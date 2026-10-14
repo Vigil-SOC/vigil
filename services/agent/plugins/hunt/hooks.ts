@@ -2,12 +2,12 @@ import type { CallPayload, NewEvent, TerminalHandoff } from "../../contracts/eve
 import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBehind, type RunValues } from "../../core/guards.js";
 import { recalledPayloadOf } from "../../contracts/memory.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
-import { callsIn, childOrdinal, runChild, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
+import { agentCalls, callsIn, childOrdinal, runChild, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
 import { okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
-import type { RunSpec } from "../../core/spec.js";
+import type { RunSpec, ToolSpec } from "../../core/spec.js";
 import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "./adapters.js";
@@ -472,8 +472,10 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
       async (args) => {
         const given = Array.isArray(args["results"]) ? (args["results"] as Record<string, unknown>[]) : [];
         const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
+        const served = servedSince(callsIn(await state(ctx).read(ctx.options.run_id)), ctx.options.spec.tools);
         return withBook(ctx, ports, (book) => {
-          const records = book.appendEvidence(evidenceFrom({ results }));
+          const evidence = evidenceFrom({ results });
+          const records = book.appendEvidence(served === null ? evidence : evidence.map((result) => ({ ...result, served_by: served })));
           const raised = (Array.isArray(args["follow_up"]) ? args["follow_up"] : []).map((one) => {
             const lead = one as { question?: unknown; entity?: unknown; hypothesis_id?: unknown };
             return book.raise(String(lead.question ?? ""), {
@@ -587,6 +589,22 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
     );
   }
   return tools;
+}
+
+// The integration a record's rows came from when they cite no alert (#2287): the server
+// that answered every estate query since the hunt's last record, when one alone did. A
+// Vigil tool among them, or a second server, leaves it unsaid rather than guessed.
+export function servedSince(calls: readonly CallPayload[], tools: readonly ToolSpec[]): string | null {
+  const own = agentCalls(calls);
+  const since = own.slice(own.map((call) => call.tool).lastIndexOf("record_evidence") + 1);
+  const servers = new Set<string | null>();
+  for (const call of since) {
+    const spec = tools.find((tool) => tool.id === call.tool);
+    if (!call.ok || spec === undefined || typeof spec["provides"] !== "string") continue;
+    servers.add(typeof spec["server"] === "string" && spec["server"] !== "" ? spec["server"] : null);
+  }
+  const [only] = servers;
+  return servers.size === 1 && only !== undefined ? only : null;
 }
 
 // The expand tool reads raw payloads back off this run's own ledger.

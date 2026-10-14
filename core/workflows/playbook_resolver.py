@@ -149,6 +149,9 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # RECALL_IGNORED_ARGS because memory caps each list itself.
     "entity_recall": {"timeout_ms": 30_000, "max_rows": 200},
     "case_records": {"max_rows": 100, "timeout_ms": 15_000},
+    # One row of our own Postgres. Its size is the record behind the alert, which
+    # result_cap bounds, so the row cap is only the shape the bounds model asks for.
+    "get_finding": {"timeout_ms": 15_000, "max_rows": 1},
 }
 
 
@@ -159,7 +162,7 @@ def _bound_capabilities(
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
     for capability in needs:
-        for name in _candidate_names(capability):
+        for name, server in _candidates_by_name(capability):
             entry = catalogue.get(name)
             if entry is None:
                 continue
@@ -170,6 +173,9 @@ def _bound_capabilities(
                     "provides": capability,
                     "description": entry.get("description", ""),
                     "parameters": entry.get("input_schema") or {},
+                    # The integration behind it, so a hunt can name the system a
+                    # row came from. A tool this backend implements names none.
+                    **({"server": server} if server else {}),
                     **CAPABILITY_BOUNDS.get(capability, {}),
                 }
             )
@@ -185,8 +191,12 @@ def _bound_capabilities(
 # Flattened once, so the caller matching the catalogue and the ratchet checking it
 # read from one definition.
 def _candidate_names(capability: str) -> Tuple[str, ...]:
+    return tuple(name for name, _server in _candidates_by_name(capability))
+
+
+def _candidates_by_name(capability: str) -> Tuple[Tuple[str, Optional[str]], ...]:
     return tuple(
-        name
+        (name, candidate.server)
         for candidate in CAPABILITIES.get(capability, ())
         for name in candidate.names()
     )
@@ -419,6 +429,9 @@ def resolve(
 # boundary for the same reason RUN_KINDS is, and held to it by a ratchet.
 HUNT_CAPABILITIES = (
     "findings_search",
+    # One alert's whole record, its raw source evidence included. A page of findings
+    # names each alert's hosts and users; this is for the few worth reading in full.
+    "get_finding",
     "telemetry_search",
     "indicator_lookup",
     # Bound on the run rather than granted to every role: `needs` in the arch is

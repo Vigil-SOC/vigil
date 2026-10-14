@@ -309,6 +309,10 @@ export interface EvidenceRecord {
   // rewrite the graph a past decision was made against.
   entities: Entity[];
   captured_at: string;
+  // The integration that answered every query the hunt ran since its last record, when
+  // one alone did: the system a row with no alert behind it came from. Absent when the
+  // answers came from several, or from Vigil's own tools, rather than guessed at.
+  served_by?: string;
 }
 
 // The note on a "neither" the controller filled in because the lead never ruled

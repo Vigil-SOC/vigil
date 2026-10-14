@@ -18,7 +18,9 @@ one merged claim over several. Use a declared data domain from your brief.
 
 **payload** holds the rows, records or aggregates the finding rests on, as a JSON
 object serialised to a string. A verdict is argued against that payload later,
-so a summary with nothing behind it cannot be checked.
+so a summary with nothing behind it cannot be checked. Keep each finding's
+`finding_id` on the rows you copy from it: that is how the alert reaches the
+case, and how the row names the product it came from.
 
 **supports / weakens** name the hypothesis ids a finding genuinely bears on.
 

@@ -40,6 +40,8 @@ interface EvidenceRow {
   gap_detail: string | null
   /** Stamped by the API on non-gap hunt rows; a display label, as configured now. */
   source_tier: string | null
+  /** The systems its rows came from (a cited alert's data_source, or the integration that answered); empty when none is known. */
+  origins: string[]
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
@@ -432,6 +434,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           is_gap: o.is_gap === true,
           gap_detail: typeof o.gap_detail === 'string' ? o.gap_detail : null,
           source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
+          origins: Array.isArray(o.origins) ? o.origins.filter((one): one is string => typeof one === 'string' && one !== '') : [],
           bears_on: bears,
         }]
       })

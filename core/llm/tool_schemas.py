@@ -180,7 +180,7 @@ SECURITY_DETECTION_TOOLS = [
 DEEPTEMPO_FINDING_TOOLS = [
     {
         "name": "list_findings",
-        "description": "List security findings with server-side pagination and compact summaries. Returns compact finding summaries (use get_finding for full details). Supports filtering by severity, data_source, status, and pagination via offset/limit.",
+        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the raw source record. Supports filtering by severity, data_source, status, and pagination via offset/limit.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -232,7 +232,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "search_findings",
-        "description": "Search findings by text query across finding IDs, descriptions, and entity context. Returns compact summaries with pagination. Use get_finding for full details on specific results.",
+        "description": "Search findings by text query across finding IDs, descriptions, and entity context. Returns compact summaries with pagination, each naming the hosts, users and indicators the finding carries. Use get_finding for the raw source record behind a specific result.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -273,7 +273,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_finding",
-        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques and related context.",
+        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques, every entity it names, and the raw source record under entity_context.source_evidence.",
         "input_schema": {
             "type": "object",
             "properties": {

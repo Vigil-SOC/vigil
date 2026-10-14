@@ -2,7 +2,8 @@ import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
 import { callViews, type CallView } from "../../core/call-view.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
-import { citedTechniques, isGap, NULL_CHECK_PROVENANCE, sensorAttested } from "./strength.js";
+import { findingsCitedBy } from "./findings.js";
+import { citedTechniques, DEPLOYMENT_GAP_PROVENANCE, isGap, NULL_CHECK_PROVENANCE, sensorAttested, unboundInWords } from "./strength.js";
 import { renderReport, type HuntReport } from "./report.js";
 import { stepsOf, type Narrative } from "./narrative.js";
 import type {
@@ -151,6 +152,11 @@ export interface EvidenceView {
   // transport error names our plumbing rather than the estate.
   gap_detail: string | null;
   captured_at: string;
+  // Where its rows came from (#2287): the alerts its rows cite, whose data_source the
+  // reader looks up, and the integration that answered when one alone did. The
+  // source_system above is the hunt's domain word, which names no system.
+  finding_ids: string[];
+  served_by: string | null;
   // Which beliefs it bears on and how. Evidence attached to nothing is worth seeing.
   bears_on: { hypothesis_id: string; relation: LinkRelation }[];
 }
@@ -292,7 +298,7 @@ function evidenceView(
     evidence_id: record.evidence_id,
     iteration: record.iteration,
     source_system: record.source_system,
-    summary: record.summary,
+    summary: summaryOf(record),
     why_notable: record.why_notable,
     salience: record.salience,
     attack_technique: record.attack_technique ?? null,
@@ -304,10 +310,20 @@ function evidenceView(
     is_gap: isGap(record),
     gap_detail: typeof record.payload["failure_reason"] === "string" ? record.payload["failure_reason"] : null,
     captured_at: record.captured_at,
+    finding_ids: findingsCitedBy(record),
+    served_by: record.served_by ?? null,
     bears_on: links
       .filter((link) => link.evidence_id === record.evidence_id)
       .map((link) => ({ hypothesis_id: link.hypothesis_id, relation: link.relation })),
   };
+}
+
+// A deployment gap in words even on a ledger written before it was (#2287): the
+// capability it names is on the payload either way.
+function summaryOf(record: EvidenceRecord): string {
+  const capability = record.payload["capability"];
+  if (record.provenance !== DEPLOYMENT_GAP_PROVENANCE || typeof capability !== "string") return record.summary;
+  return unboundInWords(capability);
 }
 
 function reviewView(record: EvidenceRecord): ReviewView {

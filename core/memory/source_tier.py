@@ -94,15 +94,43 @@ _CASE_TIERS: Dict[str, SourceTier] = {
     "email": SourceTier.TELEMETRY,
     "endpoint": SourceTier.TELEMETRY,
     "siem": SourceTier.TELEMETRY,
+    # Vendor alert sources (#2287): what the in-repo collectors stamp, and the
+    # sources an alert import names, where the name is not already an MCP
+    # server's (crowdstrike, splunk and elastic are graded as those). Each is a
+    # product's own observation of our estate -- an EDR, a proxy, an email
+    # gateway, NDR, DNS -- so each is telemetry, as its integration category
+    # would grade it. Listed rather than defaulted, so they stop logging as unknown.
+    "microsoft_defender": SourceTier.TELEMETRY,
+    "carbon_black": SourceTier.TELEMETRY,
+    "azure_sentinel": SourceTier.TELEMETRY,
+    "aws_security_hub": SourceTier.TELEMETRY,
+    "cloudflare_cloudy": SourceTier.TELEMETRY,
+    "darktrace": SourceTier.TELEMETRY,
+    "zscaler": SourceTier.TELEMETRY,
+    "proofpoint": SourceTier.TELEMETRY,
+    "infoblox": SourceTier.TELEMETRY,
 }
 
-# Two sets of `data_domains`. `network`/`authentication`/`endpoint` are the
-# shipped threat-hunt WORKFLOW.md's; `cloud_audit`/`identity`/`endpoint_process`
-# appear in no repo file but are what every live hunt declared as of
-# 2026-08-28, so a spec is reaching the runtime from outside the tree. A worker
+# Three sets of `data_domains`. The first block is what the shipped hunt
+# definitions declare now. `network`/`authentication`/`endpoint` are what
+# threat-hunt WORKFLOW.md declared before, and past runs cite them;
+# `cloud_audit`/`identity`/`endpoint_process` appear in no repo file but are
+# what every live hunt declared as of 2026-08-28. A worker
 # label outside its own playbook's list never arrives here under that name —
 # `attributeSource` collapses it to `undeclared` first.
 _HUNT_TIERS: Dict[str, SourceTier] = {
+    # The data_domains the shipped hunt definitions declare (#2287), held to
+    # them by a ratchet: a hunt records under exactly these, and a domain
+    # missing here graded CrowdStrike process evidence a feed.
+    "net_flow": SourceTier.TELEMETRY,
+    "dns": SourceTier.TELEMETRY,
+    "http": SourceTier.TELEMETRY,
+    "proxy": SourceTier.TELEMETRY,
+    "process_lineage": SourceTier.TELEMETRY,
+    "win_events": SourceTier.TELEMETRY,
+    "auth": SourceTier.TELEMETRY,
+    "email": SourceTier.TELEMETRY,
+    "cloud": SourceTier.TELEMETRY,
     "network": SourceTier.TELEMETRY,
     "authentication": SourceTier.TELEMETRY,
     "endpoint": SourceTier.TELEMETRY,

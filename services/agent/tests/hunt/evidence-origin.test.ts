@@ -1,0 +1,64 @@
+// #2287: an evidence row names the system its rows came from -- the alerts it cites, or the
+// integration that answered when it cites none -- rather than only the hunt's domain word.
+import { describe, expect, it } from "vitest";
+import type { CallPayload } from "../../contracts/events.js";
+import type { ToolSpec } from "../../core/spec.js";
+import { InProcessState } from "../../core/state.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { servedSince } from "../../plugins/hunt/hooks.js";
+import type { HuntEvent, HuntKinds } from "../../plugins/hunt/ledger.js";
+import { huntProjection } from "../../plugins/hunt/projection.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
+import { RUN, estate, finding, harnessOf, hypothesisIn, modelOf, specOf } from "../support/kernel-hunt.js";
+
+const TOOLS: ToolSpec[] = [
+  { id: "splunk-selfhosted_splunk_execute", kind: "remote", provides: "telemetry_search", server: "splunk-selfhosted" },
+  { id: "virustotal_get_ip_report", kind: "remote", provides: "indicator_lookup", server: "virustotal" },
+  { id: "search_findings", kind: "remote", provides: "findings_search" },
+];
+
+let at = 0;
+const call = (tool: string, ok = true): CallPayload => ({ ref: `r${++at}`, turn: at, call_id: `c${at}`, tool, arguments: "{}", result: "", ok, failure: ok ? null : "down" });
+
+describe("the integration a record's rows came from", () => {
+  it("is the one server that answered every estate query since the last record", () => {
+    const calls = [call("virustotal_get_ip_report"), call("record_evidence"), call("load_skill"), call("splunk-selfhosted_splunk_execute"), call("splunk-selfhosted_splunk_execute")];
+    expect(servedSince(calls, TOOLS)).toBe("splunk-selfhosted");
+  });
+
+  it("is left unsaid when two servers answered, rather than guessed", () => {
+    expect(servedSince([call("splunk-selfhosted_splunk_execute"), call("virustotal_get_ip_report")], TOOLS)).toBeNull();
+  });
+
+  it("is left unsaid when one of Vigil's own tools answered: its rows name their own source", () => {
+    expect(servedSince([call("splunk-selfhosted_splunk_execute"), call("search_findings")], TOOLS)).toBeNull();
+    expect(servedSince([call("search_findings")], TOOLS)).toBeNull();
+  });
+
+  it("counts no call that failed, and nothing before the hunt has queried", () => {
+    expect(servedSince([call("virustotal_get_ip_report", false), call("splunk-selfhosted_splunk_execute")], TOOLS)).toBe("splunk-selfhosted");
+    expect(servedSince([], TOOLS)).toBeNull();
+  });
+});
+
+describe("an evidence row a console is sent", () => {
+  it("carries the alerts its rows cite and the integration that answered", async () => {
+    const state = new InProcessState<HuntKinds>();
+    const base = specOf();
+    // The deployment's SIEM, named by the server the resolver bound it from.
+    const spec = { ...base, tools: base.tools.map((tool) => (tool.id === "splunk_search" ? { ...tool, server: "splunk-selfhosted" } : tool)) };
+    const cited = { ...finding("endpoint", "-"), payload: JSON.stringify({ rows: [{ finding_id: "dl-003", host: "FIN-WS-114" }] }) };
+    const provider = modelOf([
+      () => ({ tool: "splunk_search", args: { sql: "select * from flows where src = '10.0.0.5'" } }),
+      (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request)), { ...cited, supports: [hypothesisIn(request)] }] } }),
+      () => ({ say: "done" }),
+    ]);
+    await runHunt(harnessOf(spec, provider, state, estate()), { run_id: RUN, run_kind: "hunt", spec, actions: [], queue: new InProcessDirectiveQueue() });
+
+    const rows = huntProjection(RUN, (await state.read(RUN)) as readonly HuntEvent[]).evidence.filter((row) => row.provenance === "worker");
+    const network = rows.find((row) => row.source_system === "network");
+    const endpoint = rows.find((row) => row.source_system === "endpoint");
+    expect(network).toMatchObject({ finding_ids: [], served_by: "splunk-selfhosted" });
+    expect(endpoint).toMatchObject({ finding_ids: ["dl-003"] });
+  });
+});
