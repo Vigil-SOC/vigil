@@ -603,7 +603,6 @@ export async function handle(state: State, leases: Leases, job: RunJob, directiv
     "gen_ai.agent.name": job.run_kind,
     "vigil.run_id": job.run_id,
     "vigil.job.reason": job.reason,
-    "vigil.enqueued_by": job.enqueued_by,
   };
   await traced(`invoke_agent ${job.run_kind}`, attributes, async () => {
     try {

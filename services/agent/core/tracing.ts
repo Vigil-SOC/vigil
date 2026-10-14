@@ -1,4 +1,4 @@
-import { context, propagation, SpanKind, SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetry/api";
+import { context, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-grpc";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
@@ -10,9 +10,10 @@ const log = logger("agent.tracing");
 // provider is registered later, and stays a no-op when none ever is.
 const tracer = trace.getTracer("vigil.agent");
 
-// A tool result runs to tens of KB and a long prompt further. Cut here rather than
-// left to the collector, whose gRPC ceiling drops the whole batch a span is in.
+// A tool result runs to tens of KB and a prompt further. Capped per value and per batch,
+// because the collector's 4 MiB gRPC ceiling rejects a whole batch that exceeds it.
 const ATTRIBUTE_LIMIT = 16_384;
+const BATCH_SIZE = 32;
 
 let provider: NodeTracerProvider | null = null;
 
@@ -31,7 +32,7 @@ export function initTracing(service: string): boolean {
         "service.version": process.env["RELEASE_VERSION"] ?? "unknown",
         "deployment.environment": process.env["ENVIRONMENT"] ?? "development",
       }),
-      spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
+      spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter(), { maxExportBatchSize: BATCH_SIZE })],
       spanLimits: { attributeValueLengthLimit: ATTRIBUTE_LIMIT },
     });
     provider.register();
@@ -52,14 +53,14 @@ export async function shutdownTracing(): Promise<void> {
 }
 
 // Prompts, responses and tool I/O carry customer logs and IOCs, so they are exported
-// only when asked. The ledger holds all of it anyway, under each span's run id.
+// only when asked. The ledger holds all of it anyway, under the run id on the root span.
 export function capturesContent(): boolean {
   return enabled("VIGIL_OTEL_CAPTURE_CONTENT");
 }
 
-// Serialised only when content is on, so a deployment that never asks never pays for it.
+// Serialised only for a span being exported, so an unsampled call never pays for it.
 export function capture(span: Span, key: string, value: unknown): void {
-  if (!capturesContent()) return;
+  if (!span.isRecording() || !capturesContent()) return;
   span.setAttribute(key, typeof value === "string" ? value : JSON.stringify(value));
 }
 
@@ -76,23 +77,29 @@ export type Carrier = Record<string, string | string[] | undefined>;
 interface TracedOptions {
   kind?: SpanKind;
   // Where the caller's trace arrived from -- request headers, a job's fields. Absent
-  // continues whatever span is active in this process.
+  // continues whatever span is active in this process; present, never does.
   parent?: Carrier;
 }
 
 // The one way a span is opened here: active for fn's whole await chain, ended however
 // fn leaves, and marked failed when it throws.
 export function traced<T>(name: string, attributes: Attributes, fn: (span: Span) => Promise<T>, options: TracedOptions = {}): Promise<T> {
-  const parent = options.parent === undefined ? context.active() : propagation.extract(context.active(), options.parent);
+  const parent = options.parent === undefined ? context.active() : propagation.extract(ROOT_CONTEXT, options.parent);
   return tracer.startActiveSpan(name, { kind: options.kind ?? SpanKind.INTERNAL, attributes }, parent, async (span) => {
     try {
       return await fn(span);
     } catch (error) {
-      span.recordException(error instanceof Error ? error : String(error));
-      span.setStatus({ code: SpanStatusCode.ERROR, message: error instanceof Error ? error.message : String(error) });
+      failed(error, span);
       throw error;
     } finally {
       span.end();
     }
   });
+}
+
+// For a failure answered rather than thrown, which traced cannot see: the span is the
+// one active where it was caught, and none is a no-op.
+export function failed(error: unknown, span: Span | undefined = trace.getActiveSpan()): void {
+  span?.recordException(error instanceof Error ? error : String(error));
+  span?.setStatus({ code: SpanStatusCode.ERROR, message: error instanceof Error ? error.message : String(error) });
 }

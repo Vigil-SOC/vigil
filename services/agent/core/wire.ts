@@ -267,7 +267,10 @@ class OpenAiSurface implements Provider {
     };
     // Opened before the limiter, so time queued behind a rate limit is on the span.
     return traced(`chat ${this.wire_model}`, attributes, async (span) => {
-      capture(span, "gen_ai.input.messages", body.messages);
+      // What this call adds since the model last spoke: earlier spans hold the rest, and
+      // the whole history cut at the cap would keep the oldest turns, not the newest.
+      const spoke = body.messages.findLastIndex((message) => message.role === "assistant");
+      capture(span, "gen_ai.input.messages", body.messages.slice(spoke + 1));
       // Assembled inside run() rather than after it, so the rate-limit slot is held
       // for the whole call and a mid-stream failure is retried like any other.
       const response = await this.limiter.run(estimate, async () => {

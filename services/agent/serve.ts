@@ -8,7 +8,7 @@ import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
-import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
+import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
@@ -121,6 +121,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
     }
   } catch (error) {
     log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
+    failed(error);
     res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
   }
   res.end();
@@ -165,6 +166,7 @@ function refuse(res: ServerResponse, status: number, detail: string): void {
 // A route that threw: logged with the run, then answered as the refusal it is.
 function fail(res: ServerResponse, status: number, route: string, runId: string, error: unknown): void {
   log.error("request failed", { route, run_id: runId, status, ...errorFields(error) });
+  failed(error);
   refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
@@ -331,7 +333,11 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
 
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
-      if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
+      if (asked !== null) {
+        const runId = asked[1] as string;
+        const attributes = { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "narrate", "vigil.run_id": runId };
+        return traced("invoke_agent narrate", attributes, () => writeNarrative(state, runId, res, build), { kind: SpanKind.SERVER, parent: req.headers });
+      }
 
       // Parsed rather than matched raw because this route takes a query. Node accepts
       // request-targets URL rejects (absolute-form with a bad host), so a throw here
@@ -394,8 +400,9 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
     verifyLedger(pool, runId),
   ).listen(chatPort());
   const stop = () => {
-    serving.close();
-    void pool.end().finally(shutdownTracing);
+    // Flushed once the open chats have drained, so their spans are not the ones lost.
+    serving.close(() => void shutdownTracing());
+    void pool.end();
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

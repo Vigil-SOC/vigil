@@ -1,12 +1,20 @@
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, NodeTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node";
+import type { ServerResponse } from "node:http";
 import type OpenAI from "openai";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { RunJob } from "../../contracts/job.js";
 import { defineTool, type ToolResult } from "../../contracts/tool.js";
 import { Limiter } from "../../core/limiter.js";
 import { remoteDispatch } from "../../core/remote.js";
+import { InProcessState } from "../../core/state.js";
 import { traced } from "../../core/tracing.js";
 import { openAiSurface } from "../../core/wire.js";
+import type { Message } from "../../core/provider.js";
+import { streamChat } from "../../serve.js";
+import { handle } from "../../worker.js";
+import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
+import { InProcessLeases } from "../support/in-process-leases.js";
 
 const exporter = new InMemorySpanExporter();
 const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
@@ -97,8 +105,8 @@ describe("a model call", () => {
     return openAiSurface(client, "gpt-4o", new Limiter({ rpm: 10_000, tpm: 10_000_000 }, 4, 1), "openai", "openai/gpt-4o");
   }
 
-  async function ask(): Promise<void> {
-    for await (const _ of surface().stream({ messages: [{ role: "user", content: "hi" }], tools: [] })) void _;
+  async function ask(messages: Message[] = [{ role: "user", content: "hi" }]): Promise<void> {
+    for await (const _ of surface().stream({ messages, tools: [] })) void _;
   }
 
   it("is a client span with the model, its usage and when the limiter let it through", async () => {
@@ -127,6 +135,53 @@ describe("a model call", () => {
     const { attributes } = only();
     expect(JSON.parse(attributes["gen_ai.input.messages"] as string)).toEqual([{ role: "user", content: "hi" }]);
     expect(JSON.parse(attributes["gen_ai.output.messages"] as string)).toMatchObject([{ role: "assistant", content: "hello" }]);
+  });
+
+  // The cap cuts from the end, so a whole history would keep its oldest turns.
+  it("carries only what was added since the model last spoke", async () => {
+    vi.stubEnv("VIGIL_OTEL_CAPTURE_CONTENT", "true");
+    await ask([
+      { role: "user", content: "first" },
+      { role: "assistant", content: "earlier answer", tool_calls: [] },
+      { role: "user", content: "second" },
+    ]);
+
+    expect(JSON.parse(only().attributes["gen_ai.input.messages"] as string)).toEqual([{ role: "user", content: "second" }]);
+  });
+});
+
+describe("a run's root span", () => {
+  const TRACE = "0af7651916cd43dd8448eb211c80319c";
+  const TRACEPARENT = `00-${TRACE}-b7ad6b7169203331-01`;
+
+  it("continues the trace the job was enqueued under, and fails with the job", async () => {
+    const job: RunJob = {
+      schema_version: 1,
+      run_id: "5a2c2d3e-0000-4000-8000-000000000777",
+      run_kind: "hunt",
+      tenant_id: null,
+      enqueued_at: new Date().toISOString(),
+      enqueued_by: "test",
+      traceparent: TRACEPARENT,
+      reason: "start",
+      request: { arch: "", playbook: "/nonexistent/hunt.playbook.yaml", config: "", prompt: "go" },
+    };
+    await expect(handle(new InProcessState(), new InProcessLeases(), job, new InProcessDirectiveQueue())).rejects.toThrow();
+
+    const span = only();
+    expect(span.name).toBe("invoke_agent hunt");
+    expect(span.spanContext().traceId).toBe(TRACE);
+    expect(span.attributes["vigil.run_id"]).toBe(job.run_id);
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  // streamChat answers a failure with an error frame rather than a throw.
+  it("is marked failed by a chat turn that failed without throwing", async () => {
+    const res = { write: () => true, end: () => undefined, writableEnded: false, destroyed: false } as unknown as ServerResponse;
+    const request = { run_id: "5a2c2d3e-0000-4000-8000-000000000778", turns: [], system_prompt: "", config: "model: x\ntools: [oops]" };
+    await traced("invoke_agent chat", {}, () => streamChat(new InProcessState(), request, res));
+
+    expect(only().status.code).toBe(SpanStatusCode.ERROR);
   });
 });
 
