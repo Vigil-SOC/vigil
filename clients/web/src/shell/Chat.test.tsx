@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { format } from 'date-fns'
 import Chat from './Chat'
+import type { Citation } from './citations'
 import api, { conversationsApi, reasoningApi, streamFetch } from '../services/api'
 
 const historyState = vi.hoisted(() => ({
@@ -451,5 +452,151 @@ describe('reasoning trace cost', () => {
     const header = document.querySelector('.trace-sum')
     expect(header?.textContent).toContain('1 unpriced')
     expect(header?.textContent).not.toContain('$0.0000')
+  })
+})
+
+describe('citation chips on the case composer (#2285)', () => {
+  const citations: Citation[] = [
+    { id: 'ev-0b17352e22bf', kind: 'evidence', label: 'step 3 · CrowdStrike', text: 'rundll32 loaded msupdate64.dll from Temp' },
+    { id: 'ev-ceab2569df3a', kind: 'evidence', label: 'step 5 · Zscaler', text: 'HTTPS beacon to cdn-invoicesync.net every 60 s' },
+    { id: 'h-fb8e2227', kind: 'explanation', label: 'explanation · DUSKY LANTERN on FIN-WS-114', text: 'DUSKY LANTERN on FIN-WS-114' },
+    { id: 'dl-005', kind: 'alert', label: 'alert · LSASS MiniDump', text: 'comsvcs.dll MiniDump of lsass.exe', href: '/overview?alert=dl-005' },
+  ]
+
+  function renderAnswer(answer: string, onCite = vi.fn()) {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [{ id: 's1', case_id: 'CASE-1' }] } } as never)
+    vi.mocked(conversationsApi.get).mockResolvedValue({
+      data: {
+        id: 's1',
+        case_id: 'CASE-1',
+        messages: [
+          { role: 'user', content: 'what happened?', complete: true },
+          { role: 'assistant', content: answer, complete: true },
+        ],
+      },
+    } as never)
+    render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" citations={citations} onCite={onCite} />)
+    return onCite
+  }
+
+  it('names the step and source a row came from, with its text on hover, never the raw id', async () => {
+    renderAnswer('The DLL loaded (ev-0b17352e22bf), then it beaconed (`ev-ceab2569df3a`).')
+    const row = await waitFor(() => {
+      const el = document.querySelector('.cite-row')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    const chips = within(row).getAllByRole('button')
+    expect(chips.map((chip) => chip.textContent)).toEqual(['step 3 · CrowdStrike', 'step 5 · Zscaler'])
+    expect(chips[0]).toHaveAttribute('title', 'rundll32 loaded msupdate64.dll from Temp')
+    const body = document.querySelector('.msg.vigil .body') as HTMLElement
+    expect(body.textContent).not.toMatch(/ev-[0-9a-f]{12}/)
+    // where the answer wrote each id, prose or code span, its chip stands in the line
+    expect(within(body).getAllByRole('button').map((chip) => chip.textContent)).toEqual(['step 3 · CrowdStrike', 'step 5 · Zscaler'])
+  })
+
+  it('collapses repeated citations of one row to one chip under the answer', async () => {
+    renderAnswer('ev-0b17352e22bf shows the load; ev-0b17352e22bf again, and ev-0b17352e22bf once more.')
+    await screen.findAllByText('step 3 · CrowdStrike')
+    expect(within(document.querySelector('.cite-row') as HTMLElement).getAllByRole('button')).toHaveLength(1)
+  })
+
+  it('chips the alerts and explanations the answer names where it names them, and leaves an id the case does not hold as text', async () => {
+    const onCite = renderAnswer('dl-005 supports h-fb8e2227; ghost-9 is not on this case.')
+    const row = await waitFor(() => {
+      const el = document.querySelector('.msg.vigil .body .cite-chip')
+      expect(el).not.toBeNull()
+      return el?.closest('.body') as HTMLElement
+    })
+    // the row under the answer lists evidence rows only (citation-chip.md); these stand in the text
+    expect(document.querySelector('.cite-row')).toBeNull()
+    const alert = within(row).getByRole('link', { name: 'alert · LSASS MiniDump' })
+    expect(alert).toHaveAttribute('href', '/overview?alert=dl-005')
+    expect(alert).toHaveAttribute('target', '_blank')
+    fireEvent.click(within(row).getByRole('button', { name: 'explanation · DUSKY LANTERN on FIN-WS-114' }))
+    expect(onCite).toHaveBeenCalledWith(expect.objectContaining({ id: 'h-fb8e2227', kind: 'explanation' }))
+    expect(screen.getByText(/ghost-9 is not on this case/)).toBeInTheDocument()
+  })
+
+  it('opens the row an evidence chip cites', async () => {
+    const onCite = renderAnswer('See ev-ceab2569df3a.')
+    fireEvent.click((await screen.findAllByRole('button', { name: 'step 5 · Zscaler' }))[0])
+    expect(onCite).toHaveBeenCalledWith(expect.objectContaining({ id: 'ev-ceab2569df3a', kind: 'evidence' }))
+  })
+})
+
+describe('case composer thread height (#2292)', () => {
+  beforeEach(() => {
+    localStorage.removeItem('soc.chat.threadHeight')
+    // jsdom has no PointerEvent, so a fired pointer event would carry no button or clientY
+    if (!('PointerEvent' in window)) {
+      class PointerEventShim extends MouseEvent {
+        pointerId: number
+        constructor(type: string, init: PointerEventInit = {}) {
+          super(type, init)
+          this.pointerId = init.pointerId ?? 0
+        }
+      }
+      vi.stubGlobal('PointerEvent', PointerEventShim)
+    }
+  })
+
+  async function renderThread() {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [{ id: 's1', case_id: 'CASE-1' }] } } as never)
+    vi.mocked(conversationsApi.get).mockResolvedValue({
+      data: {
+        id: 's1',
+        case_id: 'CASE-1',
+        messages: [
+          { role: 'user', content: 'what happened?', complete: true },
+          { role: 'assistant', content: 'A long answer.', complete: true },
+        ],
+      },
+    } as never)
+    render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" />)
+    await screen.findByText('A long answer.')
+    return document.querySelector('.case-composer .chat-body') as HTMLElement
+  }
+
+  it('drags to a height the person chose, keeps it, and restores the default on double-click', async () => {
+    const body = await renderThread()
+    // jsdom lays nothing out: the thread's box is its style height, its bottom edge fixed at 800
+    body.getBoundingClientRect = () => {
+      const height = parseFloat(body.style.height) || 150
+      return { top: 800 - height, bottom: 800, height, left: 0, right: 0, width: 0, x: 0, y: 800 - height, toJSON: () => ({}) }
+    }
+    const grip = screen.getByRole('separator', { name: 'Resize the thread' })
+    fireEvent.pointerDown(grip, { button: 0, clientY: 646, pointerId: 1 })
+    fireEvent.pointerMove(grip, { clientY: 396, pointerId: 1 })
+    expect(body.style.height).toBe('400px')
+    fireEvent.pointerUp(grip, { clientY: 396, pointerId: 1 })
+    await waitFor(() => expect(localStorage.getItem('soc.chat.threadHeight')).toBe('400'))
+
+    fireEvent.doubleClick(grip)
+    expect(body.style.height).toBe('')
+    expect(localStorage.getItem('soc.chat.threadHeight')).toBeNull()
+  })
+
+  it('resizes from the keyboard', async () => {
+    const body = await renderThread()
+    const grip = screen.getByRole('separator', { name: 'Resize the thread' })
+    fireEvent.keyDown(grip, { key: 'ArrowUp' })
+    fireEvent.keyDown(grip, { key: 'ArrowUp' })
+    expect(body.style.height).toBe('144px')
+    await waitFor(() => expect(localStorage.getItem('soc.chat.threadHeight')).toBe('144'))
+  })
+
+  it('collapses, which takes the thread and its grip away so the tab has the height', async () => {
+    await renderThread()
+    fireEvent.click(screen.getByRole('button', { name: /2 messages · hide/ }))
+    expect(document.querySelector('.case-composer .chat-body')).toBeNull()
+    expect(screen.queryByRole('separator', { name: 'Resize the thread' })).toBeNull()
+    expect(document.querySelector('.case-composer')).not.toHaveClass('thread-open')
+  })
+
+  it('opens a remembered height on the next case', async () => {
+    localStorage.setItem('soc.chat.threadHeight', '420')
+    const body = await renderThread()
+    expect(body.style.height).toBe('420px')
   })
 })

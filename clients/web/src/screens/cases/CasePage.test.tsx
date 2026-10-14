@@ -889,7 +889,7 @@ describe('case page', () => {
     expect(within(side).getByText('Beacon to rare host')).toBeInTheDocument()
     expect(within(side).queryByText('console alert')).not.toBeInTheDocument()
     // The Entities row is what the linked alerts name, once each, while the run recalls none.
-    expect(within(side).getByText('web-1, alice, db-2')).toBeInTheDocument()
+    expect(Array.from(side.querySelectorAll('.side-ent')).map((el) => el.textContent)).toEqual(['web-1', 'alice', 'db-2'])
     expect(within(side).getByText('no door')).toBeInTheDocument()
     expect(within(side).queryByText('gone')).not.toBeInTheDocument()
     const link = within(side).getByRole('link', { name: 'Open in source' })
@@ -1199,22 +1199,30 @@ describe('case page', () => {
     testState.convos = [{
       id: 'conv-hunt',
       case_id: 'case-hunt',
-      messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not.' }],
+      messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not, and h1 is ruled out.' }],
     }]
     const { showCase } = renderDetail('case-hunt')
 
-    expect(await screen.findByRole('button', { name: 'e1' })).toBeInTheDocument()
+    // the chip names the step and source the row came from (#2285), where the answer wrote the id and once under it
+    const chips = await screen.findAllByRole('button', { name: 'step 2 · elastic' })
+    expect(chips).toHaveLength(2)
+    expect(chips[0]).toHaveAttribute('title', 'no login')
+    expect(screen.queryByRole('button', { name: 'e1' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'ghost-9' })).not.toBeInTheDocument()
     expect(screen.queryByText('no login')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'e1' }))
+    fireEvent.click(chips[1])
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
     const row = (await screen.findByText('no login')).closest('[data-evidence-id]')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
     expect(row).toHaveClass('cite-target')
 
+    // an explanation the answer names is a chip too, and opens the Explanations tab
+    fireEvent.click(screen.getByRole('button', { name: 'explanation · The host is owned' }))
+    expect(screen.getByRole('tab', { name: /^Explanations/ })).toHaveAttribute('aria-selected', 'true')
+
     showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByText(/The row e1 matters/)).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText(/ghost-9 does not/)).not.toBeInTheDocument())
   })
 
   const decCase = {
@@ -1825,7 +1833,8 @@ describe('case page', () => {
       const panel = await side()
       expect(await panel.findByText('Incident response')).toBeInTheDocument()
       expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.00')
-      expect(await panel.findByText('host-1, ada')).toBeInTheDocument()
+      expect(await panel.findByText('host-1')).toHaveClass('side-ent-head')
+      expect(panel.getByText('ada')).toHaveClass('side-ent-head')
       expect(panel.getByText('$1.00 of $2.00')).toBeInTheDocument()
       expect(panel.getByText('Fair')).toHaveClass('fair')
       const meter = panel.getByRole('meter')

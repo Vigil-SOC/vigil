@@ -20,6 +20,7 @@ import Chat from '../../shell/Chat'
 import { EvidenceTrail } from './EvidenceTrail'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
+import { caseCitations } from './caseCitations'
 import { fmtCost } from '../../shared/cost'
 import { timeLeft, when } from './caseFormat'
 import {
@@ -1245,10 +1246,10 @@ export function CasePage({
         seed={askSeed?.id === id ? askSeed.text : null}
         onSeedConsumed={() => setAskSeed(null)}
         onTurnDone={refreshFold}
-        evidenceIds={fold?.kind === 'hunt' ? fold.evidence.map((row) => row.evidence_id) : []}
-        onCite={(evidenceId) => {
-          setTab('Evidence')
-          setFocusEvidence(evidenceId)
+        citations={caseCitations(fold, linkedFindings)}
+        onCite={(cite) => {
+          setTab(cite.kind === 'explanation' ? 'Explanations' : 'Evidence')
+          if (cite.kind === 'evidence') setFocusEvidence(cite.id)
         }}
       />
     </div>
