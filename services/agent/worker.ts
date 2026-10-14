@@ -13,6 +13,7 @@ import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
+import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
@@ -595,14 +596,25 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
 // business, and advance() is driven without one by the tests and by run-once.ts.
 // advance() still throws the original error; this is the only place that wraps it.
 export async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
-  try {
-    await advance(state, leases, job, build, directives);
-  } catch (error) {
-    if (error instanceof SpecError || error instanceof GatewayExhausted) {
-      throw Object.assign(new UnrecoverableError(error.message), { cause: error });
+  // One span per job rather than per run: a run parked on an approval resumes as a
+  // second job, hours later, and the run id is what ties the two together.
+  const attributes = {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": job.run_kind,
+    "vigil.run_id": job.run_id,
+    "vigil.job.reason": job.reason,
+    "vigil.enqueued_by": job.enqueued_by,
+  };
+  await traced(`invoke_agent ${job.run_kind}`, attributes, async () => {
+    try {
+      await advance(state, leases, job, build, directives);
+    } catch (error) {
+      if (error instanceof SpecError || error instanceof GatewayExhausted) {
+        throw Object.assign(new UnrecoverableError(error.message), { cause: error });
+      }
+      throw error;
     }
-    throw error;
-  }
+  }, { parent: { traceparent: job.traceparent } });
 }
 
 // One line per failed attempt: warn while BullMQ will retry, error once it will not.
@@ -718,6 +730,7 @@ function warnIfUnmirrored(): void {
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
+  initTracing("vigil-agent-worker");
   warnIfUnmirrored();
   const running = startWorker();
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
@@ -726,7 +739,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   const probes = healthServer(workerReady(running.worker)).listen(healthPort());
   const stop = () => {
     probes.close();
-    void running.close();
+    void running.close().finally(shutdownTracing);
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

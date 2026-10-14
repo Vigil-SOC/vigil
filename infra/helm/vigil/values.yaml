@@ -766,6 +766,9 @@ config:
   VIGIL_OTEL_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
   OTEL_TRACES_SAMPLER: "parentbased_always_on"
+  # Agent-layer spans carry prompts, responses and tool I/O only when this is on.
+  # They hold customer logs and IOCs, so leave it off outside development.
+  VIGIL_OTEL_CAPTURE_CONTENT: "false"
 
   # Kafka — disabled by default
   KAFKA_ENABLED: "false"

@@ -55,6 +55,7 @@ OTHER_CONSUMERS = {
     # Interpolated into mcp-config.json for the VStrike MCP server.
     "VSTRIKE_BASE_URL": "vstrike MCP server",
     # TypeScript agent processes (services/agent).
+    "VIGIL_OTEL_CAPTURE_CONTENT": "agent layer",
     "VIGIL_PLAYBOOKS_URL": "agent layer",
     "VIGIL_PRICING_URL": "agent layer",
     "VIGIL_RUNS_URL": "agent layer",

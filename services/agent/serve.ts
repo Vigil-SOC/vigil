@@ -1,3 +1,4 @@
+import { SpanKind } from "@opentelemetry/api";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import pg from "pg";
@@ -7,6 +8,7 @@ import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
+import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
@@ -300,7 +302,13 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
   // Headers before the first token, so the reader is streaming rather than
   // buffering a response it will be handed all at once.
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  await streamChat(state, request, res, build);
+  const attributes = {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "chat",
+    "vigil.run_id": request.run_id,
+    ...(request.agent_id === undefined ? {} : { "gen_ai.agent.id": request.agent_id }),
+  };
+  await traced("invoke_agent chat", attributes, () => streamChat(state, request, res, build), { kind: SpanKind.SERVER, parent: req.headers });
 }
 
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
@@ -378,6 +386,7 @@ export function serveReady(pool: pg.Pool): Ready {
 // loaded this module and exited. Its own pool: serve is a separate Deployment from
 // the worker now, and a pool cannot be shared across processes.
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
+  initTracing("vigil-agent-serve");
   const pool = new pg.Pool(poolConfig());
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
@@ -386,7 +395,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   ).listen(chatPort());
   const stop = () => {
     serving.close();
-    void pool.end();
+    void pool.end().finally(shutdownTracing);
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

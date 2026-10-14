@@ -23,6 +23,10 @@ x-agent-env: &agent-env
   # call answers 503, so a run fails before its first model call.
   - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
   - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
+  # Traces for model and tool calls, on the same switch as the Python services.
+  - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+  - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+  - VIGIL_OTEL_CAPTURE_CONTENT=${VIGIL_OTEL_CAPTURE_CONTENT:-false}
   # Pass-through, not `${BIFROST_API_KEY:-}`: the harness falls back to a
   # placeholder only when the variable is absent, and the := form would set it
   # to an empty string the OpenAI client then sends as a real credential.
