@@ -18,12 +18,15 @@ from core.monitor.common import UNMEASURED, rate_level, usage_level
 from core.monitor.models import (
     BandRate,
     BandRunning,
+    DecidedDay,
+    DecisionSuggestion,
     FleetWallPayload,
     MonitorMetric,
     PulseAdjustment,
     PulseAge,
     PulseAttention,
     PulseDay,
+    PulseDecisions,
     PulseGauge,
     PulseOldest,
     PulsePeak,
@@ -32,6 +35,9 @@ from core.monitor.models import (
     PulseThroughput,
     PulseWork,
     PulseWorkRow,
+    StopKind,
+    StopReason,
+    StopsGrid,
     WallBand,
     WallCell,
     WallClosedToday,
@@ -41,6 +47,7 @@ from core.monitor.models import (
     WallJustClosed,
     WallNextAction,
     WallSlots,
+    WhoDecided,
 )
 from core.monitor.pulse import AGE_BUCKETS, HOURS
 from core.monitor.wall import COMBINED_HEAVY, JUST_CLOSED_MINUTES
@@ -425,4 +432,80 @@ def work(now: Optional[datetime] = None) -> PulseWork:
             queue_info=day.queue_info,
         ),
         info="How long each has waited. " + INFO,
+    )
+
+
+# Why agents stopped to ask, as rows; the grid below counts them per workflow.
+STOP_REASONS = (
+    ("cannot_be_undone", "Cannot be undone"),
+    ("budget_reached", "Budget reached"),
+    ("scope_reached", "Scope reached"),
+    ("idle_too_long", "Idle too long"),
+    ("stuck", "Stuck"),
+    ("low_trust_source", "Low-trust source"),
+    ("blind_spot", "Blind spot"),
+    ("tool_not_working", "Tool not working"),
+)
+STOP_KINDS = (
+    ("full-investigation", "Investig."),
+    ("phishing-triage", "Phishing"),
+    ("endpoint-containment", "Endpoint"),
+    ("cloud-misconfig", "Cloud"),
+)
+STOP_COUNTS = (
+    (0, 0, 6, 0),
+    (4, 0, 1, 2),
+    (1, 0, 0, 3),
+    (1, 0, 0, 0),
+    (2, 0, 0, 1),
+    (0, 3, 0, 0),
+    (0, 0, 0, 2),
+    (1, 0, 2, 4),
+)
+# Closed per day over the last 7 days: (agents alone, approved by a person, by a person).
+DECIDED = (
+    (118, 22, 14),
+    (126, 20, 12),
+    (131, 19, 11),
+    (140, 17, 9),
+    (138, 15, 8),
+    (149, 14, 7),
+    (152, 16, 7),
+)
+
+
+def decisions(now: Optional[datetime] = None) -> PulseDecisions:
+    now = now or _now()
+    today = now.date()
+    return PulseDecisions(
+        now=_iso(now),
+        who=WhoDecided(
+            days=[
+                DecidedDay(
+                    day=(today - timedelta(days=len(DECIDED) - 1 - i)).isoformat(),
+                    agents_alone=alone,
+                    approved_by_person=approved,
+                    by_person=person,
+                )
+                for i, (alone, approved, person) in enumerate(DECIDED)
+            ],
+            info="Cases closed per day (UTC), by who made the call. " + INFO,
+        ),
+        stops=StopsGrid(
+            reasons=[StopReason(key=key, label=label) for key, label in STOP_REASONS],
+            kinds=[StopKind(workflow_id=wid, name=name) for wid, name in STOP_KINDS],
+            counts=[list(row) for row in STOP_COUNTS],
+            median_minutes=6,
+            expired=2,
+            info="Approvals asked today, by reason and by the workflow that asked. "
+            + INFO,
+        ),
+        suggestion=DecisionSuggestion(
+            text=(
+                "Budget stops were extended 6 of 7 times this week. Raising the default "
+                "budget would save you about 6 decisions a week."
+            ),
+            action="Change the default budget",
+            settings_section="ai-config",
+        ),
     )

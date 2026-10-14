@@ -1,13 +1,13 @@
 """The Pulse reads: the day's spine, the gauges, work by workflow, and what waits.
 
 NOT IMPLEMENTED YET. The console screen (``clients/web/src/screens/monitor/
-PulseScreen.tsx``) is built and polls ``GET /api/pulse/{summary,throughput,work}``
-every 15 s; until these reads are filled in the router answers 501 and each tab
+PulseScreen.tsx``) is built and polls
+``GET /api/pulse/{summary,throughput,work,decisions}`` every 15 s; until these reads are filled in the router answers 501 and each tab
 shows its error state (demo mode serves ``fixtures`` instead). The response
-contracts are ``PulseSummary``, ``PulseThroughput`` and ``PulseWork`` in
-``core/monitor/models.py``: the routes validate these reads against them.
-The Decisions, Sources and memory, and System tabs are placeholders in the
-screen and call nothing yet.
+contracts are ``PulseSummary``, ``PulseThroughput``, ``PulseWork`` and
+``PulseDecisions`` in ``core/monitor/models.py``: the routes validate these reads against them.
+The Sources and memory, and System tabs are placeholders in the screen and
+call nothing yet.
 
 Reference implementation: ``core/monitor/pulse.py`` on krmayankb/vigil
 ``fleet/console-monitor`` (PR #7). The TODOs note what to do differently.
@@ -96,3 +96,24 @@ def work(now: Optional[datetime] = None) -> dict:
     queue: ``{hours, queued, high_water, queue_info}`` from ``spine()``.
     """
     raise NotImplementedYet("Pulse work read is not implemented yet")
+
+
+def decisions(now: Optional[datetime] = None) -> dict:
+    """Build ``PulseDecisions``: who decided, and why agents stopped to ask.
+
+    who.days: the last 7 days (UTC), cases closed per day by
+        ``case_closure_info.closed_by_kind``: agents alone, a person. A NULL
+        closer is neither. ``approved_by_person`` stays None, with
+        ``approved_unmeasured_reason``, until an agent close after a person's
+        approval is recorded apart.
+    stops: approvals asked today (``approval_actions``), counted by reason
+        and by the workflow of the run that asked. ``median_minutes`` is asked
+        to answered for those answered today; ``expired`` the ones that timed
+        out and took their default.
+        TODO: the reason. Runs park with free text (``parked_reason``); record
+        a ``StopReason`` key when the run parks, or classify here, before
+        counting by it.
+    suggestion: only from what the stops show, e.g. budget stops that were
+        nearly always extended this week. None when nothing qualifies.
+    """
+    raise NotImplementedYet("Pulse decisions read is not implemented yet")

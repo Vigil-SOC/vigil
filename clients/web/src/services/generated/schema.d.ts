@@ -4710,6 +4710,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pulse/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pulse Decisions
+         * @description Pulse Decisions: who decided, and why agents stopped to ask.
+         */
+        get: operations["get_api_pulse_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pulse/summary": {
         parameters: {
             query?: never;
@@ -9041,6 +9061,32 @@ export interface components {
             /** Webhook Secret */
             webhook_secret?: string | null;
         };
+        /**
+         * DecidedDay
+         * @description Cases closed on one day (UTC), by who made the call.
+         */
+        DecidedDay: {
+            /**
+             * Agents Alone
+             * @description Closed by agents with no person asked.
+             */
+            agents_alone: number;
+            /**
+             * Approved By Person
+             * @description Closed by agents after a person approved. None until approved closes are recorded apart from agent closes.
+             */
+            approved_by_person: number | null;
+            /**
+             * By Person
+             * @description Closed by a person.
+             */
+            by_person: number;
+            /**
+             * Day
+             * @description ISO date.
+             */
+            day: string;
+        };
         /** Decision */
         Decision: {
             /** Actor */
@@ -9058,6 +9104,25 @@ export interface components {
              * Text
              * @default
              */
+            text: string;
+        };
+        /**
+         * DecisionSuggestion
+         * @description One change that would save decisions, derived from the stops. Never invented.
+         */
+        DecisionSuggestion: {
+            /**
+             * Action
+             * @description The button label.
+             */
+            action: string;
+            /**
+             * Settings Section
+             * @description Where the setting is changed.
+             * @enum {string}
+             */
+            settings_section: "ai-config" | "services" | "integrations" | "users" | "sla" | "autoinvestigate" | "federation" | "system" | "general" | "dev" | "data";
+            /** Text */
             text: string;
         };
         /** Decisions */
@@ -10583,6 +10648,17 @@ export interface components {
             running: number[];
         };
         /**
+         * PulseDecisions
+         * @description ``GET /api/pulse/decisions``: who decided, and why agents stopped to ask.
+         */
+        PulseDecisions: {
+            /** Now */
+            now: string;
+            stops: components["schemas"]["StopsGrid"];
+            suggestion: components["schemas"]["DecisionSuggestion"] | null;
+            who: components["schemas"]["WhoDecided"];
+        };
+        /**
          * PulseGauge
          * @description One Summary gauge. Keys, in order: without_person, closed_today, time_to_decide, spend_today.
          *
@@ -11295,6 +11371,58 @@ export interface components {
              * @enum {string}
              */
             status: "running" | "paused";
+        };
+        /** StopKind */
+        StopKind: {
+            /**
+             * Name
+             * @description Short column label.
+             */
+            name: string;
+            /** Workflow Id */
+            workflow_id: string;
+        };
+        /**
+         * StopReason
+         * @description Why an agent stopped to ask a person.
+         *
+         *     Open decision: the classification. Runs record a free-text parked reason
+         *     today; the reads need a fixed set of keys (cannot_be_undone,
+         *     budget_reached, scope_reached, idle_too_long, stuck, low_trust_source,
+         *     blind_spot, tool_not_working) recorded when the run parks.
+         */
+        StopReason: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+        };
+        /**
+         * StopsGrid
+         * @description Each stop today, by reason (rows) and kind of work (columns).
+         */
+        StopsGrid: {
+            /**
+             * Counts
+             * @description counts[reason][kind]; same order as reasons and kinds.
+             */
+            counts: number[][];
+            /**
+             * Expired
+             * @description Asked today, not answered in time, and followed their default.
+             */
+            expired: number;
+            /** Info */
+            info: string;
+            /** Kinds */
+            kinds: components["schemas"]["StopKind"][];
+            /**
+             * Median Minutes
+             * @description Median minutes from asked to answered today; None when none was answered.
+             */
+            median_minutes: number | null;
+            /** Reasons */
+            reasons: components["schemas"]["StopReason"][];
         };
         /**
          * SubmitFeedbackRequest
@@ -12080,6 +12208,21 @@ export interface components {
             secret?: string | null;
             /** Url */
             url?: string | null;
+        };
+        /** WhoDecided */
+        WhoDecided: {
+            /**
+             * Approved Unmeasured Reason
+             * @description Why approved_by_person is None, when it is.
+             */
+            approved_unmeasured_reason: string | null;
+            /**
+             * Days
+             * @description The last 7 days, oldest first; the last is today.
+             */
+            days: components["schemas"]["DecidedDay"][];
+            /** Info */
+            info: string;
         };
         /** WorkflowDetailResponse */
         WorkflowDetailResponse: {
@@ -20479,6 +20622,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_pulse_decisions: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PulseDecisions"];
                 };
             };
             /** @description Validation Error */
