@@ -26,16 +26,17 @@ vi.mock('../../services/api', () => ({
     listServers: vi.fn(),
     getStatuses: vi.fn(),
     setServerEnabled: vi.fn(),
+    reloadServers: vi.fn(),
   },
   orchestratorApi: {},
   storageApi: {},
 }))
 
-function renderSection(path = '/settings?section=integrations') {
+function renderSection(path = '/settings?section=integrations', notify = vi.fn()) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <IntegrationsStateProvider>
-        <IntegrationsSection notify={vi.fn()} />
+        <IntegrationsSection notify={notify} />
       </IntegrationsStateProvider>
     </MemoryRouter>,
   )
@@ -187,6 +188,54 @@ describe('Integrations: Connected table', () => {
     expect(screen.getByRole('tab', { name: /^Add integration/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.click(head.getByRole('button', { name: 'Build custom' }))
     expect(screen.getByRole('tab', { name: /^Custom/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('Reload servers says it is working, toasts the result and re-reads the list', async () => {
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(mcpApi.reloadServers).mockImplementation((() => new Promise((r) => { finish = r })) as never)
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const reads = vi.mocked(mcpApi.listServers).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    const working = screen.getByRole('button', { name: 'Reloading…' })
+    expect(working).toBeDisabled()
+    expect(working).toHaveAttribute('aria-busy', 'true')
+    expect(mcpApi.reloadServers).toHaveBeenCalledTimes(1)
+    expect(notify).not.toHaveBeenCalled()
+
+    finish({ data: { success: true, message: 'MCP servers reloaded successfully', total_servers: 4, servers: [] } })
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', 'Tool servers reloaded. 4 servers configured.'))
+    await waitFor(() => expect(vi.mocked(mcpApi.listServers).mock.calls.length).toBeGreaterThan(reads))
+    expect(await screen.findByRole('button', { name: 'Reload servers' })).toBeEnabled()
+  })
+
+  it('Reload servers toasts the server’s reason when it fails, and still re-reads the list', async () => {
+    vi.mocked(mcpApi.reloadServers).mockRejectedValue({
+      message: 'Request failed with status code 403',
+      response: { status: 403, data: { detail: 'Permission denied: integrations.write required' } },
+    })
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const reads = vi.mocked(mcpApi.listServers).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith('err', 'Could not reload tool servers: Permission denied: integrations.write required.'),
+    )
+    await waitFor(() => expect(vi.mocked(mcpApi.listServers).mock.calls.length).toBeGreaterThan(reads))
+    expect(await screen.findByRole('button', { name: 'Reload servers' })).toBeEnabled()
+  })
+
+  it('Reload servers falls back to the request error when the server gives no reason', async () => {
+    vi.mocked(mcpApi.reloadServers).mockRejectedValue(new Error('Network Error'))
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('err', 'Could not reload tool servers: Network Error.'))
   })
 
   it('shows loading, then an error with Retry', async () => {

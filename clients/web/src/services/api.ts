@@ -421,6 +421,13 @@ export const caseSearchApi = {
   }) => api.post('/case-search/', data),
 }
 
+export interface ReloadServersResponse {
+  success: boolean
+  message: string
+  total_servers: number
+  servers: string[]
+}
+
 export const mcpApi = {
   listServers: () => api.get('/mcp/servers'),
 
@@ -428,6 +435,10 @@ export const mcpApi = {
 
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+
+  // Re-reads mcp-config.json and integration URLs into the server catalog.
+  // Sessions already open are left as they are. Needs integrations.write.
+  reloadServers: () => api.post<ReloadServersResponse>('/mcp/servers/reload'),
 
   // Vigil's own MCP surface: whether it listens, and what may open it.
   getSurface: () => api.get('/mcp/surface'),
