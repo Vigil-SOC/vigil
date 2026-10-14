@@ -1,4 +1,4 @@
-"""The Fleet Wall read answers 501 until implemented; the helpers it will use are sound."""
+"""The Monitor reads answer 501 until implemented; the helpers they will use are sound."""
 
 from __future__ import annotations
 
@@ -28,10 +28,23 @@ def client(monkeypatch):
     return TestClient(app)
 
 
-def test_the_unimplemented_read_answers_501_with_a_fixed_message(client):
-    response = client.get("/api/fleet-wall")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/fleet-wall",
+        "/api/pulse/summary",
+        "/api/pulse/throughput",
+        "/api/pulse/work",
+    ],
+)
+def test_unimplemented_reads_answer_501_with_a_fixed_message(client, path):
+    response = client.get(path)
     assert response.status_code == 501
     assert "not implemented yet" in response.json()["detail"]
+
+
+def test_an_unknown_pulse_tab_is_404(client):
+    assert client.get("/api/pulse/nope").status_code == 404
 
 
 def test_the_router_requires_auth():

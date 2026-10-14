@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import FleetWallScreen from './FleetWallScreen'
-import { monitorApi, type FleetWallPayload, type MonitorMetric, type WallCell } from '../../services/api'
+import PulseScreen from './PulseScreen'
+import { monitorApi, type FleetWallPayload, type MonitorMetric, type PulseDay, type PulseSummary, type PulseWork, type WallCell } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
-  monitorApi: { wall: vi.fn() },
+  monitorApi: { wall: vi.fn(), summary: vi.fn(), throughput: vi.fn(), work: vi.fn() },
 }))
 
 afterEach(() => {
@@ -81,6 +82,58 @@ function wall(): FleetWallPayload {
   }
 }
 
+function day(): PulseDay {
+  const n = 24
+  return {
+    hours: Array.from({ length: n }, (_, i) => `2026-10-10T${String((15 + i) % 24).padStart(2, '0')}:00:00Z`),
+    alerts_in: Array.from({ length: n }, (_, i) => i % 5),
+    cases_formed: Array.from({ length: n }, () => 1),
+    attached: Array.from({ length: n }, () => 0),
+    closed_by_agents: Array.from({ length: n }, () => 2),
+    closed_by_person: Array.from({ length: n }, () => 0),
+    running: Array.from({ length: n }, (_, i) => (i === 10 ? 3 : 1)),
+    queued: Array.from({ length: n }, () => 2),
+    decisions: Array.from({ length: n }, () => 0),
+    cap: 3,
+    high_water: 500,
+    peak: { running: 3, at: '2026-10-11T01:00:00Z', free: 0 },
+    dropped: unmeasured('There is no drop line yet.'),
+    approved_by_person: unmeasured('Approved closes are not recorded apart yet.'),
+    info: 'per hour',
+    queue_info: 'queued each hour',
+  }
+}
+
+function summary(): PulseSummary {
+  return {
+    now: '2026-10-11T14:22:00Z',
+    gauges: [
+      { ...m(0.87, { level: 'poor' }), key: 'without_person', label: 'Handled without a person', sample: 40, yesterday: null },
+      { ...m(40), key: 'closed_today', label: 'Cases closed today', sample: null, yesterday: 30 },
+      { ...m(6), key: 'time_to_decide', label: 'Median time to decide', sample: 3, yesterday: null },
+      { ...m(12.5, { limit: 100, level: 'good' }), key: 'spend_today', label: 'AI spend today', sample: null, yesterday: null },
+    ],
+    attention: [{ level: 'poor', title: '2 decisions waiting on a person', why: 'Isolate host ws-17', action: 'Open Needs you', door: 'needs_you' }],
+    day: day(),
+    adjustments: [
+      { key: 'concurrency', label: 'Cases running at once · fleet', current: '3', note: 'Read here; change it in Settings.', unmeasured_text: null },
+      { key: 'drop_line', label: 'Drop alerts scoring under', current: null, note: 'There is no drop line yet.', unmeasured_text: 'Not measured yet' },
+    ],
+  }
+}
+
+function work(): PulseWork {
+  return {
+    now: '2026-10-11T14:22:00Z',
+    rows: [
+      { key: 'needs_you', label: 'Needs you', what: 'A decision waits on a person', count: m(2), ages: [{ label: 'under 15 min', count: 1 }, { label: '15 min to 1 h', count: 1 }, { label: '1 to 4 h', count: 0 }, { label: '4 h to 1 day', count: 0 }, { label: 'over 1 day', count: 0 }], oldest: { minutes: 42, case_id: 'c-ask' } },
+      { key: 'stuck', label: 'Stuck', what: 'No explanation moved in 6 or more steps', count: unmeasured('Stuck detection is not recorded yet.'), ages: null, oldest: null },
+    ],
+    queue: { hours: day().hours, queued: day().queued, high_water: 500, queue_info: 'queued each hour' },
+    info: 'how long they waited',
+  }
+}
+
 const props = () => ({ openChat: vi.fn(), go: vi.fn(), goSettings: vi.fn(), openCase: vi.fn(), setViewFull: vi.fn() })
 
 describe('Fleet Wall', () => {
@@ -121,5 +174,36 @@ describe('Fleet Wall', () => {
     expect(p.openCase).toHaveBeenCalledWith('c-ask')
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('region', { name: 'Selected case c-ask' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Pulse', () => {
+  it('opens on Summary: gauges against their limits, what needs attention, the day, and the adjustments', async () => {
+    vi.mocked(monitorApi.summary).mockResolvedValue({ data: summary() } as never)
+    const p = props()
+    render(<MemoryRouter><PulseScreen {...p} /></MemoryRouter>)
+    expect(await screen.findByText('Handled without a person')).toBeInTheDocument()
+    expect(screen.getByText('87%')).toBeInTheDocument()
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+    expect(screen.getByText('$12.50')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /Alerts in, cases closed and cases running/ })).toBeInTheDocument()
+    expect(screen.getAllByText(/Not measured yet/).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Open Needs you' }))
+    expect(p.go).toHaveBeenCalledWith('home')
+  })
+
+  it('shows what waits by age on Paused and stuck, and the oldest opens its case', async () => {
+    vi.mocked(monitorApi.work).mockResolvedValue({ data: work() } as never)
+    const p = props()
+    render(<MemoryRouter initialEntries={['/pulse?tab=work']}><PulseScreen {...p} /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Oldest: 42 min →' }))
+    expect(p.openCase).toHaveBeenCalledWith('c-ask')
+    expect(screen.getByText('Stuck')).toBeInTheDocument()
+  })
+
+  it('marks the tabs this release does not build', async () => {
+    render(<MemoryRouter initialEntries={['/pulse?tab=system']}><PulseScreen {...props()} /></MemoryRouter>)
+    expect(await screen.findByText(/Provider latency and errors/)).toBeInTheDocument()
+    expect(monitorApi.summary).not.toHaveBeenCalled()
   })
 })

@@ -1290,7 +1290,7 @@ export const overviewApi = {
     api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
-// Monitor reads: the Fleet Wall. The contract is core/monitor/models.py;
+// Monitor reads: the Fleet Wall and Pulse. The contract is core/monitor/models.py;
 // these are generated from it. Every number carries its limit, a level the server
 // decided, and an info line; one Vigil does not record yet is null with unmeasured_text.
 export type MonitorMetric = Schema<'MonitorMetric'>
@@ -1300,9 +1300,20 @@ export type WallCell = Schema<'WallCell'>
 export type WallBand = Schema<'WallBand'>
 export type WallFacet = Schema<'WallFacet'>
 export type FleetWallPayload = Schema<'FleetWallPayload'>
+export type PulseDay = Schema<'PulseDay'>
+export type PulseGauge = Schema<'PulseGauge'>
+export type PulseAttention = Schema<'PulseAttention'>
+export type PulseAdjustment = Schema<'PulseAdjustment'>
+export type PulseSummary = Schema<'PulseSummary'>
+export type PulseThroughput = Schema<'PulseThroughput'>
+export type PulseWorkRow = Schema<'PulseWorkRow'>
+export type PulseWork = Schema<'PulseWork'>
 
 export const monitorApi = {
   wall: () => api.get<FleetWallPayload>('/fleet-wall'),
+  summary: () => api.get<PulseSummary>('/pulse/summary'),
+  throughput: () => api.get<PulseThroughput>('/pulse/throughput'),
+  work: () => api.get<PulseWork>('/pulse/work'),
 }
 
 

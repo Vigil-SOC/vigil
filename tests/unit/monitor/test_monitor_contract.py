@@ -13,6 +13,9 @@ from fastapi.testclient import TestClient
 from core.monitor import fixtures
 from core.monitor.models import (
     FleetWallPayload,
+    PulseSummary,
+    PulseThroughput,
+    PulseWork,
 )
 from services.api.routers import monitor
 
@@ -20,6 +23,9 @@ pytestmark = pytest.mark.unit
 
 READS = [
     ("/api/fleet-wall", FleetWallPayload),
+    ("/api/pulse/summary", PulseSummary),
+    ("/api/pulse/throughput", PulseThroughput),
+    ("/api/pulse/work", PulseWork),
 ]
 
 
@@ -62,14 +68,16 @@ def test_the_fixture_wall_is_stable_between_polls():
     assert first == second
 
 
+def test_throughput_kinds_carry_no_cells():
+    assert all(kind.cells is None for kind in fixtures.throughput().kinds)
+
+
 def test_a_read_that_matches_the_contract_is_served(monkeypatch):
     client = _client(monkeypatch, demo=False)
-    monkeypatch.setattr(
-        monitor, "wall_payload", lambda **_: fixtures.wall_payload().model_dump()
-    )
-    response = client.get("/api/fleet-wall")
+    monkeypatch.setattr(monitor, "work", lambda: fixtures.work().model_dump())
+    response = client.get("/api/pulse/work")
     assert response.status_code == 200
-    assert FleetWallPayload.model_validate(response.json()).bands
+    assert PulseWork.model_validate(response.json()).rows
 
 
 def test_a_read_that_drifts_from_the_contract_is_refused(monkeypatch):
