@@ -67,7 +67,7 @@ describe("a hunt with VIGIL_GUARDS=on", () => {
     const queries: string[] = [];
     const { model, readers } = withReader([
       () => ({ tool: "splunk_search", args: { sql: "select * from flows" } }),
-      () => ({ tool: "splunk_search", args: { sql: "select * from web where user_agent = '{{h:q1.1.user_agent}}'" } }),
+      () => ({ tool: "splunk_search", args: { sql: "select * from web where user_agent = '{{h:r1.1.user_agent}}'" } }),
       () => ({ say: "done" }),
     ]);
     const spec = specOf();

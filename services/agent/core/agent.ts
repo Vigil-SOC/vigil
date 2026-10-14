@@ -1,4 +1,5 @@
-import { guardedRef, Handles, guardsOn, READER_SCHEMA, readOf, render, type Read } from "./guards.js";
+import { guardedRef, Handles, guardsOn, READER_SCHEMA, readOf, render, guardedFailure, type Read } from "./guards.js";
+import type { SpendPayload } from "../contracts/budget.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
 import type {
   AgentEvent,
@@ -423,7 +424,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
   const unsettled = options.hooks?.unsettled;
   if (unsettled !== undefined) base.unsettled = () => unsettled(ctx);
   const quarantine = guardsOn() ? options.plugin.quarantine : undefined;
-  const cfg = quarantine === undefined ? base : { ...base, system: `${base.system}\n\n${quarantine.guidance}`, guards: guardsFor(ctx, base, calls, quarantine.reader) };
+  const cfg = quarantine === undefined ? base : { ...base, system: `${base.system}\n\n${quarantine.guidance}`, guards: guardsFor(ctx, base, held, calls, quarantine.reader) };
   const framer = await Framer.open(
     harness.state,
     options.run_id,
@@ -1217,8 +1218,13 @@ async function report(
 // Experimental (core/guards.ts): the reader is a child run with no tools that
 // answers in READER_SCHEMA; handles live for the run, and are rebuilt from the
 // journaled findings when a run resumes.
-function guardsFor(ctx: PluginContext, turn: TurnConfig, prior: readonly CallPayload[], prompt: string): NonNullable<TurnConfig["guards"]> {
+function guardsFor(ctx: PluginContext, turn: TurnConfig, held: Ledger, prior: readonly CallPayload[], prompt: string): NonNullable<TurnConfig["guards"]> {
   const handles = new Handles();
+  const budget = ctx.harness.budget;
+  // A resumed run's allowance is seeded from every spend on the ledger, the readers'
+  // included, while the widening below lived only in the process that ran them.
+  const readerCalls = held.filter((event) => event.kind === "spend" && (event.payload as SpendPayload).role === "reader").length;
+  if (readerCalls > 0) budget.raise({ max_calls: budget.limits.max_calls + readerCalls });
   // What the decider already wrote or was briefed with is not new text from the
   // data: a value it named itself is shown as it is, whoever the reader says wrote it.
   let said = `${turn.task}\n${prior.map((call) => call.arguments).join("\n")}`.toLowerCase();
@@ -1228,7 +1234,9 @@ function guardsFor(ctx: PluginContext, turn: TurnConfig, prior: readonly CallPay
     if (read !== null) render(call.tool, guardedRef(call), { ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: call.tool }, { text: "", instruction_like: false, failure: null }, read, handles, known);
   }
   return {
+    refAt: (n) => `${CALL_REF}${prior.length + n}`,
     resolve: (rawArgs) => handles.resolve(rawArgs),
+    failed: (tool, ref, wrapped) => guardedFailure(tool, ref, wrapped, handles),
     read: async (tool, args, ref, result, wrapped) => {
       // The decider's own words, handles unresolved: a value it searched for by handle
       // is still one it has never read, and must not start showing because it did.
@@ -1249,19 +1257,19 @@ function guardsFor(ctx: PluginContext, turn: TurnConfig, prior: readonly CallPay
         ...(turn.signal === undefined ? {} : { signal: turn.signal }),
       };
       let read: Read | null = null;
+      const calls = budget.spent.calls;
       try {
         const provider = ctx.harness.guards_provider ?? ctx.harness.provider;
-        const budget = ctx.harness.budget;
-        const calls = budget.spent.calls;
         const outcome = await runChild<unknown>({ ...ctx, harness: { ...ctx.harness, provider } }, `reader:${await childOrdinal(ctx, "reader")}`, reader);
-        // The reader's calls are the defence's, not the run's: widened by exactly
-        // what it used, so the guards never starve the work of its call allowance.
-        // Its dollars still count against the run.
-        const used = budget.spent.calls - calls;
-        if (used > 0) budget.raise({ max_calls: budget.limits.max_calls + used });
         read = outcome.status === "completed" ? readOf(outcome.value) : null;
       } catch (error) {
         if (turn.signal?.aborted === true || hardStop(error)) throw error;
+      } finally {
+        // The reader's calls are the defence's, not the run's: widened by exactly
+        // what it used, a reader that threw included, so the guards never starve the
+        // work of its call allowance. Its dollars still count against the run.
+        const used = budget.spent.calls - calls;
+        if (used > 0) budget.raise({ max_calls: budget.limits.max_calls + used });
       }
       return { shown: render(tool, ref, result, wrapped, read, handles, known), read };
     },

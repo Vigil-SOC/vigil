@@ -1,5 +1,5 @@
 import type { ToolResult } from "../contracts/tool.js";
-import { scannerFor, type Wrapped } from "./security.js";
+import { scannerFor, scrub, type Wrapped } from "./security.js";
 
 // Experimental: the deciding model never reads text a monitored party could have
 // written. Every remote tool's result goes to a guarded reader -- a child run
@@ -75,6 +75,7 @@ export const READER_SCHEMA = {
 const HANDLE = /\{\{h:([A-Za-z0-9_.:-]+)\}\}/g;
 const SUMMARY_CAP = 320;
 const VALUE_CAP = 120;
+const FAILURE_CAP = 300;
 
 export interface GuardedRead {
   read: Read | null;
@@ -97,6 +98,15 @@ export class Handles {
       return value === undefined ? whole : JSON.stringify(value).slice(1, -1);
     });
   }
+
+  // The reverse, for text that may echo what a handle filled in: each value back to
+  // its handle, longest first so a value inside another is not split.
+  mask(text: string): string {
+    return [...this.held]
+      .filter(([, value]) => value.length >= 4)
+      .sort((a, b) => b[1].length - a[1].length)
+      .reduce((out, [key, value]) => out.split(value).join(`{{h:${key}}}`), text);
+  }
 }
 
 const scan = scannerFor([]);
@@ -115,7 +125,7 @@ const SAFE: readonly RegExp[] = [
 ];
 
 export function typeSafe(value: string): boolean {
-  return SAFE.some((shape) => shape.test(value)) && !steering(value);
+  return SAFE.some((shape) => shape.test(value)) && !steeringIn(value);
 }
 
 // Phrases an injected note uses that the kernel's own scanner, built for prompt
@@ -125,6 +135,16 @@ const STEERING = /\b(authori[sz]ed|approved|sanctioned|whitelisted|allow-?listed
 function steering(text: string): boolean {
   return scan(text) || STEERING.test(text);
 }
+
+// The phrases above are \b-anchored, so words joined into one identifier
+// (APPROVED_MAINT_OK) would slip past them.
+const steeringIn = (text: string): boolean => steering(text) || steering(text.replace(/[_.-]+/g, " "));
+
+// The reader names fields and source systems too, and a fooled reader can put a note
+// there as easily as in a value: only a short plain name reaches the decider.
+const NAME = /^[A-Za-z0-9_.-]{1,48}$/;
+
+const named = (text: unknown): string | null => (typeof text === "string" && NAME.test(text) && !steeringIn(text) ? text : null);
 
 // What the decider is shown in place of the rows. Code, not the reader, decides
 // what reaches it verbatim: a subject-written value is always a handle, and so is any
@@ -168,6 +188,18 @@ export function render(tool: string, ref: string, result: ToolResult, wrapped: W
   return lines.join("\n");
 }
 
+// A failed estate call, as the decider sees it. The backend's detail stays: a parse
+// error is how the decider fixes its query. But such errors echo the query,
+// and a handle filled into it would come back as the subject's text, so filled values
+// go back to their handles, and a detail that still reads as steering is dropped.
+export const guardedFailure = (tool: string, ref: string, wrapped: Wrapped, handles: Handles): string => {
+  const failure = wrapped.failure;
+  const kind = failure?.kind ?? "unknown";
+  const detail = failure === null ? "" : failure.kind === "timeout" ? `after ${failure.timeoutMs}ms` : scrub(handles.mask(failure.detail), FAILURE_CAP);
+  const body = detail === "" || steeringIn(detail) ? `failed: ${kind}` : `failed: ${kind} -- ${detail}`;
+  return [`<vigil:tool_result tool="${tool}" ref="${ref}" guarded="true">`, body, "</vigil:tool_result>"].join("\n");
+};
+
 export function readOf(value: unknown): Read | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as { findings?: unknown; addressed_to_reader?: unknown };
@@ -175,13 +207,14 @@ export function readOf(value: unknown): Read | null {
   const findings: ReadFinding[] = raw.findings.flatMap((one) => {
     if (typeof one !== "object" || one === null) return [];
     const f = one as { source_system?: unknown; summary?: unknown; values?: unknown };
-    const values = (Array.isArray(f.values) ? f.values : []).flatMap((v) => {
+    const values = (Array.isArray(f.values) ? f.values : []).flatMap((v, at) => {
       const held = v as { field?: unknown; value?: unknown; authored?: unknown };
       if (typeof held?.field !== "string") return [];
       const authored = held.authored === "observed" || held.authored === "outside" ? held.authored : "subject";
-      return [{ field: held.field, value: String(held.value ?? ""), authored } as ReadValue];
+      return [{ field: named(held.field) ?? `value_${at + 1}`, value: String(held.value ?? ""), authored } as ReadValue];
     });
-    return [{ ...(typeof f.source_system === "string" ? { source_system: f.source_system } : {}), summary: String(f.summary ?? ""), values }];
+    const source = named(f.source_system);
+    return [{ ...(source === null ? {} : { source_system: source }), summary: String(f.summary ?? ""), values }];
   });
   return { findings, addressed_to_reader: raw.addressed_to_reader === true };
 }

@@ -187,7 +187,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
     // still active is told so once, with what it can do, rather than ending the hunt
     // inconclusive on a board it had not finished.
     unsettled: async (ctx): Promise<string | null> => {
-      if (!guardsOn()) return null;
+      if (!guarded(ctx)) return null;
       return withBook(ctx, ports, (book) => {
         const open = [...book.projection.hypotheses.values()].filter((one) => one.status === "active");
         if (open.length === 0) return null;
@@ -497,7 +497,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
           const hypothesis = book.projection.hypotheses.get(hypothesisId);
           if (hypothesis === undefined) return `${hypothesisId} is not on the ledger`;
           if (hypothesis.status !== "active") return `${hypothesisId} is already ${hypothesis.status}; no second verdict was run`;
-          if (guardsOn()) {
+          if (guarded(ctx)) {
             const again = unchangedSinceCritic(book.projection, hypothesisId);
             if (again !== null) return again;
           }
@@ -597,23 +597,36 @@ function expandTool(ctx: PluginContext): RegisteredTool[] {
 
 // Experimental guards (core/guards.ts). A record names the result it came
 // from, and the code -- not the decider, which never read the rows -- fills in
-// what the critic argues against: the raw rows, and who wrote each field as the
-// reader labelled it. A field the decider names that the reader did not label
-// keeps the decider's word; a record naming no ref is taken as given.
+// what the critic argues against: the guarded view of the result, and who wrote
+// each field as the reader labelled it. Only that labelling can make a field
+// sensor-attested: a field the reader did not label, and a record naming no result,
+// count as the adversary's whatever the decider says.
 function withRef(item: Record<string, unknown>): Record<string, unknown> {
   const properties = (item["properties"] ?? {}) as Record<string, unknown>;
   return {
     ...item,
     properties: {
       ...properties,
-      ref: { type: "string", description: "The ref of the result this finding came from, such as r4. Its raw rows are kept with the record for the critic." },
+      ref: {
+        type: "string",
+        description: "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested.",
+      },
     },
   };
 }
 
+const unattested = (record: Record<string, unknown>): Record<string, unknown> => {
+  const asked = Array.isArray(record["rests_on"]) ? (record["rests_on"] as { field?: unknown }[]) : [];
+  return {
+    ...record,
+    ...(asked.length > 0 ? { rests_on: asked.map((basis) => ({ field: String(basis.field ?? ""), authored: "adversary" })) } : {}),
+    attacker_influenceable: true,
+  };
+};
+
 async function fromRefs(ctx: PluginContext, given: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
-  if (!given.some((one) => typeof one["ref"] === "string")) return [...given];
-  // By the ref the decider was shown (ref="q7"), which is the one it cites, and by
+  if (!given.some((one) => typeof one["ref"] === "string")) return given.map(unattested);
+  // By the ref the decider was shown (ref="r7"), which is the one it cites, and by
   // the ledger's own as a fallback.
   const calls = new Map<string, CallPayload>();
   for (const event of await state(ctx).read(ctx.options.run_id)) {
@@ -625,7 +638,7 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
   return given.map((one) => {
     const { ref, ...rest } = one;
     const call = typeof ref === "string" ? calls.get(ref) : undefined;
-    if (call === undefined) return rest;
+    if (call === undefined) return unattested(rest);
     const read = readOf(call.read);
     // Sensor-attested only when the reader said observed AND the value has a shape no
     // free text has (core/guards.ts typeSafe): code, not a model, decides what can
@@ -639,7 +652,7 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
     const asked = Array.isArray(rest["rests_on"]) ? (rest["rests_on"] as { field?: unknown; authored?: unknown }[]) : [];
     const rests_on =
       asked.length > 0
-        ? asked.map((basis) => ({ field: String(basis.field ?? ""), authored: labels.get(String(basis.field ?? "").toLowerCase()) ?? basis.authored ?? "adversary" }))
+        ? asked.map((basis) => ({ field: String(basis.field ?? ""), authored: labels.get(String(basis.field ?? "").toLowerCase()) ?? "adversary" }))
         : [...labels].map(([field, authored]) => ({ field, authored }));
     return {
       ...rest,

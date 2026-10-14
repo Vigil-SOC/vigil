@@ -224,6 +224,6 @@ quarantine:
     you can search for it: put the handle, exactly as shown, inside a query's
     arguments and the real value is used.
     Ask several queries in one turn whenever they do not depend on each other's
-    answers. When you record
-    evidence from a result, give the result's ref so the record keeps its raw rows
-    for the critic, and name the fields it rests on as the reader labelled them.
+    answers. When you record evidence from a result, give the result's ref so the
+    record keeps the result for the critic, and name the fields it rests on as the
+    reader labelled them: only those can count as attested by the sensor.

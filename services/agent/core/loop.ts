@@ -35,7 +35,11 @@ export interface TurnConfig {
   // Experimental (core/guards.ts): estate results go to a guarded reader,
   // and the model sees its findings; handles in arguments are filled at dispatch.
   guards?: {
+    // The ref of this pass's nth result, numbered after the calls already on the
+    // ledger: a resumed run reusing r1 would point old handles at new values.
+    refAt(n: number): string;
     read(tool: string, args: string, ref: string, result: ToolResult, wrapped: Wrapped): Promise<{ shown: string; read: unknown }>;
+    failed(tool: string, ref: string, wrapped: Wrapped): string;
     resolve(rawArgs: string): string;
   };
   run_id: string;

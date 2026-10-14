@@ -338,14 +338,19 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const refs = this.cfg.refs;
     const ref = refs === undefined ? undefined : `${refs.prefix}${refs.offset + this.calls.length + 1}`;
     const wrapped = wrap(call.tool, result, this.scan, this.cfg.result_cap, ref);
-    // Guarded: an estate result that answered goes to the reader, and the model
-    // sees its findings. Local tools are the run talking to itself, and a failure
-    // carries no attacker text, so both reach the model as they are.
+    // Guarded: an estate result that answered goes to the reader, and the model sees
+    // its findings. A failure goes through the guards too: a backend's error can echo
+    // the query, and with it a value a handle filled in. Local tools are the run
+    // talking to itself, so they reach the model as they are.
     const tool = this.tools.find((granted) => granted.id === call.tool);
+    const guards = this.cfg.guards;
+    const guardRef = ref ?? guards?.refAt(this.calls.length + 1) ?? "";
     const guarded =
-      this.cfg.guards !== undefined && tool !== undefined && !tool.local && result.ok
-        ? await this.cfg.guards.read(call.tool, call.args, ref ?? `q${this.calls.length + 1}`, result, wrapped)
-        : undefined;
+      guards === undefined || tool === undefined || tool.local
+        ? undefined
+        : result.ok
+          ? await guards.read(call.tool, call.args, guardRef, result, wrapped)
+          : { shown: guards.failed(call.tool, guardRef, wrapped), read: null };
     const attempt: Attempt = {
       tool: call.tool,
       args: call.args,
