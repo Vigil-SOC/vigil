@@ -9899,18 +9899,41 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** NeedsYouHypothesis */
+        NeedsYouHypothesis: {
+            /**
+             * Hypothesis Id
+             * @default
+             */
+            hypothesis_id: string;
+            /**
+             * Provenance
+             * @default
+             */
+            provenance: string;
+            /** Statement */
+            statement: string;
+        };
         /** NeedsYouItem */
         NeedsYouItem: {
             /** Case Id */
             case_id?: string | null;
+            /** Checkpoint Class */
+            checkpoint_class?: string | null;
+            /** Checkpoint Id */
+            checkpoint_id?: string | null;
             /** Created At */
             created_at: string;
+            /** Hypotheses */
+            hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /** Kind */
             kind: string;
             /** Reason */
             reason: string;
             /** Reversibility */
             reversibility: string;
+            /** Run Id */
+            run_id?: string | null;
             /** Source Id */
             source_id: string;
             /** Title */

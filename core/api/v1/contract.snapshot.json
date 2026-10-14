@@ -2551,6 +2551,29 @@
         "title": "MttrResponse",
         "type": "object"
       },
+      "NeedsYouHypothesis": {
+        "properties": {
+          "hypothesis_id": {
+            "default": "",
+            "title": "Hypothesis Id",
+            "type": "string"
+          },
+          "provenance": {
+            "default": "",
+            "title": "Provenance",
+            "type": "string"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statement"
+        ],
+        "title": "NeedsYouHypothesis",
+        "type": "object"
+      },
       "NeedsYouItem": {
         "properties": {
           "case_id": {
@@ -2564,9 +2587,38 @@
             ],
             "title": "Case Id"
           },
+          "checkpoint_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Class"
+          },
+          "checkpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Id"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/NeedsYouHypothesis"
+            },
+            "title": "Hypotheses",
+            "type": "array"
           },
           "kind": {
             "title": "Kind",
@@ -2579,6 +2631,17 @@
           "reversibility": {
             "title": "Reversibility",
             "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "source_id": {
             "title": "Source Id",

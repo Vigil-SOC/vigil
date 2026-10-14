@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
+import { LATER_RELEASE } from '../../shared/later'
 import { STANCE_WORD, TIER_WORD, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
 import type { Phase } from './useCases'
 
@@ -129,7 +130,7 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
               <span role="cell" className={`ev-stance ${row.stance ?? ''}`}>{row.stance ? STANCE_WORD[row.stance] : DASH}</span>
               <span role="cell" className="ev-by ev-line" title={row.by}>{row.by}</span>
               <span role="cell">
-                <button type="button" className="ev-act" disabled aria-label="Actions for this row" title="Coming in a later release">
+                <button type="button" className="ev-act" disabled aria-label="Actions for this row" title={LATER_RELEASE}>
                   ···
                 </button>
               </span>

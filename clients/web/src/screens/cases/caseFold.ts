@@ -5,7 +5,8 @@ export interface CallRow {
   question: string
   tool: string
   result_length: number
-  cost_usd: number
+  /** Null when nothing priced it: shown as not recorded, never as $0. */
+  cost_usd: number | null
   duration_ms?: number
   iteration?: number
 }
@@ -90,10 +91,28 @@ interface RunMeta {
   huntStatus: string
 }
 
+/** The question a run is stopped on, as the run itself holds it. */
+export interface OpenCheckpointRow {
+  checkpoint_id: string
+  checkpoint_class: string
+  question: string
+  raised_at: string
+  /** A hypothesis approval's explanations, with where each came from where the run recorded it. */
+  hypotheses: { hypothesis_id: string; statement: string; provenance: string }[]
+}
+
+export interface OpenQuestionRow {
+  question_id: string
+  question: string
+}
+
 interface HuntFold {
   kind: 'hunt'
   run: RunMeta
   iteration: number
+  openCheckpoint: OpenCheckpointRow | null
+  /** Leads the hunt opened and has not closed. */
+  openQuestions: OpenQuestionRow[]
   doing: string
   worker: string
   moves: MoveRow[]
@@ -155,7 +174,8 @@ export function wordDisplay(word: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED'] as const
+// The kernel hunt's moves (services/agent plugins/hunt/words.ts) come after the controller's.
+const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED', 'RECORD', 'LINK', 'PROPOSE', 'QUERY', 'QUESTION', 'READ'] as const
 type HuntAction = (typeof HUNT_ACTIONS)[number]
 
 function isHuntAction(token: string): token is HuntAction {
@@ -187,6 +207,18 @@ export function actionWords(token: string): string {
       return 'Start incident response on a proven explanation'
     case 'STALLED':
       return 'Stalled, no decision made'
+    case 'RECORD':
+      return 'Record evidence'
+    case 'LINK':
+      return 'Weigh evidence against the explanations'
+    case 'PROPOSE':
+      return 'Propose an explanation'
+    case 'QUERY':
+      return 'Query the estate'
+    case 'QUESTION':
+      return 'Open or close a lead'
+    case 'READ':
+      return 'Read the board'
     default: {
       const unhandled: never = token
       return unhandled
@@ -300,7 +332,7 @@ function callsOf(raw: unknown): CallRow[] {
       question: str(o.question),
       tool: str(o.tool),
       result_length: num(o.result_length) ?? 0,
-      cost_usd: num(o.cost_usd) ?? 0,
+      cost_usd: num(o.cost_usd),
       ...(typeof o.duration_ms === 'number' ? { duration_ms: o.duration_ms } : {}),
       ...(typeof o.iteration === 'number' ? { iteration: o.iteration } : {}),
     }]
@@ -335,6 +367,21 @@ function recallOf(raw: unknown): RecallView | null {
   // A journaled empty result is known-to-be-none. An absent payload is not a recall.
   if (unavailable === null && !Array.isArray(o.keys)) return null
   return { keys, gaps, sightings, verdicts, unavailable }
+}
+
+function checkpointOf(raw: unknown): OpenCheckpointRow | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (!str(o.checkpoint_id)) return null
+  const context = o.context && typeof o.context === 'object' ? (o.context as Record<string, unknown>) : {}
+  const hypotheses = Array.isArray(context.hypotheses)
+    ? context.hypotheses.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const h = item as Record<string, unknown>
+        return str(h.statement) ? [{ hypothesis_id: str(h.hypothesis_id), statement: str(h.statement), provenance: str(h.provenance) }] : []
+      })
+    : []
+  return { checkpoint_id: str(o.checkpoint_id), checkpoint_class: str(o.checkpoint_class), question: str(o.question), raised_at: str(o.raised_at), hypotheses }
 }
 
 function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
@@ -394,6 +441,14 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     kind: 'hunt',
     run,
     iteration: num(raw.iteration) ?? 0,
+    openCheckpoint: checkpointOf(raw.open_checkpoint),
+    openQuestions: Array.isArray(raw.open_questions)
+      ? raw.open_questions.flatMap((item) => {
+          if (!item || typeof item !== 'object') return []
+          const o = item as Record<string, unknown>
+          return str(o.question) ? [{ question_id: str(o.question_id), question: str(o.question) }] : []
+        })
+      : [],
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
     moves: rows,
@@ -471,6 +526,8 @@ export interface StoppedRun {
   line: string
   /** The reason as the server wrote it; '' when none was recorded. */
   raw: string
+  /** A hunt parked at one of its own limits (turns, time or budget), not on a question: Keep going lifts it. */
+  atLimit: boolean
 }
 
 const ENDED = ['failed', 'cancelled', 'canceled']
@@ -485,7 +542,52 @@ export function stoppedRun(fold: RunFold | null): StoppedRun | null {
   const line = first
     ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
     : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
-  return { state: stopped ? 'stopped' : 'paused', line, raw }
+  const atLimit = !stopped && fold.kind === 'hunt' && huntStatus === 'parked' && fold.openCheckpoint === null
+  return { state: stopped ? 'stopped' : 'paused', line, raw, atLimit }
+}
+
+/** A run that ended for good without failing: what it found, in one statement read off the ledger's own
+ *  verdicts, and the open question it could not conclude past, when its reason names one. */
+export interface EndedRun {
+  /** "1 proven · 1 inconclusive"; for a run that tests no explanations, its findings. */
+  line: string
+  /** The reason as the server wrote it, model prose included; '' when none was recorded. */
+  raw: string
+  question: OpenQuestionRow | null
+}
+
+// The termination predicate's refusal names the question it would not conclude past.
+const BLOCKED_BY = /\bopen question (q-[\w-]+)/
+
+const ENDED_ORDER = ['proven', 'handed_off', 'standing', 'weakened', 'forming', 'inconclusive', 'parked', 'ruled out']
+
+export function endedRun(fold: RunFold | null): EndedRun | null {
+  if (!fold || ENDED.includes(fold.run.status)) return null
+  if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return null
+  if (fold.kind === 'lead') return { line: plural(fold.findings.length, 'finding'), raw: fold.reason, question: null }
+  const tally = new Map<string, number>()
+  for (const row of fold.hypotheses) {
+    const word = explanationWord(row.status, row.supports, row.weakens)
+    tally.set(word, (tally.get(word) ?? 0) + 1)
+  }
+  const rank = (word: string) => (ENDED_ORDER.indexOf(word) < 0 ? ENDED_ORDER.length : ENDED_ORDER.indexOf(word))
+  const line = [...tally.keys()].sort((a, b) => rank(a) - rank(b)).map((word) => `${tally.get(word)} ${word.replace(/_/g, ' ')}`).join(' · ')
+  const cited = BLOCKED_BY.exec(fold.reason)?.[1]
+  return {
+    line: line || 'No explanation was tested',
+    raw: fold.reason,
+    question: cited ? fold.openQuestions.find((q) => q.question_id === cited) ?? null : null,
+  }
+}
+
+/** Model or worker text as one plain line: list markers, headings and emphasis dropped, so no raw markdown shows. */
+export function plainLine(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)]|#{1,6})\s+/, '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/(\*\*|__|`)/g, '')
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {

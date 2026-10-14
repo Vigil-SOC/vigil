@@ -198,6 +198,17 @@ describe('Home', () => {
     expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
   })
 
+  it('lists a hunt stopped at a limit as waiting, answered on its case rather than approved here', async () => {
+    mockQueue([item({ kind: 'parked', source_id: 'run-9', run_id: 'run-9', title: 'Keep the hunt going?', reason: 'Ran out of turns: iteration 48 of 48', created_at: '' })])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Keep the hunt going?' })).closest('article') as HTMLElement
+    expect(screen.getByText('1 decision waits on you. Everything else is running.')).toBeInTheDocument()
+    expect(within(card).getByText('Stopped at a limit')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open case' })).toHaveClass('primary')
+  })
+
   it('says the board is clear when nothing is waiting', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     renderHome()

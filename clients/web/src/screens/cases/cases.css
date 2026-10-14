@@ -271,7 +271,7 @@
 
 .case-page .case-checked li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px 84px 60px 64px;
+  grid-template-columns: minmax(0, 1fr) 110px 84px 76px 76px;
   gap: 12px;
   align-items: center;
   padding: 9px 12px;
@@ -287,6 +287,13 @@
   font-family: var(--font-mono);
   font-size: 12px;
   overflow-wrap: normal;
+}
+
+/* A figure the ledger never recorded reads as words, not as a zero in the figures' font */
+.case-page .case-checked li .num.unrecorded {
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--tx3);
 }
 
 .case-page .case-checked li.gap {
@@ -713,8 +720,8 @@
 /* Paused or stopped: the Now card's place, without its accent or breathing dot. */
 .case-page .case-stopped {
   display: flex;
-  align-items: baseline;
-  gap: 4px 10px;
+  flex-direction: column;
+  gap: 10px;
   padding: 12px 14px;
   border-radius: 12px;
   background: var(--bg2);
@@ -723,7 +730,9 @@
   line-height: 1.5;
 }
 
+.case-page .case-stopped .stopped-line { display: flex; align-items: baseline; gap: 4px 10px; }
 .case-page .case-stopped b { flex-shrink: 0; font-weight: 700; color: var(--tx1); }
+.case-page .case-answered b { color: var(--good); }
 .case-page .case-stopped .clamp2 { min-width: 0; color: var(--tx2); overflow-wrap: anywhere; }
 
 .case-page .watch-link { align-self: flex-start; flex-shrink: 0; }
@@ -1568,3 +1577,81 @@
 
 .cases-pager-nav button:hover:not(:disabled) { background: var(--bg3); color: var(--tx0); }
 .cases-pager-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Findings so far: one row per explanation or answer, its word as a pill; no list bullets. */
+.case-page .case-findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.case-page .case-findings li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.case-page .case-findings li > .case-expl-pill,
+.case-page .case-findings .case-findings-who {
+  flex-shrink: 0;
+}
+
+.case-page .case-findings .case-findings-who {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+/* What a hypothesis approval approves: each explanation in full, the benign one labelled. */
+.case-needs .needs-approving {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.case-needs .needs-approving li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--ln0);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.case-needs .needs-approving li.benign { border-style: dashed; }
+
+.case-needs .needs-approving-tag {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--tx2);
+}
+
+.case-needs .needs-approving li.benign .needs-approving-tag { color: var(--vio); }
+
+.case-needs .needs-sent {
+  margin: 0;
+  font-size: 13px;
+  color: var(--good);
+}
+
+.case-needs .needs-error,
+.case-stopped .needs-error {
+  font-size: 12px;
+  color: var(--poor);
+}
+
+.case-stopped .needs-keep-going .btn,
+.case-needs .needs-keep-going .btn { height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px; }

@@ -36,7 +36,7 @@ const STEP_ACTION: Record<string, string> = {
   custom_skill: 'Add',
 }
 
-const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint' }
+const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint', parked: 'Stopped at a limit' }
 
 type Pickup = { share: number; launched: number; today: number }
 
@@ -148,14 +148,15 @@ function DecisionCard({
         </p>
       )}
       <div className="home-actions">
-        {item.reversibility === 'reversible' ? (
+        {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
+        {item.kind === 'parked' ? null : item.reversibility === 'reversible' ? (
           <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
             Approve
           </button>
         ) : (
           <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
         )}
-        {rejecting ? (
+        {item.kind === 'parked' ? null : rejecting ? (
           <form
             className="home-reject"
             onSubmit={(event) => {
@@ -184,7 +185,7 @@ function DecisionCard({
         )}
         {caseId && (
           <Link
-            className="home-btn ghost"
+            className={item.kind === 'parked' ? 'home-btn primary' : 'home-btn ghost'}
             to={`/cases?case=${encodeURIComponent(caseId)}`}
             onClick={(event) => {
               if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window

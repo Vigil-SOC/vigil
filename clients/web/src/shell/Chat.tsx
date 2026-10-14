@@ -20,6 +20,7 @@ import api, {
 import { notificationService } from '../services/notifications'
 import { useConversations } from './useConversations'
 import { Popup } from '../shared/ui'
+import { LATER_RELEASE } from '../shared/later'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
@@ -1239,8 +1240,8 @@ export default function Chat({
         <div className="composer-box">
           <div className="composer-modes" role="group" aria-label="Composer mode">
             <button type="button" className="on" aria-pressed="true">Ask</button>
-            <button type="button" disabled title="Coming in a later release">Tell</button>
-            <button type="button" disabled title="Coming in a later release">Do</button>
+            <button type="button" disabled title={LATER_RELEASE}>Tell</button>
+            <button type="button" disabled title={LATER_RELEASE}>Do</button>
           </div>
           {foot}
         </div>

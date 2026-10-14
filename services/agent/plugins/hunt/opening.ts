@@ -199,15 +199,20 @@ export async function startHunt(
   // no operator started -- a hunt's escalation teed it up -- so calling it a hunt
   // names the wrong run. spec.name is no substitute: it is the playbook's own name,
   // as often a phrase about the activity as it is a title.
-  const count = spec.hypotheses.length + spec.operator_hypotheses.length;
+  //
+  // Counted over the whole board, the benign explanation included, because that is what
+  // the case's Explanations tab shows once the run starts; each carries its provenance so
+  // the approval can say which one is the claim to beat.
+  const count = ledger.projection.hypotheses.size;
   const checkpoint = raiseCheckpoint(
     "hypothesis_approval",
     0,
-    `Approve and start this ${runKind === "hunt" ? "hunt" : "run"} on ${count} ${count === 1 ? "hypothesis" : "hypotheses"}`,
+    `Approve and start this ${runKind === "hunt" ? "hunt" : "run"} on ${count} ${count === 1 ? "explanation" : "explanations"}`,
     {
       hypotheses: [...ledger.projection.hypotheses.values()].map((hypothesis) => ({
         hypothesis_id: hypothesis.hypothesis_id,
         statement: hypothesis.statement,
+        provenance: hypothesis.provenance,
       })),
       budgets: spec.budgets,
       scope: spec.scope,

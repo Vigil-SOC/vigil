@@ -142,13 +142,21 @@ export const aiDecisionsApi = {
 }
 
 export interface NeedsYouItem {
-  kind: 'checkpoint' | 'approval'
+  /** `parked`: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. */
+  kind: 'checkpoint' | 'approval' | 'parked'
   source_id: string
   title: string
   reason: string
+  /** '' when nothing recorded when it started waiting. */
   created_at: string
   reversibility: string
   case_id: string | null
+  run_id?: string | null
+  /** The run's own checkpoint this item answers, so a page reading the run can tell it was answered. */
+  checkpoint_id?: string | null
+  checkpoint_class?: string | null
+  /** A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat. */
+  hypotheses?: { hypothesis_id: string; statement: string; provenance: string }[]
 }
 
 export const approvalsApi = {

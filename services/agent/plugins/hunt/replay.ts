@@ -10,7 +10,8 @@ export interface ReplayedDecision {
   iteration: number;
   action: string;
   target: string | null;
-  cost_usd: number;
+  // Null where nothing priced the decision's model call.
+  cost_usd: number | null;
   // Wall time of the lead's model calls; omitted on ledgers that did not record it.
   duration_ms?: number;
   // Always false now: nothing is rebuilt, so nothing is exact.

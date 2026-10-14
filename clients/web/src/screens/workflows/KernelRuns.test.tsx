@@ -75,6 +75,18 @@ describe('a hunt run on the kernel', () => {
     expect(text).toContain('192.0.2.10 is beaconing')
     expect(text).toContain('splunk_search')
   })
+
+  it('reads on the case page in words: one move a turn, its agent named, no tool JSON', () => {
+    const fold = readFold({ status: 'completed', hunt: huntProjection })
+    if (fold?.kind !== 'hunt') throw new Error('not a hunt fold')
+    expect(fold.moves.length).toBeGreaterThan(0)
+    for (const move of fold.moves) {
+      expect(move.doing).not.toMatch(/[{}]/)
+      expect(move.worker).toBe('Hunt lead')
+    }
+    const turns = fold.moves.map((move) => move.iteration)
+    expect(new Set(turns).size).toBe(turns.length)
+  })
 })
 
 describe('an investigate run on the kernel', () => {

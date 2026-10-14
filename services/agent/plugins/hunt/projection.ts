@@ -103,7 +103,8 @@ export interface MoveView {
   query_intent: string;
   worker_agent_id: string | null;
   evidence_citations: string[];
-  cost_usd: number;
+  // Null where the ledger recorded no price for the move's model call: not recorded, not $0.
+  cost_usd: number | null;
   // What was refused before this move was accepted: a stalled turn is nothing but these.
   rejected_attempts: string[];
   // Wall time of the lead's model calls for this move. Absent on a ledger that did

@@ -27,7 +27,8 @@
    "resolution_reason": "survived the argue-the-null pass against \"a backup job\" on 2 corroborating source system(s)",
    "provenance": "hunt_spec",
    "supports": 2,
-   "weakens": 0
+   "weakens": 0,
+   "neither": 2
   },
   {
    "hypothesis_id": "h-3de60798",
@@ -38,7 +39,8 @@
    "resolution_reason": "hunt ended (completed) with the hypothesis unresolved",
    "provenance": "agent",
    "supports": 0,
-   "weakens": 0
+   "weakens": 0,
+   "neither": 4
   }
  ],
  "evidence_count": 5,
@@ -288,10 +290,10 @@
    "rationale": "the beacon is proven",
    "target_entity": null,
    "target_hypothesis_id": null,
-   "query_intent": "",
-   "worker_agent_id": null,
+   "query_intent": "Asked to conclude the hunt (refused)",
+   "worker_agent_id": "Hunt lead",
    "evidence_citations": [],
-   "cost_usd": 0,
+   "cost_usd": null,
    "rejected_attempts": [
     "<vigil:tool_result tool=\"conclude_hunt\">\nfailed: refused -- refused: h-3de60798 is still active: 192.0.2.10 runs an unsanctioned sync client. Resolve it before concluding again.\n</vigil:tool_result>"
    ],
@@ -305,25 +307,40 @@
    "rationale": "",
    "target_entity": null,
    "target_hypothesis_id": "h-3dcfffab",
-   "query_intent": "",
-   "worker_agent_id": null,
+   "query_intent": "Put an explanation up for a verdict",
+   "worker_agent_id": "Hunt lead",
    "evidence_citations": [],
-   "cost_usd": 0,
+   "cost_usd": null,
    "rejected_attempts": [],
    "duration_ms": 0,
    "created_at": "2026-10-10T06:19:58.401Z"
   },
   {
-   "decision_id": "r5",
-   "iteration": 5,
-   "action": "INVESTIGATE",
+   "decision_id": "r6",
+   "iteration": 6,
+   "action": "QUESTION",
    "rationale": "",
    "target_entity": null,
    "target_hypothesis_id": null,
-   "query_intent": "",
-   "worker_agent_id": null,
+   "query_intent": "Opened a lead: is the sync client on the approved list?",
+   "worker_agent_id": "Hunt lead",
    "evidence_citations": [],
-   "cost_usd": 0,
+   "cost_usd": null,
+   "rejected_attempts": [],
+   "duration_ms": 0,
+   "created_at": "2026-10-10T06:19:58.378Z"
+  },
+  {
+   "decision_id": "r5",
+   "iteration": 5,
+   "action": "PROPOSE",
+   "rationale": "",
+   "target_entity": null,
+   "target_hypothesis_id": null,
+   "query_intent": "Proposed an explanation: 192.0.2.10 runs an unsanctioned sync client",
+   "worker_agent_id": "Hunt lead",
+   "evidence_citations": [],
+   "cost_usd": null,
    "rejected_attempts": [],
    "duration_ms": 0,
    "created_at": "2026-10-10T06:19:58.376Z"
@@ -331,14 +348,14 @@
   {
    "decision_id": "r4",
    "iteration": 4,
-   "action": "INVESTIGATE",
+   "action": "RECORD",
    "rationale": "",
    "target_entity": null,
    "target_hypothesis_id": null,
-   "query_intent": "",
-   "worker_agent_id": null,
+   "query_intent": "Recorded 2 pieces of evidence: every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (network)",
+   "worker_agent_id": "Hunt lead",
    "evidence_citations": [],
-   "cost_usd": 0,
+   "cost_usd": null,
    "rejected_attempts": [],
    "duration_ms": 0,
    "created_at": "2026-10-10T06:19:58.373Z"
@@ -346,14 +363,14 @@
   {
    "decision_id": "r3",
    "iteration": 3,
-   "action": "INVESTIGATE",
+   "action": "QUERY",
    "rationale": "",
    "target_entity": null,
    "target_hypothesis_id": null,
-   "query_intent": "search_findings {\"query\":\"198.51.100.7\"}",
-   "worker_agent_id": null,
+   "query_intent": "Searched alerts for 198.51.100.7",
+   "worker_agent_id": "Hunt lead",
    "evidence_citations": [],
-   "cost_usd": 0,
+   "cost_usd": null,
    "rejected_attempts": [],
    "duration_ms": 0,
    "created_at": "2026-10-10T06:19:58.370Z"
@@ -361,36 +378,49 @@
   {
    "decision_id": "r2",
    "iteration": 2,
-   "action": "INVESTIGATE",
+   "action": "QUERY",
    "rationale": "",
    "target_entity": null,
    "target_hypothesis_id": null,
-   "query_intent": "splunk_search {\"sql\":\"select * from flows where src = '192.0.2.10'\"}",
-   "worker_agent_id": null,
+   "query_intent": "Searched Splunk for select * from flows where src = '192.0.2.10' (refused)",
+   "worker_agent_id": "Hunt lead",
    "evidence_citations": [],
-   "cost_usd": 0,
+   "cost_usd": null,
    "rejected_attempts": [
     "<vigil:tool_result tool=\"splunk_search\">\nfailed: unavailable -- splunk_search is down\n</vigil:tool_result>"
    ],
    "duration_ms": 0,
    "created_at": "2026-10-10T06:19:58.368Z"
+  },
+  {
+   "decision_id": "r1",
+   "iteration": 1,
+   "action": "READ",
+   "rationale": "",
+   "target_entity": null,
+   "target_hypothesis_id": null,
+   "query_intent": "Read the hunt-method playbook",
+   "worker_agent_id": "Hunt lead",
+   "evidence_citations": [],
+   "cost_usd": null,
+   "rejected_attempts": [],
+   "duration_ms": 0,
+   "created_at": "2026-10-10T06:19:58.366Z"
   }
  ],
  "calls": [
   {
-   "question": "",
+   "question": "Searched Splunk for select * from flows where src = '192.0.2.10' (refused)",
    "tool": "splunk_search",
    "result_length": 106,
-   "cost_usd": 0,
    "duration_ms": 0,
    "iteration": 2,
    "failed": "unavailable"
   },
   {
-   "question": "",
+   "question": "Searched alerts for 198.51.100.7",
    "tool": "search_findings",
    "result_length": 203,
-   "cost_usd": 0,
    "duration_ms": 0,
    "iteration": 3
   }
