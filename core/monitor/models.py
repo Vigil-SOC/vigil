@@ -1,7 +1,7 @@
-"""The Monitor contract: what ``GET /api/fleet-wall`` answers.
+"""The Monitor contract: what ``GET /api/fleet-wall`` and ``GET /api/pulse/*`` answer.
 
 These models are the routes' ``response_model``, so every implementation of the
-read in ``wall.py`` is validated against them, and the
+reads in ``wall.py`` and ``pulse.py`` is validated against them, and the
 console's types are generated from them (``Schema<'FleetWallPayload'>`` etc. in
 ``clients/web/src/services/api.ts``). Where a field's meaning is still an open
 decision, its description says so; settle it here, not in an implementation.
@@ -183,7 +183,7 @@ class WallBand(Contract):
     waiting: int = Field(description="Queued intake rows routed to this workflow.")
     without_person: BandRate
     cells: Optional[list[WallCell]] = Field(
-        default=None, description="Every open case in the band, as drawn."
+        default=None, description="Omitted on Pulse Throughput."
     )
 
 
@@ -215,3 +215,134 @@ class FleetWallPayload(Contract):
     just_closed: list[WallJustClosed] = Field(description="Newest first.")
     just_closed_minutes: int
     info: WallInfo
+
+
+# ---------------------------------------------------------------- Pulse
+
+
+class PulsePeak(Contract):
+    running: int
+    at: Optional[str] = Field(default=None, description="ISO hour of the peak.")
+    free: Optional[int] = Field(
+        default=None, description="Slots free at the peak; None without a cap."
+    )
+
+
+class PulseDay(Contract):
+    """24 hourly buckets (UTC) ending now; every list has one entry per hour.
+    Bucket in SQL (date_trunc), not in Python."""
+
+    hours: list[str] = Field(description="ISO hour starts.")
+    alerts_in: list[int] = Field(description="Findings created.")
+    cases_formed: list[int]
+    attached: list[int] = Field(description="Intake rows merged into open cases.")
+    closed_by_agents: list[int]
+    closed_by_person: list[int]
+    running: list[int] = Field(
+        description="Workflow runs live at any point in the hour; a dead run with finished_at NULL does not count."
+    )
+    queued: list[int] = Field(description="Intake rows waiting at the end of the hour.")
+    decisions: list[int] = Field(description="Approvals answered by a person.")
+    cap: Optional[int] = None
+    high_water: Optional[int] = None
+    peak: PulsePeak
+    dropped: MonitorMetric
+    approved_by_person: MonitorMetric
+    info: str
+    queue_info: str
+
+
+class PulseGauge(MonitorMetric):
+    """One Summary gauge. Keys, in order: without_person, closed_today, time_to_decide, spend_today.
+
+    Open decision for spend_today: which spend is the source of truth (run
+    costs, LLM spend on Health, or the budget reservations that block runs).
+    """
+
+    key: str
+    label: str
+    sample: Optional[int] = Field(
+        default=None,
+        description="without_person: closes today. time_to_decide: decisions answered today.",
+    )
+    yesterday: Optional[int] = Field(
+        default=None, description="closed_today: count by this time yesterday."
+    )
+
+
+class PulseAttention(Contract):
+    """Derived only from what the reads can see; never invented."""
+
+    level: Level
+    title: str
+    why: str
+    action: str
+    door: Literal["needs_you", "throughput", "work"]
+
+
+class PulseAdjustment(Contract):
+    """A fleet setting, read-only on Pulse."""
+
+    key: str
+    label: str
+    current: Optional[str] = None
+    note: str
+    unmeasured_text: Optional[str] = None
+
+
+class PulseSummary(Contract):
+    """``GET /api/pulse/summary``."""
+
+    now: str
+    gauges: list[PulseGauge]
+    attention: list[PulseAttention]
+    day: PulseDay
+    adjustments: list[PulseAdjustment]
+
+
+class PulseThroughput(Contract):
+    """``GET /api/pulse/throughput``."""
+
+    now: str
+    day: PulseDay
+    kinds: list[WallBand] = Field(
+        description="The Fleet Wall bands without their cells."
+    )
+    info: str
+
+
+class PulseAge(Contract):
+    label: str = Field(description="One of pulse.AGE_BUCKETS.")
+    count: int
+
+
+class PulseOldest(Contract):
+    minutes: float
+    case_id: str
+
+
+class PulseWorkRow(Contract):
+    key: str = Field(description="needs_you, paused, stuck, on_hold.")
+    label: str
+    what: str
+    count: MonitorMetric
+    ages: Optional[list[PulseAge]] = Field(
+        default=None, description="None when unmeasured."
+    )
+    oldest: Optional[PulseOldest] = None
+
+
+class PulseQueue(Contract):
+    hours: list[str]
+    queued: list[int]
+    high_water: Optional[int] = None
+    queue_info: str
+
+
+class PulseWork(Contract):
+    """``GET /api/pulse/work``: what waits, by age."""
+
+    now: str
+    rows: list[PulseWorkRow]
+    queue: PulseQueue
+    info: str

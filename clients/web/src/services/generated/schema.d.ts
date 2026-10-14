@@ -4710,6 +4710,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pulse/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pulse Summary
+         * @description Pulse Summary: the gauges, what needs attention, the day, the adjustments.
+         */
+        get: operations["get_api_pulse_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pulse/throughput": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pulse Throughput
+         * @description Pulse Throughput: the day and work by workflow.
+         */
+        get: operations["get_api_pulse_throughput"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pulse/work": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pulse Work
+         * @description Pulse Paused and stuck: what waits, by age.
+         */
+        get: operations["get_api_pulse_work"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reasoning/investigation/{investigation_id}/interactions": {
         parameters: {
             query?: never;
@@ -10421,6 +10481,257 @@ export interface components {
             max_cost_usd: number;
         };
         /**
+         * PulseAdjustment
+         * @description A fleet setting, read-only on Pulse.
+         */
+        PulseAdjustment: {
+            /** Current */
+            current: string | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Note */
+            note: string;
+            /** Unmeasured Text */
+            unmeasured_text: string | null;
+        };
+        /** PulseAge */
+        PulseAge: {
+            /** Count */
+            count: number;
+            /**
+             * Label
+             * @description One of pulse.AGE_BUCKETS.
+             */
+            label: string;
+        };
+        /**
+         * PulseAttention
+         * @description Derived only from what the reads can see; never invented.
+         */
+        PulseAttention: {
+            /** Action */
+            action: string;
+            /**
+             * Door
+             * @enum {string}
+             */
+            door: "needs_you" | "throughput" | "work";
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "good" | "fair" | "poor";
+            /** Title */
+            title: string;
+            /** Why */
+            why: string;
+        };
+        /**
+         * PulseDay
+         * @description 24 hourly buckets (UTC) ending now; every list has one entry per hour.
+         *     Bucket in SQL (date_trunc), not in Python.
+         */
+        PulseDay: {
+            /**
+             * Alerts In
+             * @description Findings created.
+             */
+            alerts_in: number[];
+            approved_by_person: components["schemas"]["MonitorMetric"];
+            /**
+             * Attached
+             * @description Intake rows merged into open cases.
+             */
+            attached: number[];
+            /** Cap */
+            cap: number | null;
+            /** Cases Formed */
+            cases_formed: number[];
+            /** Closed By Agents */
+            closed_by_agents: number[];
+            /** Closed By Person */
+            closed_by_person: number[];
+            /**
+             * Decisions
+             * @description Approvals answered by a person.
+             */
+            decisions: number[];
+            dropped: components["schemas"]["MonitorMetric"];
+            /** High Water */
+            high_water: number | null;
+            /**
+             * Hours
+             * @description ISO hour starts.
+             */
+            hours: string[];
+            /** Info */
+            info: string;
+            peak: components["schemas"]["PulsePeak"];
+            /** Queue Info */
+            queue_info: string;
+            /**
+             * Queued
+             * @description Intake rows waiting at the end of the hour.
+             */
+            queued: number[];
+            /**
+             * Running
+             * @description Workflow runs live at any point in the hour; a dead run with finished_at NULL does not count.
+             */
+            running: number[];
+        };
+        /**
+         * PulseGauge
+         * @description One Summary gauge. Keys, in order: without_person, closed_today, time_to_decide, spend_today.
+         *
+         *     Open decision for spend_today: which spend is the source of truth (run
+         *     costs, LLM spend on Health, or the budget reservations that block runs).
+         */
+        PulseGauge: {
+            /**
+             * Info
+             * @description The ⓘ line: where the number comes from and how it is counted.
+             */
+            info: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Level
+             * @description Decided by the server (common.usage_level / rate_level); the console never derives it. None when there is no limit or no value.
+             */
+            level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit
+             * @description The enforced limit, or None when none is set.
+             */
+            limit: number | null;
+            /**
+             * Sample
+             * @description without_person: closes today. time_to_decide: decisions answered today.
+             */
+            sample: number | null;
+            /**
+             * Unmeasured Reason
+             * @description Why it is not measured.
+             */
+            unmeasured_reason: string | null;
+            /**
+             * Unmeasured Text
+             * @description 'Not measured yet' when value is None.
+             */
+            unmeasured_text: string | null;
+            /**
+             * Value
+             * @description None when unmeasured.
+             */
+            value: number | null;
+            /**
+             * Yesterday
+             * @description closed_today: count by this time yesterday.
+             */
+            yesterday: number | null;
+        };
+        /** PulseOldest */
+        PulseOldest: {
+            /** Case Id */
+            case_id: string;
+            /** Minutes */
+            minutes: number;
+        };
+        /** PulsePeak */
+        PulsePeak: {
+            /**
+             * At
+             * @description ISO hour of the peak.
+             */
+            at: string | null;
+            /**
+             * Free
+             * @description Slots free at the peak; None without a cap.
+             */
+            free: number | null;
+            /** Running */
+            running: number;
+        };
+        /** PulseQueue */
+        PulseQueue: {
+            /** High Water */
+            high_water: number | null;
+            /** Hours */
+            hours: string[];
+            /** Queue Info */
+            queue_info: string;
+            /** Queued */
+            queued: number[];
+        };
+        /**
+         * PulseSummary
+         * @description ``GET /api/pulse/summary``.
+         */
+        PulseSummary: {
+            /** Adjustments */
+            adjustments: components["schemas"]["PulseAdjustment"][];
+            /** Attention */
+            attention: components["schemas"]["PulseAttention"][];
+            day: components["schemas"]["PulseDay"];
+            /** Gauges */
+            gauges: components["schemas"]["PulseGauge"][];
+            /** Now */
+            now: string;
+        };
+        /**
+         * PulseThroughput
+         * @description ``GET /api/pulse/throughput``.
+         */
+        PulseThroughput: {
+            day: components["schemas"]["PulseDay"];
+            /** Info */
+            info: string;
+            /**
+             * Kinds
+             * @description The Fleet Wall bands without their cells.
+             */
+            kinds: components["schemas"]["WallBand"][];
+            /** Now */
+            now: string;
+        };
+        /**
+         * PulseWork
+         * @description ``GET /api/pulse/work``: what waits, by age.
+         */
+        PulseWork: {
+            /** Info */
+            info: string;
+            /** Now */
+            now: string;
+            queue: components["schemas"]["PulseQueue"];
+            /** Rows */
+            rows: components["schemas"]["PulseWorkRow"][];
+        };
+        /** PulseWorkRow */
+        PulseWorkRow: {
+            /**
+             * Ages
+             * @description None when unmeasured.
+             */
+            ages: components["schemas"]["PulseAge"][] | null;
+            count: components["schemas"]["MonitorMetric"];
+            /**
+             * Key
+             * @description needs_you, paused, stuck, on_hold.
+             */
+            key: string;
+            /** Label */
+            label: string;
+            oldest: components["schemas"]["PulseOldest"] | null;
+            /** What */
+            what: string;
+        };
+        /**
          * RecalculateCostRequest
          * @description Body for POST /analytics/recalculate-cost.
          *
@@ -11452,7 +11763,7 @@ export interface components {
         WallBand: {
             /**
              * Cells
-             * @description Every open case in the band, as drawn.
+             * @description Omitted on Pulse Throughput.
              */
             cells: components["schemas"]["WallCell"][] | null;
             /**
@@ -20168,6 +20479,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_pulse_summary: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PulseSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_pulse_throughput: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PulseThroughput"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_pulse_work: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PulseWork"];
                 };
             };
             /** @description Validation Error */

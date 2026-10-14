@@ -1,7 +1,7 @@
-"""Sample Fleet Wall payloads, served in demo mode.
+"""Sample Fleet Wall and Pulse payloads, served in demo mode.
 
-They let the console and demos run before the read in ``wall.py``
-exists, and show an implementer what a full payload looks like.
+They let the console and demos run before the reads in ``wall.py`` and
+``pulse.py`` exist, and show an implementer what a full payload looks like.
 Built from the contract models, so a fixture that drifts from the contract
 fails to construct. Seeded, so the wall does not reshuffle on every poll; the
 case ids are made up and do not open real cases.
@@ -9,6 +9,7 @@ case ids are made up and do not open real cases.
 
 from __future__ import annotations
 
+import math
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -19,6 +20,18 @@ from core.monitor.models import (
     BandRunning,
     FleetWallPayload,
     MonitorMetric,
+    PulseAdjustment,
+    PulseAge,
+    PulseAttention,
+    PulseDay,
+    PulseGauge,
+    PulseOldest,
+    PulsePeak,
+    PulseQueue,
+    PulseSummary,
+    PulseThroughput,
+    PulseWork,
+    PulseWorkRow,
     WallBand,
     WallCell,
     WallClosedToday,
@@ -29,11 +42,13 @@ from core.monitor.models import (
     WallNextAction,
     WallSlots,
 )
+from core.monitor.pulse import AGE_BUCKETS, HOURS
 from core.monitor.wall import COMBINED_HEAVY, JUST_CLOSED_MINUTES
 
 INFO = "Sample data: demo mode is on."
 FLEET_CAP = 80
 HIGH_WATER = 500
+DAILY_SPEND_CAP = 100.0
 
 # (workflow_id, name, open cases); unassigned last.
 WORKFLOWS = (
@@ -133,7 +148,7 @@ def _cells(
     return cells
 
 
-def _bands(now: datetime) -> list[WallBand]:
+def _bands(now: datetime, with_cells: bool = True) -> list[WallBand]:
     rng = random.Random(7)
     bands, first = [], 1
     for workflow_id, name, n in WORKFLOWS:
@@ -164,7 +179,7 @@ def _bands(now: datetime) -> list[WallBand]:
                     info=INFO,
                     sample=rng.randint(5, 40),
                 ),
-                cells=cells,
+                cells=cells if with_cells else None,
             )
         )
     return bands
@@ -233,4 +248,181 @@ def wall_payload(
             cell="One square per open case, coloured by state. " + INFO,
             kind="One band per workflow. " + INFO,
         ),
+    )
+
+
+def _day(now: datetime) -> PulseDay:
+    rng = random.Random(11)
+    hour = now.replace(minute=0, second=0)
+    hours = [_iso(hour - timedelta(hours=HOURS - 1 - i)) for i in range(HOURS)]
+
+    def wave(base: float, amp: float) -> list[int]:
+        return [
+            max(0, int(base + amp * (1 + math.sin(i / 3.5)) + rng.randint(-2, 2)))
+            for i in range(HOURS)
+        ]
+
+    running = [min(FLEET_CAP, n) for n in wave(30, 22)]
+    peak = max(range(HOURS), key=running.__getitem__)
+    return PulseDay(
+        hours=hours,
+        alerts_in=wave(20, 25),
+        cases_formed=wave(3, 4),
+        attached=wave(1, 3),
+        closed_by_agents=wave(2, 3),
+        closed_by_person=[rng.randint(0, 2) for _ in range(HOURS)],
+        running=running,
+        queued=wave(10, 20),
+        decisions=[rng.randint(0, 3) for _ in range(HOURS)],
+        cap=FLEET_CAP,
+        high_water=HIGH_WATER,
+        peak=PulsePeak(
+            running=running[peak], at=hours[peak], free=FLEET_CAP - running[peak]
+        ),
+        dropped=_unmeasured("There is no drop line yet."),
+        approved_by_person=_unmeasured("Approved closes are not recorded apart yet."),
+        info="Per hour, last 24 h (UTC). " + INFO,
+        queue_info="Intake rows queued at the end of each hour. " + INFO,
+    )
+
+
+def summary(now: Optional[datetime] = None) -> PulseSummary:
+    now = now or _now()
+    spend = 63.4
+    return PulseSummary(
+        now=_iso(now),
+        gauges=[
+            PulseGauge(
+                value=0.82,
+                level=rate_level(0.82),
+                info=INFO,
+                key="without_person",
+                label="Handled without a person",
+                sample=57,
+            ),
+            PulseGauge(
+                value=57,
+                info=INFO,
+                key="closed_today",
+                label="Cases closed today",
+                yesterday=48,
+            ),
+            PulseGauge(
+                value=7,
+                info=INFO,
+                key="time_to_decide",
+                label="Median time to decide",
+                sample=11,
+            ),
+            PulseGauge(
+                value=spend,
+                limit=DAILY_SPEND_CAP,
+                level=usage_level(spend, DAILY_SPEND_CAP),
+                info=INFO,
+                key="spend_today",
+                label="AI spend today",
+            ),
+        ],
+        attention=[
+            PulseAttention(
+                level="poor",
+                title="3 decisions waiting on a person",
+                why="The oldest was asked 84 min ago",
+                action="Open Needs you",
+                door="needs_you",
+            ),
+            PulseAttention(
+                level="fair",
+                title="6 cases paused over 1 h",
+                why="Waiting on enrichment",
+                action="See paused and stuck",
+                door="work",
+            ),
+        ],
+        day=_day(now),
+        adjustments=[
+            PulseAdjustment(
+                key="concurrency",
+                label="Cases running at once · fleet",
+                current=str(FLEET_CAP),
+                note="Read here; change it in Settings.",
+            ),
+            PulseAdjustment(
+                key="daily_cap",
+                label="AI spend cap per day",
+                current=f"${DAILY_SPEND_CAP:.0f}",
+                note="Read here; change it in Settings.",
+            ),
+            PulseAdjustment(
+                key="drop_line",
+                label="Drop alerts scoring under",
+                note="There is no drop line yet.",
+                unmeasured_text=UNMEASURED,
+            ),
+        ],
+    )
+
+
+def throughput(now: Optional[datetime] = None) -> PulseThroughput:
+    now = now or _now()
+    return PulseThroughput(
+        now=_iso(now),
+        day=_day(now),
+        kinds=_bands(now, with_cells=False),
+        info="Per workflow, today. " + INFO,
+    )
+
+
+def _ages(*counts: int) -> list[PulseAge]:
+    return [
+        PulseAge(label=label, count=n) for (_, label), n in zip(AGE_BUCKETS, counts)
+    ]
+
+
+def work(now: Optional[datetime] = None) -> PulseWork:
+    now = now or _now()
+    day = _day(now)
+    return PulseWork(
+        now=_iso(now),
+        rows=[
+            PulseWorkRow(
+                key="needs_you",
+                label="Needs you",
+                what="A decision waits on a person",
+                count=MonitorMetric(value=3, info=INFO),
+                ages=_ages(1, 1, 1, 0, 0),
+                oldest=PulseOldest(minutes=84, case_id="case-0001"),
+            ),
+            PulseWorkRow(
+                key="paused",
+                label="Paused",
+                what="A run paused and has not resumed",
+                count=MonitorMetric(value=13, info=INFO),
+                ages=_ages(2, 3, 5, 2, 1),
+                oldest=PulseOldest(minutes=1630, case_id="case-0010"),
+            ),
+            PulseWorkRow(
+                key="stuck",
+                label="Stuck",
+                what="No explanation moved in 6 or more steps",
+                count=MonitorMetric(value=4, info=INFO),
+                ages=_ages(0, 2, 1, 1, 0),
+                oldest=PulseOldest(minutes=410, case_id="case-0002"),
+            ),
+            PulseWorkRow(
+                key="on_hold",
+                label="On hold",
+                what="Held by a person",
+                count=MonitorMetric(value=5, info=INFO),
+                ages=_ages(0, 1, 2, 2, 0),
+                oldest=PulseOldest(minutes=720, case_id="case-0030"),
+            ),
+        ],
+        queue=PulseQueue(
+            hours=day.hours,
+            queued=day.queued,
+            high_water=HIGH_WATER,
+            queue_info=day.queue_info,
+        ),
+        info="How long each has waited. " + INFO,
     )
