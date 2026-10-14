@@ -23,9 +23,21 @@ export interface Harness<Kinds extends Record<string, unknown> = Record<never, n
   budget: Budget;
   memory: Memory;
   state: State<Kinds>;
+  // Experimental (core/guards.ts): the guarded reader's model, when it is
+  // not the run's own. A reader only extracts and labels, so a cheaper one serves.
+  guards_provider?: Provider;
 }
 
 export interface TurnConfig {
+  // Asked once when the model stops calling tools with turns left: what the plugin
+  // says is still open, as the next call's tail, or null when nothing is.
+  unsettled?: () => Promise<string | null>;
+  // Experimental (core/guards.ts): estate results go to a guarded reader,
+  // and the model sees its findings; handles in arguments are filled at dispatch.
+  guards?: {
+    read(tool: string, args: string, ref: string, result: ToolResult, wrapped: Wrapped): Promise<{ shown: string; read: unknown }>;
+    resolve(rawArgs: string): string;
+  };
   run_id: string;
   run_kind: RunKind;
   role: string;
@@ -84,6 +96,10 @@ export interface Attempt {
   // Set by invoke. Absent when the attempt never ran: a refusal, a rejection,
   // or a result served from an earlier pass of the ledger.
   duration_ms?: number;
+  // Experimental guards (core/guards.ts): what the model was shown in place
+  // of wrapped.text, and the reader's findings it was rendered from.
+  shown?: string;
+  read?: unknown;
 }
 
 // tool and args are null when the run parked on a checkpoint the harness did not

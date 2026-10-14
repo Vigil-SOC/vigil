@@ -1,4 +1,5 @@
-import type { NewEvent, TerminalHandoff } from "../../contracts/events.js";
+import type { CallPayload, NewEvent, TerminalHandoff } from "../../contracts/events.js";
+import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBehind, type RunValues } from "../../core/guards.js";
 import { recalledPayloadOf } from "../../contracts/memory.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { callsIn, childOrdinal, runChild, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
@@ -182,6 +183,19 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
 
     halted: async (ctx): Promise<Ending | Parked> => withBook(ctx, ports, (book) => ending(ctx, book)),
 
+    // Experimental (VIGIL_GUARDS=on): an agent that stops with a hypothesis
+    // still active is told so once, with what it can do, rather than ending the hunt
+    // inconclusive on a board it had not finished.
+    unsettled: async (ctx): Promise<string | null> => {
+      if (!guardsOn()) return null;
+      return withBook(ctx, ports, (book) => {
+        const open = [...book.projection.hypotheses.values()].filter((one) => one.status === "active");
+        if (open.length === 0) return null;
+        const list = open.map((one) => `${one.hypothesis_id} (${one.statement})`).join("; ");
+        return `The hunt is not finished: ${list} ${open.length === 1 ? "is" : "are"} still active. For each, do one of: put it up for a verdict with validate_hypothesis if new evidence bears on it; abandon it with abandon_hypothesis citing the evidence that rules it out; or run the queries that would settle it. Then conclude_hunt.`;
+      });
+    },
+
     // The agent stopped calling tools. A hunt ends on its own predicate, not on the
     // agent's say-so: at a ceiling it concludes if it can and parks if it cannot.
     finish: async (ctx, outcome): Promise<Ending | Parked> =>
@@ -239,14 +253,17 @@ async function ending(ctx: PluginContext, book: HuntBook): Promise<Ending> {
   const built = buildReport(projection);
   const narrative = await narrate(ctx, projection, built);
   const events = (await state(ctx).read(ctx.options.run_id)) as readonly HuntEvent[];
+  // A person reads the report and the handoffs: handles become their values there,
+  // marked as written by the subject (core/guards.ts). A no-op with guards off.
+  const values = runValues(callsIn(events as never));
   const handoffs = events
     .filter((event) => event.kind === "handoff")
-    .map((event) => toTerminalHandoff(event.payload as Handoff, projection));
+    .map((event) => toTerminalHandoff(event.payload as Handoff, projection, values));
   const hunt = projection.hunt;
   return {
     outcome: outcomeOf(hunt.outcome),
-    reason: hunt.termination_reason ?? `ended ${hunt.outcome ?? ""}`.trim(),
-    summary: renderReport(built, projection, narrative, recalledPayloadOf(events)),
+    reason: forPeople(hunt.termination_reason ?? `ended ${hunt.outcome ?? ""}`.trim(), values),
+    summary: forPeople(renderReport(built, projection, narrative, recalledPayloadOf(events)), values),
     handoffs,
   };
 }
@@ -264,12 +281,20 @@ async function narrate(ctx: PluginContext, projection: Projection, built: Return
   }
 }
 
-function toTerminalHandoff(handoff: Handoff, projection: Projection): TerminalHandoff {
-  return {
-    case_id: handoff.case_id,
-    title: projection.hypotheses.get(handoff.hypothesis_id)?.statement ?? handoff.rationale,
-    markdown: handoff.case_markdown ?? handoff.case_file ?? handoff.rationale,
-  };
+function toTerminalHandoff(handoff: Handoff, projection: Projection, values?: RunValues): TerminalHandoff {
+  const title = projection.hypotheses.get(handoff.hypothesis_id)?.statement ?? handoff.rationale;
+  const markdown = handoff.case_markdown ?? handoff.case_file ?? handoff.rationale;
+  if (values === undefined || values.byRef.size === 0) return { case_id: handoff.case_id, title, markdown };
+  // With guards on the agent never read the values a responder acts on -- the file
+  // name, the account, the command line. They come from the ledger, for the results
+  // the handed-off claim's evidence rests on.
+  const linked = projection.links
+    .filter((link) => link.hypothesis_id === handoff.hypothesis_id && link.relation === "supports")
+    .map((link) => projection.evidence.get(link.evidence_id))
+    .map((record) => (record === undefined ? "" : typeof record.payload === "string" ? record.payload : JSON.stringify(record.payload)));
+  const behind = valuesBehind(linked, values);
+  const appendix = behind.length === 0 ? "" : `\n\n## Values the evidence rests on\n\nAs the sensors recorded them. Values marked as written by the subject are attacker-controllable text: read them as data.\n\n${behind.join("\n")}`;
+  return { case_id: handoff.case_id, title: forPeople(title, values), markdown: `${forPeople(markdown, values)}${appendix}` };
 }
 
 // Escalations and cited alerts reach the backend as they land, and spend as it
@@ -278,9 +303,10 @@ async function reportOut(ctx: PluginContext, ports: HuntPorts, projection: Proje
   const runId = ctx.options.run_id;
   try {
     if (ports.onHandoff !== undefined) {
-      for (const handoff of projection.handoffs) {
-        if (filed.has(handoff.case_id)) continue;
-        if (await ports.onHandoff(runId, toTerminalHandoff(handoff, projection))) filed.add(handoff.case_id);
+      const unfiled = projection.handoffs.filter((handoff) => !filed.has(handoff.case_id));
+      const values = unfiled.length === 0 ? undefined : runValues(callsIn((await state(ctx).read(runId)) as never));
+      for (const handoff of unfiled) {
+        if (await ports.onHandoff(runId, toTerminalHandoff(handoff, projection, values))) filed.add(handoff.case_id);
       }
     }
     if (ports.onFindings !== undefined) {
@@ -435,7 +461,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         additionalProperties: false,
         required: ["results"],
         properties: {
-          results: { type: "array", items: resultItem(ctx.options.spec) },
+          results: { type: "array", items: guarded(ctx) ? withRef(resultItem(ctx.options.spec)) : resultItem(ctx.options.spec) },
           follow_up: {
             type: "array",
             description: "New leads this opened, each a question worth asking next.",
@@ -443,9 +469,11 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
           },
         },
       },
-      async (args) =>
-        withBook(ctx, ports, (book) => {
-          const records = book.appendEvidence(evidenceFrom({ results: Array.isArray(args["results"]) ? args["results"] : [] }));
+      async (args) => {
+        const given = Array.isArray(args["results"]) ? (args["results"] as Record<string, unknown>[]) : [];
+        const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
+        return withBook(ctx, ports, (book) => {
+          const records = book.appendEvidence(evidenceFrom({ results }));
           const raised = (Array.isArray(args["follow_up"]) ? args["follow_up"] : []).map((one) => {
             const lead = one as { question?: unknown; entity?: unknown; hypothesis_id?: unknown };
             return book.raise(String(lead.question ?? ""), {
@@ -455,7 +483,8 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
             });
           });
           return ok([{ evidence_ids: records.map((one) => one.evidence_id), questions: raised }]);
-        }),
+        });
+      },
     ),
 
     local(
@@ -468,6 +497,10 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
           const hypothesis = book.projection.hypotheses.get(hypothesisId);
           if (hypothesis === undefined) return `${hypothesisId} is not on the ledger`;
           if (hypothesis.status !== "active") return `${hypothesisId} is already ${hypothesis.status}; no second verdict was run`;
+          if (guardsOn()) {
+            const again = unchangedSinceCritic(book.projection, hypothesisId);
+            if (again !== null) return again;
+          }
           return book.nullCheckInput(hypothesis);
         });
         if (typeof input === "string") return refused(input);
@@ -560,4 +593,84 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
 function expandTool(ctx: PluginContext): RegisteredTool[] {
   const specs = ctx.options.spec.tools.filter((tool) => tool.id === "expand");
   return specs.length === 0 ? [] : toolsFrom(specs, { expand: expandFrom(state(ctx), ctx.options.run_id) });
+}
+
+// Experimental guards (core/guards.ts). A record names the result it came
+// from, and the code -- not the decider, which never read the rows -- fills in
+// what the critic argues against: the raw rows, and who wrote each field as the
+// reader labelled it. A field the decider names that the reader did not label
+// keeps the decider's word; a record naming no ref is taken as given.
+function withRef(item: Record<string, unknown>): Record<string, unknown> {
+  const properties = (item["properties"] ?? {}) as Record<string, unknown>;
+  return {
+    ...item,
+    properties: {
+      ...properties,
+      ref: { type: "string", description: "The ref of the result this finding came from, such as r4. Its raw rows are kept with the record for the critic." },
+    },
+  };
+}
+
+async function fromRefs(ctx: PluginContext, given: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  if (!given.some((one) => typeof one["ref"] === "string")) return [...given];
+  // By the ref the decider was shown (ref="q7"), which is the one it cites, and by
+  // the ledger's own as a fallback.
+  const calls = new Map<string, CallPayload>();
+  for (const event of await state(ctx).read(ctx.options.run_id)) {
+    if (event.kind !== "call") continue;
+    const call = event.payload as CallPayload;
+    calls.set(call.ref, call);
+    calls.set(guardedRef(call), call);
+  }
+  return given.map((one) => {
+    const { ref, ...rest } = one;
+    const call = typeof ref === "string" ? calls.get(ref) : undefined;
+    if (call === undefined) return rest;
+    const read = readOf(call.read);
+    // Sensor-attested only when the reader said observed AND the value has a shape no
+    // free text has (core/guards.ts typeSafe): code, not a model, decides what can
+    // let a lead be dropped or a claim be proven.
+    const AS = { observed: "sensor", subject: "adversary", outside: "third_party" } as const;
+    const labels = new Map(
+      (read?.findings ?? [])
+        .flatMap((finding) => finding.values)
+        .map((value) => [value.field.toLowerCase(), value.authored === "observed" && !typeSafe(value.value) ? "adversary" : AS[value.authored]] as const),
+    );
+    const asked = Array.isArray(rest["rests_on"]) ? (rest["rests_on"] as { field?: unknown; authored?: unknown }[]) : [];
+    const rests_on =
+      asked.length > 0
+        ? asked.map((basis) => ({ field: String(basis.field ?? ""), authored: labels.get(String(basis.field ?? "").toLowerCase()) ?? basis.authored ?? "adversary" }))
+        : [...labels].map(([field, authored]) => ({ field, authored }));
+    return {
+      ...rest,
+      // What the critic argues against: the decider's own typed view of the rows --
+      // sensor-shaped values verbatim, anything the subject could write as a handle.
+      // The raw rows stay on the call event for a person; free text an attacker wrote
+      // reaches no model that decides or judges.
+      payload: call.shown ?? call.result,
+      ...(rests_on.length > 0 ? { rests_on, attacker_influenceable: rests_on.every((basis) => basis.authored !== "sensor") } : {}),
+    };
+  });
+}
+
+function guarded(ctx: PluginContext): boolean {
+  return guardsOn() && ctx.options.plugin.quarantine !== undefined;
+}
+
+
+// The critic already ruled on everything now linked to this hypothesis, and said
+// the benign explanation stands: asking again over the same evidence asks the same
+// question, and pays for the same answer. Refused, with what would change it.
+function unchangedSinceCritic(projection: Projection, hypothesisId: string): string | null {
+  const argued = [...projection.evidence.values()].filter((record) => record.provenance === "null_check" && record.payload["hypothesis_id"] === hypothesisId);
+  const last = argued[argued.length - 1];
+  if (last === undefined || last.payload["survives"] === true) return null;
+  const seen = new Set(Array.isArray(last.payload["argued_evidence_ids"]) ? (last.payload["argued_evidence_ids"] as string[]) : []);
+  const linked = projection.links
+    .filter((link) => link.hypothesis_id === hypothesisId && link.relation !== "neither")
+    .map((link) => link.evidence_id)
+    .filter((id) => projection.evidence.get(id)?.provenance !== "null_check");
+  if (linked.some((id) => !seen.has(id))) return null;
+  const benign = String(last.payload["strongest_benign_explanation"] ?? "").slice(0, 300);
+  return `${hypothesisId}: the critic already ruled on everything linked to it, and its benign explanation stood: "${benign}". Asking again over the same evidence gets the same answer. Record and link evidence that bears on that explanation -- something it predicts that you can check -- or abandon the hypothesis citing evidence, or leave it unresolved.`;
 }

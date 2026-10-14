@@ -1,3 +1,4 @@
+import { guardedRef, Handles, guardsOn, READER_SCHEMA, readOf, render, type Read } from "./guards.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
 import type {
   AgentEvent,
@@ -24,7 +25,7 @@ import { registryOf, type Registry } from "./registry.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
 import type { RunSpec, ToolSpec } from "./spec.js";
-import { persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
+import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
 import type { RunEventKind } from "../contracts/events.js";
@@ -109,6 +110,9 @@ export interface PluginHooks {
   // The gateway's own allowance refused a call: not this run failing, and nothing
   // a retry can change. Absent leaves it to the worker, which records the budget.
   exhausted?(ctx: PluginContext, reason: string): Promise<Ending>;
+  // When the agent stops calling tools with turns left: what is still open, asked
+  // of it once as its next turn's tail, or null to let it stop.
+  unsettled?(ctx: PluginContext): Promise<string | null>;
   // How the run ends once the loop has answered or been refused. Null takes the
   // kernel's own ending: review, then a summary off the answer.
   finish?(ctx: PluginContext, outcome: Outcome<unknown>): Promise<Ending | Parked | null>;
@@ -415,7 +419,11 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
   const linked = link(options.signal, watch.signal, halt.signal);
   const task = options.conversation?.task ?? (await (options.hooks?.brief?.(ctx) ?? Promise.resolve(briefOf(options.spec))));
   const allowance = await options.hooks?.turns?.(ctx);
-  const cfg = turnFor(options, calls, used, task, linked.signal, allowance);
+  const base = turnFor(options, calls, used, task, linked.signal, allowance);
+  const unsettled = options.hooks?.unsettled;
+  if (unsettled !== undefined) base.unsettled = () => unsettled(ctx);
+  const quarantine = guardsOn() ? options.plugin.quarantine : undefined;
+  const cfg = quarantine === undefined ? base : { ...base, system: `${base.system}\n\n${quarantine.guidance}`, guards: guardsFor(ctx, base, calls, quarantine.reader) };
   const framer = await Framer.open(
     harness.state,
     options.run_id,
@@ -470,6 +478,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
           // Verbatim, so a transcript rebuilt from the ledger is the bytes the model sent.
           ...(first && thought !== "" ? { thought } : {}),
           ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
+          ...(seen.attempt.shown === undefined ? {} : { shown: seen.attempt.shown, read: seen.attempt.read }),
         };
         first = false;
         await harness.state.append(options.run_id, [event(options, "call", call)]);
@@ -663,7 +672,7 @@ export function historyOf(calls: readonly CallPayload[]): Message[] {
       content: held.find((one) => one.thought !== undefined)?.thought ?? "",
       tool_calls: held.map((one) => ({ id: one.call_id, tool: one.tool, args: one.arguments })),
     });
-    for (const one of held) messages.push({ role: "tool", call_id: one.call_id, content: one.result });
+    for (const one of held) messages.push({ role: "tool", call_id: one.call_id, content: one.shown ?? one.result });
   }
   return messages;
 }
@@ -1080,7 +1089,9 @@ function recordOf(call: CallPayload, cited: boolean): string {
     `<vigil:record id="${call.ref}"${cited ? ' cited="true"' : ""}>`,
     `tool: ${scrub(call.tool, 100)}`,
     `arguments: ${scrub(call.arguments, 1_000)}`,
-    scrub(call.result, RECORD_CAP),
+    // With guards on, the view the agent had, not the raw rows: a judge reads no text
+    // the subject wrote either (core/guards.ts).
+    scrub(call.shown ?? call.result, RECORD_CAP),
     "</vigil:record>",
   ].join("\n");
 }
@@ -1201,4 +1212,58 @@ async function report(
 ): Promise<AgentReport> {
   const calls = callsIn(await ctx.harness.state.read(ctx.options.run_id));
   return { status, reason, pending, calls: calls.length, turns: calls.reduce((max, call) => Math.max(max, call.turn), 0) };
+}
+
+// Experimental (core/guards.ts): the reader is a child run with no tools that
+// answers in READER_SCHEMA; handles live for the run, and are rebuilt from the
+// journaled findings when a run resumes.
+function guardsFor(ctx: PluginContext, turn: TurnConfig, prior: readonly CallPayload[], prompt: string): NonNullable<TurnConfig["guards"]> {
+  const handles = new Handles();
+  // What the decider already wrote or was briefed with is not new text from the
+  // data: a value it named itself is shown as it is, whoever the reader says wrote it.
+  let said = `${turn.task}\n${prior.map((call) => call.arguments).join("\n")}`.toLowerCase();
+  const known = (value: string) => value.length > 0 && said.includes(value.toLowerCase());
+  for (const call of prior) {
+    const read = readOf(call.read);
+    if (read !== null) render(call.tool, guardedRef(call), { ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: call.tool }, { text: "", instruction_like: false, failure: null }, read, handles, known);
+  }
+  return {
+    resolve: (rawArgs) => handles.resolve(rawArgs),
+    read: async (tool, args, ref, result, wrapped) => {
+      // The decider's own words, handles unresolved: a value it searched for by handle
+      // is still one it has never read, and must not start showing because it did.
+      said += `\n${args.toLowerCase()}`;
+      const reader: TurnConfig = {
+        run_id: turn.run_id,
+        run_kind: turn.run_kind,
+        role: "reader",
+        system: prompt,
+        task: `The analyst called ${tool} with ${args}. What came back:\n\n${wrapped.text}`,
+        schema: READER_SCHEMA as unknown as Record<string, unknown>,
+        max_turns: 0,
+        approvals: new Set(),
+        verbs: [],
+        result_cap: turn.result_cap,
+        recall_limit: 0,
+        recall_keys: [],
+        ...(turn.signal === undefined ? {} : { signal: turn.signal }),
+      };
+      let read: Read | null = null;
+      try {
+        const provider = ctx.harness.guards_provider ?? ctx.harness.provider;
+        const budget = ctx.harness.budget;
+        const calls = budget.spent.calls;
+        const outcome = await runChild<unknown>({ ...ctx, harness: { ...ctx.harness, provider } }, `reader:${await childOrdinal(ctx, "reader")}`, reader);
+        // The reader's calls are the defence's, not the run's: widened by exactly
+        // what it used, so the guards never starve the work of its call allowance.
+        // Its dollars still count against the run.
+        const used = budget.spent.calls - calls;
+        if (used > 0) budget.raise({ max_calls: budget.limits.max_calls + used });
+        read = outcome.status === "completed" ? readOf(outcome.value) : null;
+      } catch (error) {
+        if (turn.signal?.aborted === true || hardStop(error)) throw error;
+      }
+      return { shown: render(tool, ref, result, wrapped, read, handles, known), read };
+    },
+  };
 }

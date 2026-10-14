@@ -53,6 +53,9 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
   if (min_results !== undefined && (typeof min_results !== "number" || !Number.isInteger(min_results) || min_results < 1)) {
     throw new SpecError(`${where}: min_results must be a positive integer`);
   }
+  const q = raw["quarantine"] as { reader?: unknown; guidance?: unknown } | undefined;
+  if (q !== undefined && (typeof q?.reader !== "string" || typeof q?.guidance !== "string")) throw new SpecError(`${where}: quarantine needs reader and guidance`);
+  const quarantine = q === undefined ? undefined : { reader: q.reader as string, guidance: q.guidance as string };
 
   return {
     id,
@@ -66,6 +69,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     ...(record === undefined ? {} : { record }),
     ...(min_results === undefined ? {} : { min_results: min_results as number }),
     ...(finish_with === undefined ? {} : { finish_with: finish_with as "ask" | "tool" }),
+    ...(quarantine === undefined ? {} : { quarantine }),
   };
 }
 

@@ -1,3 +1,4 @@
+import { forModelsDeep } from "../../core/guards.js";
 import { fromText } from "./entities.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
 import { evidenceStrength, isGap, NULL_CHECK_PROVENANCE } from "./strength.js";
@@ -200,7 +201,9 @@ function conclusionsIn(projection: Projection): DistilConclusion[] {
 export function huntDistil(_runId: string, events: readonly HuntEvent[]): DistilPayload {
   const projection = fold(events);
 
-  return {
+  // Memory is read by later runs' models: a handle becomes a neutral marker, never
+  // its value (core/guards.ts). A no-op with guards off.
+  return forModelsDeep({
     investigation_kind: "hunt",
     investigation_id: projection.hunt.hunt_id,
     outcome: projection.hunt.outcome,
@@ -208,5 +211,5 @@ export function huntDistil(_runId: string, events: readonly HuntEvent[]): Distil
     distil_schema_version: DISTIL_SCHEMA_VERSION,
     sightings: sightingsIn(projection),
     conclusions: conclusionsIn(projection),
-  };
+  } as DistilPayload);
 }

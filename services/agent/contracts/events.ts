@@ -214,6 +214,10 @@ export interface CallPayload {
   // The role that made the call, when it was not the run's one agent: a step a
   // plugin ran under its own prompt and grants.
   role?: string;
+  // Experimental guards: what the model was shown in place of result, which
+  // stays the raw text, and the reader's findings it was rendered from.
+  shown?: string;
+  read?: unknown;
 }
 
 // The answer the run ends on, in the shape its plugin declared.
