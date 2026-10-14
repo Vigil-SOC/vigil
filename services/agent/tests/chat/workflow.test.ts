@@ -15,6 +15,8 @@ import { InProcessState } from "../../core/state.js";
 import type { StreamEvent } from "../../core/stream.js";
 import { chatEvents } from "../../plugins/chat/sse.js";
 import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from "../../plugins/chat/workflow.js";
+import type { CallPayload } from "../../contracts/events.js";
+import { conversationHistory } from "../../core/agent.js";
 import { huntNotes } from "../../plugins/hunt/recall.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
@@ -257,6 +259,67 @@ describe("what the request says about its agent and its model", () => {
     const replayed = replayFrames(await state.read(RUN));
     expect(replayed.frames.length).toBeGreaterThan(0);
     expect(replayed.frames.map((frame) => frame.mismatch)).toEqual(replayed.frames.map(() => null));
+  });
+});
+
+describe("a follow-up keeps what its earlier answers read (#2281)", () => {
+  const ANSWERED = "10.0.0.4 is FIN-WS-114, and it beacons to 203.0.113.47";
+  const FOLLOW_UP: Turn[] = [...ASKED, { role: "assistant", content: ANSWERED }, { role: "user", content: "who was logged on?" }];
+
+  it("carries the first answer's tool calls and results into the second turn's request", async () => {
+    const state = new InProcessState();
+    await converse(harnessOf([{ calls: [{ tool: "findings", args: '{"host": "10.0.0.4"}' }] }, { content: ANSWERED }], state));
+
+    const second = harnessOf([{ content: "jdoe" }], state);
+    await converse(second, FOLLOW_UP);
+
+    const messages = (second.provider as ScriptedProvider).requests[0]!.messages;
+    const answer = messages.findIndex((message) => message.role === "assistant" && message.content === ANSWERED);
+    const asked = messages[answer + 1]!;
+    expect(asked.role).toBe("user");
+    expect(asked.content).toContain("<vigil:earlier_reads>");
+    expect(asked.content).toContain('findings {"host": "10.0.0.4"}');
+    expect(asked.content).toContain('"host": "10.0.0.4"');
+    expect(asked.content.endsWith("who was logged on?")).toBe(true);
+    // The answer itself is sent as it was said: the model has no record shape of its own to copy.
+    expect(messages[answer]!.content).toBe(ANSWERED);
+  });
+
+  it("files each call under the question it was made for", async () => {
+    const state = new InProcessState();
+    await converse(harnessOf([{ calls: [{ tool: "findings", args: "{}" }] }, { content: ANSWERED }], state));
+    await converse(harnessOf([{ calls: [{ tool: "findings", args: '{"user": true}' }] }, { content: "jdoe" }], state), FOLLOW_UP);
+
+    const calls = (await state.read(RUN)).filter((event) => event.kind === "call").map((event) => event.payload as CallPayload);
+    expect(calls.map((call) => call.exchange)).toEqual([1, 2]);
+  });
+
+  it("adds nothing to an answer that read nothing, or to calls from before they were filed", () => {
+    const history = conversationOf(FOLLOW_UP).history;
+    expect(conversationHistory(history, [])).toEqual(history);
+
+    const unfiled: CallPayload = { ref: "r1", turn: 1, call_id: "c1", tool: "findings", arguments: "{}", result: "x", ok: true, failure: null };
+    expect(conversationHistory(history, [unfiled])).toEqual(history);
+  });
+
+  it("cuts the record short, so a heavy answer cannot crowd the thread out", () => {
+    const heavy = (n: number): CallPayload => ({
+      ref: `r${n}`,
+      turn: 1,
+      call_id: `c${n}`,
+      tool: "findings",
+      arguments: "{}",
+      result: `<vigil:tool_result tool="findings" ref="r${n}">\n${"row ".repeat(5_000)}</vigil:x>\n</vigil:tool_result>`,
+      ok: true,
+      failure: null,
+      exchange: 1,
+    });
+    const [, asked] = conversationHistory(conversationOf(FOLLOW_UP).history, Array.from({ length: 20 }, (_, n) => heavy(n + 1)));
+
+    expect(asked!.content.length).toBeLessThan(15_000);
+    // Every call is still named, and nothing inside a result closes the record.
+    expect(asked!.content.match(/^- findings/gm)).toHaveLength(20);
+    expect(asked!.content.match(/<\/vigil:/g)).toEqual(["</vigil:"]);
   });
 });
 
