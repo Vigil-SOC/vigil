@@ -102,6 +102,7 @@ forbidden_modules =
     tools
     services.api
     services.daemon
+    services.medic_dockerproxy
     services.medic_gateway
     services.worker
 
@@ -119,4 +120,23 @@ forbidden_modules =
     services.api
     services.daemon
     services.medic
+    services.medic_dockerproxy
+    services.worker
+
+[importlinter:contract:medic-dockerproxy]
+name = The Medic Docker proxy imports nothing from core, tools, Medic or any other service (A3-1)
+type = forbidden
+source_modules =
+    services.medic_dockerproxy
+; The only holder of the Docker socket on Compose (C3 §4.3): it shares no code
+; with Medic, the gateway or Vigil. Listed by name, as above; services/
+; medic_dockerproxy/tests/test_fence.py fails when a new Python service isn't
+; added here.
+forbidden_modules =
+    core
+    tools
+    services.api
+    services.daemon
+    services.medic
+    services.medic_gateway
     services.worker

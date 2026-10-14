@@ -9,6 +9,7 @@ env/
 ENV/
 .venv
 .venv-medic-gateway
+.venv-medic-dockerproxy
 
 # Testing
 .pytest_cache/
@@ -129,3 +130,7 @@ services/medic_gateway/tests/
 services/medic_gateway/**/__pycache__/
 services/medic_gateway/**/.pytest_cache/
 services/medic_gateway/**/.ruff_cache/
+services/medic_dockerproxy/tests/
+services/medic_dockerproxy/**/__pycache__/
+services/medic_dockerproxy/**/.pytest_cache/
+services/medic_dockerproxy/**/.ruff_cache/

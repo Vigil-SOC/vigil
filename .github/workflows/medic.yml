@@ -12,6 +12,8 @@ on:
       - "infra/docker/Dockerfile.medic"
       - "services/medic_gateway/**"
       - "infra/docker/Dockerfile.medic-gateway"
+      - "services/medic_dockerproxy/**"
+      - "infra/docker/Dockerfile.medic-dockerproxy"
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
@@ -21,6 +23,8 @@ on:
       - "infra/docker/Dockerfile.medic"
       - "services/medic_gateway/**"
       - "infra/docker/Dockerfile.medic-gateway"
+      - "services/medic_dockerproxy/**"
+      - "infra/docker/Dockerfile.medic-dockerproxy"
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
@@ -199,4 +203,105 @@ jobs:
             sleep 1
           done
           docker logs gw
+          exit 1
+
+  # The read-only Docker proxy (C3 §4.3, SP2): check 4 in its tests, against a
+  # fake socket and, because the runner has Docker, against the real engine too
+  # (test_live_docker.py: SP2's 43 with the negative control). Then the image.
+  medic-dockerproxy:
+    name: Medic Docker proxy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Install the proxy's locked dev dependencies
+        run: uv sync --project services/medic_dockerproxy --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic_dockerproxy --frozen ruff check services/medic_dockerproxy
+          uv run --project services/medic_dockerproxy --frozen ruff format --check services/medic_dockerproxy
+
+      # The live tests must run here, not skip: -m docker on its own first, and
+      # fail if it collected nothing.
+      - name: Pytest (live Docker, check 4)
+        run: |
+          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker -rs
+          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker --collect-only -q | grep -q "^43/"
+
+      - name: Pytest
+        run: uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy
+
+      - name: Import fence
+        run: uv run --project services/medic_dockerproxy --frozen lint-imports
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/Dockerfile.medic-dockerproxy
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build proxy image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.medic-dockerproxy
+          push: false
+          load: true
+          tags: vigil-medic-dockerproxy:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A credential in env: refuses to start (exit 2) and names it, not its value.
+      - name: Smoke test, credential in env
+        run: |
+          set +e
+          out=$(docker run --rm --read-only -e DAEMON_WEBHOOK_TOKEN=leak-me \
+            -e VIGIL_MEDIC_DOCKERPROXY_BIND=127.0.0.1:8472 vigil-medic-dockerproxy:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 2
+          grep -q DAEMON_WEBHOOK_TOKEN <<<"$out"
+          if grep -q leak-me <<<"$out"; then exit 1; fi
+
+      # As it will run: read-only root, no capabilities, the socket read-only and
+      # only its group added. The image's HEALTHCHECK command must go green
+      # (it pings Docker through the proxy), and check 4 must hold in the image.
+      - name: Smoke test, healthy and read-only
+        run: |
+          docker run -d --name dp --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --group-add "$(stat -c %g /var/run/docker.sock)" \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e VIGIL_MEDIC_DOCKERPROXY_BIND=127.0.0.1:8472 \
+            vigil-medic-dockerproxy:ci
+          for _ in $(seq 1 20); do
+            if docker exec dp python -m services.medic_dockerproxy check; then
+              docker exec dp id -u | grep -qx 10003
+              if docker exec dp touch /tmp/x; then exit 1; fi
+              docker exec dp python -c '
+          import http.client as h
+          def get(p):
+              c = h.HTTPConnection("127.0.0.1", 8472, timeout=5)
+              c.request("GET", p)
+              r = c.getresponse()
+              return r.status, r.read()
+          assert get("/containers/dp/export")[0] == 403
+          assert get("/containers/dp/archive?path=/")[0] == 403
+          st, body = get("/containers/dp/json")
+          assert st == 200 and b"Env" not in body and b"Cmd" not in body, body
+          '
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs dp
           exit 1
