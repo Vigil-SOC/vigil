@@ -13,7 +13,7 @@ import { openAiSurface } from "../../core/wire.js";
 import type { Message } from "../../core/provider.js";
 import { streamChat } from "../../serve.js";
 import { handle } from "../../worker.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import { InProcessLeases } from "../support/in-process-leases.js";
 
 const exporter = new InMemorySpanExporter();
