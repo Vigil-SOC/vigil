@@ -72,7 +72,7 @@ describe("resolving a run", () => {
   it("lets an explicit arch path override the registry's default", async () => {
     const job = startJob();
     job.request.arch = join(import.meta.dirname, "..", "..", "plugins", "hunt", "plugin.yaml");
-    expect((await resolveSpec(job)).dispatch.max_workers).toBe(4);
+    expect((await resolveSpec(job)).allowance).toEqual({ turns_per_iteration: 6, calls_per_iteration: 60 });
   });
 
   // Per-run, so it rides the job rather than the playbook the reference names --
@@ -112,12 +112,11 @@ describe("the arch a run started under is journaled", () => {
     expect(opened?.arch).toBe("hunt");
     // The turn count is the one that binds; max_calls is a backstop the hunt
     // raises off it, so this asserts the relationship rather than the arithmetic
-    // -- the multiplier is a property of this arch's fan-out, not of the budget.
+    // -- the multiplier is the plugin's allowance, not a property of the budget.
     // Cast because the harness's budget type has no turn count -- that is the
     // whole point of the split, and the journaled spec carries the hunt's.
     const budgets = opened?.budgets as unknown as { max_iterations: number; max_calls: number; max_cost_usd: number };
-    // A hunt runs as one agent doing its workers' querying itself, so its turn budget
-    // is the iteration budget times the fan-out it replaces: 8 x (4 workers + 2).
+    // The turn budget is the iteration budget times the plugin's allowance: 8 x 6.
     expect(budgets.max_iterations).toBe(48);
     expect(budgets.max_calls).toBeGreaterThan(budgets.max_iterations);
     expect(budgets.max_cost_usd).toBe(5);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
 import { InProcessState } from "../../core/state.js";
-import { DEFAULT_BUDGETS, DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
+import { DEFAULT_BUDGETS, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
 import { composeProjection } from "../../plugins/compose/projection.js";
 import { runCompose } from "../../plugins/compose/workflow.js";
 import type { Mirror, TerminalResult } from "../../plugins/compose/mirror.js";
@@ -32,8 +32,7 @@ function composeSpecFor(): RunSpec {
     narrative: "",
     prompt: "",
     phases: [{ id: "only", agent: "reporter", name: "Report", instructions: "report", approval_required: false, tools: [], prompt: "" }],
-    roles: { workers: {} },
-    dispatch: DEFAULT_DISPATCH,
+    roles: {},
     digest: {},
   };
 }

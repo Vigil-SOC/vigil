@@ -23,7 +23,7 @@ import type { Message } from "./provider.js";
 import { registryOf, type Registry } from "./registry.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
-import type { RunSpec, ToolSpec } from "./spec.js";
+import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
@@ -185,8 +185,7 @@ export function pluginGrants(
 
 // Needs this deployment answers with nothing. Declaration order, so a replay reads the same.
 export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[]): string[] {
-  const provided = new Set(tools.map((tool) => tool["provides"]).filter((one): one is string => typeof one === "string"));
-  return plugin.needs.filter((need) => need !== "*" && !provided.has(need));
+  return unboundCapabilities(plugin.needs, tools);
 }
 
 // Progressive disclosure: the system prompt carries each skill's name and one
@@ -621,8 +620,8 @@ export function systemOf(plugin: PluginManifest): string {
   return [plugin.system.trim(), skills, record, finish].filter((part) => part !== "").join("\n\n");
 }
 
-// What the playbook told whoever runs it. The single agent is the run's lead and
-// its every worker, so it reads the prose written for each.
+// What the playbook told whoever runs it. The single agent is the run's lead, so it
+// reads the prose written for each role.
 export function directivesOf(spec: RunSpec): string {
   const held = spec.directives ?? {};
   const lines = Object.entries(held)

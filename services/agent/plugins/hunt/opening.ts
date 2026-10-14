@@ -80,6 +80,9 @@ export async function startHunt(
   // Defaults to "hunt" so every existing caller and test is unchanged. Adjudicate
   // passes its own kind so the ledger is not filed as a hunt.
   runKind: RunKind = "hunt",
+  // What the agent needs, as its plugin declares it: one nothing here answers is
+  // journalled as a blind spot.
+  needs: readonly string[] = [],
 ): Promise<Journal> {
   const now = new Date().toISOString();
   const huntId = newId("hunt");
@@ -170,7 +173,7 @@ export async function startHunt(
 
   // Journalled once at start, so a missing capability reaches the report as a blind
   // spot the verdicts count. resumeHunt seeds nothing, so a handover cannot re-declare.
-  const unbound = unboundCapabilities(spec.roles, spec.tools);
+  const unbound = unboundCapabilities(needs, spec.tools);
   for (const capability of unbound) {
     ledger.append({
       kind: "evidence",

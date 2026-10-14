@@ -27,7 +27,7 @@ And the five things a run needs to be trusted and learned from:
 
 A directory, `plugins/<id>/`, holding everything about one kind of run:
 
-- `plugin.yaml`: what the agent is, what it may use, how it ends (below), and the run's roles: what each may use, and for the hunt its critic and result shape. This is the arch layer of the arch · playbook · config spec; `plugins/kinds.ts` maps each run kind to its plugin and to the views below
+- `plugin.yaml`: what the agent is, what it may use, how it ends (below), and the run's roles: what each may use, and for the hunt its critic, the shape a finding takes (`finding`) and what an iteration may spend (`allowance`). This is the arch layer of the arch · playbook · config spec; `plugins/kinds.ts` maps each run kind to its plugin and to the views below
 - `hooks.ts`, optionally: code the kernel calls at its seams
 - the plugin's own domain: its ledger vocabulary, the console view (`view.ts`), memory distil and recall, and readers for ledgers an earlier engine wrote (`investigate/legacy/`, `hunt/projection.ts`)
 
