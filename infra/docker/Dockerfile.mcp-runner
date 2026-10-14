@@ -1,0 +1,97 @@
+# infra/docker/Dockerfile.mcp-runner
+# =============================================================================
+# MCP runner: a supervisor that starts catalog MCP servers, each under its own
+# uid, and serves them over MCP streamable HTTP.
+#
+# Final image runs:  python -m services.mcp_runner.main
+# Exposes port:      6991
+#
+# Runs as root on purpose: setpriv needs it to drop each child to its own uid.
+# Compose grants only SETUID, SETGID and KILL; the HOME dirs and the uid map
+# are created here, at build, so no CHOWN is needed at runtime.
+# =============================================================================
+
+ARG PYTHON_VERSION=3.12
+
+# ---------------------------------------------------------------------------
+# Node runtime and the catalog's npx connectors, as in Dockerfile.backend.
+# ---------------------------------------------------------------------------
+FROM node:22-slim AS mcp-node
+# npm's bundled tar unpacks every package below:
+# 10.9.9 bundles tar 7.5.22, past CVE-2026-59873 (fixed in 7.5.19).
+RUN npm install -g npm@10.9.9 && npm cache clean --force
+WORKDIR /opt/vigil/mcp/npm
+COPY infra/docker/mcp-packages/package.json infra/docker/mcp-packages/package-lock.json \
+     infra/docker/mcp-packages/.npmrc ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+# ---------------------------------------------------------------------------
+# Python dependencies
+# ---------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION}-slim AS python-deps
+
+WORKDIR /install
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.lock .
+RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
+
+# ---------------------------------------------------------------------------
+# Runtime
+# ---------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+ARG VIGIL_VERSION=
+LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
+
+# libpq5: psycopg imports through core.*. git: SentinelOne's uv tool installs
+# from its git tag. setpriv is util-linux, already in the slim image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpq5 git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=python-deps /install/deps /usr/local
+
+COPY --from=mcp-node /usr/local/bin/node /usr/local/bin/node
+COPY --from=mcp-node /opt/vigil/mcp/npm /opt/vigil/mcp/npm
+
+# Baked uvx connectors, as in Dockerfile.backend.
+COPY infra/docker/mcp-packages/uv-tools.txt /tmp/uv-tools.txt
+RUN grep -v '^#' /tmp/uv-tools.txt > /tmp/uv-tools.list \
+    && UV_TOOL_DIR=/opt/vigil/mcp/uv-tools \
+      UV_TOOL_BIN_DIR=/opt/vigil/mcp/uv-tools/.bin UV_PYTHON_DOWNLOADS=never \
+      UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=hardlink UV_COMPILE_BYTECODE=1 \
+      xargs -a /tmp/uv-tools.list -L1 uv tool install --python /usr/local/bin/python \
+    && rm -rf /tmp/uv-tools.txt /tmp/uv-tools.list /tmp/uv-cache
+
+# Root-owned and world-readable, so every server uid can read but not write it.
+COPY core/            ./core/
+COPY services/        ./services/
+COPY mcp-config.json  ./mcp-config.json
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# One HOME per server under /var/lib/vigil/mcp/<name>, owned by its uid, with
+# the name->uid map beside them. The security-detections volume mounts (ro) at
+# the backend's path, owned 1000:1000 as in Dockerfile.backend: a fresh named
+# volume takes the owner of whichever image mounts it first, and the backend
+# must be able to clone into it.
+RUN python -m services.mcp_runner.catalog /var/lib/vigil/mcp \
+    && mkdir -p /home/vigil/security-detections \
+    && chmod 0755 /home/vigil && chown 1000:1000 /home/vigil/security-detections
+
+# Every catalog entry the image claims to run must find its launcher; and the
+# check must not have created a secret store.
+RUN python -m core.integrations.mcp.verify_catalog && test ! -e /root/.vigil
+
+EXPOSE 6991
+
+CMD ["python", "-m", "services.mcp_runner.main"]
