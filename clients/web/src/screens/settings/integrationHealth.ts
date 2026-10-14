@@ -49,6 +49,8 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const isRunning = i.statuses[name] === 'running'
     const configured = integration ? i.enabledIntegrations.includes(integration.id) : false
     const isExtension = !!integration?.fields?.some((f) => f.name === 'connectorUrl')
+    // saving an extension does not switch it on, so a saved one counts as connected (shown Off)
+    const extConfigured = Boolean(isExtension && integration && i.integrations[integration.id]?.['connectorUrl'])
     const masterOn = configured && isEnabled
     const lastTest = integration ? i.lastTest[integration.id] : undefined
     const missing = i.missingCredentials[name] ?? []
@@ -61,7 +63,7 @@ export function buildRows(i: HealthInput): ServerRow[] {
       failedTest ? lastTest.error || 'Last test failed' : '',
     ].filter((n, idx, all) => n && all.indexOf(n) === idx && !(idx > 0 && repeatsMissing(n)))
     // a server nobody connected has no health to report
-    const connected = isEnabled || configured
+    const connected = isEnabled || configured || extConfigured
     const level: Level = !connected ? null : notes.length ? 'poor' : isRunning ? 'good' : null
     return {
       name,
@@ -70,12 +72,12 @@ export function buildRows(i: HealthInput): ServerRow[] {
       isRunning,
       configured,
       isExtension,
-      extConfigured: Boolean(isExtension && integration && i.integrations[integration.id]?.['connectorUrl']),
+      extConfigured,
       masterOn,
       masterMixed: isExtension && configured !== isEnabled,
       connected,
       level,
-      word: level ? '' : isEnabled ? 'Not running' : integration && !configured ? 'Not set up' : 'Off',
+      word: level ? '' : isEnabled ? 'Not running' : integration && !configured && !extConfigured ? 'Not set up' : 'Off',
       note: notes.join(' — '),
       lastTest,
     }
