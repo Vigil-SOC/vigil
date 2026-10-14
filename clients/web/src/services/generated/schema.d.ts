@@ -4220,10 +4220,20 @@ export interface paths {
          * Get Servers Status
          * @description Session state for every catalog server.
          *
-         *     ``status`` is ``running`` only while that server's persistent session is
-         *     connected. With no MCP client, every server is disconnected: the catalog
-         *     has no session state of its own. Dormant reconnect stays on
-         *     ``GET /connections/status``.
+         *     ``status`` is one of:
+         *
+         *     * ``running`` while that server's persistent session is connected;
+         *     * ``not_set_up`` while the install lacks what the server serves from
+         *       (security-detections before its rules are fetched). The row names the
+         *       reason and ``setup_action``, the one action that fixes it;
+         *     * ``on_demand`` when nothing has dialled the server yet and it connects on
+         *       its first call: every server with eager connect off, and one held back
+         *       for setup until this process next uses it (the fetch may have run in
+         *       another worker). Not down;
+         *     * ``disconnected`` otherwise. With no MCP client every server is: the
+         *       catalog has no session state of its own.
+         *
+         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
