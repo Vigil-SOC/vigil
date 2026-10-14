@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { sourceBadge } from '../../config/sourceBadges'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
 import { LATER_RELEASE } from '../../shared/later'
-import { STANCE_WORD, TIER_WORD, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
+import { STANCE_WORD, TIER_WORD, evidenceSource, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -47,8 +46,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
       })
       .join(' · '),
     links: row.bears_on.map((link) => link.relation),
-    // The system the rows came from, as the board names it; the hunt's domain word only when none is known.
-    source: row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system || DASH,
+    source: evidenceSource(row) || DASH,
     tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
     stance: stanceOn(row, against),
     by: workerAt(fold, row.iteration) ?? DASH,

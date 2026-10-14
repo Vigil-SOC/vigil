@@ -1,5 +1,6 @@
 // What the case page reads off GET /workflows/runs/{id}. Hunt-like runs arrive
 // under `hunt`; every other kind arrives under `projection`.
+import { sourceBadge } from '../../config/sourceBadges'
 
 export interface CallRow {
   question: string
@@ -29,6 +30,11 @@ export interface HypothesisRow {
   neither: number | null
   resolution_reason: string | null
   provenance: string
+}
+
+/** The system an evidence row's rows came from, as the board names it; the hunt's domain word only when none is known. One reading for the trail and the citation chips. */
+export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'>): string {
+  return row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system
 }
 
 interface EvidenceRow {
