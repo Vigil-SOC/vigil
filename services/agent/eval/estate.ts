@@ -1,9 +1,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { parse as parseYaml } from "yaml";
 
 // A labelled eval case and its estate: each call is answered from the case file (first
-// matching response, then the tool's default, then empty). Nothing reaches a real system.
+// matching response, then the tool's default, then empty). Telemetry is the exception: its
+// rows form one events table the call's SQL runs over. Nothing reaches a real system.
 
 // Typed structurally, so the same file drives the kernel and the engine it replaced.
 
@@ -15,10 +17,12 @@ export type Trap = "blind" | "injection" | "lookalike";
 
 export interface Response {
   // Every term must appear, case-insensitively, in the call's arguments. Absent
-  // matches any call: the tool's default.
+  // matches any call: the tool's default. On telemetry only a failure matches.
   match?: string[];
   rows?: unknown[];
   failure?: "timeout" | "unavailable" | "backend_error";
+  // Why it failed, when the estate knows: an invalid query.
+  detail?: string;
 }
 
 export interface EvalCase {
@@ -71,16 +75,49 @@ export interface DispatchLike {
   invoke(tool: ToolLike, args: Record<string, unknown>, signal?: AbortSignal): Promise<Result>;
 }
 
+// The telemetry tool, and the table its SQL is told it runs over.
+const TELEMETRY = "splunk_search";
+const COLUMNS = ["time", "host", "user", "source", "event", "detail"] as const;
+
+const matches = (response: Response, text: string) => (response.match ?? []).every((term) => text.includes(term.toLowerCase()));
+
 export function responseFor(one: EvalCase, toolId: string, args: Record<string, unknown>): Response {
   const text = JSON.stringify(args).toLowerCase();
   const responses = one.tools[toolId] ?? [];
-  const matched = responses.find((response) => response.match !== undefined && response.match.every((term) => text.includes(term.toLowerCase())));
+  if (toolId === TELEMETRY) {
+    // A source that is down stays down, whatever the query; otherwise the query's filters
+    // decide, so contradictory queries cannot return the same rows.
+    const failed = responses.find((response) => response.failure !== undefined && matches(response, text));
+    return failed ?? query(responses.flatMap((response) => response.rows ?? []), args["sql"]);
+  }
+  const matched = responses.find((response) => response.match !== undefined && matches(response, text));
   return matched ?? responses.find((response) => response.match === undefined) ?? { rows: [] };
+}
+
+// Runs one read-only query over a fresh in-memory events table holding the case's rows.
+function query(rows: readonly unknown[], sql: unknown): Response {
+  if (typeof sql !== "string" || !/^\s*(select|with)\b/i.test(sql)) {
+    return { failure: "backend_error", detail: "sql must be a single SELECT over the events table" };
+  }
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE events (${COLUMNS.join(", ")})`);
+    const insert = db.prepare(`INSERT INTO events VALUES (${COLUMNS.map(() => "?").join(", ")})`);
+    for (const row of rows) {
+      const record = row as Record<string, unknown>;
+      insert.run(...COLUMNS.map((column) => (record[column] === undefined || record[column] === null ? null : String(record[column]))));
+    }
+    return { rows: db.prepare(sql).all().map((row) => ({ ...row })) };
+  } catch (caught) {
+    return { failure: "backend_error", detail: `invalid query: ${caught instanceof Error ? caught.message : String(caught)}` };
+  } finally {
+    db.close();
+  }
 }
 
 export function resultOf(response: Response, toolId: string): Result {
   if (response.failure === "timeout") return { ok: false, failure: { kind: "timeout", timeoutMs: 15_000 } };
-  if (response.failure !== undefined) return { ok: false, failure: { kind: response.failure, detail: `${toolId} is not answering` } };
+  if (response.failure !== undefined) return { ok: false, failure: { kind: response.failure, detail: response.detail ?? `${toolId} is not answering` } };
   const rows = response.rows ?? [];
   return { ok: true, rows, rowCount: rows.length, capped: false, sourceSystem: toolId };
 }

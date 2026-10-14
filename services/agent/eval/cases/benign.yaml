@@ -189,7 +189,7 @@
     splunk_search:
       - match: [adm-user0260]
         rows:
-          - { time: "2026-10-08T09:00:00Z", source: ad, event: group_add, detail: "added by svc-idm (identity workflow) referencing AR-9921" }
+          - { time: "2026-10-08T09:00:00Z", source: ad, event: group_add, detail: "adm-user0260 added by svc-idm (identity workflow) referencing AR-9921" }
 
 - id: ben-10-phish-report-clicked-no-payload
   truth: benign

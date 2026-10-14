@@ -31,19 +31,37 @@ describe("the estate", () => {
     rationale: "r",
     tools: {
       splunk_search: [
-        { match: ["ws-1", "powershell"], rows: [{ hit: "both" }] },
-        { match: ["ws-1"], rows: [{ hit: "host" }] },
-        { failure: "timeout" },
+        { match: ["srv-db-02"], rows: [{ host: "srv-db-02", event: "network", detail: "BackupAgent.exe -> 192.0.2.50" }] },
+        { match: ["192.0.2.50"], rows: [{ source: "firewall", detail: "37 servers contact 192.0.2.50" }] },
       ],
+      lookup_indicators: [{ match: ["192.0.2.50"], rows: [{ verdict: "benign" }] }, { failure: "timeout" }],
     },
   };
+  const sql = (query: string, from = one) => responseFor(from, "splunk_search", { sql: query });
 
-  it("answers the first response whose every term is in the call, then the default", () => {
-    expect(responseFor(one, "splunk_search", { sql: "select * from events where host='WS-1' and detail like '%PowerShell%'" }).rows).toEqual([{ hit: "both" }]);
-    expect(responseFor(one, "splunk_search", { sql: "host = 'ws-1'" }).rows).toEqual([{ hit: "host" }]);
-    expect(responseFor(one, "splunk_search", { sql: "anything else" }).failure).toBe("timeout");
+  it("answers telemetry from the call's SQL, so contradictory filters cannot return the same rows", () => {
+    expect(sql("select host from events where host = 'srv-db-02'").rows).toEqual([{ host: "srv-db-02" }]);
+    expect(sql("select host, source from events where host <> 'srv-db-02' or host is null").rows).toEqual([{ host: null, source: "firewall" }]);
+    expect(sql("SELECT count(*) AS n FROM events WHERE detail LIKE '%192.0.2.50%'").rows).toEqual([{ n: 2 }]);
+    expect(sql("select * from events where host = 'ws-9'").rows).toEqual([]);
+    expect(sql("index=main host=srv-db-02")).toMatchObject({ failure: "backend_error" });
+    expect(sql("select * from proxy")).toMatchObject({ failure: "backend_error", detail: expect.stringContaining("no such table") });
+  });
+
+  it("keeps a telemetry failure failing whatever the query", () => {
+    const down: EvalCase = { ...one, tools: { splunk_search: [{ match: ["ws-1"], failure: "unavailable" }, { rows: [{ host: "ws-2" }] }] } };
+    expect(sql("select * from events where host = 'ws-1'", down).failure).toBe("unavailable");
+    expect(sql("select host from events", down).rows).toEqual([{ host: "ws-2" }]);
+    // A source down with no terms fails every query.
+    const dark: EvalCase = { ...one, tools: { splunk_search: [{ failure: "timeout" }] } };
+    expect(sql("select * from events", dark).failure).toBe("timeout");
+  });
+
+  it("answers other tools with the first response whose every term is in the call, then the default", () => {
+    expect(responseFor(one, "lookup_indicators", { values: ["192.0.2.50"] }).rows).toEqual([{ verdict: "benign" }]);
+    expect(responseFor(one, "lookup_indicators", { values: ["x"] }).failure).toBe("timeout");
     // A tool the case does not mention found nothing.
-    expect(responseFor(one, "lookup_indicators", { values: ["x"] })).toEqual({ rows: [] });
+    expect(responseFor(one, "search_findings", { query: "x" })).toEqual({ rows: [] });
   });
 
   it("answers in the engines' result shape, and leaves the engine's own tools to it", async () => {
@@ -53,9 +71,9 @@ describe("the estate", () => {
     const inner = { invoke: async () => ({ ok: true as const, rows: ["own"], rowCount: 1, capped: false, sourceSystem: "own" }) };
     const dispatch = estateDispatch(one, inner, seen);
     expect(await dispatch.invoke({ id: "load_skill", local: true }, {})).toMatchObject({ rows: ["own"] });
-    expect(await dispatch.invoke({ id: "splunk_search", local: false }, { sql: "ws-1" })).toMatchObject({ rows: [{ hit: "host" }] });
+    expect(await dispatch.invoke({ id: "lookup_indicators", local: false }, { values: ["192.0.2.50"] })).toMatchObject({ rows: [{ verdict: "benign" }] });
     // Only estate calls are counted.
-    expect(seen).toEqual([{ tool: "splunk_search", args: '{"sql":"ws-1"}' }]);
+    expect(seen).toEqual([{ tool: "lookup_indicators", args: '{"values":["192.0.2.50"]}' }]);
   });
 });
 

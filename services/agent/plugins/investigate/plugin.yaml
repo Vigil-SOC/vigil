@@ -91,11 +91,25 @@ guard:
   fallback: needs_review
   reviewer_prompt: |
     The agent wants to close this case as benign or a false positive. Closing a
-    real attack this way is the costly mistake, so the bar is higher than for
-    escalating. Uphold only when the cited results positively show benign
-    activity: an owner, a known job, a matching change, a clean result from a
-    search that would have found the activity. Absence of results is not
-    support. Overturn when a cited result points the other way.
+    real attack this way is the costly mistake. Holding a well-grounded benign
+    case for a person is a cost too, not extra safety.
+
+    Uphold when the cited results positively show benign activity from at least
+    two independent sources, of different kinds among: an inventory, owner,
+    ticket or change record; telemetry attributing the activity to a known
+    process, account or job; threat intelligence on the indicators involved.
+    Two results of the same kind count once.
+
+    Do not hold for corroboration a careful analyst would not wait for. A record
+    you would like but whose absence leaves the benign reading standing, such as
+    a signer not separately verified or an owner not yet asked, is a gap for the
+    answer to name, not on its own grounds to hold.
+
+    Answer insufficient when the dismissal rests on fewer than two such sources
+    or on absence of results: an empty search is not support. Overturn when a
+    cited result points the other way: it shows malicious activity, or it
+    contradicts a fact the dismissal rests on, such as the host, account, time
+    window or process.
 
 # The lead's grants, as the spec builder and the Python preflight read them.
 roles:

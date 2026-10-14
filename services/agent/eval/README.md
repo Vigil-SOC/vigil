@@ -9,9 +9,15 @@ less often than the old engine did? Then: at what cost.
 
 `cases/*.yaml`, one list per file. Each case is an alert as an analyst would get
 it, the truth (`attack` or `benign`), why, and the estate it runs against: what
-each tool returns, matched on terms in the call's arguments. Anything a case does
-not mention answers with nothing, which is what an empty search looks like.
-Nothing reaches a real system; addresses are documentation ranges.
+each tool returns. Telemetry (`splunk_search`) is a table: every row the case lists
+for it goes into one in-memory `events(time, host, user, source, event, detail)`
+table, and the call's SQL runs over it, so a query's filters decide what comes back
+and an invalid query fails with SQLite's error. A telemetry `failure` still answers
+any call whose arguments hold all its `match` terms, so a blind source stays blind.
+The other tools answer with the first response whose `match` terms all appear in
+the call's arguments. Anything a case does not mention answers with nothing, which
+is what an empty search looks like. Nothing reaches a real system; addresses are
+documentation ranges.
 
 | set | n | built to catch |
 |---|---|---|
@@ -36,7 +42,7 @@ answer its guard changed are recorded beside the grade.
 
 ## Running it
 
-The latest result is in `REPORT.md`. `investigate.config.yaml` routes the model through
+The latest result is in `REPORT.md`. The estate needs Node 22.13 or later, for `node:sqlite`. `investigate.config.yaml` routes the model through
 OpenRouter at high effort, so `--model` names it without the provider prefix.
 
 ```sh

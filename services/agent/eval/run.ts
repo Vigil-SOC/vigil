@@ -168,13 +168,15 @@ interface Engine {
 async function loadEngine(): Promise<Engine> {
   const at = (path: string) => import(pathToFileURL(join(ENGINE, path)).href);
   const [worker, harness, state, leases, memory] = await Promise.all([at("worker.ts"), at("harness.ts"), at("core/state.ts"), at("core/leases.ts"), at("core/memory.ts")]);
+  // Later checkouts keep the in-process leases with the test doubles.
+  const InProcessLeases = leases.InProcessLeases ?? (await at("tests/support/in-process-leases.ts")).InProcessLeases;
   const { execSync } = await import("node:child_process");
   const commit = execSync("git rev-parse --short HEAD", { cwd: ENGINE }).toString().trim();
   return {
     advance: worker.advance,
     harnessFor: harness.harnessFor,
     InProcessState: state.InProcessState,
-    InProcessLeases: leases.InProcessLeases,
+    InProcessLeases,
     nullMemory: memory.nullMemory,
     commit,
   };
