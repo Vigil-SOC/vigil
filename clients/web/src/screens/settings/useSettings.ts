@@ -465,6 +465,11 @@ export function useOrchestrator() {
   const save = useCallback(async (next: OrchestratorConfig) => {
     const res = await configApi.setOrchestrator(next)
     notifyAutonomyChanged()
+    // refresh the status banner in place: no loading phase, no reset of unsaved edits
+    orchestratorApi
+      .getStatus()
+      .then((r) => setStatus((r.data as OrchestratorStatus | null) ?? null))
+      .catch(() => {})
     return res
   }, [])
   const purgeAll = useCallback(
