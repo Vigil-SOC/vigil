@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
@@ -18,6 +17,7 @@ from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
 from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
+from core.workflows.handoff_cases import handoff_case_id
 from core.workflows.workflow_run_service import WorkflowRunService
 
 router = APIRouter()
@@ -354,21 +354,9 @@ def _record_report(case_id: str, run_id: str, update: TerminalUpdate) -> None:
         )
 
 
-# The Vigil case a handoff opens, named for the handoff rather than for the moment
-# it arrived. Derived rather than looked up because there is nothing to look it up
-# by: create_case mints its own id, so a handoff arriving twice -- pushed the moment
-# the hunt journals it, then again on the terminal that re-carries it -- would open
-# two cases with nothing able to tell they are the same escalation. No date in the
-# key, so two arrivals either side of midnight still land on one case.
-#
-# 16 hex characters, not 8. A collision here does not merely reuse an id: the second
-# escalation finds the first one's case already open and returns, so its case file is
-# discarded with nothing said. 32 bits makes that a coin flip at seventy-odd thousand
-# escalations; 64 makes it unreachable, and cases.case_id is String(50) against the
-# 29 this spends, so the width is free.
+# The Vigil case a handoff opens (see handoff_cases), so the run page can name it too.
 def _handoff_case_id(source_run_id: str, handoff: TerminalHandoff) -> str:
-    digest = hashlib.sha256(f"{source_run_id}:{handoff.case_id}".encode()).hexdigest()
-    return f"case-handoff-{digest[:16]}"
+    return handoff_case_id(source_run_id, handoff.case_id)
 
 
 def _case_exists(data: Any, case_id: str) -> bool:
