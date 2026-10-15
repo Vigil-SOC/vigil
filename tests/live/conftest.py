@@ -66,6 +66,7 @@ def pytest_runtest_makereport(item, call):
             "status": status,
             "detail": detail.removeprefix("Skipped: "),
             "duration_s": round(report.duration, 1),
+            "transport": getattr(item, "_live_transport", None),
         }
 
 
@@ -112,9 +113,12 @@ async def mcp_client(tmp_path, monkeypatch):
     An empty ``VIGIL_DIR``, because stored integration config outranks env: a
     developer's saved Splunk URL would otherwise win over the instance under test.
     """
+    from core.config import get_settings
     from tests.live.harness import build_client
 
     monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    # Settings hold MCP_RUNNER_URL; a probe fixture may have unset it.
+    get_settings.cache_clear()
     client = build_client()
     try:
         yield client

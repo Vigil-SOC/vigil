@@ -166,14 +166,6 @@ PROBES = [
     Probe("pagerduty", "get_user_data", {}, expect=_pagerduty_me),
     # Needs OKTA_DOMAIN and OKTA_API_TOKEN; the first uvx fetch clones and installs.
     Probe("okta", "list_okta_users", {"max_results": 1}, expect=_okta_users, timeout=120.0),
-    Probe(
-        "gcp-scc",
-        "top_vulnerability_findings",
-        {"project_id": os.environ.get("LIVE_GCP_SCC_PROJECT_ID", ""), "max_findings": 1},
-        expect=_scc_findings,
-        requires=("GOOGLE_APPLICATION_CREDENTIALS", "LIVE_GCP_SCC_PROJECT_ID"),
-        timeout=120.0,
-    ),
 ]
 
 
@@ -183,10 +175,39 @@ async def test_connector(probe, mcp_client, request):
 
 
 # ---------------------------------------------------------------------------
-# Cloudflare, in-repo. The server is a no-op unless the integration is enabled
-# in the integration config, and resolves its token and account from the
-# environment (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID). So the probe gives
-# the server a throwaway VIGIL_DIR whose config enables it, as Settings would.
+# File-based cloud credentials stay with stdio children. The ADC JSON that
+# google-github-actions/auth writes, and the AWS shared-credentials profile
+# below, are files on the job host that a runner child (its own uid and HOME)
+# cannot read; #2303 leaves file-based credentials out of the runner epic, so
+# these two run as stdio children and the matrix shows them as `stdio`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stdio_only(monkeypatch):
+    monkeypatch.delenv("MCP_RUNNER_URL", raising=False)
+
+
+GCP_SCC = Probe(
+    "gcp-scc",
+    "top_vulnerability_findings",
+    {"project_id": os.environ.get("LIVE_GCP_SCC_PROJECT_ID", ""), "max_findings": 1},
+    expect=_scc_findings,
+    requires=("GOOGLE_APPLICATION_CREDENTIALS", "LIVE_GCP_SCC_PROJECT_ID"),
+    timeout=120.0,
+)
+
+
+@pytest.mark.parametrize("probe", [GCP_SCC], ids=repr)
+async def test_gcp_scc(probe, stdio_only, mcp_client, request):
+    await check(probe, mcp_client, request)
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare, in-repo. The server resolves its token and account from the
+# environment (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID). The probe still
+# gives this process a throwaway VIGIL_DIR whose config enables it, as Settings
+# would: resolve() runs here and pushes what it finds to the server.
 #
 # cf_lookup_ip_threat is GET /accounts/{id}/firewall/access_rules/rules. It is
 # read-only and needs the token's "Account Firewall Access Rules: Read"
@@ -267,5 +288,5 @@ def aws_profile(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("probe", [AWS_SECURITY], ids=repr)
-async def test_aws_security(probe, aws_profile, mcp_client, request):
+async def test_aws_security(probe, stdio_only, aws_profile, mcp_client, request):
     await check(probe, mcp_client, request)

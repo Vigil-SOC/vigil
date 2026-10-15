@@ -211,7 +211,9 @@
         "CRIBL_BASE_URL": "${CRIBL_BASE_URL}",
         "CRIBL_AUTH_TYPE": "${CRIBL_AUTH_TYPE:-cloud}",
         "CRIBL_CLIENT_ID": "${CRIBL_CLIENT_ID}",
-        "CRIBL_CLIENT_SECRET": "${CRIBL_CLIENT_SECRET}"
+        "CRIBL_CLIENT_SECRET": "${CRIBL_CLIENT_SECRET}",
+        "CRIBL_USERNAME": "${CRIBL_USERNAME:-}",
+        "CRIBL_PASSWORD": "${CRIBL_PASSWORD:-}"
       }
     },
 
@@ -346,7 +348,7 @@
       "args": ["core/integrations/cloudflare/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "Cloudflare WAF, Zero Trust Gateway, and Access response actions plus read-only IP/domain threat lookups. Configure api_token (and optional account_id, zone_id) in Settings → Integrations. Tools are no-ops until the integration is enabled.",
+        "_setup_note": "Cloudflare WAF, Zero Trust Gateway, and Access response actions plus read-only IP/domain threat lookups. Configure api_token (and optional account_id, zone_id) in Settings → Integrations. Tools are no-ops until an api_token is configured.",
         "_note": "Cloudforce One threat-intel feeds are ingested separately by daemon/threat_feed_poller.py and enrich findings via daemon/processor.py — no MCP tool surface required for v1."
       }
     }
