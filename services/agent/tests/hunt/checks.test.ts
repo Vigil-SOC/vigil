@@ -86,4 +86,18 @@ describe("a record's values checked against the result it cites", () => {
     // An integer one off is still a difference: rounding never moves a whole number.
     expect(found["conn_count"]!.status).toBe("differs");
   });
+
+  it("takes a number with its fraction cut off as a match: an epoch written without its milliseconds", () => {
+    const r8 = {
+      ...r6,
+      ref: "r8",
+      result: ['<vigil:tool_result tool="splunk_execute" ref="r8">', "1 row(s) from splunk", JSON.stringify([{ dest_ip: "45.77.53.176", first: "1534759305.832", last: "1534766375.226" }]), "</vigil:tool_result>"].join("\n"),
+    } as CallPayload;
+    const found = Object.fromEntries(checkValues({ dest_ip: "45.77.53.176", first: 1534759305, last: 1534766375 }, [r8]).map((check) => [check.field, check]));
+    expect(found["first"]).toMatchObject({ status: "match", rounded: true });
+    expect(found["last"]).toMatchObject({ status: "match", rounded: true });
+    // Neither cut nor rounded: still a difference.
+    const off = checkValues({ dest_ip: "45.77.53.176", first: 1534759307 }, [r8]).find((check) => check.field === "first");
+    expect(off?.status).toBe("differs");
+  });
 });
