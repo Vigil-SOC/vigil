@@ -24,6 +24,7 @@ import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
 import { usePendingApprovals } from '../screens/decisions/useDecisions'
+import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
 import type { ConsoleScreenGoOptions, ConsoleScreenProps, SettingsSectionKey } from '../shared/types'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
@@ -339,17 +340,22 @@ function SocConsoleInner() {
 
   useEffect(() => {
     let live = true
-    configApi
-      .getAutonomy()
-      .then((res) => {
-        if (!live) return
-        const auto = Boolean(res.data?.auto_response_enabled)
-        const force = Boolean(res.data?.force_manual_approval)
-        setAssist(force || !auto)
-      })
-      .catch(() => {})
+    const load = () => {
+      configApi
+        .getAutonomy()
+        .then((res) => {
+          if (!live) return
+          const auto = Boolean(res.data?.auto_response_enabled)
+          const force = Boolean(res.data?.force_manual_approval)
+          setAssist(force || !auto)
+        })
+        .catch(() => {})
+    }
+    load()
+    window.addEventListener(AUTONOMY_CHANGED, load)
     return () => {
       live = false
+      window.removeEventListener(AUTONOMY_CHANGED, load)
     }
   }, [])
 

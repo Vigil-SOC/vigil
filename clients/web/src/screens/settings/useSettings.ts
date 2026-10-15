@@ -462,7 +462,11 @@ export function useOrchestrator() {
     }
   }, [reloadKey])
 
-  const save = useCallback((next: OrchestratorConfig) => configApi.setOrchestrator(next), [])
+  const save = useCallback(async (next: OrchestratorConfig) => {
+    const res = await configApi.setOrchestrator(next)
+    notifyAutonomyChanged()
+    return res
+  }, [])
   const purgeAll = useCallback(
     () => orchestratorApi.purgeAll().then((res) => (res.data?.deleted ?? 0) as number),
     [],
@@ -470,6 +474,11 @@ export function useOrchestrator() {
 
   return { config, setConfig, defaults, bounds, profiles, status, phase, reload, save, purgeAll }
 }
+
+export const AUTONOMY_CHANGED = 'vigil:autonomy-changed'
+
+/** Tells the shell to re-read autonomy after a save on the Limits & autonomy screen. */
+export const notifyAutonomyChanged = () => window.dispatchEvent(new Event(AUTONOMY_CHANGED))
 
 export function useForceManualApproval() {
   const [state, setState] = useState<ForceManualApproval>({
@@ -509,6 +518,7 @@ export function useForceManualApproval() {
       environment_wins: Boolean(row.environment_wins),
     }
     setState(next)
+    notifyAutonomyChanged()
     return next
   }, [])
 
