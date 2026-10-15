@@ -89,3 +89,11 @@ export function healthServer(ready: Ready): Server {
 export function healthPort(): number {
   return Number(process.env["AGENT_HEALTH_PORT"] ?? 6990);
 }
+
+// Interface the agent listeners bind to. Unset keeps all interfaces, which the
+// Compose and Helm deployments need for cross-container probes; a host-native
+// start sets it to loopback.
+export function agentBindHost(): string | undefined {
+  const host = process.env["AGENT_BIND_HOST"]?.trim();
+  return host ? host : undefined;
+}
