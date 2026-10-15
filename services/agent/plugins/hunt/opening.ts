@@ -7,7 +7,7 @@ import { newId } from "./ids.js";
 import { Journal, type HuntKinds } from "./journal.js";
 import type { DirectiveQueue } from "./ports.js";
 import { narrativeOf } from "./render.js";
-import { DEPLOYMENT_GAP_PROVENANCE } from "./strength.js";
+import { DEPLOYMENT_GAP_PROVENANCE, unboundInWords } from "./strength.js";
 import type { HuntState } from "./types.js";
 
 // How a hunt opens and is picked back up, and the names its record is written in, so
@@ -179,7 +179,7 @@ export async function startHunt(
         dispatch_id: null,
         iteration: 0,
         source_system: DEPLOYMENT_SOURCE,
-        summary: `no tool in this deployment answers ${capability}`,
+        summary: unboundInWords(capability),
         payload: { capability, hypothesis_id: null },
         salience: "notable",
         why_notable: "the roles that need it run without it, so no query can close this",

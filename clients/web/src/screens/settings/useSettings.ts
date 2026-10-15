@@ -760,12 +760,19 @@ interface ToggleResult {
   error?: string | null
 }
 
+/** What a server waits on before it can start, and the action that provides it. */
+export interface McpSetup {
+  reason: string
+  action?: string
+}
+
 export function useMcpServers() {
   const [servers, setServers] = useState<string[]>([])
   const [statuses, setStatuses] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [missingCredentials, setMissingCredentials] = useState<Record<string, string[]>>({})
+  const [setups, setSetups] = useState<Record<string, McpSetup>>({})
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -782,6 +789,7 @@ export function useMcpServers() {
         const enabledDict: Record<string, boolean> = {}
         const errorDict: Record<string, string> = {}
         const missingDict: Record<string, string[]> = {}
+        const setupDict: Record<string, McpSetup> = {}
         if (Array.isArray(statusList)) {
           statusList.forEach((item: {
             name?: string
@@ -789,6 +797,8 @@ export function useMcpServers() {
             enabled?: boolean
             error?: string
             missing_credentials?: string[]
+            setup?: string
+            setup_action?: string
           }) => {
             if (item.name && item.status) statusDict[item.name] = item.status
             if (item.name) enabledDict[item.name] = !!item.enabled
@@ -796,12 +806,16 @@ export function useMcpServers() {
             if (item.name && item.missing_credentials?.length) {
               missingDict[item.name] = item.missing_credentials
             }
+            if (item.name && item.setup) {
+              setupDict[item.name] = { reason: item.setup, action: item.setup_action }
+            }
           })
         }
         setStatuses(statusDict)
         setEnabled(enabledDict)
         setErrors(errorDict)
         setMissingCredentials(missingDict)
+        setSetups(setupDict)
         setPhase('ready')
       })
       .catch((e) => {
@@ -848,7 +862,7 @@ export function useMcpServers() {
     [fetchAll],
   )
 
-  return { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled }
+  return { servers, statuses, enabled, errors, missingCredentials, setups, phase, error, reload, setServerEnabled }
 }
 
 export type CostTimeRange = '24h' | '7d' | '30d' | 'all'

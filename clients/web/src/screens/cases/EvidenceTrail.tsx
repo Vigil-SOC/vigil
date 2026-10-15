@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
 import { LATER_RELEASE } from '../../shared/later'
-import { STANCE_WORD, TIER_WORD, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
+import { STANCE_WORD, TIER_WORD, evidenceSource, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -46,7 +46,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
       })
       .join(' · '),
     links: row.bears_on.map((link) => link.relation),
-    source: row.source_system || DASH,
+    source: evidenceSource(row) || DASH,
     tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
     stance: stanceOn(row, against),
     by: workerAt(fold, row.iteration) ?? DASH,

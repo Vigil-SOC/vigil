@@ -861,10 +861,11 @@ export const detectionRulesApi = {
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
   
+  // A clone or pull runs for minutes (the server allows 300 s per repository).
   updateSource: (sourceId: string) =>
-    api.post(`/detection-rules/sources/${sourceId}/update`),
+    api.post(`/detection-rules/sources/${sourceId}/update`, undefined, { timeout: 0 }),
   
-  updateAll: () => api.post('/detection-rules/update-all'),
+  updateAll: () => api.post('/detection-rules/update-all', undefined, { timeout: 0 }),
   
   getStats: () => api.get('/detection-rules/stats'),
   

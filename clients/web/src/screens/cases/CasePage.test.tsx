@@ -400,6 +400,42 @@ describe('case page', () => {
     expect(act).toHaveAttribute('title', 'Coming in a later release')
   })
 
+  // #2287: the system the rows came from, not the hunt's domain word; the domain only when no system is known.
+  it('names the system each evidence row came from, with its tier beside it', async () => {
+    testState.cases = [{
+      case_id: 'case-origin',
+      title: 'Origin case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-origin')],
+    }]
+    const base = { gap_detail: null, is_gap: false, bears_on: [] }
+    testState.runs['run-origin'] = {
+      hunt: {
+        ...HUNT,
+        evidence_count: 3,
+        evidence: [
+          { ...base, evidence_id: 'o1', iteration: 2, source_system: 'process_lineage', summary: 'rundll32 loaded msupdate64.dll', source_tier: 'telemetry', origins: ['crowdstrike'] },
+          { ...base, evidence_id: 'o2', iteration: 3, source_system: 'proxy', summary: 'beacon and email', source_tier: 'telemetry', origins: ['zscaler', 'proofpoint'] },
+          { ...base, evidence_id: 'o3', iteration: 4, source_system: 'dns', summary: 'one lookup', source_tier: 'telemetry' },
+        ],
+      },
+    }
+    renderCase('case-origin')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
+    await waitFor(() => expect(row('o1')).not.toBeNull())
+    expect(within(row('o1')).getByText('CrowdStrike')).toBeInTheDocument()
+    expect(within(row('o1')).getByText('Telemetry')).toBeInTheDocument()
+    expect(within(row('o1')).queryByText('process_lineage')).not.toBeInTheDocument()
+    expect(within(row('o2')).getByText('Zscaler, Proofpoint')).toBeInTheDocument()
+    expect(within(row('o3')).getByText('dns')).toBeInTheDocument()
+  })
+
   it('totals the Evidence header over every row, against the hunt\'s own explanation, and pages older rows in', async () => {
     testState.cases = [{ ...openCase('case-157'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-157')] }]
     const newest = Array.from({ length: 50 }, (_, i) => ({

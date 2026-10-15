@@ -1,6 +1,6 @@
 import { basePath } from '../../config/basePath'
 import type { Citation } from '../../shell/citations'
-import type { RunFold } from './caseFold'
+import { evidenceSource, type RunFold } from './caseFold'
 import type { CaseLinkedFinding } from './useCases'
 
 /**
@@ -13,7 +13,7 @@ export function caseCitations(fold: RunFold | null, alerts: readonly CaseLinkedF
   if (fold?.kind === 'hunt') {
     for (const row of fold.evidence) {
       if (!row.evidence_id) continue
-      const source = row.is_gap ? 'blind spot' : row.source_system
+      const source = row.is_gap ? 'blind spot' : evidenceSource(row)
       out.push({
         id: row.evidence_id,
         kind: 'evidence',

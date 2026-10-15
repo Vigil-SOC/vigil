@@ -2,7 +2,7 @@
 
 One free account per connector below. Add the secrets to the repo (Settings, Secrets and variables, Actions). The workflow maps each `LIVE_*` secret to the env var in the "Env var" column. Until a secret exists its probe is skipped as not configured. Probes are in `test_free_tier.py`.
 
-CI runner needs: Node 20+ (`npx`), `uv` (`uvx`), and Docker (Okta only; run `docker pull` first so the image pull is not inside the probe timeout).
+CI runner needs: Node 20+ (`npx`), `uv` (`uvx`), and `git` (uvx installs from git tags).
 
 ## API-key connectors
 

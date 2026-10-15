@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from core.config import vigil_path
 from core.storage.models import CaseEvidence
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -22,15 +23,24 @@ logger = logging.getLogger(__name__)
 class CaseEvidenceService:
     """Service for managing case evidence."""
 
-    def __init__(self, storage_path: str = "./evidence"):
+    def __init__(self, storage_path: Optional[str] = None):
         """
         Initialize the evidence service.
 
         Args:
-            storage_path: Path to evidence storage directory
+            storage_path: Path to evidence storage directory. Defaults to
+                ``evidence`` in the State Directory, which every install shape
+                already makes writable and keeps: the compose volume, the
+                desktop app's, ``~/.vigil`` on a host. The working directory is
+                none of those -- in the image it is root-owned ``/app`` (#2280).
+
+        Touches no disk: reading a case's evidence is a database query, and a
+        store that cannot be created must not fail it. The write creates the
+        directories it needs.
         """
-        self.storage_path = Path(storage_path)
-        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self.storage_path = (
+            Path(storage_path) if storage_path else vigil_path("evidence")
+        )
 
     def calculate_file_hashes(self, file_path: Path) -> Dict[str, str]:
         """

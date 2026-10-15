@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import IntegrationsSection from './IntegrationsSection'
 import { tabFromQuery } from './integrationsData'
 import { IntegrationsStateProvider } from './IntegrationsState'
-import { configApi, mcpApi } from '../../services/api'
+import { configApi, detectionRulesApi, mcpApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   default: {},
@@ -17,6 +17,7 @@ vi.mock('../../services/api', () => ({
   detectionRulesApi: {
     listSources: vi.fn(() => Promise.resolve({ data: { sources: [] } })),
     getStats: vi.fn(() => Promise.resolve({ data: {} })),
+    updateAll: vi.fn(),
   },
   federationApi: {},
   ingestionApi: {},
@@ -153,6 +154,50 @@ describe('Integrations: Connected table', () => {
     fireEvent.click(row('Security Detections').getByRole('switch', { name: 'Toggle security-detections' }))
     await waitFor(() => expect(mcpApi.setServerEnabled).toHaveBeenLastCalledWith('security-detections', true))
     await waitFor(() => expect(row('Security Detections').getByText('Good')).toBeInTheDocument())
+  })
+
+  it('shows security-detections as not set up, with the fetch as its one action, until its rules exist', async () => {
+    let fetched = false
+    vi.mocked(mcpApi.listServers).mockResolvedValue({
+      data: { servers: ['github', 'security-detections', 'splunk-selfhosted'] },
+    } as never)
+    vi.mocked(mcpApi.getStatuses).mockImplementation((() =>
+      Promise.resolve({
+        data: {
+          statuses: [
+            { name: 'github', status: 'running', enabled: true },
+            fetched
+              ? { name: 'security-detections', status: 'running', enabled: true }
+              : {
+                  name: 'security-detections',
+                  status: 'not_set_up',
+                  enabled: true,
+                  setup: 'No detection rules have been fetched on this install yet.',
+                  setup_action: 'fetch_detection_rules',
+                },
+            { name: 'splunk-selfhosted', status: 'on_demand', enabled: true },
+          ],
+        },
+      })) as never)
+    vi.mocked(detectionRulesApi.updateAll).mockImplementation((() => {
+      fetched = true
+      return Promise.resolve({ data: { results: [{ success: true }, { success: true }] } })
+    }) as never)
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 3' })
+
+    const detections = row('Security Detections')
+    expect(detections.getByText('Not set up')).toBeInTheDocument()
+    expect(detections.getByText('No detection rules have been fetched on this install yet.')).toBeInTheDocument()
+    expect(row('Splunk (Self-Hosted)').getByText('Starts on first use')).toBeInTheDocument()
+    // waiting is not a fault: no Poor, no banner
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    fireEvent.click(detections.getByRole('button', { name: 'Fetch rules' }))
+    await waitFor(() => expect(detectionRulesApi.updateAll).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(row('Security Detections').getByText('Good')).toBeInTheDocument())
+    expect(row('Security Detections').queryByRole('button', { name: 'Fetch rules' })).not.toBeInTheDocument()
   })
 
   it('shows a dash, not a level, where nothing was ever tested', async () => {

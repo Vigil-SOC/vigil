@@ -9,7 +9,9 @@
 id: hunt
 description: Test a hunt's hypotheses against the estate's telemetry, to a supported verdict each.
 
-needs: [findings_search, telemetry_search, indicator_lookup, entity_recall]
+# get_finding opens one alert's raw record: a page of findings names each one's hosts
+# and users, and this is for the few worth reading in full.
+needs: [findings_search, get_finding, telemetry_search, indicator_lookup, entity_recall]
 
 # The record is required, and the hunt's own: link_evidence, propose_hypothesis
 # and open_question write the hunt's hypothesis, link and question events.

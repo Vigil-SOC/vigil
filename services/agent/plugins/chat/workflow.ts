@@ -69,6 +69,7 @@ export async function* runChat(harness: Harness, options: ChatOptions): AsyncGen
   }
 }
 
+// Prose only: what each answer read is on the ledger, and the kernel carries it (#2281).
 function messageOf(turn: Turn): Message {
   if (turn.role === "assistant") return { role: "assistant", content: turn.content, tool_calls: [] };
   return { role: "user", content: turn.content };

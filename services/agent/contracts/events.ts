@@ -218,6 +218,9 @@ export interface CallPayload {
   // stays the raw text, and the reader's findings it was rendered from.
   shown?: string;
   read?: unknown;
+  // In a conversation, the question it was made for, counted from 1. Each question
+  // restarts turn, so this is what files a call under the answer it grounded.
+  exchange?: number;
 }
 
 // The answer the run ends on, in the shape its plugin declared.

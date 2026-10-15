@@ -198,6 +198,9 @@ class MCPClient:
         # structured list of env var names when credentials are missing.
         self.last_errors: Dict[str, str] = {}
         self.last_missing_credentials: Dict[str, List[str]] = {}
+        # Servers held back because the install has not set them up (rules not
+        # fetched), keyed to the reason. Retried once that clears.
+        self.last_setup_required: Dict[str, str] = {}
 
     async def connect_to_server(
         self,
@@ -233,10 +236,13 @@ class MCPClient:
             self.last_errors: Dict[str, str] = {}
         if not hasattr(self, "last_missing_credentials"):
             self.last_missing_credentials: Dict[str, List[str]] = {}
+        if not hasattr(self, "last_setup_required"):
+            self.last_setup_required: Dict[str, str] = {}
         # Clear any stale state from a prior attempt so the UI always
         # reflects the most recent connect.
         self.last_errors.pop(server_name, None)
         self.last_missing_credentials.pop(server_name, None)
+        self.last_setup_required.pop(server_name, None)
 
         if not MCP_AVAILABLE:
             logger.error("MCP SDK not available")
@@ -261,6 +267,15 @@ class MCPClient:
             if self.persistent_sessions[server_name].is_connected:
                 logger.debug(f"Already connected to {server_name}")
                 return True
+
+        # Setup gate: a server with nothing to serve until the install fetches
+        # it (security-detections' rules) is not spawned. Like the credential
+        # gate below, this is a state to show, not an error to record.
+        needs = self.setup_required(server_name)
+        if needs:
+            self.last_setup_required[server_name] = needs
+            logger.info("MCP server %s not set up: %s", server_name, needs)
+            return False
 
         server = self.mcp_service.servers[server_name]
 
@@ -368,6 +383,28 @@ class MCPClient:
                 missing.append(var)
         return missing
 
+    def setup_required(self, server_name: str) -> Optional[str]:
+        """Why ``server_name`` is not set up yet, or None (see ``MCPService``)."""
+        check = getattr(self.mcp_service, "setup_required", None)
+        reason = check(server_name) if callable(check) else None
+        return reason if isinstance(reason, str) and reason else None
+
+    def was_dialled(self, server_name: str) -> bool:
+        """Whether this process has tried to connect ``server_name`` at all.
+
+        With eager connect off a server is only dialled on first use, so one
+        nothing has used yet is waiting, not down.
+        """
+        return (
+            server_name in self.persistent_sessions
+            or server_name in getattr(self, "last_errors", {})
+            or server_name in getattr(self, "last_missing_credentials", {})
+        )
+
+    def held_for_setup(self, server_name: str) -> bool:
+        """Whether the last connect of ``server_name`` stopped at the setup gate."""
+        return server_name in getattr(self, "last_setup_required", {})
+
     def get_missing_credentials(self, server_name: str) -> Optional[List[str]]:
         """Return the list of unset required env vars from the last connect."""
         return getattr(self, "last_missing_credentials", {}).get(server_name)
@@ -409,13 +446,16 @@ class MCPClient:
             name
             for name, missing in list(self.last_missing_credentials.items())
             if missing
-        ]
+        ] + list(getattr(self, "last_setup_required", {}))
         for server_name in candidates:
             server = self.mcp_service.servers.get(server_name)
             if server is None:
                 continue
-            # Cheap precheck — skip unless creds actually resolve now.
-            if self._missing_credentials_for(server):
+            # Cheap precheck — skip unless creds actually resolve now, and the
+            # install has set the server up.
+            if self._missing_credentials_for(server) or self.setup_required(
+                server_name
+            ):
                 continue
             # Rate-limit: don't retry the same server more than once
             # per _RETRY_MIN_INTERVAL_S seconds.
@@ -536,12 +576,17 @@ class MCPClient:
         if server_name not in self.persistent_sessions:
             logger.info(f"Creating persistent connection to {server_name}...")
             if not await self.connect_to_server(server_name, persistent=True):
+                needs = getattr(self, "last_setup_required", {}).get(server_name)
                 _err = {
                     "error": True,
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Failed to connect to server: {server_name}",
+                            "text": (
+                                f"{server_name} is not set up: {needs}"
+                                if needs
+                                else f"Failed to connect to server: {server_name}"
+                            ),
                         }
                     ],
                 }

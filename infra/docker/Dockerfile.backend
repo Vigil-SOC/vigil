@@ -150,13 +150,13 @@ COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
 # Declared intent. .dockerignore excludes *.md except this file.
 COPY --chown=vigil:vigil INTENT.md    ./INTENT.md
 COPY --chown=vigil:vigil mcp-config.json ./mcp-config.json
+# Operator password-reset link tool (docker exec deeptempo-backend python scripts/reset_password.py)
+COPY --chown=vigil:vigil scripts/reset_password.py ./scripts/reset_password.py
 
 # Built SPA — served by FastAPI StaticFiles (or nginx sidecar)
 COPY --from=web-builder --chown=vigil:vigil /build/web/build ./clients/web/build/
 
 # Writable dirs the app needs at runtime
-# security-detections: DetectionRulesService clones here, and compose mounts a
-# named volume on it, which comes up root-owned unless the image has the dir.
 RUN mkdir -p /app/data/investigations /home/vigil/.vigil /home/vigil/security-detections \
     && chown -R vigil:vigil /app/data /home/vigil
 

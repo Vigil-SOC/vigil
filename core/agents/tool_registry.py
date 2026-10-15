@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, username_has_permission
+from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -36,6 +37,9 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 Args = Dict[str, Any]
 
 
+# A page of findings is what a hunt groups alerts by, so each carries the hosts,
+# users and indicators it names (#2277), bounded; the raw record stays behind
+# get_finding, which a hunt opens only for the alerts worth reading in full.
 def _compact(finding: Args) -> Args:
     return {
         "finding_id": finding.get("finding_id"),
@@ -46,6 +50,7 @@ def _compact(finding: Args) -> Args:
         "timestamp": finding.get("timestamp"),
         "status": finding.get("status"),
         "summary": (finding.get("description") or "")[:200],
+        "entities": finding_entity_summary(finding.get("entity_context")),
     }
 
 

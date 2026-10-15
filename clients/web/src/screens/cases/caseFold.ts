@@ -1,5 +1,6 @@
 // What the case page reads off GET /workflows/runs/{id}. Hunt-like runs arrive
 // under `hunt`; every other kind arrives under `projection`.
+import { sourceBadge } from '../../config/sourceBadges'
 
 export interface CallRow {
   question: string
@@ -31,6 +32,11 @@ export interface HypothesisRow {
   provenance: string
 }
 
+/** The system an evidence row's rows came from, as the board names it; the hunt's domain word only when none is known. One reading for the trail and the citation chips. */
+export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'>): string {
+  return row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system
+}
+
 interface EvidenceRow {
   evidence_id: string
   iteration: number
@@ -40,6 +46,8 @@ interface EvidenceRow {
   gap_detail: string | null
   /** Stamped by the API on non-gap hunt rows; a display label, as configured now. */
   source_tier: string | null
+  /** The systems its rows came from (a cited alert's data_source, or the integration that answered); empty when none is known. */
+  origins: string[]
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
@@ -432,6 +440,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           is_gap: o.is_gap === true,
           gap_detail: typeof o.gap_detail === 'string' ? o.gap_detail : null,
           source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
+          origins: Array.isArray(o.origins) ? o.origins.filter((one): one is string => typeof one === 'string' && one !== '') : [],
           bears_on: bears,
         }]
       })

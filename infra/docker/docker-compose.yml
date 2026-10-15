@@ -220,11 +220,14 @@ services:
       # volume inherits that; a path the image does not create mounts as root.
       # Shared with soc-daemon and llm-worker, which read it via vigil_path().
       - vigil_home:/home/vigil/.vigil
+      # Detection rule repositories, fetched from Settings (security-detections
+      # stays "not set up" until they are). Outside the State Directory so the
+      # backups skip a few hundred MB anyone can fetch again; shared with every
+      # service that reads detection_sources.json, since one that finds the
+      # repos missing saves them as not cloned for all.
+      - detection_rules:/home/vigil/security-detections
       # The orchestrator and cases routers read the daemon's workdirs.
       - vigil_investigations:/app/data/investigations
-      # Detection rule clones (DetectionRulesService), read-only in mcp-runner.
-      # The image pre-creates this dir owned by 1000:1000, as for vigil_home.
-      - security_detections:/home/vigil/security-detections
     depends_on:
       postgres:
         condition: service_healthy
@@ -406,9 +409,10 @@ services:
       - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
       - "127.0.0.1:9091:9091"  # Health /health + /status (unauthenticated; host-local only)
     volumes:
-      # Same State Directory and workdirs as backend (see there).
+      # Same State Directory, workdirs and detection rules as backend (see there).
       - vigil_home:/home/vigil/.vigil
       - vigil_investigations:/app/data/investigations
+      - detection_rules:/home/vigil/security-detections
     depends_on:
       postgres:
         condition: service_healthy
@@ -469,8 +473,9 @@ services:
       - REQUESTS_CA_BUNDLE
       - NODE_EXTRA_CA_CERTS
     volumes:
-      # Same State Directory as backend (see there).
+      # Same State Directory and detection rules as backend (see there).
       - vigil_home:/home/vigil/.vigil
+      - detection_rules:/home/vigil/security-detections
     depends_on:
       postgres:
         condition: service_healthy
@@ -650,7 +655,8 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - security_detections:/home/vigil/security-detections:ro
+      # The backend's detection rules, read-only (see the backend's mount).
+      - detection_rules:/home/vigil/security-detections:ro
     restart: unless-stopped
     networks:
       - mcp-network
@@ -967,7 +973,7 @@ volumes:
     driver: local
   vigil_investigations:
     driver: local
-  security_detections:
+  detection_rules:
     driver: local
   grafana_data:
     driver: local

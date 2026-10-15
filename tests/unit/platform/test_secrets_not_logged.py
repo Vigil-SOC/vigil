@@ -52,7 +52,10 @@ def _client(user) -> TestClient:
 def _settings(monkeypatch, *, dev_mode: bool):
     real = email_service.get_settings()
     patched = SimpleNamespace(
-        dev_mode=dev_mode, smtp_from=real.smtp_from, vigil_frontend_url=""
+        dev_mode=dev_mode,
+        smtp_from=real.smtp_from,
+        vigil_frontend_url="",
+        vigil_email_backend="console",
     )
     monkeypatch.setattr(email_service, "get_settings", lambda: patched)
     monkeypatch.setattr(auth, "get_settings", lambda: patched)
