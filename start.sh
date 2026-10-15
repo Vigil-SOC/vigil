@@ -309,6 +309,9 @@ start_agent_layer() {
     scripts/agent_up.sh || echo "Warning: agent layer failed to start (workflow runs won't be picked up)."
 }
 
+# Outlasts the worker's own Redis connect retries (core/llm/gateway/gateway.py).
+WORKER_READY_TIMEOUT=120
+
 if [ "$DAEMON" -eq 0 ]; then
     # Foreground
     cleanup() {
@@ -319,7 +322,7 @@ if [ "$DAEMON" -eq 0 ]; then
         [ -f logs/agent-worker.pid ] && kill "$(cat logs/agent-worker.pid)" 2>/dev/null
         [ -f logs/agent-serve.pid ] && kill "$(cat logs/agent-serve.pid)" 2>/dev/null
         pkill -f "uvicorn services.api.main:app" 2>/dev/null
-        exit 0
+        exit "${STARTUP_FAILED:-0}"
     }
     trap cleanup INT TERM EXIT
 
@@ -340,6 +343,9 @@ if [ "$DAEMON" -eq 0 ]; then
 
     python3 -m services.worker > >(tee -ia "$LOGS_DIR/llm_worker.log") 2>&1 &
     WORKER_PID=$!
+    # Logged from on_startup, i.e. once the worker has connected to Redis.
+    wait_for_log_line "LLM worker" "$WORKER_PID" "$LOGS_DIR/llm_worker.log" \
+        "LLM worker started" "$WORKER_READY_TIMEOUT" || { STARTUP_FAILED=1; exit 1; }
 
     start_frontend
     start_agent_layer
@@ -376,12 +382,24 @@ else
 
     rotate_log logs/daemon.log
     nohup "${PWD}/venv/bin/python" services/daemon/main.py > logs/daemon.log 2>&1 &
-    echo $! > logs/daemon.pid
+    DAEMON_PID=$!
+    echo $DAEMON_PID > logs/daemon.pid
 
     # Started unconditionally, independent of orchestrator.settings (#581).
     rotate_log logs/llm_worker.log
     nohup "${PWD}/venv/bin/python" -m services.worker > logs/llm_worker.log 2>&1 &
-    echo $! > logs/llm_worker.pid
+    WORKER_PID=$!
+    echo $WORKER_PID > logs/llm_worker.pid
+
+    # Both start in parallel; without these checks a crash at startup (e.g. Redis
+    # not accepting connections yet) still ended in "Ready" (#2321).
+    if ! wait_for_log_line "SOC daemon" "$DAEMON_PID" logs/daemon.log \
+            "SOC Daemon fully operational" 60 \
+        || ! wait_for_log_line "LLM worker" "$WORKER_PID" logs/llm_worker.log \
+            "LLM worker started" "$WORKER_READY_TIMEOUT"; then
+        echo "Startup incomplete; stop the rest with ./shutdown_all.sh" >&2
+        exit 1
+    fi
 
     start_agent_layer
 

@@ -408,6 +408,25 @@ wait_for_url() {
     return 1
 }
 
+# --- Wait for a background process to log that it is ready ---
+# Succeeds once LOG contains LINE while PID is still alive; fails as soon as PID
+# exits, or after TIMEOUT seconds. On failure prints NAME and the log's tail.
+wait_for_log_line() {
+    local name="$1" pid="$2" log="$3" line="$4" timeout="${5:-60}" i=0
+    while [ $i -lt "$timeout" ]; do
+        kill -0 "$pid" 2>/dev/null || break
+        grep -qF "$line" "$log" 2>/dev/null && return 0
+        sleep 1; i=$((i + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "$name did not report ready within ${timeout}s. See $log:" >&2
+    else
+        echo "$name exited during startup. See $log:" >&2
+    fi
+    tail -n 20 "$log" >&2 2>/dev/null || true
+    return 1
+}
+
 # --- Ensure a docker service is running ---
 # Profiled services (splunk, kafka, observability...) need COMPOSE_PROFILES set
 # or `up` silently no-ops on them.
