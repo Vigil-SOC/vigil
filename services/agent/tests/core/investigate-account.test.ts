@@ -143,6 +143,15 @@ describe("what the record now says outright", () => {
     expect(headlineOf("The user ran tools, e.g. procdump, on the host. More.")).toBe("The user ran tools, e.g. procdump, on the host.");
   });
 
+  it("opens a listed or labelled summary on its first sentences, not on a list marker", () => {
+    const listed = "Findings:\n1. Phishing mail delivered a macro. 2. It ran.\n\nThe host beaconed.";
+    expect(headlineOf(listed)).toBe("Findings: Phishing mail delivered a macro.");
+    const narrated = (summary: string) =>
+      investigateAccount("run-5", ledger([{ kind: "conclusion", payload: { plugin: "investigate", value: { summary }, capped: false, turns: 1, cost_usd: 0 } }])).narrative;
+    expect(narrated(listed)).toEqual({ run_id: "run-5", summary: "Findings: Phishing mail delivered a macro. It ran.", what_happened: listed });
+    expect(narrated("CONFIRMED MALICIOUS — Credential theft. On ACCT-WS-007.")).toEqual({ run_id: "run-5", summary: "Credential theft. On ACCT-WS-007." });
+  });
+
   it("reads an older claim's side off its opening words", () => {
     const older = investigateAccount(
       "run-3",
