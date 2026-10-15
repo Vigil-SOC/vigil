@@ -54,18 +54,49 @@ def test_two_runs_of_one_kind_keep_every_item_by_run():
     assert [run.run_id for run in merged.runs] == ["inv-1", "inv-2"]
 
 
-def test_the_latest_decisive_run_sets_the_verdict():
-    decided = with_verdict(fixture("investigate-01c1d889.json", "inv-1"), "malicious")
-    unsure = with_verdict(fixture("investigate-01c1d889.json", "inv-2"), "inconclusive")
-    assert merge_accounts([decided, unsure]).verdict.run_id == "inv-1"
-    later = with_verdict(fixture("investigate-01c1d889.json", "inv-3"), "benign")
-    assert merge_accounts([decided, unsure, later]).verdict.run_id == "inv-3"
+def verdicts(*dispositions: str) -> list[CaseAccount]:
+    return [
+        with_verdict(fixture("investigate-01c1d889.json", f"inv-{at}"), disposition)
+        for at, disposition in enumerate(dispositions, start=1)
+    ]
 
 
-def test_with_no_decisive_run_the_latest_verdict_stands():
-    first = with_verdict(fixture("investigate-01c1d889.json", "inv-1"), "needs_review")
-    second = with_verdict(fixture("investigate-01c1d889.json", "inv-2"), "inconclusive")
-    assert merge_accounts([first, second]).verdict.run_id == "inv-2"
+def test_the_latest_run_speaks_for_the_case():
+    assert merge_accounts(verdicts("inconclusive", "malicious")).verdict.run_id == "inv-2"
+    assert merge_accounts(verdicts("needs_review", "inconclusive")).verdict.run_id == "inv-2"
+    assert merge_accounts(verdicts("benign", "benign")).verdict.disposition == "benign"
+
+
+def test_an_attack_is_not_outranked_by_a_run_that_could_not_settle_it():
+    verdict = merge_accounts(verdicts("malicious", "inconclusive")).verdict
+    assert (verdict.run_id, verdict.disposition) == ("inv-1", "malicious")
+
+
+@pytest.mark.parametrize(
+    "dispositions, expected",
+    [
+        # An older dismissal never hides a newer hold or a newer lean.
+        (("benign", "needs_review"), ("inv-2", "needs_review")),
+        (("benign", "suspicious"), ("inv-2", "suspicious")),
+        # A newer dismissal never silently overrules an older attack.
+        (("malicious", "benign"), ("inv-2", "needs_review")),
+        (("suspicious", "false_positive"), ("inv-2", "needs_review")),
+    ],
+)
+def test_a_dismissal_hides_no_objection(dispositions, expected):
+    verdict = merge_accounts(verdicts(*dispositions)).verdict
+    assert (verdict.run_id, verdict.disposition) == expected
+
+
+def test_a_held_dismissal_names_who_objects():
+    verdict = merge_accounts(verdicts("malicious", "benign")).verdict
+    assert verdict.basis == "Run inv-2 says benign, but run inv-1 says malicious."
+
+
+def test_a_dismissal_with_a_run_unread_is_held_for_a_person():
+    verdict = merge_accounts(verdicts("benign"), unread=["hunt-9"]).verdict
+    assert verdict.disposition == "needs_review"
+    assert "run hunt-9 could not be read" in verdict.basis
 
 
 def test_the_narrative_is_the_verdicts_runs():
@@ -88,7 +119,7 @@ def test_the_timeline_is_in_time_order_across_runs():
     rca = fixture("root-cause-v2-nightshift.json")
     investigation = fixture("investigate-01c1d889.json")
     merged = merge_accounts([rca, investigation])
-    timed = [entry.at for entry in merged.timeline if entry.at is not None]
+    timed = [case_account._instant(entry.at) for entry in merged.timeline if entry.at is not None]
     assert timed == sorted(timed)
     # An entry with no time stays beside the entries of its own run around it.
     untimed = [entry for entry in merged.timeline if entry.at is None]
@@ -117,8 +148,47 @@ def test_every_fixture_merges_into_a_valid_account():
     assert len(held["runs"]) == len(accounts)
 
 
+def timeline(run_id: str, *ats: str | None) -> CaseAccount:
+    entries = [
+        {"run_id": run_id, "text": f"{run_id}-{at}", **({} if when is None else {"at": when})}
+        for at, when in enumerate(ats)
+    ]
+    return CaseAccount.model_validate(
+        {"schema_version": 1, "runs": [{"run_id": run_id, "run_kind": "investigate"}], "timeline": entries}
+    )
+
+
+def texts(account: CaseAccount) -> list[str]:
+    return [entry.text for entry in account.timeline]
+
+
+def test_the_timeline_orders_by_instant_not_by_text():
+    # 11:00+02:00 is 09:00Z, before 10:00Z, though it sorts after it as text.
+    merged = merge_accounts(
+        [timeline("a", "2026-10-15T10:00:00Z"), timeline("b", "2026-10-15T11:00:00+02:00", "2026-10-16")]
+    )
+    assert texts(merged) == ["b-0", "a-0", "b-1"]
+
+
+def test_an_untimed_entry_stays_beside_its_own_runs_entries():
+    merged = merge_accounts(
+        [timeline("a", "2026-10-15T09:00:00Z"), timeline("b", None, "2026-10-15T10:00:00Z"), timeline("c", None)]
+    )
+    # b's untimed first entry takes its run's next time; c gave none and goes last.
+    assert texts(merged) == ["a-0", "b-0", "b-1", "c-0"]
+
+
+def test_a_cancelled_read_is_not_an_unread_run(monkeypatch):
+    async def read(run_id: str):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(case_account, "read_account", read)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(read_case_account(["inv-1"]))
+
+
 def test_reading_a_case_names_the_runs_it_could_not_read(monkeypatch):
-    accounts = {"inv-1": fixture("investigate-01c1d889.json", "inv-1"), "chat-1": None}
+    accounts = {"inv-1": verdicts("benign")[0], "chat-1": None}
 
     async def read(run_id: str):
         if run_id == "broken":
@@ -129,3 +199,6 @@ def test_reading_a_case_names_the_runs_it_could_not_read(monkeypatch):
     result = asyncio.run(read_case_account(["inv-1", "broken", "chat-1"]))
     assert result.unread == ["broken"]
     assert [run.run_id for run in result.account.runs] == ["inv-1"]
+    # A dismissal reached without a run it could not read is no dismissal.
+    assert result.account.verdict.disposition == "needs_review"
+    assert result.account.verdict.basis == "Run inv-1 says benign, but run broken could not be read."
