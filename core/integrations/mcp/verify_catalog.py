@@ -10,6 +10,7 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
+
 def check_catalog(root: Path) -> dict:
     from core.integrations.mcp.service import MCPService
 

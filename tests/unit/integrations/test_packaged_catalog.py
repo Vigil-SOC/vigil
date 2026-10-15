@@ -100,7 +100,9 @@ def test_git_tool_with_python_exe_launches_its_venv(tmp_path, monkeypatch):
     info.mkdir(parents=True)
     (info / "METADATA").write_text("Name: okta-mcp\nVersion: 0.1\n")
     (info / "direct_url.json").write_text(
-        json.dumps({"url": f"{url}.git", "vcs_info": {"requested_revision": "02.0-beta"}})
+        json.dumps(
+            {"url": f"{url}.git", "vcs_info": {"requested_revision": "02.0-beta"}}
+        )
     )
     args = ["--from", f"git+{url}.git@02.0-beta", "python", "-m", "okta_mcp.server"]
     assert packaged.installed_launch("uvx", args) == (
