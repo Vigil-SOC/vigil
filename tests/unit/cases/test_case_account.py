@@ -259,3 +259,16 @@ def test_an_investigations_own_run_row_dates_it(monkeypatch):
         rows=[{"run_id": own, "started_at": _at(7), "finished_at": _at(12)}],
     )
     assert case_account.case_run_ids(None, "case-1") == ["hunt-1", own]
+
+
+def test_a_run_with_no_time_yet_does_not_fail_the_read(monkeypatch):
+    _case(
+        monkeypatch,
+        started=[
+            {"run_id": "hunt-1", "started_at": _at(8), "finished_at": _at(9)},
+            {"run_id": "queued-1", "started_at": None, "finished_at": None},
+        ],
+        investigations=[{"investigation_id": "inv-b", "created_at": None, "started_at": None, "completed_at": None}],
+    )
+    ids = case_account.case_run_ids(None, "case-1")
+    assert ids[-1] == "hunt-1" and set(ids[:2]) == {"queued-1", case_account.run_id_for("inv-b")}
