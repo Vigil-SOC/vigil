@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from services.daemon.config import ProcessingConfig
-from services.daemon.processor import FindingProcessor
+from services.daemon.processor import TRIAGE_MAX_TOKENS, FindingProcessor
 from services.daemon.responder import AutonomousResponder
 
 
@@ -279,7 +279,11 @@ class TestTriageProviderResolution:
         ):
             content, error = asyncio.run(processor._get_ai_triage("p"))
         gateway.submit.assert_awaited_once_with(
-            "p", provider_id="openai-1", model="gpt-4o", timeout=60
+            "p",
+            provider_id="openai-1",
+            model="gpt-4o",
+            timeout=60,
+            max_tokens=TRIAGE_MAX_TOKENS,
         )
         assert content is None and error == "AuthenticationError: bad key"
 
@@ -318,7 +322,7 @@ class TestTriageTimeout:
 
     @classmethod
     def _run(cls, triage_timeout):
-        async def slow_submit(prompt, *, provider_id, model, timeout):
+        async def slow_submit(prompt, *, provider_id, model, timeout, max_tokens):
             # Mirrors arq's job.result(timeout=...): the gateway's own clock.
             await asyncio.wait_for(asyncio.sleep(cls.ROUND_TRIP), timeout)
             return {"content": "SEVERITY: high\nREASONING: slow but fine"}

@@ -46,6 +46,11 @@ TRIAGE_KEYS = (
     "REASONING",
 )
 
+# Output ceiling for the triage reply. The reply is a few lines, but thinking
+# models (Gemini 2.5, OpenAI reasoning) spend output tokens before it; the
+# gateway's 2048 default cut REASONING off mid-sentence (#2315).
+TRIAGE_MAX_TOKENS = 8192
+
 # Finding-dict keys that triage/enrich produce; cached together in the
 # ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
 _AI_ANALYSIS_KEYS = (
@@ -708,6 +713,7 @@ REASONING: [Brief explanation]
                 provider_id=provider_id,
                 model=model,
                 timeout=self.config.triage_timeout,
+                max_tokens=TRIAGE_MAX_TOKENS,
             )
         except Exception as e:
             logger.error(f"LLM queue triage error: {e}")
