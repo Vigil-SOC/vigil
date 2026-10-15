@@ -694,6 +694,37 @@ class TestReconcile:
         assert orch._update_investigation_status.call_args[0][1] == "waiting_approval"
 
     @pytest.mark.asyncio
+    async def test_a_parked_run_is_paused_with_its_reason_and_no_heartbeat(self):
+        orch = _orchestrator()
+        orch._send_notification = MagicMock()
+        orch._send_slack_for_notification = AsyncMock()
+        projection = {"status": "parked", "reason": "Stopped: out of turns"}
+        await self._reconcile(orch, projection)
+        await self._reconcile(orch, projection)
+
+        assert orch._record_progress.call_args.kwargs["heartbeat"] is False
+        assert orch._update_investigation_status.call_args[0][1:3] == (
+            "paused",
+            "Stopped: out of turns",
+        )
+        # Told once, not on every tick.
+        orch._send_notification.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_resumed_run_goes_back_to_executing_and_can_park_again(self):
+        orch = _orchestrator()
+        orch._send_notification = MagicMock()
+        orch._send_slack_for_notification = AsyncMock()
+        await self._reconcile(orch, {"status": "parked", "reason": "idle"})
+        await self._reconcile(orch, {"status": "active"})
+
+        assert orch._record_progress.call_args.kwargs["heartbeat"] is True
+        assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+        await self._reconcile(orch, {"status": "parked", "reason": "idle"})
+        assert orch._send_notification.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_records_progress_before_deciding_anything(self):
         orch = _orchestrator()
         await self._reconcile(

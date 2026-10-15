@@ -1150,7 +1150,7 @@ class Orchestrator:
 
                 # Before anything reads a row: the row is a copy of the ledger,
                 # and a supervisor deciding on a stale copy decides on nothing.
-                for status in ("executing", "waiting_approval"):
+                for status in ("executing", "waiting_approval", "paused"):
                     for inv in self._get_investigations_by_status(status):
                         reconciling = _inv_as_dict(inv).get("investigation_id")
                         if reconciling:
@@ -1525,13 +1525,23 @@ class Orchestrator:
         if projection is None:
             return
 
-        self._record_progress(inv_id, projection)
+        # A parked hunt is waiting on a person: its row must stop looking active, or
+        # the stale check never fires and the run holds a slot while doing nothing.
+        parked = projection.get("status") == "parked"
+        self._record_progress(inv_id, projection, heartbeat=not parked)
         checkpoint = projection.get("open_checkpoint")
         if checkpoint:
             self._raise_run_approval(inv_id, checkpoint)
             self._update_investigation_status(inv_id, "waiting_approval")
             return
 
+        if parked:
+            reason = projection.get("reason") or "The run is parked"
+            self._update_investigation_status(inv_id, "paused", reason)
+            await self._notify_parked(inv_id, reason)
+            return
+
+        self._parked_runs().discard(inv_id)
         if projection.get("status") != "terminal":
             self._update_investigation_status(inv_id, "executing")
             return
@@ -1543,10 +1553,32 @@ class Orchestrator:
         else:
             self._update_investigation_status(inv_id, "failed", reason or str(outcome))
 
+    def _parked_runs(self) -> set:
+        return self.__dict__.setdefault("_parked_notified", set())
+
+    # Once per park: a resumed run that parks again is told again.
+    async def _notify_parked(self, inv_id: str, reason: str) -> None:
+        if inv_id in self._parked_runs():
+            return
+        self._parked_runs().add(inv_id)
+        self._send_notification(
+            inv_id,
+            "run_parked",
+            f"Run parked: {inv_id}",
+            f"Investigation {inv_id} is waiting on a person. {reason}",
+            priority="high",
+        )
+        await self._send_slack_for_notification(
+            f"Run parked: {inv_id}", f"Investigation {inv_id} is parked. {reason}"
+        )
+
     # The heartbeat. A failure here is logged loudly on purpose (#147): swallowed
     # quietly, last_activity_at stops moving and the supervisor stale-kills a run
     # that is perfectly healthy.
-    def _record_progress(self, inv_id: str, projection: Dict[str, Any]) -> None:
+    # A parked run still records what it cost, but its activity time stays put.
+    def _record_progress(
+        self, inv_id: str, projection: Dict[str, Any], heartbeat: bool = True
+    ) -> None:
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import Investigation
@@ -1565,7 +1597,8 @@ class Orchestrator:
                 inv.iteration_count = (
                     projection.get("iteration", 0) if counted is None else counted
                 )
-                inv.last_activity_at = utcnow()
+                if heartbeat:
+                    inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")
                 if cost is not None:

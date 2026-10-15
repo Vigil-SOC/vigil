@@ -10,6 +10,7 @@ const STATUS_META: Record<string, Meta> = {
   queued: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
   assigned: { fg: 'var(--med)', bg: 'var(--med-dim)' },
   executing: { fg: 'var(--high)', bg: 'var(--high-dim)' },
+  paused: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
   review_submitted: { fg: 'var(--high)', bg: 'var(--high-dim)', label: 'review' },
   completed: { fg: 'var(--ok)', bg: 'var(--ok-dim)' },
   failed: { fg: 'var(--crit)', bg: 'var(--crit-dim)' },
