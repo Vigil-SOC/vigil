@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import List
 
 import pytest
@@ -116,3 +117,24 @@ class TestWhatTheHuntIsSteeredToward:
 def test_the_legacy_ioc_tallying_is_gone():
     for dead in ("_hunt_for_iocs", "_extract_iocs", "_analyze_finding_patterns"):
         assert not hasattr(TaskScheduler, dead), f"{dead} still exists"
+
+
+class TestRestartDoesNotRepeatARecentHunt:
+    def _hunt_task(self, monkeypatch, last):
+        monkeypatch.setattr(
+            TaskScheduler, "_last_scheduled_hunt_at", staticmethod(lambda: last)
+        )
+        scheduler = _scheduler()
+        scheduler._seed_threat_hunt_last_run()
+        return next(t for t in scheduler._tasks if t.name == "threat_hunt")
+
+    def test_a_hunt_within_the_interval_is_not_due(self, monkeypatch):
+        from core.time import utcnow
+
+        task = self._hunt_task(monkeypatch, utcnow() - timedelta(minutes=5))
+        elapsed = (utcnow() - task.last_run).total_seconds()
+        assert elapsed < task.interval
+
+    def test_no_prior_hunt_is_due(self, monkeypatch):
+        task = self._hunt_task(monkeypatch, None)
+        assert task.last_run is None
