@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { investigateAccount } from "../../plugins/investigate/account.js";
+import { headlineOf, investigateAccount } from "../../plugins/investigate/account.js";
 
 // An investigation's account, read off the ledger: the answer, the record it kept (which
 // it journaled and nothing showed), and its steps.
@@ -68,6 +68,8 @@ describe("what the record now says outright", () => {
     { kind: "run", payload: { run_kind: "investigate" } },
     { kind: "hypothesis", payload: { hypothesis_id: "h1", statement: "adam.hartley's account dumped lsass", status: "active", provenance: "agent", resolution_reason: null, benign: false } },
     { kind: "hypothesis", payload: { hypothesis_id: "h2", statement: "An admin ran a sanctioned backup", status: "active", provenance: "agent", resolution_reason: null, benign: true } },
+    // Written by a link_evidence call the run died before journaling.
+    { kind: "link", payload: { evidence_id: "r0", hypothesis_id: "h2", relation: "neither", note: "orphaned" } },
     served("r1", 1, "crowdstrike:falcon:edr", "trace the process tree"),
     { kind: "link", payload: { evidence_id: "r1", hypothesis_id: "h1", relation: "supports", note: "comsvcs MiniDump of lsass on ACCT-WS-007" } },
     { kind: "call", payload: { ref: "r2", turn: 2, call_id: "r2", tool: "link_evidence", arguments: '{"links":[{"evidence_id":"r1","hypothesis_id":"h1","stance":"supports","note":"comsvcs MiniDump of lsass on ACCT-WS-007"}]}', ok: true, failure: null, class: "served", result: "linked" } },
@@ -83,7 +85,7 @@ describe("what the record now says outright", () => {
           citations: ["r1"],
           gaps: ["Who approved the backup window?"],
           next_steps: ["Isolate ACCT-WS-007"],
-          timeline: [{ at: "2026-09-02T09:12:00Z", stage: "CREDENTIAL ACCESS", what: "lsass dumped on ACCT-WS-007", techniques: ["T1003.001"], citations: ["r1"] }],
+          timeline: [{ at: "2026-09-02T09:12:00Z", stage: "CREDENTIAL ACCESS", what: "lsass dumped on ACCT-WS-007", techniques: ["T1003.001"], citations: ["r1"] }, { what: "okta queried", citations: ["r3"] }],
         },
         capped: false,
         turns: 2,
@@ -113,6 +115,14 @@ describe("what the record now says outright", () => {
   it("lays the timeline out from the answer, pointed at the observation it cites", () => {
     expect(account.timeline).toEqual([
       { run_id: "run-2", text: "lsass dumped on ACCT-WS-007", at: "2026-09-02T09:12:00Z", stage: "CREDENTIAL ACCESS", techniques: ["T1003.001"], ref: "r2.0" },
+      { run_id: "run-2", text: "okta queried" },
+    ]);
+  });
+
+  it("counts only the turns that asked the estate something as steps", () => {
+    expect(account.steps?.map((step) => [step.kind, step.refs])).toEqual([
+      ["EXAMINE", ["r1"]],
+      ["CONCLUDE", ["r1"]],
     ]);
   });
 
@@ -123,12 +133,25 @@ describe("what the record now says outright", () => {
     ]);
   });
 
+  it("takes a shouted label off a headline, and only a label", () => {
+    expect(headlineOf("CONFIRMED MALICIOUS — Credential theft on ACCT-WS-007. More.")).toBe("Credential theft on ACCT-WS-007.");
+    expect(headlineOf("VERDICT: benign backup job.")).toBe("Benign backup job.");
+    expect(headlineOf("SSH-based lateral movement from bastion-01. More.")).toBe("SSH-based lateral movement from bastion-01.");
+    expect(headlineOf("US-EAST-1 instance i-0abc launched a miner.")).toBe("US-EAST-1 instance i-0abc launched a miner.");
+    expect(headlineOf("The user ran tools, e.g. procdump, on the host. More.")).toBe("The user ran tools, e.g. procdump, on the host.");
+  });
+
   it("reads an older claim's side off its opening words", () => {
     const older = investigateAccount(
       "run-3",
       ledger([{ kind: "hypothesis", payload: { hypothesis_id: "h1", statement: "Benign administrative activity by IT", status: "active", provenance: "agent", resolution_reason: null } }]),
     );
     expect(older.explanations?.[0]?.role).toBe("benign");
+    const said = investigateAccount(
+      "run-4",
+      ledger([{ kind: "hypothesis", payload: { hypothesis_id: "h1", statement: "This is an authorized pentest", status: "active", provenance: "agent", resolution_reason: null } }]),
+    );
+    expect(said.explanations?.[0]?.role).toBe("benign");
     expect(older).not.toHaveProperty("verdict");
     expect(older).not.toHaveProperty("gaps");
   });
