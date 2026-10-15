@@ -360,11 +360,7 @@ def wake_investigation(investigation_id: str):
                 detail=f"Cannot wake investigation in status '{inv.get('status')}'",
             )
 
-        state = orch.workdir.read_state(investigation_id)
-        state["status"] = "executing"
-        state.pop("failure_reason", None)
-        state["error_count"] = 0
-        orch.workdir.write_state(investigation_id, state)
+        orch.wake(investigation_id)
         orch._update_investigation_status(investigation_id, "assigned")
 
         return {
