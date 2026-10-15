@@ -532,7 +532,9 @@ class DatabaseService:
         triage failed without a later success (ai_triage_error recorded, no
         ai_triage — #965), oldest first. Returns dicts (FindingSchema.dump inside
         the session) so callers get detached-safe data. ``max_age_hours`` bounds
-        the working set so ancient, un-enrichable findings aren't retried forever."""
+        the working set by when Vigil stored the finding (created_at), not the
+        source event time, so replayed or late captures still get triaged; ancient,
+        un-enrichable findings aren't retried forever."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
@@ -549,8 +551,8 @@ class DatabaseService:
             )
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
-                query = query.where(Finding.timestamp >= cutoff)
-            query = query.order_by(Finding.timestamp.asc()).limit(limit)
+                query = query.where(Finding.created_at >= cutoff)
+            query = query.order_by(Finding.created_at.asc()).limit(limit)
             return FindingSchema.dump_many(session.execute(query).scalars().all())
 
     @default_on_error(0)

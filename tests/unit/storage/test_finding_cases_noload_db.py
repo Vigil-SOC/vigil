@@ -9,6 +9,7 @@ and all, and ``FindingSchema`` then drops it. The read paths in
 
 import re
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Iterator, List
 
 import pytest
@@ -138,3 +139,29 @@ def test_update_finding_skips_cases_and_links_survive():
         assert finding is not None
         assert finding.severity == "low"
         assert len(finding.cases) == 2
+
+
+def test_missing_enrichment_age_bound_uses_ingest_time_not_event_time():
+    service = DatabaseService()
+    old_event = utcnow() - timedelta(days=30)
+    for finding_id in ("backfill-replay", "backfill-stale"):
+        assert service.create_finding(
+            finding_id=finding_id,
+            mitre_predictions={TECHNIQUE: 0.5},
+            anomaly_score=0.4,
+            timestamp=old_event,
+            data_source="backfill",
+            severity="high",
+            status="new",
+        )
+    with get_db_manager().session_scope() as session:
+        stale = session.get(Finding, "backfill-stale")
+        assert stale is not None
+        stale.created_at = old_event
+
+    ids = {
+        d["finding_id"]
+        for d in service.get_findings_missing_enrichment(limit=1000, max_age_hours=168)
+    }
+    assert "backfill-replay" in ids
+    assert "backfill-stale" not in ids
