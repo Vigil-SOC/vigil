@@ -271,6 +271,24 @@ describe('Ask Vigil dock', () => {
   })
 })
 
+describe('outside a secure context', () => {
+  it('renders and sends a v4 session id when crypto.randomUUID is missing', async () => {
+    // plain HTTP at a LAN address: browsers leave randomUUID undefined
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+    try {
+      vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+      renderChat()
+      fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'status?' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+      const body = JSON.parse(String(vi.mocked(streamFetch).mock.calls[0][1]?.body))
+      expect(body.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('case composer', () => {
   it('keeps its private note and has no @ button', () => {
     render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-9" />)
