@@ -1753,6 +1753,30 @@ export interface paths {
         patch: operations["patch_api_cases_case_id"];
         trace?: never;
     };
+    "/api/cases/{case_id}/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Account
+         * @description What the case's runs concluded, merged into one account on each read.
+         *
+         *     Never stored, so never stale. A section no run filled is absent. A run
+         *     whose account could not be read is left out and named in ``unread``, and
+         *     a verdict reached without it does not stand as a dismissal.
+         */
+        get: operations["get_api_cases_case_id_account"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/activities": {
         parameters: {
             query?: never;
@@ -7690,6 +7714,19 @@ export interface components {
             /** Timeline */
             timeline?: components["schemas"]["TimelineEntry"][];
             verdict?: components["schemas"]["Verdict"];
+        };
+        /**
+         * CaseAccountResponse
+         * @description A case's account, merged on read from its runs' accounts.
+         *
+         *     ``unread`` names the runs left out because their account could not be
+         *     read, so the page can say the account was reached without them rather
+         *     than show it as whole.
+         */
+        CaseAccountResponse: {
+            account: components["schemas"]["CaseAccount"];
+            /** Unread */
+            unread: string[];
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -14844,6 +14881,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSuccessResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_cases_case_id_account: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseAccountResponse"];
                 };
             };
             /** @description Validation Error */
