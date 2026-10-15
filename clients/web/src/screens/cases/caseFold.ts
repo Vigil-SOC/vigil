@@ -10,6 +10,18 @@ export interface CallRow {
   cost_usd: number | null
   duration_ms?: number
   iteration?: number
+  /** The call's ref, opened whole at /workflows/runs/{id}/calls/{ref}. */
+  ref?: string
+  /** The query text it sent, when the run carries it. */
+  query?: string
+  /** Rows the result said it held. */
+  rows?: number
+  /** served, visibility_gap or defect. */
+  class?: string
+  /** The turn's words before its calls, shared by every call of that turn. */
+  thought?: string
+  /** The kind a failed call reported: timeout, unavailable, refused... */
+  failed?: string
 }
 
 /** One lead move, newest first in `moves`. Lead decisions carry no time or iteration. */
@@ -49,6 +61,8 @@ interface EvidenceRow {
   /** The systems its rows came from (a cited alert's data_source, or the integration that answered); empty when none is known. */
   origins: string[]
   bears_on: { hypothesis_id: string; relation: string }[]
+  /** worker, tool_failure, deployment_gap, operator_gap, null_check... */
+  provenance: string
 }
 
 interface LeadGapRow {
@@ -343,6 +357,12 @@ function callsOf(raw: unknown): CallRow[] {
       cost_usd: num(o.cost_usd),
       ...(typeof o.duration_ms === 'number' ? { duration_ms: o.duration_ms } : {}),
       ...(typeof o.iteration === 'number' ? { iteration: o.iteration } : {}),
+      ...(typeof o.ref === 'string' ? { ref: o.ref } : {}),
+      ...(typeof o.query === 'string' ? { query: o.query } : {}),
+      ...(typeof o.rows === 'number' ? { rows: o.rows } : {}),
+      ...(typeof o.class === 'string' ? { class: o.class } : {}),
+      ...(typeof o.thought === 'string' ? { thought: o.thought } : {}),
+      ...(typeof o.failed === 'string' ? { failed: o.failed } : {}),
     }]
   })
 }
@@ -442,6 +462,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
           origins: Array.isArray(o.origins) ? o.origins.filter((one): one is string => typeof one === 'string' && one !== '') : [],
           bears_on: bears,
+          provenance: str(o.provenance),
         }]
       })
     : []

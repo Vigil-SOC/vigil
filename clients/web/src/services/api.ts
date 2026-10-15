@@ -1000,6 +1000,8 @@ export const workflowApi = {
     api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
   replayRun: (runId: string) => api.get(`/workflows/runs/${runId}/replay`),
   verifyRun: (runId: string) => api.get(`/workflows/runs/${runId}/verify`),
+  /** One call as journaled: the query it sent and the result it got back. */
+  getCall: (runId: string, ref: string) => api.get(`/workflows/runs/${runId}/calls/${encodeURIComponent(ref)}`),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),

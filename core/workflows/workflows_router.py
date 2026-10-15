@@ -3,10 +3,10 @@
 import logging
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from core.agents.projections import read_projection, read_replay, read_verify
+from core.agents.projections import read_call, read_projection, read_replay, read_verify
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import (
@@ -727,6 +727,31 @@ async def replay_workflow_run(
             status_code=404, detail=f"Nothing to replay for run: {run_id}"
         )
     return report
+
+
+@router.get("/workflows/runs/{run_id}/calls/{ref}")
+async def read_workflow_run_call(
+    run_id: str,
+    ref: str = Path(..., pattern=r"^r\d+$"),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """One call of a run, whole: the query it sent and the result it got back.
+
+    What a reader opens from the Checked tab, or from an evidence row's source,
+    to check a record against the query it came from.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        call = await read_call(run_id, ref)
+    except Exception as exc:  # noqa: BLE001 — logged; the reader gets a fixed message
+        logger.error("could not read call %s of run %s: %s", ref, run_id, exc)
+        raise HTTPException(
+            status_code=502, detail="Could not read the call from the agent layer"
+        ) from None
+    if call is None:
+        raise HTTPException(status_code=404, detail=f"No call {ref} in run {run_id}")
+    return call
 
 
 @router.get("/workflows/runs/{run_id}/verify")

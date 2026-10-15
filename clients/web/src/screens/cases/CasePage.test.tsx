@@ -234,13 +234,15 @@ describe('case page', () => {
     const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
     expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.20')
     expect(card).not.toHaveTextContent('no source')
-    // the run's cost, not the row's; the row shows its own turn's cost and size in chars
-    const row = within(card).getByText('who logged in').closest('li') as HTMLElement
+    // the run's cost in the header; each turn shows its words and its own cost once
+    const turn = within(card).getByText('who logged in').closest('section') as HTMLElement
+    expect(turn).toHaveTextContent('Turn 3')
+    expect(turn).toHaveTextContent('$0.01')
+    const row = turn.querySelector('li') as HTMLElement
     expect(row).toHaveTextContent('search')
     expect(row).toHaveTextContent('12 chars')
-    expect(row).toHaveTextContent('$0.01')
-    // a latency the ledger never recorded says so, never a zero
-    expect(row).toHaveTextContent('not recorded')
+    // a latency the ledger never recorded is a dash, never a zero
+    expect(row).toHaveTextContent('—')
     expect(row).not.toHaveTextContent('0.0 s')
   })
 
@@ -746,7 +748,7 @@ describe('case page', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('The run could not be read.')
     })
 
-    it('puts no-source gaps after the calls, in red, outside the query count; "—" when the run has no cost', async () => {
+    it('lists the calls only, counts the no-source gaps in the header; "—" when the run has no cost', async () => {
       leadCase(lead({
         calls: [{ question: 'who logged in', tool: 'okta', result_length: 1240, cost_usd: 0.02, duration_ms: 800 }],
         gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
@@ -754,24 +756,23 @@ describe('case page', () => {
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
       expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 1 query · — · 1 with no source')
+      // the gaps themselves are read on Memory and blind spots
       const rows = card.querySelectorAll('li')
-      expect(rows).toHaveLength(2)
+      expect(rows).toHaveLength(1)
       expect(rows[0]).toHaveTextContent('okta')
       expect(rows[0]).toHaveTextContent('1,240 chars')
       expect(rows[0]).toHaveTextContent('800 ms')
-      expect(rows[1]).toHaveClass('gap')
-      expect(rows[1]).toHaveTextContent('list users — tool down')
-      expect(rows[1]).toHaveTextContent('No source')
+      expect(card).not.toHaveTextContent('tool down')
       fireEvent.click(within(card).getByRole('button', { name: 'About the cost' }))
       expect(screen.getByRole('tooltip')).toHaveTextContent(/turn's cost/)
     })
 
-    it('keeps the header and red rows when there are gaps but no calls', async () => {
+    it('keeps the header when there are gaps but no calls', async () => {
       leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
       expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.50 · 1 with no source')
-      expect(card.querySelectorAll('li')).toHaveLength(1)
+      expect(card.querySelectorAll('li')).toHaveLength(0)
     })
 
     it('shows the empty state for a ready run with no calls and no gaps', async () => {
@@ -2003,10 +2004,10 @@ describe('Memory and blind spots tab', () => {
   it('shows recalled rows with provenance, merged blind spots, and counts the rows', async () => {
     open('m-hunt', { hunt: { ...HUNT, recall, calls: [...HUNT.calls, { question: 'what is 10.0.0.7', tool: 'recall_entity', result_length: 340, cost_usd: 0 }], evidence: [{ ...HUNT.evidence[0], is_gap: true, gap_detail: 'no proxy logs' }] } })
     fireEvent.click(await memoryTab())
+    const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
     // sighting + verdict + recall_entity call + declared gap + visibility gap
     expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('5')
 
-    const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
     expect(recalled.getByText('Asked about 10.0.0.7, m.kaur')).toBeInTheDocument()
     expect(recalled.getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
     expect(recalled.getByText('Hunt hunt-9 · May 2, 2026')).toBeInTheDocument()
@@ -2020,7 +2021,9 @@ describe('Memory and blind spots tab', () => {
     const blind = within(screen.getByRole('region', { name: 'Blind spots' }))
     expect(blind.getByText('Declared')).toBeInTheDocument()
     expect(blind.getByText('no evidence gathered — MFA push logs never checked')).toBeInTheDocument()
-    expect(blind.getByText('Visibility')).toBeInTheDocument()
+    // the hunt's own account of what it could not see, under the source it lost
+    expect(blind.getByText('Telemetry')).toBeInTheDocument()
+    expect(blind.getByText('could not answer')).toBeInTheDocument()
     expect(blind.getByText('no proxy logs')).toBeInTheDocument()
   })
 
@@ -2443,12 +2446,11 @@ describe('a kernel hunt on its case', () => {
     }))
     fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
     const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    const [unpriced, priced] = Array.from(card.querySelectorAll('li'))
-    expect(unpriced).toHaveTextContent('not recorded')
+    const [unpriced, priced] = Array.from(card.querySelectorAll('section.checked-turn'))
     expect(unpriced).toHaveTextContent('8 ms')
-    expect(unpriced).not.toHaveTextContent('$0.00')
+    expect(unpriced).not.toHaveTextContent('$')
     expect(priced).toHaveTextContent('$0.0015')
-    expect(priced).toHaveTextContent('not recorded') // its latency
+    expect(priced).not.toHaveTextContent('$0.00 ')
   })
 
   it('says "Coming in a later release" on every drawn but not live control, never the internal wording', async () => {

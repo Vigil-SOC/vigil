@@ -50,7 +50,17 @@ export function huntView(
           iteration: turn.turn,
           query_intent: turnWords([call]).words,
           ...(costs.get(turn.turn) == null ? {} : { cost_usd: costs.get(turn.turn) as number }),
-          calls: [{ tool: call.tool, result: call.result, ...(call.duration_ms === undefined ? {} : { duration_ms: call.duration_ms }) }],
+          calls: [
+            {
+              tool: call.tool,
+              result: call.result,
+              ref: call.ref,
+              arguments: call.arguments,
+              ...(call.class === undefined ? {} : { class: call.class }),
+              ...(turn.thought ? { thought: turn.thought } : {}),
+              ...(call.duration_ms === undefined ? {} : { duration_ms: call.duration_ms }),
+            },
+          ],
         })),
     ),
   );

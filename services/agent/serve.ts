@@ -45,6 +45,9 @@ const VERIFY = /^\/runs\/([0-9a-fA-F-]{36})\/verify$/;
 // GET /runs/<id>/events[?snapshots=1] -- the ledger itself. Snapshots stay off
 // unless asked: a decision snapshot is the digest, and the case record does not show it.
 const EVENTS = /^\/runs\/([0-9a-fA-F-]{36})\/events$/;
+// GET /runs/<id>/calls/<ref>: one call as it was journaled -- the query it sent and
+// the result it got back -- for a reader checking a record against its source.
+const CALL = /^\/runs\/([0-9a-fA-F-]{36})\/calls\/(r\d+)$/;
 // A conversation is prose and a config, not an upload. Anything larger is a
 // mistake or an attack, and either way it is refused before it is parsed.
 const MAX_BODY = 1_000_000;
@@ -279,6 +282,13 @@ async function readEvents(state: State, runId: string, snapshots: boolean, res: 
   res.end(JSON.stringify({ events }));
 }
 
+async function readCall(state: State, runId: string, ref: string, res: ServerResponse): Promise<void> {
+  const found = (await state.read(runId)).find((event) => event.kind === "call" && (event.payload as { ref?: unknown }).ref === ref);
+  if (found === undefined) return refuse(res, 404, `no call ${ref} in ${runId}`);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ run_id: runId, ts: found.ts, ...(found.payload as object) }));
+}
+
 async function readVerify(runId: string, verify: VerifyRun | undefined, res: ServerResponse): Promise<void> {
   if (verify === undefined) {
     log.error("ledger verify is not wired", { run_id: runId });
@@ -360,6 +370,9 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
       if (verified !== null) return readVerify(verified[1] as string, verify, res);
+
+      const called = req.method === "GET" ? CALL.exec(parsed.pathname) : null;
+      if (called !== null) return readCall(state, called[1] as string, called[2] as string, res);
 
       const logged = req.method === "GET" ? EVENTS.exec(parsed.pathname) : null;
       if (logged !== null) return readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);
