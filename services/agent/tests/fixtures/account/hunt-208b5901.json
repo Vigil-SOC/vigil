@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "runs": [{ "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "run_kind": "hunt" }],
+  "verdict": {
+    "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+    "disposition": "inconclusive",
+    "headline": "The volume shadow copy deletion on FIN-WKS-014 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
+    "basis": "hunt ended (failed) with the hypothesis unresolved"
+  },
+  "narrative": {
+    "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+    "summary": "This hunt ended failed: the role never emitted a valid answer. Of 2 explanation(s), 0 proven, 0 ruled out, 2 not settled. It gathered 1 observation(s).",
+    "what_happened": "### How each explanation stands\n- **not settled** — The volume shadow copy deletion on FIN-WKS-014 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.\n\n### What came back\n- FIN-WKS-014 full kill chain under alice.morgan _(ev-64769d746afe, anomalous)_",
+    "written_by": "vigil",
+    "missing_because": "the role never emitted a valid answer: / must have required property 'summary'"
+  },
+  "explanations": [
+    {
+      "id": "h-98e38c67",
+      "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+      "claim": "The volume shadow copy deletion on FIN-WKS-014 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
+      "role": "adversary",
+      "standing": "inconclusive",
+      "reason": "hunt ended (failed) with the hypothesis unresolved"
+    },
+    {
+      "id": "h-cd39e37d",
+      "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+      "claim": "the activity described in the intrusion claim has a legitimate explanation and is not adversary action",
+      "role": "benign",
+      "standing": "inconclusive",
+      "reason": "hunt ended (failed) with the hypothesis unresolved"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-64769d746afe",
+      "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+      "claim": "FIN-WKS-014 full kill chain under alice.morgan: Invoice_88231.xlsm spawned encoded hidden powershell, which spawned rundll32 of C:\\Users\\Public\\svchost-helper.dll,Start; the vssadmin parent is svchost-helper.dll.",
+      "source": "process_lineage",
+      "turn": 3,
+      "salience": "anomalous",
+      "attested": true,
+      "checks": [],
+      "bears_on": [
+        { "on": "h-98e38c67", "stance": "supports" },
+        { "on": "h-cd39e37d", "stance": "weakens" }
+      ]
+    }
+  ],
+  "next_steps": [
+    { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "text": "Settle h-98e38c67: The volume shadow copy deletion on FIN-WKS-014 is part of a hands-on-keyboard intrusion — the hunt ended before deciding it" }
+  ],
+  "gaps": [],
+  "escalations": [],
+  "steps": [
+    { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "n": 1, "kind": "READ", "text": "I'll start by loading the hunt method skill and checking the board state.", "at": "2026-10-15T16:24:16.158Z", "cost_usd": 0.04966 }
+  ]
+}
