@@ -1,9 +1,8 @@
 """The case account: what a run concluded, in the shape every loop fills.
 
 Mirrors ``services/agent/contracts/account.ts``, which says what each field
-means; the docstrings here say only what differs on this side. The fixtures
-under ``services/agent/tests/fixtures/account`` hold the two to the same JSON,
-and ``tests/unit/_ratchets/test_case_account_agrees.py`` to the same fields.
+means; the comments here say only what differs on this side. The fixtures
+under ``services/agent/tests/fixtures/account`` hold the two to the same JSON.
 
 An absent section means the loop does not produce it, so nothing in an account
 is null: a value a run does not have is left out. Validation refuses a null
@@ -181,6 +180,8 @@ class ChainEvent(_AccountModel):
     causes: str | Absent = None
     tie: ChainTie | Absent = None
     together_with: list[str] | Absent = None
+    origin: ChainStatus | Absent = None
+    why_origin: str | Absent = None
     ran_as: str | Absent = None
     operated_by: str | Absent = None
     entities: list[EntityKey] | Absent = None
@@ -194,8 +195,6 @@ class ChainPath(_AccountModel):
 class Chain(_AccountModel):
     run_id: str
     events: list[ChainEvent]
-    origin: str | Absent = None
-    why_origin: str | Absent = None
     score: float | Absent = None
     alternatives: list[ChainPath] | Absent = None
 
