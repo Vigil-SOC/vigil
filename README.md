@@ -154,7 +154,7 @@ Then open http://localhost:6988 and create the admin account on the bootstrap sc
 - **WSL2 with Ubuntu** (`wsl --install -d Ubuntu` in an administrator PowerShell, then reboot). Inside Ubuntu: `sudo apt update && sudo apt install -y git curl`.
 - **Docker Desktop for Windows**, running, with **Settings → Resources → WSL integration** turned on for your Ubuntu distro. `docker ps` must work inside Ubuntu before you start.
 - **Node.js 20+ inside Ubuntu**, for example with [nvm](https://github.com/nvm-sh/nvm). A Windows Node install is not visible to the scripts.
-- **Clone into the Linux home** (`~/vigil`), not under `/mnt/c`. On the Windows drive, auto-reload, file permissions and Docker mounts are slow or unreliable; `start.sh` warns if it finds itself there. The repo's `.gitattributes` keeps shell scripts on LF line endings even if Git for Windows made the checkout.
+- **Clone into the Linux home** (`~/vigil`), not under `/mnt/c`. On the Windows drive, auto-reload, file permissions and Docker mounts are slow or unreliable; `start.sh` warns if it finds itself there. The repo's `.gitattributes` keeps shell scripts on LF line endings even if Git for Windows made the checkout. That only applies to files checked out after it: if `start.sh` fails with `$'\r': command not found`, the clone predates it. Clone again inside Ubuntu, or run `git rm -r --cached -q . && git reset --hard` in the checkout (this discards uncommitted changes).
 - **Memory.** WSL2 takes up to half of the machine's RAM by default, and Docker Desktop runs inside it. On an 8 GB laptop, put this in `%UserProfile%\.wslconfig` and run `wsl --shutdown` in PowerShell:
 
   ```ini

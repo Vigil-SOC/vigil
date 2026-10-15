@@ -3,9 +3,10 @@
 # ("$'\r': command not found", "env: 'bash\r': No such file or directory").
 # Scoped to what Linux reads: not `* text=auto`, so nothing else is rewritten.
 
-# Shell scripts (no extensionless scripts with a shebang exist in the repo)
+# Shell and awk scripts (no extensionless scripts with a shebang exist in the repo)
 *.sh            text eol=lf
 *.bash          text eol=lf
+*.awk           text eol=lf
 
 # Python entry points run directly (shebang line)
 scripts/*.py    text eol=lf
@@ -16,3 +17,6 @@ VERSION         text eol=lf
 .python-version text eol=lf
 Dockerfile*     text eol=lf
 *.sql           text eol=lf
+# The support bundle's redaction list: a "\r" on each name would match nothing,
+# and secrets would reach the bundle unredacted.
+scripts/vigil-support/*.txt text eol=lf

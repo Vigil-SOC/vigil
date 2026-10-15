@@ -1,8 +1,10 @@
 """WSL2 handling in scripts/lib.sh, and the Ollama install hint.
 
-Drives the shell functions from a temp copy of lib.sh with stub commands first
-on PATH. `uname` is stubbed so the Linux and WSL branches run on any host, and
-no test can launch a real browser or touch a real Docker.
+Drives the shell functions from a temp copy of lib.sh with stub commands and
+links to a few host tools as the whole PATH, so a real wslview, explorer.exe or
+docker on the host is never found. `uname` is stubbed and the copy reads a temp
+file for /proc/version, so the Linux and WSL branches run the same on any host,
+WSL included, and no test can launch a real browser or touch a real Docker.
 """
 
 from __future__ import annotations
@@ -17,6 +19,10 @@ import pytest
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parents[3]
+
+# Host tools lib.sh and the stubs run; nothing else from the host is on PATH.
+HOST_TOOLS = ("basename", "dirname", "grep", "touch")
+BASH = shutil.which("bash") or "/bin/bash"
 
 # Records its name and arguments in $ROOT_FOR_STUB/calls, then exits $rc.
 RECORDER = """#!/bin/bash
@@ -36,18 +42,19 @@ exit 0
 """
 
 
-def _is_real_wsl_host() -> bool:
-    try:
-        return "microsoft" in Path("/proc/version").read_text().lower()
-    except OSError:
-        return False
-
-
 @pytest.fixture
 def sandbox(tmp_path: Path) -> Path:
     (tmp_path / "scripts").mkdir()
-    shutil.copy(REPO / "scripts" / "lib.sh", tmp_path / "scripts" / "lib.sh")
+    lib = (REPO / "scripts" / "lib.sh").read_text()
+    assert "/proc/version" in lib
+    (tmp_path / "scripts" / "lib.sh").write_text(
+        lib.replace("/proc/version", str(tmp_path / "proc_version"))
+    )
     (tmp_path / "bin").mkdir()
+    for name in HOST_TOOLS:
+        found = shutil.which(name)
+        assert found, f"{name} not on PATH"
+        (tmp_path / "bin" / name).symlink_to(found)
     (tmp_path / "calls").write_text("")
     for name in ("sleep",):
         stub = tmp_path / "bin" / name
@@ -71,16 +78,21 @@ def _bash(
     _stub(
         root, "uname", f'#!/bin/bash\n[ "$1" = -s ] && echo {system} || echo x86_64\n'
     )
+    (root / "proc_version").write_text(
+        "Linux version 5.15.153.1-microsoft-standard-WSL2\n"
+        if wsl
+        else "Linux version 6.8.0\n"
+    )
     full_env = {
         **{k: v for k, v in os.environ.items() if k != "WSL_DISTRO_NAME"},
-        "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
+        "PATH": str(root / "bin"),
         "ROOT_FOR_STUB": str(root),
         **env,
     }
     if wsl:
         full_env["WSL_DISTRO_NAME"] = "Ubuntu"
     return subprocess.run(
-        ["bash", "-c", f'source "{root}/scripts/lib.sh"\n{body}'],
+        [BASH, "-c", f'source "{root}/scripts/lib.sh"\n{body}'],
         env=full_env,
         capture_output=True,
         text=True,
@@ -98,7 +110,6 @@ def test_is_wsl_follows_distro_name(sandbox: Path) -> None:
     assert _bash(sandbox, "is_wsl", wsl=True).returncode == 0
 
 
-@pytest.mark.skipif(_is_real_wsl_host(), reason="this host is WSL")
 def test_is_wsl_false_elsewhere(sandbox: Path) -> None:
     assert _bash(sandbox, "is_wsl", wsl=False).returncode != 0
 
