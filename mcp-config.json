@@ -153,7 +153,7 @@
 
     "shodan": {
       "command": "npx",
-      "args": ["-y", "@burtthecoder/mcp-shodan@1.0.22"],
+      "args": ["-y", "@burtthecoder/mcp-shodan@1.0.34"],
       "env": {
         "SHODAN_API_KEY": "${SHODAN_API_KEY}"
       }
