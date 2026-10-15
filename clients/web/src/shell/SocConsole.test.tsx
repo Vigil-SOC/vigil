@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, beforeAll, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
@@ -1094,6 +1095,18 @@ describe('SocConsole', () => {
       data: { auto_response_enabled: false, force_manual_approval: false },
     } as never)
     renderConsole()
+    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+  })
+
+  it('re-reads autonomy when a save on the Limits & autonomy screen announces it', async () => {
+    renderConsole()
+    expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: true, force_manual_approval: true },
+    } as never)
+    act(() => {
+      window.dispatchEvent(new Event(AUTONOMY_CHANGED))
+    })
     expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
 
