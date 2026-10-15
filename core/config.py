@@ -226,6 +226,8 @@ class Settings(BaseSettings):
     model_catalog_refresh_interval_s: int = 300
     prompt_injection_block: bool = False
     mcp_auto_connect_on_startup: Optional[bool] = None
+    # The MCP runner; empty runs each server as a stdio child (start.sh).
+    mcp_runner_url: str = ""
     llm_budget_unlimited: bool = False
     extension_connector_allowlist: Annotated[List[str], NoDecode] = []
 
@@ -442,14 +444,22 @@ def load_integrations_config(config_service: Any = None) -> dict[str, Any]:
 
 
 def _integration_rows(config_service: Any) -> list:
+    # core.storage.connection imports get_settings from this module, so a
+    # top-level import of core.storage would cycle.
+    from core.storage.connection import MissingPostgresPasswordError, get_db_manager
+
     try:
         if config_service is None:
-            # core.storage.connection imports get_settings from this module, so
-            # a top-level import of core.storage would cycle.
             from core.storage.config_service import get_config_service
 
+            # Raised here, not swallowed and logged inside list_integrations.
+            get_db_manager()
             config_service = get_config_service()
         return config_service.list_integrations() or []
+    except MissingPostgresPasswordError:
+        # No database configured at all, as in an MCP runner child: its settings
+        # arrive in its env, which resolve() reads next. Nothing to warn about.
+        return []
     except Exception:
         logger.warning(
             "Integration config unavailable from the database; using the file",

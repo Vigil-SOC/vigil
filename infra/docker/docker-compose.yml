@@ -202,6 +202,11 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
+      # MCP servers run in mcp-runner, not here (#2303). The token comes from the
+      # file mcp-runner-token writes unless MCP_RUNNER_TOKEN is set.
+      MCP_RUNNER_URL: http://mcp-runner:6991
+      MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
+      MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
       # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
       # on; the OTLP push needs the collector from --profile observability.
       VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
@@ -228,7 +233,10 @@ services:
       - detection_rules:/home/vigil/security-detections
       # The orchestrator and cases routers read the daemon's workdirs.
       - vigil_investigations:/app/data/investigations
+      - mcp_runner_token:/run/vigil/mcp-runner:ro
     depends_on:
+      mcp-runner:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -241,8 +249,10 @@ services:
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Postgres and Redis on deeptempo-network; the MCP runner on mcp-network.
     networks:
       - deeptempo-network
+      - mcp-network
 
   # Schedule loop. No profile, so it is part of the default project.
   # A missing backups.json stays in the loop; exiting would restart under
@@ -350,6 +360,10 @@ services:
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
       AGENT_URL: http://agent-serve:6989
+      # MCP runner, as for backend.
+      MCP_RUNNER_URL: http://mcp-runner:6991
+      MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
+      MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
       # Polling intervals (seconds)
       DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
@@ -413,7 +427,10 @@ services:
       - vigil_home:/home/vigil/.vigil
       - vigil_investigations:/app/data/investigations
       - detection_rules:/home/vigil/security-detections
+      - mcp_runner_token:/run/vigil/mcp-runner:ro
     depends_on:
+      mcp-runner:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -428,6 +445,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
+      - mcp-network
 
   # ARQ Worker - Processes LLM requests from the queue
   llm-worker:
@@ -621,23 +639,46 @@ services:
     networks:
       - deeptempo-network
 
-  # MCP runner (#2303): starts catalog MCP servers, each under its own uid, and
-  # serves them over MCP streamable HTTP on :6991. Nothing talks to it yet, so it
-  # sits behind a profile; `docker compose up mcp-runner` starts it by name.
-  # Holds no app secret, no ~/.vigil and no POSTGRES_*, and is on mcp-network
-  # only, so it cannot resolve postgres or redis.
-  mcp-runner:
-    profiles: [mcp-runner]
+  # The MCP runner's bearer, generated once into its own volume: root:1000 0440,
+  # so the runner (root) and backend and soc-daemon (uid 1000) read it, and no
+  # server, each under its own uid, does. MCP_RUNNER_TOKEN set wins over it.
+  mcp-runner-token:
     image: vigil-mcp-runner:local
-    build:
+    build: &mcp-runner-build
       context: ../..
       dockerfile: infra/docker/Dockerfile.mcp-runner
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        f=/run/vigil/mcp-runner/token
+        umask 077
+        [ -s "$$f" ] || python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$$f"
+        chown 0:1000 /run/vigil/mcp-runner "$$f"
+        chmod 0750 /run/vigil/mcp-runner
+        chmod 0440 "$$f"
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    network_mode: none
+    volumes:
+      - mcp_runner_token:/run/vigil/mcp-runner
+    restart: "no"
+
+  # MCP runner (#2303): starts catalog MCP servers, each under its own uid, and
+  # serves them over MCP streamable HTTP on :6991. backend and soc-daemon start
+  # and stop servers here; none runs in their containers.
+  # Holds no app secret, no ~/.vigil and no POSTGRES_*, and is on mcp-network
+  # only, so it cannot resolve postgres or redis.
+  mcp-runner:
+    image: vigil-mcp-runner:local
+    build: *mcp-runner-build
     container_name: deeptempo-mcp-runner
     environment:
       # Its own bearer, not AGENT_INTERNAL_TOKEN. Empty means every route 503s.
       MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
+      MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
       PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       SSL_CERT_FILE:
@@ -660,6 +701,10 @@ services:
     volumes:
       # The backend's detection rules, read-only (see the backend's mount).
       - detection_rules:/home/vigil/security-detections:ro
+      - mcp_runner_token:/run/vigil/mcp-runner:ro
+    depends_on:
+      mcp-runner-token:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - mcp-network
@@ -978,6 +1023,8 @@ volumes:
     driver: local
   detection_rules:
     driver: local
+  mcp_runner_token:
+    driver: local
   grafana_data:
     driver: local
   kafka_data:
@@ -996,7 +1043,8 @@ volumes:
 networks:
   deeptempo-network:
     driver: bridge
-  # MCP runners only; no database or cache on it.
+  # The MCP runner, and the backend and soc-daemon that call it; no database or
+  # cache on it.
   mcp-network:
     driver: bridge
 

@@ -197,6 +197,7 @@ ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
         "JWT_SECRET_KEY",
         "KAFKA_SASL_PASSWORD",
         "KAFKA_SASL_USERNAME",
+        "MCP_RUNNER_TOKEN",
         "OPENAI_API_KEY",
         "PAGERDUTY_ROUTING_KEY",
         "POSTGRES_PASSWORD",

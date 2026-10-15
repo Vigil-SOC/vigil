@@ -50,7 +50,6 @@ def _fetch_sigma(home):
 def _service(rules: DetectionRulesService) -> MCPService:
     service = MCPService.__new__(MCPService)
     service._detection_rules = rules
-    service._enabled_servers = {}
     service.servers = {
         SD: MCPServer(name=SD, command="node", args=[], cwd=".", env={"KEEP": "1"})
     }
