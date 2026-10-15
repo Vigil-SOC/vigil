@@ -1,4 +1,4 @@
-"""Daemon listeners bind to settings.daemon_bind_host (#1683)."""
+"""Daemon health/metrics bind to daemon_bind_host; the webhook to daemon_webhook_bind_host."""
 
 import asyncio
 import socket
@@ -43,13 +43,15 @@ async def test_metrics_server_binds_configured_host():
 
 
 @pytest.mark.asyncio
-async def test_webhook_server_binds_configured_host_and_health_has_no_stats():
+async def test_webhook_server_binds_webhook_host_not_daemon_host_and_health_has_no_stats():
     port = _free_port()
     poller = DataPoller(PollingConfig(webhook_port=port))
     shutdown = asyncio.Event()
     with patch(
         "services.daemon.poller.get_settings",
-        return_value=SimpleNamespace(daemon_bind_host="127.0.0.1"),
+        return_value=SimpleNamespace(
+            daemon_bind_host="192.0.2.1", daemon_webhook_bind_host="127.0.0.1"
+        ),
     ), patch("aiohttp.web.TCPSite", wraps=web.TCPSite) as site:
         task = asyncio.create_task(poller._run_webhook_server(shutdown))
         body = None

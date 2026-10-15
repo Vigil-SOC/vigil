@@ -253,6 +253,9 @@ class Settings(BaseSettings):
     daemon_crowdstrike_poll_interval: int = 60
     daemon_webhook_enabled: bool = True
     daemon_webhook_port: int = 8081
+    # Authenticated listener for alerts from other machines, so it stays on all
+    # interfaces even where daemon_bind_host is loopback.
+    daemon_webhook_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_auto_triage: bool = True
     daemon_auto_enrich: bool = True
     daemon_triage_timeout: int = 60
