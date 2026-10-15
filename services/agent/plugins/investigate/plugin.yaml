@@ -56,11 +56,11 @@ conclusion:
   schema:
     type: object
     additionalProperties: false
-    required: [summary, disposition, confidence, citations, gaps, next_steps]
+    required: [summary, disposition, confidence, citations, gaps, next_steps, timeline]
     properties:
       summary:
         type: string
-        description: What happened, in a paragraph a reader can act on.
+        description: What happened, in a paragraph a reader can act on. The order of events goes in timeline, not here.
       disposition:
         type: string
         enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
@@ -79,6 +79,33 @@ conclusion:
         type: array
         description: What a reader should do next, most important first.
         items: { type: string }
+      # Its own field rather than numbered prose in the summary, so a reader can lay it
+      # out without parsing the model's wording, which drifts run to run.
+      timeline:
+        type: array
+        description: What happened, in the order it happened, one entry per event. Empty when the case holds no sequence of events.
+        items:
+          type: object
+          additionalProperties: false
+          required: [what]
+          properties:
+            at:
+              type: string
+              description: When, as ISO 8601 to the precision the evidence gives (2026-09-02T14:02:11Z, or 2026-09-02 when only the day is known). Omit when unknown.
+            stage:
+              type: string
+              description: The kill-chain stage, such as INITIAL ACCESS, EXECUTION or EXFILTRATION. Omit for an event that is not part of an attack.
+            what:
+              type: string
+              description: The event in one sentence, naming the host, account and values the evidence shows.
+            techniques:
+              type: array
+              description: ATT&CK technique ids, such as T1003.001.
+              items: { type: string }
+            citations:
+              type: array
+              description: Refs of the tool results that show this event, such as r3.
+              items: { type: string }
 
 # Dismissing a case is cheap to say and expensive to say wrongly: a run that
 # found nothing, or was talked out of what it found, reads as benign. So a
