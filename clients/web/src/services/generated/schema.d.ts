@@ -2153,7 +2153,8 @@ export interface paths {
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
          *     ``case_id`` column. The run is the case's latest, an investigation's
-         *     ``run_id_for`` or a run started on the case, never the shadow adjudication.
+         *     ``run_id_for`` or a run started on the case, never the shadow adjudication,
+         *     and never a run another run on the case started (``primary_ref``).
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -7967,6 +7968,8 @@ export interface components {
             max_cost_usd: number;
             /** Run Id */
             run_id: string;
+            /** Spawned By */
+            spawned_by?: string | null;
             /** Status */
             status: string;
             /** Workflow Id */

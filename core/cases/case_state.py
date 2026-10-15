@@ -128,7 +128,28 @@ def run_ref(run: WorkflowRun, steps: int = 0) -> dict:
             run.iteration_count if run.iteration_count is not None else steps
         ),
         "created_at": run.started_at.isoformat() if run.started_at else None,
+        "spawned_by": spawned_by(run.triggered_by),
     }
+
+
+def spawned_by(triggered_by: Optional[str]) -> Optional[str]:
+    """The run whose handoff started this one, from ``handoff:<run>:<case>``."""
+    parts = (triggered_by or "").split(":")
+    return parts[1] if len(parts) >= 3 and parts[0] == "handoff" and parts[1] else None
+
+
+def primary_ref(refs: Sequence[dict]) -> Optional[dict]:
+    """The run a case page reads: the newest one that no other run on the case started.
+
+    A hunt's handoff starts a root-cause run on the case it escalates, and that run
+    is newer than the hunt; it is the hunt's follow-up, not the case's run. Newest
+    first in, as ``case_run_refs`` returns them.
+    """
+    listed = {ref["run_id"] for ref in refs}
+    for ref in refs:
+        if ref.get("spawned_by") not in listed:
+            return ref
+    return refs[0] if refs else None
 
 
 def case_run_refs(
