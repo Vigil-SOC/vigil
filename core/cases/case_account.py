@@ -80,7 +80,8 @@ def case_run_ids(session: Session, case_id: str) -> List[str]:
     Both ways a run joins a case: started on it, with the case id in its
     trigger context (``/hunt``, a bridge handoff), or as the run of one of its
     investigations, ``run_id_for`` the investigation (an intake-opened case).
-    Each run once, as ``case_run_refs`` lists them for the case page.
+    Each run once. ``case_state.case_run_refs`` is its twin for the case
+    page: a run joining a case a third way must be added to both.
 
     By when each run ended, since a run's verdict is as new as its ending: a
     long hunt started first and finished last is the latest word. A run still
@@ -96,12 +97,15 @@ def case_run_ids(session: Session, case_id: str) -> List[str]:
         **_runs_by_id(session, [rid for rid in investigations if rid not in started]),
         **started,
     }
+    # A run queued and not yet started has no time at all, and sorts first
+    # rather than failing the read.
     keyed: List[Tuple[datetime, datetime, str]] = []
     for run_id, run in rows.items():
-        keyed.append((run.finished_at or run.started_at, run.started_at, run_id))
+        opened = run.started_at or datetime.min
+        keyed.append((run.finished_at or opened, opened, run_id))
     for run_id, item in investigations.items():
         if run_id not in rows:
-            opened = item.started_at or item.created_at
+            opened = item.started_at or item.created_at or datetime.min
             keyed.append((item.completed_at or opened, opened, run_id))
     keyed.sort()
     return [run_id for _, _, run_id in keyed]
