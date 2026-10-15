@@ -33,7 +33,9 @@ describe("a recorded investigation's account", () => {
     expect(account.runs).toEqual([{ run_id: RUN, run_kind: "investigate" }]);
     expect(account.verdict).toMatchObject({ disposition: "benign", confidence: "high", headline: expect.stringMatching(/^EDR detected credential dumping/) });
     expect(account.verdict).not.toHaveProperty("basis");
-    expect(account.narrative?.summary).toContain("authorized red-team engagement");
+    // A long summary leads with its opening and keeps the whole as what happened.
+    expect(account.narrative?.summary).toMatch(/^EDR detected credential dumping[^]*was run\.$/);
+    expect(account.narrative?.what_happened).toContain("authorized red-team engagement");
   });
 
   it("shows the record it kept: every claim, which side it argues, and how it stands", () => {
