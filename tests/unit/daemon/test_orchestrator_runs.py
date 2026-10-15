@@ -704,3 +704,86 @@ class TestReconcile:
         # check kills a run that is working.
         orch._record_progress.assert_called_once()
         assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+
+# #2354: a hunt parked without a checkpoint reads as paused, says so once, and
+# goes back to executing (or to its TTL terminal) through the same reconcile.
+class TestParkedRun:
+    def _orchestrator(self, status="executing"):
+        orch = _orchestrator()
+        row = {"status": status}
+
+        def write(_inv_id, new, notes=None, activity=None):
+            was, row["status"], row["activity"] = row["status"], new, activity
+            return was
+
+        orch._update_investigation_status = MagicMock(side_effect=write)
+        orch._send_notification = MagicMock()
+        orch._send_slack_for_notification = AsyncMock()
+        return orch, row
+
+    async def _reconcile(self, orch, projection):
+        with patch(
+            "services.daemon.orchestrator.read_projection",
+            new=AsyncMock(return_value=projection),
+        ):
+            await orch._reconcile(INV)
+
+    @pytest.mark.asyncio
+    async def test_parked_reads_paused_with_its_reason_and_notifies_once(self):
+        orch, row = self._orchestrator()
+        parked = {"status": "parked", "reason": "out of turns", "iteration": 6}
+        for _ in range(3):
+            await self._reconcile(orch, parked)
+
+        assert row == {"status": "paused", "activity": "out of turns"}
+        orch._send_notification.assert_called_once()
+        assert orch._send_notification.call_args[0][1] == "run_paused"
+        orch._send_slack_for_notification.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_resumed_run_executes_again_and_drops_the_reason(self):
+        orch, row = self._orchestrator(status="paused")
+        await self._reconcile(orch, {"status": "active", "iteration": 7})
+
+        assert row == {"status": "executing", "activity": None}
+        orch._send_notification.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_the_park_ttl_terminal_fails_it(self):
+        orch, row = self._orchestrator(status="paused")
+        await self._reconcile(
+            orch, {"status": "terminal", "outcome": "aborted", "reason": "park expired"}
+        )
+
+        assert row["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_an_answered_checkpoint_park_stays_executing(self):
+        orch, row = self._orchestrator(status="waiting_approval")
+        # Answered, so no open checkpoint, but the worker has not resumed yet.
+        await self._reconcile(
+            orch, {"status": "parked", "reason": "awaiting budget_anomaly checkpoint c1: go on?"}
+        )
+
+        assert row["status"] == "executing"
+        orch._send_notification.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_unread_row_is_not_announced(self):
+        orch, _ = self._orchestrator()
+        orch._update_investigation_status = MagicMock(return_value=None)
+        await self._reconcile(orch, {"status": "parked", "reason": "out of turns"})
+
+        orch._send_notification.assert_not_called()
+
+    def test_paused_is_live_but_holds_no_slot(self):
+        from core.storage.models.workflow import (
+            IN_FLIGHT_INVESTIGATION_STATUSES,
+            LIVE_INVESTIGATION_STATUSES,
+        )
+        from services.daemon.orchestrator import RUNNING_INVESTIGATION_STATUSES
+
+        assert "paused" in LIVE_INVESTIGATION_STATUSES
+        assert "paused" not in IN_FLIGHT_INVESTIGATION_STATUSES
+        assert "paused" not in RUNNING_INVESTIGATION_STATUSES

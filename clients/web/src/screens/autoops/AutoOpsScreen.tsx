@@ -243,6 +243,7 @@ function InvestigationRow({
       <td>
         <span
           className="mono muted"
+          title={inv.current_activity || undefined}
           style={{ display: 'inline-block', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
         >
           {inv.current_activity || inv.status}

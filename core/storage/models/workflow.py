@@ -24,11 +24,12 @@ from core.time import utcnow
 # The two senses of "not finished", kept together because they differ by one
 # status and drift apart when they do not share a home. LIVE is the record the
 # Case owns; IN_FLIGHT is the subset holding an agent slot, which a run under
-# review has already given back.
+# review or parked waiting on a person (``paused``) has already given back.
 LIVE_INVESTIGATION_STATUSES = (
     "assigned",
     "executing",
     "waiting_approval",
+    "paused",
     "review_submitted",
 )
 IN_FLIGHT_INVESTIGATION_STATUSES = (
@@ -40,7 +41,7 @@ IN_FLIGHT_INVESTIGATION_STATUSES = (
 # own. The case reads them as a running run ``executing`` and a held one ``paused``.
 RUN_LIVE_STATE = {"running": "executing", "paused": "paused"}
 # What a case's combined state may take from a run or an investigation.
-LIVE_CASE_STATES = LIVE_INVESTIGATION_STATUSES + ("paused",)
+LIVE_CASE_STATES = LIVE_INVESTIGATION_STATUSES
 
 
 class Investigation(Base):
