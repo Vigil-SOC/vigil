@@ -232,7 +232,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "search_findings",
-        "description": "Search findings by text query across finding IDs, descriptions, and entity context. Returns compact summaries with pagination, each naming the hosts, users and indicators the finding carries. Use get_finding for the raw source record behind a specific result.",
+        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_status, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the raw source record behind a specific result.',
         "input_schema": {
             "type": "object",
             "properties": {
@@ -268,7 +268,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_findings_stats",
-        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source, status, and top MITRE techniques. Use this to get an overview before drilling into specific findings.",
+        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source and status. Takes no filters: for counts over a subset, use search_findings. Use this to get an overview before drilling into specific findings.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {

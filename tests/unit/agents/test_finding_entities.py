@@ -29,8 +29,8 @@ class _Findings:
     def __init__(self, findings):
         self.findings = findings
 
-    def count_findings(self, **_kwargs):
-        return len(self.findings)
+    def get_findings_summary(self, **_kwargs):
+        return {"total": len(self.findings)}
 
     def get_findings(self, **_kwargs):
         return self.findings

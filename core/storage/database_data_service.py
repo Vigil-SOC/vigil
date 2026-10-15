@@ -14,7 +14,7 @@ from core.storage.connection import (
     init_database,
 )
 from core.storage.schemas import CaseSchema, FindingSchema
-from core.storage.service import DatabaseService
+from core.storage.service import IP_FACET_KEYS, DatabaseService
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,28 @@ def _tally(rows: List[Dict], field: str) -> Dict[str, int]:
         key = row.get(field) or "unknown"
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _tally_ips(rows: List[Dict], top: int) -> Dict[str, Any]:
+    """The ``top`` busiest addresses per IP facet, each once per row naming it."""
+    out: Dict[str, Any] = {}
+    for facet, keys in IP_FACET_KEYS.items():
+        counts: Dict[str, int] = {}
+        for row in rows:
+            context = row.get("entity_context") or {}
+            named = set()
+            for key in keys:
+                raw = context.get(key)
+                for item in raw if isinstance(raw, list) else [raw]:
+                    if isinstance(item, str) and item.strip():
+                        named.add(item.strip())
+            for ip in named:
+                counts[ip] = counts.get(ip, 0) + 1
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        out[facet] = dict(ranked[:top])
+        if len(ranked) > top:
+            out[f"{facet}_omitted"] = len(ranked) - top
+    return out
 
 
 class DatabaseDataService:
@@ -222,24 +244,52 @@ class DatabaseDataService:
                 return 0
         return 0
 
-    def get_findings_summary(self, exclusions: str = "include") -> Dict[str, Any]:
-        """``{total, by_severity, by_data_source}`` for the findings summary.
+    def get_findings_summary(
+        self,
+        severity: Optional[str] = None,
+        data_source: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        min_anomaly_score: Optional[float] = None,
+        status: Optional[str] = None,
+        search_query: Optional[str] = None,
+        exclusions: str = "include",
+        top_ips: int = 0,
+    ) -> Dict[str, Any]:
+        """``{total, by_severity, by_data_source, by_status}`` over every match,
+        plus the ``top_ips`` busiest source and destination addresses if asked.
 
         Aggregated in SQL against the database, so it is not capped by the
         ``get_findings`` row limit (#1438). Demo mode tallies its sample rows.
         """
         if self._demo_mode and self._demo_service:
             findings = self._demo_service.get_findings(10000)
-            return {
+            summary: Dict[str, Any] = {
                 "total": len(findings),
                 "by_severity": _tally(findings, "severity"),
                 "by_data_source": _tally(findings, "data_source"),
+                "by_status": _tally(findings, "status"),
             }
+            if top_ips:
+                summary.update(_tally_ips(findings, top_ips))
+            return summary
         if self._db_available:
-            summary = self._db_service.summarize_findings(exclusions=exclusions)
+            summary = self._db_service.summarize_findings(
+                severity=severity,
+                data_source=data_source,
+                cluster_id=cluster_id,
+                min_anomaly_score=min_anomaly_score,
+                status=status,
+                search_query=search_query,
+                exclusions=exclusions,
+                top_ips=top_ips,
+            )
             if summary is not None:
                 return summary
-        return {"total": 0, "by_severity": {}, "by_data_source": {}}
+        empty: Dict[str, Any] = {"total": 0, "by_severity": {}, "by_data_source": {}}
+        empty["by_status"] = {}
+        if top_ips:
+            empty.update({facet: {} for facet in IP_FACET_KEYS})
+        return empty
 
     def get_finding(self, finding_id: str) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:

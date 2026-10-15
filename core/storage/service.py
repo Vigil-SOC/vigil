@@ -8,7 +8,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import String, and_
+from sqlalchemy import case as sql_case
+from sqlalchemy import cast, distinct, func, literal, or_, select, true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
@@ -108,6 +111,88 @@ def findings_by_technique_stmt(
     if limit is not None:
         stmt = stmt.limit(limit)
     return stmt
+
+
+# entity_context keys naming a finding's source and destination addresses, as
+# the ingesters write them: each a string or a list of strings.
+IP_FACET_KEYS = {
+    "by_source_ip": ("src_ip", "src_ips", "source_ips"),
+    "by_destination_ip": ("dst_ip", "dst_ips", "dest_ips"),
+}
+
+
+def _finding_filters(
+    severity: Optional[str] = None,
+    data_source: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    min_anomaly_score: Optional[float] = None,
+    status: Optional[str] = None,
+    search_query: Optional[str] = None,
+    exclusions: str = "include",
+) -> list:
+    """WHERE clauses every findings list, count and summary filters by."""
+    filters = []
+    if severity:
+        filters.append(Finding.severity == severity)
+    if data_source:
+        filters.append(Finding.data_source == data_source)
+    if cluster_id is not None:
+        filters.append(Finding.cluster_id == cluster_id)
+    if min_anomaly_score is not None:
+        filters.append(Finding.anomaly_score >= min_anomaly_score)
+    if status:
+        filters.append(Finding.status == status)
+    if search_query:
+        pattern = f"%{search_query}%"
+        filters.append(
+            or_(
+                Finding.finding_id.ilike(pattern),
+                Finding.description.ilike(pattern),
+                cast(Finding.entity_context, String).ilike(pattern),
+            )
+        )
+    exclusion_filter = exclusion_view_filter(exclusions)
+    if exclusion_filter is not None:
+        filters.append(exclusion_filter)
+    return filters
+
+
+def _top_ips(session, criteria: list, keys, limit: int):
+    """``({address: findings naming it}, distinct addresses)`` over the matches:
+    the ``limit`` busiest, read from ``keys`` of ``entity_context``."""
+    matched = select(Finding.finding_id, Finding.entity_context).where(*criteria)
+    matched = matched.subquery()
+    context = matched.c.entity_context
+
+    def as_array(key):
+        value = context[key]
+        kind = func.jsonb_typeof(value)
+        return sql_case(
+            (kind == "array", value),
+            (kind == "string", func.jsonb_build_array(value)),
+            else_=func.jsonb_build_array(),
+        )
+
+    merged = as_array(keys[0])
+    for key in keys[1:]:
+        merged = merged.op("||", return_type=JSONB)(as_array(key))
+    element = func.jsonb_array_elements(merged).table_valued("value").lateral()
+    ip = func.btrim(element.c.value.op("#>>", return_type=String)(literal("{}")))
+    named = (
+        select(matched.c.finding_id, ip.label("ip"))
+        .select_from(matched.join(element, true()))
+        .where(func.jsonb_typeof(element.c.value) == "string")
+        .subquery()
+    )
+    findings = func.count(distinct(named.c.finding_id))
+    rows = session.execute(
+        select(named.c.ip, findings, func.count().over())
+        .where(named.c.ip != "")
+        .group_by(named.c.ip)
+        .order_by(findings.desc(), named.c.ip)
+        .limit(limit)
+    ).all()
+    return {row[0]: int(row[1]) for row in rows}, int(rows[0][2]) if rows else 0
 
 
 class DatabaseService:
@@ -397,38 +482,21 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             query = select(Finding).options(*_FINDING_READ_OPTIONS)
 
-            filters = []
-            if severity:
-                filters.append(Finding.severity == severity)
-            if data_source:
-                filters.append(Finding.data_source == data_source)
-            if cluster_id is not None:
-                filters.append(Finding.cluster_id == cluster_id)
-            if min_anomaly_score is not None:
-                filters.append(Finding.anomaly_score >= min_anomaly_score)
-            if status:
-                filters.append(Finding.status == status)
+            filters = _finding_filters(
+                severity=severity,
+                data_source=data_source,
+                cluster_id=cluster_id,
+                min_anomaly_score=min_anomaly_score,
+                status=status,
+                search_query=search_query,
+                exclusions=exclusions,
+            )
             if timestamp_start is not None:
                 filters.append(Finding.timestamp >= timestamp_start)
             if timestamp_end is not None:
                 filters.append(Finding.timestamp <= timestamp_end)
             if dated_only:
                 filters.append(Finding.timestamp.isnot(None))
-            if search_query:
-                from sqlalchemy import String, cast
-
-                search_clauses = [
-                    Finding.finding_id.ilike(f"%{search_query}%"),
-                    cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
-                ]
-                if hasattr(Finding, "description"):
-                    search_clauses.append(
-                        Finding.description.ilike(f"%{search_query}%")
-                    )
-                filters.append(or_(*search_clauses))
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                filters.append(exclusion_filter)
 
             if filters:
                 query = query.where(and_(*filters))
@@ -501,36 +569,15 @@ class DatabaseService:
         """
         with self.db_manager.session_scope() as session:
             query = select(func.count()).select_from(Finding)
-
-            filters = []
-            if severity:
-                filters.append(Finding.severity == severity)
-            if data_source:
-                filters.append(Finding.data_source == data_source)
-            if cluster_id is not None:
-                filters.append(Finding.cluster_id == cluster_id)
-            if min_anomaly_score is not None:
-                filters.append(Finding.anomaly_score >= min_anomaly_score)
-            if status:
-                filters.append(Finding.status == status)
-            if search_query:
-                from sqlalchemy import String, cast
-
-                filters.append(
-                    or_(
-                        Finding.finding_id.ilike(f"%{search_query}%"),
-                        (
-                            Finding.description.ilike(f"%{search_query}%")
-                            if hasattr(Finding, "description")
-                            else Finding.finding_id.ilike(f"%{search_query}%")
-                        ),
-                        cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
-                    )
-                )
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                filters.append(exclusion_filter)
-
+            filters = _finding_filters(
+                severity=severity,
+                data_source=data_source,
+                cluster_id=cluster_id,
+                min_anomaly_score=min_anomaly_score,
+                status=status,
+                search_query=search_query,
+                exclusions=exclusions,
+            )
             if filters:
                 query = query.where(and_(*filters))
 
@@ -538,20 +585,34 @@ class DatabaseService:
 
     @default_on_error(None)
     def summarize_findings(
-        self, exclusions: str = "include"
+        self,
+        severity: Optional[str] = None,
+        data_source: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        min_anomaly_score: Optional[float] = None,
+        status: Optional[str] = None,
+        search_query: Optional[str] = None,
+        exclusions: str = "include",
+        top_ips: int = 0,
     ) -> Optional[Dict[str, Any]]:
-        """``{total, by_severity, by_data_source}`` over every matching finding.
+        """``{total, by_severity, by_data_source, by_status}`` over every match.
 
-        Counted and grouped in SQL under the same exclusion filter as
-        ``count_findings``, so ``total`` agrees with the list endpoint's total
-        however many rows there are (#1438). A null or empty severity or data
-        source is bucketed as ``"unknown"``. ``None`` means the query failed.
+        Counted and grouped in SQL under the same filters as ``count_findings``,
+        so ``total`` agrees with the list total however many rows there are
+        (#1438). A null or empty value is bucketed as ``"unknown"``. ``top_ips``
+        adds ``by_source_ip``/``by_destination_ip``: the busiest addresses, each
+        counted once per finding naming it (#2312). ``None`` means it failed.
         """
+        criteria = _finding_filters(
+            severity=severity,
+            data_source=data_source,
+            cluster_id=cluster_id,
+            min_anomaly_score=min_anomaly_score,
+            status=status,
+            search_query=search_query,
+            exclusions=exclusions,
+        )
         with self.db_manager.session_scope() as session:
-            criteria = []
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                criteria.append(exclusion_filter)
 
             def grouped(column) -> Dict[str, int]:
                 counts: Dict[str, int] = {}
@@ -559,16 +620,24 @@ class DatabaseService:
                 for value, count in session.execute(stmt).all():
                     key = value or "unknown"
                     counts[key] = counts.get(key, 0) + int(count)
-                return counts
+                return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
             total = session.execute(
                 select(func.count()).select_from(Finding).where(*criteria)
             ).scalar()
-            return {
+            summary: Dict[str, Any] = {
                 "total": int(total or 0),
                 "by_severity": grouped(Finding.severity),
                 "by_data_source": grouped(Finding.data_source),
+                "by_status": grouped(Finding.status),
             }
+            if top_ips:
+                for facet, keys in IP_FACET_KEYS.items():
+                    top, distinct = _top_ips(session, criteria, keys, top_ips)
+                    summary[facet] = top
+                    if distinct > len(top):
+                        summary[f"{facet}_omitted"] = distinct - len(top)
+            return summary
 
     @default_on_error(False)
     def update_finding(self, finding_id: str, **updates) -> bool:
