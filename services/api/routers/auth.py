@@ -28,6 +28,7 @@ from core.auth.auth_service import (
 )
 from core.auth.password_reset import (
     generate_reset_token,
+    reset_link,
     verify_reset_token,
 )
 from core.auth.password_validator import (
@@ -821,23 +822,24 @@ def password_reset_request(
     via the configured email backend. The default ConsoleBackend sends nothing;
     with DEV_MODE on it logs the link.
     """
+    settings = get_settings()
     user = session.query(User).filter(User.email == body.email).first()
     if user and user.is_active:
         token = generate_reset_token(user.user_id)
-        frontend_base = get_settings().vigil_frontend_url.rstrip("/")
+        frontend_base = settings.vigil_frontend_url
         if frontend_base:
-            reset_link = f"{frontend_base}/reset-password?token={token}"
+            link = reset_link(frontend_base, token)
         else:
             # Fall back to a raw token so a dev console backend still shows
             # something actionable when VIGIL_FRONTEND_URL isn't set.
-            reset_link = f"(token) {token}"
+            link = f"(token) {token}"
         subject = "Vigil SOC — password reset"
         body_text = (
             f"Hello {user.full_name or user.username},\n\n"
             "A password reset was requested for this account. Use the link "
             "below to choose a new password. The link is valid for one hour "
             "and can only be used once.\n\n"
-            f"{reset_link}\n\n"
+            f"{link}\n\n"
             "If you did not request this reset, you can ignore this email."
         )
         send_email(to=user.email, subject=subject, body=body_text)
@@ -848,11 +850,25 @@ def password_reset_request(
         # here because the DB lookup already dominates the timing.
         logger.info("Password reset requested for unknown/inactive email")
 
-    return {
-        "message": (
-            "If that email matches an active account, a reset link has been sent."
+    return {"message": _reset_request_message(settings)}
+
+
+def _reset_request_message(settings) -> str:
+    """What the requester is told. Depends only on how mail is configured,
+    never on the account, so the reply still can't enumerate emails."""
+    # Any value but smtp falls back to the console backend (get_email_backend).
+    if settings.vigil_email_backend.strip().lower() == "smtp":
+        return "If that email matches an active account, a reset link has been sent."
+    if settings.dev_mode:
+        return (
+            "Email isn't set up on this server. If that email matches an active "
+            "account, its reset link or token has been written to the server log."
         )
-    }
+    return (
+        "Email isn't set up on this server, so no reset link was sent. Ask an "
+        "administrator to issue one with scripts/reset-password.sh (on a compose "
+        "install: docker exec deeptempo-backend python scripts/reset_password.py)."
+    )
 
 
 @router.post("/password-reset/confirm")
