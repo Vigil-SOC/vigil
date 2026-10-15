@@ -259,10 +259,11 @@
       "args": ["core/integrations/vstrike/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "CloudCurrent VStrike network topology fusion layer. Set VSTRIKE_BASE_URL and VSTRIKE_API_KEY in .env, or configure in Settings > Integrations.",
-        "VSTRIKE_BASE_URL": "${VSTRIKE_BASE_URL}",
-        "VSTRIKE_API_KEY": "${VSTRIKE_API_KEY}",
-        "VSTRIKE_VERIFY_SSL": "${VSTRIKE_VERIFY_SSL}"
+        "_setup_note": "CloudCurrent VStrike network topology fusion layer. Set VSTRIKE_BASE_URL, VSTRIKE_USERNAME and VSTRIKE_PASSWORD in .env, or configure in Settings > Integrations. Only the credentials gate dormancy: a URL saved in Settings is in the integration config, not the secret store the gate reads.",
+        "VSTRIKE_USERNAME": "${VSTRIKE_USERNAME}",
+        "VSTRIKE_PASSWORD": "${VSTRIKE_PASSWORD}",
+        "VSTRIKE_BASE_URL": "${VSTRIKE_BASE_URL:-}",
+        "VSTRIKE_VERIFY_SSL": "${VSTRIKE_VERIFY_SSL:-}"
       }
     },
 
