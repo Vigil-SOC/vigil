@@ -18,7 +18,7 @@ import { expandFrom } from "./expand.js";
 import { citedFindings } from "./findings.js";
 import { Journal, type HuntKinds } from "./journal.js";
 import type { HuntEvent, Projection } from "./ledger.js";
-import { narrativeInput, type Narrative } from "./narrative.js";
+import { ledgerNarrative, narrativeInput, type Narrative } from "./narrative.js";
 import { startHunt } from "./opening.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport, renderReport } from "./report.js";
@@ -276,8 +276,13 @@ async function narrate(ctx: PluginContext, projection: Projection, built: Return
     await state(ctx).append(ctx.options.run_id, [event]);
     return narrative;
   } catch (error) {
-    log.error("hunt ended without an account of it", { run_id: ctx.options.run_id, ...errorFields(error) });
-    return null;
+    // The verdicts stand on their own, but a hunt with no account at all leaves every
+    // reader of it a blank: lay its record out instead, marked as Vigil's.
+    log.error("hunt ended without the model's account of it", { run_id: ctx.options.run_id, ...errorFields(error) });
+    const narrative = ledgerNarrative(projection, built, error instanceof Error ? error.message : String(error));
+    const event: NewEvent<HuntKinds> = { run_id: ctx.options.run_id, run_kind: ctx.options.run_kind, kind: "narrative", payload: narrative };
+    await state(ctx).append(ctx.options.run_id, [event]);
+    return narrative;
   }
 }
 

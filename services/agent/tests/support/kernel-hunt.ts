@@ -41,7 +41,7 @@ export type Step = (request: TurnRequest) => { tool: string; args: unknown } | {
 
 // A model that reads the ids off the board and results, as a real one does. Asked for an
 // emission (the critic's argument, the narrator's account) it answers by schema.
-export function modelOf(steps: readonly Step[], answers: { critic?: unknown } = {}): Provider & { requests: TurnRequest[] } {
+export function modelOf(steps: readonly Step[], answers: { critic?: unknown; narrator?: unknown } = {}): Provider & { requests: TurnRequest[] } {
   const requests: TurnRequest[] = [];
   let at = 0;
   return {
@@ -56,7 +56,7 @@ export function modelOf(steps: readonly Step[], answers: { critic?: unknown } = 
           ? (answers.critic ?? { benign_explanation: "a backup job", benign_explanation_stands: false, rationale: "the interval is too regular for a backup" })
           : "open_questions" in properties
             ? { summary: "the host beaconed; one claim is still open", open_questions: ["is the sync client sanctioned?"] }
-            : { summary: "the host beaconed", what_happened: "regular outbound flows", next_steps: ["isolate the host"] };
+            : (answers.narrator ?? { summary: "the host beaconed", what_happened: "regular outbound flows", next_steps: ["isolate the host"] });
         yield { type: "text_delta", text: JSON.stringify(answer) };
         yield { type: "usage", tokens: ZERO_TOKENS };
         return;
