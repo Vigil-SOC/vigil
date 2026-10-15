@@ -22,9 +22,17 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
-from core.agents.projections import PROJECTION_READ_CONCURRENCY, read_account
-from core.cases.case_records_service import list_case_runs
+from core.agents.projections import (
+    PROJECTION_READ_CONCURRENCY,
+    read_account,
+    run_id_for,
+)
+from core.cases.case_records_service import (
+    list_case_investigations,
+    list_case_runs,
+)
 from core.cases.disagreements import find_disagreements
+from core.storage.models import WorkflowRun
 from core.storage.schemas.case_account import (
     ACCOUNT_SCHEMA_VERSION,
     CaseAccount,
@@ -69,13 +77,42 @@ class CaseAccountRead:
 def case_run_ids(session: Session, case_id: str) -> List[str]:
     """The case's runs, oldest first: the order the merge reads them in.
 
+    Both ways a run joins a case: started on it, with the case id in its
+    trigger context (``/hunt``, a bridge handoff), or as the run of one of its
+    investigations, ``run_id_for`` the investigation (an intake-opened case).
+    Each run once, as ``case_run_refs`` lists them for the case page.
+
     By when each run ended, since a run's verdict is as new as its ending: a
     long hunt started first and finished last is the latest word. A run still
-    going is placed by when it started.
+    going is placed by when it started; an investigation whose run has no row
+    of its own, by its own times.
     """
-    runs = list_case_runs(session, case_id)
-    runs.sort(key=lambda run: (run.finished_at or run.started_at, run.started_at))
-    return [run.run_id for run in runs]
+    started = {run.run_id: run for run in list_case_runs(session, case_id)}
+    investigations = {
+        run_id_for(item.investigation_id): item
+        for item in list_case_investigations(session, case_id)
+    }
+    rows = {
+        **_runs_by_id(session, [rid for rid in investigations if rid not in started]),
+        **started,
+    }
+    keyed: List[Tuple[datetime, datetime, str]] = []
+    for run_id, run in rows.items():
+        keyed.append((run.finished_at or run.started_at, run.started_at, run_id))
+    for run_id, item in investigations.items():
+        if run_id not in rows:
+            opened = item.started_at or item.created_at
+            keyed.append((item.completed_at or opened, opened, run_id))
+    keyed.sort()
+    return [run_id for _, _, run_id in keyed]
+
+
+def _runs_by_id(session: Session, run_ids: Sequence[str]) -> dict:
+    """The ``workflow_runs`` rows of these ids that exist, by id."""
+    if not run_ids:
+        return {}
+    rows = session.query(WorkflowRun).filter(WorkflowRun.run_id.in_(run_ids)).all()
+    return {row.run_id: row for row in rows}
 
 
 async def read_case_account(run_ids: Sequence[str]) -> CaseAccountRead:
