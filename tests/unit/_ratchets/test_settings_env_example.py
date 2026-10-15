@@ -70,6 +70,7 @@ NOT_SETTINGS = ENV_CREDENTIAL_NAMES | {
     "GRAFANA_PASSWORD",
     "VITE_EXTENSION_ORIGIN_ALLOWLIST",
     # Read by the TypeScript agent processes themselves, not by Settings.
+    "AGENT_BIND_HOST",
     "AGENT_HEALTH_PORT",
     "AGENT_HTTP_PORT",
     "VIGIL_OTEL_CAPTURE_CONTENT",
