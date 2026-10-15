@@ -157,6 +157,29 @@ async def read_replay(
     return response.json()
 
 
+async def read_call(run_id: str, ref: str) -> Optional[Dict[str, Any]]:
+    """One call of ``run_id`` as journaled: the query it sent and what came back.
+
+    None is serve's 404, an unknown run or ref. Anything else raises, because an
+    operator opened the call to check a record against it.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/calls/{ref}")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    return response.json()
+
+
 async def read_events(run_id: str) -> Optional[List[Dict[str, Any]]]:
     """The run's ledger, without snapshots.
 

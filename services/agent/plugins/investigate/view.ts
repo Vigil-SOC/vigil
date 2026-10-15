@@ -48,7 +48,14 @@ export function investigateView(runId: string, events: readonly Envelope[]): Lea
         iteration: turn,
         query_intent: steps.find((one) => one.thought !== undefined)?.thought ?? "",
         cost_usd: 0,
-        calls: steps.map((one) => ({ tool: one.tool, result: one.result, ...(one.duration_ms === undefined ? {} : { duration_ms: one.duration_ms }) })),
+        calls: steps.map((one) => ({
+          tool: one.tool,
+          result: one.result,
+          ref: one.ref,
+          arguments: one.arguments,
+          ...(one.class === undefined ? {} : { class: one.class }),
+          ...(one.duration_ms === undefined ? {} : { duration_ms: one.duration_ms }),
+        })),
       })),
     ),
     gaps: kernel.calls

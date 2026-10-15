@@ -332,6 +332,26 @@ describe("reading a run's ledger", () => {
   });
 });
 
+describe("reading one call of a run", () => {
+  it("answers the call as journaled, and 404 for a ref the run never made", async () => {
+    await listen([]);
+    await state.append(RUN, [
+      {
+        run_id: RUN,
+        run_kind: "investigate",
+        kind: "call",
+        payload: { ref: "r1", turn: 1, call_id: "c1", tool: "splunk_execute", arguments: '{"spl_query":"index=botsv3 | head 1"}', ok: true, failure: null, result: "1 row(s) from splunk" },
+      } as NewEvent<Record<string, unknown>>,
+    ]);
+
+    const found = await get(`/runs/${RUN}/calls/r1`);
+    expect(found.status).toBe(200);
+    expect(await found.json()).toMatchObject({ run_id: RUN, ref: "r1", tool: "splunk_execute", arguments: '{"spl_query":"index=botsv3 | head 1"}', result: "1 row(s) from splunk" });
+    expect((await get(`/runs/${RUN}/calls/r2`)).status).toBe(404);
+    expect((await get(`/runs/${RUN}/calls/x1`)).status).toBe(404);
+  });
+});
+
 describe("a route that throws", () => {
   it("answers 500 rather than crashing the process", async () => {
     await listen([]);
