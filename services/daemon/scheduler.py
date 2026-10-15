@@ -174,6 +174,37 @@ class TaskScheduler:
         except Exception as e:
             logger.warning(f"Failed to initialize Claude service: {e}")
 
+    def _seed_threat_hunt_last_run(self):
+        """Count the hunt's interval from the last scheduled hunt the intake saw.
+
+        last_run lives in memory, so a restart would otherwise open a hunt on the
+        first tick even when one was queued minutes ago.
+        """
+        task = next((t for t in self._tasks if t.name == "threat_hunt"), None)
+        if task is None:
+            return
+        task.last_run = self._last_scheduled_hunt_at()
+
+    @staticmethod
+    def _last_scheduled_hunt_at() -> Optional[datetime]:
+        from sqlalchemy import func
+
+        from core.storage.models import IntakeTrigger
+
+        try:
+            with get_db_manager().session_scope() as session:
+                return (
+                    session.query(func.max(IntakeTrigger.created_at))
+                    .filter(
+                        IntakeTrigger.kind == "schedule",
+                        IntakeTrigger.payload["trigger_type"].astext == "scheduled",
+                    )
+                    .scalar()
+                )
+        except Exception:  # noqa: BLE001 -- no history means the hunt is simply due
+            logger.warning("could not read the last scheduled hunt", exc_info=True)
+            return None
+
     async def run(self, shutdown_event: asyncio.Event):
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
@@ -182,6 +213,8 @@ class TaskScheduler:
         # the gateway's rates.
         await refresh_gateway_rates()
         rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
+
+        self._seed_threat_hunt_last_run()
 
         # Run startup tasks
         for task in self._tasks:
