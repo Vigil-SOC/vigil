@@ -53,7 +53,8 @@ class AIDecisionLog(Base):
 
     # AI's decision
     decision_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
+    # Null when the model gave none, rather than a 0 a real answer can also be.
+    confidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     reasoning: Mapped[str] = mapped_column(Text, nullable=False)
     recommended_action: Mapped[str] = mapped_column(Text, nullable=False)
 

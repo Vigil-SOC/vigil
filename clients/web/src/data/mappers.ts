@@ -257,7 +257,7 @@ export interface ApiDecision {
   decision_id: string
   agent_id?: string
   decision_type?: string
-  confidence_score?: number // 0–1
+  confidence_score?: number | null // 0–1; null when the model gave none
   reasoning?: string
   recommended_action?: string
   finding_id?: string
@@ -324,7 +324,7 @@ export function mapApiDecision(d: ApiDecision): Decision {
     conf:
       typeof d.confidence_score === 'number'
         ? Math.round(d.confidence_score * 100)
-        : 0,
+        : null,
     ai: d.recommended_action || DASH,
     human: decisionHuman(d.human_decision),
     outcome: decisionOutcome(d.human_decision),

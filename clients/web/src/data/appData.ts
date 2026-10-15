@@ -56,7 +56,8 @@ export interface Decision {
   agent: string
   type: string
   inv: string
-  conf: number
+  /** percent; null when the model gave no confidence */
+  conf: number | null
   ai: string
   human: string
   outcome: Outcome

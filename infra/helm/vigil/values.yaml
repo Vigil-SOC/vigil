@@ -434,6 +434,7 @@ dbInit:
     - 40_drop_custom_workflow_graph_layout.sql
     - 40_skill_reads.sql
     - 41_workflow_runs_progress.sql
+    - 42_ai_decision_confidence_nullable.sql
   resources:
     requests:
       cpu: 50m

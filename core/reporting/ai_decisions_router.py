@@ -82,7 +82,7 @@ class AIDecisionResponse(BaseModel):
     decision_id: str
     agent_id: str
     decision_type: str
-    confidence_score: float
+    confidence_score: Optional[float]
     reasoning: str
     recommended_action: str
     finding_id: Optional[str]
@@ -194,19 +194,29 @@ async def get_ai_decision_stats(
 
 
 @router.get("/decisions/pending-feedback")
-async def get_pending_feedback_decisions(limit: int = Query(50, ge=1, le=100)):
+async def get_pending_feedback_decisions(
+    limit: int = Query(50, ge=1, le=100),
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+):
     """
     Get decisions that are awaiting human feedback.
 
-    Returns decisions ordered by confidence (lowest first) since
-    low-confidence decisions benefit most from feedback.
+    Returns the newest ``limit`` of them ordered by confidence (lowest first)
+    since low-confidence decisions benefit most from feedback. Daemon triage
+    logs a decision per finding, so without ``agent_id`` its rows can fill the
+    window.
     """
     db_service = DatabaseService()
 
-    decisions = db_service.list_ai_decisions(has_feedback=False, limit=limit)
+    decisions = db_service.list_ai_decisions(
+        agent_id=agent_id, has_feedback=False, limit=limit
+    )
 
-    # Sort by confidence score (lowest first)
-    decisions_sorted = sorted(decisions, key=lambda d: d.confidence_score)
+    # Lowest confidence first; one the model never gave goes ahead of them.
+    decisions_sorted = sorted(
+        decisions,
+        key=lambda d: (d.confidence_score is not None, d.confidence_score or 0),
+    )
 
     return [AIDecisionResponse(**AIDecisionLogSchema.dump(d)) for d in decisions_sorted]
 

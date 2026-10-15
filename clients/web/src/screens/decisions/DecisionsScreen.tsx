@@ -62,7 +62,8 @@ function fmtTime(iso?: string): string {
   return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, HH:mm')
 }
 
-function confMeter(pct: number) {
+function confMeter(pct: number | null) {
+  if (pct === null) return <span className="muted">—</span>
   const cls = pct >= 85 ? 'hi' : pct < 70 ? 'lo' : ''
   return (
     <span className="confmeter">
@@ -72,6 +73,10 @@ function confMeter(pct: number) {
       <span className="num">{pct}%</span>
     </span>
   )
+}
+
+function confText(pct: number | null): string {
+  return pct === null ? '—' : `${pct}%`
 }
 
 function outcomeChip(o: Outcome) {
@@ -517,7 +522,7 @@ function DecisionsDetail({
               </div>
               <div className="cr-meta">
                 <span>{x.type}</span>
-                <span className="mono" style={{ marginLeft: 'auto' }}>{x.conf}%</span>
+                <span className="mono" style={{ marginLeft: 'auto' }}>{confText(x.conf)}</span>
               </div>
             </div>
           ))}
@@ -562,7 +567,7 @@ function DecisionsDetail({
             <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Decision details</h3></div>
             <div className="p-[18px]">
               <div className="kv">
-                <div className="row"><span className="k">AI confidence</span><span className="val">{d.conf}%</span></div>
+                <div className="row"><span className="k">AI confidence</span><span className="val">{confText(d.conf)}</span></div>
                 <div className="row"><span className="k">Est. time saved</span><span className="val">{d.saved}</span></div>
                 <div className="row"><span className="k">Agent</span><span className="val">{d.agent}</span></div>
                 <div className="row"><span className="k">Current outcome</span><span className="val">{outcomeChip(d.outcome)}</span></div>
@@ -623,7 +628,7 @@ export default function DecisionsScreen({ setViewFull }: ConsoleScreenProps) {
   const [approvalBanner, setApprovalBanner] = useState<string | null>(null)
 
   const stats = useDecisionStats('all')
-  const pending = usePendingDecisions()
+  const pending = usePendingDecisions(agentF)
   const all = useDecisions(agentF, statusF)
   const approvals = usePendingApprovals()
   const agentIds = useDecisionAgentIds()
@@ -725,11 +730,9 @@ export default function DecisionsScreen({ setViewFull }: ConsoleScreenProps) {
 
       {(tab === 'pending' || tab === 'all') && (
         <div className="bar-row" style={{ paddingTop: 8 }}>
+          <Dropdown label="Agent" value={agentF} options={agentOpts} onSelect={setAgentF} selected={agentF !== 'all'} onClear={() => setAgentF('all')} />
           {tab === 'all' && (
-            <>
-              <Dropdown label="Agent" value={agentF} options={agentOpts} onSelect={setAgentF} selected={agentF !== 'all'} onClear={() => setAgentF('all')} />
-              <Dropdown label="Status" value={statusF} options={STATUS_OPTS} onSelect={(v) => setStatusF(v as DecisionStatus)} selected={statusF !== 'all'} onClear={() => setStatusF('all')} />
-            </>
+            <Dropdown label="Status" value={statusF} options={STATUS_OPTS} onSelect={(v) => setStatusF(v as DecisionStatus)} selected={statusF !== 'all'} onClear={() => setStatusF('all')} />
           )}
           <div className="search" style={{ marginLeft: 'auto', maxWidth: 280 }}>
             <span><Icon name="search" /></span>
