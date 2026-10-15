@@ -29,6 +29,9 @@ from core.integrations.mcp.service import MCPService
 
 UID_BASE = 10001
 UID_MAP = "uids.json"
+# Each server's TMPDIR, inside its HOME: a shared /tmp lets servers plant
+# files for each other.
+TMP_DIR = "tmp"
 
 
 @contextmanager
@@ -54,12 +57,16 @@ class Launch:
     env: Dict[str, str]
 
 
+def read_entries(root: Path) -> Dict[str, dict]:
+    raw = json.loads((Path(root) / "mcp-config.json").read_text())["mcpServers"]
+    # String values are the file's _comment_* section headers.
+    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+
+
 class Catalog:
     def __init__(self, root: Path):
         self.root = Path(root)
-        raw = json.loads((self.root / "mcp-config.json").read_text())["mcpServers"]
-        # String values are the file's _comment_* section headers.
-        self.entries = {k: v for k, v in raw.items() if isinstance(v, dict)}
+        self.entries = read_entries(self.root)
         stub = SimpleNamespace(
             derive_remote_mcp_env=lambda: {}, get_mcp_env_vars=lambda: {}
         )
@@ -99,11 +106,13 @@ class Catalog:
         # What the backend sent wins over the catalog's defaults.
         env.update(request_env)
         env.update(ca_bundle_env())
-        env.update(HOME=home, PYTHONPATH=root)
+        env.update(HOME=home, PYTHONPATH=root, TMPDIR=str(Path(home) / TMP_DIR))
         return Launch(command, args, cwd, env)
 
 
 def assign_uids(names: List[str]) -> Dict[str, int]:
+    # By sorted position, so a new entry shifts every uid after it. Safe while
+    # the HOMEs are baked into the image; not if they move to a volume.
     return {name: UID_BASE + i for i, name in enumerate(sorted(names))}
 
 
@@ -120,20 +129,14 @@ def provision(state_dir: Path, names: List[str]) -> Dict[str, int]:
     uids = assign_uids(names)
     for name, uid in uids.items():
         home = state_dir / name
-        home.mkdir(exist_ok=True)
-        os.chown(home, uid, uid)
-        home.chmod(0o700)
+        for path in (home, home / TMP_DIR):
+            path.mkdir(exist_ok=True)
+            os.chown(path, uid, uid)
+            path.chmod(0o700)
     (state_dir / UID_MAP).write_text(json.dumps(uids, indent=2, sort_keys=True))
     return uids
 
 
 if __name__ == "__main__":
-    app_root = Path(__file__).resolve().parents[2]
-    names = sorted(
-        k
-        for k, v in json.loads((app_root / "mcp-config.json").read_text())[
-            "mcpServers"
-        ].items()
-        if isinstance(v, dict)
-    )
+    names = sorted(read_entries(Path(__file__).resolve().parents[2]))
     print(json.dumps(provision(Path(sys.argv[1]), names), sort_keys=True))

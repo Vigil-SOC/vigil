@@ -25,7 +25,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from services.mcp_runner.catalog import Catalog, load_uids
-from services.mcp_runner.supervisor import Supervisor
+from services.mcp_runner.supervisor import ShuttingDown, Supervisor
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,28 @@ STATE_DIR = Path("/var/lib/vigil/mcp")
 PORT = 6991
 
 
-_LOADER_VARS = {"GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH"}
+# glibc's own unsecure-envvars list (what it strips for setuid programs), plus
+# PATH, which picks the binaries setpriv and the server run.
+_ROOT_UNSAFE_VARS = {
+    "GCONV_PATH",
+    "GETCONF_DIR",
+    "GLIBC_TUNABLES",
+    "HOSTALIASES",
+    "LOCALDOMAIN",
+    "LOCPATH",
+    "MALLOC_TRACE",
+    "NIS_PATH",
+    "NLSPATH",
+    "PATH",
+    "RESOLV_HOST_CONF",
+    "RES_OPTIONS",
+    "TMPDIR",
+    "TZDIR",
+}
 
 
-def _is_loader_var(key: str) -> bool:
-    return key.startswith("LD_") or key in _LOADER_VARS
+def _is_root_unsafe(key: str) -> bool:
+    return key.startswith("LD_") or key in _ROOT_UNSAFE_VARS
 
 
 class BearerAuth:
@@ -95,11 +112,14 @@ def create_app(
             isinstance(k, str) and isinstance(v, str) for k, v in env.items()
         ):
             return JSONResponse({"detail": 'body must be {"env": {str: str}}'}, 422)
-        # setpriv sees this env while still root; loader variables would run
-        # code there before it drops to the server's uid.
-        if loader := sorted(k for k in env if _is_loader_var(k)):
-            return JSONResponse({"detail": f"env may not set {loader}"}, 422)
-        action, child = await supervisor.put(name, env)
+        # setpriv sees this env while still root; these would run code there
+        # before it drops to the server's uid.
+        if unsafe := sorted(k for k in env if _is_root_unsafe(k)):
+            return JSONResponse({"detail": f"env may not set {unsafe}"}, 422)
+        try:
+            action, child = await supervisor.put(name, env)
+        except ShuttingDown:
+            return JSONResponse({"detail": "the runner is shutting down"}, 503)
         status = child.status()
         return JSONResponse(
             {"action": action, "running": child.state == "running", **status},
@@ -130,9 +150,10 @@ def create_app(
 
         try:
             await child.manager.handle_request(scope, receive, tracked_send)
-        except (RuntimeError, AttributeError):
+        except (RuntimeError, AttributeError, AssertionError):
             # The manager stopped (DELETE, restart) while this request was in
-            # its body read; answer as for a stopped server if we still can.
+            # its body read or waiting to open a session; answer as for a
+            # stopped server if we still can.
             if started:
                 raise
             response = JSONResponse({"detail": f"{name} is not running"}, 503)
@@ -182,6 +203,9 @@ def main() -> None:
         host="0.0.0.0",  # nosec B104 - containers must bind all interfaces
         port=PORT,
         log_level="info",
+        # A client's MCP GET stream never ends on its own, and uvicorn waits
+        # for open streams before lifespan shutdown stops the servers.
+        timeout_graceful_shutdown=5,
     )
 
 

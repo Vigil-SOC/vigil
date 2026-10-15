@@ -652,6 +652,9 @@ services:
     # A stop kills the server's process group; grandchildren (npx -> node) are
     # re-parented to PID 1, which must reap them.
     init: true
+    # uvicorn gives open MCP streams 5 s, then each server up to ~6 s to stop
+    # (stdin grace, SIGTERM, SIGKILL); Docker's default 10 s would cut that.
+    stop_grace_period: 20s
     security_opt:
       - no-new-privileges:true
     volumes:

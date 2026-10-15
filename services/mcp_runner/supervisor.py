@@ -24,12 +24,18 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 
 from core.integrations.mcp.client import PersistentServerSession
-from services.mcp_runner.catalog import Catalog
+from services.mcp_runner.catalog import TMP_DIR, Catalog
 
 logger = logging.getLogger(__name__)
 
 STDERR_TAIL_LINES = 40
 EXIT_POLL_SECONDS = 0.5
+# By path: a bare name would be looked up on the child env's PATH, as root.
+SETPRIV = "/usr/bin/setpriv"
+
+
+class ShuttingDown(Exception):
+    """A start was refused because the supervisor is stopping."""
 
 
 class _ChildSession(PersistentServerSession):
@@ -145,10 +151,11 @@ class Supervisor:
         assert self._tg is not None
         # Refuse new starts, then stop each child under its lock so a start
         # in flight finishes first and is stopped by event, not cancellation.
+        # All at once: each may take its stdin grace period.
         self._closing = True
-        for name in list(self.children):
-            async with self._lock(name):
-                await self._stop(name)
+        async with anyio.create_task_group() as stops:
+            for name in list(self.children):
+                stops.start_soon(self._stop_locked, name)
         self._tg.cancel_scope.cancel()
         await self._tg.__aexit__(*exc)
         self._tg = None
@@ -174,7 +181,7 @@ class Supervisor:
         """Start ``name`` with ``env``; a no-op when it already runs with it."""
         async with self._lock(name):
             if self._closing:
-                raise RuntimeError("supervisor is shutting down")
+                raise ShuttingDown
             current = self.running(name)
             if current is not None and current.env == env:
                 return "unchanged", current
@@ -203,6 +210,10 @@ class Supervisor:
             await self._stop(name)
             self.children.pop(name, None)
 
+    async def _stop_locked(self, name: str) -> None:
+        async with self._lock(name):
+            await self._stop(name)
+
     async def _stop(self, name: str) -> None:
         child = self.children.get(name)
         if child is not None and not child.done.is_set():
@@ -212,7 +223,7 @@ class Supervisor:
     def _params(self, child: Child) -> StdioServerParameters:
         home = self.state_dir / child.name
         if not self.switch_uid:  # as root, provisioned at image build
-            home.mkdir(parents=True, exist_ok=True)
+            (home / TMP_DIR).mkdir(parents=True, exist_ok=True)
         launch = self.catalog.launch(child.name, child.env, str(home))
         command, args = launch.command, launch.args
         if self.switch_uid:
@@ -225,7 +236,7 @@ class Supervisor:
                 command,
                 *args,
             ]
-            command = "setpriv"
+            command = SETPRIV
         return StdioServerParameters(
             command=command, args=args, cwd=launch.cwd, env=launch.env
         )
