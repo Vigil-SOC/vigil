@@ -758,7 +758,7 @@ class DatabaseService:
                 .with_for_update()
             ).scalar_one_or_none()
             if not finding:
-                logger.warning(f"Finding not found: {finding_id}")
+                logger.warning("Finding not found: %s", finding_id)
                 return False
             finding.ai_enrichment = merge_ai_enrichment(
                 finding.ai_enrichment, ai_enrichment, daemon=daemon

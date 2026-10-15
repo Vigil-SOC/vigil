@@ -391,7 +391,7 @@ class DatabaseDataService:
                     finding_id, ai_enrichment, daemon=daemon, **updates
                 )
             except Exception as e:
-                logger.error(f"Error writing ai_enrichment in DB: {e}")
+                logger.error("Error writing ai_enrichment in DB: %s", e)
                 return False
         return False
 
