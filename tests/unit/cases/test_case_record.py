@@ -1,5 +1,6 @@
 """Record is one merged read, newest first, with audit rows unchained."""
 
+import json
 from datetime import datetime, timezone
 
 from core.cases.case_record import merge_record
@@ -305,12 +306,26 @@ def test_a_search_reads_as_its_query_and_how_many_rows_came_back():
                 "turn": 1,
             },
         ),
+        (
+            "call",
+            {
+                "tool": "splunk-mcp_splunk_execute",
+                "arguments": '{"spl_query": "index=botsv3 | stats count by host"}',
+                "ok": True,
+                "result": '<vigil:tool_result tool="splunk_execute" ref="r7">\n1 row(s) from splunk\n'
+                + json.dumps([{"success": True, "results": [{"host": "a"}, {"host": "b"}, {"host": "c"}]}])
+                + "\n</vigil:tool_result>",
+                "turn": 2,
+            },
+        ),
         ("dispatch", {"agent_id": "agent"}),
     )
     texts = [row["text"] for row in reversed(merge_record(rows, []))]
     assert texts == [
         "Searched Splunk: index=botsv3 sourcetype=stream:tcp | stats count by dest_ip → 1 row",
         "Refused — Searched Splunk: index=botsv3 | head 1 — timeout — no answer in 30s",
+        # The wrapper Splunk answers in is one row; its results are what came back.
+        "Searched Splunk: index=botsv3 | stats count by host → 3 rows",
     ]
 
 

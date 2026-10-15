@@ -212,6 +212,28 @@ def _quoted(text: str, limit: int = 120) -> str:
 
 # "N row(s) from <source>" opens every rendered tool result.
 _ROWS = re.compile(r"^(?:<vigil:tool_result[^>]*>\s*)?(\d+) rows?\b")
+_BODY = re.compile(r"^<vigil:tool_result[^>]*>\n?(.*?)\n?</vigil:tool_result>$", re.S)
+
+
+def _rows_in(result: str) -> Optional[int]:
+    """Rows a call got back. A tool that wraps its answer ({success, query,
+    results: [...]}, as the Splunk tools do) says one row, the wrapper."""
+    said = _ROWS.match(result)
+    if not said:
+        return None
+    count = int(said.group(1))
+    if count != 1:
+        return count
+    found = _BODY.match(result)
+    body = found.group(1) if found else result
+    try:
+        parsed = json.loads(body.split("\n", 1)[1])
+    except (IndexError, ValueError):
+        return count
+    only = parsed[0] if isinstance(parsed, list) and len(parsed) == 1 else None
+    if isinstance(only, Mapping) and isinstance(only.get("results"), list):
+        return len(only["results"])
+    return count
 
 
 def _verb(tool: str) -> str:
@@ -251,9 +273,8 @@ def _call_text(body: Mapping[str, Any], context: RecordContext) -> Optional[str]
     text = f"{verb}: {_listed(subject)}" if subject else verb
     if not ok:
         return _join(f"Refused — {text}", _failure(body.get("failure")))
-    rows = _ROWS.match(str(body.get("result") or ""))
-    if rows and subject:
-        count = int(rows.group(1))
+    count = _rows_in(str(body.get("result") or ""))
+    if count is not None and subject:
         return f"{text} → {count:,} {'row' if count == 1 else 'rows'}"
     return text
 
