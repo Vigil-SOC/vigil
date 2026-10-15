@@ -146,6 +146,7 @@ describe("what the record now says outright", () => {
   it("opens a listed or labelled summary on its first sentences, not on a list marker", () => {
     const listed = "Findings:\n1. Phishing mail delivered a macro. 2. It ran.\n\nThe host beaconed.";
     expect(headlineOf(listed)).toBe("Findings: Phishing mail delivered a macro.");
+    expect(headlineOf("Findings: 1. Beacon on port 443. 2. It ran.")).toBe("Findings: Beacon on port 443.");
     const narrated = (summary: string) =>
       investigateAccount("run-5", ledger([{ kind: "conclusion", payload: { plugin: "investigate", value: { summary }, capped: false, turns: 1, cost_usd: 0 } }])).narrative;
     expect(narrated(listed)).toEqual({ run_id: "run-5", summary: "Findings: Phishing mail delivered a macro. It ran.", what_happened: listed });

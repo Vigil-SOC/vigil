@@ -75,8 +75,8 @@ export function headlineOf(summary: string): string {
 // list markers dropped, inline ("macro. 2. It ran") too, so a marker never ends a sentence.
 function sentencesOf(summary: string): string[] {
   const unlabelled = summary.replace(/^[A-Z][A-Z /]*?\s*(?:—|:|\s-\s)\s*/, "");
-  const first = (unlabelled.split(/\n\s*\n/)[0] ?? unlabelled).replace(/^\s*(?:[-*]|\d+[.)])\s+/gm, "").replace(/\s*\n\s*/g, " ").replace(/(?<=[.!?])\s+\d+[.)]\s+/g, " ");
-  return (first.match(/.+?(?<!(?:^|\s)\d{1,3})[.!?](?=\s+[A-Z("']|\s*$)|.+$/gs) ?? [first]).map((one) => one.trim());
+  const first = (unlabelled.split(/\n\s*\n/)[0] ?? unlabelled).replace(/^\s*(?:[-*]|\d+[.)])\s+/gm, "").replace(/\s*\n\s*/g, " ").replace(/(?<=[.!?:])\s+\d+[.)]\s+/g, " ");
+  return (first.match(/.+?[.!?](?=\s+[A-Z("']|\s*$)|.+$/gs) ?? [first]).map((one) => one.trim());
 }
 
 function opening(sentences: readonly string[], count: number): string {
