@@ -38,6 +38,7 @@ interface Enrichment {
   indicators?: { malicious_ips?: string[]; suspicious_domains?: string[] }
   analysis_notes?: string
   raw_response?: string
+  generated_at?: string
 }
 
 const ENRICHMENT_PROGRESS = [
@@ -212,7 +213,9 @@ export default function FindingPopup({
         const data = res.data as RawFinding
         setRaw(data)
         setStatus((data as { status?: string }).status || '')
-        if (data.ai_enrichment) {
+        // The daemon writes triage keys into ai_enrichment too; only a
+        // generated analysis carries generated_at.
+        if (data.ai_enrichment?.generated_at) {
           setEnrichment(data.ai_enrichment)
           setEnrichPhase('ready')
         }

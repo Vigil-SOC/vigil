@@ -195,6 +195,15 @@ async def _dispatch(
     return result.get("content", "")
 
 
+def is_generated_analysis(enrichment: Any) -> bool:
+    """True when ``ai_enrichment`` holds an analysis from ``enrich()``.
+
+    The daemon writes triage keys into the same column, so presence alone
+    isn't enough; only ``enrich()`` stamps ``generated_at``.
+    """
+    return isinstance(enrichment, dict) and bool(enrichment.get("generated_at"))
+
+
 async def _persist(
     finding_id: str, enrichment: Dict[str, Any], data_service: Any
 ) -> bool:
