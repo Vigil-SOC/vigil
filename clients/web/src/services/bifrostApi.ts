@@ -62,9 +62,9 @@ export interface BifrostKey {
   }
 }
 
-/** Vertex's credential is not an API key: it is a service-account JSON plus the
-    project/region that scope it. Bifrost holds the JSON under `auth_credentials`;
-    the passthrough mirrors it to the key's `value` so one secret ref backs both.
+/** The project/region every Vertex key is scoped by, plus — for a service
+    account — its JSON under `auth_credentials`. An express-mode API key sends a
+    bare `value` beside this block instead.
 
     All three fields are omitted on an edit that isn't changing them — Bifrost
     masks each on read, and echoing a mask back stores the mask, so the
@@ -102,7 +102,7 @@ export interface BifrostKeyWrite {
   /** Omit to keep the stored credential — the passthrough fills it in. */
   value?: string
   use_for_batch_api?: boolean
-  /** Vertex only — sent instead of a bare `value`. */
+  /** Vertex only — the scope, and a service account's JSON. */
   vertex_key_config?: VertexKeyConfig
   /** Ollama only — its credential is an endpoint, not a secret. Omit to keep
       the stored URL. */
