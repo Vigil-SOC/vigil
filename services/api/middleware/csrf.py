@@ -157,8 +157,21 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     self.report_only,
                 )
                 if not self.report_only:
+                    detail = "CSRF token missing or invalid"
+                    if (
+                        not cookie_token
+                        and self.cookie_secure
+                        and request.url.scheme == "http"
+                        and request.headers.get("x-forwarded-proto", "http") == "http"
+                    ):
+                        detail += (
+                            ". The browser did not send the csrf_token cookie: it is "
+                            "marked Secure and this page is served over plain HTTP. "
+                            "Use HTTPS, or set VIGIL_COOKIE_SECURE=false for "
+                            "local/loopback-only HTTP access"
+                        )
                     return JSONResponse(
-                        {"detail": "CSRF token missing or invalid"},
+                        {"detail": detail},
                         status_code=403,
                     )
 

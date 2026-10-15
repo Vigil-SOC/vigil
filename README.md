@@ -125,6 +125,7 @@ Then open http://localhost:6988 and create the admin account on the bootstrap sc
 
 - **`AGENT_INTERNAL_TOKEN`** lets the agent layer talk to the API. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Without it the stack still starts, but workflow runs stay queued.
 - **Authentication is on by default.** No account or default password ships; the first visit creates the admin. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
+- **Open the console over HTTPS, or from `localhost`.** Auth cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), and browsers drop them on plain `http://<ip>`, so sign-in fails with *CSRF token missing or invalid*. The dev server also listens on `127.0.0.1:6988` only. For a remote host, use an SSH tunnel (`ssh -L 6988:127.0.0.1:6988 user@host`, then browse `http://localhost:6988`) or put HTTPS in front. For trusted plain-HTTP access only, set `VIGIL_COOKIE_SECURE=false` in `.env` and change `host` in `clients/web/vite.config.ts` to listen beyond localhost.
 
 > **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`). Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
 >

@@ -313,7 +313,34 @@ def test_enforcing_csrf_lets_cookieless_internal_through_and_rejects_api():
 
     rejected = client.post("/api/cases/")
     assert rejected.status_code == 403
-    assert rejected.json()["detail"] == "CSRF token missing or invalid"
+    assert rejected.json()["detail"].startswith("CSRF token missing or invalid")
+
+
+def test_csrf_rejection_hints_at_secure_cookie_over_plain_http():
+    from services.api.middleware.csrf import CSRFMiddleware
+
+    def build(cookie_secure):
+        app = FastAPI()
+        app.add_middleware(
+            CSRFMiddleware,
+            enabled=True,
+            report_only=False,
+            exempt_paths=(),
+            cookie_secure=cookie_secure,
+        )
+
+        @app.post("/api/x")
+        def x():
+            return {"ok": True}
+
+        return TestClient(app)
+
+    secure = build(True).post("/api/x")
+    assert secure.status_code == 403
+    assert "VIGIL_COOKIE_SECURE=false" in secure.json()["detail"]
+
+    insecure = build(False).post("/api/x")
+    assert insecure.json()["detail"] == "CSRF token missing or invalid"
 
 
 def test_the_shipped_configs_do_not_take_the_exemption_away():
