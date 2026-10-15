@@ -7,6 +7,7 @@ import { clock } from './clock'
 import FlowDiagram from './FlowDiagram'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
+import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import { EmptyState, Popup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -240,11 +241,11 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
     const findingId = open.finding_id
     setActionError(null)
     try {
-      const res = await findingsApi.launchIntake(findingId)
+      const note = await sendFindingToTriage(findingId)
       if (!stillOpen(findingId)) return
-      setLaunchNote(res.data.already_queued ? 'Already waiting in the Triage queue.' : 'Waiting in the Triage queue')
+      setLaunchNote(note)
     } catch (error) {
-      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t send this finding to triage'))
+      if (stillOpen(findingId)) setActionError(errorText(error, SEND_TO_TRIAGE_FAILED))
     }
   }
 

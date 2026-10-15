@@ -10,6 +10,7 @@ vi.mock('../../services/api', () => ({
     getEnrichment: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    launchIntake: vi.fn(),
   },
 }))
 
@@ -263,5 +264,24 @@ describe('FindingPopup AI enrichment errors', () => {
     expect(await screen.findByText('AI enrichment failed')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     expect(screen.queryByText('Virtual-key budget spent')).not.toBeInTheDocument()
+  })
+})
+
+describe('FindingPopup send to triage', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('queues the finding and says so', async () => {
+    openFinding({})
+    vi.mocked(findingsApi.launchIntake).mockResolvedValueOnce({ data: { already_queued: false } } as never)
+    fireEvent.click(await screen.findByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByText('Waiting in the Triage queue')).toBeInTheDocument()
+    expect(findingsApi.launchIntake).toHaveBeenCalledWith('f-source-1')
+  })
+
+  it('shows an error when queueing fails', async () => {
+    openFinding({})
+    vi.mocked(findingsApi.launchIntake).mockRejectedValueOnce(new Error('boom'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t send this finding to triage')
   })
 })
