@@ -17763,7 +17763,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;
@@ -22509,7 +22509,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;

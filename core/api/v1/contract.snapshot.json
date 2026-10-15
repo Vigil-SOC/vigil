@@ -6098,7 +6098,7 @@
             }
           },
           {
-            "description": "Text search across finding IDs, descriptions, entity context",
+            "description": "Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match",
             "in": "query",
             "name": "search",
             "required": false,
@@ -6111,7 +6111,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Text search across finding IDs, descriptions, entity context",
+              "description": "Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match",
               "title": "Search"
             }
           },
