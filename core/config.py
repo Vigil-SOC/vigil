@@ -260,6 +260,7 @@ class Settings(BaseSettings):
     daemon_enrich_backfill: bool = True
     daemon_enrich_backfill_interval: int = 300
     daemon_enrich_backfill_batch: int = 50
+    # Measured from when Vigil stored the finding, not its event time
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
     daemon_confidence_threshold: float = 0.90
