@@ -49,6 +49,24 @@ export function queryOf(args: unknown): string {
 // "N row(s) from <source>" opens every rendered result (core/security.ts).
 const ROWS = /^(?:<vigil:tool_result[^>]*>\s*)?(\d+) rows?\b/;
 
+// How many rows came back. A tool that wraps its answer ({success, query, results: [...]},
+// as the Splunk tools do) reports one row, the wrapper; the rows are its results.
+export function rowsIn(result: string): number | undefined {
+  const said = ROWS.exec(result);
+  if (said === null) return undefined;
+  const count = Number(said[1]);
+  if (count !== 1) return count;
+  const body = /^<vigil:tool_result[^>]*>\n?([\s\S]*?)\n?<\/vigil:tool_result>$/.exec(result)?.[1] ?? result;
+  const split = body.indexOf("\n");
+  try {
+    const parsed: unknown = JSON.parse(body.slice(split + 1));
+    const only = Array.isArray(parsed) && parsed.length === 1 ? (parsed[0] as Record<string, unknown> | null) : null;
+    return only !== null && typeof only === "object" && Array.isArray(only["results"]) ? only["results"].length : count;
+  } catch {
+    return count;
+  }
+}
+
 interface DispatchCalls {
   iteration?: number;
   query_intent?: string;
@@ -83,7 +101,7 @@ export function callViews(dispatches: Iterable<DispatchCalls>): CallView[] {
         ...(failed === undefined ? {} : { failed }),
         ...(typeof record.ref === "string" ? { ref: record.ref } : {}),
         ...(queryOf(record.arguments ?? "") === "" || queryOf(record.arguments ?? "") === "{}" ? {} : { query: queryOf(record.arguments) }),
-        ...(ROWS.exec(result) === null ? {} : { rows: Number(ROWS.exec(result)![1]) }),
+        ...(rowsIn(result) === undefined ? {} : { rows: rowsIn(result) as number }),
         ...(typeof record.class === "string" ? { class: record.class } : {}),
         ...(typeof record.thought === "string" && record.thought !== "" ? { thought: record.thought } : {}),
       });

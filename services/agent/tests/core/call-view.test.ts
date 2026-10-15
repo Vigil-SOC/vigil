@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callViews, queryOf } from "../../core/call-view.js";
+import { callViews, queryOf, rowsIn } from "../../core/call-view.js";
 
 // A row of the Checked tab: the call's ref, the query it sent, how many rows came
 // back, how the kernel classed it, and the turn's words, read off the ledger call.
@@ -40,5 +40,18 @@ describe("a call as a reader checks it", () => {
     expect(queryOf('{"ip":"45.77.53.176"}')).toBe("45.77.53.176");
     expect(queryOf({ window: "1h" })).toBe('{"window":"1h"}');
     expect(queryOf("not json")).toBe("not json");
+  });
+});
+
+describe("how many rows a call got back", () => {
+  it("counts a wrapped answer's results, not the wrapper", () => {
+    const wrapped = ['<vigil:tool_result tool="splunk_execute" ref="r5">', "1 row(s) from splunk", JSON.stringify([{ success: true, count: 30, results: Array.from({ length: 30 }, (_, i) => ({ i })) }]), "</vigil:tool_result>"].join("\n");
+    expect(rowsIn(wrapped)).toBe(30);
+  });
+
+  it("takes the count as said when the rows are the rows", () => {
+    expect(rowsIn("1 row(s) from okta\n[{\"user\":\"ada\"}]")).toBe(1);
+    expect(rowsIn("25 row(s) from splunk\n[]")).toBe(25);
+    expect(rowsIn("no rows here")).toBeUndefined();
   });
 });

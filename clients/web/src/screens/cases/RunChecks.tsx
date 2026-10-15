@@ -44,7 +44,9 @@ function tableOf(body: string): { head: string; columns: string[]; rows: Record<
     // A single nested record ("success, query, results: [...]") reads better as its results.
     if (rows.length === 1 && Array.isArray(rows[0]!.results)) {
       const inner = (rows[0]!.results as unknown[]).filter((row): row is Record<string, unknown> => !!row && typeof row === 'object' && !Array.isArray(row))
-      if (inner.length > 0) return { head: body.slice(0, split), columns: [...new Set(inner.flatMap((row) => Object.keys(row)))].slice(0, 14), rows: inner }
+      // Its first line counted the wrapper; the count a reader wants is the results'.
+      const head = body.slice(0, split).replace(/^\d+ rows?(\(s\))?/, `${inner.length} ${inner.length === 1 ? 'row' : 'rows'}`)
+      if (inner.length > 0) return { head, columns: [...new Set(inner.flatMap((row) => Object.keys(row)))].slice(0, 14), rows: inner }
     }
     return { head: body.slice(0, split), columns: columns.slice(0, 14), rows }
   } catch {
