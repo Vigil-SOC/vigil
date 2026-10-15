@@ -4552,26 +4552,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/orchestrator/investigations/{investigation_id}/review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Review Investigation
-         * @description Human review of an investigation: approve or request rework.
-         */
-        post: operations["post_api_orchestrator_investigations_investigation_id_review"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/orchestrator/investigations/{investigation_id}/wake": {
         parameters: {
             query?: never;
@@ -10378,13 +10358,6 @@ export interface components {
             config: string;
             /** Playbook */
             playbook: string;
-        };
-        /** ReviewRequest */
-        ReviewRequest: {
-            /** Action */
-            action: string;
-            /** Notes */
-            notes?: string | null;
         };
         /**
          * Routability
@@ -19479,43 +19452,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_orchestrator_investigations_investigation_id_review: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                investigation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReviewRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {

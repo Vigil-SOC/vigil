@@ -1065,8 +1065,6 @@ export const orchestratorApi = {
     api.post('/orchestrator/scan-findings', {
       severities: severities || ['critical', 'high'],
     }, { timeout: LLM_TIMEOUT }),
-  reviewInvestigation: (id: string, action: 'approve' | 'rework', notes?: string) =>
-    api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getChainOfCustody: (id: string) =>
     api.get(`/orchestrator/investigations/${id}/chain-of-custody`),

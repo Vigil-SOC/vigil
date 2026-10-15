@@ -651,21 +651,6 @@ class TestReconcile:
         orch._update_investigation_status.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_a_completed_run_goes_to_review(self):
-        orch = _orchestrator()
-        await self._reconcile(
-            orch,
-            {
-                "status": "terminal",
-                "outcome": "completed",
-                "reason": "stale password",
-                "iterations": 4,
-            },
-        )
-
-        assert orch._update_investigation_status.call_args[0][1] == "review_submitted"
-
-    @pytest.mark.asyncio
     async def test_a_failed_run_carries_its_reason(self):
         orch = _orchestrator()
         await self._reconcile(

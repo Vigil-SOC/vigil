@@ -21,21 +21,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from core.storage.models.base import Base
 from core.time import utcnow
 
-# The two senses of "not finished", kept together because they differ by one
-# status and drift apart when they do not share a home. LIVE is the record the
-# Case owns; IN_FLIGHT is the subset holding an agent slot, which a run under
-# review has already given back.
+# The two senses of "not finished": LIVE is the record the Case owns, IN_FLIGHT
+# the runs holding an agent slot. They coincide since a completed run no longer
+# waits in review (#2324), but callers still name the sense they mean.
 LIVE_INVESTIGATION_STATUSES = (
     "assigned",
     "executing",
     "waiting_approval",
-    "review_submitted",
 )
-IN_FLIGHT_INVESTIGATION_STATUSES = (
-    "assigned",
-    "executing",
-    "waiting_approval",
-)
+IN_FLIGHT_INVESTIGATION_STATUSES = LIVE_INVESTIGATION_STATUSES
 # A run with no ``Investigation`` row (``/hunt``) has three live-ish words of its
 # own. The case reads them as a running run ``executing`` and a held one ``paused``.
 RUN_LIVE_STATE = {"running": "executing", "paused": "paused"}
