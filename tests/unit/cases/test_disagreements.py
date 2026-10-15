@@ -34,14 +34,15 @@ def verdict(run_id: str, disposition: str) -> dict:
     return {"run_id": run_id, "disposition": disposition, "headline": "h"}
 
 
-def claim(run_id: str, id: str, text: str, standing: str, role: str = "adversary"):
-    return {
+def claim(run_id, id, text, standing, role="adversary", techniques=None):
+    held = {
         "run_id": run_id,
         "id": id,
         "claim": text,
         "role": role,
         "standing": standing,
     }
+    return {**held, "techniques": techniques} if techniques else held
 
 
 def test_the_sample_runs_disagree_on_exfiltration():
@@ -78,6 +79,17 @@ def test_opposite_verdicts_are_one_disagreement_naming_every_run():
     assert "investigate aaaaaaaa says malicious" in found[0].text
 
 
+def test_a_run_holding_out_for_review_objects_to_a_dismissal():
+    found = find_disagreements(
+        [
+            account("a", verdict=verdict("a", "needs_review")),
+            account("b", verdict=verdict("b", "benign")),
+        ]
+    )
+
+    assert [(one.kind, one.runs) for one in found] == [("verdict", ["a", "b"])]
+
+
 def test_a_run_that_could_not_decide_disagrees_with_nobody():
     found = find_disagreements(
         [
@@ -91,22 +103,84 @@ def test_a_run_that_could_not_decide_disagrees_with_nobody():
 
 def test_a_claim_held_by_one_run_and_ruled_out_by_another_is_paired_by_what_it_names():
     held = claim(
-        "a", "h1", "adam.hartley's session on ACCT-WS-007 dumped lsass", "proven"
+        "a", "h1", "lsass dumped on ACCT-WS-007", "proven", techniques=["T1003.001"]
     )
-    dropped = claim("b", "h1", "Credential theft from ACCT-WS-007", "ruled_out")
+    dropped = claim(
+        "b",
+        "h1",
+        "Credential theft on ACCT-WS-007",
+        "ruled_out",
+        techniques=["T1003.001"],
+    )
+    weakened = claim("c", "h4", "comsvcs MiniDump (T1003.001)", "weakened")
     elsewhere = claim("b", "h2", "Beaconing from WEB-02", "ruled_out")
     benign = claim("b", "h3", "Backup job on ACCT-WS-007", "ruled_out", role="benign")
+    unrelated = claim("c", "h5", "Beaconing from WEB-03", "ruled_out")
 
     found = find_disagreements(
         [
             account("a", explanations=[held]),
             account("b", explanations=[dropped, elsewhere, benign]),
+            account("c", explanations=[weakened, unrelated]),
         ]
     )
 
+    # One disagreement for the held claim, naming every run that dropped it.
     assert [
-        (one.kind, [(r.run_id, r.id) for r in one.refs or []]) for one in found
-    ] == [("standing", [("a", "h1"), ("b", "h1")])]
+        (one.kind, one.runs, [(r.run_id, r.id) for r in one.refs or []])
+        for one in found
+    ] == [("standing", ["a", "b", "c"], [("a", "h1"), ("b", "h1"), ("c", "h4")])]
+
+
+def test_alternative_attacks_on_the_case_host_are_not_a_disagreement():
+    # The case's host is in every claim, and attacks on it are alternatives.
+    found = find_disagreements(
+        [
+            account(
+                "a",
+                explanations=[
+                    claim(
+                        "a",
+                        "h1",
+                        "Credential dumping via procdump on ACCT-WS-007",
+                        "proven",
+                    )
+                ],
+            ),
+            account(
+                "b",
+                explanations=[
+                    claim("b", "h1", "Ransomware staging on ACCT-WS-007", "ruled_out"),
+                    claim(
+                        "b",
+                        "h2",
+                        "Data exfiltration to cloud storage from ACCT-WS-007",
+                        "ruled_out",
+                    ),
+                ],
+            ),
+        ]
+    )
+
+    assert found == []
+
+
+def test_run_local_refs_and_times_tie_nothing():
+    gap = {
+        "run_id": "a",
+        "text": "splunk_search could not answer r7 at 2026-10-15T10:00:00Z (h1)",
+        "kind": "visibility",
+    }
+    record = {
+        "run_id": "b",
+        "id": "r7.0",
+        "claim": "r7 at 2026-10-15T10:00:00Z held h1",
+    }
+
+    assert (
+        find_disagreements([account("a", gaps=[gap]), account("b", evidence=[record])])
+        == []
+    )
 
 
 def test_one_shared_host_does_not_tie_a_gap_to_a_record():
