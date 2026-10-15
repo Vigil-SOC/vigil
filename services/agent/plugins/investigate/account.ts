@@ -71,9 +71,12 @@ export function headlineOf(summary: string): string {
   return opening(sentencesOf(summary), 1);
 }
 
+// A summary written as a list or in paragraphs opens with its first paragraph, its
+// list markers dropped, inline ("macro. 2. It ran") too, so a marker never ends a sentence.
 function sentencesOf(summary: string): string[] {
   const unlabelled = summary.replace(/^[A-Z][A-Z /]*?\s*(?:—|:|\s-\s)\s*/, "");
-  return (unlabelled.match(/.+?[.!?](?=\s+[A-Z("']|\s*$)|.+$/gs) ?? [unlabelled]).map((one) => one.trim());
+  const first = (unlabelled.split(/\n\s*\n/)[0] ?? unlabelled).replace(/^\s*(?:[-*]|\d+[.)])\s+/gm, "").replace(/\s*\n\s*/g, " ").replace(/(?<=[.!?])\s+\d+[.)]\s+/g, " ");
+  return (first.match(/.+?(?<!(?:^|\s)\d{1,3})[.!?](?=\s+[A-Z("']|\s*$)|.+$/gs) ?? [first]).map((one) => one.trim());
 }
 
 function opening(sentences: readonly string[], count: number): string {
@@ -157,8 +160,9 @@ export function investigateAccount(runId: string, events: readonly Envelope[]): 
   }
   if (summary !== undefined) {
     const sentences = sentencesOf(summary);
-    const longer = sentences.length > OPENING_SENTENCES;
-    account.narrative = { run_id: runId, summary: longer ? opening(sentences, OPENING_SENTENCES) : summary, ...(longer ? { what_happened: summary } : {}) };
+    const shown = opening(sentences, OPENING_SENTENCES);
+    const longer = shown !== opening(sentences, sentences.length) || /\n/.test(summary.trim());
+    account.narrative = { run_id: runId, summary: shown, ...(longer ? { what_happened: summary } : {}) };
   }
 
   const explanations = [...record.hypotheses.values()].map(
