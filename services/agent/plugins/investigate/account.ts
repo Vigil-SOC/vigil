@@ -68,10 +68,22 @@ const texts = (value: unknown): string[] => (Array.isArray(value) ? value.map(te
 // with a space either side, so "SSH-based" and "US-EAST-1" stay whole. A sentence ends
 // where the next one starts with a capital, so "e.g. procdump" does not end it.
 export function headlineOf(summary: string): string {
-  const unlabelled = summary.replace(/^[A-Z][A-Z /]*?\s*(?:—|:|\s-\s)\s*/, "");
-  const first = /^(.+?[.!?])(?=\s+[A-Z("']|\s*$)/.exec(unlabelled)?.[1] ?? unlabelled;
-  return first.charAt(0).toUpperCase() + first.slice(1);
+  return opening(sentencesOf(summary), 1);
 }
+
+function sentencesOf(summary: string): string[] {
+  const unlabelled = summary.replace(/^[A-Z][A-Z /]*?\s*(?:—|:|\s-\s)\s*/, "");
+  return (unlabelled.match(/.+?[.!?](?=\s+[A-Z("']|\s*$)|.+$/gs) ?? [unlabelled]).map((one) => one.trim());
+}
+
+function opening(sentences: readonly string[], count: number): string {
+  const joined = sentences.slice(0, count).join(" ");
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
+}
+
+// An answer's summary is often its whole account, and the case page leads with a
+// short one: its opening sentences, with the whole summary kept as what happened.
+const OPENING_SENTENCES = 2;
 
 // Each link is an observation: the result it cites, what the agent said it shows, and
 // what it bears on. Its id is the link_evidence call and its place in that call, since a
@@ -143,7 +155,11 @@ export function investigateAccount(runId: string, events: readonly Envelope[]): 
     };
     account.verdict = verdict;
   }
-  if (summary !== undefined) account.narrative = { run_id: runId, summary };
+  if (summary !== undefined) {
+    const sentences = sentencesOf(summary);
+    const longer = sentences.length > OPENING_SENTENCES;
+    account.narrative = { run_id: runId, summary: longer ? opening(sentences, OPENING_SENTENCES) : summary, ...(longer ? { what_happened: summary } : {}) };
+  }
 
   const explanations = [...record.hypotheses.values()].map(
     (hypothesis): Explanation => ({
