@@ -242,6 +242,63 @@ agentServe:
   extraEnv: []
 
 # -----------------------------------------------------------------------------
+# MCP runner (#2303): starts catalog MCP servers, each under its own uid, and
+# serves them over streamable HTTP on 6991. The backend and daemon get
+# MCP_RUNNER_URL and MCP_RUNNER_TOKEN pointing at it.
+#
+# The pod runs as root (to drop each server to its own uid) with only SETUID,
+# SETGID and KILL, so it will not admit in a namespace enforcing the
+# `restricted` Pod Security Standard; `baseline` admits it.
+#
+# One runner serves every server. To give a server its own runner, add a second
+# runner Deployment and set MCP_RUNNER_URL_<SERVER> on backend and daemon; the
+# chart does not render that.
+# -----------------------------------------------------------------------------
+mcpRunner:
+  enabled: true
+  image:
+    repository: ""   # empty → <registry>/<namespace>-mcp-runner
+    tag: ""
+    pullPolicy: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  # Root, but no fsGroup: nothing it mounts should be re-owned.
+  podSecurityContext:
+    runAsUser: 0
+    runAsNonRoot: false
+    seccompProfile:
+      type: RuntimeDefault
+  # What setpriv and the supervisor need: SETUID/SETGID to drop each child to
+  # its uid, KILL to stop a child under another uid. Matches docker-compose.yml.
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+      add: [SETUID, SETGID, KILL]
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+
+# Detection rule repositories (Settings → security-detections). A volume spec,
+# mounted read-write on the backend (which clones into it) and read-only on the
+# MCP runner, both at /home/vigil/security-detections. Unset mounts nothing.
+# backend.replicaCount > 1, or a runner on another node, needs ReadWriteMany.
+#   detectionRules:
+#     volume:
+#       persistentVolumeClaim:
+#         claimName: vigil-detection-rules
+detectionRules:
+  volume: {}
+
+# -----------------------------------------------------------------------------
 # In-chart Postgres (set postgresql.enabled=false to use an external DB)
 # -----------------------------------------------------------------------------
 postgresql:
@@ -596,6 +653,11 @@ secrets:
   # must be given the same value. Generate with:
   #   python -c "import secrets; print(secrets.token_urlsafe(48))"
   agentInternalToken: ""
+
+  # Bearer for the MCP runner, kept in its own Secret (<fullname>-mcp-runner),
+  # not this one. Empty generates one, kept across upgrades. With existingSecret
+  # or externalSecret, that Secret must carry MCP_RUNNER_TOKEN instead.
+  mcpRunnerToken: ""
 
   # Optional data-source integrations.
   splunkPassword: ""
