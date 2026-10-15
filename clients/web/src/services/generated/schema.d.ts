@@ -7666,6 +7666,8 @@ export interface components {
             /** Accounts */
             accounts?: components["schemas"]["Account"][];
             chain?: components["schemas"]["Chain"];
+            /** Disagreements */
+            disagreements?: components["schemas"]["Disagreement"][];
             /** Entities */
             entities?: components["schemas"]["EntityItem"][];
             /** Escalations */
@@ -9123,6 +9125,20 @@ export interface components {
             /** Kind */
             kind: string;
         };
+        /** Disagreement */
+        Disagreement: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "verdict" | "standing" | "gap_answered";
+            /** Refs */
+            refs?: components["schemas"]["ItemRef"][];
+            /** Runs */
+            runs: string[];
+            /** Text */
+            text: string;
+        };
         /**
          * EntityContext
          * @description Free-form entity context; ``source_evidence`` is the one named key.
@@ -9872,6 +9888,13 @@ export interface components {
             principal?: string | null;
             /** Tool */
             tool: string;
+        };
+        /** ItemRef */
+        ItemRef: {
+            /** Id */
+            id: string;
+            /** Run Id */
+            run_id: string;
         };
         /**
          * JiraExportRequest
