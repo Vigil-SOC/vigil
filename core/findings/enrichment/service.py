@@ -31,9 +31,12 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 # Bounded separately per path: the enrichment JSON schema is large, so a tight
-# cap truncates it — but local models are slow per token, so they get a
-# tighter bound than the cloud path while still leaving room for the object.
+# cap truncates it. Local (Ollama) models are slow per token, so they get the
+# tightest bound that still fits the object. Other cloud models behind Bifrost
+# get the most room: thinking models (e.g. Gemini 2.5) spend their reasoning
+# tokens out of the same budget before writing the JSON.
 ANTHROPIC_MAX_TOKENS = 4096
+CLOUD_MAX_TOKENS = 8192
 LOCAL_MAX_TOKENS = 1400
 
 LOCAL_SYSTEM_PROMPT = (
@@ -140,7 +143,9 @@ async def _dispatch(
         "messages": [{"role": "user", "content": f"/no_think\n{prompt}"}],
         "system_prompt": LOCAL_SYSTEM_PROMPT,
         "model": model_id,
-        "max_tokens": LOCAL_MAX_TOKENS,
+        "max_tokens": (
+            LOCAL_MAX_TOKENS if provider.provider_type == "ollama" else CLOUD_MAX_TOKENS
+        ),
     }
     from core.llm.providers.recovery import (
         is_gateway_connection_error,
@@ -179,6 +184,14 @@ async def _dispatch(
                 attempt + 1,
                 retry_limit,
             )
+    if result.get("finish_reason") == "length":
+        # Hit max_tokens — the JSON is likely truncated and parse will fall back.
+        logger.warning(
+            "Enrichment for %s hit the %s-token cap on model %s; response may be truncated",
+            finding_id,
+            dispatch_args["max_tokens"],
+            model_id,
+        )
     return result.get("content", "")
 
 

@@ -626,6 +626,26 @@ async def test_local_dispatch_prefixes_no_think_and_uses_the_tighter_cap(monkeyp
     assert calls[0]["model"] == "qwen3:8b"
 
 
+@pytest.mark.parametrize("provider_type", ["gemini", "vertex", "openai"])
+async def test_cloud_dispatch_gets_the_cloud_cap(monkeypatch, provider_type):
+    """Thinking models count reasoning against max_tokens; 1400 truncates them."""
+    calls = _patch_local_dispatch(monkeypatch, results=[{"content": "OK"}])
+
+    assert await _dispatch_local(provider_type=provider_type) == "OK"
+    assert calls[0]["max_tokens"] == enrichment_service.CLOUD_MAX_TOKENS
+
+
+async def test_truncated_dispatch_logs_a_warning(monkeypatch, caplog):
+    calls = _patch_local_dispatch(
+        monkeypatch, results=[{"content": '{"threat', "finish_reason": "length"}]
+    )
+
+    with caplog.at_level("WARNING"):
+        assert await _dispatch_local(provider_type="gemini") == '{"threat'
+    assert len(calls) == 1
+    assert "f-1" in caplog.text and "qwen3:8b" in caplog.text
+
+
 async def test_local_dispatch_retries_after_a_successful_recovery(monkeypatch):
     calls = _patch_local_dispatch(
         monkeypatch,
