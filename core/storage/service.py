@@ -5,6 +5,7 @@ Provides high-level database operations for cases, findings, and related entitie
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -142,8 +143,11 @@ def _finding_filters(
         filters.append(Finding.anomaly_score >= min_anomaly_score)
     if status:
         filters.append(Finding.status == status)
-    if search_query:
-        pattern = f"%{search_query}%"
+    # each whitespace/comma-separated term must match one of the text columns
+    for term in re.split(r"[\s,]+", search_query or ""):
+        if not term:
+            continue
+        pattern = f"%{term}%"
         filters.append(
             or_(
                 Finding.finding_id.ilike(pattern),
@@ -467,7 +471,8 @@ class DatabaseService:
             cluster_id: Filter by cluster ID
             min_anomaly_score: Minimum anomaly score
             status: Filter by status
-            search_query: Text search across finding_id, description, entity_context
+            search_query: Terms (split on whitespace/commas) that must all match
+                finding_id, description or entity_context
             limit: Maximum number of results
             offset: Offset for pagination
             sort_by: Column to sort by (timestamp, anomaly_score, severity, created_at)

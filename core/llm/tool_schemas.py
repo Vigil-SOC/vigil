@@ -238,7 +238,7 @@ DEEPTEMPO_FINDING_TOOLS = [
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text search query (searches finding IDs, descriptions, entity context)",
+                    "description": 'Text search across finding IDs, descriptions and entity context. Terms split on whitespace or commas; a finding must match every term (e.g. "10.0.0.1 10.0.0.2" finds findings naming both hosts).',
                 },
                 "severity": {
                     "type": "string",
