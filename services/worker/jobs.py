@@ -215,11 +215,24 @@ async def on_shutdown(ctx: Dict[str, Any]):
         refresher.cancel()
 
 
+def worker_redis_settings():
+    """Gateway settings, but patient: Redis can be slow right after a restart.
+
+    ARQ's defaults (1 s timeout, 5 tries, 1 s apart) give up in seconds, and a
+    worker that fails to connect exits and stays down.
+    """
+    settings = gateway_redis_settings()
+    settings.conn_timeout = 5
+    settings.conn_retries = 30
+    settings.conn_retry_delay = 2
+    return settings
+
+
 class WorkerSettings:
     functions = [llm_call]
     # ARQ reads this attribute by name; alias the import so the class
     # attribute does not shadow the function producing it.
-    redis_settings = gateway_redis_settings()
+    redis_settings = worker_redis_settings()
     queue_name = QUEUE_NAME
     max_jobs = MAX_CONCURRENT_LLM_CALLS
     job_timeout = 180

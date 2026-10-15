@@ -288,6 +288,22 @@ print_ready() {
     echo "=========================================="
 }
 
+# The LLM worker drains the arq:llm queue that daemon triage enqueues to. It can
+# die on startup (e.g. a Redis connect timeout) with nothing but a log line, so
+# give it a few seconds and say so loudly rather than print Ready over it.
+check_llm_worker() {
+    local pid="$1" log="$2" i=0
+    while [ $i -lt 5 ]; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1; i=$((i + 1))
+    done
+    kill -0 "$pid" 2>/dev/null && return 0
+    echo "" >&2
+    echo "WARNING: LLM worker exited during startup; daemon triage will not run. See $log:" >&2
+    tail -n 10 "$log" >&2 2>/dev/null || true
+    return 1
+}
+
 start_frontend() {
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
         local host="$BIND_HOST"; [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
@@ -343,6 +359,7 @@ if [ "$DAEMON" -eq 0 ]; then
 
     start_frontend
     start_agent_layer
+    check_llm_worker "$WORKER_PID" "logs/llm_worker.log" || true
     print_ready
     echo "Press Ctrl+C to stop"
 
@@ -381,9 +398,11 @@ else
     # Started unconditionally, independent of orchestrator.settings (#581).
     rotate_log logs/llm_worker.log
     nohup "${PWD}/venv/bin/python" -m services.worker > logs/llm_worker.log 2>&1 &
-    echo $! > logs/llm_worker.pid
+    LLM_WORKER_PID=$!
+    echo $LLM_WORKER_PID > logs/llm_worker.pid
 
     start_agent_layer
+    check_llm_worker "$LLM_WORKER_PID" "logs/llm_worker.log" || true
 
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
         # Absolute log dir: the `cd clients/web` only applies inside the
