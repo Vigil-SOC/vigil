@@ -1312,7 +1312,7 @@ export function CasePage({
             )
           )}
 
-          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} onShowOlder={(shown) => setEvidenceLimit(shown + EVIDENCE_PAGE)} />}
+          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} runId={runId} onAsk={(text) => setAskSeed({ id, text })} onShowOlder={(shown) => setEvidenceLimit(shown + EVIDENCE_PAGE)} />}
 
           {tab === 'Checked' && (
             foldPhase === 'loading' ? (

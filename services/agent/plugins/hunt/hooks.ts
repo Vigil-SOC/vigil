@@ -3,7 +3,8 @@ import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBeh
 import { recalledPayloadOf } from "../../contracts/memory.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { agentCalls, callsIn, childOrdinal, runChild, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
-import { okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
+import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
+import { carriesField, checkValues } from "./checks.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
@@ -461,7 +462,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         additionalProperties: false,
         required: ["results"],
         properties: {
-          results: { type: "array", items: guarded(ctx) ? withRef(resultItem(ctx.options.spec)) : resultItem(ctx.options.spec) },
+          results: { type: "array", items: withRef(resultItem(ctx.options.spec)) },
           follow_up: {
             type: "array",
             description: "New leads this opened, each a question worth asking next.",
@@ -471,7 +472,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
       },
       async (args) => {
         const given = Array.isArray(args["results"]) ? (args["results"] as Record<string, unknown>[]) : [];
-        const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
+        const results = guarded(ctx) ? await fromRefs(ctx, given) : await citedRefs(ctx, given);
         const served = servedSince(callsIn(await state(ctx).read(ctx.options.run_id)), ctx.options.spec.tools);
         return withBook(ctx, ports, (book) => {
           const evidence = evidenceFrom({ results });
@@ -629,6 +630,11 @@ function withRef(item: Record<string, unknown>): Record<string, unknown> {
         type: "string",
         description: "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested.",
       },
+      refs: {
+        type: "array",
+        items: { type: "string" },
+        description: "Every ref this finding's values came from, when they came from more than one result. Each value is checked against them.",
+      },
     },
   };
 }
@@ -674,6 +680,8 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
         : [...labels].map(([field, authored]) => ({ field, authored }));
     return {
       ...rest,
+      source_ref: call.ref,
+      source_refs: [call.ref],
       // What the critic argues against: the decider's own typed view of the rows --
       // sensor-shaped values verbatim, anything the subject could write as a handle.
       // The raw rows stay on the call event for a person; free text an attacker wrote
@@ -682,6 +690,57 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
       ...(rests_on.length > 0 ? { rests_on, attacker_influenceable: rests_on.every((basis) => basis.authored !== "sensor") } : {}),
     };
   });
+}
+
+// Without guards the decider read the rows itself, so its labels stand, but only
+// against the result it names: a record must cite a served telemetry call, and a
+// field it rests on counts as the sensor's only if that call's result carries it.
+// Anything else is unattested, whatever the decider says, so a record can always be
+// traced to the query it came from or is known not to be.
+async function citedRefs(ctx: PluginContext, given: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  const calls = new Map<string, CallPayload>();
+  for (const event of await state(ctx).read(ctx.options.run_id)) {
+    if (event.kind === "call") calls.set((event.payload as CallPayload).ref, event.payload as CallPayload);
+  }
+  const telemetry = (call: CallPayload): boolean => {
+    const spec = ctx.options.spec.tools.find((tool) => tool.id === call.tool);
+    return spec !== undefined && typeof spec["provides"] === "string";
+  };
+  return given.map((one) => {
+    const { ref, refs, ...rest } = one;
+    const named = [...new Set([...(typeof ref === "string" ? [ref] : []), ...(Array.isArray(refs) ? refs.filter((one): one is string => typeof one === "string") : [])])];
+    const cited = named.flatMap((name) => {
+      const call = calls.get(name);
+      return call !== undefined && classOf(call) === "served" && telemetry(call) ? [call] : [];
+    });
+    if (cited.length === 0) return unattested(rest);
+    const payload = payloadOf(rest["payload"]);
+    const asked = Array.isArray(rest["rests_on"]) ? (rest["rests_on"] as { field?: unknown; authored?: unknown }[]) : [];
+    const rests_on = asked.map((basis) => {
+      const field = String(basis.field ?? "");
+      const claimed = basis.authored === "sensor" || basis.authored === "adversary" || basis.authored === "third_party" ? basis.authored : "adversary";
+      return { field, authored: claimed === "sensor" && !carriesField(field, cited) ? "adversary" : claimed };
+    });
+    return {
+      ...rest,
+      source_ref: cited[0]!.ref,
+      source_refs: cited.map((call) => call.ref),
+      checks: checkValues(payload, cited),
+      ...(rests_on.length > 0 ? { rests_on, attacker_influenceable: rests_on.every((basis) => basis.authored !== "sensor") } : {}),
+    };
+  });
+}
+
+// The payload as the record stores it: the agent sends it serialised.
+function payloadOf(raw: unknown): Record<string, unknown> {
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw !== "string") return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 function guarded(ctx: PluginContext): boolean {

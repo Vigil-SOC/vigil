@@ -24,6 +24,7 @@ import { fold, type HuntEvent, type HuntKinds } from "../../plugins/hunt/ledger.
 import { buildReport } from "../../plugins/hunt/report.js";
 import { DEPLOYMENT_GAP_PROVENANCE, openGaps } from "../../plugins/hunt/strength.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
+import { estateRef } from "../support/kernel-hunt.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-00000000ca95";
 const SPEC: RunSpec = (() => {
@@ -73,23 +74,24 @@ function modelOf(steps: readonly Step[]): Provider {
   };
 }
 
-// The estate: every remote tool fails the way it is told to, the hunt's own tools run.
-function estate(failure: ToolFailure | null): ToolDispatch {
+// The estate: every remote tool but the spared one fails the way it is told to, the
+// hunt's own tools run.
+function estate(failure: ToolFailure | null, spared?: string): ToolDispatch {
   return {
     invoke: async (tool, args): Promise<ToolResult> => {
       if (tool.local) return tool.invoke(args);
-      if (failure !== null) return { ok: false, failure };
-      return { ok: true, rows: [{ n: 1 }], rowCount: 1, capped: false, sourceSystem: tool.id };
+      if (failure !== null && tool.id !== spared) return { ok: false, failure };
+      return { ok: true, rows: [{ n: 1, interval_s: 300 }], rowCount: 1, capped: false, sourceSystem: tool.id };
     },
   };
 }
 
-async function hunt(steps: readonly Step[], failure: ToolFailure | null) {
+async function hunt(steps: readonly Step[], failure: ToolFailure | null, spared?: string) {
   const state = new InProcessState<HuntKinds>();
   const harness: Harness<HuntKinds> = {
     provider: modelOf(steps),
     registry: registryOf([], {}),
-    dispatch: estate(failure),
+    dispatch: estate(failure, spared),
     budget: budgetOf({ ...SPEC.budgets, max_calls: 40 }, unmeteredQuota),
     memory: nullMemory,
     state,
@@ -153,7 +155,8 @@ describe("a refusal or a bad argument is a defect, not a visibility gap", () => 
   });
 });
 
-const finding = (source: string, hypothesisId: string) => ({
+const finding = (source: string, hypothesisId: string, ref?: string) => ({
+  ...(ref === undefined ? {} : { ref }),
   source_system: source,
   summary: `412 connections from 10.0.0.5 to 45.77.53.176 every 300s (${source})`,
   salience: "anomalous",
@@ -171,7 +174,7 @@ describe("what a blind spot does to a verdict", () => {
         () => ({ tool: "splunk_search", args: { sql: "select 1" } }),
         () => ({ tool: "search_findings", args: { query: "45.77.53.176" } }),
         () => ({ tool: "lookup_indicators", args: { values: ["45.77.53.176"] } }),
-        (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request)), finding("endpoint", hypothesisIn(request))] } }),
+        (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request), estateRef(request)), finding("endpoint", hypothesisIn(request), estateRef(request))] } }),
         (request) => ({ tool: "validate_hypothesis", args: { hypothesis_id: hypothesisIn(request) } }),
         () => ({ say: "done" }),
       ],
@@ -183,19 +186,20 @@ describe("what a blind spot does to a verdict", () => {
     expect(hypothesis!.status).not.toBe("proven");
   });
 
-  // The other half of #1436: a defect on every lead must not lock a claim the
-  // evidence carries.
+  // The other half of #1436: a defect on every other lead must not lock a claim the
+  // evidence carries. One query is served, because a record must cite what it read.
   it("proves a well-supported hypothesis however many calls were refused", async () => {
     const { projection, declared } = await hunt(
       [
         () => ({ tool: "splunk_search", args: { sql: "select 1" } }),
         () => ({ tool: "search_findings", args: { query: "45.77.53.176" } }),
         () => ({ tool: "lookup_indicators", args: { values: ["45.77.53.176"] } }),
-        (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request)), finding("endpoint", hypothesisIn(request))] } }),
+        (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request), estateRef(request)), finding("endpoint", hypothesisIn(request), estateRef(request))] } }),
         (request) => ({ tool: "validate_hypothesis", args: { hypothesis_id: hypothesisIn(request) } }),
         () => ({ say: "done" }),
       ],
       FAILURES["refused"]!,
+      "splunk_search",
     );
 
     const [hypothesis] = [...projection.hypotheses.values()];
