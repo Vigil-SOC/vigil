@@ -1,3 +1,4 @@
+import type { ValueCheck } from "./checks.js";
 import { setMaxListeners } from "node:events";
 import { drain, streamTurn } from "../../core/stream.js";
 import type { Attempt, Harness, Outcome, TurnConfig } from "../../core/loop.js";
@@ -271,6 +272,9 @@ export function evidenceFrom(answer: WorkerAnswer): WorkerEvidence[] {
         ? { attacker_influenceable: record["attacker_influenceable"] }
         : {}),
       ...(restsOn(record["rests_on"]).length > 0 ? { rests_on: restsOn(record["rests_on"]) } : {}),
+      ...(typeof record["source_ref"] === "string" ? { source_ref: record["source_ref"] } : {}),
+      ...(Array.isArray(record["source_refs"]) ? { source_refs: record["source_refs"] as string[] } : {}),
+      ...(Array.isArray(record["checks"]) ? { checks: record["checks"] as ValueCheck[] } : {}),
       ...(typeof record["attack_technique"] === "string" && record["attack_technique"] !== ""
         ? { attack_technique: record["attack_technique"] }
         : {}),

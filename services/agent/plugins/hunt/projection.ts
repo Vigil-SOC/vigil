@@ -1,3 +1,4 @@
+import type { ValueCheck } from "./checks.js";
 import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
 import { callViews, type CallView } from "../../core/call-view.js";
@@ -157,6 +158,12 @@ export interface EvidenceView {
   // source_system above is the hunt's domain word, which names no system.
   finding_ids: string[];
   served_by: string | null;
+  // The rows or aggregates the record was written over, and the query they came from:
+  // what a reader opens to check the record against its source.
+  payload: Record<string, unknown>;
+  source_ref: string | null;
+  source_refs: string[];
+  checks: ValueCheck[];
   // Which beliefs it bears on and how. Evidence attached to nothing is worth seeing.
   bears_on: { hypothesis_id: string; relation: LinkRelation }[];
 }
@@ -312,6 +319,10 @@ function evidenceView(
     captured_at: record.captured_at,
     finding_ids: findingsCitedBy(record),
     served_by: record.served_by ?? null,
+    payload: record.payload,
+    source_ref: record.source_ref ?? null,
+    source_refs: record.source_refs ?? (record.source_ref ? [record.source_ref] : []),
+    checks: record.checks ?? [],
     bears_on: links
       .filter((link) => link.evidence_id === record.evidence_id)
       .map((link) => ({ hypothesis_id: link.hypothesis_id, relation: link.relation })),

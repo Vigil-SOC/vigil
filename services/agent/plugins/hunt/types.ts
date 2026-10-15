@@ -1,3 +1,4 @@
+import type { ValueCheck } from "./checks.js";
 import { DEFAULT_PARK_MS, type BudgetLimits, type Refusal } from "../../contracts/budget.js";
 // Type-only, so the cycle with the spec loader is erased at compile time.
 import type { HuntSpec } from "./config.js";
@@ -313,6 +314,14 @@ export interface EvidenceRecord {
   // one alone did: the system a row with no alert behind it came from. Absent when the
   // answers came from several, or from Vigil's own tools, rather than guessed at.
   served_by?: string;
+  // The ref of the served telemetry call this record was read from, such as r7: the
+  // query a reader opens to check the record. Absent when the record named none, or
+  // named one that was not a served telemetry call; such a record is unattested.
+  source_ref?: string;
+  // Every served call it cites, source_ref first; and each value of its payload checked
+  // against them (checks.ts). Absent on a record that cited none.
+  source_refs?: string[];
+  checks?: ValueCheck[];
 }
 
 // The note on a "neither" the controller filled in because the lead never ruled

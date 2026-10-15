@@ -49,7 +49,7 @@ export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system
   return row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system
 }
 
-interface EvidenceRow {
+export interface EvidenceRow {
   evidence_id: string
   iteration: number
   source_system: string
@@ -61,8 +61,32 @@ interface EvidenceRow {
   /** The systems its rows came from (a cited alert's data_source, or the integration that answered); empty when none is known. */
   origins: string[]
   bears_on: { hypothesis_id: string; relation: string }[]
+  why_notable: string
+  salience: string
+  attack_technique: string | null
+  sensor_attested: boolean
+  rests_on: { field: string; authored: string }[]
+  /** The rows or aggregates the record was written over. */
+  payload: Record<string, unknown> | null
+  /** The query it was read from; null when it named none, so it is unattested. */
+  source_ref: string | null
   /** worker, tool_failure, deployment_gap, operator_gap, null_check... */
   provenance: string
+  /** Every query it cites, source_ref first. */
+  source_refs: string[]
+  /** Each value it was written over, checked against the queries it cites. */
+  checks: ValueCheck[]
+}
+
+export interface ValueCheck {
+  field: string
+  claimed: unknown
+  status: 'match' | 'differs' | 'absent'
+  ref?: string
+  found_field?: string
+  found?: unknown
+  /** The record rounded the found number to the places it wrote. */
+  rounded?: boolean
 }
 
 interface LeadGapRow {
@@ -462,7 +486,39 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
           origins: Array.isArray(o.origins) ? o.origins.filter((one): one is string => typeof one === 'string' && one !== '') : [],
           bears_on: bears,
+          why_notable: str(o.why_notable),
+          salience: str(o.salience),
+          attack_technique: typeof o.attack_technique === 'string' && o.attack_technique ? o.attack_technique : null,
+          sensor_attested: o.sensor_attested === true,
+          rests_on: Array.isArray(o.rests_on)
+            ? o.rests_on.flatMap((basis) => {
+                if (!basis || typeof basis !== 'object') return []
+                const b = basis as Record<string, unknown>
+                return str(b.field) ? [{ field: str(b.field), authored: str(b.authored) }] : []
+              })
+            : [],
+          payload: o.payload && typeof o.payload === 'object' && !Array.isArray(o.payload) ? (o.payload as Record<string, unknown>) : null,
+          source_ref: typeof o.source_ref === 'string' && o.source_ref ? o.source_ref : null,
           provenance: str(o.provenance),
+          source_refs: Array.isArray(o.source_refs) ? o.source_refs.filter((one): one is string => typeof one === 'string') : [],
+          checks: Array.isArray(o.checks)
+            ? o.checks.flatMap((item) => {
+                if (!item || typeof item !== 'object') return []
+                const c = item as Record<string, unknown>
+                const status = c.status === 'match' || c.status === 'differs' ? c.status : 'absent'
+                return str(c.field)
+                  ? [{
+                      field: str(c.field),
+                      claimed: c.claimed,
+                      status,
+                      ...(typeof c.ref === 'string' ? { ref: c.ref } : {}),
+                      ...(typeof c.found_field === 'string' ? { found_field: c.found_field } : {}),
+                      ...('found' in c ? { found: c.found } : {}),
+                      ...(c.rounded === true ? { rounded: true } : {}),
+                    } as ValueCheck]
+                  : []
+              })
+            : [],
         }]
       })
     : []

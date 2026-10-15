@@ -23,6 +23,7 @@ import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
 import { evidenceStrength, sensorAttested, unmetPredicates } from "../../plugins/hunt/strength.js";
 import type { EvidenceRecord } from "../../plugins/hunt/types.js";
 import { evidenceOn, newLedger } from "../support/hunt.js";
+import { estateRef } from "../support/kernel-hunt.js";
 
 const SENSOR = { field: "conn_count", authored: "sensor" as const };
 const AUTHORED = { field: "filename", authored: "adversary" as const };
@@ -86,7 +87,7 @@ function harnessOf(spec: RunSpec, provider: Provider, state: InProcessState<Hunt
   return {
     provider,
     registry: registryOf([], {}),
-    dispatch: { invoke: async (tool, args): Promise<ToolResult> => (tool.local ? tool.invoke(args) : { ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: tool.id }) },
+    dispatch: { invoke: async (tool, args): Promise<ToolResult> => (tool.local ? tool.invoke(args) : { ok: true, rows: [{ conn_count: 412, filename: "updater.exe" }], rowCount: 1, capped: false, sourceSystem: tool.id }) },
     budget: budgetOf({ ...spec.budgets, max_calls: 40 }, unmeteredQuota),
     memory: nullMemory,
     state,
@@ -169,11 +170,13 @@ describe("what an ABANDON may rest on", () => {
   const abandonCiting = async (restsOn: unknown[]) => {
     const state = new InProcessState<HuntKinds>();
     const provider = modelOf([
+      () => ({ tool: "splunk_search", args: { sql: "select conn_count from flows" } }),
       (request) => ({
         tool: "record_evidence",
         args: {
           results: [
             {
+              ref: estateRef(request),
               source_system: "network",
               summary: "the beacon's filename looks like an updater",
               salience: "notable",

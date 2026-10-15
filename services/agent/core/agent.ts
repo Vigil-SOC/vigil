@@ -594,8 +594,9 @@ function turnFor(
     ...(options.conversation === undefined || spec.context_window === undefined ? {} : { context_window: spec.context_window }),
     // A conversation stops whenever the person's question is answered.
     ...(plugin.min_results === undefined || options.conversation !== undefined ? {} : { persist: { min_results: plugin.min_results } }),
-    // Numbered only when the answer can cite them.
-    ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
+    // Numbered only when the answer can cite them, or the record does: a required
+    // record names the result each of its records was read from.
+    ...(structured?.citations_field === undefined && plugin.record !== "required" ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
     ...(signal === undefined ? {} : { signal }),
   };
 }
