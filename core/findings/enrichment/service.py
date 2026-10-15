@@ -305,3 +305,12 @@ async def enrich(
         await _persist(finding_id, enrichment, data_service)
 
     return enrichment
+
+
+def is_generated_analysis(ai_enrichment: Optional[Dict[str, Any]]) -> bool:
+    """True when ``ai_enrichment`` holds an analysis from :func:`enrich`.
+
+    The column also carries the daemon's triage keys, so a truthy value does
+    not mean an analysis exists; ``generated_at`` is stamped only here.
+    """
+    return bool(ai_enrichment) and "generated_at" in ai_enrichment

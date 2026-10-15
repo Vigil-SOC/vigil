@@ -94,7 +94,7 @@ async def test_missing_finding_is_404(monkeypatch):
 
 
 async def test_existing_enrichment_is_returned_from_cache(monkeypatch):
-    cached = {"threat_summary": "already analysed"}
+    cached = {"threat_summary": "already analysed", "generated_at": "2026-08-03T00:00:00Z"}
     monkeypatch.setattr(
         findings_api,
         "data_service",
@@ -112,12 +112,37 @@ async def test_existing_enrichment_is_returned_from_cache(monkeypatch):
     assert calls == [], "a cache hit must not call a provider"
 
 
+async def test_triage_only_enrichment_is_not_a_cached_analysis(monkeypatch):
+    monkeypatch.setattr(
+        findings_api,
+        "data_service",
+        _StubDataService(
+            {
+                "finding_id": FINDING_ID,
+                "ai_enrichment": {"ai_triage": {"verdict": "benign"}, "enriched_at": "x"},
+            }
+        ),
+    )
+    calls = _stub_enrich(monkeypatch, result={"threat_summary": "fresh"})
+
+    response = await findings_api.get_or_generate_enrichment(FINDING_ID, False)
+
+    assert response["cached"] is False
+    assert len(calls) == 1
+
+
 async def test_force_regenerate_bypasses_the_cache(monkeypatch):
     monkeypatch.setattr(
         findings_api,
         "data_service",
         _StubDataService(
-            {"finding_id": FINDING_ID, "ai_enrichment": {"threat_summary": "stale"}}
+            {
+                "finding_id": FINDING_ID,
+                "ai_enrichment": {
+                    "threat_summary": "stale",
+                    "generated_at": "2026-08-03T00:00:00Z",
+                },
+            }
         ),
     )
     calls = _stub_enrich(monkeypatch, result={"threat_summary": "fresh"})

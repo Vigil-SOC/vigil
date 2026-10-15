@@ -230,6 +230,29 @@ describe('FindingPopup IP exclusions', () => {
 describe('FindingPopup AI enrichment errors', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it('offers Generate for a triage-only enrichment', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({
+      data: { ...baseFinding, ai_enrichment: { ai_triage: { verdict: 'benign' }, enriched_at: 'x' } },
+    } as never)
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: 'Generate AI analysis' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Regenerate' })).not.toBeInTheDocument()
+  })
+
+  it('shows a generated analysis with Regenerate', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({
+      data: {
+        ...baseFinding,
+        ai_enrichment: { threat_summary: 'exfil over DNS', generated_at: '2026-08-03T00:00:00Z' },
+      },
+    } as never)
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: 'Regenerate' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generate AI analysis' })).not.toBeInTheDocument()
+  })
+
   it('shows a budget-spent state with no retry when the virtual key is spent', async () => {
     vi.mocked(findingsApi.getById).mockResolvedValueOnce({ data: baseFinding } as never)
     vi.mocked(findingsApi.getEnrichment).mockRejectedValueOnce({
