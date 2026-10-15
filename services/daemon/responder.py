@@ -344,7 +344,10 @@ class AutonomousResponder:
 
         # The address comes from alert text. Only a routable-looking host address
         # is acted on; a malformed or loopback/unspecified one is dropped.
-        for candidate in entity_context.get("src_ips") or []:
+        candidates = list(entity_context.get("src_ips") or [])
+        if entity_context.get("src_ip"):
+            candidates.append(entity_context["src_ip"])
+        for candidate in candidates:
             target_ip = _actionable_ip(candidate)
             if target_ip:
                 break
