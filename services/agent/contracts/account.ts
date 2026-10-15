@@ -89,7 +89,8 @@ export interface Bearing {
 }
 
 // A value of a record checked against the results it cites, by code rather than by
-// the model that wrote both. The hunt's record checks are this shape.
+// the model that wrote both. The hunt's record checks are this shape, and
+// plugins/hunt/checks.ts should import it from here once they land.
 export const CHECK_STATUSES = ["match", "differs", "absent"] as const;
 export type CheckStatus = (typeof CHECK_STATUSES)[number];
 
@@ -101,7 +102,7 @@ export interface ValueCheck {
   ref?: string;
   found_field?: string;
   found?: unknown;
-  // The claimed number is the found one rounded to the places the record wrote.
+  // The claimed number is the found one rounded or cut to the places the record wrote.
   rounded?: true;
 }
 
@@ -169,21 +170,22 @@ export interface ChainEvent {
   tie?: ChainTie;
   // Events that together with this one caused the same next event.
   together_with?: string[];
+  // Set on an event the run names as where it began, with how well that claim holds
+  // and why nothing earlier explains it. A run that traced several threads may name
+  // an origin on more than one.
+  origin?: ChainStatus;
+  why_origin?: string;
   ran_as?: string;
   operated_by?: string;
   entities?: EntityKey[];
 }
 
-// How it started: every event the run placed on a causal path. The path from the
+// How it started: every event the run placed on a causal path. The path from an
 // origin to the symptom is read by following causes; a run that traced more than one
 // thread holds several, each ending at an event with no causes.
 export interface Chain {
   run_id: string;
   events: ChainEvent[];
-  // The event the run names as where it began, and why nothing earlier explains it.
-  // Absent when the run stopped before it could name one.
-  origin?: string;
-  why_origin?: string;
   // 0 to 1, how well the whole path holds.
   score?: number;
   alternatives?: ChainPath[];
