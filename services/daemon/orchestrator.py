@@ -182,10 +182,10 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
     nested = finding.get("ai_enrichment")
     if not isinstance(nested, dict) or not nested:
         return finding
-    from services.daemon.processor import _AI_ANALYSIS_KEYS
+    from core.storage.service import DAEMON_ENRICHMENT_KEYS
 
     lifted = dict(finding)
-    for key in _AI_ANALYSIS_KEYS:
+    for key in DAEMON_ENRICHMENT_KEYS:
         if key in nested and lifted.get(key) is None:
             lifted[key] = nested[key]
     return lifted

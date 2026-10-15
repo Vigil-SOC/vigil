@@ -297,10 +297,11 @@ class TestTriageProviderResolution:
         assert finding["ai_triage_error"] == "boom"
         assert "ai_triage" not in finding
         processor._data_service = Mock()
-        processor._data_service.update_finding.return_value = True
+        processor._data_service.write_ai_enrichment.return_value = True
         asyncio.run(processor._update_finding(finding))
-        kwargs = processor._data_service.update_finding.call_args.kwargs
-        assert kwargs["ai_enrichment"] == {"ai_triage_error": "boom"}
+        args = processor._data_service.write_ai_enrichment.call_args
+        assert args.args == ("f1", {"ai_triage_error": "boom"})
+        assert args.kwargs == {"daemon": True, "severity": "high"}
 
     def test_success_clears_previous_error(self):
         processor = FindingProcessor(ProcessingConfig())

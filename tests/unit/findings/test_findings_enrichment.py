@@ -54,8 +54,8 @@ class _RecordingDataService:
         self.success = success
         self.writes = []
 
-    def update_finding(self, finding_id, **updates):
-        self.writes.append((finding_id, updates))
+    def write_ai_enrichment(self, finding_id, ai_enrichment, *, daemon):
+        self.writes.append((finding_id, ai_enrichment, daemon))
         return self.success
 
 
@@ -346,7 +346,7 @@ async def test_enrich_persists_by_default(stub_provider):
 
     enrichment = await enrich(_finding(), data_service=data_service)
 
-    assert data_service.writes == [("f-20260803-001", {"ai_enrichment": enrichment})]
+    assert data_service.writes == [("f-20260803-001", enrichment, False)]
 
 
 async def test_enrich_skips_write_when_persist_is_false(stub_provider):
@@ -407,7 +407,7 @@ async def test_explicit_finding_id_is_the_write_target(stub_provider):
         data_service=data_service,
     )
 
-    written_id, _ = data_service.writes[0]
+    written_id, *_ = data_service.writes[0]
     assert written_id == "authoritative-id"
 
 
@@ -427,7 +427,7 @@ async def test_finding_id_falls_back_to_the_dict_when_not_passed(stub_provider):
 
     await enrich(_finding(finding_id="from-dict"), data_service=data_service)
 
-    written_id, _ = data_service.writes[0]
+    written_id, *_ = data_service.writes[0]
     assert written_id == "from-dict"
 
 
