@@ -5,12 +5,10 @@ rather than fixed here, so any regression stays bisectable:
 
 * Dispatch is asymmetric — Anthropic runs on a threadpool with no retry; other
   providers get ``LLMRouter`` + retry + local-Bifrost recovery.
-* The ``ai_enrichment`` write is a full replace, and ``daemon/processor`` writes
-  a disjoint set of triage keys to the same column. So a daemon payload can
-  satisfy the API's cache check yet render as ``undefined``, writing here wipes
-  daemon triage, and the finding then leaves the daemon's
-  ``ai_enrichment IS NULL`` backfill for good. ``persist=False`` is the seam for
-  fixing that separately.
+* ``daemon/processor`` writes a disjoint set of triage keys to the same
+  ``ai_enrichment`` column, so a daemon payload can satisfy the API's cache
+  check yet render as ``undefined``. (The write here merges over existing keys,
+  so triage survives.)
 """
 
 import asyncio
@@ -200,15 +198,21 @@ async def _persist(
 ) -> bool:
     """Write ``enrichment`` to the finding's ``ai_enrichment`` column.
 
-    A full replace, not a merge — see the module docstring. A failed write is
-    logged and swallowed: the caller still gets the payload it paid a provider
+    Merged over the existing value, so the daemon's triage keys survive; keys
+    in ``enrichment`` win. A failed write is logged and swallowed: the caller still gets the payload it paid a provider
     call for. Offloaded with ``to_thread`` because the data layer is sync
     SQLAlchemy and this runs on the event loop.
     """
     service = data_service if data_service is not None else _default_data_service()
-    success = await asyncio.to_thread(
-        service.update_finding, finding_id, ai_enrichment=enrichment
-    )
+
+    def _merge_and_write() -> bool:
+        existing = (service.get_finding(finding_id) or {}).get("ai_enrichment")
+        merged = (
+            {**existing, **enrichment} if isinstance(existing, dict) else enrichment
+        )
+        return service.update_finding(finding_id, ai_enrichment=merged)
+
+    success = await asyncio.to_thread(_merge_and_write)
     if not success:
         logger.error("Failed to save enrichment for %s", finding_id)
     else:

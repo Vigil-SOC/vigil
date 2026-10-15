@@ -50,9 +50,13 @@ class _FakeProvider:
 class _RecordingDataService:
     """Stands in for DatabaseDataService; records writes."""
 
-    def __init__(self, success=True):
+    def __init__(self, success=True, existing=None):
         self.success = success
+        self.existing = existing
         self.writes = []
+
+    def get_finding(self, finding_id):
+        return {"finding_id": finding_id, "ai_enrichment": self.existing}
 
     def update_finding(self, finding_id, **updates):
         self.writes.append((finding_id, updates))
@@ -347,6 +351,16 @@ async def test_enrich_persists_by_default(stub_provider):
     enrichment = await enrich(_finding(), data_service=data_service)
 
     assert data_service.writes == [("f-20260803-001", {"ai_enrichment": enrichment})]
+
+
+async def test_enrich_keeps_existing_daemon_triage_keys(stub_provider):
+    triage = {"ai_triage": {"verdict": "malicious"}, "triage_confidence": 0.8}
+    data_service = _RecordingDataService(existing=dict(triage))
+
+    enrichment = await enrich(_finding(), data_service=data_service)
+
+    ((_, updates),) = data_service.writes
+    assert updates["ai_enrichment"] == {**triage, **enrichment}
 
 
 async def test_enrich_skips_write_when_persist_is_false(stub_provider):
