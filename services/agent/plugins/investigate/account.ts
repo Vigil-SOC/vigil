@@ -13,7 +13,7 @@ import {
 } from "../../contracts/account.js";
 import type { CallPayload, HypothesisPayload, LinkPayload } from "../../contracts/events.js";
 import { agentProjection } from "../../core/agent-view.js";
-import { recordOf } from "../../core/record.js";
+import { LINK_TOOL, PROPOSE_TOOL, QUESTION_TOOL, recordOf } from "../../core/record.js";
 
 // An investigation's account: its answer, the record it kept on the way, and its
 // steps, in the shape the case page reads. Everything here is already on the ledger;
@@ -46,8 +46,9 @@ function standingOf(hypothesis: HypothesisPayload, links: readonly LinkPayload[]
 }
 
 // Older ledgers carry no role, so the claim's own opening words decide: the benign
-// explanation is the one the agent introduced as benign, legitimate or authorized.
-const SOUNDS_BENIGN = /^\s*(benign|legitimate|authori[sz]ed|expected|false[ -]?positive|approved|sanctioned)\b/i;
+// explanation is the one the agent introduced as benign, legitimate or authorized,
+// whether it leads with the word or says "this is" one.
+const SOUNDS_BENIGN = /^\s*(?:(?:this|it|the activity) is (?:an? )?)?(?:benign|legitimate|authori[sz]ed|expected|false[ -]?positive|approved|sanctioned)\b/i;
 
 function roleOf(hypothesis: HypothesisPayload): Explanation["role"] {
   if (hypothesis.benign !== undefined) return hypothesis.benign ? "benign" : "adversary";
@@ -57,20 +58,27 @@ function roleOf(hypothesis: HypothesisPayload): Explanation["role"] {
 // "N row(s) from <source>" opens every rendered result (core/security.ts).
 const SOURCE = /^(?:<vigil:tool_result[^>]*>\s*)?\d+ rows?(?:\(s\))? from (\S+)/;
 
+const RECORD_TOOLS = new Set([PROPOSE_TOOL, LINK_TOOL, QUESTION_TOOL]);
+
 const text = (value: unknown): string | undefined => (typeof value === "string" && value.trim() !== "" ? value.trim() : undefined);
 const texts = (value: unknown): string[] => (Array.isArray(value) ? value.map(text).filter((one): one is string => one !== undefined) : []);
 
 // The first sentence, for a headline. A summary that opens with a shouted label
-// ("CONFIRMED MALICIOUS — ...") keeps what follows the label.
-function headlineOf(summary: string): string {
-  const unlabelled = summary.replace(/^[A-Z][A-Z /]+[—:-]\s*/, "");
-  const first = /^(.+?[.!?])(\s|$)/.exec(unlabelled)?.[1] ?? unlabelled;
+// ("CONFIRMED MALICIOUS — ...") keeps what follows the label; a hyphen only marks one
+// with a space either side, so "SSH-based" and "US-EAST-1" stay whole. A sentence ends
+// where the next one starts with a capital, so "e.g. procdump" does not end it.
+export function headlineOf(summary: string): string {
+  const unlabelled = summary.replace(/^[A-Z][A-Z /]*?\s*(?:—|:|\s-\s)\s*/, "");
+  const first = /^(.+?[.!?])(?=\s+[A-Z("']|\s*$)/.exec(unlabelled)?.[1] ?? unlabelled;
   return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
 // Each link is an observation: the result it cites, what the agent said it shows, and
 // what it bears on. Its id is the link_evidence call and its place in that call, since a
 // link has none of its own and one result can be cited for two different things.
+// A call's links are written just before the call is, so links followed by some other
+// call belong to a call a dead run never journaled; they are dropped, not pinned on
+// the next link_evidence call.
 function evidenceOf(runId: string, events: readonly Envelope[], calls: ReadonlyMap<string, CallPayload>): EvidenceItem[] {
   const items: EvidenceItem[] = [];
   let pending: LinkPayload[] = [];
@@ -78,7 +86,10 @@ function evidenceOf(runId: string, events: readonly Envelope[], calls: ReadonlyM
     if (event.kind === "link") pending.push(event.payload as LinkPayload);
     if (event.kind !== "call") continue;
     const call = event.payload as CallPayload;
-    if (call.tool !== "link_evidence" || pending.length === 0) continue;
+    if (call.tool !== LINK_TOOL) {
+      pending = [];
+      continue;
+    }
     let asked: Record<string, unknown>[] = [];
     try {
       const parsed = JSON.parse(call.arguments) as { links?: unknown };
@@ -155,7 +166,8 @@ export function investigateAccount(runId: string, events: readonly Envelope[]): 
       const what = text(entry["what"]);
       if (what === undefined) return [];
       const cited = texts(entry["citations"])[0];
-      const ref = cited === undefined ? undefined : (evidence.find((item) => item.source_ref === cited)?.id ?? cited);
+      // Only an observation is a ref; a call cited without a link to it is not one.
+      const ref = cited === undefined ? undefined : evidence.find((item) => item.source_ref === cited)?.id;
       const techniques = texts(entry["techniques"]);
       return [
         {
@@ -187,16 +199,16 @@ export function investigateAccount(runId: string, events: readonly Envelope[]): 
     account.gaps = gaps;
   }
 
-  // One step per turn, in the agent's own words before its calls, and the answer last.
+  // One step per turn that asked the estate something, in the agent's own words before
+  // its calls, and the answer last. Keeping the record is not a step.
   const turns = new Map<number, CallPayload[]>();
   for (const call of kernel.calls) turns.set(call.turn, [...(turns.get(call.turn) ?? []), call]);
-  const steps: Step[] = [...turns.entries()].map(([turn, made]) => ({
-    run_id: runId,
-    n: turn,
-    kind: "EXAMINE",
-    text: made.find((call) => call.thought !== undefined)?.thought ?? made.map((call) => call.tool).join(", "),
-    refs: made.map((call) => call.ref),
-  }));
+  const steps: Step[] = [...turns.entries()].flatMap(([turn, made]): Step[] => {
+    const asked = made.filter((call) => !RECORD_TOOLS.has(call.tool));
+    if (asked.length === 0) return [];
+    const said = made.find((call) => call.thought !== undefined)?.thought ?? asked.map((call) => call.tool).join(", ");
+    return [{ run_id: runId, n: turn, kind: "EXAMINE", text: said, refs: asked.map((call) => call.ref) }];
+  });
   if (kernel.conclusion !== null && summary !== undefined) {
     steps.push({ run_id: runId, n: kernel.conclusion.turns + 1, kind: "CONCLUDE", text: headlineOf(summary), refs: texts(value["citations"]) });
   }
