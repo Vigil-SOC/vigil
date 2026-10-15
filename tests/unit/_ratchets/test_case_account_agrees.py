@@ -34,6 +34,7 @@ MIRRORED = {
     "CHAIN_STATUSES": get_args(py.ChainStatus),
     "ACCOUNT_ROLES": get_args(py.AccountRole),
     "GAP_KINDS": get_args(py.GapKind),
+    "DISAGREEMENT_KINDS": get_args(py.DisagreementKind),
     "ENTITY_TYPES": ENTITY_KEY_TYPES,
 }
 

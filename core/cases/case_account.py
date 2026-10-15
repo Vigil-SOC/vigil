@@ -8,8 +8,8 @@ timeline entry's ``ref`` resolve within its own run. Nothing here rewrites an
 item but the case's verdict, which is the merge's own word when the runs do
 not let any one of them speak for the case.
 
-Which claims disagree is not settled here. A later check compares the runs;
-this keeps every run's claim so there is something to compare.
+Which claims disagree is not settled here either: every run's claim is kept,
+and core/cases/disagreements.py says where they part ways.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from core.agents.projections import PROJECTION_READ_CONCURRENCY, read_account
 from core.cases.case_records_service import list_case_runs
+from core.cases.disagreements import find_disagreements
 from core.storage.schemas.case_account import (
     ACCOUNT_SCHEMA_VERSION,
     CaseAccount,
@@ -166,6 +167,10 @@ def merge_accounts(
         items = _concat(accounts, name)
         if items is not None:
             merged[name] = items
+
+    # One run has nothing to disagree with, so the section is absent, not empty.
+    if len(accounts) > 1:
+        merged["disagreements"] = find_disagreements(accounts)
 
     # Only what some run filled is passed, so dump_account leaves the rest out.
     return CaseAccount(**merged)
