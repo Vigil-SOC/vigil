@@ -210,7 +210,7 @@ export const findingsApi = {
   delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    // may restart a local Bifrost gateway, then wait on a local model
+    // may restart the Bifrost gateway, then wait on the configured model
     api.post(`/findings/${id}/enrich`, null, {
       params: { force_regenerate },
       timeout: LLM_TIMEOUT,

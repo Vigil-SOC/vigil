@@ -41,11 +41,11 @@ interface Enrichment {
 }
 
 const ENRICHMENT_PROGRESS = [
-  'Preparing a local AI analysis…',
-  'Reviewing the finding with your local model…',
-  'Still analysing — local models often take a minute or two.',
-  'Checking the local AI gateway and automatically retrying if needed. Please keep this window open…',
-  'Local gateway recovery can take up to a minute. The analysis is still running…',
+  'Preparing the AI analysis…',
+  'Reviewing the finding with your configured model…',
+  'Still analysing — this can take a minute or two.',
+  'Checking the AI gateway and automatically retrying if needed. Please keep this window open…',
+  'Gateway recovery can take up to a minute. The analysis is still running…',
 ]
 
 const RISK_COLOR: Record<string, string> = {

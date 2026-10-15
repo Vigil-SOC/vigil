@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FindingPopup from './FindingPopup'
 import { exclusionsApi, findingsApi } from '../../services/api'
@@ -263,5 +263,25 @@ describe('FindingPopup AI enrichment errors', () => {
     expect(await screen.findByText('AI enrichment failed')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     expect(screen.queryByText('Virtual-key budget spent')).not.toBeInTheDocument()
+  })
+
+  it('never says the model is local while the analysis runs', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({ data: baseFinding } as never)
+    vi.mocked(findingsApi.getEnrichment).mockReturnValueOnce(new Promise(() => {}))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Generate AI analysis' }))
+      // walk every timed progress message (4s, 15s, 45s, 75s)
+      for (const ms of [0, 4_000, 11_000, 30_000, 30_000]) {
+        act(() => vi.advanceTimersByTime(ms))
+        const text = document.querySelector('.fp-ai-progress')?.textContent ?? ''
+        expect(text).not.toBe('')
+        expect(text).not.toMatch(/local/i)
+      }
+      expect(document.querySelector('.fp-ai-progress')).toHaveTextContent('still running')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
