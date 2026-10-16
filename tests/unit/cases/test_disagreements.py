@@ -57,7 +57,11 @@ def test_the_sample_runs_disagree_on_exfiltration():
     )
 
     assert [one.kind for one in found] == ["gap_answered"]
-    assert found[0].text.startswith('hunt 1e5c9131 could not settle "No large outbound')
+    assert found[0].text.startswith(
+        'hunt 1e5c9131 could not see one thing that investigate 01c1d889 holds records on: "No large outbound'
+    )
+    # The quote closes the line; a period after it would end on '".'.
+    assert found[0].text.endswith('"')
     assert ("01c1d889-5e0f-4686-860b-4813c0c41840", "r19.0") in [
         (ref.run_id, ref.id) for ref in found[0].refs or []
     ]
@@ -235,3 +239,45 @@ def test_the_sample_case_merges_to_its_golden():
     merged = merge_accounts([fixture(name) for name in names])
 
     assert dump_account(merged) == golden
+
+
+def test_a_run_s_open_questions_are_one_disagreement_and_quoted_short():
+    # A run whose searches all timed out leaves a question per search.
+    asked = [
+        {
+            "run_id": "a",
+            "text": f"Search {n} on fin.7z timed out. " + "x" * 200,
+            "kind": "visibility",
+        }
+        for n in range(3)
+    ]
+    record = {"run_id": "b", "id": "r1.0", "claim": "ACCT-WS-007 sent fin.7z out"}
+    other = {"run_id": "b", "id": "r2.0", "claim": "WEB-02 ran a backup"}
+
+    found = find_disagreements(
+        [account("a", gaps=asked), account("b", evidence=[record, other])]
+    )
+
+    assert len(found) == 1
+    assert found[0].text.startswith(
+        "investigate a could not see 3 things that investigate b holds records on:"
+    )
+    assert found[0].text.count("…") == 3
+    assert [(r.run_id, r.id) for r in found[0].refs or []] == [("b", "r1.0")]
+
+
+def test_a_run_s_blind_spots_and_questions_are_named_apart():
+    gaps = [
+        {"run_id": "a", "text": "Search on fin.7z timed out", "kind": "visibility"},
+        {"run_id": "a", "text": "Was fin.7z sent out?", "kind": "open_question"},
+    ]
+    record = {"run_id": "b", "id": "r1.0", "claim": "ACCT-WS-007 sent fin.7z out"}
+    other = {"run_id": "b", "id": "r2.0", "claim": "WEB-02 ran a backup"}
+
+    found = find_disagreements(
+        [account("a", gaps=gaps), account("b", evidence=[record, other])]
+    )
+
+    assert found[0].text.startswith(
+        "investigate a could not see one thing and left one question open that"
+    )

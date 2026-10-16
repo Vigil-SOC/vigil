@@ -36,7 +36,7 @@
       "claim": "The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
       "role": "adversary",
       "standing": "inconclusive",
-      "reason": "hunt ended (completed) with the hypothesis unresolved",
+      "reason": "Hunt ended (completed) with the hypothesis unresolved",
       "techniques": [
         "T1098",
         "T1550.002"
@@ -51,7 +51,7 @@
       "claim": "The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
       "role": "adversary",
       "standing": "inconclusive",
-      "reason": "hunt ended (failed) with the hypothesis unresolved",
+      "reason": "Hunt ended (failed) with the hypothesis unresolved",
       "techniques": [
         "T1490"
       ],
@@ -72,7 +72,7 @@
       "claim": "the activity described in \"The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490)",
       "role": "benign",
       "standing": "set_aside",
-      "reason": "abandoned: The benign explanation (expected operations / sanctioned tooling / normal behavior)",
+      "reason": "Abandoned: The benign explanation (expected operations / sanctioned tooling / normal behavior)",
       "techniques": [
         "T1098",
         "T1550.002"
@@ -84,7 +84,7 @@
       "claim": "the activity described in \"The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490)",
       "role": "benign",
       "standing": "inconclusive",
-      "reason": "hunt ended (failed) with the hypothesis unresolved",
+      "reason": "Hunt ended (failed) with the hypothesis unresolved",
       "techniques": [
         "T1490"
       ]
@@ -659,7 +659,7 @@
   "disagreements": [
     {
       "kind": "gap_answered",
-      "text": "hunt 1e5c9131 could not settle \"No large outbound transfer from ACCT-WS-007 (10.9.40.27) is visible in zeek:conn: a query for orig_bytes>50000 returned zero rows. The 7z archive C:\\Users\\Public\\fin.7z staged from \\\\FS-07\\Finance$\"; investigate 01c1d889 holds records on it.",
+      "text": "hunt 1e5c9131 could not see one thing that investigate 01c1d889 holds records on: \"No large outbound transfer from ACCT-WS-007 (10.9.40.27) is visible in zeek:conn: a query for orig_bytes>50000 returned zero rows. The 7z a…\"",
       "runs": [
         "1e5c9131-7490-41d1-8bc1-085758a8dcec",
         "01c1d889-5e0f-4686-860b-4813c0c41840"

@@ -18,7 +18,9 @@ const jsonIn = (dir: string): Map<string, string> =>
       .map((name) => [name, readFileSync(join(dir, name), "utf8")]),
   );
 
-const VALID = jsonIn(FIXTURES);
+// The golden accounts are what the code yields over committed inputs, so they are
+// held to the contract like the hand-written ones.
+const VALID = new Map([...jsonIn(FIXTURES), ...[...jsonIn(join(FIXTURES, "golden"))].map(([name, json]) => [`golden/${name}`, json] as const)]);
 const INVALID = jsonIn(join(FIXTURES, "invalid"));
 
 // One program over every fixture, each its own file beside the contract, so a
