@@ -39,4 +39,12 @@ describe('autoops investigation rows', () => {
     expect(within(rowFor('inv-absent')).getByText('not priced')).toBeInTheDocument()
     expect(document.body.textContent).not.toContain('$undefined')
   })
+
+  it('does not claim a human reviews finished investigations', () => {
+    render(<AutoOpsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
+
+    expect(screen.getByText('Auto-review')).toBeInTheDocument()
+    expect(screen.getByText('orchestrator approves, no human')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('awaiting a human')
+  })
 })
