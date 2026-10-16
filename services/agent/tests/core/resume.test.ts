@@ -233,6 +233,31 @@ describe("a run whose spec cannot be built before its ledger opens", () => {
     expect(await state.latestSeq(RUN)).toBeNull();
     expect(await leases.sweep(60_000, 10)).toEqual([]);
   });
+
+  // A blip on the start is retried, and a run that never opens is ended by the
+  // sweeper's resume rather than left running.
+  it("hands a passing failure back, and ends the run when the sweep finds it never opened", async () => {
+    const state = new InProcessState();
+    const flaky: typeof state = Object.create(state) as typeof state;
+    let first = true;
+    flaky.latestSeq = async (runId: string) => {
+      if (first) {
+        first = false;
+        throw new Error("connection reset");
+      }
+      return state.latestSeq(runId);
+    };
+
+    await expect(advance(flaky, leases, startJob(), scriptedHarness(CONCLUDE))).rejects.toThrow(/connection reset/);
+    expect(posted.filter((one) => one.url.includes(RUN))).toEqual([]);
+    expect((await leases.sweep(60_000, 10)).map((claim) => claim.run_id)).toEqual([RUN]);
+
+    await expect(advance(state, leases, resumeJob(), scriptedHarness(CONCLUDE))).rejects.toThrow(/has no ledger/);
+    expect(posted.filter((one) => one.url.includes(RUN)).map((one) => one.body)).toEqual([
+      expect.objectContaining({ outcome: "failed", reason: expect.stringMatching(/^it never started: cannot resume/) }),
+    ]);
+    expect(await leases.sweep(60_000, 10)).toEqual([]);
+  });
 });
 
 describe("what the caller enqueuing a run may tighten", () => {
