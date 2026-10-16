@@ -4194,13 +4194,22 @@ export interface paths {
         put?: never;
         /**
          * Reload Servers
-         * @description Reload MCP server configurations from ``mcp-config.json`` and
-         *     the integration bridge, picking up newly enabled/disabled
-         *     integrations without restarting the backend.
+         * @description Reload the catalog from ``mcp-config.json`` and apply it to running servers.
          *
-         *     Reinitialises the process-wide ``MCPService`` in place so both the
-         *     API and the ``MCPClient`` see the new catalog. Previously-enabled
-         *     servers are reconnected automatically.
+         *     The new catalog is built first; if the file does not parse, the old
+         *     catalog and every session stay as they were and the route answers 422
+         *     naming the error. Otherwise, for each server with a live session:
+         *
+         *     * removed from the file, or now disabled: disconnected (stopped in the
+         *       runner too) and its tools withdrawn from agents;
+         *     * changed spawn config: reconnected on the new config. A stdio child
+         *       compares command, args, cwd and declared env; a server in the MCP runner
+         *       compares only its declared env and credentials, because the runner
+         *       launches from its own catalog and ignores command, args and cwd;
+         *     * unchanged: left alone.
+         *
+         *     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
+         *     what happened; ``success`` is false if any reconnect or disconnect failed.
          */
         post: operations["post_api_mcp_servers_reload"];
         delete?: never;

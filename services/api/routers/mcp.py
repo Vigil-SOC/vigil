@@ -367,7 +367,7 @@ async def reload_servers(
     svc = _service()
     try:
         new_catalog = svc.load_catalog()
-    except Exception as exc:  # noqa: BLE001 - surfaced to the caller
+    except ValueError as exc:  # JSONDecodeError; nothing has been touched yet
         logger.error("MCP reload: mcp-config.json did not load: %s", exc)
         raise HTTPException(
             status_code=422,
