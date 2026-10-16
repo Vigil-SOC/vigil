@@ -15,6 +15,20 @@ export const OPERATOR_GAP_PROVENANCE = "operator_gap";
 // nothing was installed to fail, and no query will discover it.
 export const DEPLOYMENT_GAP_PROVENANCE = "deployment_gap";
 
+// What a deployment gap reads as, to whoever is shown it (#2287): what is missing and
+// what the hunt could not do for it, never the capability's id.
+const UNBOUND_IN_WORDS: Readonly<Record<string, string>> = {
+  telemetry_search: "No SIEM is connected, so the hunt could not search raw telemetry",
+  indicator_lookup: "No threat-intel source is connected, so the hunt could not look up indicators",
+  findings_search: "Vigil's findings could not be searched, so the hunt could not read what detection already scored",
+  get_finding: "Vigil's findings could not be opened, so the hunt could not read an alert's raw record",
+  entity_recall: "Episodic memory is not available, so the hunt could not recall what earlier investigations saw",
+};
+
+export function unboundInWords(capability: string): string {
+  return UNBOUND_IN_WORDS[capability] ?? "A tool this hunt needs is not connected, so part of the estate could not be searched";
+}
+
 // Stated rather than discovered: both name a blind spot no dispatch can close, unlike
 // a tool_failure a retry might.
 function declaredGap(record: EvidenceRecord): boolean {

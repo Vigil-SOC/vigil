@@ -146,8 +146,34 @@ describe('a hunt, as of the selected step', () => {
     render(<WatchRun d={hunt({ scope: undefined, budgets: undefined, reviews: undefined })} onBack={vi.fn()} />)
     step(3)
     expect(scopeOf()).toHaveTextContent('Not recorded')
+    // nothing recorded has no extent to draw: words, no bar
+    expect((screen.getByText('Scope').closest('div') as HTMLElement).querySelector('.rounded-full')).toBeNull()
     expect(limit('Budget')).toBe('Budget$4.40 spent')
     expect(screen.getByText('Not asked yet.')).toBeInTheDocument()
+  })
+
+  it('counts Steps in the unit the player numbers them, at every step', async () => {
+    render(<WatchRun d={hunt()} onBack={vi.fn()} />)
+    for (const n of [1, 2, 3]) {
+      step(n)
+      expect(await screen.findByText(`Step ${n} of 3 · Expand`)).toBeInTheDocument()
+      expect(limit('Steps')).toBe(`Steps${n} of 8`)
+    }
+  })
+
+  it('shows a blind spot from the step it was recorded in, not before, by the record\'s own time', async () => {
+    // A kernel hunt stamps a turn's first record with the turn before: by time, this gap came during step 3.
+    const stamped = hunt({
+      evidence: [
+        record(2, { is_gap: true, gap_detail: 'telemetry search unavailable', captured_at: '2026-10-06T13:13:30Z' }),
+        record(1, { ...link('h1', 'supports'), captured_at: '2026-10-06T13:11:30Z' }),
+      ],
+    })
+    render(<WatchRun d={stamped} onBack={vi.fn()} />)
+    step(2)
+    expect(await screen.findByText('None so far.')).toBeInTheDocument()
+    step(3)
+    expect(await screen.findByText('telemetry search unavailable')).toBeInTheDocument()
   })
 
   it('shows the checkpoint card at the newest step only, in plain words, and answers through steer', () => {

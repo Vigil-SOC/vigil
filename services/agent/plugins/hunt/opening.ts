@@ -7,7 +7,7 @@ import { newId } from "./ids.js";
 import { Journal, type HuntKinds } from "./journal.js";
 import type { DirectiveQueue } from "./ports.js";
 import { narrativeOf } from "./render.js";
-import { DEPLOYMENT_GAP_PROVENANCE } from "./strength.js";
+import { DEPLOYMENT_GAP_PROVENANCE, unboundInWords } from "./strength.js";
 import type { HuntState } from "./types.js";
 
 // How a hunt opens and is picked back up, and the names its record is written in, so
@@ -182,7 +182,7 @@ export async function startHunt(
         dispatch_id: null,
         iteration: 0,
         source_system: DEPLOYMENT_SOURCE,
-        summary: `no tool in this deployment answers ${capability}`,
+        summary: unboundInWords(capability),
         payload: { capability, hypothesis_id: null },
         salience: "notable",
         why_notable: "the roles that need it run without it, so no query can close this",
@@ -202,15 +202,20 @@ export async function startHunt(
   // no operator started -- a hunt's escalation teed it up -- so calling it a hunt
   // names the wrong run. spec.name is no substitute: it is the playbook's own name,
   // as often a phrase about the activity as it is a title.
-  const count = spec.hypotheses.length + spec.operator_hypotheses.length;
+  //
+  // Counted over the whole board, the benign explanation included, because that is what
+  // the case's Explanations tab shows once the run starts; each carries its provenance so
+  // the approval can say which one is the claim to beat.
+  const count = ledger.projection.hypotheses.size;
   const checkpoint = raiseCheckpoint(
     "hypothesis_approval",
     0,
-    `Approve and start this ${runKind === "hunt" ? "hunt" : "run"} on ${count} ${count === 1 ? "hypothesis" : "hypotheses"}`,
+    `Approve and start this ${runKind === "hunt" ? "hunt" : "run"} on ${count} ${count === 1 ? "explanation" : "explanations"}`,
     {
       hypotheses: [...ledger.projection.hypotheses.values()].map((hypothesis) => ({
         hypothesis_id: hypothesis.hypothesis_id,
         statement: hypothesis.statement,
+        provenance: hypothesis.provenance,
       })),
       budgets: spec.budgets,
       scope: spec.scope,

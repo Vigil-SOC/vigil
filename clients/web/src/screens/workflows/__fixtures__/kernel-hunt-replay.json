@@ -2,11 +2,105 @@
  "hunt_id": "hunt-29f86c1a1379",
  "decisions": [
   {
+   "decision_id": "r1",
+   "iteration": 1,
+   "action": "READ",
+   "target": null,
+   "cost_usd": null,
+   "duration_ms": 0,
+   "exact": true,
+   "rebuilt": {
+    "hunt_id": "hunt-29f86c1a1379",
+    "hunt_name": "beaconing on the finance segment",
+    "iteration": 1,
+    "narrative": "Finance reported a workstation that stays busy overnight. Nothing has been\nconfirmed; the overnight traffic is the only thing anyone has looked at.",
+    "hypotheses": [
+     {
+      "hypothesis_id": "h-3dcfffab",
+      "statement": "192.0.2.10 is beaconing to 198.51.100.7",
+      "status": "active"
+     }
+    ],
+    "recent_evidence": [
+     {
+      "evidence_id": "ev-922e510a735b",
+      "source_system": "deployment",
+      "summary": "no tool in this deployment answers entity_recall",
+      "salience": "notable",
+      "why_notable": "the roles that need it run without it, so no query can close this",
+      "instruction_like": false
+     }
+    ],
+    "weakens": {},
+    "entities": [],
+    "focus": {
+     "entity": null,
+     "hypothesis": null
+    },
+    "pivot_candidates": [],
+    "omitted": {
+     "count": 0,
+     "evidence_ids": []
+    },
+    "expansions": [],
+    "open_questions": [],
+    "budget_remaining": {
+     "iterations": 48,
+     "cost_usd": 5
+    },
+    "directives": [],
+    "notes": []
+   },
+   "recorded": {
+    "hunt_id": "hunt-29f86c1a1379",
+    "hunt_name": "beaconing on the finance segment",
+    "iteration": 1,
+    "narrative": "Finance reported a workstation that stays busy overnight. Nothing has been\nconfirmed; the overnight traffic is the only thing anyone has looked at.",
+    "hypotheses": [
+     {
+      "hypothesis_id": "h-3dcfffab",
+      "statement": "192.0.2.10 is beaconing to 198.51.100.7",
+      "status": "active"
+     }
+    ],
+    "recent_evidence": [
+     {
+      "evidence_id": "ev-922e510a735b",
+      "source_system": "deployment",
+      "summary": "no tool in this deployment answers entity_recall",
+      "salience": "notable",
+      "why_notable": "the roles that need it run without it, so no query can close this",
+      "instruction_like": false
+     }
+    ],
+    "weakens": {},
+    "entities": [],
+    "focus": {
+     "entity": null,
+     "hypothesis": null
+    },
+    "pivot_candidates": [],
+    "omitted": {
+     "count": 0,
+     "evidence_ids": []
+    },
+    "expansions": [],
+    "open_questions": [],
+    "budget_remaining": {
+     "iterations": 48,
+     "cost_usd": 5
+    },
+    "directives": [],
+    "notes": []
+   },
+   "mismatch": null
+  },
+  {
    "decision_id": "r2",
    "iteration": 2,
-   "action": "INVESTIGATE",
+   "action": "QUERY",
    "target": null,
-   "cost_usd": 0,
+   "cost_usd": null,
    "duration_ms": 0,
    "exact": true,
    "rebuilt": {
@@ -98,9 +192,9 @@
   {
    "decision_id": "r3",
    "iteration": 3,
-   "action": "INVESTIGATE",
+   "action": "QUERY",
    "target": null,
-   "cost_usd": 0,
+   "cost_usd": null,
    "duration_ms": 0,
    "exact": true,
    "rebuilt": {
@@ -208,9 +302,9 @@
   {
    "decision_id": "r4",
    "iteration": 4,
-   "action": "INVESTIGATE",
+   "action": "RECORD",
    "target": null,
-   "cost_usd": 0,
+   "cost_usd": null,
    "duration_ms": 0,
    "exact": true,
    "rebuilt": {
@@ -350,9 +444,9 @@
   {
    "decision_id": "r5",
    "iteration": 5,
-   "action": "INVESTIGATE",
+   "action": "PROPOSE",
    "target": null,
-   "cost_usd": 0,
+   "cost_usd": null,
    "duration_ms": 0,
    "exact": true,
    "rebuilt": {
@@ -500,11 +594,167 @@
    "mismatch": null
   },
   {
+   "decision_id": "r6",
+   "iteration": 6,
+   "action": "QUESTION",
+   "target": null,
+   "cost_usd": null,
+   "duration_ms": 0,
+   "exact": true,
+   "rebuilt": {
+    "hunt_id": "hunt-29f86c1a1379",
+    "hunt_name": "beaconing on the finance segment",
+    "iteration": 6,
+    "narrative": "Finance reported a workstation that stays busy overnight. Nothing has been\nconfirmed; the overnight traffic is the only thing anyone has looked at.",
+    "hypotheses": [
+     {
+      "hypothesis_id": "h-3dcfffab",
+      "statement": "192.0.2.10 is beaconing to 198.51.100.7",
+      "status": "active"
+     },
+     {
+      "hypothesis_id": "h-3de60798",
+      "statement": "192.0.2.10 runs an unsanctioned sync client",
+      "status": "active"
+     }
+    ],
+    "recent_evidence": [
+     {
+      "evidence_id": "ev-922e510a735b",
+      "source_system": "deployment",
+      "summary": "no tool in this deployment answers entity_recall",
+      "salience": "notable",
+      "why_notable": "the roles that need it run without it, so no query can close this",
+      "instruction_like": false
+     },
+     {
+      "evidence_id": "ev-a07413ea4365",
+      "source_system": "dispatcher",
+      "summary": "a query the hunt wanted could not be run",
+      "salience": "routine",
+      "why_notable": "a blind spot in what this run could see, not a finding",
+      "instruction_like": false
+     },
+     {
+      "evidence_id": "ev-95fb597546a8",
+      "source_system": "network",
+      "summary": "every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (network)",
+      "salience": "anomalous",
+      "why_notable": "the jitter is too low for a person or a poller",
+      "instruction_like": false
+     },
+     {
+      "evidence_id": "ev-f2d73a21525c",
+      "source_system": "endpoint",
+      "summary": "every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (endpoint)",
+      "salience": "anomalous",
+      "why_notable": "the jitter is too low for a person or a poller",
+      "instruction_like": false
+     }
+    ],
+    "weakens": {},
+    "entities": [],
+    "focus": {
+     "entity": null,
+     "hypothesis": null
+    },
+    "pivot_candidates": [],
+    "omitted": {
+     "count": 0,
+     "evidence_ids": []
+    },
+    "expansions": [],
+    "open_questions": [
+     "is the sync client on the approved list?"
+    ],
+    "budget_remaining": {
+     "iterations": 43,
+     "cost_usd": 5
+    },
+    "directives": [],
+    "notes": []
+   },
+   "recorded": {
+    "hunt_id": "hunt-29f86c1a1379",
+    "hunt_name": "beaconing on the finance segment",
+    "iteration": 6,
+    "narrative": "Finance reported a workstation that stays busy overnight. Nothing has been\nconfirmed; the overnight traffic is the only thing anyone has looked at.",
+    "hypotheses": [
+     {
+      "hypothesis_id": "h-3dcfffab",
+      "statement": "192.0.2.10 is beaconing to 198.51.100.7",
+      "status": "active"
+     },
+     {
+      "hypothesis_id": "h-3de60798",
+      "statement": "192.0.2.10 runs an unsanctioned sync client",
+      "status": "active"
+     }
+    ],
+    "recent_evidence": [
+     {
+      "evidence_id": "ev-922e510a735b",
+      "source_system": "deployment",
+      "summary": "no tool in this deployment answers entity_recall",
+      "salience": "notable",
+      "why_notable": "the roles that need it run without it, so no query can close this",
+      "instruction_like": false
+     },
+     {
+      "evidence_id": "ev-a07413ea4365",
+      "source_system": "dispatcher",
+      "summary": "a query the hunt wanted could not be run",
+      "salience": "routine",
+      "why_notable": "a blind spot in what this run could see, not a finding",
+      "instruction_like": false
+     },
+     {
+      "evidence_id": "ev-95fb597546a8",
+      "source_system": "network",
+      "summary": "every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (network)",
+      "salience": "anomalous",
+      "why_notable": "the jitter is too low for a person or a poller",
+      "instruction_like": false
+     },
+     {
+      "evidence_id": "ev-f2d73a21525c",
+      "source_system": "endpoint",
+      "summary": "every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (endpoint)",
+      "salience": "anomalous",
+      "why_notable": "the jitter is too low for a person or a poller",
+      "instruction_like": false
+     }
+    ],
+    "weakens": {},
+    "entities": [],
+    "focus": {
+     "entity": null,
+     "hypothesis": null
+    },
+    "pivot_candidates": [],
+    "omitted": {
+     "count": 0,
+     "evidence_ids": []
+    },
+    "expansions": [],
+    "open_questions": [
+     "is the sync client on the approved list?"
+    ],
+    "budget_remaining": {
+     "iterations": 43,
+     "cost_usd": 5
+    },
+    "directives": [],
+    "notes": []
+   },
+   "mismatch": null
+  },
+  {
    "decision_id": "r7",
    "iteration": 7,
    "action": "VALIDATE",
    "target": "h-3dcfffab",
-   "cost_usd": 0,
+   "cost_usd": null,
    "duration_ms": 0,
    "exact": true,
    "rebuilt": {
@@ -676,7 +926,7 @@
    "iteration": 8,
    "action": "CONCLUDE",
    "target": null,
-   "cost_usd": 0,
+   "cost_usd": null,
    "duration_ms": 0,
    "exact": true,
    "rebuilt": {
@@ -844,7 +1094,7 @@
    "mismatch": null
   }
  ],
- "reproduced": 6,
+ "reproduced": 8,
  "inexact": 0,
  "recalled": [
   "false_positive: 192.0.2.10 is a scheduled backup target — subjects ip:192.0.2.10 — activity 2026-02-01 to 2026-03-01 — analyst, from case case-0007, concluded 2026-03-02 — because the platform team confirmed the overnight schedule",

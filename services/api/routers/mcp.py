@@ -99,22 +99,51 @@ async def list_servers():
 async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
     """Session state for every catalog server.
 
-    ``status`` is ``running`` only while that server's persistent session is
-    connected. With no MCP client, every server is disconnected: the catalog
-    has no session state of its own. Dormant reconnect stays on
-    ``GET /connections/status``.
+    ``status`` is one of:
+
+    * ``running`` while that server's persistent session is connected;
+    * ``not_set_up`` while the install lacks what the server serves from
+      (security-detections before its rules are fetched). The row names the
+      reason and ``setup_action``, the one action that fixes it;
+    * ``on_demand`` when nothing has dialled the server yet and it connects on
+      its first call: every server with eager connect off, and one held back
+      for setup until this process next uses it (the fetch may have run in
+      another worker). Not down;
+    * ``disconnected`` otherwise. With no MCP client every server is: the
+      catalog has no session state of its own.
+
+    Dormant reconnect stays on ``GET /connections/status``.
     """
+    from core.integrations.mcp.registry import eager_connect_enabled
+
     enabled = mcp_service.get_all_enabled_states()
     connected = mcp_client.get_connection_status() if mcp_client else {}
+    lazy = not eager_connect_enabled()
     statuses = []
     for name in mcp_service.list_servers():
         is_up = bool(connected.get(name))
+        needs = None if is_up else mcp_service.setup_required(name)
+        if is_up:
+            status = "running"
+        elif needs:
+            status = "not_set_up"
+        elif (
+            mcp_client
+            and not mcp_client.was_dialled(name)
+            and (lazy or mcp_client.held_for_setup(name))
+        ):
+            status = "on_demand"
+        else:
+            status = "disconnected"
         row: Dict = {
             "name": name,
-            "status": "running" if is_up else "disconnected",
+            "status": status,
             "enabled": bool(enabled.get(name, False)),
         }
-        if mcp_client and not is_up:
+        if needs:
+            row["setup"] = needs
+            row["setup_action"] = mcp_service.setup_action(name)
+        elif mcp_client and not is_up:
             missing = mcp_client.get_missing_credentials(name)
             if missing:
                 row["missing_credentials"] = missing
@@ -174,12 +203,16 @@ async def set_server_enabled(
     error: Optional[str] = None
     missing_credentials: Optional[List[str]] = None
 
+    # Nothing to connect to until the server is set up. It stays enabled and
+    # starts then; connected=None keeps the console from reverting the switch
+    # as it does for a failed connect.
+    setup = mcp_service.setup_required(server_name) if request.enabled else None
     if request.enabled:
         # Try to bring the server online now. Failures (missing creds,
         # missing binary, unreachable remote MCP) surface via last_error.
         # Missing-credentials case is dormancy-by-design, not an error —
         # the UI treats it via the existing "Not Configured" chip.
-        if mcp_client is not None:
+        if mcp_client is not None and not setup:
             # Re-derive configs so a connectorUrl saved this session lands in the
             # init-time-cached spawn args before we connect.
             try:
@@ -232,6 +265,7 @@ async def set_server_enabled(
         "connected": connected,
         "error": error,
         "missing_credentials": missing_credentials,
+        "setup": setup,
         "message": f"Server {server_name} {'enabled' if request.enabled else 'disabled'}",
     }
 

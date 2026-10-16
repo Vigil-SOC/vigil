@@ -1,3 +1,4 @@
+import { SpanKind } from "@opentelemetry/api";
 import OpenAI from "openai";
 import type { TokenCounts } from "../contracts/budget.js";
 import { estimateTokens, Limiter, statusOf } from "./limiter.js";
@@ -12,6 +13,7 @@ import {
   type TurnRequest,
 } from "./provider.js";
 import type { Effort } from "./spec.js";
+import { capture, traced } from "./tracing.js";
 import { noVirtualKey, type VirtualKey } from "./vk.js";
 
 // Unset, the gateway's own default cuts a long emission off mid-JSON, which
@@ -258,22 +260,44 @@ class OpenAiSurface implements Provider {
   private async send(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<OpenAI.Chat.ChatCompletion> {
     const limit = cap === "max_tokens" ? { max_tokens: MAX_OUTPUT_TOKENS } : { max_completion_tokens: MAX_OUTPUT_TOKENS };
     const estimate = estimateTokens(JSON.stringify(body));
-    // Assembled inside run() rather than after it, so the rate-limit slot is held
-    // for the whole call and a mid-stream failure is retried like any other.
-    return this.limiter.run(estimate, async () => {
-      // Per request, not the client's defaultHeaders: the client is shared by every
-      // run, and a key changed in Settings has to reach the next call.
-      const vk = await this.vk();
-      const stream = await this.client.chat.completions.create(
-        { ...limit, ...body, ...effortFields(this.provider_type, this.effort), stream: true, stream_options: { include_usage: true } },
-        { ...(signal ? { signal } : {}), ...(vk === null ? {} : { headers: { "x-bf-vk": vk } }) },
-      );
-      if (!(Symbol.asyncIterator in stream)) {
-        throw new ProviderError("the gateway answered a stream request with a whole completion");
-      }
-      const response = await assemble(stream);
-      return response.usage === undefined ? { ...response, usage: guessed(estimate, response) } : response;
-    });
+    const attributes = {
+      "gen_ai.operation.name": "chat",
+      "gen_ai.provider.name": this.provider_type,
+      "gen_ai.request.model": this.wire_model,
+    };
+    // Opened before the limiter, so time queued behind a rate limit is on the span.
+    return traced(`chat ${this.wire_model}`, attributes, async (span) => {
+      // What this call adds since the model last spoke: earlier spans hold the rest, and
+      // the whole history cut at the cap would keep the oldest turns, not the newest.
+      const spoke = body.messages.findLastIndex((message) => message.role === "assistant");
+      capture(span, "gen_ai.input.messages", body.messages.slice(spoke + 1));
+      // Assembled inside run() rather than after it, so the rate-limit slot is held
+      // for the whole call and a mid-stream failure is retried like any other.
+      const response = await this.limiter.run(estimate, async () => {
+        span.addEvent("admitted");
+        // Per request, not the client's defaultHeaders: the client is shared by every
+        // run, and a key changed in Settings has to reach the next call.
+        const vk = await this.vk();
+        const stream = await this.client.chat.completions.create(
+          { ...limit, ...body, ...effortFields(this.provider_type, this.effort), stream: true, stream_options: { include_usage: true } },
+          { ...(signal ? { signal } : {}), ...(vk === null ? {} : { headers: { "x-bf-vk": vk } }) },
+        );
+        if (!(Symbol.asyncIterator in stream)) {
+          throw new ProviderError("the gateway answered a stream request with a whole completion");
+        }
+        const response = await assemble(stream);
+        return response.usage === undefined ? { ...response, usage: guessed(estimate, response) } : response;
+      });
+      const tokens = tokensOf(response.usage);
+      span.setAttributes({
+        "gen_ai.response.model": response.model,
+        "gen_ai.response.finish_reasons": response.choices.map((choice) => choice.finish_reason),
+        "gen_ai.usage.input_tokens": tokens.input,
+        "gen_ai.usage.output_tokens": tokens.output,
+      });
+      capture(span, "gen_ai.output.messages", response.choices.map((choice) => choice.message));
+      return response;
+    }, { kind: SpanKind.CLIENT });
   }
 }
 

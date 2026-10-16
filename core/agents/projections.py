@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import get_settings
 from core.secrets import get_secret
+from core.telemetry import inject_traceparent
 from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def _headers() -> Dict[str, str]:
     token = get_secret("AGENT_INTERNAL_TOKEN") or ""
     if not token:
         raise RuntimeError("AGENT_INTERNAL_TOKEN is not configured")
-    return {"Authorization": f"Bearer {token}"}
+    return {**inject_traceparent(), "Authorization": f"Bearer {token}"}
 
 
 def _note_read(ok: bool, message: str, *args: Any) -> None:

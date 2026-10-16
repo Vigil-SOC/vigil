@@ -121,6 +121,14 @@ def _count_queued_intake_rows() -> int:
 SCHEDULE_RUN_CEILING = 1
 
 
+# A hunt parked out of turns or budget, waiting on Keep going. A park on an
+# approval checkpoint ("awaiting ...") is not: it is waiting_approval while the
+# checkpoint is open and resumes on its own once answered.
+def _parked_on_a_person(projection: Dict[str, Any]) -> bool:
+    reason = projection.get("reason") or ""
+    return projection.get("status") == "parked" and not reason.startswith("awaiting ")
+
+
 def _count_investigations_in_flight() -> int:
     with get_db_manager().session_scope() as session:
         return (
@@ -182,10 +190,10 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
     nested = finding.get("ai_enrichment")
     if not isinstance(nested, dict) or not nested:
         return finding
-    from services.daemon.processor import _AI_ANALYSIS_KEYS
+    from core.storage.service import DAEMON_ENRICHMENT_KEYS
 
     lifted = dict(finding)
-    for key in _AI_ANALYSIS_KEYS:
+    for key in DAEMON_ENRICHMENT_KEYS:
         if key in nested and lifted.get(key) is None:
             lifted[key] = nested[key]
     return lifted
@@ -473,9 +481,8 @@ def _record_human_ask_document(
     hashed, which is wrong for a URL and worse for a path a caller chose.
 
     Written straight onto the launch session rather than through
-    ``CaseEvidenceService``: that service's constructor mkdirs an evidence
-    directory, and this path stores no file. A mkdir that fails would take the
-    launch down with it, and the row is the same either way.
+    ``CaseEvidenceService``: this path stores no file, so it has no use for the
+    evidence store, and the row is the same either way.
     """
     if not case_id or not document:
         return
@@ -1151,7 +1158,9 @@ class Orchestrator:
 
                 # Before anything reads a row: the row is a copy of the ledger,
                 # and a supervisor deciding on a stale copy decides on nothing.
-                for status in ("executing", "waiting_approval"):
+                # Paused rows too: a resume or the park TTL's terminal reaches
+                # them only here. They are never stale- or cost-checked below.
+                for status in ("executing", "waiting_approval", "paused"):
                     for inv in self._get_investigations_by_status(status):
                         reconciling = _inv_as_dict(inv).get("investigation_id")
                         if reconciling:
@@ -1533,6 +1542,15 @@ class Orchestrator:
             self._update_investigation_status(inv_id, "waiting_approval")
             return
 
+        # A hunt parked without a checkpoint (out of turns or budget) waits on a
+        # person: paused, holding no slot, and announced once per park.
+        if _parked_on_a_person(projection):
+            reason = projection.get("reason") or "Parked"
+            was = self._update_investigation_status(inv_id, "paused", activity=reason)
+            if was is not None and was != "paused":
+                await self._notify_parked(inv_id, reason)
+            return
+
         if projection.get("status") != "terminal":
             self._update_investigation_status(inv_id, "executing")
             return
@@ -1544,9 +1562,16 @@ class Orchestrator:
         else:
             self._update_investigation_status(inv_id, "failed", reason or str(outcome))
 
+    async def _notify_parked(self, inv_id: str, reason: str) -> None:
+        title = f"Run paused: {inv_id}"
+        body = f"Investigation {inv_id} is paused and waiting on a person: {reason}"
+        self._send_notification(inv_id, "run_paused", title, body, priority="high")
+        await self._send_slack_for_notification(title, body)
+
     # The heartbeat. A failure here is logged loudly on purpose (#147): swallowed
     # quietly, last_activity_at stops moving and the supervisor stale-kills a run
-    # that is perfectly healthy.
+    # that is perfectly healthy. A run parked on a person is not stamped;
+    # the first reconcile after a resume stamps it again.
     def _record_progress(self, inv_id: str, projection: Dict[str, Any]) -> None:
         try:
             from core.storage.connection import get_db_manager
@@ -1566,7 +1591,8 @@ class Orchestrator:
                 inv.iteration_count = (
                     projection.get("iteration", 0) if counted is None else counted
                 )
-                inv.last_activity_at = utcnow()
+                if not _parked_on_a_person(projection):
+                    inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")
                 if cost is not None:
@@ -2266,9 +2292,15 @@ class Orchestrator:
         except Exception:
             return None
 
+    # Returns the status the row had, or None when it was not read. Activity is
+    # the park reason a paused row shows; any other status clears it.
     def _update_investigation_status(
-        self, inv_id: str, status: str, notes: Optional[str] = None
-    ):
+        self,
+        inv_id: str,
+        status: str,
+        notes: Optional[str] = None,
+        activity: Optional[str] = None,
+    ) -> Optional[str]:
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import Investigation
@@ -2280,13 +2312,17 @@ class Orchestrator:
                     .first()
                 )
                 if inv:
+                    was = inv.status
                     inv.status = status
+                    inv.current_activity = activity
                     if notes:
                         inv.master_review_notes = notes
                     if status == "completed":
                         inv.completed_at = utcnow()
+                    return was
         except Exception as e:
             logger.error(f"Failed to update investigation status: {e}")
+        return None
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost breakdown across all investigations."""

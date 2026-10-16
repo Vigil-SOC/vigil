@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../plugins/kinds.js";
@@ -285,6 +286,27 @@ describe("the console reads a kernel run in the investigate shape", () => {
     const replay = investigateKernelReplay(RUN, events);
     expect(replay.decisions.map((one) => one.action)).toEqual(["EXAMINE", "CONCLUDE"]);
     expect(replay.kernel.turns[0]?.calls[0]?.ref).toBe("r1");
+  });
+
+  const ledger = (name: string) =>
+    readFileSync(join(FIXTURES, "ledgers", name), "utf8").split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line));
+
+  it("carries the record in the hunt's row shapes: explanations, the rows linked to each, open questions", () => {
+    const view = investigateView(RUN, ledger("kernel-investigate.jsonl"));
+    expect(view.hypotheses.map((one) => [one.hypothesis_id, one.supports, one.weakens, one.neither])).toEqual([["h1", 1, 2, 0], ["h2", 0, 0, 3], ["h3", 2, 0, 1]]);
+    // Only refs a link names are evidence, newest first.
+    expect(view.evidence.map((one) => one.evidence_id)).toEqual(["r9", "r3", "r2"]);
+    expect(view.evidence_count).toBe(3);
+    expect(view.evidence[0]).toMatchObject({ source_system: "splunk_search", bears_on: [{ hypothesis_id: "h3", relation: "supports" }, { hypothesis_id: "h1", relation: "weakens" }] });
+    expect(view.evidence[0]?.summary).not.toContain("vigil:tool_result");
+    expect(view.held).toBeNull();
+  });
+
+  it("shows a held dismissal as what it was held as, with what was asked and why", () => {
+    const view = investigateView(RUN, ledger("kernel-investigate-held.jsonl"));
+    expect(view.findings[0]?.answer).toMatchObject({ disposition: "needs_review" });
+    expect(view.held).toEqual({ field: "disposition", asked: "benign", final: "needs_review", reason: expect.stringMatching(/^the review was insufficient: Only the case note/) });
+    expect(view.open_questions).toEqual([{ question_id: "q1", question: expect.stringContaining("registered red-team operator"), hypothesis_id: "h3" }]);
   });
 });
 

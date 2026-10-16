@@ -71,6 +71,7 @@ class MCPServer:
         cwd: str,
         env: Dict[str, str],
         required_env_vars: Optional[List[str]] = None,
+        declared_env: Optional[List[str]] = None,
     ):
         self.name = name
         self.command = command
@@ -80,6 +81,9 @@ class MCPServer:
         # Credential placeholders declared in mcp-config.json for this
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
+        # The env names mcp-config.json declares; ``env`` also carries the
+        # backend's own environment, which only a stdio child inherits.
+        self.declared_env: List[str] = list(declared_env or [])
 
 
 class MCPService:
@@ -120,9 +124,6 @@ class MCPService:
         if not self.python_exe.is_file():
             self.python_exe = Path(sys.executable)
 
-        # Load enabled state (servers default to disabled)
-        self._enabled_servers: Dict[str, bool] = self._load_enabled_state()
-
         # Initialize servers
         self.servers: Dict[str, MCPServer] = {}
         self._initialize_servers()
@@ -141,12 +142,15 @@ class MCPService:
             logger.warning(f"Could not load MCP enabled state: {e}")
         return {}
 
-    def _save_enabled_state(self) -> None:
+    def _save_enabled_state(self, enabled: Dict[str, bool]) -> None:
         """Persist the enabled/disabled state to disk."""
         try:
             write_path = vigil_path(self._STATE_FILENAME, write=True)
-            with open(write_path, "w") as f:
-                json.dump({"enabled": self._enabled_servers}, f, indent=2)
+            # Replaced whole: the other worker and the daemon read it on every check.
+            tmp = write_path.with_name(f".{write_path.name}.{os.getpid()}")
+            with open(tmp, "w") as f:
+                json.dump({"enabled": enabled}, f, indent=2)
+            os.replace(tmp, write_path)
         except Exception as e:
             logger.error(f"Could not save MCP enabled state: {e}")
 
@@ -165,12 +169,17 @@ class MCPService:
         "splunk-selfhosted",
     }
 
-    def is_server_enabled(self, server_name: str) -> bool:
-        """Check whether a server is enabled. Internal platform servers default to True; all others default to False."""
-        return self._enabled_servers.get(
-            server_name,
-            server_name in self._DEFAULT_ENABLED,
-        )
+    def is_server_enabled(
+        self, server_name: str, state: Optional[Dict[str, bool]] = None
+    ) -> bool:
+        """Check whether a server is enabled. Internal platform servers default to True; all others default to False.
+
+        Read from the file on every check: the other API worker and the daemon
+        toggle the same file, and share the runner's one copy of each server.
+        """
+        if state is None:
+            state = self._load_enabled_state()
+        return state.get(server_name, server_name in self._DEFAULT_ENABLED)
 
     def set_server_enabled(self, server_name: str, enabled: bool) -> bool:
         """
@@ -180,14 +189,49 @@ class MCPService:
         """
         if server_name not in self.servers:
             return False
-        self._enabled_servers[server_name] = enabled
-        self._save_enabled_state()
+        state = self._load_enabled_state()
+        state[server_name] = enabled
+        self._save_enabled_state(state)
         logger.info(f"Server '{server_name}' {'enabled' if enabled else 'disabled'}")
         return True
 
+    # The server that answers from detection rules the install has to fetch
+    # first. ``POST /api/detection-rules/update-all`` is that fetch.
+    DETECTIONS_SERVER = "security-detections"
+    FETCH_RULES = "fetch_detection_rules"
+    _NO_RULES = "No detection rules have been fetched on this install yet."
+
+    def setup_required(self, server_name: str) -> Optional[str]:
+        """Why ``server_name`` cannot start yet, or None when nothing stops it.
+
+        Not a failure and not a missing credential: security-detections
+        searches rule repositories, and a fresh install has none until they are
+        fetched (#2291). Started anyway it indexes nothing and answers every
+        search with nothing. Read fresh on each call, so a fetch made by another
+        worker counts here too; the server's env takes the paths it found.
+        """
+        if server_name != self.DETECTIONS_SERVER:
+            return None
+        try:
+            env = self._detection_rules.saved_mcp_env_vars()
+        except Exception as exc:  # noqa: BLE001 - a status read must not raise
+            logger.warning("Could not read the detection rule sources: %s", exc)
+            env = {}
+        if not env:
+            return self._NO_RULES
+        server = self.servers.get(server_name)
+        if server is not None:
+            server.env = {**(server.env or {}), **env}
+        return None
+
+    def setup_action(self, server_name: str) -> Optional[str]:
+        """The one action that sets ``server_name`` up, for a client to offer."""
+        return self.FETCH_RULES if server_name == self.DETECTIONS_SERVER else None
+
     def get_all_enabled_states(self) -> Dict[str, bool]:
         """Return a dict of server_name -> enabled for every known server."""
-        return {name: self.is_server_enabled(name) for name in self.servers}
+        state = self._load_enabled_state()
+        return {name: self.is_server_enabled(name, state) for name in self.servers}
 
     def _substitute_env_vars(
         self, value: str, env: Optional[Dict[str, str]] = None
@@ -331,6 +375,7 @@ class MCPService:
                             "cwd": cwd,
                             "env": env,
                             "required_env_vars": required_env_vars,
+                            "declared_env": list(raw_env_strs),
                         }
                     )
 

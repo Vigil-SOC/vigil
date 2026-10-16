@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { TextInput } from '../../shared/ui'
 import { workflowApi } from '../../services/api'
-import { errMsg, type HuntEvidence, type HuntGap, type HuntView } from './runRead'
+import { GRANTS, errMsg, type Grant, type HuntEvidence, type HuntGap, type HuntView } from './runRead'
 
 /** A gap the projection reports live. query_intent belongs to the dispatch, which
  *  the finalized report joins in and a live read cannot, so the summary carries it. */
@@ -126,6 +126,28 @@ export function OpenCheckpoint({ hunt }: { hunt: HuntView }) {
         />
       </div>
       {failed && <span className="text-[11.5px]" style={{ color: 'var(--poor)' }}>{failed}</span>}
+    </div>
+  )
+}
+
+/** Keep going, by a stated amount. The amount is the whole of the directive — an extend
+ *  that grants nothing is refused now, so there is no press that quietly does nothing. */
+export function KeepGoing({ busy, onGrant, className = 'btn ghost' }: { busy: boolean; onGrant: (grant: Grant, label: string) => void; className?: string }) {
+  return (
+    <div className="flex gap-2 items-center flex-wrap" role="group" aria-label="Keep going">
+      <span className="text-[11.5px] text-tx-3">Keep going:</span>
+      {GRANTS.map(([label, grant]) => (
+        <button
+          key={label}
+          type="button"
+          className={className}
+          disabled={busy}
+          title={`extend this run by ${label.replace('+', '')} and let it carry on from where it parked`}
+          onClick={() => onGrant(grant, label)}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   )
 }

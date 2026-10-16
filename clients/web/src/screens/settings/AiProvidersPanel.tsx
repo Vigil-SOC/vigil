@@ -363,8 +363,8 @@ export function KeyDialog({
   onClose: () => void
   onSave: (data: BifrostKeyWrite) => Promise<void>
 }) {
-  // Vertex takes either a bare API key or a service-account JSON scoped by
-  // project/region — so it gets a mode switch and its own fields.
+  // Vertex takes either a bare API key or a service-account JSON, both scoped
+  // by project/region — so it gets a mode switch and its own fields.
   const isVertex = provider === 'vertex'
   const isOllama = provider === 'ollama'
   const storedUrl = secretText(existing?.ollama_key_config?.url)
@@ -372,8 +372,10 @@ export function KeyDialog({
   const storedUrlEnv = secretEnvRef(existing?.ollama_key_config?.url)
   const storedProject = secretText(existing?.vertex_key_config?.project_id)
   const storedRegion = secretText(existing?.vertex_key_config?.region)
+  // The mode is whichever credential the key holds: a service account reads
+  // back a masked `auth_credentials`, an express key a masked `value`.
   const [vertexAuth, setVertexAuth] = useState<'service_account' | 'api_key'>(
-    storedProject ? 'service_account' : 'api_key',
+    secretText(existing?.vertex_key_config?.auth_credentials) ? 'service_account' : 'api_key',
   )
   // A key Bifrost holds no token for reads back as an empty `value`, which is
   // the unauthenticated case — the common one, so it leads.
@@ -419,16 +421,18 @@ export function KeyDialog({
         // An empty `value` is no credential; an omitted one keeps the stored token.
         if (ollamaAuth === 'none') base.value = ''
         else if (secret.trim()) base.value = secret.trim()
-      } else if (isVertex && vertexAuth === 'service_account') {
+      } else if (isVertex) {
+        // Both modes carry the scope — Bifrost skips a vertex key without it.
         // Every field is omitted when left blank; the backend substitutes its
-        // stored copy, and for the credential mirrors it into `value` too.
+        // stored copy.
+        const sa = vertexAuth === 'service_account'
         base.vertex_key_config = {
           ...(projectId.trim() ? { project_id: projectId.trim() } : {}),
           ...(region.trim() ? { region: region.trim() } : {}),
-          ...(secret.trim() ? { auth_credentials: secret.trim() } : {}),
+          ...(sa && secret.trim() ? { auth_credentials: secret.trim() } : {}),
         }
+        if (!sa && secret.trim()) base.value = secret.trim()
       } else if (secret.trim()) {
-        // API-key vertex takes the plain-value path like any other provider.
         // Omitted when left blank: the backend substitutes the stored
         // credential, since Bifrost has no models-only update.
         base.value = secret.trim()
@@ -441,13 +445,12 @@ export function KeyDialog({
     }
   }
 
-  // A create needs a credential; a service-account vertex create also needs
-  // project + region.
+  // A create needs a credential; a vertex create also needs project + region.
   const missingCredential = !existing && !(isOllama ? url.trim() : secret.trim())
   const missingOllamaToken =
     isOllama && ollamaAuth === 'api_key' && !existing && !secret.trim()
   const missingVertexScope =
-    isVertex && vertexAuth === 'service_account' && !existing && (!projectId.trim() || !region.trim())
+    isVertex && !existing && (!projectId.trim() || !region.trim())
 
   return (
     <Popup open onClose={onClose} title={existing ? `Edit key · ${provider}` : `Add key · ${provider}`}>
@@ -554,38 +557,38 @@ export function KeyDialog({
                 ))}
               </div>
             </Field>
+            <div className="settings-grid-2" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
+              <Field
+                label="Project ID"
+                hint={
+                  storedProject
+                    ? 'Leave blank to keep the stored project.'
+                    : 'The GCP project that owns the Vertex AI endpoint.'
+                }
+              >
+                <TextInput
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  placeholder={storedProject || 'my-gcp-project'}
+                />
+              </Field>
+              <Field
+                label="Region"
+                hint={
+                  storedRegion
+                    ? 'Leave blank to keep the stored region.'
+                    : 'Vertex location, e.g. us-central1.'
+                }
+              >
+                <TextInput
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  placeholder={storedRegion || 'us-central1'}
+                />
+              </Field>
+            </div>
             {vertexAuth === 'service_account' ? (
               <>
-                <div className="settings-grid-2" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
-                  <Field
-                    label="Project ID"
-                    hint={
-                      storedProject
-                        ? 'Leave blank to keep the stored project.'
-                        : 'The GCP project that owns the Vertex AI endpoint.'
-                    }
-                  >
-                    <TextInput
-                      value={projectId}
-                      onChange={(e) => setProjectId(e.target.value)}
-                      placeholder={storedProject || 'my-gcp-project'}
-                    />
-                  </Field>
-                  <Field
-                    label="Region"
-                    hint={
-                      storedRegion
-                        ? 'Leave blank to keep the stored region.'
-                        : 'Vertex location, e.g. us-central1.'
-                    }
-                  >
-                    <TextInput
-                      value={region}
-                      onChange={(e) => setRegion(e.target.value)}
-                      placeholder={storedRegion || 'us-central1'}
-                    />
-                  </Field>
-                </div>
                 <Field
                   label="Service account JSON"
                   hint={

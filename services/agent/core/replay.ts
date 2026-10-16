@@ -73,7 +73,7 @@ export function transcriptOf(calls: readonly CallPayload[]): Message[] {
       content: asking.find((one) => one.thought !== undefined)?.thought ?? "",
       tool_calls: asking.map((one) => ({ id: one.call_id, tool: one.tool, args: one.arguments })),
     });
-    for (const one of asking) messages.push({ role: "tool", call_id: one.call_id, content: one.result });
+    for (const one of asking) messages.push({ role: "tool", call_id: one.call_id, content: one.shown ?? one.result });
     asking = [];
   };
   for (const call of calls) {

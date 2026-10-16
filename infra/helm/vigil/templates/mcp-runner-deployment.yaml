@@ -1,0 +1,114 @@
+{{- /*
+MCP runner (#2303): starts catalog MCP servers, each under its own uid, and
+serves them over MCP streamable HTTP on 6991. Built from
+infra/docker/Dockerfile.mcp-runner; mirrors the compose service.
+
+Holds no app secret: no vigil.envFrom, no POSTGRES_*, no state directory. Only
+its bearer token, by secretKeyRef.
+
+Nothing is mounted at /var/lib/vigil/mcp: each server's HOME and the uid map
+are baked there at image build, and a volume would hide them.
+*/ -}}
+{{- if .Values.mcpRunner.enabled }}
+{{- /* Every route wants the bearer, which an httpGet probe cannot send, so the
+       probes call GET /servers from inside the container. */}}
+{{- $probe := list "python" "-c" "import os, urllib.request as r; r.urlopen(r.Request('http://127.0.0.1:6991/servers', headers={'Authorization': 'Bearer ' + os.environ['MCP_RUNNER_TOKEN']}), timeout=5)" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vigil.mcpRunner.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "mcp-runner") | nindent 4 }}
+spec:
+  {{- /* One runner: the catalog's servers live in this one process. */}}
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "mcp-runner") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.componentLabels" (dict "context" . "component" "mcp-runner") | nindent 8 }}
+      annotations:
+        checksum/mcp-runner-token: {{ .Values.secrets.mcpRunnerToken | default "" | sha256sum }}
+        {{- with .Values.mcpRunner.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "vigil.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      {{- /* The pause container becomes PID 1 and reaps grandchildren (npx ->
+             node) re-parented on a stop; compose uses init: true for this. */}}
+      shareProcessNamespace: true
+      {{- /* uvicorn gives open streams 5 s, then each server up to ~6 s to stop. */}}
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        {{- toYaml .Values.mcpRunner.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mcp-runner
+          image: {{ include "vigil.image" (dict "context" . "component" "mcpRunner") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "mcpRunner") }}
+          ports:
+            - name: http
+              containerPort: 6991
+              protocol: TCP
+          env:
+            - name: MCP_RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.mcpRunner.tokenSecret" . }}
+                  key: MCP_RUNNER_TOKEN
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            {{- include "vigil.caBundleEnv" . | nindent 12 }}
+            {{- with .Values.mcpRunner.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- /* timeoutSeconds leaves room for the interpreter to start. */}}
+          startupProbe:
+            exec:
+              command: {{ toJson $probe }}
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: {{ toJson $probe }}
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: {{ toJson $probe }}
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.mcpRunner.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.mcpRunner.securityContext | nindent 12 }}
+          {{- with list (include "vigil.caBundleVolumeMount" .) (include "vigil.detectionRulesVolumeMount" (dict "context" . "readOnly" true)) | join "" | trim }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with list (include "vigil.caBundleVolume" .) (include "vigil.detectionRulesVolume" .) | join "" | trim }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcpRunner.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcpRunner.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcpRunner.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

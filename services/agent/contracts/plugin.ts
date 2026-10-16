@@ -58,6 +58,10 @@ export interface PluginManifest {
   skills: SkillSpec[];
   conclusion: ConclusionSpec;
   guard?: GuardSpec;
+  // Experimental (core/guards.ts), honoured only with VIGIL_GUARDS=on: the reader's
+  // prompt, and what the deciding agent is told, in this plugin's words. Not `guard`,
+  // which is the kernel reviewer's second look at a conclusion.
+  quarantine?: { reader: string; guidance: string };
   // Tool turns across the whole run, resumes included. Absent takes the
   // deployment's runtime.max_turns.
   max_turns?: number;

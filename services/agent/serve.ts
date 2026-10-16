@@ -1,3 +1,4 @@
+import { SpanKind } from "@opentelemetry/api";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import pg from "pg";
@@ -7,6 +8,7 @@ import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
+import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
@@ -119,6 +121,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
     }
   } catch (error) {
     log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
+    failed(error);
     res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
   }
   res.end();
@@ -163,6 +166,7 @@ function refuse(res: ServerResponse, status: number, detail: string): void {
 // A route that threw: logged with the run, then answered as the refusal it is.
 function fail(res: ServerResponse, status: number, route: string, runId: string, error: unknown): void {
   log.error("request failed", { route, run_id: runId, status, ...errorFields(error) });
+  failed(error);
   refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
@@ -300,7 +304,13 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
   // Headers before the first token, so the reader is streaming rather than
   // buffering a response it will be handed all at once.
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  await streamChat(state, request, res, build);
+  const attributes = {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "chat",
+    "vigil.run_id": request.run_id,
+    ...(request.agent_id === undefined ? {} : { "gen_ai.agent.id": request.agent_id }),
+  };
+  await traced("invoke_agent chat", attributes, () => streamChat(state, request, res, build), { kind: SpanKind.SERVER, parent: req.headers });
 }
 
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
@@ -323,7 +333,11 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
 
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
-      if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
+      if (asked !== null) {
+        const runId = asked[1] as string;
+        const attributes = { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "narrate", "vigil.run_id": runId };
+        return traced("invoke_agent narrate", attributes, () => writeNarrative(state, runId, res, build), { kind: SpanKind.SERVER, parent: req.headers });
+      }
 
       // Parsed rather than matched raw because this route takes a query. Node accepts
       // request-targets URL rejects (absolute-form with a bad host), so a throw here
@@ -378,6 +392,7 @@ export function serveReady(pool: pg.Pool): Ready {
 // loaded this module and exited. Its own pool: serve is a separate Deployment from
 // the worker now, and a pool cannot be shared across processes.
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
+  initTracing("vigil-agent-serve");
   const pool = new pg.Pool(poolConfig());
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
@@ -385,7 +400,8 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
     verifyLedger(pool, runId),
   ).listen(chatPort());
   const stop = () => {
-    serving.close();
+    // Flushed once the open chats have drained, so their spans are not the ones lost.
+    serving.close(() => void shutdownTracing());
     void pool.end();
   };
   process.on("SIGTERM", stop);

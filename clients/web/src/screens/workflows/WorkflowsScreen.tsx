@@ -18,7 +18,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
-import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
+import { KeepGoing, OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -2232,15 +2232,6 @@ function ReportBody({ md }: { md: string }) {
   )
 }
 
-/** What one press of extend buys. Sent as a typed grant rather than as prose the run
- *  has to parse: `extend` with an empty note parsed to nothing, journaled a note saying
- *  so, and left the hunt parked at the ceiling it was asking to be let past. */
-const GRANTS: [string, { iterations: number; cost_usd: number; wall_ms: number }][] = [
-  ['+3 turns', { iterations: 3, cost_usd: 0, wall_ms: 0 }],
-  ['+$5', { iterations: 0, cost_usd: 5, wall_ms: 0 }],
-  ['+30 min', { iterations: 0, cost_usd: 0, wall_ms: 30 * 60_000 }],
-]
-
 /** queued for the worker holding the ledger, so nothing here is instant — the
  *  panel re-reads rather than claiming the run obeyed */
 function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSteered: () => void }) {
@@ -2285,8 +2276,7 @@ function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSte
   )
 }
 
-/** Keep going, by a stated amount. The amount is the whole of the directive — an extend
- *  that grants nothing is refused now, so there is no press that quietly does nothing. */
+/** Keep going on the run page: the shared control, sending the shared directive with the note typed below. */
 function SteerExtend({
   busy, note, send,
 }: {
@@ -2295,19 +2285,8 @@ function SteerExtend({
   send: (kind: string, text: string, fields?: Record<string, unknown>) => void
 }) {
   return (
-    <div className="flex gap-2 items-center flex-wrap mb-2">
-      <span className="text-[11.5px] text-tx-3">Keep going:</span>
-      {GRANTS.map(([label, grant]) => (
-        <button
-          key={label}
-          className="btn ghost"
-          disabled={busy}
-          title={`extend this run by ${label.replace('+', '')} and let it carry on from where it parked`}
-          onClick={() => send('extend', note.trim(), { grant })}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="mb-2">
+      <KeepGoing busy={busy} onGrant={(grant) => send('extend', note.trim(), { grant })} />
     </div>
   )
 }

@@ -383,8 +383,8 @@ jobs:
         run: npm run test:run
 
   # The agent layer is a second Node package with its own manifest, so it needs
-  # its own job -- the frontend job above is scoped to frontend/. Node 20 rather
-  # than NODE_VERSION because services/agent/package.json requires it.
+  # its own job -- the frontend job above is scoped to frontend/. Node 22 rather
+  # than NODE_VERSION: the eval's estate (eval/estate.ts) runs SQL on node:sqlite.
   test-agent-layer:
     name: Unit Tests - Agent Layer
     if: github.repository == 'Vigil-SOC/vigil'
@@ -421,7 +421,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: services/agent/package-lock.json
 

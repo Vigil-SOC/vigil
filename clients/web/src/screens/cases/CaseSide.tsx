@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode, type RefObject } from 'react'
 import { casesApi } from '../../services/api'
 import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { MeterBar } from '../../shared/MeterBar'
 import { NotMeasured } from '../../shared/NotMeasured'
+import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { fmtCost } from '../../shared/cost'
 import { timeLeft, when } from './caseFormat'
@@ -12,9 +13,9 @@ import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
 
-function Block({ title, children }: { title: string; children: ReactNode }) {
+function Block({ title, children, anchor }: { title: string; children: ReactNode; anchor?: RefObject<HTMLElement> }) {
   return (
-    <section className="side-block">
+    <section className="side-block" ref={anchor}>
       <h3 className="side-title">{title}</h3>
       {children}
     </section>
@@ -46,7 +47,8 @@ function levelOf(ratio: number): Level {
   return ratio >= 0.9 ? 'poor' : ratio >= 0.75 ? 'fair' : 'good'
 }
 
-function Details({ linked, latest, workflowNames, sla, closed, fold, spend }: {
+function Details({ linked, latest, workflowNames, sla, closed, fold, spend, anchor }: {
+  anchor: RefObject<HTMLElement>
   linked: CaseLinkedFinding[]
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>
@@ -58,9 +60,9 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, spend }: {
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // What the run asked about, then what the linked alerts name: a hunt's case has alerts before it has recall.
   const recalled = fold?.recall && !fold.recall.unavailable ? fold.recall.keys : []
-  const entities = [...new Set([...recalled, ...linked.flatMap((f) => f.entities)])].join(', ')
+  const entities = [...new Set([...recalled, ...linked.flatMap((f) => f.entities)])]
   return (
-    <Block title="Details">
+    <Block title="Details" anchor={anchor}>
       <dl className="side-kv">
         <dt>Workflow</dt>
         <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : '—'}</dd>
@@ -77,9 +79,44 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, spend }: {
           )}
         </dd>
         <dt>Entities</dt>
-        <dd>{entities || '—'}</dd>
+        <dd>{entities.length ? <Entities values={entities} /> : '—'}</dd>
       </dl>
     </Block>
+  )
+}
+
+const ENTITIES_SHOWN = 3
+/** Past this a value (a hash, a long domain) keeps its head and tail and loses its middle. */
+const ENTITY_LONG = 20
+const ENTITY_TAIL = 6
+
+/**
+ * One entity on one line. A long one is cut in the middle by CSS, so the whole
+ * value stays in the DOM: selecting and copying it copies all of it.
+ */
+function Entity({ value }: { value: string }) {
+  const long = value.length > ENTITY_LONG
+  return (
+    <span className={`side-ent${long ? ' long' : ''}`} title={value}>
+      <span className="side-ent-head">{long ? value.slice(0, -ENTITY_TAIL) : value}</span>
+      {long && <span className="side-ent-tail">{value.slice(-ENTITY_TAIL)}</span>}
+    </span>
+  )
+}
+
+/** The first few entities, then "+N" for the rest (DESIGN.md §7, "Rows stay even"). */
+function Entities({ values }: { values: string[] }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? values : values.slice(0, ENTITIES_SHOWN)
+  return (
+    <div className="side-ents">
+      {shown.map((value) => <Entity key={value} value={value} />)}
+      {values.length > ENTITIES_SHOWN && (
+        <button type="button" className="side-more" aria-expanded={all} onClick={() => setAll((v) => !v)}>
+          {all ? 'Show fewer' : `+${values.length - ENTITIES_SHOWN}`}
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -131,6 +168,11 @@ function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
   )
 }
 
+/** A line of free text: wraps, stops at two lines, the whole of it on hover (DESIGN.md §7). */
+function Prose({ text }: { text: string }) {
+  return <p className="muted side-clamp" title={text}>{text}</p>
+}
+
 function Known({ fold }: { fold: RunFold | null }) {
   const recall = fold?.recall
   const cards = recall && !recall.unavailable
@@ -146,15 +188,15 @@ function Known({ fold }: { fold: RunFold | null }) {
   return (
     <Block title="Known about these entities">
       {!recall && <p className="muted">The run did not journal a recall.</p>}
-      {recall?.unavailable && <p className="muted">Recall did not happen: {recall.unavailable}</p>}
+      {recall?.unavailable && <Prose text={`Recall did not happen: ${recall.unavailable}`} />}
       {recall && !recall.unavailable && cards.length === 0 && (
-        <p className="muted">Nothing recorded about {recall.keys.join(', ') || 'these entities'}.</p>
+        <Prose text={`Nothing recorded about ${recall.keys.join(', ') || 'these entities'}.`} />
       )}
       {cards.length > 0 && (
         <div className="side-cards">
           {cards.map((card, i) => (
             <div key={i} className="side-card">
-              <div>{card.text}</div>
+              <div className="side-clamp" title={card.text}>{card.text}</div>
               <div className="side-meta">{card.kind}</div>
             </div>
           ))}
@@ -249,9 +291,11 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
   latestFold: RunFold | null
 }) {
   const spend = spendOf(latest, latestFold)
+  const anchor = useRef<HTMLElement>(null)
+  useNoSideways(anchor, 'The case side panel', '.case-side')
   return (
     <>
-      <Details linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
+      <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
       <Alerts items={linked} />
       <Cost spend={spend} />
       <Known fold={fold} />

@@ -72,6 +72,8 @@ answer and the records it cites. The answer stands only if the reviewer upholds
 it over at least one cited ref that is a real call. Otherwise the run ends on the
 fallback. Refs are checked by counting, whatever the reviewer says.
 
+`quarantine: { reader, guidance }` (experimental, `core/guards.ts`) is a different thing from `guard`. It is honoured only with `VIGIL_GUARDS=on`, and today only by hunt: every estate result goes to a tool-less reader child run, and the deciding agent sees its typed findings, with text the subject could have written reaching it only as a handle. The raw rows stay on the ledger.
+
 ## Hooks
 
 A plugin whose work needs code ships `hooks.ts` and registers it in `index.ts`.

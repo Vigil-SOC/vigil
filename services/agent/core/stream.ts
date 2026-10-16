@@ -231,6 +231,16 @@ class Run<T, Kinds extends Record<string, unknown>> {
           this.nudge = persistAsk(turn.content, this.gathered(), this.cfg.max_turns - this.turns);
           continue;
         }
+        // The plugin's own word on whether the work is settled: asked once, and only
+        // with turns left. A plugin with nothing open says nothing and the loop stops.
+        if (!this.nudged && this.cfg.unsettled !== undefined && this.turns < this.cfg.max_turns) {
+          const ask = await this.cfg.unsettled();
+          if (ask !== null) {
+            this.nudged = true;
+            this.nudge = ask;
+            continue;
+          }
+        }
         return null;
       }
 
@@ -309,7 +319,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       result,
       duration_ms: Math.max(0, Math.round(performance.now() - started)),
     });
-    const args = parseArgs(rawArgs);
+    const args = parseArgs(tool.local ? rawArgs : (this.cfg.guards?.resolve(rawArgs) ?? rawArgs));
     if (args === null) {
       return finish({ ok: false, failure: { kind: "invalid_args", detail: "arguments were not valid JSON" } });
     }
@@ -328,15 +338,29 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const refs = this.cfg.refs;
     const ref = refs === undefined ? undefined : `${refs.prefix}${refs.offset + this.calls.length + 1}`;
     const wrapped = wrap(call.tool, result, this.scan, this.cfg.result_cap, ref);
+    // Guarded: an estate result that answered goes to the reader, and the model sees
+    // its findings. A failure goes through the guards too: a backend's error can echo
+    // the query, and with it a value a handle filled in. Local tools are the run
+    // talking to itself, so they reach the model as they are.
+    const tool = this.tools.find((granted) => granted.id === call.tool);
+    const guards = this.cfg.guards;
+    const guardRef = ref ?? guards?.refAt(this.calls.length + 1) ?? "";
+    const guarded =
+      guards === undefined || tool === undefined || tool.local
+        ? undefined
+        : result.ok
+          ? await guards.read(call.tool, call.args, guardRef, result, wrapped)
+          : { shown: guards.failed(call.tool, guardRef, wrapped), read: null };
     const attempt: Attempt = {
       tool: call.tool,
       args: call.args,
       result,
       wrapped,
       ...(duration_ms === undefined ? {} : { duration_ms }),
+      ...(guarded === undefined ? {} : { shown: guarded.shown, read: guarded.read }),
     };
     this.calls.push(attempt);
-    this.transcript.push({ role: "tool", call_id: call.id, content: wrapped.text });
+    this.transcript.push({ role: "tool", call_id: call.id, content: guarded?.shown ?? wrapped.text });
     this.results += 1;
     if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
     else if (call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result);
@@ -592,7 +616,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
 // Not every throw is a turn that failed: an exhausted gateway cannot serve the next
 // call either, and a defect in this process is not a role that could not answer.
-function hardStop(error: unknown): boolean {
+export function hardStop(error: unknown): boolean {
   if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError) return true;
   return error instanceof GatewayExhausted || error instanceof ToolBoundsViolation;
 }

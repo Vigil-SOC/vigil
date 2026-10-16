@@ -68,7 +68,19 @@ describe("a hunt run by one agent", () => {
     // And what the console reads: the hunt's own projection, its moves read off the calls.
     expect(huntProjection(RUN, events).hypotheses[0]).toMatchObject({ status: "handed_off" });
     const view = huntView(RUN, events);
-    expect(view.moves.map((move) => move.action)).toEqual(["CONCLUDE", "HANDOFF_IR", "VALIDATE", "INVESTIGATE", "INVESTIGATE", "INVESTIGATE"]);
+    // One move per model turn, the unit its turn limit counts, each named for what it did.
+    expect(view.moves.map((move) => move.action)).toEqual(["CONCLUDE", "HANDOFF_IR", "VALIDATE", "RECORD", "QUERY", "QUERY", "READ"]);
+    expect(view.moves.map((move) => move.iteration)).toEqual([7, 6, 5, 4, 3, 2, 1]);
+    // In words, never a tool call's JSON, and made by the hunt's one agent.
+    expect(view.moves.map((move) => move.query_intent)).toContain("Searched alerts for 45.77.53.176");
+    expect(view.moves.find((move) => move.action === "RECORD")?.query_intent).toMatch(/^Recorded 2 pieces of evidence: every 300s/);
+    for (const move of view.moves) {
+      expect(move.query_intent).not.toMatch(/[{}]/);
+      expect(move.worker_agent_id).toBe("Hunt lead");
+    }
+    // The scripted model is unpriced: its turns' cost is not recorded, not $0.
+    expect(view.moves.every((move) => move.cost_usd === null)).toBe(true);
+    expect(view.calls.every((call) => call.cost_usd === undefined)).toBe(true);
     expect(huntKernelReplay(RUN, events).kernel.turns.length).toBeGreaterThan(0);
     // The console's move panel reads a decision per move, keyed by the id the Moves
     // tab sends, carrying the board as it stood and whether the call reproduced.
@@ -82,6 +94,7 @@ describe("a hunt run by one agent", () => {
     // The Checked tab lists what the hunt asked the estate -- not its bookkeeping --
     // as a controller hunt's worker dispatches did.
     expect(view.calls.map((call) => call.tool)).toEqual(["splunk_search", "search_findings"]);
+    expect(view.calls.map((call) => call.question)).toEqual(["Searched Splunk for select * from flows where src = '10.0.0.5'", "Searched alerts for 45.77.53.176"]);
     expect(view.calls.every((call) => call.iteration !== undefined)).toBe(true);
     // Each move carries the model call's wall time for its turn, as a controller move did.
     expect(view.moves.every((move) => typeof move.duration_ms === "number")).toBe(true);

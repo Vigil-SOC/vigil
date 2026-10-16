@@ -1,7 +1,8 @@
 import type { ToolFailure } from "../contracts/tool.js";
 
 // One row of the Checked tab. cost_usd is the dispatch's spend, repeated on each
-// of its calls: a call has no dollar cost of its own. duration_ms is absent when
+// of its calls: a call has no dollar cost of its own. Absent when nothing priced
+// the dispatch, which a reader shows as not recorded rather than as $0. duration_ms is absent when
 // the ledger predates timing, or the attempt never reached invoke. iteration is the
 // dispatch's, so a reader can tie a call to the move that asked for it; absent on a
 // dispatch that carries none. failed is the kind a failed call reports, read off the
@@ -10,7 +11,7 @@ export interface CallView {
   question: string;
   tool: string;
   result_length: number;
-  cost_usd: number;
+  cost_usd?: number;
   duration_ms?: number;
   iteration?: number;
   failed?: ToolFailure["kind"];
@@ -32,7 +33,7 @@ export function callViews(dispatches: Iterable<DispatchCalls>): CallView[] {
   const rows: CallView[] = [];
   for (const dispatch of dispatches) {
     const question = dispatch.query_intent ?? "";
-    const cost_usd = dispatch.cost_usd ?? 0;
+    const cost_usd = dispatch.cost_usd;
     const iteration = typeof dispatch.iteration === "number" ? dispatch.iteration : undefined;
     for (const call of dispatch.calls ?? []) {
       if (typeof call !== "object" || call === null) continue;
@@ -44,7 +45,7 @@ export function callViews(dispatches: Iterable<DispatchCalls>): CallView[] {
         question,
         tool: typeof record.tool === "string" ? record.tool : "",
         result_length: result.length,
-        cost_usd,
+        ...(cost_usd === undefined ? {} : { cost_usd }),
         ...(duration_ms === undefined ? {} : { duration_ms }),
         ...(iteration === undefined ? {} : { iteration }),
         ...(failed === undefined ? {} : { failed }),
