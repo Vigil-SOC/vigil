@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
@@ -1754,20 +1755,8 @@ def set_darktrace_config(
 
 
 # ---------------------------------------------------------------------------
-# Secrets manager status / reinit / migration
+# Secrets manager status / migration
 # ---------------------------------------------------------------------------
-
-
-class _SecretsReinitRequest(BaseModel):
-    """Optional override for the reinit endpoint.
-
-    The running process's ``os.environ`` may have a stale
-    ``SECRETS_BACKEND`` from launch time. ``write_backend`` here lets an
-    admin force the rebuilt singleton onto a specific backend without
-    bouncing uvicorn.
-    """
-
-    write_backend: Optional[str] = None
 
 
 class _SecretsMigrateRequest(BaseModel):
@@ -1788,33 +1777,30 @@ def secrets_status() -> Dict[str, Any]:
     return mgr.get_backend_status()
 
 
-@router.post("/secrets/reinit", dependencies=_SETTINGS_WRITE)
-def secrets_reinit(
-    request: Optional[_SecretsReinitRequest] = None,
-) -> Dict[str, Any]:
-    """Drop the cached secrets-manager singleton and rebuild it.
-
-    Useful when the long-running process picked the wrong write backend
-    on first init (e.g. ``SECRETS_BACKEND`` was stale in os.environ when
-    the very first ``set_secret`` call ran during startup). After this
-    call the manager re-evaluates backend availability fresh.
-
-    Pass ``{"write_backend": "encrypted"}`` to force a specific backend
-    regardless of what's currently in ``os.environ`` — useful when you
-    just edited ``.env`` to switch from dotenv to encrypted but haven't
-    bounced the process.
-    """
-    write_backend = request.write_backend if request else None
-    mgr = get_secrets_manager(write_backend=write_backend, force_reload=True)
-    return {
-        "reloaded": True,
-        "status": mgr.get_backend_status(),
-    }
+def _audit_secrets_migration(report: Dict[str, Any], remove: bool, user: User) -> None:
+    """Record the migration by key NAME only. Best-effort: never fails the call."""
+    try:
+        _for_user(user).record_audit(
+            config_type="secrets",
+            config_key="SECRETS_MIGRATE_TO_ENCRYPTED",
+            action="update",
+            old_value=None,
+            new_value={
+                "remove_from_dotenv": remove,
+                "migrated": list(report.get("migrated", [])),
+                "already_present": list(report.get("already_present", [])),
+                "conflicts": [c.get("key") for c in report.get("conflicts", [])],
+                "errors": [e.get("key") for e in report.get("errors", [])],
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not write secrets migration audit log: %s", e)
 
 
 @router.post("/secrets/migrate-to-encrypted", dependencies=_SETTINGS_WRITE)
 def secrets_migrate_to_encrypted(
     request: Optional[_SecretsMigrateRequest] = None,
+    current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """Move secrets from the dotenv backend to ``~/.vigil/secrets.enc``.
 
@@ -1823,11 +1809,23 @@ def secrets_migrate_to_encrypted(
     the conflict is reported so an operator can resolve it manually.
 
     Body is optional. Pass ``{"keys": ["FOO_BAR"]}`` to migrate only a
-    subset, or ``{"remove_from_dotenv": false}`` for a dry-copy that
-    leaves the source file alone.
+    subset. ``{"remove_from_dotenv": false}`` is NOT a preview: it still
+    writes every value to ``secrets.enc`` and only leaves the dotenv copy
+    in place.
+
+    Returns the report with 200 on success (conflicts included), 503 when
+    the encrypted backend is unavailable, and 500 when any key errored.
     """
 
     mgr = get_secrets_manager()
     keys = request.keys if request else None
     remove = request.remove_from_dotenv if request else True
-    return mgr.migrate_dotenv_secrets_to_encrypted(keys=keys, remove_from_dotenv=remove)
+    report = mgr.migrate_dotenv_secrets_to_encrypted(
+        keys=keys, remove_from_dotenv=remove
+    )
+    _audit_secrets_migration(report, remove, current_user)
+    if not report["encrypted_available"]:
+        return JSONResponse(status_code=503, content=report)
+    if report["errors"]:
+        return JSONResponse(status_code=500, content=report)
+    return report

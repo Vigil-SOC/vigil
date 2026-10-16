@@ -2886,40 +2886,14 @@ export interface paths {
          *     the conflict is reported so an operator can resolve it manually.
          *
          *     Body is optional. Pass ``{"keys": ["FOO_BAR"]}`` to migrate only a
-         *     subset, or ``{"remove_from_dotenv": false}`` for a dry-copy that
-         *     leaves the source file alone.
+         *     subset. ``{"remove_from_dotenv": false}`` is NOT a preview: it still
+         *     writes every value to ``secrets.enc`` and only leaves the dotenv copy
+         *     in place.
+         *
+         *     Returns the report with 200 on success (conflicts included), 503 when
+         *     the encrypted backend is unavailable, and 500 when any key errored.
          */
         post: operations["post_api_config_secrets_migrate-to-encrypted"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/secrets/reinit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Secrets Reinit
-         * @description Drop the cached secrets-manager singleton and rebuild it.
-         *
-         *     Useful when the long-running process picked the wrong write backend
-         *     on first init (e.g. ``SECRETS_BACKEND`` was stale in os.environ when
-         *     the very first ``set_secret`` call ran during startup). After this
-         *     call the manager re-evaluates backend availability fresh.
-         *
-         *     Pass ``{"write_backend": "encrypted"}`` to force a specific backend
-         *     regardless of what's currently in ``os.environ`` — useful when you
-         *     just edited ``.env`` to switch from dotenv to encrypted but haven't
-         *     bounced the process.
-         */
-        post: operations["post_api_config_secrets_reinit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11485,19 +11459,6 @@ export interface components {
              */
             remove_from_dotenv: boolean;
         };
-        /**
-         * _SecretsReinitRequest
-         * @description Optional override for the reinit endpoint.
-         *
-         *     The running process's ``os.environ`` may have a stale
-         *     ``SECRETS_BACKEND`` from launch time. ``write_backend`` here lets an
-         *     admin force the rebuilt singleton onto a specific backend without
-         *     bouncing uvicorn.
-         */
-        _SecretsReinitRequest: {
-            /** Write Backend */
-            write_backend?: string | null;
-        };
     };
     responses: never;
     parameters: never;
@@ -16587,43 +16548,6 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["_SecretsMigrateRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_config_secrets_reinit: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["_SecretsReinitRequest"] | null;
             };
         };
         responses: {
