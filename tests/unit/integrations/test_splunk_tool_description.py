@@ -105,8 +105,53 @@ def test_names_the_time_formats_that_work_and_the_one_that_does_not(monkeypatch)
     assert "2018-08-19T00:00:00" in described
     assert "epoch second" in described
     assert "08/19/2018:00:00:00" in described and "does NOT take" in described
-    # There is no such parameter, so telling it to set one would waste a turn.
-    assert "no `latest` parameter" in described
+
+
+# A window that can only start is half a window: "before 14:02" and "around 08:31" need
+# an end. The parameter is offered, and the model is told what it is for.
+def test_offers_latest_to_close_the_window(monkeypatch):
+    tools = asyncio.run(_load(monkeypatch, _ROWS).handle_list_tools())
+    execute = next(tool for tool in tools if tool.name == "splunk_execute")
+
+    assert execute.input_schema["properties"]["latest"]["default"] == "now"
+    assert "`latest` takes the same forms and defaults to now" in execute.description
+    assert "no `latest` parameter" not in execute.description
+
+
+def _searched(monkeypatch, arguments):
+    module = _load(monkeypatch, _ROWS)
+    asked = {}
+
+    class _Service:
+        def search(
+            self, query, earliest_time="-24h", latest_time="now", max_count=1000
+        ):
+            asked.update(earliest=earliest_time, latest=latest_time)
+            return []
+
+    monkeypatch.setattr(module, "get_splunk_service", lambda: _Service())
+    asyncio.run(module.handle_call_tool("splunk_execute", arguments))
+    return asked
+
+
+def test_a_closed_window_reaches_splunk(monkeypatch):
+    asked = _searched(
+        monkeypatch,
+        {
+            "spl_query": "search index=edr",
+            "earliest": "2026-09-02T08:30:00",
+            "latest": "2026-09-02T08:45:00",
+        },
+    )
+    assert asked == {"earliest": "2026-09-02T08:30:00", "latest": "2026-09-02T08:45:00"}
+
+
+@pytest.mark.parametrize("latest", [None, ""])
+def test_a_window_left_open_ends_now(monkeypatch, latest):
+    arguments = {"spl_query": "search index=edr"}
+    if latest is not None:
+        arguments["latest"] = latest
+    assert _searched(monkeypatch, arguments) == {"earliest": "0", "latest": "now"}
 
 
 # nl_search takes no time range at all, so the same map is a warning rather than

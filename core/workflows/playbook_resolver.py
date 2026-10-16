@@ -110,7 +110,7 @@ class Candidate:
 CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "telemetry_search": (
         # In-repo servers, verified against their own list_tools() by a ratchet.
-        # splunk_execute first: it takes earliest, which nl_search cannot express.
+        # splunk_execute first: it takes a window (earliest, latest), which nl_search cannot express.
         Candidate("splunk-selfhosted", ("splunk_execute", "splunk_nl_search")),
         Candidate("elastic", ("elastic_search_logs", "elastic_search_by_ioc")),
         # Third-party servers: unverifiable from this repo, so these are preferences

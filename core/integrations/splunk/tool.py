@@ -128,8 +128,10 @@ _WHY_THE_SPAN_MATTERS = (
     "back empty while reading as though nothing was there.\n"
     "`earliest` takes a relative offset (-15y), an ISO 8601 timestamp "
     "(2018-08-19T00:00:00) or an epoch second. It does NOT take Splunk's console "
-    "form (08/19/2018:00:00:00), which returns nothing here. There is no `latest` "
-    "parameter; the window always ends now, which covers any past span."
+    "form (08/19/2018:00:00:00), which returns nothing here.\n"
+    "`latest` takes the same forms and defaults to now. Set it to close the window: "
+    "what happened before a moment, or a span either side of an event. Empty results "
+    "inside a window you closed are still a gap in what you looked at."
 )
 # Without this a bare `index=x term` search returns whole events, and nothing else the
 # model sees says a count would usually do. stats/count stay the endorsed shape.
@@ -144,6 +146,8 @@ _RESULT_SIZE_GUIDANCE = (
 # Splunk's own all-time earliest: a narrower default is a silent zero on any data
 # older than it.
 _ALL_TIME = "0"
+# Where a window ends when the caller does not close it.
+_NOW = "now"
 
 # search_by_ip and search_by_hostname build their window as -{hours}h, and their client
 # is also the daemon's, so widening here leaves the daemon's polling window alone.
@@ -263,6 +267,12 @@ async def handle_list_tools():
                 "properties": {
                     "spl_query": {"type": "string"},
                     "earliest": {"type": "string", "default": "0"},
+                    "latest": {
+                        "type": "string",
+                        "default": "now",
+                        "description": "End of the window, in the forms earliest "
+                        "takes. Defaults to now.",
+                    },
                     "max_results": {
                         "type": "integer",
                         "default": 100,
@@ -337,7 +347,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 splunk.search,
                 spl,
                 args.get("earliest", _ALL_TIME),
-                "now",
+                args.get("latest") or _NOW,
                 args.get("max_results", 100),
             )
             if results is None:
