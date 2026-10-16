@@ -514,7 +514,7 @@ def test_run_job_gives_up_after_its_timeout_and_cancels(monkeypatch):
     )
     deleted = respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
 
-    with pytest.raises(SplunkSearchError, match="within 5s"):
+    with pytest.raises(SplunkSearchError, match="timed out: .* within 5s"):
         _service().run_job("index=edr", timeout_s=5)
     assert status.call_count == 5
     assert deleted.called

@@ -225,3 +225,24 @@ def test_a_search_says_how_many_events_it_matched(monkeypatch):
     assert answer["results"] == [{"count": "9"}]
     # Inside the agent layer's own timeout for a telemetry search.
     assert asked["timeout_s"] == module._SEARCH_TIMEOUT_S < 120
+
+
+# The agent layer files a failure by its wording: a timeout is a gap in what was seen,
+# anything else a search to fix. Both have to survive the "Splunk: " prefix.
+def test_a_failed_search_is_filed_as_a_defect_and_a_slow_one_as_a_gap(monkeypatch):
+    from core.agents.mcp_tools import _failure_kind
+
+    def refused(*_args):
+        raise SplunkSearchError("Unknown search command 'statz'.")
+
+    def slow(*_args):
+        raise SplunkSearchError(
+            "the search timed out: Splunk did not finish it within 110s"
+        )
+
+    _, bad = _executed(monkeypatch, refused)
+    _, late = _executed(monkeypatch, slow)
+    assert (_failure_kind(bad["error"]), _failure_kind(late["error"])) == (
+        "backend_error",
+        "timeout",
+    )

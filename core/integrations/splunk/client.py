@@ -368,7 +368,11 @@ class SplunkService:
         # Try to cancel the job. Status is ignored, same as a
         # successful search's cleanup.
         session.delete(job_url)
-        raise SplunkSearchError(f"Splunk did not finish the search within {timeout_s}s")
+        # "timed out" is what the agent layer reads a timeout by
+        # (mcp_tools._failure_kind): a gap in what was seen, not a bad search.
+        raise SplunkSearchError(
+            f"the search timed out: Splunk did not finish it within {timeout_s}s"
+        )
 
     @staticmethod
     def _earliest_from_hours(hours: int) -> str:
