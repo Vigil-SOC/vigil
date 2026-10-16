@@ -324,11 +324,25 @@ export async function advance(
 // this owner, so a worker already reclaimed displaces nobody.
 async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown): Promise<void> {
   if ((await state.latestSeq(job.run_id)) === null) {
+    await failedBeforeOpening(job, error);
     await leases.finish(job.run_id);
     return;
   }
   if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
   await leases.release(job.run_id, owner, 0);
+}
+
+// A run whose spec could not be built never opened its ledger: there is no run
+// event to hang a terminal on, since the run event is the spec. The backend's row
+// is then the only record, and nobody else will tell it: it read "running" for
+// good. Compose was already told by abandon(), except for a spent gateway, which
+// abandon() leaves to the caller. Any other error is retried, so it is not final.
+async function failedBeforeOpening(job: RunJob, error: unknown): Promise<void> {
+  if (error instanceof GatewayExhausted) {
+    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason: error.message, summary: "" });
+  } else if (error instanceof SpecError && job.run_kind !== "compose") {
+    await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: `its spec cannot be built: ${error.message}`, summary: "" });
+  }
 }
 
 // A spec error answers the same way on every attempt, and on a resume the layers come
