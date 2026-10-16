@@ -14,7 +14,6 @@ from typing import get_args
 
 import pytest
 
-from core.memory.recall_contract import ENTITY_KEY_TYPES
 from core.storage.schemas import case_account as py
 
 AGENT = Path(__file__).resolve().parents[3] / "services" / "agent"
@@ -34,7 +33,7 @@ MIRRORED = {
     "CHAIN_STATUSES": get_args(py.ChainStatus),
     "ACCOUNT_ROLES": get_args(py.AccountRole),
     "GAP_KINDS": get_args(py.GapKind),
-    "ENTITY_TYPES": ENTITY_KEY_TYPES,
+    "ENTITY_TYPES": py.ENTITY_TYPES,
 }
 
 pytestmark = pytest.mark.unit

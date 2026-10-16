@@ -17,8 +17,6 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
-from core.memory.recall_contract import ENTITY_KEY_TYPES
-
 ACCOUNT_SCHEMA_VERSION = 1
 
 RunKind = Literal[
@@ -52,10 +50,26 @@ ChainStatus = Literal["confirmed", "suspected", "unproven", "rejected"]
 AccountRole = Literal["attacker", "victim", "legitimate"]
 GapKind = Literal["visibility", "open_question", "disputed"]
 
+# The entity types a key may name, as the harness's extractor mints them
+# (ENTITY_TYPES in services/agent/plugins/hunt/types.ts). Owned here, below
+# memory, which takes its ENTITY_KEY_TYPES from this tuple.
+ENTITY_TYPES: tuple[str, ...] = (
+    "ip",
+    "domain",
+    "host",
+    "url",
+    "email",
+    "hash",
+    "arn",
+    "aws_key",
+    "user",
+    "process",
+)
+
 # A value is required after the colon. The TypeScript template cannot say so; the
 # extractor, which mints every key, is the guard there.
 EntityKey = Annotated[
-    str, StringConstraints(pattern=rf"^({'|'.join(ENTITY_KEY_TYPES)}):.+")
+    str, StringConstraints(pattern=rf"^({'|'.join(ENTITY_TYPES)}):.+")
 ]
 
 # Optional without null: accepted when left out, and kept out of the schema as a
