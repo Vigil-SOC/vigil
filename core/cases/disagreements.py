@@ -19,6 +19,7 @@ from core.memory.entity_keys import text_entity_keys
 from core.storage.schemas.case_account import (
     CaseAccount,
     Disagreement,
+    EvidenceItem,
     Explanation,
     Gap,
     ItemRef,
@@ -33,6 +34,8 @@ DROPPED = {"ruled_out", "weakened"}
 
 # The records that share the most with a gap; enough for a reader to open and judge.
 RECORDS_PER_GAP = 3
+# A question as the run asked it can run to a paragraph; the case page quotes its start.
+QUOTED_CHARS = 140
 
 # A token with a digit in it names something: FIN-WKS-014, FS-01, fin.7z, T1490.
 # A bare number is a count or a time, and two runs share those by chance.
@@ -168,6 +171,8 @@ def _standings(
     return found
 
 
+# One per run that left questions open: a run whose searches all timed out leaves a
+# dozen, and a dozen entries saying the same thing bury the one that matters.
 def _gaps_answered(
     accounts: Sequence[CaseAccount],
     names: Dict[str, str],
@@ -175,7 +180,7 @@ def _gaps_answered(
     common: Set[str],
 ) -> List[Disagreement]:
     evidence = [one for account in accounts for one in account.evidence or []]
-    found = []
+    answered: Dict[str, List[Tuple[Gap, List[EvidenceItem]]]] = {}
     for gap in _unsettled(accounts):
         asked = _identifiers(gap.text) - common
         scored = [
@@ -187,21 +192,51 @@ def _gaps_answered(
             (pair for pair in scored if pair[0] > 0), key=lambda pair: -pair[0]
         )
         answers = [item for _, item in ranked[:RECORDS_PER_GAP]]
-        if not answers:
-            continue
-        holders = list(dict.fromkeys(item.run_id for item in answers))
+        if answers:
+            answered.setdefault(gap.run_id, []).append((gap, answers))
+    found = []
+    for run_id, gaps in answered.items():
+        items = list(
+            {
+                (one.run_id, one.id): one for _, answers in gaps for one in answers
+            }.values()
+        )
+        holders = list(dict.fromkeys(one.run_id for one in items))
+        questions = "; ".join(f'"{_quoted(gap.text)}"' for gap, _ in gaps)
+        # A search that could not run is something the run could not see, not a
+        # question it asked.
+        blind = sum(1 for gap, _ in gaps if gap.kind == "visibility")
+        said = [
+            *([f"could not see {_count(blind, 'thing')}"] if blind else []),
+            *(
+                [f"left {_count(len(gaps) - blind, 'question')} open"]
+                if len(gaps) > blind
+                else []
+            ),
+        ]
         found.append(
             Disagreement(
                 kind="gap_answered",
                 text=(
-                    f'{names[gap.run_id]} could not settle "{gap.text}"; '
-                    f"{', '.join(names[one] for one in holders)} holds records on it."
+                    f"{names[run_id]} {' and '.join(said)} that "
+                    f"{', '.join(names[one] for one in holders)} "
+                    f"{'holds' if len(holders) == 1 else 'hold'} records on: {questions}"
                 ),
-                runs=[gap.run_id, *holders],
-                refs=[ItemRef(run_id=item.run_id, id=item.id) for item in answers],
+                runs=[run_id, *holders],
+                refs=[ItemRef(run_id=one.run_id, id=one.id) for one in items],
             )
         )
     return found
+
+
+def _quoted(text: str) -> str:
+    return (
+        text if len(text) <= QUOTED_CHARS else text[: QUOTED_CHARS - 1].rstrip() + "…"
+    )
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{'one' if n == 1 else n} {noun}{'' if n == 1 else 's'}"
 
 
 # A disputed tie is the run arguing with itself, not a question another run answers.

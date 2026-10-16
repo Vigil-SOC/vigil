@@ -17,7 +17,7 @@ from pydantic import BaseModel, ValidationError
 from core.storage.schemas.case_account import CaseAccount, dump_account
 
 FIXTURES = Path(__file__).resolve().parents[3] / "services/agent/tests/fixtures/account"
-VALID = sorted(FIXTURES.glob("*.json"))
+VALID = sorted([*FIXTURES.glob("*.json"), *(FIXTURES / "golden").glob("*.json")])
 INVALID = sorted((FIXTURES / "invalid").glob("*.json"))
 
 pytestmark = pytest.mark.unit
