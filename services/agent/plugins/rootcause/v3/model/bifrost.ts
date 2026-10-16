@@ -23,14 +23,20 @@ export interface BifrostOptions {
 
 const VERSION = "2023-06-01";
 
+// The Anthropic surface's "overloaded", which the Limiter does not know. A 40-turn run
+// meets it; read as the 503 it means, it is retried rather than ending the run.
+const OVERLOADED = 529;
+
 // What the Limiter reads a failure by: its status, and Retry-After when the gateway sent one.
 export class GatewayError extends Error {
+  readonly status: number;
   constructor(
-    readonly status: number,
+    readonly answered: number,
     readonly headers: Record<string, string>,
     detail: string,
   ) {
-    super(`Bifrost answered ${status}: ${detail}`);
+    super(`Bifrost answered ${answered}: ${detail}`);
+    this.status = answered === OVERLOADED ? 503 : answered;
   }
 }
 

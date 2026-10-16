@@ -62,6 +62,14 @@ describe("bifrostMessages", () => {
     expect(message.stop_reason).toBe("tool_use");
   });
 
+  it("retries an overloaded model (529) rather than ending the run", async () => {
+    const overloaded = JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } });
+    const { sent, fetch } = gateway([new Response(overloaded, { status: 529, headers: { "retry-after": "0" } }), ok(recorded("forced-submit"))]);
+    const message = await bifrostMessages({ baseUrl: "http://bifrost:8080", limiter: limiter(), fetch }).create(request);
+    expect(sent).toHaveLength(2);
+    expect(message.stop_reason).toBe("tool_use");
+  });
+
   it("stops at once when the gateway's budget is spent", async () => {
     const { fetch } = gateway([new Response("budget exceeded", { status: 402 })]);
     await expect(bifrostMessages({ baseUrl: "http://bifrost:8080", limiter: limiter(), fetch }).create(request)).rejects.toBeInstanceOf(GatewayExhausted);
