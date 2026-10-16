@@ -31,6 +31,8 @@ import {
   endedRun,
   EVIDENCE_PAGE,
   explanationWord,
+  foldRecord,
+  heldLine,
   honestLine,
   moveTool,
   plainLine,
@@ -48,6 +50,7 @@ import {
   type EndedRun,
   type HypothesisRow,
   type OpenCheckpointRow,
+  type OpenQuestionRow,
   type RecallProvenance,
   type RecordChip,
   type RunFold,
@@ -461,23 +464,29 @@ function CaseNeedRow(props: NeedProps) {
 function memoryRows(fold: RunFold | null): number {
   const recall = fold?.recall
   const opening = recall && !recall.unavailable ? recall.sightings.length + recall.verdicts.length : 0
-  return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length
+  return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length + leftOpen(fold).length
+}
+
+/** An investigation's questions still open on its record: blind spots it declared. A hunt's open questions are leads, shown where it stopped on one. */
+function leftOpen(fold: RunFold | null): OpenQuestionRow[] {
+  return fold?.kind === 'lead' ? fold.record?.openQuestions ?? [] : []
 }
 
 function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   const calls = fold?.calls.length ?? 0
   const memory = memoryRows(fold)
-  if (fold?.kind === 'hunt') {
+  const kept = foldRecord(fold)
+  if (kept) {
     return {
-      Summary: fold.hypotheses.length,
-      Explanations: fold.hypotheses.length,
-      Evidence: fold.evidenceCount,
+      Summary: kept.hypotheses.length,
+      Explanations: kept.hypotheses.length,
+      Evidence: kept.evidenceCount,
       Checked: calls,
       'Memory and blind spots': memory,
       Record: record,
     }
   }
-  const findings = fold?.findings.length ?? 0
+  const findings = fold?.kind === 'lead' ? fold.findings.length : 0
   return {
     Summary: findings,
     Explanations: 0,
@@ -494,8 +503,9 @@ const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
   const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : hasRun ? 'Run started' : 'No run yet'
   const tally = new Map<string, number>()
-  if (fold?.kind === 'hunt') {
-    for (const row of fold.hypotheses) {
+  const record = foldRecord(fold)
+  if (record) {
+    for (const row of record.hypotheses) {
       const word = explanationWord(row.status, row.supports, row.weakens)
       tally.set(word, (tally.get(word) ?? 0) + 1)
     }
@@ -508,16 +518,19 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   if (fold?.kind === 'hunt') {
     const n = stanceTotals(fold)
     evidence = !fold.evidence.length ? 'None shown' : !n ? plural(fold.evidenceCount, 'row') : `${n.supports} support · ${n.weakens} go against · ${n.neither} neither`
+  } else if (record) {
+    evidence = record.evidenceCount ? `${plural(record.evidenceCount, 'row')} weighed` : 'None linked yet'
   } else if (fold) {
     evidence = 'Findings, no for or against'
   }
   const recall = fold?.recall
   const recallRows = (recall ? recall.sightings.length + recall.verdicts.length + recall.gaps.length : 0) + recallEntityCalls(fold).length
   const blind = visibilityGaps(fold).length
-  const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap')].filter(Boolean).join(' · ')
+  const open = leftOpen(fold).length
+  const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
   const chained = rows.filter((row) => row.chained).length
   return {
-    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
+    Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
     Evidence: evidence,
     Checked: fold ? `${fold.costUsd == null ? '—' : fmtCost(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
     'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
@@ -1147,7 +1160,7 @@ export function CasePage({
   const served = needsItems.filter((it) => !pending.includes(it.source_id))
   const shownNeeds = awaitingQueue && runCheckpoint ? [fromRun(runCheckpoint, id, runId), ...served] : served
   const needsShown = Math.max(0, needsCount - (needsItems.length - served.length)) + (shownNeeds.length - served.length)
-  const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
+  const hypotheses = foldRecord(fold)?.hypotheses ?? []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
   const stopped = closed || needsShown > 0 || answeredHere ? null : stoppedRun(fold)
@@ -1299,7 +1312,7 @@ export function CasePage({
               <p className="muted">Loading the run…</p>
             ) : foldPhase === 'error' ? (
               <p>The run could not be read.</p>
-            ) : fold?.kind === 'hunt' ? (
+            ) : foldRecord(fold) ? (
               <section className="case-expl-card">
                 <div className="case-expl-head">
                   <div>
@@ -1378,7 +1391,7 @@ export function CasePage({
               <EmptyState loading compact icon="brain" title="Loading the run…" />
             ) : foldPhase === 'error' ? (
               <EmptyState error compact icon="alert" title="The run could not be read" />
-            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 ? (
+            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0 ? (
               <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
             ) : (
               <MemoryCards fold={fold} recalled={recalled} gaps={gaps} />
@@ -1522,6 +1535,7 @@ function MemoryRow({ text, meta, tone, tag, action }: { text: string; meta?: str
 function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled: CallRow[]; gaps: { id: string; text: string }[] }) {
   const recall = fold?.recall
   const opened = recall && !recall.unavailable ? recall : null
+  const open = leftOpen(fold)
   return (
     <>
       <section className="case-mem-card" aria-label="Recalled">
@@ -1561,7 +1575,7 @@ function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled:
           <h3>Blind spots that touched this case</h3>
           <button type="button" className="btn ghost" disabled title={LATER_RELEASE}>Record a blind spot</button>
         </div>
-        {gaps.length === 0 && !recall?.gaps.length ? (
+        {gaps.length === 0 && !recall?.gaps.length && open.length === 0 ? (
           <p className="muted">None recorded.</p>
         ) : (
           <div className="case-mem-rows">
@@ -1575,6 +1589,7 @@ function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled:
               />
             ))}
             {gaps.map((gap) => <MemoryRow key={gap.id} tone="poor" tag="Visibility" text={gap.text} />)}
+            {open.map((q) => <MemoryRow key={q.question_id} tone="poor" tag="Open question" text={q.question} />)}
           </div>
         )}
       </section>
@@ -1618,32 +1633,35 @@ function Clamped({ text }: { text: string }) {
 /** Findings so far as rows, never as raw list markup: a hunt's explanations by their word, a lead's answers as one plain line each. */
 function FindingList({ fold }: { fold: RunFold | null }) {
   if (!fold) return <p className="muted">No findings yet.</p>
-  if (fold.kind === 'hunt') {
-    if (fold.hypotheses.length === 0) return <p className="muted">No findings yet.</p>
-    const ranked = [...fold.hypotheses].sort((a, b) => b.supports - a.supports || b.weakens - a.weakens)
-    return (
-      <ul className="case-findings">
-        {ranked.slice(0, 6).map((row) => {
-          const word = explanationWord(row.status, row.supports, row.weakens)
-          return (
-            <li key={row.hypothesis_id}>
-              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
-              <Clamped text={row.statement || row.hypothesis_id} />
-            </li>
-          )
-        })}
-      </ul>
-    )
-  }
-  if (fold.findings.length === 0) return <p className="muted">No findings yet.</p>
+  const ranked = [...(foldRecord(fold)?.hypotheses ?? [])].sort((a, b) => b.supports - a.supports || b.weakens - a.weakens)
+  // A hunt's findings are its explanations; an investigation's are its answer, a held one first, then what it weighed.
+  const lead = fold.kind === 'lead' ? fold : null
+  const held = lead?.held ?? null
+  const answers = lead?.findings ?? []
+  if (!held && answers.length === 0 && ranked.length === 0) return <p className="muted">No findings yet.</p>
   return (
     <ul className="case-findings">
-      {fold.findings.slice(0, 6).map((row, i) => (
+      {held && (
+        <li>
+          <span className="case-expl-pill poor">Held</span>
+          <Clamped text={`${heldLine(held)}: ${held.reason}`} />
+        </li>
+      )}
+      {answers.slice(0, 6).map((row, i) => (
         <li key={i}>
           <span className="case-findings-who">{row.agent_id}</span>
           <Clamped text={plainLine(row.answer) || '—'} />
         </li>
       ))}
+      {ranked.slice(0, 6).map((row) => {
+        const word = explanationWord(row.status, row.supports, row.weakens)
+        return (
+          <li key={row.hypothesis_id}>
+            <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+            <Clamped text={row.statement || row.hypothesis_id} />
+          </li>
+        )
+      })}
     </ul>
   )
 }

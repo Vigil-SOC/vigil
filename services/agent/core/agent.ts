@@ -1166,13 +1166,19 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.summary_field : "text";
   const own = conclusion.value[field];
   const summary = typeof own === "string" && own.trim() !== "" ? own.trim() : JSON.stringify(conclusion.value);
-  const guarded = review.guarded;
-  if (guarded === undefined || guarded.asked === guarded.final) return summary;
-  const why =
-    review.grounded === false && review.stance === "uphold"
-      ? "no cited result is linked to a claim on the record"
-      : `the review was ${review.stance}${review.reasons ? `: ${review.reasons}` : ""}`;
+  const why = heldBecause(review);
+  if (why === null) return summary;
+  const guarded = review.guarded!;
   return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
+}
+
+// Why the guard moved the answer off what was asked; null when it did not.
+export function heldBecause(review: ReviewPayload): string | null {
+  const guarded = review.guarded;
+  if (guarded === undefined || guarded.asked === guarded.final) return null;
+  return review.grounded === false && review.stance === "uphold"
+    ? "no cited result is linked to a claim on the record"
+    : `the review was ${review.stance}${review.reasons ? `: ${review.reasons}` : ""}`;
 }
 
 // --- ledger ----------------------------------------------------------------
