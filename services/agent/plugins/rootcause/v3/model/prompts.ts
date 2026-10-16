@@ -1,5 +1,7 @@
 // System prompt (spec §5.4 + v1's rules) and per-move instructions. The system prompt and
 // tool definitions are byte-identical across turns and runs; run data goes in the user message only.
+// The searching rules and examples are SPL, the only language a Source speaks so far (tools/source.ts).
+// A second backend needs them per Source.language, or the model writes SPL against KQL.
 import type { Graph, GraphEdge, GraphNode } from "../graph.js";
 import type { AgentConfig } from "../config.js";
 
