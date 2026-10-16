@@ -5,7 +5,7 @@
     "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
     "disposition": "inconclusive",
     "headline": "The volume shadow copy deletion on FIN-WKS-014 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
-    "basis": "hunt ended (failed) with the hypothesis unresolved"
+    "basis": "Hunt ended (failed) with the hypothesis unresolved"
   },
   "narrative": {
     "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
@@ -21,22 +21,25 @@
       "claim": "The volume shadow copy deletion on FIN-WKS-014 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
       "role": "adversary",
       "standing": "inconclusive",
-      "reason": "hunt ended (failed) with the hypothesis unresolved"
+      "reason": "Hunt ended (failed) with the hypothesis unresolved",
+      "subjects": ["host:fin-wks-014"],
+      "techniques": ["T1490"]
     },
     {
       "id": "h-cd39e37d",
       "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
-      "claim": "the activity described in the intrusion claim has a legitimate explanation and is not adversary action",
+      "claim": "the activity described in \"The volume shadow copy deletion on FIN-WKS-014 at 2026-09-02T14:02:11Z (T1490)",
       "role": "benign",
       "standing": "inconclusive",
-      "reason": "hunt ended (failed) with the hypothesis unresolved"
+      "reason": "Hunt ended (failed) with the hypothesis unresolved",
+      "techniques": ["T1490"]
     }
   ],
   "evidence": [
     {
       "id": "ev-64769d746afe",
       "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
-      "claim": "FIN-WKS-014 full kill chain under alice.morgan: Invoice_88231.xlsm spawned encoded hidden powershell, which spawned rundll32 of C:\\Users\\Public\\svchost-helper.dll,Start; the vssadmin parent is svchost-helper.dll.",
+      "claim": "FIN-WKS-014 full kill chain under alice.morgan: Invoice_88231.xlsm (Excel, 08:31:05) spawned encoded hidden powershell (08:31:09, PID6188) which spawned rundll32 of C:\\Users\\Public\\svchost-helper.dll,Start (PID6402,",
       "source": "process_lineage",
       "turn": 3,
       "salience": "anomalous",
@@ -45,8 +48,15 @@
       "bears_on": [
         { "on": "h-98e38c67", "stance": "supports" },
         { "on": "h-cd39e37d", "stance": "weakens" }
-      ]
+      ],
+      "why": "The shadow-copy deletion descends from a macro-delivered DLL implant that also dumped",
+      "entities": ["user:alice.morgan"],
+      "techniques": ["T1490"]
     }
+  ],
+  "entities": [
+    { "key": "host:fin-wks-014", "run_id": "208b5901-e366-43de-9463-1eaaa7286731" },
+    { "key": "user:alice.morgan", "run_id": "208b5901-e366-43de-9463-1eaaa7286731" }
   ],
   "next_steps": [
     { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "text": "Settle h-98e38c67: The volume shadow copy deletion on FIN-WKS-014 is part of a hands-on-keyboard intrusion — the hunt ended before deciding it" }
@@ -54,6 +64,6 @@
   "gaps": [],
   "escalations": [],
   "steps": [
-    { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "n": 1, "kind": "READ", "text": "I'll start by loading the hunt method skill and checking the board state.", "at": "2026-10-15T16:24:16.158Z", "cost_usd": 0.04966 }
+    { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "n": 1, "kind": "READ", "text": "I'll start by loading the hunt method skill and checking the board state.", "at": "2026-10-15T16:24:16.158Z", "cost_usd": 0.04966, "duration_ms": 2948 }
   ]
 }
