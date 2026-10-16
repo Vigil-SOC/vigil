@@ -21,6 +21,7 @@ from core.agents.projections import read_events
 from core.auth.auth_service import AuthService
 from core.auth.permissions import permission_gate
 from core.cases import case_journal_service, case_records_service
+from core.cases.case_account import case_run_ids, read_case_account
 from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
@@ -45,6 +46,7 @@ from core.storage.schemas import (
     CaseWatcherSchema,
 )
 from core.storage.schemas.case_api import (
+    CaseAccountResponse,
     CaseCommentsResponse,
     CaseEscalationsResponse,
     CasePurgeResponse,
@@ -674,6 +676,24 @@ async def get_escalations(case_id: str, session: UnitOfWorkSession):
 
     escalations = case_records_service.list_escalations(session, case_id)
     return {"escalations": CaseEscalationSchema.dump_many(escalations)}
+
+
+@router.get(
+    "/{case_id}/account",
+    response_model=CaseAccountResponse,
+    response_model_exclude_unset=True,
+)
+async def get_case_account(case_id: str, session: UnitOfWorkSession):
+    """What the case's runs concluded, merged into one account on each read.
+
+    Never stored, so never stale. A section no run filled is absent. A run
+    whose account could not be read is left out and named in ``unread``, and
+    a verdict reached without it does not stand as a dismissal.
+    """
+    if not data_service.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+    read = await read_case_account(case_run_ids(session, case_id))
+    return CaseAccountResponse(account=read.account, unread=read.unread)
 
 
 @router.get("/{case_id}/record", response_model=CaseRecordResponse)

@@ -202,3 +202,73 @@ def test_reading_a_case_names_the_runs_it_could_not_read(monkeypatch):
     # A dismissal reached without a run it could not read is no dismissal.
     assert result.account.verdict.disposition == "needs_review"
     assert result.account.verdict.basis == "Run inv-1 says benign, but run broken could not be read."
+
+
+def _case(monkeypatch, *, started=(), investigations=(), rows=()):
+    from types import SimpleNamespace as Row
+
+    monkeypatch.setattr(case_account, "list_case_runs", lambda _s, _c: [Row(**run) for run in started])
+    monkeypatch.setattr(
+        case_account, "list_case_investigations", lambda _s, _c: [Row(**item) for item in investigations]
+    )
+    held = {row["run_id"]: Row(**row) for row in rows}
+    monkeypatch.setattr(case_account, "_runs_by_id", lambda _s, ids: {i: held[i] for i in ids if i in held})
+
+
+def _at(hour: int):
+    from datetime import datetime
+
+    return datetime(2026, 10, 15, hour)
+
+
+def test_an_intake_case_reads_its_investigations_run(monkeypatch):
+    # Opened by intake: the run is the investigation's, with no case id in its trigger.
+    from core.agents.projections import run_id_for
+
+    item = {"investigation_id": "inv-a", "created_at": _at(9), "started_at": _at(9), "completed_at": _at(10)}
+    _case(monkeypatch, investigations=[item])
+    assert case_account.case_run_ids(None, "case-1") == [run_id_for("inv-a")]
+
+
+def test_a_case_lists_every_run_once_by_when_it_ended(monkeypatch):
+    from core.agents.projections import run_id_for
+
+    own = run_id_for("inv-a")
+    _case(
+        monkeypatch,
+        # A long hunt started first and ended last; a run still going is placed by its start.
+        started=[
+            {"run_id": "hunt-1", "started_at": _at(8), "finished_at": _at(13)},
+            {"run_id": "live-1", "started_at": _at(11), "finished_at": None},
+            # The investigation's run is also started on the case: listed once.
+            {"run_id": own, "started_at": _at(9), "finished_at": _at(10)},
+        ],
+        investigations=[{"investigation_id": "inv-a", "created_at": _at(9), "started_at": _at(9), "completed_at": None}],
+    )
+    assert case_account.case_run_ids(None, "case-1") == [own, "live-1", "hunt-1"]
+
+
+def test_an_investigations_own_run_row_dates_it(monkeypatch):
+    from core.agents.projections import run_id_for
+
+    own = run_id_for("inv-a")
+    _case(
+        monkeypatch,
+        started=[{"run_id": "hunt-1", "started_at": _at(8), "finished_at": _at(11)}],
+        investigations=[{"investigation_id": "inv-a", "created_at": _at(7), "started_at": None, "completed_at": None}],
+        rows=[{"run_id": own, "started_at": _at(7), "finished_at": _at(12)}],
+    )
+    assert case_account.case_run_ids(None, "case-1") == ["hunt-1", own]
+
+
+def test_a_run_with_no_time_yet_does_not_fail_the_read(monkeypatch):
+    _case(
+        monkeypatch,
+        started=[
+            {"run_id": "hunt-1", "started_at": _at(8), "finished_at": _at(9)},
+            {"run_id": "queued-1", "started_at": None, "finished_at": None},
+        ],
+        investigations=[{"investigation_id": "inv-b", "created_at": None, "started_at": None, "completed_at": None}],
+    )
+    ids = case_account.case_run_ids(None, "case-1")
+    assert ids[-1] == "hunt-1" and set(ids[:2]) == {"queued-1", case_account.run_id_for("inv-b")}

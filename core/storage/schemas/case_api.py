@@ -7,11 +7,12 @@ under ``services/api/routers/`` because every module there must export a
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
 from core.storage.schemas.case import CaseSchema
+from core.storage.schemas.case_account import CaseAccount
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
@@ -215,3 +216,15 @@ class CaseSearchResponse(BaseModel):
     limit: int
     offset: int
     has_more: bool
+
+
+class CaseAccountResponse(BaseModel):
+    """A case's account, merged on read from its runs' accounts.
+
+    ``unread`` names the runs left out because their account could not be
+    read, so the page can say the account was reached without them rather
+    than show it as whole.
+    """
+
+    account: CaseAccount
+    unread: List[str]
