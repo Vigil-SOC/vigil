@@ -18,7 +18,10 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.integrations.splunk.client import SplunkService  # noqa: E402
+from core.integrations.splunk.client import (  # noqa: E402
+    SplunkSearchError,
+    SplunkService,
+)
 
 BASE = "https://splunk.example.com:8089"
 
@@ -409,3 +412,121 @@ class TestTheLeadingCommand:
         from core.integrations.splunk.client import _as_search
 
         assert _as_search("SEARCH index=botsv3") == "SEARCH index=botsv3"
+
+
+# run_job is what a model's search goes through. A failure has to come back in
+# Splunk's words, since "search failed" gives nothing to fix.
+
+
+@respx.mock
+def test_run_job_reports_what_splunk_matched_and_warned():
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "entry": [
+                    {
+                        "content": {
+                            "isDone": True,
+                            "eventCount": 48211,
+                            "resultCount": 3,
+                            "messages": [
+                                {"type": "WARN", "text": "field 'usr' not found"}
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+    )
+    respx.get(f"{job_url}/sid-1/results").mock(
+        return_value=httpx.Response(200, json={"results": [{"count": "1"}] * 3})
+    )
+    respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    job = _service().run_job("index=edr | stats count by host")
+
+    assert (job.event_count, job.result_count, len(job.rows)) == (48211, 3, 3)
+    assert job.warnings == ["field 'usr' not found"]
+
+
+@respx.mock
+def test_run_job_raises_splunks_reason_for_a_refused_search():
+    _mock_auth()
+    respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(
+            400,
+            json={
+                "messages": [
+                    {"type": "FATAL", "text": "Unknown search command 'statz'."}
+                ]
+            },
+        )
+    )
+
+    with pytest.raises(SplunkSearchError, match="Unknown search command 'statz'"):
+        _service().run_job("index=edr | statz count")
+
+
+@respx.mock
+def test_run_job_raises_splunks_reason_for_a_failed_job():
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "entry": [
+                    {
+                        "content": {
+                            "isDone": True,
+                            "isFailed": True,
+                            "messages": [
+                                {"type": "ERROR", "text": "Error in 'rex' command"}
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+    )
+    deleted = respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    with pytest.raises(SplunkSearchError, match="Error in 'rex' command"):
+        _service().run_job("index=edr | rex field=_raw")
+    assert deleted.called, "a failed job should be cleaned up"
+
+
+@respx.mock
+def test_run_job_gives_up_after_its_timeout_and_cancels(monkeypatch):
+    _hold_poll(monkeypatch)
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    status = respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200, json={"entry": [{"content": {"isDone": False}}]}
+        )
+    )
+    deleted = respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    with pytest.raises(SplunkSearchError, match="within 5s"):
+        _service().run_job("index=edr", timeout_s=5)
+    assert status.call_count == 5
+    assert deleted.called
+
+
+@respx.mock
+def test_search_still_answers_none_where_run_job_raises():
+    _mock_auth()
+    respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(
+            400, json={"messages": [{"type": "FATAL", "text": "bad"}]}
+        )
+    )
+
+    assert _service().search("index=edr | statz") is None

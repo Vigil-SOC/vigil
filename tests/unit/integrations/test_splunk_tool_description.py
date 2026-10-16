@@ -7,10 +7,13 @@ way against a 2018 dataset it kept querying with the -24h default.
 """
 
 import asyncio
+import json
 import importlib.util
 from pathlib import Path
 
 import pytest
+
+from core.integrations.splunk.client import SearchJob, SplunkSearchError
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -178,3 +181,47 @@ def test_asks_splunk_once_however_often_the_tools_are_listed(monkeypatch):
     _describe(module)
 
     assert calls["n"] == 1
+
+
+def _executed(monkeypatch, run_job):
+    module = _load(monkeypatch, _ROWS)
+
+    class _Service:
+        pass
+
+    service = _Service()
+    service.run_job = run_job
+    monkeypatch.setattr(module, "get_splunk_service", lambda: service)
+    [text] = asyncio.run(
+        module.handle_call_tool("splunk_execute", {"spl_query": "index=edr | statz"})
+    )
+    return module, json.loads(text.text)
+
+
+# The model wrote the SPL, so it is the one who can fix it, and only from Splunk's words.
+def test_a_refused_search_answers_with_splunks_reason(monkeypatch):
+    def run_job(*_args):
+        raise SplunkSearchError("Unknown search command 'statz'.")
+
+    _, answer = _executed(monkeypatch, run_job)
+    assert answer["error"] == "Splunk: Unknown search command 'statz'."
+
+
+def test_a_search_says_how_many_events_it_matched(monkeypatch):
+    asked = {}
+
+    def run_job(query, earliest, latest, max_count, timeout_s):
+        asked["timeout_s"] = timeout_s
+        return SearchJob(
+            rows=[{"count": "9"}], event_count=48211, result_count=1, warnings=["w"]
+        )
+
+    module, answer = _executed(monkeypatch, run_job)
+    assert (answer["count"], answer["event_count"], answer["warnings"]) == (
+        1,
+        48211,
+        ["w"],
+    )
+    assert answer["results"] == [{"count": "9"}]
+    # Inside the agent layer's own timeout for a telemetry search.
+    assert asked["timeout_s"] == module._SEARCH_TIMEOUT_S < 120

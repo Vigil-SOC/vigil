@@ -72,7 +72,7 @@ async def test_splunk_federation_adapter_does_not_block_the_loop():
 @pytest.mark.parametrize(
     "tool, args, method",
     [
-        ("splunk_execute", {"spl_query": "search *"}, "search"),
+        ("splunk_execute", {"spl_query": "search *"}, "run_job"),
         ("splunk_search_ip", {"ip_address": "10.0.0.1"}, "search_by_ip"),
         ("splunk_search_host", {"hostname": "web01"}, "search_by_hostname"),
         ("splunk_nl_search", {"query": "failed logins"}, "search"),
@@ -80,9 +80,12 @@ async def test_splunk_federation_adapter_does_not_block_the_loop():
 )
 async def test_splunk_mcp_tool_does_not_block_the_loop(tool, args, method):
     from core.integrations.splunk import tool as splunk_tool
+    from core.integrations.splunk.client import SearchJob
 
     svc = MagicMock()
-    setattr(svc, method, _blocking([]))
+    # run_job answers a job, the older calls a list of rows.
+    returned = SearchJob([], 0, 0) if method == "run_job" else []
+    setattr(svc, method, _blocking(returned))
 
     with patch.object(splunk_tool, "get_splunk_service", return_value=svc):
         _, ticks = await _tick_while(splunk_tool.handle_call_tool(tool, args))

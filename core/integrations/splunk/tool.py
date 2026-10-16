@@ -34,6 +34,7 @@ except ImportError:
 
 from core.integrations._base.config import missing, resolve
 from core.integrations._base.tool_result import run_tool
+from core.integrations.splunk.client import SplunkSearchError
 from core.integrations.splunk.descriptor import SPLUNK
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,10 @@ _RESULT_SIZE_GUIDANCE = (
 # Splunk's own all-time earliest: a narrower default is a silent zero on any data
 # older than it.
 _ALL_TIME = "0"
+# Under the 120 s the agent layer allows a telemetry search
+# (playbook_resolver.CAPABILITY_BOUNDS), so a slow search comes back as Splunk's own
+# timeout rather than as the caller's, with nothing said about why.
+_SEARCH_TIMEOUT_S = 110
 
 # search_by_ip and search_by_hostname build their window as -{hours}h, and their client
 # is also the daemon's, so widening here leaves the daemon's polling window alone.
@@ -332,26 +337,28 @@ async def handle_call_tool(name: str, arguments: dict | None):
         if not splunk:
             return result({"error": "Splunk not configured", "spl": spl})
         try:
-            # search() polls the job with time.sleep; keep it off the MCP loop.
-            results = await asyncio.to_thread(
-                splunk.search,
+            # run_job() polls the job with time.sleep; keep it off the MCP loop.
+            job = await asyncio.to_thread(
+                splunk.run_job,
                 spl,
                 args.get("earliest", _ALL_TIME),
                 "now",
                 args.get("max_results", 100),
+                _SEARCH_TIMEOUT_S,
             )
-            if results is None:
-                return result(
-                    {"error": "Splunk search failed or timed out", "query": spl}
-                )
             return result(
                 {
                     "success": True,
                     "query": spl,
-                    "count": len(results),
-                    "results": results,
+                    "count": len(job.rows),
+                    "event_count": job.event_count,
+                    "warnings": job.warnings,
+                    "results": job.rows,
                 }
             )
+        # Splunk's own reason, so a model can fix its SPL rather than retry it.
+        except SplunkSearchError as e:
+            return result({"error": f"Splunk: {e}", "query": spl})
         except Exception as e:
             return result({"error": str(e), "query": spl})
 

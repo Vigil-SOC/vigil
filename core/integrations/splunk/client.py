@@ -2,7 +2,8 @@
 
 import logging
 import time
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -35,6 +36,52 @@ def _as_search(query: str) -> str:
     if leading == "search" or stripped.startswith("|"):
         return stripped
     return f"search {stripped}"
+
+
+# How long a search may run when the caller says nothing: the poll loop's old
+# 60 attempts a second apart.
+DEFAULT_SEARCH_TIMEOUT_S = 60
+
+
+class SplunkSearchError(Exception):
+    """A search Splunk refused or could not finish, in Splunk's own words when it
+    gave any. A model writing SPL fixes "Unknown search command 'statz'"; it cannot
+    fix "search failed"."""
+
+
+@dataclass
+class SearchJob:
+    """A finished search: its rows, and what Splunk counted. event_count is the
+    events the search matched, which a reporting search reduces to a few rows."""
+
+    rows: List[Dict]
+    event_count: int
+    result_count: int
+    warnings: List[str] = field(default_factory=list)
+
+
+# Splunk reports a job's errors and warnings as {"type", "text"} pairs, on a
+# refused job's body and on a failed job's status.
+def _messages(body: Any, kinds: tuple) -> List[str]:
+    held = body.get("messages") if isinstance(body, dict) else None
+    if not isinstance(held, list):
+        return []
+    return [
+        str(m.get("text"))
+        for m in held
+        if isinstance(m, dict) and m.get("text") and str(m.get("type")).upper() in kinds
+    ]
+
+
+_ERRORS = ("FATAL", "ERROR")
+_WARNINGS = ("WARN", "WARNING")
+
+
+def _json(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return None
 
 
 class SplunkService:
@@ -197,96 +244,131 @@ class SplunkService:
         Returns:
             List of result dictionaries, or None if error
         """
-        session = self.session
+        # Outside the try, as before: a client that cannot be built (a CA path that
+        # does not exist) is a configuration error the caller must see, not a None.
+        self.session
         try:
-            if not self.session_key:
-                if not self.authenticate():
-                    return None
-
-            # Create search job
-            search_url = f"{self.server_url}/services/search/jobs"
-            search_data = {
-                "search": _as_search(query),
-                "earliest_time": earliest_time,
-                "latest_time": latest_time,
-                "output_mode": "json",
-            }
-
-            response = self._request("POST", search_url, data=search_data)
-
-            if response.status_code not in [200, 201]:
-                logger.error(
-                    f"Failed to create search job: {response.status_code} - {response.text}"
-                )
-                return None
-
-            job_data = response.json()
-            sid = job_data.get("sid")
-
-            if not sid:
-                logger.error("No search ID returned")
-                return None
-
-            logger.info(f"Created search job: {sid}")
-
-            # Poll for job completion
-            job_url = f"{self.server_url}/services/search/jobs/{sid}"
-            max_attempts = 60  # 60 attempts with 1 second wait = 1 minute max
-
-            for attempt in range(max_attempts):
-                status_response = self._request(
-                    "GET", job_url, params={"output_mode": "json"}
-                )
-
-                if status_response.status_code == 200:
-                    job_status = status_response.json()
-                    entry = job_status.get("entry", [{}])[0]
-                    content = entry.get("content", {})
-
-                    is_done = content.get("isDone", False)
-
-                    if is_done:
-                        # Get results
-                        results_url = f"{job_url}/results"
-                        results_response = self._request(
-                            "GET",
-                            results_url,
-                            params={"output_mode": "json", "count": max_count},
-                        )
-
-                        if results_response.status_code == 200:
-                            results_data = results_response.json()
-                            results = results_data.get("results", [])
-                            logger.info(f"Search completed with {len(results)} results")
-
-                            # Cleanup ignores status. A 401 here must not
-                            # throw away results already in hand; the next
-                            # call re-authenticates on its own 401.
-                            session.delete(job_url)
-
-                            return results
-                        else:
-                            logger.error(
-                                f"Failed to get results: {results_response.status_code}"
-                            )
-                            return None
-
-                    time.sleep(1)
-                else:
-                    logger.error(
-                        f"Failed to check job status: {status_response.status_code}"
-                    )
-                    return None
-
-            logger.error("Search job timed out")
-            # Try to cancel the job. Status is ignored, same as a
-            # successful search's cleanup.
-            session.delete(job_url)
+            return self.run_job(query, earliest_time, latest_time, max_count).rows
+        except SplunkSearchError as e:
+            logger.error("Search failed: %s", e)
             return None
-
         except Exception as e:
             logger.error(f"Error executing search: {e}")
             return None
+
+    def run_job(
+        self,
+        query: str,
+        earliest_time: str = "-24h",
+        latest_time: str = "now",
+        max_count: int = 1000,
+        timeout_s: int = DEFAULT_SEARCH_TIMEOUT_S,
+    ) -> SearchJob:
+        """Run one search job to the end: create it, poll it, fetch its results.
+
+        Raises SplunkSearchError, carrying Splunk's own messages, when the search
+        is refused, fails or does not finish within timeout_s. Blocking, like
+        search().
+        """
+        session = self.session
+        if not self.session_key:
+            if not self.authenticate():
+                raise SplunkSearchError("could not log in to Splunk")
+
+        # Create search job
+        search_url = f"{self.server_url}/services/search/jobs"
+        search_data = {
+            "search": _as_search(query),
+            "earliest_time": earliest_time,
+            "latest_time": latest_time,
+            "output_mode": "json",
+        }
+
+        response = self._request("POST", search_url, data=search_data)
+
+        if response.status_code not in [200, 201]:
+            said = _messages(_json(response), _ERRORS + _WARNINGS)
+            logger.error(
+                f"Failed to create search job: {response.status_code} - {response.text}"
+            )
+            raise SplunkSearchError(
+                "; ".join(said)
+                or f"Splunk refused the search (HTTP {response.status_code})"
+            )
+
+        sid = (_json(response) or {}).get("sid")
+
+        if not sid:
+            logger.error("No search ID returned")
+            raise SplunkSearchError("Splunk created no search job")
+
+        logger.info(f"Created search job: {sid}")
+
+        # Poll for job completion, a second apart.
+        job_url = f"{self.server_url}/services/search/jobs/{sid}"
+
+        for attempt in range(max(1, int(timeout_s))):
+            status_response = self._request(
+                "GET", job_url, params={"output_mode": "json"}
+            )
+
+            if status_response.status_code != 200:
+                logger.error(
+                    f"Failed to check job status: {status_response.status_code}"
+                )
+                raise SplunkSearchError(
+                    f"Splunk could not report on the search (HTTP {status_response.status_code})"
+                )
+
+            job_status = status_response.json()
+            entry = job_status.get("entry", [{}])[0]
+            content = entry.get("content", {})
+
+            if content.get("isFailed") or content.get("dispatchState") == "FAILED":
+                session.delete(job_url)
+                raise SplunkSearchError(
+                    "; ".join(_messages(content, _ERRORS)) or "Splunk failed the search"
+                )
+
+            if content.get("isDone", False):
+                # Get results
+                results_url = f"{job_url}/results"
+                results_response = self._request(
+                    "GET",
+                    results_url,
+                    params={"output_mode": "json", "count": max_count},
+                )
+
+                if results_response.status_code != 200:
+                    logger.error(
+                        f"Failed to get results: {results_response.status_code}"
+                    )
+                    raise SplunkSearchError(
+                        f"Splunk could not return the results (HTTP {results_response.status_code})"
+                    )
+
+                results = results_response.json().get("results", [])
+                logger.info(f"Search completed with {len(results)} results")
+
+                # Cleanup ignores status. A 401 here must not
+                # throw away results already in hand; the next
+                # call re-authenticates on its own 401.
+                session.delete(job_url)
+
+                return SearchJob(
+                    rows=results,
+                    event_count=int(content.get("eventCount") or 0),
+                    result_count=int(content.get("resultCount") or len(results)),
+                    warnings=_messages(content, _WARNINGS),
+                )
+
+            time.sleep(1)
+
+        logger.error("Search job timed out")
+        # Try to cancel the job. Status is ignored, same as a
+        # successful search's cleanup.
+        session.delete(job_url)
+        raise SplunkSearchError(f"Splunk did not finish the search within {timeout_s}s")
 
     @staticmethod
     def _earliest_from_hours(hours: int) -> str:
