@@ -51,6 +51,7 @@ Salience = Literal["routine", "notable", "anomalous"]
 ChainStatus = Literal["confirmed", "suspected", "unproven", "rejected"]
 AccountRole = Literal["attacker", "victim", "legitimate"]
 GapKind = Literal["visibility", "open_question", "disputed"]
+DisagreementKind = Literal["verdict", "standing", "gap_answered"]
 
 # A value is required after the colon. The TypeScript template cannot say so; the
 # extractor, which mints every key, is the guard there.
@@ -254,6 +255,18 @@ class Step(_AccountModel):
     refs: list[str] | Absent = None
 
 
+class ItemRef(_AccountModel):
+    run_id: str
+    id: str
+
+
+class Disagreement(_AccountModel):
+    kind: DisagreementKind
+    text: str
+    runs: list[str]
+    refs: list[ItemRef] | Absent = None
+
+
 class CaseAccount(_AccountModel):
     schema_version: int
     runs: list[AccountRun]
@@ -269,6 +282,7 @@ class CaseAccount(_AccountModel):
     gaps: list[Gap] | Absent = None
     escalations: list[Escalation] | Absent = None
     steps: list[Step] | Absent = None
+    disagreements: list[Disagreement] | Absent = None
 
 
 def dump_account(account: CaseAccount) -> dict[str, Any]:

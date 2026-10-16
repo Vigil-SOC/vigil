@@ -292,6 +292,29 @@ export interface Step {
   refs?: string[];
 }
 
+// Where a case's runs part ways. Found by comparing them, never read off one run, so
+// only a case's account carries it. verdict: one run's verdict condemns what another
+// clears. standing: a claim one run holds and another rules out, about the same
+// things. gap_answered: what one run could not settle, another holds a record on.
+export const DISAGREEMENT_KINDS = ["verdict", "standing", "gap_answered"] as const;
+export type DisagreementKind = (typeof DISAGREEMENT_KINDS)[number];
+
+// An item of one run, by that run and its id there: ids repeat across a case's runs.
+export interface ItemRef {
+  run_id: string;
+  id: string;
+}
+
+export interface Disagreement {
+  kind: DisagreementKind;
+  text: string;
+  // Every run on either side.
+  runs: string[];
+  // The explanations or evidence it rests on. Absent when it rests on a whole run's
+  // verdict or on a gap, which have no id.
+  refs?: ItemRef[];
+}
+
 export interface CaseAccount {
   schema_version: number;
   // The runs this account is built from: one for a run's own, every run on the case
@@ -309,4 +332,5 @@ export interface CaseAccount {
   gaps?: Gap[];
   escalations?: Escalation[];
   steps?: Step[];
+  disagreements?: Disagreement[];
 }
