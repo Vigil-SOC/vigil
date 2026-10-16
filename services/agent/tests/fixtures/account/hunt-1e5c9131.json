@@ -22,7 +22,7 @@
       "standing": "inconclusive",
       "reason": "hunt ended (completed) with the hypothesis unresolved",
       "techniques": ["T1098", "T1550.002"],
-      "subjects": ["host:FIN-WKS-014"]
+      "subjects": ["host:fin-wks-014"]
     },
     {
       "id": "h-371c5186",
@@ -64,7 +64,7 @@
     }
   ],
   "entities": [
-    { "key": "host:FIN-WKS-014", "run_id": "1e5c9131-7490-41d1-8bc1-085758a8dcec" },
+    { "key": "host:fin-wks-014", "run_id": "1e5c9131-7490-41d1-8bc1-085758a8dcec" },
     { "key": "user:alice.morgan", "run_id": "1e5c9131-7490-41d1-8bc1-085758a8dcec" },
     { "key": "ip:198.51.100.77", "run_id": "1e5c9131-7490-41d1-8bc1-085758a8dcec", "indicator": true }
   ],

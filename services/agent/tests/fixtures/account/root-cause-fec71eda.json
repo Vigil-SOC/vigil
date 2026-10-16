@@ -10,7 +10,7 @@
         "text": "PowerShell C2 beacon: FYODOR-L powershell.exe (PIDs 5588/5448/10432) made 3884 TCP/443 connections to 45.77.53.176. CONFIRMED finding — the artifact to trace backward.",
         "at": "2018-08-20T10:30:00Z",
         "status": "unproven",
-        "entities": ["host:FYODOR-L", "ip:45.77.53.176"]
+        "entities": ["host:fyodor-l", "ip:45.77.53.176"]
       },
       {
         "id": "step-10",

@@ -54,7 +54,7 @@
         "status": "confirmed",
         "confidence": 0.95,
         "ran_as": "alice.morgan",
-        "entities": ["host:FIN-WKS-014", "user:alice.morgan"]
+        "entities": ["host:fin-wks-014", "user:alice.morgan"]
       },
       {
         "id": "N2",
@@ -182,7 +182,7 @@
     }
   ],
   "entities": [
-    { "key": "host:FIN-WKS-014", "run_id": "2026-10-13T11-42-42", "indicator": true },
+    { "key": "host:fin-wks-014", "run_id": "2026-10-13T11-42-42", "indicator": true },
     { "key": "ip:203.0.113.66", "run_id": "2026-10-13T11-42-42", "indicator": true },
     { "key": "process:vssadmin.exe delete shadows /all /quiet", "run_id": "2026-10-13T11-42-42", "indicator": true },
     { "key": "hash:9f2e1c7b4a5d6e8f03b1c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6", "run_id": "2026-10-13T11-42-42", "indicator": true }
