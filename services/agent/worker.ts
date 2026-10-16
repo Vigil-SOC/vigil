@@ -324,11 +324,34 @@ export async function advance(
 // this owner, so a worker already reclaimed displaces nobody.
 async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown): Promise<void> {
   if ((await state.latestSeq(job.run_id)) === null) {
-    await leases.finish(job.run_id);
+    if (await failedBeforeOpening(job, error)) await leases.finish(job.run_id);
+    else await leases.release(job.run_id, owner, 0);
     return;
   }
   if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
   await leases.release(job.run_id, owner, 0);
+}
+
+// A run that failed before its ledger opened has no run event to hang a terminal on,
+// since the run event is the spec. The backend's row is then the only record, and
+// nobody else tells it: it read "running" for good. Final when a retry cannot change
+// it: a spec that cannot be built, a spent gateway, or a resume, which only the
+// sweeper sends and which finds no ledger to resume from. Anything else, a database
+// or network blip on the start, is handed back for BullMQ's retry; if every retry
+// fails the same way, the sweeper's resume lands here and ends it.
+// Compose was told by abandon() unless the gateway was spent, which abandon() skips.
+// A mirror that throws leaves the lease held, so the sweep tries again after the TTL
+// until the backend hears it; a try/catch here would drop the report instead.
+async function failedBeforeOpening(job: RunJob, error: unknown): Promise<boolean> {
+  if (error instanceof GatewayExhausted) {
+    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason: error.message, summary: "" });
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const reason = error instanceof SpecError ? `its spec cannot be built: ${message}` : job.reason !== "start" ? `it never started: ${message}` : null;
+  if (reason === null) return false;
+  if (job.run_kind !== "compose") await mirrorFor().terminal(job.run_id, { outcome: "failed", reason, summary: "" });
+  return true;
 }
 
 // A spec error answers the same way on every attempt, and on a resume the layers come

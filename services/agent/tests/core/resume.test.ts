@@ -2,7 +2,7 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnrecoverableError } from "bullmq";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunJob } from "../../contracts/job.js";
 import { GatewayExhausted } from "../../core/limiter.js";
 import { InProcessLeases } from "../support/in-process-leases.js";
@@ -200,6 +200,63 @@ describe("a run whose spec cannot be built", () => {
     await expect(advance(state, leases, resumeJob(), scriptedHarness(CONCLUDE))).rejects.toThrow();
 
     await expect(advance(state, leases, resumeJob(), scriptedHarness(CONCLUDE))).resolves.toBeUndefined();
+  });
+});
+
+describe("a run whose spec cannot be built before its ledger opens", () => {
+  let posted: { url: string; body: Record<string, unknown> }[];
+  const real = globalThis.fetch;
+
+  beforeEach(() => {
+    posted = [];
+    process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (init?.body !== undefined) posted.push({ url: String(url), body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    }) as unknown as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = real;
+    delete process.env["VIGIL_RUNS_URL"];
+  });
+
+  // A refused override is the commonest: the run never gets a spec, so never a ledger.
+  it("tells the backend it failed and why, since no ledger can say so", async () => {
+    const state = new InProcessState();
+
+    await expect(advance(state, leases, startJob("hunt", { budgets: { max_cost_usd: 0 } }), scriptedHarness(CONCLUDE))).rejects.toThrow(SpecError);
+
+    const told = posted.filter((one) => one.url.includes(RUN));
+    expect(told).toHaveLength(1);
+    expect(told[0]?.body).toMatchObject({ outcome: "failed", reason: expect.stringMatching(/^its spec cannot be built: .*must be a positive number/) });
+    expect(await state.latestSeq(RUN)).toBeNull();
+    expect(await leases.sweep(60_000, 10)).toEqual([]);
+  });
+
+  // A blip on the start is retried, and a run that never opens is ended by the
+  // sweeper's resume rather than left running.
+  it("hands a passing failure back, and ends the run when the sweep finds it never opened", async () => {
+    const state = new InProcessState();
+    const flaky: typeof state = Object.create(state) as typeof state;
+    let first = true;
+    flaky.latestSeq = async (runId: string) => {
+      if (first) {
+        first = false;
+        throw new Error("connection reset");
+      }
+      return state.latestSeq(runId);
+    };
+
+    await expect(advance(flaky, leases, startJob(), scriptedHarness(CONCLUDE))).rejects.toThrow(/connection reset/);
+    expect(posted.filter((one) => one.url.includes(RUN))).toEqual([]);
+    expect((await leases.sweep(60_000, 10)).map((claim) => claim.run_id)).toEqual([RUN]);
+
+    await expect(advance(state, leases, resumeJob(), scriptedHarness(CONCLUDE))).rejects.toThrow(/has no ledger/);
+    expect(posted.filter((one) => one.url.includes(RUN)).map((one) => one.body)).toEqual([
+      expect.objectContaining({ outcome: "failed", reason: expect.stringMatching(/^it never started: cannot resume/) }),
+    ]);
+    expect(await leases.sweep(60_000, 10)).toEqual([]);
   });
 });
 
