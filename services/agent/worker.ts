@@ -259,6 +259,8 @@ export async function advance(
   job: RunJob,
   build: HarnessFactory = harnessFor,
   directives: DirectiveQueue = new InProcessDirectiveQueue(),
+  // Whether the queue will try this job again if it throws. True without a queue.
+  final = true,
 ): Promise<void> {
   if ((await state.terminal(job.run_id)) !== null) {
     await leases.finish(job.run_id);
@@ -304,8 +306,7 @@ export async function advance(
     const parked = await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
-    await abandon(job, error);
-    await forget(state, leases, job, owner, error);
+    await forget(state, leases, job, owner, error, final || unrecoverable(error));
     throw error;
   } finally {
     clearInterval(renewing);
@@ -322,11 +323,20 @@ export async function advance(
 // retry that lands seconds later, and a refused claim returns quietly, so BullMQ
 // would retire the job as a success with the run stalled. release() is scoped to
 // this owner, so a worker already reclaimed displaces nobody.
-async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown): Promise<void> {
+//
+// A start that will not be tried again is still the console's run, though: its
+// workflow_runs row was created running, so it is told failed here, for every kind,
+// once. Not on an attempt that will be retried -- the row would flip to failed and
+// back. A resume that found no ledger was never started by this layer and says nothing.
+async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown, last: boolean): Promise<void> {
   if ((await state.latestSeq(job.run_id)) === null) {
+    if (job.reason === "start" && last) {
+      await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), summary: "" });
+    }
     await leases.finish(job.run_id);
     return;
   }
+  await abandon(job, error);
   if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
   await leases.release(job.run_id, owner, 0);
 }
@@ -434,11 +444,20 @@ export async function spentOn(state: State, runId: string): Promise<number> {
     .reduce((total, event) => total + ((event.payload as SpendPayload).cost_usd ?? 0), 0);
 }
 
-// A run that dies before it journals a terminal leaves its record open, and a
-// resolution failure dies before there is a ledger to journal one onto.
+// A compose run that dies after its ledger opened, before it journals a terminal,
+// leaves its record open. One that died before the ledger opened is forget()'s.
 async function abandon(job: RunJob, error: unknown): Promise<void> {
   if (job.run_kind !== "compose" || error instanceof GatewayExhausted) return;
-  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: error instanceof Error ? error.message : String(error), summary: "" });
+  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), summary: "" });
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// What no retry can change; see handle().
+function unrecoverable(error: unknown): error is SpecError | GatewayExhausted {
+  return error instanceof SpecError || error instanceof GatewayExhausted;
 }
 
 // A checkpoint nobody answered for max_park_ms. Saying so beats leaving the run
@@ -595,7 +614,14 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
 // Only here, not inside advance(): what a failure means to the queue is the queue's
 // business, and advance() is driven without one by the tests and by run-once.ts.
 // advance() still throws the original error; this is the only place that wraps it.
-export async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
+export async function handle(
+  state: State,
+  leases: Leases,
+  job: RunJob,
+  directives: DirectiveQueue,
+  build: HarnessFactory = harnessFor,
+  final = true,
+): Promise<void> {
   // One span per job rather than per run: a run parked on an approval resumes as a
   // second job, hours later, and the run id is what ties the two together.
   const attributes = {
@@ -606,9 +632,9 @@ export async function handle(state: State, leases: Leases, job: RunJob, directiv
   };
   await traced(`invoke_agent ${job.run_kind}`, attributes, async () => {
     try {
-      await advance(state, leases, job, build, directives);
+      await advance(state, leases, job, build, directives, final);
     } catch (error) {
-      if (error instanceof SpecError || error instanceof GatewayExhausted) {
+      if (unrecoverable(error)) {
         throw Object.assign(new UnrecoverableError(error.message), { cause: error });
       }
       throw error;
@@ -670,7 +696,9 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // every other run waited it out. A run is almost entirely waiting on a model, so
   // the ceiling is the provider's rate limit rather than this process's CPU -- the
   // limiter already holds that line, and the lease keeps two workers off one run.
-  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(ledger, leases, job.data, directives, build), {
+  // attemptsMade counts the attempts already failed, so this one is the last when
+  // it is the only one left.
+  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(ledger, leases, job.data, directives, build, job.attemptsMade + 1 >= (job.opts.attempts ?? 1)), {
     connection,
     concurrency: runConcurrency(),
     lockDuration: LEASE_TTL_MS * 10,

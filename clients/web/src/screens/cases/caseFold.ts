@@ -136,8 +136,27 @@ interface HuntFold {
   maxCostUsd: number | null
 }
 
+/** What a run's record holds: the explanations it weighed, the rows linked to them, the questions left open. */
+export interface RunRecord {
+  hypotheses: HypothesisRow[]
+  evidence: EvidenceRow[]
+  evidenceCount: number
+  openQuestions: OpenQuestionRow[]
+}
+
+/** A dismissal the reviewer guard held for a person: what the run asked for, what it ends on, and why. */
+export interface HeldRow {
+  field: string
+  asked: string
+  final: string
+  reason: string
+}
+
 interface LeadFold {
   kind: 'lead'
+  /** A kernel investigation's record; null for a run that keeps none. */
+  record: RunRecord | null
+  held: HeldRow | null
   run: RunMeta
   iterations: number
   doing: string
@@ -324,6 +343,9 @@ function str(value: unknown): string {
 function answerText(answer: unknown): string {
   if (typeof answer === 'string') return answer
   if (answer == null) return ''
+  // A structured conclusion leads with its disposition, which a clamped JSON line would cut off.
+  const o = answer as Record<string, unknown>
+  if (typeof o.summary === 'string' && o.summary) return [typeof o.disposition === 'string' ? wordDisplay(o.disposition) : '', o.summary].filter(Boolean).join(' — ')
   try {
     return JSON.stringify(answer)
   } catch {
@@ -392,20 +414,9 @@ function checkpointOf(raw: unknown): OpenCheckpointRow | null {
   return { checkpoint_id: str(o.checkpoint_id), checkpoint_class: str(o.checkpoint_class), question: str(o.question), raised_at: str(o.raised_at), hypotheses }
 }
 
-function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
-  const moves = Array.isArray(raw.moves) ? raw.moves : []
-  // The server sends moves newest first.
-  const rows = moves.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const o = item as Record<string, unknown>
-    return [{
-      doing: str(o.query_intent) || actionWords(str(o.action)),
-      worker: str(o.worker_agent_id),
-      at: typeof o.created_at === 'string' ? o.created_at : null,
-      iteration: num(o.iteration),
-    }]
-  })
-  const hypotheses = Array.isArray(raw.hypotheses)
+/** The record rows a hunt projection carries, and a kernel investigation's carries in the same shapes. */
+function recordOf(raw: Record<string, unknown>): RunRecord {
+  const hypotheses: HypothesisRow[] = Array.isArray(raw.hypotheses)
     ? raw.hypotheses.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
         const o = item as Record<string, unknown>
@@ -421,7 +432,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
         }]
       })
     : []
-  const evidence = Array.isArray(raw.evidence)
+  const evidence: EvidenceRow[] = Array.isArray(raw.evidence)
     ? raw.evidence.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
         const o = item as Record<string, unknown>
@@ -445,12 +456,10 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
         }]
       })
     : []
-  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
-    kind: 'hunt',
-    run,
-    iteration: num(raw.iteration) ?? 0,
-    openCheckpoint: checkpointOf(raw.open_checkpoint),
+    hypotheses,
+    evidence,
+    evidenceCount: num(raw.evidence_count) ?? evidence.length,
     openQuestions: Array.isArray(raw.open_questions)
       ? raw.open_questions.flatMap((item) => {
           if (!item || typeof item !== 'object') return []
@@ -458,12 +467,38 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           return str(o.question) ? [{ question_id: str(o.question_id), question: str(o.question) }] : []
         })
       : [],
+  }
+}
+
+function heldOf(raw: unknown): HeldRow | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  return str(o.asked) && str(o.final) ? { field: str(o.field), asked: str(o.asked), final: str(o.final), reason: str(o.reason) } : null
+}
+
+function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
+  const moves = Array.isArray(raw.moves) ? raw.moves : []
+  // The server sends moves newest first.
+  const rows = moves.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{
+      doing: str(o.query_intent) || actionWords(str(o.action)),
+      worker: str(o.worker_agent_id),
+      at: typeof o.created_at === 'string' ? o.created_at : null,
+      iteration: num(o.iteration),
+    }]
+  })
+  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
+  return {
+    kind: 'hunt',
+    run,
+    iteration: num(raw.iteration) ?? 0,
+    openCheckpoint: checkpointOf(raw.open_checkpoint),
+    ...recordOf(raw),
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
     moves: rows,
-    hypotheses,
-    evidence,
-    evidenceCount: num(raw.evidence_count) ?? evidence.length,
     calls: callsOf(raw.calls),
     recall: recallOf(raw.recall),
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
@@ -502,6 +537,9 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     : []
   return {
     kind: 'lead',
+    // A legacy lead ledger keeps no record, so carries none of its fields.
+    record: Array.isArray(raw.hypotheses) ? recordOf(raw) : null,
+    held: heldOf(raw.held),
     run,
     iterations: num(raw.iterations) ?? 0,
     doing: rows[0]?.doing ?? '',
@@ -526,6 +564,17 @@ export function readFold(body: unknown): RunFold | null {
   if (hunt) return asHunt(hunt, run)
   if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>, run)
   return null
+}
+
+/** The record a run keeps, a hunt's or an investigation's; null for a run that tests no explanations. */
+export function foldRecord(fold: RunFold | null): RunRecord | null {
+  if (!fold) return null
+  return fold.kind === 'hunt' ? fold : fold.record
+}
+
+/** "Asked benign · held as needs review": the answer the guard would not let stand, in words. */
+export function heldLine(held: HeldRow): string {
+  return `Asked ${held.asked.replace(/_/g, ' ')} · held as ${held.final.replace(/_/g, ' ')}`
 }
 
 /** A run that is not going on and did not conclude: parked or paused (it can wake), or failed (it cannot). */
@@ -573,19 +622,21 @@ const ENDED_ORDER = ['proven', 'handed_off', 'standing', 'weakened', 'forming', 
 export function endedRun(fold: RunFold | null): EndedRun | null {
   if (!fold || ENDED.includes(fold.run.status)) return null
   if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return null
-  if (fold.kind === 'lead') return { line: plural(fold.findings.length, 'finding'), raw: fold.reason, question: null }
+  const record = foldRecord(fold)
+  if (!record) return { line: plural(fold.kind === 'lead' ? fold.findings.length : 0, 'finding'), raw: fold.reason, question: null }
   const tally = new Map<string, number>()
-  for (const row of fold.hypotheses) {
+  for (const row of record.hypotheses) {
     const word = explanationWord(row.status, row.supports, row.weakens)
     tally.set(word, (tally.get(word) ?? 0) + 1)
   }
   const rank = (word: string) => (ENDED_ORDER.indexOf(word) < 0 ? ENDED_ORDER.length : ENDED_ORDER.indexOf(word))
   const line = [...tally.keys()].sort((a, b) => rank(a) - rank(b)).map((word) => `${tally.get(word)} ${word.replace(/_/g, ' ')}`).join(' · ')
   const cited = BLOCKED_BY.exec(fold.reason)?.[1]
+  const held = fold.kind === 'lead' && fold.held ? heldLine(fold.held) : ''
   return {
-    line: line || 'No explanation was tested',
+    line: [held, line || 'No explanation was tested'].filter(Boolean).join(' · '),
     raw: fold.reason,
-    question: cited ? fold.openQuestions.find((q) => q.question_id === cited) ?? null : null,
+    question: cited ? record.openQuestions.find((q) => q.question_id === cited) ?? null : null,
   }
 }
 

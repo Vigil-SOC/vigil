@@ -217,6 +217,7 @@ done
 [ "$ALL_PROFILES" -eq 1 ] && EXTRA_SERVICES="$EXTRA_SERVICES pgadmin splunk kafka jaeger prometheus grafana otel-collector"
 
 # --- Prerequisites ---
+wsl_preflight
 ensure_docker || exit 1
 
 SKIP_FRONTEND=0
@@ -354,7 +355,7 @@ if [ "$DAEMON" -eq 0 ]; then
 
     # Open browser once frontend is ready
     if [ "$SKIP_FRONTEND" -eq 0 ]; then
-        (sleep 3 && open "http://localhost:6988/" 2>/dev/null || xdg-open "http://localhost:6988/" 2>/dev/null) &
+        (sleep 3 && open_url "http://localhost:6988/") &
     fi
 
     wait

@@ -92,6 +92,9 @@ _ENV_VAR_OVERRIDES: Mapping[str, Mapping[str, str]] = {
     # env fallback for server_url keeps that name so an env-only deployment with
     # nothing saved in Settings still constructs the client.
     "splunk": {"server_url": "SPLUNK_URL"},
+    # env.example, the Helm chart and mcp-config.json spell the VStrike
+    # endpoint VSTRIKE_BASE_URL, not the canonical VSTRIKE_URL.
+    "vstrike": {"url": "VSTRIKE_BASE_URL"},
 }
 
 

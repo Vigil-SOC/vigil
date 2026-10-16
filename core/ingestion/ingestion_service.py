@@ -28,20 +28,19 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+# LogLM mitre_classifier class order (10 classes). Source: DeepTempo/CyberRange
+# dataset/deeptempo_join/contract.py MITRE_TACTICS (class-index update 2026-08-02).
 MITRE_TACTIC_MAP = {
     0: "Impact",
-    1: "Execution",
-    2: "Reconnaissance",
-    3: "Credential Access",
+    1: "Credential Access",
+    2: "Execution",
+    3: "Reconnaissance",
     4: "Initial Access",
     5: "Persistence",
-    6: "Discovery",
-    7: "Command and Control",
-    8: "Lateral Movement",
-    9: "Defense Evasion",
-    10: "Collection",
-    11: "Privilege Escalation",
-    12: "Exfiltration",
+    6: "Command and Control",
+    7: "Discovery",
+    8: "Exfiltration",
+    9: "Lateral Movement",
 }
 
 # 64 bits. The old 8 chars gave 32, where a 200k-row file is near-certain to
