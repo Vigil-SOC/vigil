@@ -1,4 +1,6 @@
-"""A wrong current password is a 400, so the web client never refresh-and-retries it."""
+"""POST /api/auth/change-password: why a reused password is refused (#2181), and
+a wrong current password is a 400, so the web client never refresh-and-retries it (#2182).
+"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,55 +14,78 @@ from slowapi.errors import RateLimitExceeded
 from core.auth.auth_service import AuthService
 from core.routing import request_unit_of_work
 from services.api.middleware.auth import get_current_active_user
+from services.api.middleware.rate_limit import limiter
 from services.api.routers import auth
 
-OLD = "Old-Passw0rd!xyz"
-NEW = "Brand-New-Passw0rd!42"
+pytestmark = pytest.mark.unit
+
+CURRENT = "trombone-sunrise-ledger-88"
+OLD = "harbor-violet-compass-41"
+NEW = "glacier-thimble-orchard-73"
+
+
+@pytest.fixture(scope="module")
+def hashes():
+    # bcrypt is slow; hash once for the module.
+    return AuthService.hash_password(CURRENT), AuthService.hash_password(OLD)
 
 
 @pytest.fixture
-def ctx():
-    user = SimpleNamespace(
+def user(hashes):
+    return SimpleNamespace(
         user_id="u-1",
         username="analyst",
         email="a@example.com",
-        password_hash=AuthService.hash_password(OLD),
-        password_history=[],
+        password_hash=hashes[0],
+        password_history=[hashes[1]],
         password_changed_at=None,
     )
+
+
+@pytest.fixture
+def client(user):
     app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.include_router(auth.router, prefix="/api/auth")
     app.dependency_overrides[get_current_active_user] = lambda: user
     app.dependency_overrides[request_unit_of_work] = lambda: MagicMock()
-    app.state.limiter = auth.limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    auth.limiter.reset()  # every test starts with a full budget
+    limiter.reset()  # every test starts with a full budget
     with patch.object(auth, "revoke_all_for_user", new=AsyncMock()):
-        yield TestClient(app), user
+        yield TestClient(app)
 
 
-def _post(client, current):
+def _change(client, new, current=CURRENT):
     return client.post(
         "/api/auth/change-password",
-        json={"current_password": current, "new_password": NEW},
+        json={"current_password": current, "new_password": new},
     )
 
 
-def test_wrong_current_password_is_400_and_leaves_hash(ctx):
-    client, user = ctx
+@pytest.mark.parametrize("reused", [OLD, CURRENT])
+def test_reused_password_is_400_with_reason(client, user, reused):
     before = user.password_hash
-    r = _post(client, "not-it")
-    assert r.status_code == 400
-    assert r.json()["detail"] == "Current password is incorrect"
+    resp = _change(client, reused)
+    assert resp.status_code == 400
+    assert "last" in resp.json()["detail"] and "passwords" in resp.json()["detail"]
     assert user.password_hash == before
 
 
-def test_right_current_password_changes_it(ctx):
-    client, user = ctx
-    assert _post(client, OLD).status_code == 200
+def test_fresh_password_still_changes(client, user):
+    resp = _change(client, NEW)
+    assert resp.status_code == 200
     assert AuthService.verify_password(NEW, user.password_hash)
+    assert len(user.password_history) == 2
 
 
-def test_five_wrong_attempts_before_429(ctx):
-    client, _ = ctx
-    assert [_post(client, "nope").status_code for _ in range(6)] == [400] * 5 + [429]
+def test_wrong_current_password_is_400_and_leaves_hash(client, user):
+    before = user.password_hash
+    resp = _change(client, NEW, current="not-it")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Current password is incorrect"
+    assert user.password_hash == before
+
+
+def test_five_wrong_attempts_before_429(client):
+    codes = [_change(client, NEW, current="nope").status_code for _ in range(6)]
+    assert codes == [400] * 5 + [429]

@@ -38,7 +38,14 @@ NOT_A_BAND = {
 }
 
 
-def _orchestrator(data_service) -> Orchestrator:
+@pytest.fixture
+def load(monkeypatch):
+    fake = MagicMock(return_value=FINDING)
+    monkeypatch.setattr("services.daemon.orchestrator._load_finding", fake)
+    return fake
+
+
+def _orchestrator() -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
@@ -46,7 +53,6 @@ def _orchestrator(data_service) -> Orchestrator:
     orch.stats = {"dedup_prevented": 0}
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
-    orch._data_service = data_service
     return orch
 
 
@@ -65,13 +71,11 @@ def _launching_orchestrator(tmp_path) -> Orchestrator:
 
 @pytest.mark.asyncio
 async def test_opens_a_case_and_launches_under_it():
-    data_service = MagicMock()
-    orch = _orchestrator(data_service)
+    orch = _orchestrator()
 
     await orch._create_investigation_for_finding(FINDING, None)
 
     workflow_id = select_workflow(FINDING)
-    data_service.create_case.assert_not_called()
     kwargs = orch._create_investigation.await_args.kwargs
     spec = kwargs["mint_case"]
     assert spec.title == _infer_title(FINDING, workflow_id)[:200]
@@ -84,7 +88,7 @@ async def test_opens_a_case_and_launches_under_it():
 
 @pytest.mark.asyncio
 async def test_unrated_finding_launches_with_unknown_priority():
-    orch = _orchestrator(MagicMock())
+    orch = _orchestrator()
 
     await orch._create_investigation_for_finding(UNRATED, None)
 
@@ -95,7 +99,7 @@ async def test_unrated_finding_launches_with_unknown_priority():
 
 @pytest.mark.asyncio
 async def test_a_severity_name_the_ranker_would_call_unknown_launches_unknown():
-    orch = _orchestrator(MagicMock())
+    orch = _orchestrator()
 
     await orch._create_investigation_for_finding(NOT_A_BAND, None)
 
@@ -119,10 +123,8 @@ async def test_finding_run_without_a_case_raises():
 
 
 @pytest.mark.asyncio
-async def test_human_ask_with_case_id_joins_it():
-    data_service = MagicMock()
-    data_service.get_finding.return_value = FINDING
-    orch = _orchestrator(data_service)
+async def test_human_ask_with_case_id_joins_it(load):
+    orch = _orchestrator()
 
     await orch._create_manual_investigation(
         {
@@ -141,10 +143,8 @@ async def test_human_ask_with_case_id_joins_it():
 
 
 @pytest.mark.asyncio
-async def test_joining_a_case_passes_the_document():
-    data_service = MagicMock()
-    data_service.get_finding.return_value = FINDING
-    orch = _orchestrator(data_service)
+async def test_joining_a_case_passes_the_document(load):
+    orch = _orchestrator()
 
     await orch._create_manual_investigation(
         {
@@ -165,10 +165,8 @@ async def test_joining_a_case_passes_the_document():
 
 
 @pytest.mark.asyncio
-async def test_human_ask_with_findings_mints():
-    data_service = MagicMock()
-    data_service.get_finding.return_value = FINDING
-    orch = _orchestrator(data_service)
+async def test_human_ask_with_findings_mints(load):
+    orch = _orchestrator()
 
     await orch._create_manual_investigation(
         {
@@ -190,10 +188,8 @@ async def test_human_ask_with_findings_mints():
 
 
 @pytest.mark.asyncio
-async def test_finding_ask_with_a_document_passes_it_to_claim():
-    data_service = MagicMock()
-    data_service.get_finding.return_value = FINDING
-    orch = _orchestrator(data_service)
+async def test_finding_ask_with_a_document_passes_it_to_claim(load):
+    orch = _orchestrator()
 
     await orch._create_manual_investigation(
         {
@@ -212,7 +208,7 @@ async def test_finding_ask_with_a_document_passes_it_to_claim():
 
 @pytest.mark.asyncio
 async def test_human_ask_hypothesis_only_is_caseless():
-    orch = _orchestrator(MagicMock())
+    orch = _orchestrator()
 
     await orch._create_manual_investigation(
         {
@@ -231,7 +227,7 @@ async def test_human_ask_hypothesis_only_is_caseless():
 
 @pytest.mark.asyncio
 async def test_hypothesis_only_ask_keeps_the_document_on_the_payload():
-    orch = _orchestrator(MagicMock())
+    orch = _orchestrator()
 
     await orch._create_manual_investigation(
         {
@@ -251,7 +247,7 @@ async def test_hypothesis_only_ask_keeps_the_document_on_the_payload():
 
 @pytest.mark.asyncio
 async def test_schedule_row_is_caseless():
-    orch = _orchestrator(MagicMock())
+    orch = _orchestrator()
 
     await orch._process_intake_row(
         {

@@ -24,9 +24,9 @@ from core.memory.source_tier import SourceTier
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT = REPO_ROOT / "services" / "agent"
 TYPESCRIPT = AGENT / "contracts" / "memory.ts"
-ARCH = AGENT / "arch" / "threathunt.yaml"
-ENTITIES = AGENT / "workflows" / "hunt" / "entities.ts"
-HUNT_TYPES = AGENT / "workflows" / "hunt" / "types.ts"
+ARCH = AGENT / "plugins" / "hunt/plugin.yaml"
+ENTITIES = AGENT / "plugins" / "hunt" / "entities.ts"
+HUNT_TYPES = AGENT / "plugins" / "hunt" / "types.ts"
 SCREENS = REPO_ROOT / "clients" / "web" / "src" / "screens"
 CONSOLE = SCREENS / "workflows" / "WorkflowsScreen.tsx"
 
@@ -192,7 +192,7 @@ def test_every_granted_role_is_a_role_the_arch_declares():
     declared = frozenset(re.findall(r"^ {2,4}(\w+):$", ARCH.read_text(), re.M))
     missing = frozenset(py.RECALL_GRANTS) - declared
     assert not missing, (
-        "RECALL_GRANTS names roles threathunt.yaml does not declare, and a grant "
+        "RECALL_GRANTS names roles plugins/hunt/plugin.yaml does not declare, and a grant "
         "on a role that does not exist is dropped silently:\n  "
         + "\n  ".join(sorted(missing))
     )
@@ -200,7 +200,7 @@ def test_every_granted_role_is_a_role_the_arch_declares():
 
 def test_the_arch_asks_for_what_the_grants_declare():
     # Where the grant takes effect (#732). RECALL_GRANTS says which roles hold
-    # entity_recall; `needs` in threathunt.yaml is the only thing that makes it
+    # entity_recall; `needs` in plugins/hunt/plugin.yaml is the only thing that makes it
     # so, and bindCapabilities drops an unasked-for capability silently -- the
     # role runs without the tool and nothing says why.
     sections = re.split(r"^ {2,4}(\w+):$", ARCH.read_text(), flags=re.M)

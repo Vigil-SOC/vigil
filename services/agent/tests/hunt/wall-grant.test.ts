@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseGrant } from "../../workflows/hunt/inbox.js";
+import { parseGrant } from "../../plugins/hunt/inbox.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
 import { DEFAULT_PARK_MS } from "../../contracts/budget.js";
-import { DEFAULT_TERMINATION, terminationOf } from "../../workflows/hunt/config.js";
+import { DEFAULT_TERMINATION, terminationOf } from "../../plugins/hunt/config.js";
 
 // The wall clock is the arm that actually stops a hunt, and it was the one arm an
 // extension could not buy: a run stopped at 30 minutes with turns and dollars left

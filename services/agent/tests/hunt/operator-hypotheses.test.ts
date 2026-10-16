@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BASE_RATE_PROVENANCE, OPERATOR_HYPOTHESIS_PROVENANCE } from "../../workflows/hunt/controller.js";
-import { buildDigest } from "../../workflows/hunt/digest.js";
-import { terminationVerdict } from "../../workflows/hunt/termination.js";
-import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
+import { BASE_RATE_PROVENANCE, OPERATOR_HYPOTHESIS_PROVENANCE } from "../../plugins/hunt/opening.js";
+import { briefOf } from "../../plugins/hunt/hooks.js";
+import { terminationVerdict } from "../../plugins/hunt/termination.js";
+import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
 import { newLedger, type Started } from "../support/hunt.js";
 
 const board = (started: Started) => [...started.ledger.projection.hypotheses.values()];
@@ -52,14 +52,26 @@ describe("what the caller asked about is on the board", () => {
     const started = await newLedger({ hypotheses: ["one"], operatorHypotheses: [ASKED] });
 
     const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
-    expect(checkpoint!.question).toBe("Approve and start this hunt on 2 hypotheses");
+    expect(checkpoint!.question).toBe("Approve and start this hunt on 2 explanations");
   });
 
-  it("says hypothesis, singular, for one", async () => {
+  it("says explanation, singular, for one", async () => {
     const started = await newLedger({ hypotheses: ["one"] });
 
     const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
-    expect(checkpoint!.question).toBe("Approve and start this hunt on 1 hypothesis");
+    expect(checkpoint!.question).toBe("Approve and start this hunt on 1 explanation");
+  });
+
+  // What the case's Explanations tab will show: the benign explanation the null seeds is
+  // on the board, so it is counted and named, labelled as the claim to beat.
+  it("counts and names the benign explanation it will be tested against", async () => {
+    const started = await newLedger({ hypothesisLoop: true, hypotheses: [], operatorHypotheses: [ASKED] });
+
+    const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
+    expect(checkpoint!.question).toBe("Approve and start this hunt on 2 explanations");
+    const listed = checkpoint!.context!["hypotheses"] as { statement: string; provenance: string }[];
+    expect(listed.map((one) => one.provenance)).toEqual([OPERATOR_HYPOTHESIS_PROVENANCE, "base_rate"]);
+    expect(listed[0]!.statement).toBe(ASKED);
   });
 
   // A contender, not a base rate: the null must beat it like any other, so a hunt
@@ -87,11 +99,11 @@ describe("the run's own brief reaches the lead", () => {
   });
 
   // Journalled once on the run event rather than re-rendered per turn, and read
-  // from there by the digest -- so a replay shows what the lead was actually told.
-  it("reaches every digest the lead reads", async () => {
+  // from there by the hunt agent's brief -- so a replay shows what it was actually told.
+  it("reaches the brief the hunt agent is handed", async () => {
     const started = await newLedger({ prompt: BRIEF });
 
-    expect(buildDigest(started.ledger.projection, 1).narrative).toContain(BRIEF);
+    expect(briefOf(started.ledger.projection)).toContain(BRIEF);
   });
 
   it("leaves the narrative as the playbook wrote it when the run carried no brief", async () => {

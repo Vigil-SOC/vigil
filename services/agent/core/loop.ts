@@ -23,9 +23,25 @@ export interface Harness<Kinds extends Record<string, unknown> = Record<never, n
   budget: Budget;
   memory: Memory;
   state: State<Kinds>;
+  // Experimental (core/guards.ts): the guarded reader's model, when it is
+  // not the run's own. A reader only extracts and labels, so a cheaper one serves.
+  guards_provider?: Provider;
 }
 
 export interface TurnConfig {
+  // Asked once when the model stops calling tools with turns left: what the plugin
+  // says is still open, as the next call's tail, or null when nothing is.
+  unsettled?: () => Promise<string | null>;
+  // Experimental (core/guards.ts): estate results go to a guarded reader,
+  // and the model sees its findings; handles in arguments are filled at dispatch.
+  guards?: {
+    // The ref of this pass's nth result, numbered after the calls already on the
+    // ledger: a resumed run reusing r1 would point old handles at new values.
+    refAt(n: number): string;
+    read(tool: string, args: string, ref: string, result: ToolResult, wrapped: Wrapped): Promise<{ shown: string; read: unknown }>;
+    failed(tool: string, ref: string, wrapped: Wrapped): string;
+    resolve(rawArgs: string): string;
+  };
   run_id: string;
   run_kind: RunKind;
   role: string;
@@ -59,6 +75,15 @@ export interface TurnConfig {
   // and means a run that recalls nothing: which keys a run is about is the
   // workflow's answer, and a harness that guessed would query on prose.
   recall_keys?: readonly string[];
+  // Numbers each result so the model can cite it: the nth call is `${prefix}${offset + n}`.
+  // Absent leaves results unnumbered, as the workflows written before the kernel expect.
+  refs?: { prefix: string; offset: number };
+  // Asked once more when the model stops with turns left and fewer than min_results
+  // results: keep going or say it is done. The ask is the next frame's transient tail.
+  persist?: { min_results: number };
+  // Where this turn's spend is journaled when not on its own ledger: a child's model calls
+  // are its parent's spend, while its own ledger holds what it was shown and said.
+  spend_to?: { run_id: string; run_kind: RunKind };
   // Lets this turn run against a ledger that already holds a terminal. Only for a turn
   // that describes a run rather than continues one -- never one that can reach a tool.
   after_terminal?: boolean;
@@ -75,6 +100,10 @@ export interface Attempt {
   // Set by invoke. Absent when the attempt never ran: a refusal, a rejection,
   // or a result served from an earlier pass of the ledger.
   duration_ms?: number;
+  // Experimental guards (core/guards.ts): what the model was shown in place
+  // of wrapped.text, and the reader's findings it was rendered from.
+  shown?: string;
+  read?: unknown;
 }
 
 // tool and args are null when the run parked on a checkpoint the harness did not

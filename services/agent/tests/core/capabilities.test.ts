@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook } from "../../core/spec.js";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

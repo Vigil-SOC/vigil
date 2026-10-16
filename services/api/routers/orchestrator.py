@@ -52,7 +52,6 @@ def _get_orchestrator():
             max_total_hourly_cost=get_settings().orchestrator_max_hourly_cost
         )
         orch = Orchestrator(config)
-        orch._init_services()
         _cached_orchestrator = orch
         return orch
     except Exception as e:

@@ -2148,7 +2148,7 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: the latest run's ledger, then this case's audit rows.
+         * @description The case record: the latest run's ledger, audit rows and activities.
          *
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
@@ -4220,10 +4220,20 @@ export interface paths {
          * Get Servers Status
          * @description Session state for every catalog server.
          *
-         *     ``status`` is ``running`` only while that server's persistent session is
-         *     connected. With no MCP client, every server is disconnected: the catalog
-         *     has no session state of its own. Dormant reconnect stays on
-         *     ``GET /connections/status``.
+         *     ``status`` is one of:
+         *
+         *     * ``running`` while that server's persistent session is connected;
+         *     * ``not_set_up`` while the install lacks what the server serves from
+         *       (security-detections before its rules are fetched). The row names the
+         *       reason and ``setup_action``, the one action that fixes it;
+         *     * ``on_demand`` when nothing has dialled the server yet and it connects on
+         *       its first call: every server with eager connect off, and one held back
+         *       for setup until this process next uses it (the fetch may have run in
+         *       another worker). Not down;
+         *     * ``disconnected`` otherwise. With no MCP client every server is: the
+         *       catalog has no session state of its own.
+         *
+         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
@@ -9899,18 +9909,41 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** NeedsYouHypothesis */
+        NeedsYouHypothesis: {
+            /**
+             * Hypothesis Id
+             * @default
+             */
+            hypothesis_id: string;
+            /**
+             * Provenance
+             * @default
+             */
+            provenance: string;
+            /** Statement */
+            statement: string;
+        };
         /** NeedsYouItem */
         NeedsYouItem: {
             /** Case Id */
             case_id?: string | null;
+            /** Checkpoint Class */
+            checkpoint_class?: string | null;
+            /** Checkpoint Id */
+            checkpoint_id?: string | null;
             /** Created At */
             created_at: string;
+            /** Hypotheses */
+            hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /** Kind */
             kind: string;
             /** Reason */
             reason: string;
             /** Reversibility */
             reversibility: string;
+            /** Run Id */
+            run_id?: string | null;
             /** Source Id */
             source_id: string;
             /** Title */
@@ -17730,7 +17763,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;
@@ -22476,7 +22509,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { unboundCapabilities, type Roles, type ToolSpec } from "../../core/spec.js";
-import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { DEPLOYMENT_SOURCE } from "../../workflows/hunt/controller.js";
-import { buildReport } from "../../workflows/hunt/report.js";
-import { DEPLOYMENT_GAP_PROVENANCE, evidenceStrength, isGap, unmetPredicates } from "../../workflows/hunt/strength.js";
-import { newLedger, provable, reopen, type Started } from "../support/hunt.js";
+import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
+import { DEPLOYMENT_SOURCE } from "../../plugins/hunt/opening.js";
+import { huntProjection } from "../../plugins/hunt/projection.js";
+import { buildReport } from "../../plugins/hunt/report.js";
+import { DEPLOYMENT_GAP_PROVENANCE, evidenceStrength, isGap, unmetPredicates } from "../../plugins/hunt/strength.js";
+import { newLedger, provable, reopen, validate, type Started } from "../support/hunt.js";
 
 const SEARCH: ToolSpec = { id: "elastic_elastic_search_logs", kind: "remote", provides: "telemetry_search" };
 
@@ -15,10 +16,12 @@ describe("a capability nothing provides is a blind spot the hunt declares", () =
   it("seeds one gap per capability no tool in this deployment answers", async () => {
     const started = await newLedger({ needs: ["telemetry_search", "indicator_lookup"] });
 
+    // In words, never the capability's id (#2287): the row and the blind spot are read by people.
     expect(summaries(started)).toEqual([
-      "no tool in this deployment answers telemetry_search",
-      "no tool in this deployment answers indicator_lookup",
+      "No SIEM is connected, so the hunt could not search raw telemetry",
+      "No threat-intel source is connected, so the hunt could not look up indicators",
     ]);
+    for (const summary of summaries(started)) expect(summary).not.toMatch(/telemetry_search|indicator_lookup/);
     for (const record of gaps(started)) {
       expect(record.provenance).toBe(DEPLOYMENT_GAP_PROVENANCE);
       expect(record.source_system).toBe(DEPLOYMENT_SOURCE);
@@ -90,6 +93,31 @@ describe("what a declared gap does to a verdict", () => {
     expect(unmetPredicates(strength, DEFAULT_VERDICTS)).toContain("3 open visibility gap(s) bear on it");
   });
 
+  // Through the verdict itself, not only the strength it reads: the hunt agent's
+  // validate_hypothesis applies the same lock.
+  it("keeps a well-supported hypothesis at its earned status rather than proven when the deployment is that blind", async () => {
+    const started = await newLedger({
+      needs: ["telemetry_search", "indicator_lookup", "findings_search"],
+      checkpoints: { verdict_review: "auto" },
+    });
+    const [hypothesisId] = [...started.ledger.projection.hypotheses.keys()];
+    provable(started.ledger, hypothesisId!);
+
+    expect(validate(started.ledger, hypothesisId!, true).said).toContain("gap-locked");
+    const hypothesis = started.ledger.projection.hypotheses.get(hypothesisId!)!;
+    expect(hypothesis.status).toBe("active");
+    expect(hypothesis.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
+  });
+
+  it("still lets a verdict land when one capability is missing and the rest corroborate", async () => {
+    const started = await newLedger({ needs: ["telemetry_search"], checkpoints: { verdict_review: "auto" } });
+    const [hypothesisId] = [...started.ledger.projection.hypotheses.keys()];
+    provable(started.ledger, hypothesisId!);
+
+    validate(started.ledger, hypothesisId!, true);
+    expect(started.ledger.projection.hypotheses.get(hypothesisId!)!.status).toBe("proven");
+  });
+
   it("earns no corroboration credit of its own: a missing tool corroborates nothing", async () => {
     const started = await newLedger({ needs: ["telemetry_search"] });
     const [hypothesisId] = [...started.ledger.projection.hypotheses.keys()];
@@ -99,12 +127,12 @@ describe("what a declared gap does to a verdict", () => {
 });
 
 describe("the report says the hunt ran without it", () => {
-  it("reports each one as unattributed under visibility gaps, naming the capability", async () => {
+  it("reports each one as unattributed under visibility gaps, saying what is missing", async () => {
     const started = await newLedger({ needs: ["telemetry_search"] });
 
     const report = buildReport(started.ledger.projection);
     expect(report.gaps).toHaveLength(1);
-    expect(report.gaps[0]!.summary).toBe("no tool in this deployment answers telemetry_search");
+    expect(report.gaps[0]!.summary).toBe("No SIEM is connected, so the hunt could not search raw telemetry");
     expect(report.gaps[0]!.hypothesis_id).toBeNull();
   });
 });
@@ -128,5 +156,34 @@ describe("unboundCapabilities", () => {
     const roles: Roles = { workers: { a: role(["telemetry_search"]) } };
 
     expect(unboundCapabilities(roles, [{ id: "expand", kind: "local" }])).toEqual(["telemetry_search"]);
+  });
+});
+
+// A ledger written before the gap was worded still reads in words: the capability is on its payload.
+describe("an older ledger's deployment gap", () => {
+  it("reads in words on the evidence row a console is sent", async () => {
+    const started = await newLedger();
+    started.ledger.append({
+      kind: "evidence",
+      payload: {
+        evidence_id: "ev-old",
+        dispatch_id: null,
+        iteration: 0,
+        source_system: DEPLOYMENT_SOURCE,
+        summary: "no tool in this deployment answers telemetry_search",
+        payload: { capability: "telemetry_search", hypothesis_id: null },
+        salience: "notable",
+        why_notable: "the roles that need it run without it, so no query can close this",
+        provenance: DEPLOYMENT_GAP_PROVENANCE,
+        attacker_influenceable: false,
+        instruction_like: false,
+        entities: [],
+        captured_at: new Date().toISOString(),
+      },
+    });
+    await started.ledger.flush();
+
+    const [row] = huntProjection("run", await started.state.read(started.runId)).evidence;
+    expect(row).toMatchObject({ is_gap: true, summary: "No SIEM is connected, so the hunt could not search raw telemetry" });
   });
 });

@@ -19,7 +19,11 @@ from core.deps import (
 )
 from core.documents.condense import condense
 from core.documents.extract import MAX_DOCUMENT_CHARS, DocumentRefused, extract_upload
-from core.memory.source_tier import InvestigationKind, resolve_source_tier
+from core.memory.source_tier import (
+    InvestigationKind,
+    SourceTier,
+    resolve_source_tier,
+)
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -471,16 +475,68 @@ async def execute_workflow(
 # ---------------------------------------------------------------------------
 
 
-def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
-    """Label each hunt evidence row with its Source Tier, as configured now.
+# Weakest first: a row resting on several systems is graded by the least of them.
+_TIER_ORDER = (SourceTier.NOT_EVIDENCE, SourceTier.FEED, SourceTier.TELEMETRY)
 
-    A display label, not stored: a gap row names no source, so it gets none.
+
+def _finding_sources(finding_ids: List[str]) -> Dict[str, str]:
+    """The ``data_source`` of each finding asked for that has one.
+
+    Fail-open: a read that cannot be served names no system, and the row keeps
+    the domain it was recorded under.
     """
-    for item in (folded or {}).get("evidence") or []:
-        if isinstance(item, dict) and not item.get("is_gap"):
+    if not finding_ids:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from core.storage.models.finding import Finding
+        from core.storage.unit_of_work import unit_of_work
+
+        with unit_of_work() as session:
+            rows = session.execute(
+                select(Finding.finding_id, Finding.data_source).where(
+                    Finding.finding_id.in_(finding_ids)
+                )
+            ).all()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not read the sources of %d findings", len(finding_ids))
+        return {}
+    return {finding_id: source for finding_id, source in rows if source}
+
+
+def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
+    """Label each hunt evidence row with where it came from and its Source Tier.
+
+    ``origins`` is the system its rows came from (#2287): the ``data_source`` of
+    the alerts it cites, or the integration that answered when it cites none.
+    The tier is that system's; a row naming no system is graded by its domain.
+    Display labels, as configured now and not stored: a gap row names no
+    source, so it gets neither.
+    """
+    rows = [
+        item
+        for item in (folded or {}).get("evidence") or []
+        if isinstance(item, dict) and not item.get("is_gap")
+    ]
+    cited = [
+        [one for one in item.get("finding_ids") or [] if isinstance(one, str)]
+        for item in rows
+    ]
+    sources = _finding_sources(sorted({one for ids in cited for one in ids}))
+    for item, ids in zip(rows, cited):
+        origins = list(dict.fromkeys(sources[one] for one in ids if one in sources))
+        served = item.get("served_by")
+        if not origins and isinstance(served, str) and served:
+            origins = [served]
+        if not origins:
             item["source_tier"] = resolve_source_tier(
                 str(item.get("source_system") or ""), InvestigationKind.HUNT
             ).value
+            continue
+        item["origins"] = origins
+        tiers = [resolve_source_tier(one, InvestigationKind.CASE) for one in origins]
+        item["source_tier"] = min(tiers, key=_TIER_ORDER.index).value
 
 
 @router.get("/workflows/runs/{run_id}")

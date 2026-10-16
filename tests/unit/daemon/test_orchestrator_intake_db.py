@@ -385,3 +385,28 @@ def test_a_hunt_records_no_evidence_and_keeps_the_document_on_the_payload():
     assert dumped["payload"]["document"] == "the CISA advisory"
     with get_db_manager().session_scope() as session:
         assert session.query(CaseEvidence).count() == before
+
+
+def test_open_case_holding_finds_open_cases_and_skips_closed_ones():
+    """A finding already on a not-closed Case merges into it; a closed one does not count (#2245)."""
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Case
+    from services.daemon.orchestrator import CaseSpec, _mint_case, _open_case_holding
+
+    finding_id = "f-held-2245"
+    _finding(finding_id)
+    with get_db_manager().session_scope() as session:
+        _mint_case(
+            session,
+            CaseSpec(
+                title="t",
+                finding_ids=[finding_id],
+                priority="high",
+                case_id="case-2245-open",
+            ),
+        )
+    assert _open_case_holding(finding_id) == "case-2245-open"
+
+    with get_db_manager().session_scope() as session:
+        session.get(Case, "case-2245-open").status = "closed"
+    assert _open_case_holding(finding_id) is None

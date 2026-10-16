@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor, isHuntLike, registeredKinds } from "../../arch/registry.js";
+import { archFor, isHuntLike, registeredKinds } from "../../plugins/kinds.js";
 import { buildSpec, parseConfig, SpecError, type SpecPaths } from "../../core/spec.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -83,34 +83,28 @@ describe("the registry resolves a run kind to an arch", () => {
   });
 });
 
-describe("the shipped arches", () => {
-  it("loads threathunt.yaml unmodified, as a fan-out with a lead", () => {
+describe("the arch layer each plugin.yaml carries", () => {
+  it("reads the hunt's as a fan-out with a lead, a critic and three workers", () => {
     const spec = huntSpec();
-    expect(spec.arch).toBe("threathunt");
+    expect(spec.arch).toBe("hunt");
     expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
     expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
-    expect(spec.roles.critic).toBeDefined();
-    expect(spec.digest["evidence_window"]).toBe(25);
+    expect(spec.roles.lead?.tools).toEqual(["expand"]);
+    expect(spec.roles.critic?.prompt).toContain("disconfirmation critic");
+    expect(spec.roles.critic?.output_schema?.["required"]).toContain("benign_explanation_stands");
   });
 
-  // The hunt loop with an adjudicator's brief: same workers, critic and fan-out as
-  // threathunt.yaml, a lead that proposes a workflow and may not hand off to IR.
-  it("loads adjudicate.yaml as the hunt fan-out, minus HANDOFF_IR, plus proposed_workflow", () => {
+  // An adjudication is a hunt run as a second opinion: the same workers and critic.
+  it("reads the adjudicator's as the hunt's", () => {
     const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch }, archFor("adjudicate").actions);
     expect(spec.arch).toBe("adjudicate");
     expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
     expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
     expect(spec.roles.critic).toBeDefined();
-    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
-    expect(properties["action"]?.enum).not.toContain("HANDOFF_IR");
-    expect(properties["action"]?.enum).toContain("CONCLUDE");
-    expect(properties["proposed_workflow"]).toEqual({ type: ["string", "null"] });
-    expect(spec.roles.lead?.output_schema?.["required"]).not.toContain("proposed_workflow");
-    expect(spec.roles.lead?.prompt).toContain("You execute nothing");
   });
 
   // The other shape the indirection has to carry: one role, its tools, no fan-out.
-  it("loads rootcause.yaml as one investigator answering in prose", () => {
+  it("reads root cause's as one investigator answering in prose", () => {
     const spec = buildSpec(
       {
         arch: archFor("root_cause").arch,
@@ -140,7 +134,7 @@ describe("the shipped arches", () => {
     expect(spec.roles.lead?.needs).toEqual(["telemetry_search"]);
   });
 
-  it("loads investigate.yaml as a single lead with no workers and no critic", () => {
+  it("reads investigate's as a single lead with no workers and no critic", () => {
     const spec = buildSpec(CASE, archFor("investigate").actions);
     expect(spec.arch).toBe("investigate");
     expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });
@@ -151,23 +145,8 @@ describe("the shipped arches", () => {
     ]);
   });
 
-  it("generates the roster from the worker registry and narrows worker_agent_id to it", () => {
+  it("layers playbook directives onto the roles rather than replacing them", () => {
     const spec = huntSpec();
-    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
-    expect(spec.roles.lead?.prompt).toContain("- network_analyst — traffic shape");
-    expect(properties["worker_agent_id"]?.enum).toEqual(["threat_hunter", "network_analyst", "threat_intel", null]);
-  });
-
-  // A single-lead arch has no roster to generate and nothing to narrow it to.
-  it("leaves the lead schema alone when the arch declares no workers", () => {
-    const spec = buildSpec(CASE, archFor("investigate").actions);
-    expect(spec.roles.lead?.prompt).not.toContain("Workers you may dispatch");
-    expect(spec.roles.lead?.output_schema?.["properties"]).not.toHaveProperty("worker_agent_id");
-  });
-
-  it("layers playbook directives onto the arch prompts rather than replacing them", () => {
-    const spec = huntSpec();
-    expect(spec.roles.lead?.prompt).toContain("You are the Hunt Lead");
     expect(spec.roles.workers["threat_intel"]?.prompt).toContain("snapshotted on the first day");
     expect(spec.roles.workers["network_analyst"]?.prompt).toContain("seven-day export");
     expect(spec.name).toBe("beaconing on the finance segment");

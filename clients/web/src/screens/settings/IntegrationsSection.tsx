@@ -8,6 +8,7 @@ import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
+import { detectionRulesApi } from '../../services/api'
 import {
   EXPERIMENTAL_NOTE,
   EXPERIMENTAL_SERVERS,
@@ -37,6 +38,8 @@ const categoryRank = (name: string) => {
   return i < 0 ? MCP_CATEGORIES.length : i
 }
 const canConfigure = (r: ServerRow) => !!r.integration?.fields?.length
+/** security-detections' one setup action: fetch its rule repositories */
+const FETCH_RULES = 'fetch_detection_rules'
 
 export default function IntegrationsSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
@@ -95,6 +98,22 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     setBusy(null)
     if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
     else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
+  }
+
+  // a server waiting on setup: the fetch restarts it once its rules are on disk
+  const onFetchRules = async (name: string) => {
+    setBusy(name)
+    try {
+      const res = await detectionRulesApi.updateAll()
+      const results = ((res.data as { results?: { success?: boolean }[] })?.results ?? [])
+      const ok = results.filter((r) => r.success).length
+      notify(ok && ok === results.length ? 'ok' : 'err', `Fetched ${ok} of ${results.length} detection rule sources.`)
+    } catch (e) {
+      notify('err', `Could not fetch detection rules: ${(e as { message?: string })?.message || 'request failed'}.`)
+    } finally {
+      setBusy(null)
+      reloadMcp()
+    }
   }
 
   // master: one switch over both gates
@@ -256,7 +275,11 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                 <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
                 <td><RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} /></td>
                 <td>
-                  {canConfigure(r) && (
+                  {r.setupAction === FETCH_RULES ? (
+                    <button className="btn primary int-act" disabled={busy === r.name} onClick={() => void onFetchRules(r.name)}>
+                      {busy === r.name ? 'Fetching…' : 'Fetch rules'}
+                    </button>
+                  ) : canConfigure(r) && (
                     <button className={`btn int-act${r.level === 'poor' ? ' primary' : ''}`} onClick={() => setWizardFor(r.integration!)}>
                       {r.level === 'poor' ? 'Fix' : 'Configure'}
                     </button>

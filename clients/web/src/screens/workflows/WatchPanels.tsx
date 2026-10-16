@@ -125,7 +125,19 @@ function useRecorded(runId: string, decisionId: string | null): Recorded | undef
 
 interface Standing { hypothesis_id: string; statement: string; status: string; row?: HuntStanding }
 
-function HuntExplanations({ hunt, iteration, last, recorded }: { hunt: HuntView; iteration: number; last: boolean; recorded: Recorded | undefined }) {
+/** Whether a record was on the board as of a step. An earlier step is what the lead was shown before
+ *  it moved, so a record written during that step or later is not yet there; the record's own time says
+ *  which, since a kernel hunt stamps a turn's first record with the turn before. The newest step, and a
+ *  record with no time, go by iteration. */
+function asOf(iteration: number, at: string | null, last: boolean) {
+  const cut = !last && at ? Date.parse(at) : Number.NaN
+  return (record: { iteration: number; captured_at?: string }) => {
+    const when = record.captured_at ? Date.parse(record.captured_at) : Number.NaN
+    return Number.isFinite(cut) && Number.isFinite(when) ? when < cut : record.iteration <= iteration
+  }
+}
+
+function HuntExplanations({ hunt, iteration, at, last, recorded }: { hunt: HuntView; iteration: number; at: string | null; last: boolean; recorded: Recorded | undefined }) {
   const evidence = hunt.evidence ?? []
   const byId = new Map(hunt.hypotheses.map((h) => [h.hypothesis_id, h]))
   let standings: Standing[]
@@ -135,13 +147,13 @@ function HuntExplanations({ hunt, iteration, last, recorded }: { hunt: HuntView;
   else standings = recorded.hypotheses.map((h) => ({ ...h, row: byId.get(h.hypothesis_id) }))
   if (standings.length === 0) return <NoData>No explanations on the board yet.</NoData>
 
-  const tallies = bearings(evidence.filter((e) => e.iteration <= iteration))
+  const tallies = bearings(evidence.filter(asOf(iteration, at, last)))
   // the benign account is what the others are measured against, so it comes last
   const ordered = [...standings].sort((a, b) => Number(a.row?.provenance === 'base_rate') - Number(b.row?.provenance === 'base_rate'))
   // the evidence list is capped; the newest step reads the full totals the projection counted
   const partial = !last && evidence.length < hunt.evidence_count
   // shown beside each status, never folded into it: a blind spot is not evidence either way
-  const blind = huntSpots(hunt, iteration).length
+  const blind = huntSpots(hunt, iteration, at, last).length
   return (
     <>
       {ordered.map((h) => {
@@ -206,21 +218,25 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   const digest = recorded === undefined || recorded === 'failed' ? null : recorded.budget_remaining
   // the newest step reads what the run has spent; an earlier one, what the lead was shown it had left
   const spent = last ? hunt.cost_usd : grant && digest ? grant.max_cost_usd - digest.cost_usd : undefined
-  const used = last ? hunt.iteration : grant && digest ? grant.max_iterations - digest.iterations : undefined
+  // Steps are turns, as the player counts them: an earlier step is that turn; the newest is how far the
+  // run has got, or the step on screen when the run stopped mid-way through counting it.
+  const used = last ? Math.max(hunt.iteration, iteration) : iteration
   const unread = recorded === undefined ? '…' : 'Not recorded for this step.'
 
   const budget: LimitRow = spent !== undefined && grant
     ? { label: 'Budget', value: <><Cost usd={spent} /> of {fmtCost(grant.max_cost_usd)}</>, pct: share(spent, grant.max_cost_usd) }
     : spent !== undefined ? { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
     : digest ? { label: 'Budget', value: <><Cost usd={digest.cost_usd} /> left</> } : { label: 'Budget', value: unread }
-  const steps: LimitRow = used !== undefined && grant
+  const steps: LimitRow = grant
     ? { label: 'Steps', value: `${used} of ${grant.max_iterations}`, pct: share(used, grant.max_iterations) }
-    : used !== undefined ? { label: 'Steps', value: `${used} so far` }
-    : digest ? { label: 'Steps', value: `${digest.iterations} left` } : { label: 'Steps', value: unread }
+    : { label: 'Steps', value: `${used} so far` }
 
   const state = scopeState(hunt, iteration, last)
   const where = scopeText(hunt.scope)
-  const scope: LimitRow = { label: 'Scope', value: `${where ?? 'Not recorded'}${state === 'within scope' ? '' : ` (${state})`}`, ...SCOPE_BAR[state] }
+  // A scope nobody recorded has no extent to draw, so it gets words and no bar.
+  const scope: LimitRow = where === null && state === 'within scope'
+    ? { label: 'Scope', value: 'Not recorded' }
+    : { label: 'Scope', value: `${where ?? 'Not recorded'}${state === 'within scope' ? '' : ` (${state})`}`, ...SCOPE_BAR[state] }
   return [budget, steps, scope]
 }
 
@@ -269,10 +285,12 @@ function Reviewer({ hunt, iteration }: { hunt: HuntView; iteration: number }) {
   )
 }
 
-function huntSpots(hunt: HuntView, iteration: number) {
+function huntSpots(hunt: HuntView, iteration: number, at: string | null, last: boolean) {
   const found: HuntEvidence[] = hunt.evidence ?? []
   const detail = new Map(found.map((e) => [e.evidence_id, e.gap_detail]))
-  const gaps = (hunt.report?.gaps ?? found.filter((e) => e.is_gap).map(liveGap)).filter((g) => g.iteration <= iteration)
+  const captured = new Map(found.map((e) => [e.evidence_id, e.captured_at]))
+  const seen = asOf(iteration, at, last)
+  const gaps = (hunt.report?.gaps ?? found.filter((e) => e.is_gap).map(liveGap)).filter((g) => seen({ iteration: g.iteration, captured_at: captured.get(g.evidence_id) }))
   const lines = new Map<string, { main: string; sub: string[] }>()
   for (const g of gaps) {
     const sub = [g.query_intent ? g.summary : null, detail.get(g.evidence_id)].filter((s): s is string => !!s)
@@ -283,14 +301,14 @@ function huntSpots(hunt: HuntView, iteration: number) {
 }
 
 /** Both right-hand columns for a hunt at one step. `last` is the newest step, which reads the live projection. */
-export function HuntPanels({ runId, hunt, iteration, decisionId, last }: { runId: string; hunt: HuntView; iteration: number; decisionId: string; last: boolean }) {
+export function HuntPanels({ runId, hunt, iteration, at = null, decisionId, last }: { runId: string; hunt: HuntView; iteration: number; at?: string | null; decisionId: string; last: boolean }) {
   const recorded = useRecorded(runId, last ? null : decisionId)
   return (
     <Columns
-      explanations={<><HuntExplanations hunt={hunt} iteration={iteration} last={last} recorded={recorded} />{last && <OpenCheckpoint hunt={hunt} />}</>}
+      explanations={<><HuntExplanations hunt={hunt} iteration={iteration} at={at} last={last} recorded={recorded} />{last && <OpenCheckpoint hunt={hunt} />}</>}
       rows={huntRows(hunt, iteration, last, recorded)}
       reviewer={<Reviewer hunt={hunt} iteration={iteration} />}
-      blind={<Spots lines={huntSpots(hunt, iteration)} empty="None so far." />}
+      blind={<Spots lines={huntSpots(hunt, iteration, at, last)} empty="None so far." />}
     />
   )
 }
