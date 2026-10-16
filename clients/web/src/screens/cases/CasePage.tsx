@@ -57,7 +57,7 @@ import {
   type StoppedRun,
 } from './caseFold'
 import './cases.css'
-import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
+import { CLOSURE_CATEGORIES, primaryRun, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -74,7 +74,6 @@ const EXPL_TONE: Record<string, string> = {
   'ruled out': 'muted',
 }
 
-const HUNT_WORKFLOW = 'threat-hunt'
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
 
 function Mark({ text }: { text: string }) {
@@ -878,10 +877,10 @@ export function CasePage({
     onSeedConsumed?.()
   }, [seed, id, onSeedConsumed])
 
-  const latest = investigations[0] ?? null
-  // A hunt's handoff queues a root-cause run onto the same case; the hunt's own
-  // explanations, evidence and checked data stay read from the hunt run.
-  const runId = (investigations.find((item) => item.workflow_id === HUNT_WORKFLOW) ?? latest)?.run_id ?? null
+  // The run the page reads, header and record included: a hunt's handoff queues a
+  // root-cause run onto the same case, and that follow-up is not the case's run.
+  const latest = primaryRun(investigations)
+  const runId = latest?.run_id ?? null
   const rootCauseRunId = investigations.find((item) => item.workflow_id === ROOT_CAUSE_WORKFLOW)?.run_id ?? null
   const live = investigations.filter((item) => item.live)
   // The list maps every status other than open/investigating to closed, so a

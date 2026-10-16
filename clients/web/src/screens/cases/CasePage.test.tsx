@@ -298,7 +298,7 @@ describe('case page', () => {
   it('keeps reading the hunt run once a newer root-cause run is on the case, and links to it', async () => {
     huntCase('case-handoff')
     const run = (workflow_id: string, run_id: string) => ({ ...investigation('completed', false, run_id), workflow_id })
-    testState.cases[0].investigations = [run('root-cause-analysis', 'run-rca'), run('threat-hunt', 'run-hunt')]
+    testState.cases[0].investigations = [{ ...run('root-cause-analysis', 'run-rca'), spawned_by: 'run-hunt' }, run('threat-hunt', 'run-hunt')]
     testState.runs['run-hunt'] = {
       hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
     }
