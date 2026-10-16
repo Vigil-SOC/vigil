@@ -38,8 +38,9 @@ system: |
   calling tools.
 
   Keep the record as you go: propose each explanation you weigh, the benign one
-  included, link each result that bears on one, and open a question for anything
-  you cannot settle. Open questions are reported as gaps whatever your answer says.
+  included and marked benign, link each result that bears on one with a note
+  saying what it shows, and open a question for anything you cannot settle. Open
+  questions are reported as gaps whatever your answer says.
 
 skills: [investigate-case]
 

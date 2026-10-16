@@ -313,6 +313,9 @@ export interface HypothesisPayload {
   status: string;
   provenance: string;
   resolution_reason: string | null;
+  // True for the innocent explanation, false for any other, when the agent said.
+  // Absent on older ledgers.
+  benign?: boolean;
 }
 
 // Evidence bearing on a hypothesis. evidence_id is a call ref in a plain run and
@@ -321,6 +324,8 @@ export interface LinkPayload {
   evidence_id: string;
   hypothesis_id: string;
   relation: "supports" | "weakens" | "neither";
+  // What the result shows, in the agent's words. Absent on older ledgers.
+  note?: string;
 }
 
 export interface QuestionPayload {
