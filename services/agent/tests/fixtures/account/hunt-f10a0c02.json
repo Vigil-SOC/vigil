@@ -22,7 +22,7 @@
       "standing": "proven",
       "reason": "survived the argue-the-null pass on 4 corroborating source system(s)",
       "techniques": ["T1046"],
-      "subjects": ["host:FYODOR-L", "ip:192.168.70.186"]
+      "subjects": ["host:fyodor-l", "ip:192.168.70.186"]
     },
     {
       "id": "h-6c858dc9",
@@ -53,7 +53,7 @@
         { "on": "h-c27d2fe9", "stance": "supports" },
         { "on": "h-6c858dc9", "stance": "weakens" }
       ],
-      "entities": ["host:FYODOR-L", "ip:192.168.70.186", "ip:45.77.53.176"]
+      "entities": ["host:fyodor-l", "ip:192.168.70.186", "ip:45.77.53.176"]
     },
     {
       "id": "ev-90942e7ff164",
@@ -92,10 +92,10 @@
     }
   ],
   "entities": [
-    { "key": "host:FYODOR-L", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12" },
-    { "key": "user:AzureAD\\FyodorMalteskesko", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12" },
+    { "key": "host:fyodor-l", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12" },
+    { "key": "user:azuread\\fyodormalteskesko", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12" },
     { "key": "ip:45.77.53.176", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12", "indicator": true },
-    { "key": "file:C:\\Windows\\Temp\\hdoor.exe", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12", "indicator": true }
+    { "key": "process:c:\\windows\\temp\\hdoor.exe", "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12", "indicator": true }
   ],
   "next_steps": [
     { "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12", "text": "Isolate FYODOR-L (192.168.70.186) and kill powershell.exe — Sysmon attributes 3,849 beacon connections to 45.77.53.176 to that process over 10:01–11:59 UTC." },

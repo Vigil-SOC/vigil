@@ -235,12 +235,13 @@ export interface Account {
 }
 
 // Closed, so a typo cannot invent a type and every loop's entities land in one
-// namespace. The hunt's types plus file, for a path or a file name a loop names on
-// its own, as root cause does.
-export const ENTITY_TYPES = ["ip", "domain", "host", "url", "email", "hash", "arn", "aws_key", "user", "process", "file"] as const;
+// namespace. Owned here: what the extractor emits, what a hunt's subject may name and
+// what a recall key may hold are this list, and Python's copy is ratcheted to it.
+export const ENTITY_TYPES = ["ip", "domain", "host", "url", "email", "hash", "arn", "aws_key", "user", "process"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
-// type:value, the form a hunt already writes an entity in: host:ACCT-WS-007.
+// type:value, the form a hunt already writes an entity in, normalized the extractor's
+// way: host:acct-ws-007.
 export type EntityKey = `${EntityType}:${string}`;
 
 export interface EntityItem {

@@ -86,7 +86,7 @@
     }
   ],
   "entities": [
-    { "key": "host:ACCT-WS-007", "run_id": "01c1d889-5e0f-4686-860b-4813c0c41840" },
+    { "key": "host:acct-ws-007", "run_id": "01c1d889-5e0f-4686-860b-4813c0c41840" },
     { "key": "ip:203.0.113.66", "run_id": "01c1d889-5e0f-4686-860b-4813c0c41840", "indicator": true },
     { "key": "domain:nvoicehub-support.com", "run_id": "01c1d889-5e0f-4686-860b-4813c0c41840", "indicator": true }
   ],

@@ -61,7 +61,6 @@ ENTITY_TYPES = (
     "aws_key",
     "user",
     "process",
-    "file",
 )
 EntityKey = Annotated[str, StringConstraints(pattern=rf"^({'|'.join(ENTITY_TYPES)}):")]
 
