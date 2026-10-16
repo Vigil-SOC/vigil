@@ -110,9 +110,12 @@ _ASKED = {
     "validate_hypothesis": "Put up for a verdict",
     "conclude_hunt": "Asked to conclude the hunt",
     "expand": "Opened evidence in full",
+    "record": "Recorded a causal step",
+    "finish": "Asked to finish the trace",
 }
 
 _SUBJECT_KEYS = (
+    "spl_query",
     "query",
     "values",
     "entity_keys",
@@ -207,6 +210,48 @@ def _quoted(text: str, limit: int = 120) -> str:
     return f"“{flat if len(flat) <= limit else flat[: limit - 3] + '...'}”"
 
 
+# "N row(s) from <source>" opens every rendered tool result.
+_ROWS = re.compile(r"^(?:<vigil:tool_result[^>]*>\s*)?(\d+) rows?\b")
+_BODY = re.compile(r"^<vigil:tool_result[^>]*>\n?(.*?)\n?</vigil:tool_result>$", re.S)
+
+
+def _rows_in(result: str) -> Optional[int]:
+    """Rows a call got back. A tool that wraps its answer ({success, query,
+    results: [...]}, as the Splunk tools do) says one row, the wrapper."""
+    said = _ROWS.match(result)
+    if not said:
+        return None
+    count = int(said.group(1))
+    if count != 1:
+        return count
+    found = _BODY.match(result)
+    body = found.group(1) if found else result
+    try:
+        parsed = json.loads(body.split("\n", 1)[1])
+    except (IndexError, ValueError):
+        return count
+    only = parsed[0] if isinstance(parsed, list) and len(parsed) == 1 else None
+    if isinstance(only, Mapping) and isinstance(only.get("results"), list):
+        return len(only["results"])
+    return count
+
+
+def _verb(tool: str) -> str:
+    if tool in _ASKED:
+        return _ASKED[tool]
+    # An MCP tool is "<server>_<tool>": a Splunk search reads as one by any server name.
+    if "splunk" in tool and ("execute" in tool or "search" in tool):
+        return "Searched Splunk"
+    return tool.replace("_", " ").replace("-", " ").capitalize()
+
+
+def _failure(value: Any) -> str:
+    """A refused or failed call's reason: ``{kind, detail}`` or the text as written."""
+    if isinstance(value, Mapping):
+        return _short(_join(value.get("kind"), value.get("detail")))
+    return _short(value or "")
+
+
 def _call_text(body: Mapping[str, Any], context: RecordContext) -> Optional[str]:
     tool = str(body.get("tool") or "")
     ok = body.get("ok") is not False
@@ -224,10 +269,13 @@ def _call_text(body: Mapping[str, Any], context: RecordContext) -> Optional[str]
             (found for key in _SUBJECT_KEYS if (found := _strings(args.get(key)))),
             [],
         )
-    verb = _ASKED.get(tool) or tool.replace("_", " ").replace("-", " ").capitalize()
+    verb = _verb(tool)
     text = f"{verb}: {_listed(subject)}" if subject else verb
     if not ok:
-        return _join(f"Refused — {text}", _short(body.get("failure") or ""))
+        return _join(f"Refused — {text}", _failure(body.get("failure")))
+    count = _rows_in(str(body.get("result") or ""))
+    if count is not None and subject:
+        return f"{text} → {count:,} {'row' if count == 1 else 'rows'}"
     return text
 
 
@@ -286,6 +334,9 @@ def event_text(
     if kind == "finding":
         return _join(body.get("agent_id"), _short(body.get("answer"))) or kind
     if kind == "dispatch":
+        # A dispatch naming only who ran it repeats the call row beside it.
+        if not body.get("query_intent") and not body.get("failure_reason"):
+            return None
         return (
             _join(
                 body.get("query_intent") or body.get("agent_id"),
@@ -349,7 +400,32 @@ def event_text(
         return _join("Handed to incident response", body.get("title")) or kind
     if kind == "conclusion":
         value = body.get("value") if isinstance(body.get("value"), Mapping) else {}
-        return _join("Concluded", _short(value.get("summary"))) or kind
+        return _join("Concluded", _short(value.get("summary") or value.get("text")))
+    if kind == "step":
+        status = body.get("link_status") if body.get("cause_id") else None
+        origin = (
+            "origin, " + str(body.get("origin_status")) if body.get("origin") else None
+        )
+        tie = (
+            f"caused by {body.get('cause_id')} via {body.get('link')} ({status})"
+            if body.get("cause_id")
+            else None
+        )
+        return _join(
+            f"Step {body.get('step_id') or ''}".strip(),
+            _short(body.get("event")),
+            body.get("who"),
+            tie,
+            origin,
+        )
+    if kind == "notice":
+        return _join("Notice", _short(body.get("text"))) or kind
+    if kind == "phase":
+        answer = body.get("answer") if isinstance(body.get("answer"), Mapping) else {}
+        return _join(
+            f"Phase {body.get('name') or body.get('phase_id') or ''} by {body.get('agent') or 'an agent'}",
+            _short(answer.get("summary")),
+        )
     if kind == "review":
         return (
             _join("Reviewed", body.get("stance"), _short(body.get("reasons"))) or kind

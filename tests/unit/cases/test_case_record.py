@@ -1,5 +1,6 @@
 """Record is one merged read, newest first, with audit rows unchained."""
 
+import json
 from datetime import datetime, timezone
 
 from core.cases.case_record import merge_record
@@ -269,3 +270,86 @@ def test_a_report_activity_reads_as_plain_words_not_markdown():
         row["text"]
         == "Hunt report — threat-hunt Outcome: completed Iterations: 40 of 48"
     )
+
+
+def _rows(*rows):
+    return [
+        {
+            "seq": seq,
+            "ts": f"2026-10-14T17:00:{seq:02d}Z",
+            "kind": kind,
+            "payload": payload,
+        }
+        for seq, (kind, payload) in enumerate(rows)
+    ]
+
+
+def test_a_search_reads_as_its_query_and_how_many_rows_came_back():
+    rows = _rows(
+        (
+            "call",
+            {
+                "tool": "splunk-mcp_splunk_execute",
+                "arguments": '{"spl_query": "index=botsv3 sourcetype=stream:tcp | stats count by dest_ip"}',
+                "ok": True,
+                "result": '<vigil:tool_result tool="splunk_execute" ref="r6">\n1 row(s) from splunk\n[]\n</vigil:tool_result>',
+                "turn": 1,
+            },
+        ),
+        (
+            "call",
+            {
+                "tool": "splunk-mcp_splunk_execute",
+                "arguments": '{"spl_query": "index=botsv3 | head 1"}',
+                "ok": False,
+                "failure": {"kind": "timeout", "detail": "no answer in 30s"},
+                "turn": 1,
+            },
+        ),
+        (
+            "call",
+            {
+                "tool": "splunk-mcp_splunk_execute",
+                "arguments": '{"spl_query": "index=botsv3 | stats count by host"}',
+                "ok": True,
+                "result": '<vigil:tool_result tool="splunk_execute" ref="r7">\n1 row(s) from splunk\n'
+                + json.dumps([{"success": True, "results": [{"host": "a"}, {"host": "b"}, {"host": "c"}]}])
+                + "\n</vigil:tool_result>",
+                "turn": 2,
+            },
+        ),
+        ("dispatch", {"agent_id": "agent"}),
+    )
+    texts = [row["text"] for row in reversed(merge_record(rows, []))]
+    assert texts == [
+        "Searched Splunk: index=botsv3 sourcetype=stream:tcp | stats count by dest_ip → 1 row",
+        "Refused — Searched Splunk: index=botsv3 | head 1 — timeout — no answer in 30s",
+        # The wrapper Splunk answers in is one row; its results are what came back.
+        "Searched Splunk: index=botsv3 | stats count by host → 3 rows",
+    ]
+
+
+def test_root_cause_and_phase_rows_read_as_words_not_their_kind():
+    rows = _rows(
+        (
+            "step",
+            {
+                "step_id": "s2",
+                "event": "powershell.exe started iexeplorer.exe",
+                "who": "FYODOR-L\\fyodor",
+                "cause_id": "s1",
+                "link": "parent_process_id",
+                "link_status": "proven",
+            },
+        ),
+        ("notice", {"text": "No process telemetry before 10:00"}),
+        ("phase", {"name": "triage", "agent": "triage-agent", "answer": {"summary": "Two hosts beacon"}}),
+        ("conclusion", {"value": {"text": "The chain starts at a phishing attachment"}}),
+    )
+    texts = [row["text"] for row in reversed(merge_record(rows, []))]
+    assert texts == [
+        "Step s2 — powershell.exe started iexeplorer.exe — FYODOR-L\\fyodor — caused by s1 via parent_process_id (proven)",
+        "Notice — No process telemetry before 10:00",
+        "Phase triage by triage-agent — Two hosts beacon",
+        "Concluded — The chain starts at a phishing attachment",
+    ]
