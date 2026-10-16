@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import type { CaseAccount } from "../contracts/account.js";
 import type { AgentEvent, RunKind } from "../contracts/events.js";
 import type { Notes } from "../core/memory.js";
 import type { State } from "../core/seams.js";
@@ -10,6 +11,7 @@ import { huntProjection, type ProjectionOptions } from "./hunt/projection.js";
 import { huntNotes } from "./hunt/recall.js";
 import { leadProjection } from "./investigate/legacy/projection.js";
 import { isAgentRun } from "../core/agent.js";
+import { investigateAccount } from "./investigate/account.js";
 import { investigateView } from "./investigate/view.js";
 import { huntView } from "./hunt/view.js";
 import type { LeadKinds } from "./investigate/legacy/vocabulary.js";
@@ -38,6 +40,9 @@ export interface ArchEntry {
   // itself says why it is not the projection. Absent means a run of this kind is
   // not distilled, which is the honest default rather than empty rows.
   distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
+  // What a run of this kind concluded, in the shape the case page reads. Absent, or
+  // null for a ledger it cannot read, means the run has no account to show.
+  account?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => CaseAccount | null;
   // The plugin the worker runs this kind as, on the kernel (core/agent.ts). Absent
   // for the kinds whose plugin runs through their own wrapper.
   plugin?: string;
@@ -94,6 +99,8 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     // Either engine answers in the lead's shape, so the console needs no second view.
     projection: (runId, events) =>
       isAgentRun(events) ? investigateView(runId, events) : leadProjection(runId, events as readonly AgentEvent<LeadKinds>[]),
+    // The lead loop kept no record to read an account from.
+    account: (runId, events) => (isAgentRun(events) ? investigateAccount(runId, events) : null),
   },
   // No actions: nothing emits one. A step ends when its agent answers, and the run
   // ends when the list does, so there is no verb for a model to choose or to halt on.
