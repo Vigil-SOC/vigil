@@ -50,9 +50,10 @@ ChainStatus = Literal["confirmed", "suspected", "unproven", "rejected"]
 AccountRole = Literal["attacker", "victim", "legitimate"]
 GapKind = Literal["visibility", "open_question", "disputed"]
 
-# The entity types a key may name, as the harness's extractor mints them
-# (ENTITY_TYPES in services/agent/plugins/hunt/types.ts). Owned here, below
-# memory, which takes its ENTITY_KEY_TYPES from this tuple.
+# The entity types a key may name: ENTITY_TYPES in
+# services/agent/contracts/account.ts, which the hunt extractor's list in
+# plugins/hunt/types.ts matches (a ratchet compares each with this tuple).
+# Owned here, below memory, which takes its ENTITY_KEY_TYPES from this tuple.
 ENTITY_TYPES: tuple[str, ...] = (
     "ip",
     "domain",
