@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../plugins/kinds.js";
 import { defineTool, type RegisteredTool } from "../../contracts/tool.js";
-import type { ResolutionPayload, ReviewPayload, CallPayload } from "../../contracts/events.js";
+import type { CallPayload, ConclusionPayload, ResolutionPayload, ReviewPayload } from "../../contracts/events.js";
 import type { PluginManifest } from "../../contracts/plugin.js";
 import { historyOf, isAgentRun, pluginGrants, runAgent, skillTool, type AgentKinds, type AgentOptions } from "../../core/agent.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
@@ -64,6 +64,7 @@ function concluded(disposition: string, citations: string[]): ScriptedTurn {
       citations,
       gaps: [],
       next_steps: ["reach the owning team"],
+      timeline: [{ at: "2026-06-15T09:14:00Z", stage: "CREDENTIAL ACCESS", what: "fourteen lockouts on svc-backup from one host", citations }],
     },
   };
 }
@@ -102,6 +103,9 @@ describe("the kernel runs a plugin to a conclusion", () => {
     // A disposition nobody guards is not reviewed.
     expect((events.find((one) => one.kind === "review")?.payload as ReviewPayload).stance).toBe("skipped");
     expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", summary: "the lockouts are malicious" });
+    // The order of events is its own field, not numbered prose in the summary.
+    const value = (events.find((one) => one.kind === "conclusion")?.payload as ConclusionPayload).value;
+    expect(value.timeline).toEqual([{ at: "2026-06-15T09:14:00Z", stage: "CREDENTIAL ACCESS", what: "fourteen lockouts on svc-backup from one host", citations: ["r2"] }]);
     // The engine is stamped on the journaled spec, so a resume and every reader know it.
     expect(isAgentRun(events)).toBe(true);
   });
@@ -326,6 +330,10 @@ describe("plugins load from their directory", () => {
     const plugin = quiet(pluginFor("investigate"));
     expect(plugin.skills.map((one) => one.name)).toEqual(["investigate-case"]);
     expect(plugin.guard).toMatchObject({ field: "disposition", fallback: "needs_review" });
+    // The answer carries its timeline as entries a reader can lay out, required so every run has one.
+    const schema = (plugin.conclusion as unknown as { schema: { required: string[]; properties: Record<string, { items?: { required?: string[] } }> } }).schema;
+    expect(schema.required).toContain("timeline");
+    expect(schema.properties["timeline"]?.items?.required).toEqual(["what"]);
     expect(pluginGrants(plugin, specOf().tools)["agent"]).toEqual(
       expect.arrayContaining(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators", "load_skill"]),
     );
