@@ -316,24 +316,27 @@ async def get_connections_status(mcp_client=Depends(provide_mcp_client)):
 def _spawn_changed(old, new) -> bool:
     """Whether ``new`` would start differently from ``old``.
 
-    A runner launches from its own catalog with only the env this process
-    sends (``runner_env``), so there only declared env and credentials count.
+    Env counts only as mcp-config.json declares it (substituted), plus the
+    credentials it names: the rest is this process's own environment. A runner
+    launches from its own catalog with only that env (``runner_env``), so there
+    command, args and cwd do not count.
     """
     from core.integrations.mcp.runner import runner_url
 
-    if runner_url(new.name) is None:
-        return (old.command, old.args, old.cwd, old.env) != (
-            new.command,
-            new.args,
-            new.cwd,
-            new.env,
+    def spawn(server):
+        env = server.env or {}
+        declared = {k: env.get(k) for k in server.declared_env}
+        if runner_url(server.name) is not None:
+            return declared, server.required_env_vars
+        return (
+            declared,
+            server.required_env_vars,
+            server.command,
+            server.args,
+            server.cwd,
         )
 
-    def declared(server):
-        env = server.env or {}
-        return {k: env.get(k) for k in server.declared_env}, server.required_env_vars
-
-    return declared(old) != declared(new)
+    return spawn(old) != spawn(new)
 
 
 @router.post("/servers/reload")
@@ -351,9 +354,9 @@ async def reload_servers(
     * removed from the file, or now disabled: disconnected (stopped in the
       runner too) and its tools withdrawn from agents;
     * changed spawn config: reconnected on the new config. A stdio child
-      compares command, args, cwd and env; a server in the MCP runner compares
-      only its declared env and credentials, because the runner launches from
-      its own catalog and ignores command, args and cwd;
+      compares command, args, cwd and declared env; a server in the MCP runner
+      compares only its declared env and credentials, because the runner
+      launches from its own catalog and ignores command, args and cwd;
     * unchanged: left alone.
 
     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report

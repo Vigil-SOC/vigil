@@ -310,9 +310,7 @@ class MCPService:
             with open(mcp_config_path, "r") as f:
                 mcp_config = json.load(f)
 
-            for server_name, server_config in mcp_config.get(
-                "mcpServers", {}
-            ).items():
+            for server_name, server_config in mcp_config.get("mcpServers", {}).items():
                 # Skip comment keys
                 if server_name.startswith("_comment"):
                     continue
@@ -365,9 +363,7 @@ class MCPService:
                 # substitution collapses missing vars to empty strings
                 # — used by mcp_client to short-circuit connect when
                 # required credentials aren't set.
-                required_env_vars = extract_required_env_vars(
-                    raw_env_strs, raw_args
-                )
+                required_env_vars = extract_required_env_vars(raw_env_strs, raw_args)
 
                 # Launch the image's baked copy of a pinned npx/uvx entry
                 # instead of downloading it; anything not baked is as declared.
@@ -385,9 +381,7 @@ class MCPService:
                     }
                 )
 
-            logger.info(
-                f"Loaded {len(server_configs)} servers from mcp-config.json"
-            )
+            logger.info(f"Loaded {len(server_configs)} servers from mcp-config.json")
         else:
             logger.warning("mcp-config.json not found")
 
