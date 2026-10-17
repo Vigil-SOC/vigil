@@ -8,16 +8,23 @@ Enables continuous improvement of AI agents through human oversight.
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
 from core.storage.schemas import AIDecisionLogSchema
 from core.storage.service import DatabaseService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Grading a decision is deciding on it, so it takes the approvals right: the
+# console gates the AI Decisions screen on the same permission.
+_DECIDE = [permission_gate("ai_decisions.approve")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/ai",
@@ -51,7 +58,10 @@ class CreateAIDecisionRequest(BaseModel):
 class SubmitFeedbackRequest(BaseModel):
     """Request model for submitting feedback on an AI decision."""
 
-    human_reviewer: str = Field(..., description="Name/ID of reviewer")
+    human_reviewer: Optional[str] = Field(
+        default=None,
+        description="Ignored: the signed-in user is recorded as the reviewer.",
+    )
     human_decision: str = Field(
         ..., description="Human's decision: 'agree', 'disagree', or 'partial'"
     )
@@ -147,8 +157,16 @@ async def create_ai_decision(request: CreateAIDecisionRequest):
     return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
 
 
-@router.post("/decisions/{decision_id}/feedback", response_model=AIDecisionResponse)
-async def submit_feedback(decision_id: str, request: SubmitFeedbackRequest):
+@router.post(
+    "/decisions/{decision_id}/feedback",
+    dependencies=_DECIDE,
+    response_model=AIDecisionResponse,
+)
+async def submit_feedback(
+    decision_id: str,
+    request: SubmitFeedbackRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Submit human feedback on an AI decision.
 
@@ -157,9 +175,10 @@ async def submit_feedback(decision_id: str, request: SubmitFeedbackRequest):
     """
     db_service = DatabaseService()
 
+    # The body field is kept for the frozen contract; the record names the session user.
     decision = db_service.submit_ai_decision_feedback(
         decision_id=decision_id,
-        human_reviewer=request.human_reviewer,
+        human_reviewer=current_user.username,
         human_decision=request.human_decision,
         feedback_comment=request.feedback_comment,
         accuracy_grade=request.accuracy_grade,

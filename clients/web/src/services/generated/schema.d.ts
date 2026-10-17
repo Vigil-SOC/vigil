@@ -10834,9 +10834,9 @@ export interface components {
             human_decision: string;
             /**
              * Human Reviewer
-             * @description Name/ID of reviewer
+             * @description Ignored: the signed-in user is recorded as the reviewer.
              */
-            human_reviewer: string;
+            human_reviewer?: string | null;
             /**
              * Reasoning Grade
              * @description Reasoning quality grade (0-1)
