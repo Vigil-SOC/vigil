@@ -1,6 +1,7 @@
 import type { AgentEvent, CallPayload, TerminalPayload } from "../../../contracts/events.js";
 import type { SpendPayload } from "../../../core/seams.js";
 import type { RootCauseProjection, SearchView } from "../projection.js";
+import type { RootCauseReplay, RootCauseReplayStep } from "../replay.js";
 import { RECENT_SEARCHES } from "../projection.js";
 import type { Proof, StepPayload } from "../proof.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphEdge, type GraphNode } from "./graph.js";
@@ -92,7 +93,24 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
   };
 }
 
-// What the run did, move by move, rebuilt from the ledger alone.
-export function rootCauseV3Replay(runId: string, events: readonly AgentEvent<Record<never, never>>[]): { run_id: string; engine: "rootcause-v3"; steps: V3Step[] } {
-  return { run_id: runId, engine: "rootcause-v3", steps: fold(events as readonly AgentEvent<V3Kinds>[]).steps };
+// What the run did, in ledger order, in the shape the console replays a root-cause run in: each move as a
+// notice, the searches it ran, and the chain as it stands at the end. The moves themselves ride along.
+export function rootCauseV3Replay(runId: string, events: readonly AgentEvent<Record<never, never>>[]): RootCauseReplay & { engine: "rootcause-v3"; moves: V3Step[] } {
+  const ledger = events as readonly AgentEvent<V3Kinds>[];
+  const folded = fold(ledger);
+  const byTurn = new Map(folded.steps.map((step) => [step.n, step]));
+  const steps: RootCauseReplayStep[] = [];
+  let budgets: RootCauseReplay["budgets"];
+  let last = "";
+  for (const event of ledger) {
+    last = event.ts;
+    if (event.kind === "run") budgets = (event.payload as { budgets?: RootCauseReplay["budgets"] }).budgets;
+    if (event.kind !== "rootcause_turn") continue;
+    const step = byTurn.get(event.payload.turn);
+    if (step === undefined) continue;
+    steps.push({ kind: "notice", recorded_at: event.ts, text: `Turn ${step.n}: ${step.move} ${step.targetId}. ${step.reason}` });
+    for (const q of step.queries) steps.push({ kind: "search", recorded_at: event.ts, tool: "splunk", args: q.query.slice(0, 500), rows: q.rows ?? 0, failed: q.rows === undefined });
+  }
+  if (folded.graph !== null) for (const link of chainOf(folded.graph)) steps.push({ kind: "step", recorded_at: last, ...link });
+  return { run_id: runId, run_kind: "root_cause", ...(budgets === undefined ? {} : { budgets }), steps, engine: "rootcause-v3", moves: folded.steps };
 }

@@ -95,7 +95,7 @@ function stepOf(turn: number, entries: readonly TraceEntry[]): V3Step | null {
         ...(p.input?.purpose ? { purpose: p.input.purpose } : {}),
       };
     });
-  const patch = entries.find((e) => e.type === "graph-patch")?.payload as { result?: { idMap?: Record<string, string> } } | undefined;
+  const patches = entries.filter((e) => e.type === "graph-patch").map((e) => e.payload as { result?: { idMap?: Record<string, string> } });
   const changed = entries
     .filter((e) => e.type === "confidence-change")
     .map((e) => {
@@ -108,7 +108,7 @@ function stepOf(turn: number, entries: readonly TraceEntry[]): V3Step | null {
     targetId: decision.targetId,
     reason: decision.reason ?? "",
     queries,
-    added: [...new Set(Object.values(patch?.result?.idMap ?? {}))],
+    added: [...new Set(patches.flatMap((p) => Object.values(p.result?.idMap ?? {})))],
     changed,
   };
 }
@@ -123,8 +123,8 @@ export function fold(events: readonly AgentEvent<V3Kinds>[]): Folded {
     } else if (event.kind === "rootcause_turn" && out.setup !== null && out.graph !== null) {
       const { turn, rare, entries } = event.payload;
       if (rare !== undefined) out.graph.rare = rare;
-      const patched = entries.find((e) => e.type === "graph-patch")?.payload as { patch: GraphPatch } | undefined;
-      if (patched !== undefined) applyPatch(out.graph, patched.patch, turn, out.setup.cfg);
+      // In the order the turn applied them: the move's own, then a probe the model chose next.
+      for (const e of entries) if (e.type === "graph-patch") applyPatch(out.graph, (e.payload as { patch: GraphPatch }).patch, turn, out.setup.cfg);
       out.entries.push(...entries);
       out.lastTurn = turn;
       const step = stepOf(turn, entries);

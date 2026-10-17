@@ -147,6 +147,11 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     tt.relate([...new Set([...result.touched, ...Object.values(result.idMap)])]);
     if (cfg.lead) {
       const r = resolveNext(st.next, graph, cfg, turn, created, { index: o.index, range: o.range });
+      if (r.probe) {
+        const probe = { ...emptyPatch(), addProbe: r.probe };
+        const applied = applyPatch(graph, probe, turn, cfg);
+        tt.write("graph-patch", { patch: probe, result: { idMap: applied.idMap, rejected: applied.rejected, touched: applied.touched, resolvedMarkers: applied.resolvedMarkers } });
+      }
       pending = r.decision;
       st.refused = r.refused;
       if (st.next) tt.write("reasoning", { lead: st.next, ...(r.refused ? { refused: r.refused } : { next: `${r.decision!.move} ${r.decision!.targetId}` }) });

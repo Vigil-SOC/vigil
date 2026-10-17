@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applyPatch, emptyPatch } from "../../../plugins/rootcause/v3/graph.js";
 import { options, optionsText, resolveNext } from "../../../plugins/rootcause/v3/lead.js";
 import { apply, cfg, ev, node, seeded } from "./helpers.js";
 
@@ -54,6 +55,8 @@ describe("lead", () => {
     expect(optionsText(g, cfg, {}, 8)).toContain('"zed" (actor, github, ×3)');
     const r = resolveNext({ move: "probe", target: "zed", why: "rare" }, g, cfg, 8, [], { index: "lab", range: ["2026-03-11T00:00:00Z", "2026-03-14T00:00:00Z"] });
     expect(r.decision).toMatchObject({ move: "test", targetId: "PROBE1" });
+    expect(g.theories?.some((t) => t.id === "PROBES")).toBeFalsy();
+    applyPatch(g, { ...emptyPatch(), addProbe: r.probe! }, 8, cfg);
     const pr = g.theories!.find((t) => t.id === "PROBES")!.predictions[0]!;
     expect(pr).toMatchObject({ sourcetype: "github", earliest: "2026-03-11T00:00:00Z", status: "open" });
     expect(pr.spl).toContain('"zed"');

@@ -168,6 +168,7 @@ export interface GraphPatch {
   setConclusion?: Conclusion;
   setTheories?: Theory[]; // a new round: replaces the live stories (empty: the round failed, the count still moves)
   predictionResult?: { id: string; status: Prediction["status"]; result: string; toolCallIds: string[]; supports: string[]; weakens: string[] };
+  addProbe?: Prediction; // a rare record the model chose to read (lead.ts), filed under the PROBES pseudo-story
 }
 
 export const emptyPatch = (): GraphPatch => ({ addNodes: [], addEdges: [], addEvidence: [] });
@@ -291,6 +292,11 @@ export function applyPatch(g: Graph, patch: GraphPatch, turn: number, cfg: Agent
       for (const t of g.theories ?? []) t.status = "replaced";
       (g.theories ??= []).push(...patch.setTheories);
     }
+  }
+  if (patch.addProbe) {
+    let t = (g.theories ?? []).find((x) => x.id === "PROBES" && x.status === "live");
+    if (!t) { t = { id: "PROBES", round: g.theorizeCount ?? 0, story: "Rare records read on their own (not a story).", accountsFor: [], gaps: "", predictions: [], status: "live", support: 0, against: 0 }; (g.theories ??= []).push(t); }
+    t.predictions.push(patch.addProbe);
   }
   if (patch.predictionResult) {
     const r = patch.predictionResult;

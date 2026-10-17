@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../../contracts/events.js";
 import { Budget } from "../../../plugins/rootcause/v3/budget.js";
 import { defaultConfig, type AgentConfig } from "../../../plugins/rootcause/v3/config.js";
-import type { Graph } from "../../../plugins/rootcause/v3/graph.js";
+import { applyPatch, createGraph, emptyPatch, type Graph, type GraphPatch, type Prediction } from "../../../plugins/rootcause/v3/graph.js";
 import { engineOf, fold, type V3Kinds } from "../../../plugins/rootcause/v3/ledger.js";
 import { ScriptedModelClient } from "../../../plugins/rootcause/v3/model/client.js";
 import { rootCauseV3Projection, rootCauseV3Replay } from "../../../plugins/rootcause/v3/projection.js";
-import { run } from "../../../plugins/rootcause/v3/orchestrator.js";
+import { run, seedFromAlert } from "../../../plugins/rootcause/v3/orchestrator.js";
 import { domainsIn } from "../../../plugins/rootcause/v3/survey.js";
 import { Registry } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { splunkTool } from "../../../plugins/rootcause/v3/tools/splunk-tool.js";
@@ -81,7 +81,11 @@ describe("rootcause v3 ledger", () => {
     expect(view.steps.map((s) => s.step_id)).toEqual(r.rootPath!.nodeIds);
     expect(view.steps.at(-1)).toMatchObject({ origin: true, cause_id: null });
     expect(view.steps[0]!.cause_id).toBe(r.rootPath!.nodeIds[1]);
-    expect(rootCauseV3Replay("r1", events as never).steps).toEqual(folded.steps);
+    const replay = rootCauseV3Replay("r1", events as never);
+    expect(replay).toMatchObject({ run_kind: "root_cause", engine: "rootcause-v3", moves: folded.steps });
+    expect(replay.steps.filter((s) => s.kind === "notice")).toHaveLength(folded.steps.length);
+    expect(replay.steps.filter((s) => s.kind === "search").length).toBe(folded.steps.reduce((n, s) => n + s.queries.length, 0));
+    expect(replay.steps.filter((s) => s.kind === "step").map((s) => (s as { step_id: string }).step_id)).toEqual(r.rootPath!.nodeIds);
   });
 
   it("resumes from the fold to the same end as a run that was never interrupted", async () => {
@@ -123,5 +127,32 @@ describe("rootcause v3 ledger", () => {
     // Ids issued after the resume never reuse one the first worker issued.
     const ids = trace.chronological().filter((e) => e.type === "query").map((e) => (e.payload as { toolCallId: string }).toolCallId);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("folds stories, their test results and probes, though the graph keeps the patch's own objects", () => {
+    // The live graph holds the stories a patch added by reference, and later turns change them. Each turn is
+    // journaled as it ends, as the worker does, so the fold must not see those later changes twice.
+    const { events, push } = journal(cfg);
+    const live = seedFromAlert(createGraph("r1"), alert, cfg);
+    const pred = (id: string): Prediction => ({ id, sourcetype: "edr", expect: "x", spl: "index=lab x", separates: [], next: false, status: "open" });
+    const story = (id: string) => ({ id, round: 1, story: id, accountsFor: [], gaps: "", predictions: [pred(`${id}.P1`)], status: "live" as const, support: 0, against: 0 });
+    const turns: GraphPatch[][] = [
+      [{ ...emptyPatch(), setTheories: [story("R1.H1"), story("R1.H2")] }],
+      [{ ...emptyPatch(), predictionResult: { id: "R1.H1.P1", status: "found", result: "seen", toolCallIds: ["tc_1"], supports: ["R1.H1"], weakens: ["R1.H2"] } }, { ...emptyPatch(), addProbe: pred("PROBE1") }],
+      [{ ...emptyPatch(), predictionResult: { id: "PROBE1", status: "found", result: "read", toolCallIds: ["tc_2"], supports: [], weakens: [] } }, { ...emptyPatch(), addProbe: pred("PROBE2") }],
+      [{ ...emptyPatch(), setTheories: [story("R2.H1")] }],
+    ];
+    turns.forEach((patches, i) => {
+      const entries = patches.map((patch, j) => {
+        applyPatch(live, patch, i + 1, cfg);
+        return { id: `T${i}${j}`, ts: "", runId: "r1", turn: i + 1, correlationId: "N1", relatedIds: [], type: "graph-patch" as const, payload: { patch } };
+      });
+      push("rootcause_turn", { turn: i + 1, entries });
+    });
+
+    const folded = fold(events).graph!;
+    expect(JSON.parse(JSON.stringify(folded))).toEqual(JSON.parse(JSON.stringify(live)));
+    expect(folded.theories!.find((t) => t.id === "R1.H1")).toMatchObject({ support: 1, status: "replaced" });
+    expect(folded.theories!.find((t) => t.id === "PROBES")!.predictions.map((p) => p.id)).toEqual(["PROBE1", "PROBE2"]);
   });
 });
