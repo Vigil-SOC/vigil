@@ -10,7 +10,7 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
-# Client-level floor; every call site also passes timeout=30 explicitly.
+# Default for every request; each call site also passes self.timeout.
 DEFAULT_TIMEOUT = 30.0
 
 # Falcon caps: IDs per ID-query page, and IDs per summaries request.
@@ -29,6 +29,7 @@ class CrowdStrikeService:
         client_id: str,
         client_secret: str,
         base_url: str = "https://api.crowdstrike.com",
+        timeout: float = DEFAULT_TIMEOUT,
     ):
         self.client_id = client_id
         self.client_secret = client_secret
@@ -38,8 +39,9 @@ class CrowdStrikeService:
         # Detail of the last failed get_detections call (e.g. "HTTP 500 ..."),
         # so callers can report why it returned None.
         self.last_error: Optional[str] = None
+        self.timeout = timeout
         self.session = httpx.Client(
-            timeout=DEFAULT_TIMEOUT,
+            timeout=timeout,
             follow_redirects=_FOLLOW_REDIRECTS,
         )
 
@@ -57,7 +59,7 @@ class CrowdStrikeService:
                 f"{self.base_url}/oauth2/token",
                 data={"client_id": self.client_id, "client_secret": self.client_secret},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=30,
+                timeout=self.timeout,
             )
 
             if response.status_code == 201:
@@ -88,7 +90,7 @@ class CrowdStrikeService:
             response = self.session.get(
                 f"{self.base_url}/sensors/queries/sensors/v1",
                 params={"limit": 1},
-                timeout=30,
+                timeout=self.timeout,
             )
 
             if response.status_code == 200:
@@ -114,7 +116,9 @@ class CrowdStrikeService:
                 params["filter"] = filter_query
 
             response = self.session.get(
-                f"{self.base_url}/detects/queries/detects/v1", params=params, timeout=30
+                f"{self.base_url}/detects/queries/detects/v1",
+                params=params,
+                timeout=self.timeout,
             )
             if response.status_code != 200:
                 logger.error(f"Failed to query detections: {response.status_code}")
@@ -161,7 +165,7 @@ class CrowdStrikeService:
                 detail_response = self.session.post(
                     f"{self.base_url}/detects/entities/summaries/GET/v1",
                     json={"ids": detection_ids[i : i + _SUMMARIES_MAX]},
-                    timeout=30,
+                    timeout=self.timeout,
                 )
 
                 if detail_response.status_code != 200:
@@ -191,7 +195,7 @@ class CrowdStrikeService:
                 f"{self.base_url}/devices/entities/devices-actions/v2",
                 params={"action_name": "lift_containment"},
                 json={"ids": [host_id]},
-                timeout=30,
+                timeout=self.timeout,
             )
 
             if response.status_code == 202:

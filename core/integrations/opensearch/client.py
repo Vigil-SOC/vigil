@@ -37,6 +37,7 @@ class OpenSearchService:
         verify_ssl: bool = True,
         index_pattern: str = ".opensearch-sap-*-findings-*",
         ca_cert_path: Optional[str] = None,
+        timeout: float = 30.0,
     ):
         self.opensearch_url = opensearch_url.rstrip("/")
         self.dashboards_url = (dashboards_url or "").rstrip("/") or None
@@ -45,6 +46,7 @@ class OpenSearchService:
         self.verify_ssl = verify_ssl
         self.index_pattern = index_pattern
         self.ca_cert_path = ca_cert_path or None
+        self.timeout = timeout
 
         self._client: Optional[httpx.AsyncClient] = None
         self._dashboards_client: Optional[httpx.AsyncClient] = None
@@ -64,7 +66,7 @@ class OpenSearchService:
             headers={"Content-Type": "application/json"},
             auth=self._auth(),
             verify=tls_verify(self.verify_ssl, self.ca_cert_path),
-            timeout=30.0,
+            timeout=self.timeout,
         )
 
     def _build_dashboards_client(self) -> httpx.AsyncClient:
@@ -77,7 +79,7 @@ class OpenSearchService:
             headers={"Content-Type": "application/json", "osd-xsrf": "true"},
             auth=self._auth(),
             verify=tls_verify(self.verify_ssl, self.ca_cert_path),
-            timeout=30.0,
+            timeout=self.timeout,
         )
 
     @property
