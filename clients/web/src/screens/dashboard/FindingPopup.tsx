@@ -8,6 +8,7 @@ import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/m
 import { techniqueName } from '../../data/mitre'
 import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
+import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import SourceChip from '../../shared/SourceChip'
 import type { Phase } from '../cases/useCases'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -184,6 +185,8 @@ export default function FindingPopup({
   const [status, setStatus] = useState('')
   const [acting, setActing] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [triageNote, setTriageNote] = useState<string | null>(null)
+  const [triageError, setTriageError] = useState<string | null>(null)
 
   // excluding an address from here, while looking at the finding that names it
   const { notify } = useToast()
@@ -202,6 +205,8 @@ export default function FindingPopup({
     setEnrichment(null)
     setEnrichPhase('idle')
     setEnrichError(null)
+    setTriageNote(null)
+    setTriageError(null)
     setExcludeIp(null)
     setExcludeReason('')
     setExcludeError(null)
@@ -303,6 +308,15 @@ export default function FindingPopup({
       .then(() => onChanged?.())
       .catch(() => setStatus(status)) // revert on failure
       .finally(() => setActing(false))
+  }
+
+  const sendToTriage = () => {
+    if (!id) return
+    setTriageNote(null)
+    setTriageError(null)
+    sendFindingToTriage(id)
+      .then(setTriageNote)
+      .catch(() => setTriageError(SEND_TO_TRIAGE_FAILED))
   }
 
   const doDelete = () => {
@@ -527,10 +541,13 @@ export default function FindingPopup({
 
           {/* actions */}
           <div className="fp-actions">
+            <button className="btn ghost" onClick={sendToTriage}>Send to triage</button>
             <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={acting}>
               <Icon name="trash" size={14} /> Delete finding
             </button>
           </div>
+          {triageNote && <p>{triageNote}</p>}
+          {triageError && <p role="alert">{triageError}</p>}
         </>
       )}
 
