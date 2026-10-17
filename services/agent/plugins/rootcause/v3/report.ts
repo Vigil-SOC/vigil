@@ -16,17 +16,32 @@ const DOMAIN = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|co|test|exam
 const IOC_KINDS = new Set(["ip", "domain-name", "url", "file-hash", "image-digest", "access-key", "arn", "commit-sha", "process", "host", "user"]);
 const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n) + ` …[+${s.length - n} chars]` : s);
 
-export function disposition(g: Graph, exit: ExitReason | null): string {
-  if (exit === "root-cause-found") return "True Positive: a confirmed causal chain leads from the alert to its root cause.";
-  if (exit === "false-positive") return "False Positive: the alerted event itself was refuted by the evidence.";
+// How the run came out, computed by code: true positive (a confirmed chain, a confirmed upstream event, or likely
+// causes behind a confirmed alert), false positive (the alerted event itself refuted), or inconclusive.
+export type Outcome = "root-cause-found" | "upstream-confirmed" | "causes-likely" | "false-positive" | "inconclusive";
+
+export function outcomeOf(g: Graph, exit: ExitReason | null): { outcome: Outcome; confirmed: number; likely: number } {
   const path = bestPathFromSymptom(g);
   const up = path?.nodeIds.map((id) => g.nodes[id]!).filter((n) => n.kind === "action" && !n.isSymptom) ?? [];
   const confirmed = up.filter((n) => n.status === "confirmed").length;
-  if (confirmed) return `True Positive (root cause not fully confirmed): ${confirmed} confirmed upstream event(s) explain the alert.`;
   // Likely causes (>= 0.6) behind a confirmed alert are a real attack whose steps are not all confirmed yet.
   const likely = up.filter((n) => n.status !== "ruled-out" && n.confidence >= 0.6).length;
   const symptom = path ? g.nodes[path.nodeIds[0]!] : undefined;
-  if (likely && symptom?.status === "confirmed") return `True Positive (causes likely, not yet confirmed): the alert is confirmed and ${likely} likely upstream event(s) explain it.`;
+  const outcome: Outcome =
+    exit === "root-cause-found" ? "root-cause-found"
+    : exit === "false-positive" ? "false-positive"
+    : confirmed ? "upstream-confirmed"
+    : likely && symptom?.status === "confirmed" ? "causes-likely"
+    : "inconclusive";
+  return { outcome, confirmed, likely };
+}
+
+export function disposition(g: Graph, exit: ExitReason | null): string {
+  const { outcome, confirmed, likely } = outcomeOf(g, exit);
+  if (outcome === "root-cause-found") return "True Positive: a confirmed causal chain leads from the alert to its root cause.";
+  if (outcome === "false-positive") return "False Positive: the alerted event itself was refuted by the evidence.";
+  if (outcome === "upstream-confirmed") return `True Positive (root cause not fully confirmed): ${confirmed} confirmed upstream event(s) explain the alert.`;
+  if (outcome === "causes-likely") return `True Positive (causes likely, not yet confirmed): the alert is confirmed and ${likely} likely upstream event(s) explain it.`;
   return "Inconclusive: no upstream cause of the alert was confirmed.";
 }
 
@@ -44,30 +59,38 @@ export interface ReportOptions { unfiltered?: boolean }
 // applies: an unverified event's label loses its accusing words and says it is unverified, its accounts and
 // addresses are never attackers or indicators, and an inferred link says so.
 const ACCUSE_ALL = new RegExp(ACCUSE.source, "gi");
-function forReport(g: Graph): Graph {
+export function forReport(g: Graph): Graph {
   if (!Object.values(g.nodes).some((n) => n.unverified)) return g;
   return { ...g, nodes: Object.fromEntries(Object.entries(g.nodes).map(([id, n]) => [id, n.unverified ? { ...n, label: `${n.label.replace(ACCUSE_ALL, "[unverified]")} (unverified)` } : n])) };
 }
 
-export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | null, alert: Alert, budget?: Budget, opts: ReportOptions = {}): string {
-  const raw = !!opts.unfiltered;
-  const g = raw ? g0 : forReport(g0);
-  const path = bestPathFromSymptom(g);
-  const pathNodes = path?.nodeIds.map((id) => g.nodes[id]!) ?? [];
-  const out: string[] = [];
-  out.push(`# RCA report: ${alert.title}`, "", `Run ${g.runId} · alert ${alert.id} at ${alert.observedAt} · exit **${exit}**${budget ? ` · $${budget.usd.toFixed(2)}` : ""}`, "");
-  out.push(`**Disposition:** ${disposition(g, exit)}`, "");
-  if (raw) out.push("*Unfiltered report. The disposition is computed by code and can only come out True Positive, Inconclusive, or False Positive when the alerted event itself is refuted; it cannot come out benign.*", "");
+const live = (e: { status: string; retired?: boolean }) => !e.retired && e.status !== "ruled-out";
 
-  // Who is who: an account an action ran as, when someone else operated that action, is a victim account.
-  const live = (e: { status: string; retired?: boolean }) => !e.retired && e.status !== "ruled-out";
-  const operators = new Map<string, Set<string>>(); // victim account -> operators seen using it
+// Who ran each action and who operated it, when someone else did: an operator counts at even odds (>= 0.5) or better.
+export function whoRan(g: Graph, n: GraphNode): { ranAs: string[]; operatedBy: string[] } {
+  const ranAs = actorsFor(g, n).filter(({ e }) => live(e)).map(({ actor }) => actor.label);
+  const operatedBy = actorsFor(g, n, "operated-by").filter(({ e }) => live(e) && e.confidence >= 0.5).map(({ actor }) => actor.label).filter((o) => !ranAs.includes(o));
+  return { ranAs, operatedBy };
+}
+
+export interface WhoIsWho {
+  attackers: Set<string>;
+  // victim account -> operators seen using it
+  operators: Map<string, Set<string>>;
+  legitUsers: Set<string>;
+  // domains the unnamed operators' descriptions mention
+  seenAs: Set<string>;
+}
+
+// Who is who: an account an action ran as, when someone else operated that action, is a victim account.
+export function whoIsWho(g: Graph, raw = false): WhoIsWho {
+  const operators = new Map<string, Set<string>>();
   const attackers = new Set<string>();
   // An operator counts only when it is at least even odds (>= 0.5) and is not the account the action itself ran as.
   // Operators the logs do not name (free-text descriptions: "attacker via the implant", "attacker reusing alice's
   // credential") are one attacker, listed once (one report had ten such lines for the same intruder).
   const opName = (label: string) => (NAMED.test(label) ? label : UNNAMED);
-  const seenAs = new Set<string>(); // domains the unnamed operators' descriptions mention
+  const seenAs = new Set<string>();
   for (const a of Object.values(g.nodes).filter((x) => x.kind === "actor" && !NAMED.test(x.label))) for (const d of a.label.match(DOMAIN) ?? []) seenAs.add(d.toLowerCase());
   for (const n of Object.values(g.nodes).filter((x) => x.kind === "action" && x.status !== "ruled-out" && (raw || !x.unverified))) {
     const ranAs = actorsFor(g, n).filter(({ e }) => live(e)).map(({ actor }) => actor.label);
@@ -84,6 +107,63 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   const operatedByOther = (n: GraphNode, who: string) => actorsFor(g, n, "operated-by").some(({ e, actor }) => live(e) && actor.label !== who);
   for (const n of acts.filter((x) => !x.legitimate)) for (const { e, actor } of actorsFor(g, n)) if (live(e) && !operators.has(actor.label) && !operatedByOther(n, actor.label)) legitUsers.delete(actor.label);
   for (const a of attackers) legitUsers.delete(a);
+  return { attackers, operators, legitUsers, seenAs };
+}
+
+export const unnamedAttacker = (name: string) => name === UNNAMED;
+
+// The model's own closing verdict (conclude move). A sentence that calls a legitimate user the attacker is left out,
+// and so is a takeover claim no cited takeover record backs.
+export function concludedText(g: Graph, legitUsers: ReadonlySet<string>, raw = false): string | undefined {
+  const c = g.conclusion;
+  if (!c) return undefined;
+  const blames = (x: string) => ACCUSE.test(x) && [...legitUsers].some((u) => x.includes(u) || x.includes(u.split(/[:/]/).pop()!));
+  const backed = Object.values(g.nodes).filter((n) => n.takeover).map((n) => n.id);
+  const unbacked = (x: string) => TAKEOVER.test(x) && !backed.some((id) => new RegExp(`\\b${id}\\b`).test(x));
+  return raw ? c.text : c.text.split(/(?<=[.!?])\s+/).filter((x) => !blames(x) && !unbacked(x)).join(" ");
+}
+
+// Carrier services (aws:service:lambda) are not people.
+const peopleOf = (legitUsers: ReadonlySet<string>) => [...legitUsers].filter((u) => !/\.amazonaws\.com$|^aws:service:|\.googleapis\.com$/i.test(u));
+
+// Indicators: not from legitimate steps, and never a legitimate user's name (a report once listed a developer).
+// No address or account from a suspected finding no link ties to the chain (a guess so far), and never one a
+// legitimate step also carries (a developer's address, on an unlinked finding, was once listed).
+// Addresses and accounts only from events tied to the incident by a link >= 0.5: a weakly linked or unlinked
+// logon lists ordinary workstations and an admin's own host (a dozen office addresses and an admin
+// workstation were once listed from a 0.39 link and an unlinked logon).
+export function indicatorsOf(g: Graph, legitUsers: ReadonlySet<string>, raw = false): Map<string, Set<string>> {
+  const people = peopleOf(legitUsers);
+  const legitName = (x: string) => people.some((u) => u.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(u.toLowerCase()));
+  const acts = Object.values(g.nodes).filter((x) => x.kind === "action" && x.status !== "ruled-out");
+  const loose = new Set(islands(g, 0.5).map((n) => n.id));
+  const legitVals = new Set(acts.filter((x) => x.legitimate).flatMap((x) => x.artifacts.filter((a) => a.kind === "ip" || a.kind === "user").map((a) => a.value.trim().toLowerCase())));
+  const iocs = new Map<string, Set<string>>();
+  for (const n of Object.values(g.nodes)) {
+    if (n.status === "ruled-out" || n.kind !== "action" || n.legitimate || (!raw && n.unverified)) continue;
+    for (const a of n.artifacts) if (IOC_KINDS.has(a.kind) && (raw || (!(a.kind === "user" && legitName(a.value)) && !legitVals.has(a.value.trim().toLowerCase()) && !(loose.has(n.id) && (a.kind === "ip" || a.kind === "user"))))) (iocs.get(a.kind) ?? iocs.set(a.kind, new Set()).get(a.kind)!).add(a.value);
+  }
+  return iocs;
+}
+
+// Every event that is not ruled out, in time order, on or off the chain.
+export const incidentEvents = (g: Graph): GraphNode[] =>
+  Object.values(g.nodes).filter((n) => n.kind === "action" && n.status !== "ruled-out").sort((a, b) => (a.observedAt ?? "~").localeCompare(b.observedAt ?? "~"));
+
+// The other chains worth a reader's time: the next three, scored 0.05 or better.
+export const alternativesOf = (g: Graph) => allPaths(g, 4).slice(1).filter((p) => p.score >= 0.05);
+
+export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | null, alert: Alert, budget?: Budget, opts: ReportOptions = {}): string {
+  const raw = !!opts.unfiltered;
+  const g = raw ? g0 : forReport(g0);
+  const path = bestPathFromSymptom(g);
+  const pathNodes = path?.nodeIds.map((id) => g.nodes[id]!) ?? [];
+  const out: string[] = [];
+  out.push(`# RCA report: ${alert.title}`, "", `Run ${g.runId} · alert ${alert.id} at ${alert.observedAt} · exit **${exit}**${budget ? ` · $${budget.usd.toFixed(2)}` : ""}`, "");
+  out.push(`**Disposition:** ${disposition(g, exit)}`, "");
+  if (raw) out.push("*Unfiltered report. The disposition is computed by code and can only come out True Positive, Inconclusive, or False Positive when the alerted event itself is refuted; it cannot come out benign.*", "");
+
+  const { attackers, operators, legitUsers, seenAs } = whoIsWho(g, raw);
   if (attackers.size || (!raw && (operators.size || legitUsers.size))) {
     out.push("**Accounts**", "");
     for (const a of attackers) out.push(`- ${a}: attacker (operated the malicious actions)${a === UNNAMED && seenAs.size ? `; seen as ${[...seenAs].join(", ")}` : ""}`);
@@ -95,10 +175,7 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   // The model's own closing verdict (conclude move). A sentence that calls a legitimate user the attacker is left out.
   if (g.conclusion) {
     const c = g.conclusion;
-    const blames = (x: string) => ACCUSE.test(x) && [...legitUsers].some((u) => x.includes(u) || x.includes(u.split(/[:/]/).pop()!));
-    const backed = Object.values(g.nodes).filter((n) => n.takeover).map((n) => n.id);
-    const unbacked = (x: string) => TAKEOVER.test(x) && !backed.some((id) => new RegExp(`\\b${id}\\b`).test(x));
-    const text = raw ? c.text : c.text.split(/(?<=[.!?])\s+/).filter((x) => !blames(x) && !unbacked(x)).join(" ");
+    const text = concludedText(g, legitUsers, raw)!;
     out.push("## Investigator's conclusion", "", text, "");
     if (c.rootCause) out.push(`Root cause named: **${c.rootCause}** ${g.nodes[c.rootCause]?.label ?? ""}`, "");
     if (c.chain.length) out.push(`Chain, root first: ${c.chain.join(" → ")}`, "");
@@ -138,36 +215,21 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   out.push("", "**Impersonation indicators**", "", ...(impersonation.length ? impersonation.map((x) => `- ${x}`) : ["- none found"]), "");
   out.push("**Exonerated identities**", "", ...(exonerated.length ? exonerated.map((x) => `- ${x}`) : ["- none"]), "");
 
-  // A result naming a legitimate person is left out of "Established by". Carrier services (aws:service:lambda)
-  // are not people, and a name counts only as a whole word of 4+ chars ("lambda" dropped the VPC peering finding).
-  const people = [...legitUsers].filter((u) => !/\.amazonaws\.com$|^aws:service:|\.googleapis\.com$/i.test(u));
+  // A result naming a legitimate person is left out of "Established by". A name counts only as a whole word of
+  // 4+ chars ("lambda" dropped the VPC peering finding).
+  const people = peopleOf(legitUsers);
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const namesLegitUser = (text: string) => people.some((u) => [u, u.split(/[/:]/).at(-1)!].filter((x) => x.length >= 4).some((x) => new RegExp(`\\b${esc(x)}\\b`, "i").test(text)));
-  // Indicators: not from legitimate steps, and never a legitimate user's name (a report once listed a developer).
-  const legitName = (x: string) => people.some((u) => u.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(u.toLowerCase()));
-  // No address or account from a suspected finding no link ties to the chain (a guess so far), and never one a
-  // legitimate step also carries (a developer's address, on an unlinked finding, was once listed).
-  // Addresses and accounts only from events tied to the incident by a link >= 0.5: a weakly linked or unlinked
-  // logon lists ordinary workstations and an admin's own host (a dozen office addresses and an admin
-  // workstation were once listed from a 0.39 link and an unlinked logon).
-  const loose = new Set(islands(g, 0.5).map((n) => n.id));
-  const legitVals = new Set(acts.filter((x) => x.legitimate).flatMap((x) => x.artifacts.filter((a) => a.kind === "ip" || a.kind === "user").map((a) => a.value.trim().toLowerCase())));
-  const iocs = new Map<string, Set<string>>();
-  for (const n of Object.values(g.nodes)) {
-    if (n.status === "ruled-out" || n.kind !== "action" || n.legitimate || (!raw && n.unverified)) continue;
-    for (const a of n.artifacts) if (IOC_KINDS.has(a.kind) && (raw || (!(a.kind === "user" && legitName(a.value)) && !legitVals.has(a.value.trim().toLowerCase()) && !(loose.has(n.id) && (a.kind === "ip" || a.kind === "user"))))) (iocs.get(a.kind) ?? iocs.set(a.kind, new Set()).get(a.kind)!).add(a.value);
-  }
+  const iocs = indicatorsOf(g, legitUsers, raw);
   out.push("## Indicators (from confirmed and suspected events)", "");
   for (const [k, vs] of iocs) out.push(`- ${k}: ${[...vs].join(", ")}`);
   if (!iocs.size) out.push("- none recorded");
   out.push("");
 
   // Incident timeline: every event that is not ruled out, in time order, on or off the chain.
-  const events = Object.values(g.nodes).filter((n) => n.kind === "action" && n.status !== "ruled-out").sort((a, b) => (a.observedAt ?? "~").localeCompare(b.observedAt ?? "~"));
   out.push("## Incident timeline", "");
-  for (const n of events) {
-    const ran = actorsFor(g, n).filter(({ e }) => live(e)).map(({ actor }) => actor.label);
-    const ops = actorsFor(g, n, "operated-by").filter(({ e }) => live(e) && e.confidence >= 0.5).map(({ actor }) => actor.label).filter((o) => !ran.includes(o));
+  for (const n of incidentEvents(g)) {
+    const { ranAs: ran, operatedBy: ops } = whoRan(g, n);
     const who = ops.length ? ` · ran as ${ran.join(", ") || "?"}, operated by ${ops.join(", ")}` : ran.length ? ` · ran as ${ran.join(", ")}` : "";
     out.push(`- ${n.observedAt ?? "time unknown"} · **${n.id}** ${n.label} — ${n.status} ${pct(n.confidence)} (${n.domain})${path?.nodeIds.includes(n.id) ? " · chain" : ""}${n.legitimate ? " · legitimate activity" : ""}${who}`);
   }
@@ -191,7 +253,7 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   if (others.length) {
     out.push("## Other findings (off the main chain)", "");
     for (const n of others) out.push(`- **${n.id}** ${n.label} — ${n.status} ${pct(n.confidence)}${n.observedAt ? ` @ ${n.observedAt}` : ""} (${n.domain})${n.evidence.length ? `: ${n.evidence.at(-1)!.summary}` : ""}`);
-    const alts = allPaths(g, 4).slice(1).filter((p) => p.score >= 0.05);
+    const alts = alternativesOf(g);
     if (alts.length) out.push("", "Alternative chains:", ...alts.map((p) => `- ${p.nodeIds.join(" ← ")} (score ${pct(p.score)})`));
     out.push("");
   }
