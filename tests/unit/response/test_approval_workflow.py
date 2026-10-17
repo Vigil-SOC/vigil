@@ -10,6 +10,7 @@ from core.response.approval_service import (
     ActionType,
     ApprovalService,
     Reversibility,
+    assist_on,
 )
 from core.response.autonomous_response_service import AutonomousResponseService
 from core.response.config import ResponseConfig
@@ -176,6 +177,90 @@ class TestConfidenceThresholds:
             svc.set_force_manual_approval(True)
             assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
         store.set_system_config.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("env", "status"),
+        [
+            (None, ActionStatus.PENDING),  # a fresh install is Assist
+            ("true", ActionStatus.PENDING),
+            ("false", ActionStatus.APPROVED),  # the deployment picked Act
+        ],
+    )
+    def test_no_stored_choice_is_assist_unless_env_picked_act(
+        self, monkeypatch, env, status
+    ):
+        if env is None:
+            monkeypatch.delenv("DAEMON_FORCE_APPROVAL", raising=False)
+        else:
+            monkeypatch.setenv("DAEMON_FORCE_APPROVAL", env)
+        get_settings.cache_clear()
+        store = Mock()
+        store.read_system_config.return_value = None
+        try:
+            with patch(
+                "core.response.approval_service.get_config_service",
+                return_value=store,
+            ):
+                action = _create(ApprovalService(config=ResponseConfig()), 0.99)
+        finally:
+            get_settings.cache_clear()
+        assert action.status == status.value
+        store.set_system_config.assert_not_called()
+
+    def test_env_true_holds_a_stored_act_outside_the_daemon(self, monkeypatch):
+        # Only the daemon sets the in-process flag; an API-side service must
+        # still read DAEMON_FORCE_APPROVAL=true as Assist over a stored Act.
+        monkeypatch.setenv("DAEMON_FORCE_APPROVAL", "true")
+        get_settings.cache_clear()
+        store = Mock()
+        store.read_system_config.return_value = {"enabled": False}
+        try:
+            with patch(
+                "core.response.approval_service.get_config_service",
+                return_value=store,
+            ):
+                svc = ApprovalService(config=ResponseConfig())
+                assert svc.force_manual_approval is False
+                action = _create(svc, 0.99)
+        finally:
+            get_settings.cache_clear()
+        assert action.status == ActionStatus.PENDING.value
+
+
+class TestAssistOn:
+    """What a workflow's write tools are gated on: the console chip's reading."""
+
+    @pytest.mark.parametrize(
+        ("auto", "row", "expected"),
+        [
+            ("true", None, True),  # nobody has picked: Assist
+            ("true", {"enabled": False}, False),  # Settings picked Act
+            ("true", {"enabled": True}, True),
+            ("false", {"enabled": False}, True),  # auto-response off reads Assist
+        ],
+    )
+    def test_reads_like_the_console_chip(self, monkeypatch, auto, row, expected):
+        monkeypatch.delenv("DAEMON_FORCE_APPROVAL", raising=False)
+        monkeypatch.setenv("DAEMON_AUTO_RESPONSE", auto)
+        get_settings.cache_clear()
+        store = Mock()
+        store.read_system_config.return_value = row
+        try:
+            with patch(
+                "core.response.approval_service.get_config_service",
+                return_value=store,
+            ):
+                assert assist_on() is expected
+        finally:
+            get_settings.cache_clear()
+
+    def test_a_failed_read_is_assist(self):
+        store = Mock()
+        store.read_system_config.side_effect = RuntimeError("db down")
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            assert assist_on() is True
 
 
 class TestConfiguredBands:

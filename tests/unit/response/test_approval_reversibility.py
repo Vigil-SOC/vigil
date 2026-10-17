@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.config import get_settings
 from core.response.approval_service import (
     ActionStatus,
     ActionType,
@@ -13,6 +14,15 @@ from core.response.approval_service import (
 from core.response.autonomous_response_service import AutonomousResponseService
 
 pytestmark = pytest.mark.external_service
+
+
+@pytest.fixture(autouse=True)
+def _act(monkeypatch):
+    """These tests run in Act. With no approval row stored, Vigil is in Assist."""
+    monkeypatch.setenv("DAEMON_FORCE_APPROVAL", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _create(

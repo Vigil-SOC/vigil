@@ -35,7 +35,11 @@ from core.intent import (
     intent_file,
     read_intent,
 )
-from core.response.approval_service import APPROVAL_CONFIG_KEY, Reversibility
+from core.response.approval_service import (
+    APPROVAL_CONFIG_KEY,
+    Reversibility,
+    stored_force_manual_approval,
+)
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -58,19 +62,25 @@ def _overlay_force_manual_approval(
     """The one DB overlay ``from_env()`` does not apply.
 
     ``ApprovalService`` reads ``approval.force_manual_approval`` itself and the
-    env flag forces it on, so the effective value is env OR db. Same
-    try/except-and-continue as the orchestrator overlay: no DB, no overlay.
+    env flag forces it on, so the effective value is env OR db. No row is
+    Assist unless the env picked Act, and a failed read is Assist, both as
+    ``ApprovalService`` decides.
     """
+    key = "respond.force_manual_approval"
+    if effective[key]:
+        return
     try:
-        row = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
+        row = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Could not read approval config from DB: %s", exc)
+        effective[key] = True
+        sources[FORCE_APPROVAL_PATH] = "default"
         return
-    if not row or not isinstance(row, dict) or not row.get("enabled"):
-        return
-    if not effective["respond.force_manual_approval"]:
-        effective["respond.force_manual_approval"] = True
+    effective[key] = stored_force_manual_approval(row)
+    if row:
         sources[FORCE_APPROVAL_PATH] = "db"
+    elif effective[key]:
+        sources[FORCE_APPROVAL_PATH] = "default"
 
 
 def intent_report(

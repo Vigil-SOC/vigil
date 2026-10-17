@@ -1,4 +1,7 @@
-"""Compose approvals: ART execute is gated; incident-response is not (#837)."""
+"""Compose approvals: ART execute is gated; incident-response is not (#837).
+
+In Assist, a granted tool that changes something on its own is gated too.
+"""
 
 from __future__ import annotations
 
@@ -85,4 +88,32 @@ def test_incident_response_stays_ungated():
 
 def test_hunt_stays_ungated():
     _, config = resolve_hunt("threat-hunt")
+    assert yaml.safe_load(config)["approvals"] == []
+
+
+WRITE = "cloudflare_cf_waf_block_ip"
+LOOKUP = "cloudflare_list_blocked_ips"
+
+
+@pytest.mark.parametrize(("assist", "gated"), [(True, [WRITE]), (False, [])])
+def test_assist_gates_a_granted_write_tool_and_act_does_not(monkeypatch, assist, gated):
+    monkeypatch.setattr("core.response.approval_service.assist_on", lambda: assist)
+    config = _config([WRITE, LOOKUP], WRITE, LOOKUP)
+    assert {WRITE, LOOKUP} <= {tool["id"] for tool in config["tools"]}
+    assert config["approvals"] == gated
+
+
+def test_assist_gates_execute_and_a_write_tool_together(monkeypatch):
+    monkeypatch.setattr("core.response.approval_service.assist_on", lambda: True)
+    config = _config([EXECUTE_TOOL, WRITE], EXECUTE_TOOL, WRITE)
+    assert config["approvals"] == [EXECUTE_TOOL, WRITE]
+
+
+def test_assist_is_not_read_when_no_write_tool_is_granted(monkeypatch):
+    def unread():
+        raise AssertionError("assist_on read for a grant with no write tool")
+
+    monkeypatch.setattr("core.response.approval_service.assist_on", unread)
+    assert _config([LOOKUP], LOOKUP)["approvals"] == []
+    _, config = resolve("incident-response")
     assert yaml.safe_load(config)["approvals"] == []

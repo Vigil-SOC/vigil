@@ -207,8 +207,12 @@ export default function LimitsStep() {
               onClick={selectAssist}
               className={`card card-sq text-left p-3.5 ${actOn ? '' : 'border-accent-line bg-[var(--accent-dim)]'}`}
             >
-              <div className="text-[13px] font-semibold text-tx">Assist</div>
-              <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
+              <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-tx">
+                Assist <span className="chip">Recommended</span>
+              </div>
+              <span className="text-xs text-tx-3">
+                Every action in the approval queue waits for you. Switch to Act once you trust Vigil’s decisions on your data.
+              </span>
             </button>
             <button
               type="button"
@@ -216,9 +220,7 @@ export default function LimitsStep() {
               onClick={selectAct}
               className={`card card-sq text-left p-3.5 ${actOn ? 'border-accent-line bg-[var(--accent-dim)]' : ''}`}
             >
-              <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-tx">
-                Act <span className="chip">Recommended</span>
-              </div>
+              <div className="text-[13px] font-semibold text-tx">Act</div>
               <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
             </button>
           </div>

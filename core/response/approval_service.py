@@ -23,6 +23,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from core.config import get_settings
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -40,6 +41,38 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
+
+
+def stored_force_manual_approval(value: Optional[Dict[str, Any]]) -> bool:
+    """Assist (True) or Act (False) from the ``APPROVAL_CONFIG_KEY`` row.
+
+    DAEMON_FORCE_APPROVAL=true is Assist whatever the row says, in every
+    process. No row means nobody has picked one in Settings yet. That is
+    Assist, unless DAEMON_FORCE_APPROVAL=false picked Act for the deployment.
+    """
+    env = get_settings().daemon_force_approval
+    if env is True:
+        return True
+    if isinstance(value, dict) and "enabled" in value:
+        return bool(value["enabled"])
+    return env is not False
+
+
+def assist_on() -> bool:
+    """Whether Vigil runs in Assist, read the way the console chip reads it.
+
+    Approval is forced (env, a stored Assist, or nobody has picked yet), or
+    auto-response is off. A failed read of the row is Assist.
+    """
+    if not get_settings().daemon_auto_response:
+        return True
+    try:
+        value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Cannot read the approval setting; treating it as Assist: %s", e)
+        return True
+    return stored_force_manual_approval(value)
+
 
 _pending_gauge: Any = None
 
@@ -193,12 +226,13 @@ class ApprovalService:
     #
     # ``self.force_manual_approval`` is this process forcing approval on
     # (the daemon does when DAEMON_FORCE_APPROVAL is set) and is never
-    # written to the row. The row is what Settings writes and the SQL seed
-    # creates (Act); it is read at each decision so a long-lived service sees
-    # a change without a restart. Nothing here writes it.
+    # written to the row. The row is what Settings writes; nothing seeds it,
+    # so a fresh install has none and runs in Assist. It is read at each
+    # decision so a long-lived service sees a change without a restart.
+    # Nothing here writes it.
 
     def _stored_force_manual_approval(self) -> bool:
-        """The stored flag; Act when no row exists, Assist when the read fails."""
+        """The stored flag, or the no-row default; Assist when the read fails."""
         try:
             value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
         except Exception as e:  # noqa: BLE001
@@ -206,7 +240,7 @@ class ApprovalService:
                 "Cannot read the approval setting; requiring manual approval: %s", e
             )
             return True
-        return bool(value.get("enabled", False)) if value else False
+        return stored_force_manual_approval(value)
 
     def set_force_manual_approval(self, force: bool):
         """Force manual approval for this process; the stored row is left as is."""

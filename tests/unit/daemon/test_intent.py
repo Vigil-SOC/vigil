@@ -22,7 +22,11 @@ from core.intent import (
 )
 from core.response.config import ResponseConfig
 from services.daemon.config import DaemonConfig
-from services.daemon.intent import intent_report, report_intent
+from services.daemon.intent import (
+    effective_daemon_config,
+    intent_report,
+    report_intent,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -41,6 +45,21 @@ def offline_config():
         yield
 
 
+@pytest.fixture
+def force_env(monkeypatch):
+    """Set or unset DAEMON_FORCE_APPROVAL; Settings is rebuilt on both sides."""
+
+    def _set(value):
+        if value is None:
+            monkeypatch.delenv("DAEMON_FORCE_APPROVAL", raising=False)
+        else:
+            monkeypatch.setenv("DAEMON_FORCE_APPROVAL", value)
+        get_settings.cache_clear()
+
+    yield _set
+    get_settings.cache_clear()
+
+
 def _intent_records(caplog):
     return [r for r in caplog.records if r.name.endswith("intent")]
 
@@ -54,11 +73,19 @@ def _write(tmp_path: Path, frontmatter: str) -> Path:
 # --- shipped manifest --------------------------------------------------------
 
 
-def test_shipped_manifest_declares_every_field_at_default():
+def test_shipped_manifest_declares_every_field_at_default(monkeypatch, force_env):
+    # Assist is what no stored Settings choice reads as, so the defaults are
+    # read through the overlay with an empty config table.
+    force_env(None)
+    monkeypatch.setattr(
+        "services.daemon.intent.get_config_service", lambda: _FakeConfigService({})
+    )
     declared = read_intent(DEFAULT_INTENT_FILE)
     assert declared is not None
     assert set(declared) == {f.key for f in INTENT_FIELDS}
-    assert diff_intent(declared, effective_values(DaemonConfig()), {}) == []
+    effective = effective_values(effective_daemon_config(DaemonConfig()))
+    assert effective["respond.force_manual_approval"] is True
+    assert diff_intent(declared, effective, {}) == []
 
 
 def test_every_response_knob_has_a_manifest_key():
@@ -221,6 +248,9 @@ class _FakeConfigService:
     def get_system_config(self, key, default=None):
         return self.rows.get(key, default)
 
+    def read_system_config(self, key):
+        return self.rows.get(key)
+
 
 def test_db_overlays_report_source_db(tmp_path, monkeypatch):
     svc = _FakeConfigService(
@@ -241,6 +271,48 @@ def test_db_overlays_report_source_db(tmp_path, monkeypatch):
     assert (cost.effective, cost.source, cost.label) == (2.5, "db", "loosen")
     force = rows["respond.force_manual_approval"]
     assert (force.effective, force.source, force.label) == (True, "db", "loosen")
+
+
+def _force_row(tmp_path, monkeypatch, rows):
+    svc = _FakeConfigService(rows)
+    monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: svc)
+    monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: svc)
+    path = _write(tmp_path, "respond:\n  force_manual_approval: true\n")
+    [row] = intent_report(path=path, include_same=True)
+    return row
+
+
+_STORED_ACT = {"approval.force_manual_approval": {"enabled": False}}
+
+
+@pytest.mark.parametrize(
+    "env, rows, expected",
+    [
+        # A fresh install: no stored choice and no env is Assist.
+        (None, {}, (True, "default", "same")),
+        ("", {}, (True, "default", "same")),
+        # The deployment picked Act and nobody has changed it in Settings.
+        ("false", {}, (False, "env", "tighten")),
+        # Someone picked Act in Settings.
+        (None, _STORED_ACT, (False, "db", "tighten")),
+        # Env true is Assist whatever Settings stored.
+        ("true", _STORED_ACT, (True, "env", "same")),
+    ],
+)
+def test_force_approval_is_assist_until_env_or_settings_picks_act(
+    tmp_path, monkeypatch, force_env, env, rows, expected
+):
+    force_env(env)
+    row = _force_row(tmp_path, monkeypatch, rows)
+    assert (row.effective, row.source, row.label) == expected
+
+
+def test_failed_approval_read_reports_assist(tmp_path, force_env, offline_config):
+    force_env("false")
+    path = _write(tmp_path, "respond:\n  force_manual_approval: true\n")
+    [row] = intent_report(path=path, include_same=True)
+    # ApprovalService holds every action when it cannot read the row.
+    assert (row.effective, row.source) == (True, "default")
 
 
 # --- file problems: one warning, daemon still starts --------------------------
