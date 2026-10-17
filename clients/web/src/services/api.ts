@@ -764,8 +764,6 @@ export const ingestionApi = {
 
 export interface BudgetSettings {
   default_vk: string
-  budget_limit_usd: number
-  enforcement_mode: 'warning' | 'hard_stop'
 }
 
 interface BifrostBudgetTier {

@@ -454,12 +454,12 @@ export interface paths {
         };
         /**
          * Get Budget Settings
-         * @description Return the persisted Bifrost VK + budget config.
+         * @description Return the persisted Bifrost VK config.
          */
         get: operations["get_api_analytics_budget"];
         /**
          * Put Budget Settings
-         * @description Update the Bifrost VK + budget config.
+         * @description Update the Bifrost VK config.
          *
          *     Admin operation. The dispatch path picks up the change on the next
          *     runtime-config TTL tick (~60s). When ``DEV_MODE=true`` or
@@ -7509,48 +7509,23 @@ export interface components {
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
             /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
-            /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /**
          * BudgetSettingsUpdate
-         * @description Admin-intent body for PUT /budget. All fields required so the API
-         *     can't be used to silently drop a setting via an empty PATCH.
-         *     budget_limit_usd and enforcement_mode are stored for compatibility
-         *     and ignored at dispatch.
+         * @description Admin-intent body for PUT /budget. The spend ceiling lives on the
+         *     virtual key in Bifrost, not here. Unknown fields are ignored, so older
+         *     clients that still send budget_limit_usd / enforcement_mode get a 200.
          */
         BudgetSettingsUpdate: {
-            /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
             /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /** ByPriorityResponse */
         ByPriorityResponse: {
