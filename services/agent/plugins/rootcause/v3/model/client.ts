@@ -182,7 +182,7 @@ export class AnthropicModelClient implements ModelClient {
   }
 
   addContext(text: string) {
-    this.system = [this.system[0], { ...this.system[1], text: `${this.system[1].text}\n\n${text}` }];
+    this.system = [this.system[0]!, { ...this.system[1]!, text: `${this.system[1]!.text}\n\n${text}` }];
   }
 
   // A refusal (the safety filter misfiring on attack narrative built up in the snapshot) is retried: once without
@@ -306,7 +306,7 @@ export class ScriptedModelClient implements ModelClient {
     const i = this.script.findIndex((s, j) => !this.used.has(j) && s.move === req.move && s.correlationId === req.correlationId);
     if (i < 0) throw new Error(`scripted model: no entry for (${req.move}, ${req.correlationId})`);
     this.used.add(i);
-    const s = this.script[i];
+    const s = this.script[i]!;
     const toolCalls: ToolCallOut[] = [];
     for (const c of s.toolCalls) toolCalls.push((await runTool(this.d, req, c.tool, c.input)).out);
     const raw = mapIds(s.submission, (x) => (/^\$\d+$/.test(x) ? toolCalls[Number(x.slice(1))]?.id ?? x : x));

@@ -18,7 +18,7 @@ What the port changed:
   standalone repo.
 - Schemas are zod 4.6.5, imported as `zod4` (openai@4 pins zod 3 as a peer). Nothing
   outside plugins/rootcause imports it.
-- Type-checked by `tsconfig.rootcause-v3.json`, with `noUncheckedIndexedAccess` off,
-  which the loop never compiled under.
+- Type-checked by the package's tsconfig like the rest, `noUncheckedIndexedAccess`
+  included, which the loop never compiled under.
 
 Not wired to the worker yet. Nothing here runs a `root_cause` run.

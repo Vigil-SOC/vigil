@@ -20,7 +20,7 @@ function values(c: CandidateT): string[] {
 // A search spans the data range (>= WIDE of it) by its explicit earliest/latest.
 export function wideSearch(q: unknown, range: [string, string]): boolean {
   const { earliest, latest } = (q ?? {}) as { earliest?: string; latest?: string };
-  const [s, e] = range.map(Date.parse);
+  const [s, e] = range.map(Date.parse) as [number, number];
   const a = earliest ? Date.parse(earliest) : NaN, z = latest ? Date.parse(latest) : NaN;
   return !Number.isNaN(a) && !Number.isNaN(z) && Math.min(z, e) - Math.max(a, s) >= WIDE * (e - s);
 }
@@ -40,7 +40,7 @@ export function routineShown(c: CandidateT, outputOf: OutputOf | undefined, rang
   if (!c.baseline || !outputOf || !range) return !!c.baseline;
   const ts = c.baseline.toolCallIds.flatMap((id) => timesIn(outputOf(id) ?? ""));
   if (!ts.length) return false;
-  const [s, e] = range.map(Date.parse);
+  const [s, e] = range.map(Date.parse) as [number, number];
   if (Math.max(...ts) - Math.min(...ts) < SPREAD * (e - s)) return false;
   // Over a range of several days, routine work spans most of its calendar days. A start-to-end spread alone let two
   // days of a borrowed identity's activity pass (a per-day count stamped at midnight stretched a day and a half
@@ -58,7 +58,7 @@ export function baselineProblem(c: CandidateT, inputOf: InputOf | undefined, ran
   if (!b || !inputOf || !range) return null;
   const qs = b.toolCallIds.map(inputOf).filter((q): q is { spl?: string; earliest?: string; latest?: string } => !!q && typeof q === "object");
   if (!qs.length) return null; // uncited ids are refused elsewhere
-  const [s, e] = range.map(Date.parse);
+  const [s, e] = range.map(Date.parse) as [number, number];
   const span = e - s;
   const wide = (q: { earliest?: string; latest?: string }) => {
     const a = q.earliest ? Date.parse(q.earliest) : NaN, z = q.latest ? Date.parse(q.latest) : NaN;

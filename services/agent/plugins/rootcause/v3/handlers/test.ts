@@ -40,7 +40,7 @@ export const test: Handler = async (d, g, ctx) => {
   // rechecks it (a pod a test showed "stayed Pending, never ran" once kept its link at 0.76, and the report blamed
   // a developer's address).
   const refuted = (sub.contradicts ?? []).filter((x) => (g.nodes[x]?.kind === "action" && !g.nodes[x].isSymptom) || g.edges[x]?.kind === "explains");
-  const addEvidence = ids.length ? refuted.map((x) => ({ targetId: x, evidence: { source: g.nodes[x]?.domain ?? g.nodes[g.edges[x].target].domain, summary: `test ${id}: ${sub.summary}`.slice(0, 300), strength: "corroborating" as const, polarity: "refutes" as const, toolCallIds: ids, traceIds: v.traceIds(ids), turn: ctx.turn } })) : [];
+  const addEvidence = ids.length ? refuted.map((x) => ({ targetId: x, evidence: { source: g.nodes[x]?.domain ?? g.nodes[g.edges[x]!.target]!.domain, summary: `test ${id}: ${sub.summary}`.slice(0, 300), strength: "corroborating" as const, polarity: "refutes" as const, toolCallIds: ids, traceIds: v.traceIds(ids), turn: ctx.turn } })) : [];
   if (refuted.length) ctx.trace.write("reasoning", { test: id, contradicts: refuted });
   return merge({ predictionResult: { id, status, result, toolCallIds: ids, supports: sub.supports, weakens: narrow ? [] : sub.weakens }, addEvidence }, ...parts);
 };

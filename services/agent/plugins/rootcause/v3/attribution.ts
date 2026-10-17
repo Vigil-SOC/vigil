@@ -64,7 +64,7 @@ export function buildAttributionPatch(actionId: string, signals: IdentitySignal[
     if (!actorId) {
       actorId = `actor:${grp.principal}`;
       const known = findActor(g, [...grp.names]);
-      addNodes.push({ tempId: actorId, kind: "actor", label: known ? g.nodes[known].label : grp.principal, domain: ctx.domain, prior: 0.5, evidence: [], artifacts: [...grp.names].map((v) => ({ kind: "principal" as const, value: v })) });
+      addNodes.push({ tempId: actorId, kind: "actor", label: known ? g.nodes[known]!.label : grp.principal, domain: ctx.domain, prior: 0.5, evidence: [], artifacts: [...grp.names].map((v) => ({ kind: "principal" as const, value: v })) });
     }
     actorIds.set(low(grp.principal), actorId);
     const kind: EdgeKind = grp.relation === "operated-by" ? "operated-by" : "attributed-to";
@@ -95,7 +95,7 @@ export function buildAttributionPatch(actionId: string, signals: IdentitySignal[
   const machine = ranAs.filter(([, g]) => g.sigs.some((s) => s.layer === "machine-facing"));
   const human = ranAs.filter(([k, g]) => !machine.some(([m]) => m === k) && g.sigs.some((s) => s.layer === "human-facing"));
   if (machine.length === 1) {
-    const [mk, m] = machine[0];
+    const [mk, m] = machine[0]!;
     const mSigs = m.sigs.filter((s) => s.layer === "machine-facing");
     for (const [hk, h] of human) {
       const calls = [...new Set([...mSigs, ...h.sigs].flatMap((s) => s.toolCallIds))];

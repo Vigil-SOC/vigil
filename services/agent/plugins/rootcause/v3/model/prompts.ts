@@ -39,11 +39,11 @@ const evLine = (e: { strength: string; polarity: string; summary: string; toolCa
 
 export function currentTarget(g: Graph, id: string): string {
   const n: GraphNode | undefined = g.nodes[id];
-  const e: GraphEdge | undefined = g.edges[id];
+  const e: GraphEdge = g.edges[id]!;
   const x = n ?? e;
   const head = n
     ? `${n.id} [${n.kind}|${n.status}|${n.confidence.toFixed(2)}|${n.domain}] ${n.label}${n.observedAt ? ` @${n.observedAt}` : ""}\n  artifacts: ${n.artifacts.map((a) => `${a.kind}=${a.value}`).join(", ") || "none"}`
-    : `${e.id} ${e.source} -${e.kind}-> ${e.target} [${e.status}|${e.confidence.toFixed(2)}]\n  source: ${g.nodes[e.source].label}\n  target: ${g.nodes[e.target].label}`;
+    : `${e.id} ${e.source} -${e.kind}-> ${e.target} [${e.status}|${e.confidence.toFixed(2)}]\n  source: ${g.nodes[e.source]!.label}\n  target: ${g.nodes[e.target]!.label}`;
   const hist = x.confidenceHistory.map((h) => `t${h.turn}:${h.value.toFixed(2)}`).join(" ");
   const leads = n?.leads ? `\n  cross-source leads (code sweep of its identifying values over the whole range; cite these ids): ${n.leads}` : "";
   return `<current_target>\n${head}${leads}\n  strengthen attempts: ${x.strengthenAttempts}; history: ${hist || "-"}\n  evidence:\n${x.evidence.map(evLine).join("\n") || "  (none)"}\n</current_target>`;
@@ -66,26 +66,26 @@ export const instructions = {
   strengthen(g: Graph, id: string): string {
     const isEdge = id in g.edges;
     const what = isEdge
-      ? g.edges[id].kind === "attributed-to"
-        ? `Decide who performed ${g.edges[id].target}. Gather identity evidence for whether ${g.nodes[g.edges[id].source].label} performed it: system-issued identities on the event (machine-facing) against names the actor chose (human-facing). Report identitySignals for every identity on the event.`
-        : `Test whether ${g.edges[id].source} caused ${g.edges[id].target}: find the records that join them (a shared process, file, session, credential, value) or that contradict it (wrong order, different actor, unrelated).`
+      ? g.edges[id]!.kind === "attributed-to"
+        ? `Decide who performed ${g.edges[id]!.target}. Gather identity evidence for whether ${g.nodes[g.edges[id]!.source]!.label} performed it: system-issued identities on the event (machine-facing) against names the actor chose (human-facing). Report identitySignals for every identity on the event.`
+        : `Test whether ${g.edges[id]!.source} caused ${g.edges[id]!.target}: find the records that join them (a shared process, file, session, credential, value) or that contradict it (wrong order, different actor, unrelated).`
       : g.nodes[id]?.isSymptom
         ? `Test whether the alerted event ${id} happened as described: find its own record and the records around it. Refute it only with a record showing it did not happen or differs from the alert. Whether it was routine work or the attack is not decided here: the causes found upstream decide that, so do not refute it for looking normal for its account.`
         : `Test whether ${id} happened as described and what it really was: find its own record, and records that confirm or contradict it. If it turns out to be normal work, say so with refuting evidence.`;
     return `<move_instructions>\nMove: strengthen ${id}.\n${what}\nEvidence that weakens the hypothesis is as valuable as evidence that supports it. If you find the events that caused the target, report them under causes so they enter the graph. Report with submit_assessment. If this node's own sourcetype holds nothing more upstream and its cause must be in another sourcetype, add a boundary.\n</move_instructions>`;
   },
   expand(g: Graph, id: string): string {
-    const n = g.nodes[id];
+    const n = g.nodes[id]!;
     return `<move_instructions>\nMove: expand ${id} "${n.label}".\nFind what caused it: the event(s) immediately upstream that made it happen. Propose 1-3 candidate causes, each one concrete event with its record cited, an edge-evidence item for why it caused ${id}, its identifying artifacts and identity signals. Search every sourcetype that could hold the cause. Mark isRootCause only for the event where the incident began (initial access) with nothing earlier that explains it. Report with submit_causes.\n</move_instructions>`;
   },
   fork(g: Graph, id: string): string {
-    const n = g.nodes[id];
+    const n = g.nodes[id]!;
     const parents = Object.values(g.edges).filter((e) => e.kind === "explains" && e.target === id)
-      .map((e) => `${e.source} "${g.nodes[e.source].label}" (${e.status === "ruled-out" || g.nodes[e.source].status === "ruled-out" ? "ruled out" : `${e.status} ${e.confidence.toFixed(2)}`})`);
+      .map((e) => `${e.source} "${g.nodes[e.source]!.label}" (${e.status === "ruled-out" || g.nodes[e.source]!.status === "ruled-out" ? "ruled out" : `${e.status} ${e.confidence.toFixed(2)}`})`);
     return `<move_instructions>\nMove: fork ${id} "${n.label}".\nThe current explanation stalled. Propose a cause for ${id} that differs from: ${parents.join("; ") || "none"}. Look in sourcetypes and time windows the existing causes did not use. Report with submit_causes.\n</move_instructions>`;
   },
   pivotEntry(g: Graph, markerId: string, window: [string, string], into?: string): string {
-    const m = g.nodes[markerId], o = g.nodes[m.originNodeId!];
+    const m = g.nodes[markerId]!, o = g.nodes[m.originNodeId!]!;
     const dom = into ?? m.targetDomain;
     return `<move_instructions>\nMove: pivot ${markerId}, first step.\nThe cause of ${o.id} "${o.label}" is believed to be recorded in ${dom}${dom === m.targetDomain ? ` (${m.reason ?? ""})` : ` (your choice; the boundary pointed to ${m.targetDomain})`}. Search ${dom} between ${window[0]} and ${window[1]} for up to 3 entry events: the earliest activity there that could lead forward to ${o.id}. Start from the identifiers ${o.id} carries and the cross-source leads. Record their identifying artifacts and a baseline for each (the same account/address over the whole range: is this its normal activity?). Entries without a baseline, or matching normal activity, are not added. Report with submit_entry_points.\n</move_instructions>`;
   },
@@ -105,8 +105,8 @@ export const instructions = {
   },
 
   connect(g: Graph, topId: string, ids: string[]): string {
-    const top = g.nodes[topId];
-    const list = ids.map((id) => { const n = g.nodes[id]; return `- ${n.id} "${n.label}"${n.observedAt ? ` @${n.observedAt}` : ""} (${n.domain}); ${n.artifacts.slice(0, 6).map((a) => `${a.kind}=${a.value}`).join(", ")}`; }).join("\n");
+    const top = g.nodes[topId]!;
+    const list = ids.map((id) => { const n = g.nodes[id]!; return `- ${n.id} "${n.label}"${n.observedAt ? ` @${n.observedAt}` : ""} (${n.domain}); ${n.artifacts.slice(0, 6).map((a) => `${a.kind}=${a.value}`).join(", ")}`; }).join("\n");
     return `<move_instructions>\nMove: connect.\nThe chain to the alert stops at ${top.id} "${top.label}"${top.observedAt ? ` @${top.observedAt}` : ""}: what led to it is not known. These findings are in the graph but no link ties them to the chain:\n${list}\nFor each, find out from the data whether it led to an event on the chain (most often ${top.id}), directly or through steps in between. Follow what they share: a credential, key, token, session, IP, host, process, pod, container, file or repository, and the records that pass it from one to the next in time order. Findings can also link to each other: together they may be one chain. Report the steps in between as events (each with its record cited and identifying artifacts, given a ref), and each link cause -> effect between graph ids and refs with the records that join them. A cause comes before its effect. Report a finding as unrelated only when the records show it has nothing to do with the chain; one you could not link is left out, not unrelated. Never link on a guess: no shared value or record, no link. Report with submit_links.\n</move_instructions>`;
   },
 
@@ -115,12 +115,12 @@ export const instructions = {
   },
 
   branch(g: Graph, id: string): string {
-    const n = g.nodes[id];
-    const known = Object.values(g.edges).filter((e) => e.kind === "explains" && e.source === id).map((e) => `${e.target} "${g.nodes[e.target].label}"`);
+    const n = g.nodes[id]!;
+    const known = Object.values(g.edges).filter((e) => e.kind === "explains" && e.source === id).map((e) => `${e.target} "${g.nodes[e.target]!.label}"`);
     return `<move_instructions>\nMove: branch from ${id} "${n.label}"${n.observedAt ? ` (${n.observedAt})` : ""}.\nThe incident is more than the chain to the alert. Find what else ${id} produced that is part of the incident and not yet in the graph: other processes, files, logons, connections, accounts or hosts it led to, after ${n.observedAt ?? "its time"} and up to the end of the data. Already known effects: ${known.join("; ") || "none"}. An event's effects often land in a different sourcetype from the event itself: search ${id}'s identifying values (accounts, keys, hosts, IPs, resource names) in the sourcetypes searched least so far (see constraints) before going back to ${n.domain}. Also look for later activity by the same account on other hosts. If ${id} ran code or exposed a credential, its effects are where that code or credential acted next, in any source: search by host and IP as well as by process id, since many records carry no process id. Before reporting an effect, check the snapshot: if it is already an event there, do not report it again. Report up to 3 new effects, each one concrete event with its record cited and its identifying artifacts (hosts, accounts, hashes, IPs, domains), and a baseline: a search of the same account, host or destination over the whole data range showing this differs from its normal activity. Effects without a baseline, or that match normal activity, are not added. Report none if there is nothing more. Report with submit_effects.\n</move_instructions>`;
   },
   pivotForward(g: Graph, markerId: string, leafId: string): string {
-    const m = g.nodes[markerId], o = g.nodes[m.originNodeId!], leaf = g.nodes[leafId];
+    const m = g.nodes[markerId]!, o = g.nodes[m.originNodeId!]!, leaf = g.nodes[leafId]!;
     return `<move_instructions>\nMove: pivot ${markerId}, forward step.\nFrom ${leaf.id} "${leaf.label}", find what it produced next (up to 3 effects), moving toward ${o.id} "${o.label}" (${o.observedAt ?? "time unknown"}). Only effects before ${o.observedAt ?? "the origin"} count: later ones are not causes and are not added. If an effect is ${o.id} itself, report it with the same identifiers (the join then closes). Record identifying artifacts and a baseline on each effect. Set reachedOriginDomain when an effect is recorded in ${o.domain}. Report with submit_effects.\n</move_instructions>`;
   },
 };

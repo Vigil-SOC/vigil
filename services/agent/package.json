@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.rootcause-v3.json",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/core tests/hunt tests/chat",
     "test:integration": "vitest run tests/integration",

@@ -172,7 +172,7 @@ export function boundaryPatch(b: BoundaryT | undefined, originId: string, g: Gra
     : Object.values(g.nodes).some((n) => n.kind === "boundary-marker" && n.originNodeId === originId && n.targetDomain === b.targetDomain) ? "a marker to that domain already exists"
     // The same process or container described twice gets one boundary per domain (three copies of one
     // container start once each opened a pivot into the same source, ten turns of repeats).
-    : Object.values(g.nodes).some((n) => n.kind === "boundary-marker" && n.targetDomain === b.targetDomain && g.nodes[n.originNodeId!] && sameProcess(g.nodes[n.originNodeId!], origin!)) ? "a marker to that domain already exists on the same process"
+    : Object.values(g.nodes).some((n) => n.kind === "boundary-marker" && n.targetDomain === b.targetDomain && g.nodes[n.originNodeId!] && sameProcess(g.nodes[n.originNodeId!]!, origin!)) ? "a marker to that domain already exists on the same process"
     : "";
   if (why) { ctx.trace.write("reasoning", { boundaryIgnored: b, why }); return {}; }
   const id = tempId("marker");

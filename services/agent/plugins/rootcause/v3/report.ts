@@ -20,19 +20,19 @@ export function disposition(g: Graph, exit: ExitReason | null): string {
   if (exit === "root-cause-found") return "True Positive: a confirmed causal chain leads from the alert to its root cause.";
   if (exit === "false-positive") return "False Positive: the alerted event itself was refuted by the evidence.";
   const path = bestPathFromSymptom(g);
-  const up = path?.nodeIds.map((id) => g.nodes[id]).filter((n) => n.kind === "action" && !n.isSymptom) ?? [];
+  const up = path?.nodeIds.map((id) => g.nodes[id]!).filter((n) => n.kind === "action" && !n.isSymptom) ?? [];
   const confirmed = up.filter((n) => n.status === "confirmed").length;
   if (confirmed) return `True Positive (root cause not fully confirmed): ${confirmed} confirmed upstream event(s) explain the alert.`;
   // Likely causes (>= 0.6) behind a confirmed alert are a real attack whose steps are not all confirmed yet.
   const likely = up.filter((n) => n.status !== "ruled-out" && n.confidence >= 0.6).length;
-  const symptom = path ? g.nodes[path.nodeIds[0]] : undefined;
+  const symptom = path ? g.nodes[path.nodeIds[0]!] : undefined;
   if (likely && symptom?.status === "confirmed") return `True Positive (causes likely, not yet confirmed): the alert is confirmed and ${likely} likely upstream event(s) explain it.`;
   return "Inconclusive: no upstream cause of the alert was confirmed.";
 }
 
 function actorsFor(g: Graph, n: GraphNode, kind: "attributed-to" | "operated-by" = "attributed-to") {
   return getParents(g, n.id, kind).filter((e) => !e.retired).sort((a, b) => b.confidence - a.confidence)
-    .map((e) => ({ e, actor: g.nodes[e.source] }));
+    .map((e) => ({ e, actor: g.nodes[e.source]! }));
 }
 
 // unfiltered: the same report without the filters written around the grader's hard fail (the code-written
@@ -53,7 +53,7 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   const raw = !!opts.unfiltered;
   const g = raw ? g0 : forReport(g0);
   const path = bestPathFromSymptom(g);
-  const pathNodes = path?.nodeIds.map((id) => g.nodes[id]) ?? [];
+  const pathNodes = path?.nodeIds.map((id) => g.nodes[id]!) ?? [];
   const out: string[] = [];
   out.push(`# RCA report: ${alert.title}`, "", `Run ${g.runId} · alert ${alert.id} at ${alert.observedAt} · exit **${exit}**${budget ? ` · $${budget.usd.toFixed(2)}` : ""}`, "");
   out.push(`**Disposition:** ${disposition(g, exit)}`, "");
@@ -111,12 +111,12 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   else {
     out.push(`Root-cause chain, symptom first (path score ${pct(path.score)}):`, "");
     pathNodes.forEach((n, i) => {
-      const link = i > 0 ? ` ← link ${path.edgeIds[i - 1]} ${pct(g.edges[path.edgeIds[i - 1]].confidence)}${g.edges[path.edgeIds[i - 1]].inferred ? " (inferred: no record joins them)" : ""}` : "";
+      const link = i > 0 ? ` ← link ${path.edgeIds[i - 1]} ${pct(g.edges[path.edgeIds[i - 1]!]!.confidence)}${g.edges[path.edgeIds[i - 1]!]!.inferred ? " (inferred: no record joins them)" : ""}` : "";
       const label = n.kind === "boundary-marker" ? `[open boundary] cause of ${n.originNodeId} believed to be in ${n.targetDomain}: ${n.reason ?? ""}` : n.label;
       out.push(`${i + 1}. **${n.id}** ${label} — ${n.status} ${pct(n.confidence)}${n.observedAt ? ` @ ${n.observedAt}` : ""} (${n.domain})${n.isRoot ? " **ROOT CAUSE**" : ""}${n.legitimate && !raw ? " *(legitimate activity, not the attacker)*" : ""}${link}`);
       if (n.isRoot && n.rootJustification) out.push(`   - why root: ${n.rootJustification}`);
       for (const j of getParents(g, n.id).filter((e) => e.joint && !e.retired && e.status !== "ruled-out" && !path.edgeIds.includes(e.id)))
-        out.push(`   - together with: **${j.source}** ${g.nodes[j.source].label} (${j.status} ${pct(j.confidence)})`);
+        out.push(`   - together with: **${j.source}** ${g.nodes[j.source]!.label} (${j.status} ${pct(j.confidence)})`);
     });
   }
   out.push("");
@@ -256,7 +256,7 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   out.push("## 6. Open questions", "");
   const open: string[] = [];
   for (const n of Object.values(g.nodes)) if (n.kind === "boundary-marker" && !n.resolvedTo) open.push(`Boundary ${n.id}: cause of ${n.originNodeId} believed to be in ${n.targetDomain} (${n.reason ?? ""}); ${n.pivotSteps ?? 0} pivot steps, not stitched.`);
-  for (const e of Object.values(g.edges)) if (e.disputed && !e.retired) open.push(`Disputed ${e.kind} ${e.id}: ${g.nodes[e.source].label} -> ${e.target} at ${pct(e.confidence)}.`);
+  for (const e of Object.values(g.edges)) if (e.disputed && !e.retired) open.push(`Disputed ${e.kind} ${e.id}: ${g.nodes[e.source]!.label} -> ${e.target} at ${pct(e.confidence)}.`);
   for (const n of Object.values(g.nodes)) if (n.status === "ruled-out") open.push(`Ruled out ${n.id} ${n.label}: ${n.evidence.filter((e) => e.polarity === "refutes").map((e) => e.summary).join(" ") || "no support"}`);
   const flags = trace.chronological().filter((x) => x.type === "reasoning" && (x.payload as any)?.suspiciousContent);
   for (const f of flags) open.push(`Suspicious content flagged at turn ${f.turn} (${f.id}): ${(f.payload as any).suspiciousContent.join(" | ")}`);

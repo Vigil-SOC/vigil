@@ -39,7 +39,7 @@ export const wrap = (tool: string, id: string, text: string) =>
 // The sourcetypes a search reads (not the ones it excludes with NOT), counted for coverage.
 export function searchedSourcetypes(input: unknown): string[] {
   const spl = String((input as { spl?: unknown })?.spl ?? "");
-  return [...new Set([...spl.matchAll(/(NOT\s+)?sourcetype\s*=\s*"?([^"\s|)]+)"?/gi)].filter((m) => !m[1]).map((m) => m[2]))];
+  return [...new Set([...spl.matchAll(/(NOT\s+)?sourcetype\s*=\s*"?([^"\s|)]+)"?/gi)].filter((m) => !m[1]).map((m) => m[2]!))];
 }
 
 export class Registry implements ToolRegistry {

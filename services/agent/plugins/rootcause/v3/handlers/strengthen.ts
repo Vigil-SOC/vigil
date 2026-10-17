@@ -9,7 +9,7 @@ import { boundaryPatch, candidatePatch, merge, noteSuspicious, userContent, Vett
 export const strengthen: Handler = async (d, g, ctx) => {
   const id = d.targetId;
   const edge = g.edges[id];
-  const node = g.nodes[id] ?? g.nodes[edge.target];
+  const node = g.nodes[id] ?? g.nodes[edge!.target]!;
   const r = await ctx.model.runTurn({
     move: "strengthen", correlationId: id, submitTool: "submit_assessment", allowedDomains: ctx.domains, focusTime: node.observedAt, trace: ctx.trace,
     maxSearches: ctx.cfg.strengthenSearches,
@@ -24,7 +24,7 @@ export const strengthen: Handler = async (d, g, ctx) => {
   // (a run once ruled the alert out in 2 turns as "routine for its role" before any cause search). On the
   // symptom only a direct record refutes, and it cannot be flagged legitimate.
   const symptom = !edge && !!g.nodes[id]?.isSymptom;
-  const all = v.evidence(sub.evidence, edge ? g.nodes[edge.source].domain : node.domain);
+  const all = v.evidence(sub.evidence, edge ? g.nodes[edge.source]!.domain : node.domain);
   const kept = symptom ? all.filter((e) => e.polarity === "supports" || e.strength === "direct") : all;
   if (kept.length < all.length) ctx.trace.write("rejected-evidence", { target: id, dropped: all.length - kept.length, reason: "only a direct record refutes the alert itself" });
   const evidence = kept.map((e) => ({ targetId: id, evidence: e }));

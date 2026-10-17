@@ -71,7 +71,7 @@ function rare(rows: Row[], shown: number): string {
     }
   }
   if (!out.length) return "";
-  const more = [...extra].slice(0, 5).map((i) => show(rows[i]));
+  const more = [...extra].slice(0, 5).map((i) => show(rows[i]!));
   return `RARE among the ${rows.length} rows: ${out.slice(0, 25).join("; ")}${out.length > 25 ? ` …+${out.length - 25}` : ""}` +
     (more.length ? `\nrare rows beyond the ${shown} shown:\n${more.join("\n")}` : "");
 }
@@ -94,11 +94,11 @@ export class LiveSearch implements SearchBackend {
     if (!st) return [];
     const named = new Set<string>();
     const pipes = spl.split("|").slice(1).join("|");
-    for (const m of pipes.matchAll(/\b(?:table|fields)\s+([^|]+)/g)) m[1].split(/[\s,]+/).filter((f) => f && !/^[-+]$/.test(f)).forEach((f) => named.add(f));
-    for (const m of pipes.matchAll(/\bby\s+([^|]+)/g)) m[1].split(/[\s,]+/).filter(Boolean).forEach((f) => named.add(f));
-    for (const m of pipes.matchAll(/\b(?:values|dc|count|min|max|latest|earliest|first|last|sum|avg)\(([^)]+)\)/g)) named.add(m[1]);
-    const base = spl.split("|")[0];
-    const filters = [...base.matchAll(/(?:^|[\s(])"?([A-Za-z_@][\w.{}@/:-]*)"?\s*!?=/g)].map((m) => m[1]).filter((f) => !/^(index|sourcetype|source|host|earliest|latest)$/.test(f));
+    for (const m of pipes.matchAll(/\b(?:table|fields)\s+([^|]+)/g)) m[1]!.split(/[\s,]+/).filter((f) => f && !/^[-+]$/.test(f)).forEach((f) => named.add(f));
+    for (const m of pipes.matchAll(/\bby\s+([^|]+)/g)) m[1]!.split(/[\s,]+/).filter(Boolean).forEach((f) => named.add(f));
+    for (const m of pipes.matchAll(/\b(?:values|dc|count|min|max|latest|earliest|first|last|sum|avg)\(([^)]+)\)/g)) named.add(m[1]!);
+    const base = spl.split("|")[0]!;
+    const filters = [...base.matchAll(/(?:^|[\s(])"?([A-Za-z_@][\w.{}@/:-]*)"?\s*!?=/g)].map((m) => m[1]!).filter((f) => !/^(index|sourcetype|source|host|earliest|latest)$/.test(f));
     const want = [...named].map((f) => f.replace(/^"|"$/g, "")).filter((f) => f && !f.startsWith("_") && !/^(sort|head|limit|count|as)$/i.test(f) && !/[=()]/.test(f));
     const checks = rows.length ? want.filter((f) => rows.every((r) => { const v = fieldsOf(r)[f] ?? flatten(fieldsOf(r)).get(f); return v === undefined || v === null || v === ""; }))
       : events === 0 ? filters : [];
@@ -131,7 +131,7 @@ export class LiveSearch implements SearchBackend {
     const pipes = spl.split("|");
     const i = pipes.findIndex((p, k) => k > 0 && /^\s*(stats|chart|timechart|top|rare)\b/i.test(p) && /\bby\b/i.test(p));
     if (i < 0) return null;
-    const fields = pipes[i].split(/\bby\b/i).pop()!.split(/[\s,]+/).map((f) => f.replace(/^"|"$/g, "")).filter((f) => f && !/[=()]/.test(f) && !/^(limit|useother|usenull)$/i.test(f)).slice(0, 6);
+    const fields = pipes[i]!.split(/\bby\b/i).pop()!.split(/[\s,]+/).map((f) => f.replace(/^"|"$/g, "")).filter((f) => f && !/[=()]/.test(f) && !/^(limit|useother|usenull)$/i.test(f)).slice(0, 6);
     if (!fields.length) return null;
     const prefix = pipes.slice(0, i).join("|");
     const job = await this.client.runJob(`${prefix} | stats count as total ${fields.map((f, k) => `count("${f}") as f${k}`).join(" ")}`, { earliest, latest, limit: 1, timeoutMs });

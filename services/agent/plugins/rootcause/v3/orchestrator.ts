@@ -27,14 +27,14 @@ export function seedFromAlert(g: Graph, alert: Alert, cfg: AgentConfig): Graph {
 export function chainSolid(g: Graph, cfg: AgentConfig): boolean {
   const path = bestPathFromSymptom(g);
   if (path) {
-    const nodes = path.nodeIds.map((id) => g.nodes[id]);
-    const top = nodes[nodes.length - 1];
+    const nodes = path.nodeIds.map((id) => g.nodes[id]!);
+    const top = nodes[nodes.length - 1]!;
     // Near-certain counts as solid: the evidence rule can leave a 0.99 link suspected.
     const ok = (x: { status: string; confidence: number }) => x.status === "confirmed" || x.confidence >= cfg.thresholds.settled;
-    const solid = nodes.every((n) => n.kind !== "boundary-marker" && ok(n)) && path.edgeIds.every((id) => ok(g.edges[id]));
+    const solid = nodes.every((n) => n.kind !== "boundary-marker" && ok(n)) && path.edgeIds.every((id) => ok(g.edges[id]!));
     const attributed = nodes.filter((n) => n.kind === "action").every((n) => {
       const es = getParents(g, n.id, "attributed-to").filter((e) => !e.retired).sort((a, b) => b.confidence - a.confidence);
-      return !es.length || (ok(es[0]) && es.slice(1).every((e) => e.confidence <= cfg.thresholds.competitorMax));
+      return !es.length || (ok(es[0]!) && es.slice(1).every((e) => e.confidence <= cfg.thresholds.competitorMax));
     });
     return !!top.isRoot && solid && attributed;
   }
@@ -138,7 +138,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     for (const c of result.changes) tt.write("confidence-change", c);
     for (const r of result.rejected) log(`  rejected: ${r.reason}`);
     const created = [...new Set(Object.values(result.idMap))].filter((id) => (graph.nodes[id]?.createdTurn ?? graph.edges[id]?.createdTurn) === turn);
-    for (const id of created) log(`  new ${id} ${graph.nodes[id] ? graph.nodes[id].label : `${graph.edges[id].source} ${graph.edges[id].kind} ${graph.edges[id].target}`}`);
+    for (const id of created) log(`  new ${id} ${graph.nodes[id] ? graph.nodes[id]!.label : `${graph.edges[id]!.source} ${graph.edges[id]!.kind} ${graph.edges[id]!.target}`}`);
     for (const m of result.resolvedMarkers) log(`  boundary ${m} resolved`);
     for (const c of result.changes) log(`  ${c.id} ${c.from.toFixed(2)} -> ${c.to.toFixed(2)} ${c.status}`);
     tt.relate([...new Set([...result.touched, ...Object.values(result.idMap)])]);

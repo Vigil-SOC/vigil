@@ -43,7 +43,7 @@ export const connect: Handler = async (d, g, ctx) => {
   let resolve: GraphPatch["resolveBoundary"];
   for (const l of sub.links) {
     const a = end(l.from), b = end(l.to);
-    const evidence = v.evidence(l.evidence, a && g.nodes[a.id] ? g.nodes[a.id].domain : ctx.domains[0]);
+    const evidence = v.evidence(l.evidence, a && g.nodes[a.id] ? g.nodes[a.id]!.domain : ctx.domains[0]!);
     const why = !a || !b ? `unknown end ${!a ? l.from : l.to}`
       : a.id === b.id ? "a link joins two different events"
       : a.at && b.at && Date.parse(a.at) > Date.parse(b.at) + SKEW_MS ? `${l.from} (${a.at}) is after ${l.to} (${b.at}); a cause comes first`

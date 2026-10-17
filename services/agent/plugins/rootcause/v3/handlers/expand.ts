@@ -12,7 +12,7 @@ const CAUSE_LOOKBACK_MS = 48 * 3600_000;
 
 const causes = (fork: boolean): Handler => async (d, g, ctx) => {
   const id = d.targetId;
-  const n = g.nodes[id];
+  const n = g.nodes[id]!;
   const wide = !fork && n.expandAttempts >= 1;
   const extra = wide ? "\nAn earlier attempt found no cause near the event. Search the whole data range, every sourcetype, starting with the cross-source leads on the current target." : "";
   const r = await ctx.model.runTurn({

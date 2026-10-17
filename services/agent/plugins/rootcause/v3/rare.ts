@@ -46,7 +46,7 @@ export async function rareSweep(d: RareDeps): Promise<string> {
       const spl = `${base} ${q(f)}=* | stats count min(_time) as first max(_time) as last${host ? ` dc(${q(host)}) as hosts values(${q(host)}) as h` : ""} by ${q(f)} | sort 0 count first | head ${TOP}${host ? ` | eval h=mvjoin(mvindex(h,0,1),",")` : ""}`;
       const s = await search(d, `rare sweep: least frequent ${f} in ${st}`, spl);
       if (!s.ok || !s.rows.length) continue;
-      const vals = s.rows.map((x) => `${String(x[f]).slice(0, 100)} ×${x.count} (${iso(x.first)}${x.count !== "1" ? ` → ${iso(x.last)}` : ""}${x.h ? `, ${x.h}${Number(x.hosts) > 2 ? ` +${Number(x.hosts) - 2}` : ""}` : ""})`);
+      const vals = s.rows.map((x) => `${String(x[f]).slice(0, 100)} ×${x.count} (${iso(x.first!)}${x.count !== "1" ? ` → ${iso(x.last!)}` : ""}${x.h ? `, ${x.h}${Number(x.hosts) > 2 ? ` +${Number(x.hosts) - 2}` : ""}` : ""})`);
       lines.push(`  ${f} (${r[f]} distinct) [${s.id}]: ${vals.join("; ")}`);
     }
     if (lines.length) out.push(`- ${st}:`, ...lines);
@@ -63,12 +63,12 @@ export function rareValues(text: string | undefined, maxCount = 5): RareValue[] 
   let st = "";
   for (const line of (text ?? "").split("\n")) {
     const s = line.match(/^- (\S+):\s*$/);
-    if (s) { st = s[1]; continue; }
+    if (s) { st = s[1]!; continue; }
     const m = line.match(/^\s+(\S+) \(\d+ distinct\) \[tc_\d+\]: (.*)$/);
     if (!m || !st) continue;
-    for (const part of m[2].split(/; (?=\S[^;]*? ×\d+ \()/)) {
+    for (const part of m[2]!.split(/; (?=\S[^;]*? ×\d+ \()/)) {
       const v = part.match(/^(.*?) ×(\d+) \(/);
-      if (v && Number(v[2]) <= maxCount && v[1].trim().length >= 2 && !out.some((x) => x.value === v[1].trim())) out.push({ value: v[1].trim(), sourcetype: st, field: m[1], count: Number(v[2]) });
+      if (v && Number(v[2]) <= maxCount && v[1]!.trim().length >= 2 && !out.some((x) => x.value === v[1]!.trim())) out.push({ value: v[1]!.trim(), sourcetype: st, field: m[1]!, count: Number(v[2]) });
     }
   }
   return out;

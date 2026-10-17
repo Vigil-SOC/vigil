@@ -20,7 +20,7 @@ describe("lead", () => {
   });
   it("lists no branch from the symptom and no expand past the attempt cap", () => {
     const g = seeded();
-    g.nodes.N1.expandAttempts = cfg.maxExpandAttempts + 1;
+    g.nodes.N1!.expandAttempts = cfg.maxExpandAttempts + 1;
     const o = options(g, cfg);
     expect(o.branch).toBeUndefined();
     expect(o.expand).toBeUndefined();
@@ -54,7 +54,7 @@ describe("lead", () => {
     expect(optionsText(g, cfg, {}, 8)).toContain('"zed" (actor, github, ×3)');
     const r = resolveNext({ move: "probe", target: "zed", why: "rare" }, g, cfg, 8, [], { index: "lab", range: ["2026-03-11T00:00:00Z", "2026-03-14T00:00:00Z"] });
     expect(r.decision).toMatchObject({ move: "test", targetId: "PROBE1" });
-    const pr = g.theories!.find((t) => t.id === "PROBES")!.predictions[0];
+    const pr = g.theories!.find((t) => t.id === "PROBES")!.predictions[0]!;
     expect(pr).toMatchObject({ sourcetype: "github", earliest: "2026-03-11T00:00:00Z", status: "open" });
     expect(pr.spl).toContain('"zed"');
     expect(resolveNext({ move: "probe", target: "nope" }, g, cfg, 8, [], { index: "lab", range: ["a", "b"] }).refused).toMatch(/not available/);
