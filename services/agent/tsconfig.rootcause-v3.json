@@ -1,0 +1,11 @@
+// The root-cause v3 engine, ported from the loop it was tuned in, which did not compile
+// with noUncheckedIndexedAccess. Everything else is the base config. Ported as written so
+// the port can be read against the tested code; turning the flag on is its own change.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["plugins/rootcause/v3/**/*.ts", "tests/rootcause/v3/**/*.ts"],
+  "exclude": ["node_modules"]
+}
