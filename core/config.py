@@ -269,7 +269,10 @@ class Settings(BaseSettings):
     daemon_monitor_threshold: float = 0.70
     daemon_critical_action_floor: float = 0.70
     daemon_high_action_floor: float = 0.80
-    daemon_force_approval: bool = False
+    # Assist (True) or Act (False). Unset, the Settings choice decides and a
+    # fresh install, which has none, is Assist. True keeps Assist whatever
+    # Settings says; False is Act until Settings picks Assist.
+    daemon_force_approval: Optional[bool] = None
     daemon_dry_run: bool = False
     daemon_escalation_enabled: bool = True
     daemon_escalate_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
@@ -356,6 +359,7 @@ class Settings(BaseSettings):
     @field_validator(
         "demo_mode",
         "daemon_slack_enabled",
+        "daemon_force_approval",
         "mcp_auto_connect_on_startup",
         mode="before",
     )

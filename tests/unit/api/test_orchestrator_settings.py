@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -86,7 +87,7 @@ def _store():
     return saved, svc
 
 
-def _settings(force: bool, auto: bool):
+def _settings(force: Optional[bool], auto: bool):
     settings = MagicMock()
     settings.daemon_force_approval = force
     settings.daemon_auto_response = auto
@@ -136,12 +137,11 @@ def test_assist_and_act_write_only_the_approval_flag():
     saved, svc = _store()
     saved["orchestrator.settings"] = {"enabled": True, "max_concurrent_agents": 3}
     user = MagicMock()
+    settings = _settings(None, True)
     with (
         patch("services.api.routers.config.get_config_service", return_value=svc),
-        patch(
-            "services.api.routers.config.get_settings",
-            return_value=_settings(False, True),
-        ),
+        patch("services.api.routers.config.get_settings", return_value=settings),
+        patch("core.response.approval_service.get_settings", return_value=settings),
     ):
         missing = get_force_manual_approval()
         svc.set_system_config.assert_not_called()
@@ -150,7 +150,8 @@ def test_assist_and_act_write_only_the_approval_flag():
         )
         act = set_force_manual_approval(ForceManualApprovalConfig(enabled=False), user)
 
-    assert missing.enabled is False
+    # No stored choice is Assist, and reading it stores nothing.
+    assert missing.enabled is True
     assert missing.environment_wins is False
     assert assist.enabled is True
     assert act.enabled is False
@@ -160,6 +161,26 @@ def test_assist_and_act_write_only_the_approval_flag():
         "max_concurrent_agents": 3,
     }
     assert "tier" not in saved["orchestrator.settings"]
+
+
+@pytest.mark.parametrize(
+    ("force", "enabled", "wins"),
+    [(None, True, False), (True, True, True), (False, False, False)],
+)
+def test_no_stored_choice_is_assist_unless_the_environment_picked_act(
+    force, enabled, wins
+):
+    _saved, svc = _store()
+    settings = _settings(force, True)
+    with (
+        patch("services.api.routers.config.get_config_service", return_value=svc),
+        patch("services.api.routers.config.get_settings", return_value=settings),
+        patch("core.response.approval_service.get_settings", return_value=settings),
+    ):
+        seen = get_force_manual_approval()
+
+    assert (seen.enabled, seen.environment_wins) == (enabled, wins)
+    svc.set_system_config.assert_not_called()
 
 
 def test_a_failed_approval_read_is_an_error_not_act():

@@ -70,6 +70,9 @@ class ResponseConfig:
     # investigated, at or above these.
     critical_action_floor: float = 0.70
     high_action_floor: float = 0.80
+    # From env, only DAEMON_FORCE_APPROVAL=true sets this. The Settings choice,
+    # and the Assist a fresh install starts in, are read per decision by
+    # ApprovalService.
     force_manual_approval: bool = False
     dry_run: bool = False  # Log actions without executing
 
@@ -83,7 +86,7 @@ class ResponseConfig:
             monitor_threshold=s.daemon_monitor_threshold,
             critical_action_floor=s.daemon_critical_action_floor,
             high_action_floor=s.daemon_high_action_floor,
-            force_manual_approval=s.daemon_force_approval,
+            force_manual_approval=s.daemon_force_approval is True,
             dry_run=s.daemon_dry_run,
         )
 

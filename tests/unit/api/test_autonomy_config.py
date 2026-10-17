@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.config import get_settings
 from core.response.config import ResponseConfig
 from services.api.routers.config import (
     OrchestratorSettingsConfig,
@@ -18,10 +19,10 @@ class _Rows:
     def __init__(self, row):
         self.row = row
 
-    def get_system_config(self, key, default=None):
+    def read_system_config(self, key):
         if key == "approval.force_manual_approval":
             return self.row
-        return default
+        return None
 
 
 def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
@@ -44,7 +45,7 @@ def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
     base.response = ResponseConfig(
         auto_response_enabled=False, force_manual_approval=False
     )
-    rows.row = None
+    rows.row = {"enabled": False}
     plain = get_autonomy_config()
     assert plain.auto_response_enabled is False
     assert plain.force_manual_approval is False
@@ -64,3 +65,21 @@ def test_disabled_db_row_does_not_force_manual(monkeypatch):
     result = get_autonomy_config()
     assert result.auto_response_enabled is True
     assert result.force_manual_approval is False
+
+
+def test_no_stored_choice_is_assist_unless_env_picked_act(monkeypatch):
+    rows = _Rows(None)
+    monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: rows)
+    base = DaemonConfig()
+    monkeypatch.setattr(
+        "services.api.routers.config.DaemonConfig.from_env", lambda: base
+    )
+
+    monkeypatch.delenv("DAEMON_FORCE_APPROVAL", raising=False)
+    get_settings.cache_clear()
+    assert get_autonomy_config().force_manual_approval is True
+
+    monkeypatch.setenv("DAEMON_FORCE_APPROVAL", "false")
+    get_settings.cache_clear()
+    assert get_autonomy_config().force_manual_approval is False
+    get_settings.cache_clear()

@@ -497,7 +497,7 @@ check_detection_candidate lints and replays a candidate Sigma rule against event
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 3000,
-        "extra_principles": "- Act immediately on high-confidence threats (>=$auto_approve)\n- Never auto-approve without strong evidence\n- Provide complete audit trail\n- Memory: recall_entity on the entity; read-only, and it orients your search rather than deciding its outcome\n- Prefer the most surgical Cloudflare action available: cf_waf_block_ip for malicious source IPs, cf_gateway_block_domain for outbound C2/exfil, cf_access_revoke_session only when an authenticated user identity is implicated. All cf_* write actions go through the approval pipeline; do not call them directly when confidence < $auto_approve.",
+        "extra_principles": "- Request containment at once for a confirmed high-confidence threat (>=$auto_approve)\n- Every request goes through create_approval_action and waits for a person; your confidence ranks it and never releases it, so report it honestly\n- Provide complete audit trail\n- Memory: recall_entity on the entity; read-only, and it orients your search rather than deciding its outcome\n- Prefer the most surgical Cloudflare action available: waf_block for malicious source IPs, gateway_block for outbound C2/exfil, access_revoke only when an authenticated user identity is implicated. Request it with create_approval_action; once a person approves it, the approval pipeline runs it. Never call a cf_* write tool (cf_waf_block_ip, cf_waf_unblock_ip, cf_gateway_block_domain, cf_access_revoke_session) yourself, at any confidence.",
         "methodology": """<methodology>
 1. Gather data from multiple detection sources (Tempo Flow, EDR)
 2. Correlate signals: shared IPs/hosts/users, time proximity, MITRE techniques
@@ -509,8 +509,8 @@ check_detection_candidate lints and replays a candidate Sigma rule against event
    - Active C2: +0.20
    - Ransomware behavior: +0.25
    - Time correlation (<5min): +0.10
-4. Decision: >=$auto_approve auto-approve, $review-<$auto_approve quick review, $monitor-<$review human review, <$monitor escalate
-5. Execute via create_approval_action with confidence, evidence, reasoning
+4. Decision: >=$auto_approve request containment now, $review-<$auto_approve request it for a quick review, $monitor-<$review request a human review, <$monitor escalate without requesting an action
+5. Request via create_approval_action with confidence, evidence, reasoning; a person approves every request
 6. Document correlation logic and evidence
 </methodology>""",
     },

@@ -94,17 +94,26 @@ def test_builtin_band_text_is_rendered_from_response_config():
         )
     )
     assert (
-        ">=0.95 auto-approve, 0.88-<0.95 quick review, 0.60-<0.88 human review, "
-        "<0.60 escalate"
+        ">=0.95 request containment now, 0.88-<0.95 request it for a quick review, "
+        "0.60-<0.88 request a human review, <0.60 escalate"
     ) in agents["auto_responder"].system_prompt
     assert "waits for an analyst" in agents["responder"].system_prompt
     for agent in agents.values():
         assert "$" not in agent.system_prompt, agent.id
 
     defaults = SOCAgentLibrary.get_all_agents(ResponseConfig())
-    assert ">=0.90 auto-approve, 0.85-<0.90 quick review" in (
+    assert ">=0.90 request containment now, 0.85-<0.90 request it" in (
         defaults["auto_responder"].system_prompt
     )
+
+
+def test_no_builtin_prompt_promises_auto_approval_or_direct_writes():
+    # An agent's request always waits for a person (create_approval_action is
+    # human_only), in Assist and in Act, so no prompt may say otherwise.
+    for agent in SOCAgentLibrary.get_all_agents().values():
+        prompt = agent.system_prompt.lower()
+        assert "auto-approve" not in prompt, agent.id
+        assert "do not call them directly when" not in prompt, agent.id
 
 
 def test_custom_agent_builder_reads_model_and_category():
