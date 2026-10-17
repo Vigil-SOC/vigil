@@ -62,6 +62,10 @@ export interface Narrative {
   // right is a schema problem nobody can see from the outside, and the successful
   // answer hides it completely.
   rejected_attempts?: string[];
+  // "vigil" when the model wrote no account and this one was built from the ledger,
+  // with why the model's did not land. Absent on an account the model wrote.
+  written_by?: "vigil";
+  missing_because?: string;
 }
 
 // Raw payloads, not digest summaries, for the same reason the critic argues against
@@ -160,7 +164,78 @@ export function renderNarrative(narrative: Narrative): string[] {
     "",
     ...steps,
     "",
-    `_Written from the ledger by ${narrative.model_id} at ${narrative.written_at}. The verdicts and findings below are the hunt's own record; this section is an account of them._`,
+    narrative.written_by === "vigil"
+      ? `_Laid out by Vigil from the ledger at ${narrative.written_at}, because the model wrote no account (${narrative.missing_because ?? "no reason recorded"}). It restates the record and draws no conclusions._`
+      : `_Written from the ledger by ${narrative.model_id} at ${narrative.written_at}. The verdicts and findings below are the hunt's own record; this section is an account of them._`,
     "",
   ];
+}
+
+const STANDING: Record<string, string> = {
+  proven: "proven",
+  disproven: "ruled out",
+  inconclusive: "not settled",
+  active: "not settled",
+  parked: "set aside",
+  handed_off: "proven and handed to incident response",
+};
+
+const SALIENCE_ORDER = ["anomalous", "notable", "routine"];
+
+// The account a hunt still owes when the model wrote none: its own record, laid out
+// as one, and marked as Vigil's so nobody mistakes it for the model's judgement. Every
+// sentence is a count or a line already on the ledger -- it says what the record holds
+// and draws nothing from it, which is the judgement the model was there to make.
+export function ledgerNarrative(projection: Projection, report: HuntReport, missingBecause: string): Narrative {
+  const verdicts = report.hypotheses;
+  const count = (status: string) => verdicts.filter((one) => STANDING[one.status] === status).length;
+  const gathered = [...projection.evidence.values()].filter((record) => !isGap(record));
+  const unsettled = verdicts.filter((one) => one.status === "active" || one.status === "inconclusive");
+
+  const tally = [
+    `${count("proven") + count("proven and handed to incident response")} proven`,
+    `${count("ruled out")} ruled out`,
+    `${unsettled.length} not settled`,
+  ].join(", ");
+  const summary = [
+    `This hunt ended ${report.outcome ?? "without a verdict"}: ${report.reason}.`,
+    verdicts.length === 0 ? "It recorded no explanations." : `Of ${verdicts.length} explanation(s), ${tally}.`,
+    `It gathered ${gathered.length} observation(s)` +
+      (report.gaps.length === 0 ? "" : `, and ${report.gaps.length} quer${report.gaps.length === 1 ? "y" : "ies"} could not be answered`) +
+      (report.handoffs.length === 0 ? "." : `, and handed ${report.handoffs.length} case(s) to incident response.`),
+  ].join(" ");
+
+  const standing = verdicts.map(
+    (one) => `- **${STANDING[one.status] ?? one.status}** — ${one.statement}${one.resolution_reason === null ? "" : ` (${one.resolution_reason})`}`,
+  );
+  const observed = [...gathered]
+    .sort((a, b) => SALIENCE_ORDER.indexOf(a.salience) - SALIENCE_ORDER.indexOf(b.salience))
+    .slice(0, 10)
+    .map((record) => `- ${record.summary} _(${record.evidence_id}, ${record.salience})_`);
+  const unseen = report.gaps.map((gap) => `- ${gap.query_intent || gap.summary}`);
+  const what_happened = [
+    "### How each explanation stands",
+    standing.length === 0 ? "No explanations were recorded." : standing.join("\n"),
+    "",
+    `### What came back${gathered.length > observed.length ? ` (the ${observed.length} most notable of ${gathered.length})` : ""}`,
+    observed.length === 0 ? "Nothing was gathered." : observed.join("\n"),
+    ...(unseen.length === 0 ? [] : ["", "### What could not be seen", unseen.join("\n")]),
+  ].join("\n");
+
+  const next_steps = [
+    ...report.handoffs.map((handoff) => `Follow the escalation ${handoff.case_id} — ${handoff.rationale}`),
+    ...unsettled.map((one) => `Settle ${one.hypothesis_id}: ${one.statement} — the hunt ended before deciding it`),
+    ...report.gaps.slice(0, 3).map((gap) => `Get a source that answers: ${gap.query_intent || gap.summary} — the hunt could not look`),
+  ].slice(0, 8);
+
+  return {
+    summary,
+    what_happened,
+    next_steps,
+    model_id: "vigil",
+    written_at: new Date().toISOString(),
+    cost_usd: 0,
+    written_by: "vigil",
+    missing_because: missingBecause,
+  };
 }

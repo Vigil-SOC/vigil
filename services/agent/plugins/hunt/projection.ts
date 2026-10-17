@@ -82,6 +82,9 @@ export interface HuntNarrative {
   next_steps: string[];
   model_id: string;
   written_at: string;
+  // Set when the model wrote no account and Vigil laid the record out instead.
+  written_by?: "vigil";
+  missing_because?: string;
 }
 
 export interface QuestionView {
@@ -277,6 +280,7 @@ function narrativeView(held: Narrative | null): HuntNarrative | null {
     next_steps: stepsOf(held.next_steps),
     model_id: held.model_id,
     written_at: held.written_at,
+    ...(held.written_by === undefined ? {} : { written_by: held.written_by, missing_because: held.missing_because ?? "" }),
   };
 }
 

@@ -142,6 +142,9 @@ interface HuntNarrative {
   next_steps: string[]
   model_id: string
   written_at: string
+  /** 'vigil' when the model wrote no account and Vigil laid the record out instead. */
+  written_by?: 'vigil'
+  missing_because?: string
 }
 
 /** What a run read out of episodic memory before it started. Mirrors the recall

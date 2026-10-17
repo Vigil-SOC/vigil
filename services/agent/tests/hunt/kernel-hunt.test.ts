@@ -251,3 +251,33 @@ describe("an adjudication run by one agent", () => {
     expect((abandoned?.payload as { ok: boolean }).ok).toBe(false);
   });
 });
+
+// The narrator answered nothing usable, every attempt. The hunt still ends with an
+// account -- its own record laid out by Vigil and marked as such -- rather than none.
+describe("a hunt whose model writes no account", () => {
+  it("journals one laid out from the ledger, marked as Vigil's", async () => {
+    const state = new InProcessState<HuntKinds>();
+    const steps: Step[] = [
+      () => ({ tool: "splunk_search", args: { sql: "select * from flows where src = '10.0.0.5'" } }),
+      (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request))] } }),
+      () => ({ tool: "conclude_hunt", args: { reason: "nothing more to look at" } }),
+    ];
+    await runHunt(harnessOf(specOf(), modelOf(steps, { narrator: {} }), state), {
+      run_id: RUN,
+      run_kind: "hunt",
+      spec: specOf(),
+      actions: archFor("hunt").actions,
+      queue: new InProcessDirectiveQueue(),
+    });
+
+    const events = (await state.read(RUN)) as readonly HuntEvent[];
+    const view = huntProjection(RUN, events);
+    expect(view.narrative).toMatchObject({ written_by: "vigil", model_id: "vigil" });
+    expect(view.narrative?.missing_because).toContain("the narrator did not answer");
+    expect(view.narrative?.summary).toMatch(/^This hunt ended /);
+    expect(view.narrative?.what_happened).toContain("### How each explanation stands");
+    expect(view.narrative?.what_happened).toContain("45.77.53.176");
+    const terminal = await state.terminal(RUN);
+    expect(terminal?.summary).toContain("Laid out by Vigil from the ledger");
+  });
+});

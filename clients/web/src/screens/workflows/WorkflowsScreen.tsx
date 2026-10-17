@@ -1520,11 +1520,13 @@ function HuntAccount({ hunt, report, gaps, onGo, rewrite }: { hunt: HuntView; re
         <button className="btn ghost text-[11px]" onClick={() => onGo('evidence')}>Evidence ▸</button>
         {gaps > 0 && <button className="btn ghost text-[11px]" onClick={() => onGo('gaps')}>Gaps ▸</button>}
         <span className="flex-1" />
-        {rewrite && <Rewrite target={rewrite} label="rewrite" />}
+        {rewrite && <Rewrite target={rewrite} label={account.written_by === 'vigil' ? 'write the account' : 'rewrite'} />}
         <CopyReport md={report} />
       </div>
       <div className="muted text-[11px] mt-2">
-        Written from the ledger by {account.model_id}. The tabs above are the hunt's own record; this is an account of it.
+        {account.written_by === 'vigil'
+          ? `Laid out by Vigil from the hunt's record: the model wrote no account${account.missing_because ? ` (${account.missing_because})` : ''}. It restates the record and draws no conclusions.`
+          : `Written from the ledger by ${account.model_id}. The tabs above are the hunt's own record; this is an account of it.`}
       </div>
     </div>
   )
