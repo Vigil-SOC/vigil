@@ -109,7 +109,7 @@ export function DemoSource() {
             <Icon name="sparkle" size={14} />
             {phase === 'busy' ? 'Turning on…' : 'Turn on demo data'}
           </button>
-          <span className="su-note">Uses generated sample data instead of your database, so you can look around.</span>
+          <span className="su-note">Fills Dashboard with a fictional sample estate, so you can look around.</span>
         </div>
         {rows.length > 0 && <CheckTable label="Demo data status" rows={rows} />}
       </div>

@@ -20,6 +20,7 @@ from core.detections.reconstruction import (
     span_for_steps,
     steps_from_dispatch_results,
 )
+from core.integrations.mcp.surface import current_caller
 from core.storage.database_data_service import DatabaseDataService
 
 
@@ -609,7 +610,10 @@ class SecurityDetectionsTools:
         are ignored so this does not freeze a later execute-tool JSON shape.
         """
         span = span_for_steps(steps)
-        findings = DatabaseDataService().get_findings(
+        # As tool_registry._data(): a person in chat sees demo mode, a run reads
+        # Postgres, where the Findings its trace produced are.
+        data = DatabaseDataService(follow_demo=current_caller() is not None)
+        findings = data.get_findings(
             limit=10000,
             timestamp_start=span[0] if span else None,
             timestamp_end=span[1] if span else None,

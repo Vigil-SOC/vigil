@@ -264,7 +264,8 @@ def cluster_findings_by_attack_path(finding_ids: List[str]) -> List[str]:
     """
     from core.storage.database_data_service import DatabaseDataService
 
-    data_service = DatabaseDataService()
+    # Clusters the findings a vStrike push just stored, which are always real.
+    data_service = DatabaseDataService(follow_demo=False)
 
     clusters: Dict[tuple, List[Dict]] = {}
     for fid in finding_ids:

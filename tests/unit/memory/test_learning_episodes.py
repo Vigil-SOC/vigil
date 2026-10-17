@@ -336,7 +336,9 @@ def _install(monkeypatch, runs):
         def get_findings(self, **_kwargs):
             return findings
 
-    monkeypatch.setattr("core.detections.tools.DatabaseDataService", lambda: _Store())
+    monkeypatch.setattr(
+        "core.detections.tools.DatabaseDataService", lambda **_: _Store()
+    )
     return holder, reads, steps
 
 

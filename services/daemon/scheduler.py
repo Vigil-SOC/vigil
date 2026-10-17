@@ -177,7 +177,8 @@ class TaskScheduler:
         try:
             from core.storage.database_data_service import DatabaseDataService
 
-            self._data_service = DatabaseDataService()
+            # Probes and reports work on real findings, whatever the console shows.
+            self._data_service = DatabaseDataService(follow_demo=False)
             logger.info("Database service initialized for scheduler")
         except Exception as e:
             logger.error(f"Failed to initialize database service: {e}")

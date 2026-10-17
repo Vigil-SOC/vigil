@@ -7,6 +7,7 @@ import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { useToast } from '../../shell/toast'
+import { DEMO_ENV_NOTICE, turnOnDemoMode } from '../setup/demoMode'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import './home.css'
 
@@ -84,6 +85,7 @@ function readHidden(): string[] {
 }
 
 const FIRST_RUN_HEADLINE = 'Nothing is connected yet, so nothing needs you'
+const DEMO_ON = 'Demo data is on. Dashboard shows the sample estate.'
 
 function headline(count: number): string {
   if (count === 0) return 'Board clear.'
@@ -288,9 +290,12 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const exploreDemo = async () => {
     setDemoBusy(true)
     try {
-      const res = await configApi.setDemoMode(true)
-      const message = res.data?.message
-      setDemoMessage(typeof message === 'string' ? message : '')
+      // a server-set DEMO_MODE=false wins, so demo is not marked on here
+      if ((await turnOnDemoMode()) === 'environment') {
+        setDemoMessage(DEMO_ENV_NOTICE)
+        return
+      }
+      setDemoMessage(DEMO_ON)
       setSetup((current) => (current ? { ...current, demo_enabled: true } : current))
     } catch (err) {
       setSetupError(errorText(err, 'Could not enable demo mode'))
@@ -498,11 +503,17 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
               <div className="home-notready">
                 <h3>Not ready to connect yet?</h3>
                 <p>
-                  Load a day of demo data from a sample estate. Everything is labelled demo and can be cleared in
-                  one click.
+                  Load a day of sample data from a small fictional company with two attacks under way. It fills
+                  Dashboard; Overview, Triage and Cases keep showing only your own data. Turn it off in Settings ›
+                  Data &amp; uploads.
                 </p>
                 <div className="home-notready-actions">
-                  {!setup.demo_enabled && (
+                  {setup.demo_enabled ? (
+                    <Link className="btn" to="/dashboard">
+                      <Icon name="grid" size={13} />
+                      Open Dashboard
+                    </Link>
+                  ) : (
                     <button type="button" className="btn" disabled={demoBusy} onClick={() => void exploreDemo()}>
                       <Icon name="play" size={13} />
                       Explore with demo data

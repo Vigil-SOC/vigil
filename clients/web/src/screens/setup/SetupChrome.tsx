@@ -108,7 +108,7 @@ export function Rail({ steps, active, mark, onPick, onDemo, demoBusy }: RailProp
         </p>
       </div>
       <button type="button" className="su-demo" disabled={demoBusy} onClick={onDemo}>
-        Skip setup and look around with demo data
+        Skip setup and explore demo data on Dashboard
       </button>
     </aside>
   )

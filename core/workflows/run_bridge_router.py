@@ -1,5 +1,7 @@
 # The projection of a run, written by the agent layer. Phase rows are what the UI
 # reads; approval decisions travel back the other way for that layer to journal.
+# A run's cases and findings are Postgres rows, so every data service here passes
+# follow_demo=False: demo mode must not swallow a run's links, activities or case.
 
 from __future__ import annotations
 
@@ -264,7 +266,7 @@ def _link_findings(case_id: str, run_id: str, finding_ids: List[str]) -> None:
     from core.cases import case_journal_service
     from core.storage.database_data_service import DatabaseDataService
 
-    data = DatabaseDataService()
+    data = DatabaseDataService(follow_demo=False)
     for finding_id in dict.fromkeys(finding_ids):
         try:
             if not data.get_finding(finding_id):
@@ -322,7 +324,7 @@ def _add_activity(
 ) -> None:
     from core.storage.database_data_service import DatabaseDataService
 
-    data = DatabaseDataService()
+    data = DatabaseDataService(follow_demo=False)
     case = data.get_case(case_id)
     if not case:
         logger.warning("case %s is gone; %s not recorded on it", case_id, activity_type)
@@ -400,7 +402,7 @@ def _open_case(run_id: str, handoff: TerminalHandoff) -> Optional[str]:
     from core.storage.database_data_service import DatabaseDataService
 
     case_id = _handoff_case_id(run_id, handoff)
-    data = DatabaseDataService()
+    data = DatabaseDataService(follow_demo=False)
     if _case_exists(data, case_id):
         return case_id
 
@@ -584,7 +586,7 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
     from core.storage.database_data_service import DatabaseDataService
 
     try:
-        case = DatabaseDataService().get_case(case_id) or {}
+        case = DatabaseDataService(follow_demo=False).get_case(case_id) or {}
         if any(
             (a.get("details") or {}).get("handoff_id") == handoff.case_id
             and (a.get("details") or {}).get("run_id") == run_id

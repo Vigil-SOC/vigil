@@ -147,10 +147,11 @@ const SetupWizard = () => {
   const done = step === 'done'
   const last = index === DONE - 1
 
-  const dismiss = () => {
+  const leave = (to: string) => {
     markSetupDismissed()
-    navigate('/', { replace: true })
+    navigate(to, { replace: true })
   }
+  const dismiss = () => leave('/')
 
   const save = (next: SetupProgress) => {
     writeSetupProgress(next)
@@ -190,7 +191,7 @@ const SetupWizard = () => {
     setDemoBusy(true)
     try {
       if ((await turnOnDemoMode()) === 'environment') notify('err', DEMO_ENV_NOTICE)
-      else dismiss()
+      else leave('/dashboard') // the sample estate shows there, not on Home
     } catch {
       notify('err', 'Demo data could not be turned on')
     } finally {

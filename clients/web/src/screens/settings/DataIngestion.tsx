@@ -28,17 +28,26 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+// Every server reads the saved switch within seconds, so turning it off needs no restart.
+export const DEMO_OFF = 'Demo data is off. Vigil shows your own findings and cases now.'
+
 export function DemoDataClear({ notify }: SectionProps) {
   const [enabled, setEnabled] = useState(false)
+  // DEMO_MODE in the server's environment wins over the setting saved here
+  const [fromEnv, setFromEnv] = useState(false)
   const [busy, setBusy] = useState(false)
   const [report, setReport] = useState<string | null>(null)
+  const [confirmOff, setConfirmOff] = useState(false)
+  const [turnedOff, setTurnedOff] = useState(false)
 
   useEffect(() => {
     let live = true
     configApi
       .getDemoMode()
       .then((res) => {
-        if (live) setEnabled(Boolean(res.data?.enabled))
+        if (!live) return
+        setEnabled(Boolean(res.data?.enabled))
+        setFromEnv(res.data?.source === 'environment')
       })
       .catch(() => {})
     return () => {
@@ -53,7 +62,7 @@ export function DemoDataClear({ notify }: SectionProps) {
     try {
       const res = await configApi.resetDemoData()
       const data = res.data as { findings_count?: number; cases_count?: number }
-      const text = `Regenerated ${data.findings_count} findings and ${data.cases_count} cases.`
+      const text = `Restored the sample estate: ${data.findings_count} findings and ${data.cases_count} cases.`
       setReport(text)
       notify('ok', text)
     } catch (e) {
@@ -63,20 +72,59 @@ export function DemoDataClear({ notify }: SectionProps) {
     }
   }
 
+  const turnOff = async () => {
+    setBusy(true)
+    try {
+      await configApi.setDemoMode(false)
+      setTurnedOff(true)
+      setReport(null)
+      notify('ok', DEMO_OFF)
+    } catch (e) {
+      notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Could not turn off demo data.')
+    } finally {
+      setBusy(false)
+      setConfirmOff(false)
+    }
+  }
+
   return (
     <SettingsCard
       title="Demo data"
-      desc="Findings and cases on screen are generated sample data. Clearing them regenerates that set."
+      desc="Dashboard shows a fictional sample estate in place of your data; Overview, Triage and Cases keep your own. Clearing drops changes made to it and restores the estate as it started."
     >
-      <button className="btn primary" onClick={clear} disabled={busy}>
-        {busy ? 'Clearing…' : 'Clear demo data'}
-      </button>
-      {report && (
-        <div className="settings-banner ok mt-3" role="status">
-          <Icon name="check2" size={13} />
-          <span className="text-xs">{report}</span>
+      {!turnedOff && (
+        <div className="flex flex-wrap gap-2.5">
+          <button className="btn primary" onClick={clear} disabled={busy}>
+            {busy ? 'Clearing…' : 'Clear demo data'}
+          </button>
+          {!fromEnv && (
+            <button className="btn ghost" onClick={() => setConfirmOff(true)} disabled={busy}>
+              Turn off demo data
+            </button>
+          )}
         </div>
       )}
+      {fromEnv && (
+        <p className="text-xs text-tx-3 mt-3">
+          Demo mode is set by the server&apos;s environment (DEMO_MODE), so it can only be turned off there.
+        </p>
+      )}
+      {(report || turnedOff) && (
+        <div className="settings-banner ok mt-3" role="status">
+          <Icon name="check2" size={13} />
+          <span className="text-xs">{turnedOff ? DEMO_OFF : report}</span>
+        </div>
+      )}
+      <ConfirmDialog
+        open={confirmOff}
+        danger={false}
+        title="Turn off demo data"
+        body="Vigil stops showing the sample estate and works on your own findings and cases, starting now."
+        confirmLabel="Turn off"
+        busy={busy}
+        onConfirm={turnOff}
+        onClose={() => setConfirmOff(false)}
+      />
     </SettingsCard>
   )
 }

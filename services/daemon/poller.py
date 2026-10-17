@@ -274,7 +274,7 @@ class DataPoller:
             # Initialize data service for database access
             from core.storage.database_data_service import DatabaseDataService
 
-            self._data_service = DatabaseDataService()
+            self._data_service = DatabaseDataService(follow_demo=False)
 
         except Exception as e:
             logger.error(f"Error initializing services: {e}")

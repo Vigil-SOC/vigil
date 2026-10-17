@@ -31,15 +31,19 @@ import pytest  # noqa: E402
 
 
 # get_settings() is lru_cached, so a test that monkeypatches env needs the cache
-# dropped on both sides to avoid leaking a stale Settings.
+# dropped on both sides to avoid leaking a stale Settings. is_demo_mode() keeps a
+# short-lived read of the saved switch, dropped for the same reason.
 @pytest.fixture(autouse=True)
 def _reset_settings_cache():
-    from core.config import Settings, get_settings  # lazy: AST tests need no app deps
+    # lazy: AST tests need no app deps
+    from core.config import Settings, forget_demo_mode, get_settings
 
     Settings.model_config["env_file"] = None  # ignore the developer's .env, as CI does
     get_settings.cache_clear()
+    forget_demo_mode()
     yield
     get_settings.cache_clear()
+    forget_demo_mode()
 
 
 # Tests that legitimately talk to Postgres: `external_service` ones (unit/conftest.py

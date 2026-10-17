@@ -670,11 +670,12 @@ class WorkflowsService:
         context = parameters.get("context", "")
         hypothesis = parameters.get("hypothesis", "")
 
+        # A run's target is a Postgres row, whatever demo mode shows the console.
         if finding_id:
             try:
                 from core.storage.database_data_service import DatabaseDataService
 
-                data_service = DatabaseDataService()
+                data_service = DatabaseDataService(follow_demo=False)
                 finding = data_service.get_finding(finding_id)
                 if finding:
                     techniques = finding.get("predicted_techniques", [])
@@ -704,7 +705,7 @@ class WorkflowsService:
             try:
                 from core.storage.database_data_service import DatabaseDataService
 
-                data_service = DatabaseDataService()
+                data_service = DatabaseDataService(follow_demo=False)
                 case = data_service.get_case(case_id)
                 if case:
                     parts.append(f"""**Target Case:**

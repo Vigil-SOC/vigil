@@ -91,12 +91,13 @@ def test_db_available_short_circuits_when_already_connected():
 
 
 def test_demo_mode_never_attempts_reconnect():
-    with patch("core.storage.database_data_service.is_demo_mode", return_value=True):
-        # The demo service is injected, so the constructor builds no real one.
-        svc = DatabaseDataService(demo_data=MagicMock())
+    # The demo service is injected, so no real one is built.
+    svc = DatabaseDataService(demo_data=MagicMock())
 
     svc._last_reconnect_attempt = 0.0
-    with patch("core.storage.database_data_service.init_database") as fake_init:
+    with patch(
+        "core.storage.database_data_service.is_demo_mode", return_value=True
+    ), patch("core.storage.database_data_service.init_database") as fake_init:
         assert svc._db_available is False
         fake_init.assert_not_called()
 
@@ -145,9 +146,10 @@ def test_probe_does_nothing_in_demo_mode_or_when_disconnected():
         svc.probe_connection()
     fake_manager.assert_not_called()
 
-    with patch("core.storage.database_data_service.is_demo_mode", return_value=True):
-        demo = DatabaseDataService(demo_data=MagicMock())
+    demo = DatabaseDataService(demo_data=MagicMock())
     demo._db_connected = True
-    with patch("core.storage.database_data_service.get_db_manager") as fake_manager:
+    with patch(
+        "core.storage.database_data_service.is_demo_mode", return_value=True
+    ), patch("core.storage.database_data_service.get_db_manager") as fake_manager:
         demo.probe_connection()
     fake_manager.assert_not_called()
