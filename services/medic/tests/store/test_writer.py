@@ -72,6 +72,25 @@ def test_pilot_day_appends_byte_identical_to_the_contract(data_dir: Path) -> Non
     assert report.head_seq == day[-1]["seq"] and report.head_hash == day[-1]["hash"]
 
 
+def test_gap_chain_appends_byte_identical_to_the_contract(data_dir: Path) -> None:
+    chain = load("chain-04-gap.jsonl")
+    with open_writer(data_dir) as w:
+        for rec in chain:
+            assert w.append(draft(rec)) == rec, rec["seq"]
+    assert verify_store(data_dir).ok
+
+
+def test_a_gap_that_ends_before_it_starts_is_refused(data_dir: Path) -> None:
+    # Appending it would break verify(), and a broken chain won't reopen (S2-4):
+    # one clock jump must not take the store down.
+    gap = draft(next(r for r in load("chain-04-gap.jsonl") if r["type"] == "gap"))
+    gap["body"]["from"], gap["body"]["to"] = gap["body"]["to"], gap["body"]["from"]
+    with open_writer(data_dir) as w, pytest.raises(RecordRefused) as err:
+        w.append(gap)
+    assert (err.value.code, err.value.where) == ("E-GAP", "$.body")
+    assert stored(data_dir) == []
+
+
 def test_a_store_reset_starts_a_fresh_store_after_the_old_head(data_dir: Path) -> None:
     reset, opened = load("chain-03-store-reset.jsonl")
     with open_writer(data_dir) as w:
@@ -109,11 +128,12 @@ def test_a_purged_store_verifies_from_its_anchor_and_keeps_appending(
     assert verify_store(data_dir).ok
 
 
-def test_valid_fixture_list_is_the_three_the_tests_cover() -> None:
+def test_valid_fixture_list_is_the_four_the_tests_cover() -> None:
     assert [p.name for p in VALID] == [
         "chain-01-pilot-day.jsonl",
         "chain-02-after-purge.jsonl",
         "chain-03-store-reset.jsonl",
+        "chain-04-gap.jsonl",
     ]
 
 
@@ -130,6 +150,9 @@ EXPECTED = {
     "feedback-suggested-lane-on-agree": ("E-SCHEMA", "$.body"),
     "float-value": ("E-SCHEMA", "$.body.evidence[0].value"),
     "free-text-field": ("E-SCHEMA", "$.body"),
+    "gap-free-text": ("E-SCHEMA", "$.body"),
+    "gap-unknown-reason": ("E-SCHEMA", "$.body.reason"),
+    "gap-without-end": ("E-SCHEMA", "$.body"),
     "instance-id-hostname": ("E-SCHEMA", "$.body.instance_id"),
     "lane-four": ("E-SCHEMA", "$.body.lane"),
     "missing-would-have": ("E-SCHEMA", "$.body"),

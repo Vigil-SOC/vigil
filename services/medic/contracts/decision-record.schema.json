@@ -38,7 +38,8 @@
         "adjudication",
         "anchor",
         "store_reset",
-        "pack_event"
+        "pack_event",
+        "gap"
       ],
       "x-medic-type": "enum"
     },
@@ -179,6 +180,22 @@
         "properties": {
           "body": {
             "$ref": "#/$defs/pack_event"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gap"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/gap"
           }
         }
       }
@@ -1332,6 +1349,32 @@
           }
         }
       ]
+    },
+    "gap": {
+      "description": "A time Medic wasn't watching (S2-5, decided 2026-10-07; C5 §5.1 step 2, C4 §6.8). Written once at start-up when the last heartbeat (or, with none, the last record) shows Medic was stalled (the watchdog fired) or off (stopped, killed, crashed). `at` is the wall clock at start-up; `from` is the last sign of life, `to` the start-up. from <= to is checked by decision_chain.verify (E-GAP), because a schema can't compare two fields. Not engine output, so never in a replay store.",
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/ts"
+        },
+        "to": {
+          "$ref": "#/$defs/ts"
+        },
+        "reason": {
+          "description": "stalled: the watchdog ended a hung main loop. off: any other time Medic didn't run (stopped, killed, crashed, host down).",
+          "enum": [
+            "stalled",
+            "off"
+          ],
+          "x-medic-type": "enum"
+        }
+      }
     },
     "ts_tick": {
       "description": "An evaluation tick (E3 §1): whole seconds on the 15 s grid, no fraction, so the same instant has one spelling (A3-5; S0 review R5).",
