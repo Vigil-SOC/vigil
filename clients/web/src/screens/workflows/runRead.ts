@@ -195,7 +195,10 @@ export interface HuntRecall {
 }
 
 export interface HuntHandoff {
+  /** The Vigil case the handoff was filed on. */
   case_id: string
+  /** The hunt's own name for the handoff, as its report and ledger say it. */
+  handoff_key?: string
   hypothesis_id: string
   iteration: number
   rationale: string

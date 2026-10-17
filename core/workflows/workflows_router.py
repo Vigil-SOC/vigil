@@ -30,6 +30,7 @@ from core.storage.models import User
 from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
+from core.workflows.handoff_cases import stamp_handoff_cases
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
@@ -563,6 +564,8 @@ async def get_workflow_run(
     folded = await read_projection(run_id, evidence_limit)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
         _stamp_source_tiers(folded)
+        origin = (row.get("trigger_context") or {}).get("case_id")
+        stamp_handoff_cases(folded, run_id, str(origin) if origin else None)
         row["hunt"] = folded
     else:
         row["projection"] = folded

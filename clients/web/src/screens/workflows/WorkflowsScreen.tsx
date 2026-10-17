@@ -2663,7 +2663,11 @@ function HuntEscalations({ handoffs }: { handoffs: HuntHandoff[] }) {
           <tbody>
             {handoffs.map((h) => (
               <tr key={h.case_id}>
-                <td className="mono tight" style={{ fontSize: 11 }}>{h.case_id}</td>
+                <td className="mono tight" style={{ fontSize: 11 }}>
+                  <Link to={{ pathname: '/cases', search: `?case=${encodeURIComponent(h.case_id)}` }} className="underline" title={h.handoff_key ? `The hunt calls it ${h.handoff_key}` : undefined}>
+                    {h.case_id}
+                  </Link>
+                </td>
                 <td className="muted tight"><Hyp id={h.hypothesis_id} /></td>
                 <td>{h.rationale}</td>
               </tr>

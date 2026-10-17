@@ -3,6 +3,7 @@
    and the report itself were reachable only as prose, and only after terminal. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { RunDetail } from './WorkflowsScreen'
 
 vi.mock('../../services/api', () => ({
@@ -49,7 +50,7 @@ const hunt = (over = {}) => ({
 const detail = (over = {}) => ({ run_id: 'run-1', status: 'completed', ...over })
 
 const renderPanel = (over = {}) =>
-  render(<RunDetail d={detail(over)} onSteered={() => {}} />)
+  render(<RunDetail d={detail(over)} onSteered={() => {}} />, { wrapper: MemoryRouter })
 
 /** The panel is four views of one run rather than five stacked tables, so a test
  *  about one of them says which. A tab that is not offered at all is a claim in
@@ -239,14 +240,17 @@ describe('escalations and supervision', () => {
     renderPanel({
       hunt: hunt({
         handoffs: [
-          { case_id: 'case-25aac39c', hypothesis_id: 'h-3431', iteration: 4, rationale: 'isolate FYODOR-L first' },
+          { case_id: 'case-handoff-0123456789abcdef', handoff_key: 'case-25aac39c', hypothesis_id: 'h-3431', iteration: 4, rationale: 'isolate FYODOR-L first' },
         ],
       }),
     })
     tabTo(/^Escalations/)
 
     expect(screen.getByText('Escalated to incident response (1)')).toBeInTheDocument()
-    expect(screen.getByText('case-25aac39c')).toBeInTheDocument()
+    // The case the bridge filed it on, not the hunt's own key for it.
+    const link = screen.getByRole('link', { name: 'case-handoff-0123456789abcdef' })
+    expect(link).toHaveAttribute('href', '/cases?case=case-handoff-0123456789abcdef')
+    expect(link).toHaveAttribute('title', 'The hunt calls it case-25aac39c')
     expect(screen.getByText('isolate FYODOR-L first')).toBeInTheDocument()
   })
 
