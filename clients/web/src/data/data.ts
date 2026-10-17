@@ -2,6 +2,7 @@ import type { IconName } from '../shared/icons'
 
 export type ConsoleScreenKey =
   | 'overview'
+  | 'fleet-wall'
   | 'triage'
   | 'dashboard'
   | 'home'
@@ -26,6 +27,7 @@ export interface NavGate {
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
   ['home', 'Home', 'home'],
   ['graph', 'Overview', 'overview'],
+  ['wall', 'Fleet Wall', 'fleet-wall'],
   ['clock', 'Triage queue', 'triage'],
   ['grid', 'Dashboard', 'dashboard'],
   ['folder', 'Cases', 'cases'],
@@ -101,6 +103,7 @@ export interface CaseRow {
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   overview: ['Overview', 'What arrived today and where it went'],
+  'fleet-wall': ['Fleet Wall', 'Every open case, live, grouped by kind of work. The cases that need a person come first.'],
   triage: ['Triage queue', 'What intake did with what arrived'],
   dashboard: ['Dashboard', 'Security operations overview'],
   home: ['Home', 'What needs a person'],

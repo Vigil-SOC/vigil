@@ -3689,6 +3689,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/fleet-wall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fleet Wall
+         * @description Every open case as a cell, grouped by workflow, with the fleet strip.
+         */
+        get: operations["get_api_fleet-wall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -7418,6 +7438,88 @@ export interface components {
             /** Services */
             services: string[];
         };
+        /**
+         * BandRate
+         * @description Share of today's closes for this workflow made without a person.
+         */
+        BandRate: {
+            /**
+             * Info
+             * @description The ⓘ line: where the number comes from and how it is counted.
+             */
+            info: string;
+            /**
+             * Level
+             * @description Decided by the server (common.usage_level / rate_level); the console never derives it. None when there is no limit or no value.
+             */
+            level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit
+             * @description The enforced limit, or None when none is set.
+             */
+            limit: number | null;
+            /**
+             * Sample
+             * @description Closes the share is taken over.
+             */
+            sample: number | null;
+            /**
+             * Unmeasured Reason
+             * @description Why it is not measured.
+             */
+            unmeasured_reason: string | null;
+            /**
+             * Unmeasured Text
+             * @description 'Not measured yet' when value is None.
+             */
+            unmeasured_text: string | null;
+            /**
+             * Value
+             * @description None when unmeasured.
+             */
+            value: number | null;
+        };
+        /**
+         * BandRunning
+         * @description Runs of this workflow running now, against the workflow's slots if it has any.
+         */
+        BandRunning: {
+            /**
+             * Cap Text
+             * @description How the cap applies, e.g. 'shares the fleet cap'.
+             */
+            cap_text: string | null;
+            /**
+             * Info
+             * @description The ⓘ line: where the number comes from and how it is counted.
+             */
+            info: string;
+            /**
+             * Level
+             * @description Decided by the server (common.usage_level / rate_level); the console never derives it. None when there is no limit or no value.
+             */
+            level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit
+             * @description The enforced limit, or None when none is set.
+             */
+            limit: number | null;
+            /**
+             * Unmeasured Reason
+             * @description Why it is not measured.
+             */
+            unmeasured_reason: string | null;
+            /**
+             * Unmeasured Text
+             * @description 'Not measured yet' when value is None.
+             */
+            unmeasured_text: string | null;
+            /**
+             * Value
+             * @description None when unmeasured.
+             */
+            value: number | null;
+        };
         /** Body_attach_case_document_api_cases__case_id__attachments_post */
         Body_attach_case_document_api_cases__case_id__attachments_post: {
             /** File */
@@ -9207,6 +9309,40 @@ export interface components {
             total: number;
         };
         /**
+         * FleetWallPayload
+         * @description ``GET /api/fleet-wall``. Polled every 10 s; keep it cheap (no unindexed scans).
+         */
+        FleetWallPayload: {
+            /** Bands */
+            bands: components["schemas"]["WallBand"][];
+            closed_today: components["schemas"]["WallClosedToday"];
+            /** Facets */
+            facets: components["schemas"]["WallFacet"][];
+            incidents_today: components["schemas"]["MonitorMetric"];
+            info: components["schemas"]["WallInfo"];
+            /**
+             * Just Closed
+             * @description Newest first.
+             */
+            just_closed: components["schemas"]["WallJustClosed"][];
+            /** Just Closed Minutes */
+            just_closed_minutes: number;
+            /** @description Queued intake rows against the intake high-water mark. */
+            load: components["schemas"]["MonitorMetric"];
+            next_action: components["schemas"]["WallNextAction"] | null;
+            /**
+             * Now
+             * @description ISO time the payload was built.
+             */
+            now: string;
+            /**
+             * Omitted
+             * @description Open cases past wall.WALL_LIMIT, not drawn.
+             */
+            omitted: number;
+            slots: components["schemas"]["WallSlots"];
+        };
+        /**
          * ForceManualApprovalConfig
          * @description ``approval.force_manual_approval``. Assist is true, Act is false.
          */
@@ -9841,6 +9977,42 @@ export interface components {
         ModelsListResponse: {
             /** Models */
             models: components["schemas"]["ModelInfoResponse"][];
+        };
+        /**
+         * MonitorMetric
+         * @description One number as the console shows it: value, limit, level and where it comes from.
+         */
+        MonitorMetric: {
+            /**
+             * Info
+             * @description The ⓘ line: where the number comes from and how it is counted.
+             */
+            info: string;
+            /**
+             * Level
+             * @description Decided by the server (common.usage_level / rate_level); the console never derives it. None when there is no limit or no value.
+             */
+            level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit
+             * @description The enforced limit, or None when none is set.
+             */
+            limit: number | null;
+            /**
+             * Unmeasured Reason
+             * @description Why it is not measured.
+             */
+            unmeasured_reason: string | null;
+            /**
+             * Unmeasured Text
+             * @description 'Not measured yet' when value is None.
+             */
+            unmeasured_text: string | null;
+            /**
+             * Value
+             * @description None when unmeasured.
+             */
+            value: number | null;
         };
         /** MttdResponse */
         MttdResponse: {
@@ -11261,6 +11433,284 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WallBand
+         * @description One workflow; unassigned cases last.
+         */
+        WallBand: {
+            /**
+             * Cells
+             * @description Every open case in the band, as drawn.
+             */
+            cells: components["schemas"]["WallCell"][] | null;
+            /**
+             * Cost Per Case
+             * @description Mean USD per case closed today, summing all of a case's runs (not per run).
+             */
+            cost_per_case: number | null;
+            /** Mean Steps */
+            mean_steps: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Open
+             * @description Open cases in this workflow.
+             */
+            open: number;
+            running: components["schemas"]["BandRunning"];
+            /**
+             * Today
+             * @description Runs finished today.
+             */
+            today: number;
+            /**
+             * Waiting
+             * @description Queued intake rows routed to this workflow.
+             */
+            waiting: number;
+            without_person: components["schemas"]["BandRate"];
+            /** Workflow Id */
+            workflow_id: string;
+        };
+        /**
+         * WallCell
+         * @description One open case. Built through core.cases.combined_state.queue_item so the
+         *     wall and the Cases page cannot disagree.
+         */
+        WallCell: {
+            /**
+             * Alerts
+             * @description Alerts combined into the case.
+             */
+            alerts: number;
+            /** Case Id */
+            case_id: string;
+            /**
+             * Combined
+             * @description More than one alert.
+             */
+            combined: boolean;
+            /** @description Set when state is needs_you. */
+            decision: components["schemas"]["WallDecision"] | null;
+            /** Description */
+            description: string | null;
+            /**
+             * Heavy
+             * @description wall.COMBINED_HEAVY or more alerts; drawn with a thick outline.
+             */
+            heavy: boolean;
+            /**
+             * Incident
+             * @description Reserved until incident declarations are recorded.
+             */
+            incident: null;
+            /** Limit Level */
+            limit_level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit Used
+             * @description Share (0..1) of max_cost_usd spent; None when not priced.
+             */
+            limit_used: number | null;
+            /**
+             * Near Limit
+             * @description limit_used >= 0.75.
+             */
+            near_limit: boolean;
+            /**
+             * Owner
+             * @description None means agents own it.
+             */
+            owner: string | null;
+            /**
+             * Reason
+             * @description Why it is in this state, in one line.
+             */
+            reason: string;
+            /** Severity */
+            severity: string | null;
+            /**
+             * Sla Seconds Left
+             * @description Negative once breached; None when no SLA.
+             */
+            sla_seconds_left: number | null;
+            /**
+             * State
+             * @description needs_you: asking a person. running: run executing or assigned. paused: run paused. stuck: no explanation moved in 6+ steps. on_hold: held by a person. waiting: anything else.
+             * @enum {string}
+             */
+            state: "needs_you" | "running" | "paused" | "waiting" | "stuck" | "on_hold";
+            /** Steps */
+            steps: number | null;
+            /** Title */
+            title: string;
+            /** Workflow Id */
+            workflow_id: string;
+        };
+        /**
+         * WallClosedToday
+         * @description Cases closed since midnight UTC.
+         */
+        WallClosedToday: {
+            /**
+             * Info
+             * @description The ⓘ line: where the number comes from and how it is counted.
+             */
+            info: string;
+            /**
+             * Level
+             * @description Decided by the server (common.usage_level / rate_level); the console never derives it. None when there is no limit or no value.
+             */
+            level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit
+             * @description The enforced limit, or None when none is set.
+             */
+            limit: number | null;
+            /**
+             * Unmeasured Reason
+             * @description Why it is not measured.
+             */
+            unmeasured_reason: string | null;
+            /**
+             * Unmeasured Text
+             * @description 'Not measured yet' when value is None.
+             */
+            unmeasured_text: string | null;
+            /**
+             * Value
+             * @description None when unmeasured.
+             */
+            value: number | null;
+            /**
+             * Without Person
+             * @description Share (0..1) closed by agents. A closure with closed_by_kind NULL is not an agent close. None when nothing closed today.
+             */
+            without_person: number | null;
+            /**
+             * Yesterday
+             * @description Closed yesterday from midnight up to this time of day.
+             */
+            yesterday: number;
+        };
+        /** WallDecision */
+        WallDecision: {
+            /** Reason */
+            reason: string | null;
+            /**
+             * Since
+             * @description ISO time the decision was asked.
+             */
+            since: string | null;
+            /** Title */
+            title: string | null;
+        };
+        /** WallFacet */
+        WallFacet: {
+            /**
+             * Count
+             * @description None when the state is not recorded yet.
+             */
+            count: number | null;
+            /**
+             * Key
+             * @description all, needs_you, stuck, near_limit, running, paused, on_hold, in that order.
+             */
+            key: string;
+            /** Label */
+            label: string;
+            /** Unmeasured Reason */
+            unmeasured_reason: string | null;
+        };
+        /** WallInfo */
+        WallInfo: {
+            /**
+             * Cell
+             * @description The ⓘ text for the squares.
+             */
+            cell: string;
+            /**
+             * Kind
+             * @description The ⓘ text for the bands.
+             */
+            kind: string;
+        };
+        /** WallJustClosed */
+        WallJustClosed: {
+            /**
+             * By
+             * @enum {string}
+             */
+            by: "agents" | "a person";
+            /** Case Id */
+            case_id: string;
+            /**
+             * Closed At
+             * @description ISO time.
+             */
+            closed_at: string;
+        };
+        /** WallNextAction */
+        WallNextAction: {
+            /**
+             * Case Id
+             * @description The oldest one's case.
+             */
+            case_id: string | null;
+            /**
+             * Count
+             * @description Decisions waiting on a person (core.response.approval_service.needs_you).
+             */
+            count: number;
+            /** Reason */
+            reason: string | null;
+            /** Title */
+            title: string | null;
+        };
+        /**
+         * WallSlots
+         * @description Cases running at once against the concurrency cap.
+         *
+         *     Open decision: what "slots" counts. Today: open cases whose run is executing
+         *     or assigned, against ``orchestrator_max_agents``. If fleet limits land
+         *     (Redis model/tool gate, human lane), read those instead or rename the gauge.
+         */
+        WallSlots: {
+            /**
+             * Info
+             * @description The ⓘ line: where the number comes from and how it is counted.
+             */
+            info: string;
+            /**
+             * Level
+             * @description Decided by the server (common.usage_level / rate_level); the console never derives it. None when there is no limit or no value.
+             */
+            level: ("good" | "fair" | "poor") | null;
+            /**
+             * Limit
+             * @description The enforced limit, or None when none is set.
+             */
+            limit: number | null;
+            /**
+             * Near Limit
+             * @description Open cases that have spent >= 75% of max_cost_usd.
+             */
+            near_limit: number;
+            /**
+             * Unmeasured Reason
+             * @description Why it is not measured.
+             */
+            unmeasured_reason: string | null;
+            /**
+             * Unmeasured Text
+             * @description 'Not measured yet' when value is None.
+             */
+            unmeasured_text: string | null;
+            /**
+             * Value
+             * @description None when unmeasured.
+             */
+            value: number | null;
         };
         /**
          * WatcherAdd
@@ -17995,6 +18445,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NoiseMarkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_fleet-wall": {
+        parameters: {
+            query?: {
+                just_closed_minutes?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetWallPayload"];
                 };
             };
             /** @description Validation Error */
