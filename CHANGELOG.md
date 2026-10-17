@@ -32,6 +32,25 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## [0.8.0](https://github.com/Vigil-SOC/vigil/compare/v0.7.0...v0.8.0) (2026-10-17)
+
+
+### Features
+
+* **skills:** record skill reads and show usage per skill ([#1560](https://github.com/Vigil-SOC/vigil/issues/1560)) ([#1997](https://github.com/Vigil-SOC/vigil/issues/1997)) ([327dafb](https://github.com/Vigil-SOC/vigil/commit/327dafb71e8685f5f66c529b0e04395f1934e9ff))
+
+
+### Bug Fixes
+
+* **cases:** PATCH /cases/{id} applies assignee; Edit case can clear it ([#2121](https://github.com/Vigil-SOC/vigil/issues/2121)) ([fa7c8d9](https://github.com/Vigil-SOC/vigil/commit/fa7c8d94cba1791430d10012da6c2f512cb15496))
+* **daemon:** count only running investigations against the slot cap ([#1904](https://github.com/Vigil-SOC/vigil/issues/1904)) ([9e17624](https://github.com/Vigil-SOC/vigil/commit/9e176248d6847eec84cfb6409623081577778326)), closes [#1874](https://github.com/Vigil-SOC/vigil/issues/1874)
+* **ingestion:** skip re-uploaded findings by external id as well as finding id ([#1935](https://github.com/Vigil-SOC/vigil/issues/1935)) ([#1937](https://github.com/Vigil-SOC/vigil/issues/1937)) ([3e10689](https://github.com/Vigil-SOC/vigil/commit/3e10689f6050c4082a0c72e4f31307e30ece6b68))
+
+
+### Documentation
+
+* **medic/S4b2:** v26 lists the sensor-blind incident of its blind period (⚑ S4b2-1) ([#1946](https://github.com/Vigil-SOC/vigil/issues/1946)) ([8813f24](https://github.com/Vigil-SOC/vigil/commit/8813f24ac3fbf9f6d7586d53b8ea371e5cfa4702))
+
 ## [0.7.0](https://github.com/Vigil-SOC/vigil/compare/v0.6.0...v0.7.0) (2026-10-08)
 
 
