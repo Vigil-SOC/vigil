@@ -92,7 +92,7 @@ describe("theorize: the rare-activity list gets a test", () => {
     const ctx: any = { model, trace: new MemoryTrace("t").forTurn(1, "theorize", "N1"), cfg: base, range: ["2026-03-11T00:00:00Z", "2026-03-14T00:00:00Z"], domains: ["ct"], index: "x", tools: { coverage: {} }, sizes: {} };
     const patch = await theorize({ move: "theorize", targetId: "N1", turn: 1, priority: 1, reason: "" }, g, ctx);
     expect(sent).toMatch(/rare-activity list/);
-    const p = patch.setTheories![0].predictions.find((x) => x.id === "R1.PRARE")!;
+    const p = patch.setTheories![0]!.predictions.find((x) => x.id === "R1.PRARE")!;
     expect(p).toMatchObject({ next: true, sourcetype: "edr:process", earliest: "2026-03-11T00:00:00Z" });
     expect(p.spl).toContain('"xz"');
   });

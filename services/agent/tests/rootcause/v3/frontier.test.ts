@@ -49,7 +49,7 @@ describe("frontier", () => {
     const g = seeded();
     apply(g, { addNodes: [solid("c")], addEdges: [link("e", "c", "N1", [])] });
     for (let t = 2; t <= 4; t++) apply(g, { incrementAttempts: ["E1"] }, t);
-    expect(isStalled(g.edges.E1, cfg)).toBe(true);
+    expect(isStalled(g.edges.E1!, cfg)).toBe(true);
     expect(selectFrontier(g, cfg, 5)).toMatchObject({ move: "fork", targetId: "N1", priority: 5 });
   });
   it("stall by small movement over the last two attempts", () => {
@@ -57,7 +57,7 @@ describe("frontier", () => {
     apply(g, { addNodes: [node("c")] });
     apply(g, { incrementAttempts: ["N2"] }, 2);
     apply(g, { incrementAttempts: ["N2"] }, 3);
-    expect(isStalled(g.nodes.N2, cfg)).toBe(true);
+    expect(isStalled(g.nodes.N2!, cfg)).toBe(true);
   });
   it("P7: alternative path when the best is done", () => {
     const g = seeded();

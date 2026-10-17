@@ -60,11 +60,11 @@ describe("connect", () => {
     expect(patch.incrementConnect).toEqual(["N4", "N3"]);
     expect(patch.resolveBoundary).toMatchObject({ markerId: "B1", nodeId: "N4" });
     const r = apply(g, patch, 5);
-    const x1 = r.idMap[patch.addNodes[0].tempId];
+    const x1 = r.idMap[patch.addNodes[0]!.tempId];
     const links = Object.values(g.edges).filter((e) => e.kind === "explains" && !e.retired).map((e) => `${e.source}>${e.target}`);
     expect(links).toEqual(expect.arrayContaining(["N3>" + x1, x1 + ">N4", "N4>N2"]));
     expect(links).not.toContain("N2>N3"); // a cause comes first
-    expect(g.nodes.B1.resolvedTo).toBe("N4");
+    expect(g.nodes.B1!.resolvedTo).toBe("N4");
     expect(islands(g)).toEqual([]);
   });
   it("a legitimate step links into the attack only with direct evidence", async () => {
@@ -171,9 +171,9 @@ describe("a link needs a value both events carry", () => {
     ] });
     const sig = (id: string, v: string) => buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: v, resolvesTo: `ad:${v}`, toolCallIds: ["tc_1"] }], g, { turn: 1, domain: "wineventlog", traceIds: () => [] });
     add(sig("N1", "alice")); add(sig("N2", "bob"));
-    expect(sharedValue(g, g.nodes.N1, g.nodes.N2)).toBeNull(); // host only, different accounts
-    expect(sharedValue(g, g.nodes.N3, g.nodes.N4)).toBeNull(); // host only, different sources
-    expect(sharedValue(g, g.nodes.N5, g.nodes.N6)).toMatch(/invoice_10001\.xlsm/i);
+    expect(sharedValue(g, g.nodes.N1!, g.nodes.N2!)).toBeNull(); // host only, different accounts
+    expect(sharedValue(g, g.nodes.N3!, g.nodes.N4!)).toBeNull(); // host only, different sources
+    expect(sharedValue(g, g.nodes.N5!, g.nodes.N6!)).toMatch(/invoice_10001\.xlsm/i);
     const r = add({ addEdges: [
       { tempId: "x", kind: "explains", source: "N1", target: "N2", prior: 0.4, evidence: [ev("direct")] },
       { tempId: "y", kind: "explains", source: "N5", target: "N6", prior: 0.4, evidence: [ev("direct")] },
@@ -211,7 +211,7 @@ describe("verdict path, interleaved branch", () => {
     const strong = (t: string) => ({ tempId: t, prior: 0.5, evidence: [ev("direct", "supports", [`${t}1`]), ev("direct", "supports", [`${t}2`])] });
     apply(g, { addNodes: [node("a", strong("a")), node("b", strong("b")), { tempId: "m", kind: "boundary-marker", label: "m", domain: "x", prior: 0.3, evidence: [], artifacts: [], targetDomain: "x", originNodeId: "N2" }],
       addEdges: [{ tempId: "e1", kind: "explains", source: "a", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["l1"])] }, { tempId: "e2", kind: "explains", source: "b", target: "a", prior: 0.5, evidence: [ev("direct", "supports", ["l2"])] }, { tempId: "e3", kind: "explains", source: "m", target: "a", prior: 0.3, evidence: [] }] });
-    expect(allPaths(g)[0].nodeIds).toEqual(["N1", "N2", "N3"]);
+    expect(allPaths(g)[0]!.nodeIds).toEqual(["N1", "N2", "N3"]);
   });
   it("branches from the chain event nearest the alert every branchEvery turns once the stories run", () => {
     const g = graph(); // S <- N2 (top), stories since turn 5
@@ -240,9 +240,9 @@ describe("role ARNs: a hand-off joins, two sessions of one role do not", () => {
     add(sig("N1", "arn:aws:sts::111122223333:assumed-role/admin/session-a"));
     add(sig("N2", "arn:aws:sts::111122223333:assumed-role/ops-controller/svc-deploy"));
     add(sig("N3", "arn:aws:sts::111122223333:assumed-role/admin/fn-sync"));
-    expect(sharedValue(g, g.nodes.N1, g.nodes.N3)).toBeNull(); // two sessions of role/admin
-    expect(sharedValue(g, g.nodes.N1, g.nodes.N2)).toBeNull(); // the dev ran as it, the create only names it: not a hand-off this way
-    expect(sharedValue(g, g.nodes.N2, g.nodes.N3)).toMatch(/role\/admin/); // created with the role -> runs as it
+    expect(sharedValue(g, g.nodes.N1!, g.nodes.N3!)).toBeNull(); // two sessions of role/admin
+    expect(sharedValue(g, g.nodes.N1!, g.nodes.N2!)).toBeNull(); // the dev ran as it, the create only names it: not a hand-off this way
+    expect(sharedValue(g, g.nodes.N2!, g.nodes.N3!)).toMatch(/role\/admin/); // created with the role -> runs as it
   });
 });
 
@@ -261,7 +261,7 @@ describe("routine work leads to more routine work", () => {
       { tempId: "a", kind: "explains", source: "N1", target: "N2", prior: 0.6, evidence: [ev("direct")] },
       { tempId: "b", kind: "explains", source: "N3", target: "N2", prior: 0.6, evidence: [ev("direct")] },
     ] });
-    expect(g.nodes.N1.legitimate).toBe(true);
-    expect(g.nodes.N3.legitimate).toBeFalsy();
+    expect(g.nodes.N1!.legitimate).toBe(true);
+    expect(g.nodes.N3!.legitimate).toBeFalsy();
   });
 });

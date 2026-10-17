@@ -12,7 +12,7 @@ const live = (n: GraphNode) => n.kind === "action" && n.status !== "ruled-out";
 const symptomOf = (g: Graph) => Object.values(g.nodes).find((n) => n.isSymptom);
 function chainTop(g: Graph): GraphNode | undefined {
   const p = bestPathFromSymptom(g);
-  return p ? [...p.nodeIds].reverse().map((id) => g.nodes[id]).find((n) => n.kind === "action") : symptomOf(g);
+  return p ? [...p.nodeIds].reverse().map((id) => g.nodes[id]!).find((n) => n.kind === "action") : symptomOf(g);
 }
 
 // Untested stories and unread rare records are easy to leave behind once a thread is producing (a story's
@@ -93,7 +93,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
   const ids = o[move];
   if (!ids) return { refused: `${next.move} is not available now.` };
   let target = next.target?.trim() ?? "";
-  if (move === "theorize" || move === "connect") target = ids[0];
+  if (move === "theorize" || move === "connect") target = ids[0]!;
   // An event reported this turn, named by its label (the model cannot know its id yet).
   if (!ids.includes(target) && !g.nodes[target] && !g.edges[target]) {
     const want = target.toLowerCase();
@@ -101,7 +101,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     if (hit) target = hit.id;
   }
   // A pivot named by the event its boundary hangs off: that event's open boundary.
-  if (move === "pivot" && g.nodes[target]?.kind === "action") target = ids.find((m) => g.nodes[m].originNodeId === target) ?? target;
+  if (move === "pivot" && g.nodes[target]?.kind === "action") target = ids.find((m) => g.nodes[m]!.originNodeId === target) ?? target;
   // A prediction named as theorize wrote it ("P3", "H1.P3"): the latest round's prediction with that id.
   if (move === "test" && !ids.includes(target)) {
     const key = (x: string) => x.toUpperCase().replace(/[^A-Z0-9]+/g, ".");
@@ -111,7 +111,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     const hits = ids.filter((id) => key(id).endsWith(`.${want}`) || inStory(id));
     const round = Math.max(0, ...hits.map((id) => Number(id.match(/^R(\d+)\./)?.[1] ?? 0)));
     const latest = hits.filter((id) => id.startsWith(`R${round}.`));
-    if (latest.length === 1) target = latest[0];
+    if (latest.length === 1) target = latest[0]!;
   }
   if (!ids.includes(target)) return { refused: `${move} ${next.target ?? ""} is not available (${move} is available on: ${ids.slice(0, 12).join(", ")}).` };
   return { decision: { move, targetId: target, turn: turn + 1, priority: -1, reason: `model: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };

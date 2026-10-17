@@ -502,7 +502,7 @@ function rescore(g: Graph, ids: string[], turn: number, cfg: AgentConfig) {
   // Joint causes are needed together, so they do not dispute each other; nor do linked identities.
   for (const es of groups.values()) {
     // A carrier service is neither a rival nor a link between rivals.
-    const live = es.filter((e) => e.status !== "ruled-out" && g.nodes[e.source]?.status !== "ruled-out" && !e.joint && !(e.kind !== "explains" && isCarrier(g.nodes[e.source])));
+    const live = es.filter((e) => e.status !== "ruled-out" && g.nodes[e.source]?.status !== "ruled-out" && !e.joint && !(e.kind !== "explains" && isCarrier(g.nodes[e.source]!)));
     // Identities are grouped into chains (linked directly or through another identity on the same action).
     const chain = new Map<string, number>();
     if (es[0]?.kind !== "explains") {
@@ -510,7 +510,7 @@ function rescore(g: Graph, ids: string[], turn: number, cfg: AgentConfig) {
       ids.forEach((id, i) => chain.set(id, i));
       for (let changed = true; changed; ) {
         changed = false;
-        for (const x of ids) for (const y of ids) if (chain.get(x) !== chain.get(y) && linkedPrincipals(g.nodes[x], g.nodes[y])) {
+        for (const x of ids) for (const y of ids) if (chain.get(x) !== chain.get(y) && linkedPrincipals(g.nodes[x]!, g.nodes[y]!)) {
           const to = Math.min(chain.get(x)!, chain.get(y)!), from = Math.max(chain.get(x)!, chain.get(y)!);
           for (const [k, v] of chain) if (v === from) chain.set(k, to);
           changed = true;
@@ -554,7 +554,7 @@ function topAccount(g: Graph, n: GraphNode): string | undefined {
 const principalArn = (x: Artifact) => x.kind === "arn" && /:(role|user|assumed-role)\//i.test(x.value);
 let roleArnRule = true; // set per call; off reproduces the rule before role hand-offs
 const accountLike = (x: Artifact) => LOOSE_KINDS.has(x.kind) || (roleArnRule && principalArn(x));
-const roleKey = (v: string) => { const m = v.match(/:(?:role|assumed-role)\/([^/]+)/i) ?? v.match(/:user\/(.+)$/i); return m ? m[1].toLowerCase() : ""; };
+const roleKey = (v: string) => { const m = v.match(/:(?:role|assumed-role)\/([^/]+)/i) ?? v.match(/:user\/(.+)$/i); return m ? m[1]!.toLowerCase() : ""; };
 export function sharedValue(g: Graph, a: GraphNode, b: GraphNode, roleArns = true): string | null {
   roleArnRule = roleArns;
   const ta = topAccount(g, a), tb = topAccount(g, b);
@@ -562,7 +562,7 @@ export function sharedValue(g: Graph, a: GraphNode, b: GraphNode, roleArns = tru
   const ranUnder = (actor: string | undefined, v: string) => { const k = roleKey(v), l = (actor && g.nodes[actor]?.label.toLowerCase()) || ""; return !!k && (l.includes(`role/${k}`) || l.includes(`user/${k}`)); };
   const looseOk = (x: Artifact) => (x.kind === "host" ? sameAccount && a.domain === b.domain : roleArnRule && principalArn(x) ? sameAccount || (ranUnder(tb, x.value) && !ranUnder(ta, x.value)) : accountLike(x) ? sameAccount : true);
   // Host and account values that do not count here, in any spelling that contains them.
-  const off = [...a.artifacts, ...b.artifacts].filter((x) => accountLike(x) && !looseOk(x)).flatMap((x) => { const v = x.value.trim().toLowerCase(); return [v, v.split(/[.@\\]/)[0]]; }).filter((v) => v.length >= 3);
+  const off = [...a.artifacts, ...b.artifacts].filter((x) => accountLike(x) && !looseOk(x)).flatMap((x) => { const v = x.value.trim().toLowerCase(); return [v, v.split(/[.@\\]/)[0]!]; }).filter((v) => v.length >= 3);
   const blocked = (t: string) => off.some((o) => t.includes(o));
   const text = (n: GraphNode) => [n.label, ...n.artifacts.map((x) => x.value)].join("\n").toLowerCase();
   const ta2 = text(a), tb2 = text(b);
@@ -620,16 +620,16 @@ export function allPaths(g: Graph, limit = 50): Path[] {
   const out: Path[] = [];
   const walk = (nodeIds: NodeId[], edgeIds: EdgeId[], score: number) => {
     if (out.length >= 1000) return;
-    const top = nodeIds[nodeIds.length - 1];
+    const top = nodeIds[nodeIds.length - 1]!;
     const parents = nodeIds.length >= MAX_DEPTH ? [] : liveParents(g, top).filter((e) => !nodeIds.includes(e.source));
     if (!parents.length) { out.push({ nodeIds, edgeIds, score }); return; }
-    for (const e of parents) walk([...nodeIds, e.source], [...edgeIds, e.id], score * e.confidence * nodeScore(g.nodes[e.source]));
+    for (const e of parents) walk([...nodeIds, e.source], [...edgeIds, e.id], score * e.confidence * nodeScore(g.nodes[e.source]!));
   };
   walk([s.id], [], nodeScore(s));
   // More solid hops first (a link >= 0.5 into an event >= 0.6), then score. A product score alone always favours
   // the shortest path, so a chain that stops at an open boundary after one hop beat the real three-hop chain to the
   // credential (a verdict once stopped at a boundary two hops up, without the step that minted the credential).
-  const solid = (p: Path) => p.edgeIds.filter((id, i) => g.edges[id].confidence >= 0.5 && g.nodes[p.nodeIds[i + 1]]?.kind === "action" && g.nodes[p.nodeIds[i + 1]].confidence >= 0.6).length;
+  const solid = (p: Path) => p.edgeIds.filter((id, i) => g.edges[id]!.confidence >= 0.5 && g.nodes[p.nodeIds[i + 1]!]?.kind === "action" && g.nodes[p.nodeIds[i + 1]!]!.confidence >= 0.6).length;
   const hops = new Map(out.map((p) => [p, solid(p)]));
   return out.sort((a, b) => hops.get(b)! - hops.get(a)! || b.score - a.score || a.nodeIds.length - b.nodeIds.length).slice(0, limit);
 }

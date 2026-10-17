@@ -21,12 +21,12 @@ export function snapshot(g: Graph, maxEvidence = 2): string {
   for (const n of Object.values(g.nodes)) if (n.kind === "boundary-marker" && !n.resolvedTo) include.add(n.id);
   for (const n of Object.values(g.nodes)) if (n.kind === "action" && n.status !== "ruled-out" && include.size < MAX_NODES) include.add(n.id);
   for (const e of Object.values(g.edges)) if (!e.retired && e.kind === "explains" && include.has(e.source) && include.has(e.target)) edgeIds.add(e.id);
-  for (const id of edgeIds) { include.add(g.edges[id].source); include.add(g.edges[id].target); }
+  for (const id of edgeIds) { include.add(g.edges[id]!.source); include.add(g.edges[id]!.target); }
 
-  const live = [...include].filter((id) => g.nodes[id].status !== "ruled-out").sort(byId);
+  const live = [...include].filter((id) => g.nodes[id]!.status !== "ruled-out").sort(byId);
   const lines = ["NODES"];
   for (const id of live) {
-    const n = g.nodes[id];
+    const n = g.nodes[id]!;
     const conf = n.kind === "boundary-marker" ? "-" : n.confidence.toFixed(2);
     const tags = [n.isSymptom ? "SYMPTOM" : "", n.isRoot ? "ROOT" : "", n.legitimate ? "LEGITIMATE" : "", n.unverified ? "UNVERIFIED" : "", best?.nodeIds.includes(id) ? "PATH" : ""].filter(Boolean).join(" ");
     const label = n.kind === "boundary-marker" ? `upstream cause of ${n.originNodeId} in ${n.targetDomain} (${n.reason ?? ""})` : n.label;
@@ -36,7 +36,7 @@ export function snapshot(g: Graph, maxEvidence = 2): string {
   }
   lines.push("EDGES");
   for (const id of [...edgeIds].sort(byId)) {
-    const e = g.edges[id];
+    const e = g.edges[id]!;
     if (e.status === "ruled-out") continue;
     lines.push(`${e.id} ${e.source} -${e.kind}-> ${e.target} ${e.confidence.toFixed(2)}${e.disputed ? " DISPUTED" : ""}${e.joint ? " JOINT" : ""}${e.inferred ? " INFERRED" : ""}${e.status === "confirmed" ? " confirmed" : ""}`);
   }
@@ -45,7 +45,7 @@ export function snapshot(g: Graph, maxEvidence = 2): string {
   if (out.length || outEdges.length) {
     lines.push("RULED OUT");
     for (const n of out) lines.push(`${n.id} ${n.label} (${n.evidence.find((e) => e.polarity === "refutes")?.summary.slice(0, 120) ?? "no support"})`);
-    for (const e of outEdges) lines.push(`${e.id} ${g.nodes[e.source].label} -${e.kind}-> ${e.target}`);
+    for (const e of outEdges) lines.push(`${e.id} ${g.nodes[e.source]!.label} -${e.kind}-> ${e.target}`);
   }
   const th = g.theories ?? [];
   if (th.length) {

@@ -36,22 +36,22 @@ describe("e2e scripted (mini)", () => {
     if (!g) throw new Error("the run handed back no graph");
     const graph: Graph = g;
     const path = r.rootPath!.nodeIds.map((id) => graph.nodes[id]!);
-    const has = (i: number, kind: string, value: string) => path[i].artifacts.some((a) => a.kind === kind && a.value === value);
+    const has = (i: number, kind: string, value: string) => path[i]!.artifacts.some((a) => a.kind === kind && a.value === value);
     expect(path).toHaveLength(4);
     expect(has(0, "event-id", "E-900")).toBe(true);
     expect(has(1, "process-guid", "PG-2")).toBe(true);
     expect(has(2, "event-id", "F-10")).toBe(true);
     expect(has(3, "event-id", "M-1")).toBe(true);
-    expect(path[3].isRoot).toBe(true);
+    expect(path[3]!.isRoot).toBe(true);
 
     // The boundary edr -> mail was resolved by a direct file-hash stitch.
     const marker = Object.values(graph.nodes).find((n) => n.kind === "boundary-marker")!;
-    expect(marker.resolvedTo).toBe(path[3].id);
+    expect(marker.resolvedTo).toBe(path[3]!.id);
     expect(trace.chronological().some((e) => e.type === "stitch" && (e.payload as any).kind === "auto")).toBe(true);
 
     // Attribution: the system-issued logon wins, the name on the command line is exonerated.
-    const attr = Object.values(graph.edges).filter((e) => e.kind === "attributed-to" && e.target === path[1].id);
-    const by = (p: string) => attr.find((e) => graph.nodes[e.source].label === p)!;
+    const attr = Object.values(graph.edges).filter((e) => e.kind === "attributed-to" && e.target === path[1]!.id);
+    const by = (p: string) => attr.find((e) => graph.nodes[e.source]!.label === p)!;
     expect(by("ad:mallory").status).toBe("confirmed");
     expect(by("ad:alice").status).toBe("ruled-out");
 

@@ -19,10 +19,7 @@
     "moduleResolution": "NodeNext",
     "outDir": "dist",
     "sourceMap": true,
-    "declaration": false,
-    // Emit only; strictness is `npm run typecheck`'s, which holds everything but
-    // plugins/rootcause/v3 to this flag (see tsconfig.rootcause-v3.json).
-    "noUncheckedIndexedAccess": false
+    "declaration": false
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist", "tests", "scripts", "vitest.config.ts"]

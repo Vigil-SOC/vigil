@@ -24,10 +24,10 @@ describe("attribution relations and repeats", () => {
     apply(g, { addNodes: [node("act")] });
     const sig = (call: string) => [{ layer: "machine-facing" as const, kind: "account", value: "alice", resolvesTo: "ad:alice", toolCallIds: [call] }];
     apply(g, buildAttributionPatch("N2", sig("tc_1"), g, ctx));
-    const once = Object.values(g.edges)[0].confidence;
+    const once = Object.values(g.edges)[0]!.confidence;
     apply(g, buildAttributionPatch("N2", sig("tc_2"), g, ctx), 2);
     expect(Object.values(g.edges)).toHaveLength(1);
-    expect(Object.values(g.edges)[0].confidence).toBeCloseTo(once, 9);
+    expect(Object.values(g.edges)[0]!.confidence).toBeCloseTo(once, 9);
   });
   it("ran-as the victim and operated-by the attacker are separate edges on one action", () => {
     const g = seeded();
@@ -36,7 +36,7 @@ describe("attribution relations and repeats", () => {
       { layer: "machine-facing", relation: "ran-as", kind: "account", value: "alice", resolvesTo: "ad:alice", toolCallIds: ["tc_1"] },
       { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "evil.test operator", toolCallIds: ["tc_2"] },
     ], g, ctx));
-    const kinds = Object.values(g.edges).map((x) => `${x.kind}:${g.nodes[x.source].label}:${x.status}`).sort();
+    const kinds = Object.values(g.edges).map((x) => `${x.kind}:${g.nodes[x.source]!.label}:${x.status}`).sort();
     expect(kinds).toEqual(["attributed-to:ad:alice:confirmed", "operated-by:evil.test operator:suspected"]);
     expect(Object.values(g.edges).every((x) => !x.disputed)).toBe(true);
   });
@@ -76,14 +76,14 @@ describe("frontier after the chain", () => {
     apply(g, { addNodes: [node("mid", { evidence: solid }), node("root", { isRoot: true, domain: "k8s", evidence: [ev("direct", "supports", ["r1"]), ev("corroborating", "supports", ["r2"])] })],
       addEdges: [{ tempId: "e1", kind: "explains", source: "mid", target: "N1", prior: 0.3, evidence: [ev("direct", "supports", ["x1"]), ev("corroborating", "supports", ["x2"])] },
         { tempId: "e2", kind: "explains", source: "root", target: "mid", prior: 0.3, evidence: [ev("direct", "supports", ["y1"]), ev("corroborating", "supports", ["y2"])] }] });
-    const mid = g.nodes.N2.domain;
+    const mid = g.nodes.N2!.domain;
     expect(selectFrontier(g, cfg, 2, { [mid]: 1, k8s: 30 })).toMatchObject({ move: "branch", targetId: "N2" });
   });
   it("does not fork on a strong link that stalled", () => {
     const g = seeded();
     apply(g, { addNodes: [node("c", { evidence: [ev("direct", "supports", ["c1"])] })], addEdges: [{ tempId: "e", kind: "explains", source: "c", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["k1"])] }] });
     for (let t = 2; t <= 4; t++) apply(g, { incrementAttempts: ["E1"] }, t);
-    expect(g.edges.E1.confidence).toBeGreaterThan(0.6);
+    expect(g.edges.E1!.confidence).toBeGreaterThan(0.6);
     expect(selectFrontier(g, cfg, 5)?.move).not.toBe("fork");
   });
 });
@@ -121,7 +121,7 @@ describe("duplicates", () => {
 });
 
 describe("end of run", () => {
-  const solid = (ids: string[]) => [ev("direct", "supports", [ids[0]]), ev("corroborating", "supports", [ids[1]])];
+  const solid = (ids: string[]) => [ev("direct", "supports", [ids[0]!]), ev("corroborating", "supports", [ids[1]!])];
   it("a chain link is settled once two checks do not move it, or once it is near-certain", () => {
     const g = seeded();
     apply(g, { addNodes: [node("root", { isRoot: true, evidence: solid(["r1", "r2"]) })], addEdges: [{ tempId: "e", kind: "explains", source: "root", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["k1"])] }] });
@@ -132,8 +132,8 @@ describe("end of run", () => {
     expect(selectFrontier(g, cfg, 4)?.targetId).not.toBe("E1");
     const g2 = seeded();
     apply(g2, { addNodes: [node("root", { isRoot: true, evidence: solid(["r1", "r2"]) })], addEdges: [{ tempId: "e", kind: "explains", source: "root", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["k1"]), ...["a", "b", "c", "d", "e", "f"].map((x) => ev("circumstantial", "supports", [x], `timing ${x}`))] }] });
-    expect(g2.edges.E1.status).toBe("suspected");
-    expect(g2.edges.E1.confidence).toBeGreaterThanOrEqual(0.95);
+    expect(g2.edges.E1!.status).toBe("suspected");
+    expect(g2.edges.E1!.confidence).toBeGreaterThanOrEqual(0.95);
     expect(selectFrontier(g2, cfg, 2)?.targetId).not.toBe("E1");
   });
   it("off-chain events get one check, and only plausible ones", () => {
@@ -177,7 +177,7 @@ describe("cross-source sweep", () => {
     const g = seeded();
     apply(g, { addNodes: [node("x", { artifacts: [{ kind: "arn", value: "arn:aws:sts::1:assumed-role/deployer/ci-session" }, { kind: "ip", value: "192.0.2.9" }, { kind: "process-guid", value: "77" }] })] });
     apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "svc-a", toolCallIds: ["tc_1"] }], g, ctx));
-    expect(sweepValues(g, g.nodes.N2)).toEqual(["deployer", "ci-session", "arn:aws:sts::1:assumed-role/deployer/ci-session", "192.0.2.9", "svc-a"]);
+    expect(sweepValues(g, g.nodes.N2!)).toEqual(["deployer", "ci-session", "arn:aws:sts::1:assumed-role/deployer/ci-session", "192.0.2.9", "svc-a"]);
   });
   it("finds the source that pins the event and opens a boundary there when a cause search comes back empty", async () => {
     const { sweep } = await import("../../../plugins/rootcause/v3/sweep.js");
@@ -190,7 +190,7 @@ describe("cross-source sweep", () => {
       return { toolCallId: `tc_${calls.length}`, tool: "splunk_query", input, result: { ok: true, data }, wrapped: "" };
     } };
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
-    const r = await sweep(g, g.nodes.N2, { cfg, tools, trace: new MemoryTrace("t").forTurn(1, "expand", "N2"), domains: ["edr", "mail", "auth"], range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "lab" } as any);
+    const r = await sweep(g, g.nodes.N2!, { cfg, tools, trace: new MemoryTrace("t").forTurn(1, "expand", "N2"), domains: ["edr", "mail", "auth"], range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "lab" } as any);
     expect(calls[0]).toMatch(/^index=lab NOT sourcetype="edr" "ABCD1234"/);
     expect(r.topDomain).toBe("mail");
     expect(r.leads).toMatch(/"ABCD1234": mail 1 events .*\[tc_1\]/);
@@ -203,7 +203,7 @@ describe("same event, times, placeholders", () => {
     const { sameEvent } = await import("../../../plugins/rootcause/v3/stitch.js");
     expect(sameEvent({ domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: arts }, { domain: "ct", observedAt: "2026-01-01T10:00:03Z", artifacts: arts })).toBe(true);
     expect(sameEvent({ domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: arts }, { domain: "ct", observedAt: "2026-01-01T10:00:09Z", artifacts: arts })).toBe(false);
-    expect(sameEvent({ domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: [arts[0], { kind: "host", value: "h" }] }, { domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: [arts[0], { kind: "host", value: "h" }] })).toBe(false);
+    expect(sameEvent({ domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: [arts[0]!, { kind: "host", value: "h" }] }, { domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: [arts[0]!, { kind: "host", value: "h" }] })).toBe(false);
     const g = seeded();
     apply(g, { addNodes: [node("a", { domain: "ct", observedAt: "2026-01-01T10:00:00Z", artifacts: arts })] });
     expect(apply(g, { addNodes: [node("b", { label: "other words", domain: "ct", observedAt: "2026-01-01T10:00:01Z", artifacts: arts })] }).idMap.b).toBe("N2");
@@ -275,7 +275,7 @@ describe("legitimate steps", () => {
     const g = seeded();
     apply(g, { addNodes: [node("dev", { label: "admin applied a Function resource from 6.6.6.6", legitimate: true, isRoot: true, evidence: [ev("direct", "supports", ["d1"]), ev("corroborating", "supports", ["d2"])] })],
       addEdges: [{ tempId: "e", kind: "explains", source: "dev", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["x1"]), ev("corroborating", "supports", ["x2"])] }] });
-    expect(g.nodes.N2.isRoot).toBeUndefined();
+    expect(g.nodes.N2!.isRoot).toBeUndefined();
     expect(selectFrontier(g, cfg, 2)).toMatchObject({ move: "expand", targetId: "N2" });
     apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "k8s:admin", toolCallIds: ["tc_1"] }], g, ctx));
     const { renderReport } = await import("../../../plugins/rootcause/v3/report.js");
@@ -331,7 +331,7 @@ describe("pivot closes when a lead already explains the origin", () => {
     const ctx: any = { cfg, turn: 3, model, tools: { callCount: 0 }, trace: new MemoryTrace("t").forTurn(3, "pivot", "B1"), domains: ["edr", "k8s"], range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"] };
     const patch = await pivot({ move: "pivot", targetId: "B1", turn: 3, priority: 1, reason: "" }, g, ctx);
     apply(g, patch, 3);
-    expect(g.nodes.B1.resolvedTo).toBe("N2");
+    expect(g.nodes.B1!.resolvedTo).toBe("N2");
   });
 });
 
@@ -340,8 +340,8 @@ describe("disposition", () => {
     const { disposition } = await import("../../../plugins/rootcause/v3/report.js");
     const g = seeded();
     apply(g, { addNodes: [node("cause", { prior: 0.5, evidence: [ev("corroborating", "supports", ["c1"])] })], addEdges: [{ tempId: "e", kind: "explains", source: "cause", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["c2"])] }] });
-    g.nodes.N1.status = "confirmed";
-    expect(g.nodes.N2.status).toBe("suspected");
+    g.nodes.N1!.status = "confirmed";
+    expect(g.nodes.N2!.status).toBe("suspected");
     expect(disposition(g, "budget-exhausted")).toMatch(/^True Positive \(causes likely/);
   });
 });

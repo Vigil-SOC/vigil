@@ -42,16 +42,16 @@ export const theorize: Handler = async (d, g, ctx) => {
     const hit = all.find((p) => mentionsRare(`${p.spl} ${p.expect}`, names));
     if (hit) { if (!all.some((p) => p.next && mentionsRare(`${p.spl} ${p.expect}`, names))) hit.next = true; }
     else {
-      const pick = rare.find((x) => !tested.some((p) => mentionsRare(`${p.spl} ${p.expect}`, [x.value]))) ?? rare[0];
+      const pick = rare.find((x) => !tested.some((p) => mentionsRare(`${p.spl} ${p.expect}`, [x.value]))) ?? rare[0]!;
       const q = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-      theories[0].predictions.push({ id: R("PRARE"), sourcetype: pick.sourcetype, expect: `the ${pick.count} record(s) where ${pick.field} is ${pick.value.slice(0, 120)}: what they are, which host and account, and whether they belong to the incident`, spl: `index=${ctx.index} sourcetype=${q(pick.sourcetype)} ${q(pick.value)} | stats count min(_time) max(_time) values(*) by sourcetype`, earliest: ctx.range[0], latest: ctx.range[1], separates: [], next: true, status: "open" });
+      theories[0]!.predictions.push({ id: R("PRARE"), sourcetype: pick.sourcetype, expect: `the ${pick.count} record(s) where ${pick.field} is ${pick.value.slice(0, 120)}: what they are, which host and account, and whether they belong to the incident`, spl: `index=${ctx.index} sourcetype=${q(pick.sourcetype)} ${q(pick.value)} | stats count min(_time) max(_time) values(*) by sourcetype`, earliest: ctx.range[0], latest: ctx.range[1], separates: [], next: true, status: "open" });
       ctx.trace.write("reasoning", { theorize: "no prediction tested the rare-activity list; added one by code", rare: pick });
     }
   }
   // Nothing matched: test the first prediction of the first stories rather than none.
   if (!theories.some((t) => t.predictions.some((p) => p.next))) {
     ctx.trace.write("reasoning", { nextTestsUnmatched: sub.nextTests, fallback: "first prediction of the first 3 stories" });
-    for (const t of theories.slice(0, 3)) t.predictions[0].next = true;
+    for (const t of theories.slice(0, 3)) t.predictions[0]!.next = true;
   }
   // Prediction ids must be unique in the round (the model may number them per story).
   const seen = new Set<string>();

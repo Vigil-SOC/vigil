@@ -14,8 +14,8 @@ describe("attribution", () => {
     ], g, ctx);
     apply(g, p);
     const edges = Object.values(g.edges);
-    const legit = edges.find((e) => g.nodes[e.source].label === "git:dev-b")!;
-    const attacker = edges.find((e) => g.nodes[e.source].label === "git:fork-x")!;
+    const legit = edges.find((e) => g.nodes[e.source]!.label === "git:dev-b")!;
+    const attacker = edges.find((e) => g.nodes[e.source]!.label === "git:fork-x")!;
     expect(legit.confidence).toBeCloseTo(0.08, 2);
     expect(legit.status).toBe("ruled-out");
     expect(attacker.confidence).toBeCloseTo(0.95, 2);

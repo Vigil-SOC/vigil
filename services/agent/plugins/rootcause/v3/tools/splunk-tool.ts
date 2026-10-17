@@ -24,8 +24,8 @@ const SplunkInput = z.object({
 export type SplunkInputT = z.infer<typeof SplunkInput>;
 
 const stMentions = (spl: string) => [
-  ...[...spl.matchAll(/\bsourcetype\s*=\s*"?([^\s"|)]+)"?/gi)].map((m) => m[1]),
-  ...[...spl.matchAll(/\bsourcetype\s+IN\s*\(([^)]*)\)/gi)].flatMap((m) => m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, ""))),
+  ...[...spl.matchAll(/\bsourcetype\s*=\s*"?([^\s"|)]+)"?/gi)].map((m) => m[1]!),
+  ...[...spl.matchAll(/\bsourcetype\s+IN\s*\(([^)]*)\)/gi)].flatMap((m) => m[1]!.split(",").map((s) => s.trim().replace(/^"|"$/g, ""))),
 ];
 
 // Limits a search to the allowed sourcetypes: refuses one that names another, and adds the filter when it
@@ -59,7 +59,7 @@ export function validateSpl(spl: string, index: string): string | null {
 }
 
 export function searchWindow(input: Pick<SplunkInputT, "earliest" | "latest">, ctx: Pick<ToolContext, "range" | "focusTime" | "beforeMs">): { earliest: string; latest: string; note: string } {
-  const [r0, r1] = ctx.range.map((x) => Date.parse(x));
+  const [r0, r1] = ctx.range.map((x) => Date.parse(x)) as [number, number];
   const f = ctx.focusTime ? Date.parse(ctx.focusTime) : NaN;
   const clip = (t: number) => new Date(Math.min(Math.max(t, r0), r1)).toISOString();
   const before = ctx.beforeMs ?? BEFORE_MS;
@@ -103,7 +103,7 @@ export function splunkTool(backend: SearchBackend, index: string): EvidenceTool<
         }
       }
       const text = await backend.search(q, ctx.timeoutMs);
-      const wild = [...scoped.spl.split("|")[0].matchAll(/\b([\w.{}@-]+)\s*=\s*"?\*([^\s"*)]+)\*?"?/g)].map((m) => m[2]);
+      const wild = [...scoped.spl.split("|")[0]!.matchAll(/\b([\w.{}@-]+)\s*=\s*"?\*([^\s"*)]+)\*?"?/g)].map((m) => m[2]!);
       const hint = wild.length ? `\nNOTE: leading-wildcard field filters (${wild.slice(0, 3).map((w) => `*${w}*`).join(", ")}) make Splunk parse every event in the window. A plain keyword ("${wild[0]}") uses the index and is much faster.` : "";
       if (text.startsWith("ERROR:") || text.startsWith("refused:")) return { ok: false, error: `${text.replace(/^ERROR:\s*/, "")}\n${head}` };
       const empty = /^0 events matched, 0 results/.test(text) ? "\nNOTE: nothing matched. Against your stated expectation this is evidence, if the search names the right fields and window." : "";

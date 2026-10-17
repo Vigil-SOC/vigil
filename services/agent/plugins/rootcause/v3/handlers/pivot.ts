@@ -2,15 +2,15 @@
 // entry events; each later step asks what the best lead produced. Every new node is run through the
 // stitch matcher against the marker's origin.
 import type { z } from "zod4";
-import type { GraphPatch, NodeIn } from "../graph.js";
+import type { GraphNode, GraphPatch, NodeIn } from "../graph.js";
 import { instructions } from "../model/prompts.js";
 import type { SubmitEffects, SubmitEntryPoints } from "../model/schemas.js";
 import { matchBoundary, sameEvent } from "../stitch.js";
 import { candidatePatch, merge, noteSuspicious, tempId, userContent, Vetter, withBaseline, type Handler } from "./common.js";
 
 export const pivot: Handler = async (d, g, ctx) => {
-  const m = g.nodes[d.targetId];
-  const origin = g.nodes[m.originNodeId!];
+  const m = g.nodes[d.targetId]!;
+  const origin = g.nodes[m.originNodeId!]!;
   const steps = m.pivotSteps ?? 0;
   const exhausted = (): GraphPatch => merge({ updateMarkers: [{ markerId: m.id, pivotSteps: ctx.cfg.maxForwardSteps + 1, forwardLeaves: [] }] });
 
@@ -58,9 +58,9 @@ export const pivot: Handler = async (d, g, ctx) => {
   // Forward only from leads that happened before the origin: past it, the pivot is retelling what followed.
   const originT = origin.observedAt ? Date.parse(origin.observedAt) : Infinity;
   const before = (n: { observedAt?: string }) => !n.observedAt || Date.parse(n.observedAt) <= originT;
-  const leaves = m.forwardLeaves.map((id) => g.nodes[id]).filter((n) => n && before(n));
+  const leaves = m.forwardLeaves.map((id) => g.nodes[id]).filter((n): n is GraphNode => !!n && before(n));
   if (!leaves.length) return exhausted();
-  const leaf = [...leaves].sort((a, b) => b.confidence - a.confidence)[0];
+  const leaf = [...leaves].sort((a, b) => b.confidence - a.confidence)[0]!;
   const allowed = [...new Set([d.source && ctx.domains.includes(d.source) ? d.source : m.targetDomain!, origin.domain])];
   const r = await ctx.model.runTurn({
     move: "pivot-forward", correlationId: m.id, submitTool: "submit_effects", allowedDomains: allowed, focusTime: leaf.observedAt, trace: ctx.trace,
