@@ -8,7 +8,7 @@ import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
-import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import { gateway, harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
@@ -36,6 +36,9 @@ import type { ComposeKinds } from "./plugins/compose/vocabulary.js";
 import { runHunt } from "./plugins/hunt/workflow.js";
 import { runRootCause } from "./plugins/rootcause/workflow.js";
 import type { RootCauseKinds } from "./plugins/rootcause/proof.js";
+import { runRootCauseV3 } from "./plugins/rootcause/v3/engine.js";
+import type { V3Kinds } from "./plugins/rootcause/v3/ledger.js";
+import { bifrostMessages } from "./plugins/rootcause/v3/model/bifrost.js";
 import type { HuntKinds } from "./plugins/hunt/ledger.js";
 import type { DirectiveQueue } from "./plugins/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./plugins/hunt/directives.js";
@@ -226,6 +229,16 @@ async function drive(
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
     const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, onProgress: progressFor(), signal });
     return done.status === "waiting_approval" ? done.reason : null;
+  }
+  if (entry.workflow === "rootcause" && spec.sections["root_cause_engine"] === "v3") {
+    const harness = build(kind, spec, as<V3Kinds>(state), undefined, seed);
+    const provider = spec.provider;
+    await runRootCauseV3(harness, {
+      run_id, spec, started_by, signal, stop: stopFrom(directives, run_id),
+      messages: (bound) => bifrostMessages({ ...gateway, ...(provider === undefined ? {} : { provider }), signal: bound }),
+      log: (line) => log.info(line, { run_id }),
+    });
+    return null;
   }
   if (entry.workflow === "rootcause") {
     const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);

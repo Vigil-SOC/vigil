@@ -72,6 +72,12 @@ export async function surveySplunk(runner: JobRunner, live: LiveSearch, scope: S
 export const splunkAdapter: SourceAdapter = {
   backend: "splunk-selfhosted",
   tools: [SPLUNK_EXECUTE],
+  async indexes(invoke: Invoke): Promise<string[]> {
+    // eventcount reads index metadata, not events, so the window does not bound it.
+    const job = await splunkRunner(invoke).runJob("| eventcount summarize=false index=* | stats sum(count) as count by index | where count > 0 | sort - count", { earliest: 0, latest: Date.now() / 1000, limit: 200 });
+    if (job.errors.length) throw new Error(`could not list the indexes: ${job.errors.join("; ")}`);
+    return job.rows.map((r) => String(r["index"])).filter((i) => i !== "" && i !== "undefined");
+  },
   open(invoke: Invoke, scope: SourceScope): Source {
     const runner = splunkRunner(invoke);
     const live = new LiveSearch(runner, scope.index, scope.range);

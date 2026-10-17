@@ -14,6 +14,8 @@ import { investigateView } from "./investigate/view.js";
 import { huntView } from "./hunt/view.js";
 import type { LeadKinds } from "./investigate/legacy/vocabulary.js";
 import { rootCauseProjection } from "./rootcause/projection.js";
+import { ENGINE as ROOT_CAUSE_V3, engineOf } from "./rootcause/v3/ledger.js";
+import { rootCauseV3Projection } from "./rootcause/v3/projection.js";
 import type { RootCauseKinds } from "./rootcause/proof.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
@@ -77,8 +79,11 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     workflow: "rootcause",
     actions: [],
     halts: [],
-    owned: { config: ["checkpoints"] },
-    projection: (runId, events) => rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),
+    // root_cause_engine picks the loop ("v3", else the kernel's); root_cause_index pins v3's index.
+    owned: { config: ["checkpoints", "root_cause_engine", "root_cause_index"] },
+    // Either engine answers in the trace's shape; v3 adds its report and moves.
+    projection: (runId, events) =>
+      engineOf(events) === ROOT_CAUSE_V3 ? rootCauseV3Projection(runId, events) : rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),
   },
   // adjudicate is a hunt run as a second opinion: the lead is shown a finding
   // intake admitted and the workflow intake chose, tests the stated intent against

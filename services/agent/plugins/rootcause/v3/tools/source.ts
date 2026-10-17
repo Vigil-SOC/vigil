@@ -33,6 +33,9 @@ export interface SourceAdapter {
   // The tool ids, as the binding flattens them, this adapter knows how to call.
   tools: readonly string[];
   open(invoke: Invoke, scope: SourceScope): Source;
+  // The indexes (or their equivalent) the tool can search, largest first: what a run
+  // picks its scope from when nothing configured names one.
+  indexes(invoke: Invoke): Promise<string[]>;
 }
 
 export class UnsupportedSource extends Error {}

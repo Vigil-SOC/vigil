@@ -58,6 +58,18 @@ export class Registry implements ToolRegistry {
   list() { return [...this.tools.values()]; }
   get callCount() { return this.seq; }
 
+  // The calls a resumed run already made, as its trace holds them: their ids stay
+  // cited in the graph, so a check still reads them and a new call never reuses one.
+  restore(calls: readonly { toolCallId: string; input: unknown; output: string }[]): this {
+    for (const c of calls) {
+      this.inputs.set(c.toolCallId, c.input);
+      this.outputs.set(c.toolCallId, c.output);
+      for (const st of searchedSourcetypes(c.input)) this.coverage[st] = (this.coverage[st] ?? 0) + 1;
+      this.seq = Math.max(this.seq, Number(c.toolCallId.replace(/^tc_/, "")) || 0);
+    }
+    return this;
+  }
+
   async call(name: string, input: unknown, ctx: ToolContext): Promise<ToolCallRecord> {
     const toolCallId = `tc_${++this.seq}`;
     this.inputs.set(toolCallId, input);

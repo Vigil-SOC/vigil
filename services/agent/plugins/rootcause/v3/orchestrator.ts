@@ -15,7 +15,8 @@ import type { Alert, Deps, ExitReason, LoopContext, RunResult } from "./types.js
 const NETWORK = /connection error|fetch failed|EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|network|timed out|timeout|overloaded|529|503/i;
 
 // onTurn gets the graph after the rare sweep (turn 0) and after every turn: what a resume starts from.
-export interface RunOpts { runId: string; range: [string, string]; index: string; graph?: Graph; startTurn?: number; log?: (s: string) => void; onTurn?: (graph: Graph, turn: number) => void | Promise<void> }
+// signal: an operator's stop or a lost lease; the run throws its reason at the next turn rather than start one.
+export interface RunOpts { runId: string; range: [string, string]; index: string; graph?: Graph; startTurn?: number; signal?: AbortSignal; log?: (s: string) => void; onTurn?: (graph: Graph, turn: number) => void | Promise<void> }
 
 export function seedFromAlert(g: Graph, alert: Alert, cfg: AgentConfig): Graph {
   applyPatch(g, { ...emptyPatch(), addNodes: [{ tempId: "symptom", kind: "action", label: alert.title, domain: alert.source, prior: 0.5, evidence: [], artifacts: alert.artifacts, observedAt: alert.observedAt, isSymptom: true }] }, 0, cfg);
@@ -90,6 +91,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
   let concluding: ExitReason | null = null; // the exit to take once the conclude turn has run
 
   for (let turn = o.startTurn ?? 1; ; turn++) {
+    o.signal?.throwIfAborted();
     cur = turn;
     if (concluding && graph.conclusion) { exit = concluding; break; }
     exit = checkExit(graph, cfg, turn, deps.budget);
@@ -112,14 +114,14 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     const tt = deps.trace.forTurn(turn, decision.move, decision.targetId);
     tt.write("decision", decision);
     log(`turn ${turn} · P${decision.priority} ${decision.move} ${decision.targetId} · $${deps.budget.usd.toFixed(2)} · ${decision.reason}`);
-    const ctx: LoopContext = { runId: graph.runId, turn, cfg, model, tools: deps.tools, trace: tt, budget: deps.budget, domains: deps.domains, sizes: deps.sizes, range: o.range, index: o.index, signal: new AbortController().signal };
+    const ctx: LoopContext = { runId: graph.runId, turn, cfg, model, tools: deps.tools, trace: tt, budget: deps.budget, domains: deps.domains, sizes: deps.sizes, range: o.range, index: o.index, signal: o.signal ?? new AbortController().signal };
 
     let patch: GraphPatch;
     try {
       // A network outage is not the move's fault: wait and retry the same move, up to about 10 minutes.
       for (let wait = 1; ; wait++) {
         try { patch = await route(decision, graph, ctx); break; } catch (e: any) {
-          if (!NETWORK.test(String(e?.message ?? e) + String(e?.cause?.message ?? e?.cause?.cause?.message ?? "")) || wait > 20) throw e;
+          if (o.signal?.aborted || !NETWORK.test(String(e?.message ?? e) + String(e?.cause?.message ?? e?.cause?.cause?.message ?? "")) || wait > 20) throw e;
           tt.write("rejected-submission", { networkRetry: wait, error: String(e?.message ?? e) });
           log(`  network error, retrying in 30s (${wait}/20): ${e?.message ?? e}`);
           await new Promise((r) => setTimeout(r, 30_000));
@@ -128,6 +130,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       failures = 0;
     } catch (e: any) {
       // A failed turn counts as an attempt on its target, so the frontier moves on; three in a row stop the run.
+      if (o.signal?.aborted) throw e;
       tt.write("rejected-submission", { error: String(e?.message ?? e) });
       log(`  turn failed: ${e?.message ?? e}`);
       if (++failures >= 3) throw e;

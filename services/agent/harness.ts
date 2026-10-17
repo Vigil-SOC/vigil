@@ -29,8 +29,9 @@ export function internalToken(): string {
 //
 // maxRetries: 0 because the limiter is the retry policy. The SDK's own default would
 // multiply against the limiter's and the gateway's, billing every attempt.
+const gatewayUrl = (process.env["BIFROST_URL"] ?? "http://bifrost:8080").replace(/\/+$/, "");
 const client = new OpenAI({
-  baseURL: `${(process.env["BIFROST_URL"] ?? "http://bifrost:8080").replace(/\/+$/, "")}/v1`,
+  baseURL: `${gatewayUrl}/v1`,
   apiKey: process.env["BIFROST_API_KEY"] ?? "unused",
   maxRetries: 0,
   timeout: Number(process.env["VIGIL_LLM_TIMEOUT_MS"] ?? 600_000),
@@ -51,6 +52,10 @@ const prices = httpPrices(pricing);
 // The Settings → Budgets key, sent on every model call so Bifrost's budget binds
 // agent runs too. Read per process, never carried in a RunSpec.
 const vk = httpVirtualKey(pricing);
+
+// The same gateway, allowance and budget key, for a loop that speaks the gateway's
+// Anthropic surface rather than going through the harness's provider: root cause v3.
+export const gateway = { baseUrl: gatewayUrl, apiKey: process.env["BIFROST_API_KEY"], limiter, vk };
 
 // The six injected parts, assembled per run because the model, the grants and the
 // budget are all the spec's. Nothing here is shared between two runs.

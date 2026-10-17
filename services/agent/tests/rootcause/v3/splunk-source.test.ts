@@ -89,6 +89,12 @@ describe("splunkAdapter", () => {
     await expect(splunkAdapter.open(invoke, { index: "lab", range }).survey()).rejects.toThrow("index lab not found");
   });
 
+  it("lists the indexes that hold events, largest first, from index metadata", async () => {
+    const { invoke, asked } = recording([envelope([{ index: "lab", count: "1200" }, { index: "main", count: "90" }])]);
+    expect(await splunkAdapter.indexes(invoke)).toEqual(["lab", "main"]);
+    expect(asked[0]!["spl_query"]).toMatch(/^\| eventcount summarize=false index=\*/);
+  });
+
   it("searches with v3's guarded tool, scoped to the run's index", () => {
     const tool = splunkAdapter.open(async () => envelope([]), { index: "lab", range }).evidenceTool();
     expect(tool.name).toBe("splunk_query");
