@@ -1169,14 +1169,18 @@ export function CasePage({
   // Only what exists: the live investigation's status, else the run's outcome.
   const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
   // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
-  // else took the key (a menu or dialog is open, or a text field has focus).
+  // else took the key (a menu or dialog is showing, or a text field has focus). A closed dialog that
+  // stays mounted, like the Ask Vigil dock, is aria-hidden and doesn't count.
   useEffect(() => {
     if (onExpand) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
       const t = e.target as HTMLElement | null
       if (t?.closest('input, textarea, select, [contenteditable="true"]')) return
-      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      const showing = [...document.querySelectorAll('[role="dialog"], [role="menu"]')].some(
+        (el) => !el.closest('[aria-hidden="true"], [hidden]'),
+      )
+      if (showing) return
       onBack()
     }
     window.addEventListener('keydown', onKey)

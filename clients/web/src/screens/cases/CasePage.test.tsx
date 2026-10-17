@@ -1807,6 +1807,24 @@ describe('case page', () => {
       expect(onBack).toHaveBeenCalledTimes(1)
     })
 
+    it('full page: a closed dialog that stays mounted (the Ask Vigil dock) does not stop Escape; an open one does', async () => {
+      testState.cases = [open('case-9')]
+      const onBack = vi.fn()
+      renderDetail('case-9', { onBack })
+      await screen.findByRole('heading', { name: 'Frame case' })
+      const dock = document.createElement('aside')
+      dock.setAttribute('role', 'dialog')
+      dock.setAttribute('aria-hidden', 'true')
+      document.body.appendChild(dock)
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+
+      dock.setAttribute('aria-hidden', 'false')
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+      dock.remove()
+    })
+
     it('opens Edit and Merge from the ⋯ menu; Merge loads its own picker', async () => {
       testState.cases = [open('case-9'), { ...open('case-10'), title: 'Other case' }]
       renderDetail('case-9')
