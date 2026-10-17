@@ -4,17 +4,39 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   bifrostApi,
+  secretText,
   type BifrostKey,
   type BifrostKeyWrite,
   type BifrostModel,
   type BifrostModelParameters,
   type BifrostProvider,
   type BifrostRoutability,
+  type BifrostSecret,
   type BifrostVirtualKey,
   type BifrostVirtualKeyWrite,
 } from '../../services/bifrostApi'
 
 type Phase = 'loading' | 'ready' | 'error'
+
+const readsEnv = (v: BifrostSecret | string | undefined): boolean =>
+  typeof v === 'object' &&
+  !!v &&
+  (v.type === 'env' || v.type === 'vault' || !!v.from_env || /^(env|vault)\./.test(v.ref || ''))
+
+/** A key the gateway's seed config made from an environment variable
+    (`default-anthropic-key` reads `env.ANTHROPIC_API_KEY`) that cannot route:
+    the variable is unset, or what it points at does not answer. The console
+    treats such a key as not set up. An env-backed key that does route (an
+    operator who set the variable) is a real key.
+
+    With no routability verdict to go on, only an unresolved reference counts. */
+export function isUnsetSeed(key: BifrostKey, verdicts: BifrostRoutability | null): boolean {
+  const creds = [key.value, key.vertex_key_config?.auth_credentials, key.ollama_key_config?.url]
+  if (!creds.some(readsEnv)) return false
+  if (verdicts) return !verdicts.keys?.[key.id]?.routable
+  return creds.some((c) => readsEnv(c) && !secretText(c))
+}
+
 
 const errText = (e: unknown, fallback: string): string => {
   const r = e as { response?: { data?: { detail?: string; error?: { message?: string } } } }
@@ -26,7 +48,10 @@ const errText = (e: unknown, fallback: string): string => {
 /** Providers with their keys, loaded together — a provider with no keys can't route. */
 export function useBifrostProviders() {
   const [providers, setProviders] = useState<BifrostProvider[]>([])
+  // `keys` leaves out unset seed keys (isUnsetSeed); they are kept apart so a
+  // first real key can replace one rather than sit beside it.
   const [keys, setKeys] = useState<Record<string, BifrostKey[]>>({})
+  const [seeds, setSeeds] = useState<Record<string, BifrostKey[]>>({})
   // `null` is "could not ask", not a verdict of "not routable".
   const [verdicts, setVerdicts] = useState<BifrostRoutability | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -60,7 +85,8 @@ export function useBifrostProviders() {
         ])
         if (cancelled) return
         setProviders(list)
-        setKeys(Object.fromEntries(entries))
+        setKeys(Object.fromEntries(entries.map(([n, ks]) => [n, ks.filter((k) => !isUnsetSeed(k, routability))])))
+        setSeeds(Object.fromEntries(entries.map(([n, ks]) => [n, ks.filter((k) => isUnsetSeed(k, routability))])))
         setVerdicts(routability)
         setPhase('ready')
       })
@@ -110,9 +136,14 @@ export function useBifrostProviders() {
     [reload],
   )
 
+  // a provider that only holds unset seeds is not shown; one added with no key yet is
+  const shown = providers.filter((p) => (keys[p.name] || []).length > 0 || !(seeds[p.name] || []).length)
+
   return {
     providers,
+    shown,
     keys,
+    seeds,
     verdicts,
     phase,
     error,

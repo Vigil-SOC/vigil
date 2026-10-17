@@ -69,7 +69,9 @@ interface AiProvidersPanelProps extends SectionProps {
 export default function AiProvidersPanel({ notify, addProviderRequested, onAddProviderOpened }: AiProvidersPanelProps) {
   const {
     providers,
+    shown,
     keys,
+    seeds,
     verdicts,
     phase,
     error,
@@ -80,6 +82,9 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     removeProvider,
   } = useBifrostProviders()
   const [editing, setEditing] = useState<{ provider: string; key: BifrostKey | null } | null>(null)
+  // a first key takes the place of the provider's unset seed key rather than sitting beside it
+  const targetId = (e: { provider: string; key: BifrostKey | null }) =>
+    e.key?.id || ((keys[e.provider] || []).length === 0 ? (seeds[e.provider] || [])[0]?.id : undefined) || null
   // The header "Add key" picks the provider first when there is more than one.
   const [pickProvider, setPickProvider] = useState<string | null>(null)
   const [addingProvider, setAddingProvider] = useState(false)
@@ -102,6 +107,13 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
   const handleAddProvider = async () => {
     const name = newProvider.trim().toLowerCase()
     if (!name) return
+    // Bifrost may already hold it, seeded but not set up: go straight to its key
+    if (providers.some((p) => p.name === name)) {
+      setAddingProvider(false)
+      setNewProvider('')
+      setEditing({ provider: name, key: null })
+      return
+    }
     setBusy(true)
     try {
       await addProvider(name)
@@ -166,7 +178,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
         />
       )}
-      {phase === 'ready' && providers.length === 0 && (
+      {phase === 'ready' && shown.length === 0 && (
         <EmptyState
           compact
           icon="sparkle"
@@ -175,7 +187,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           primary={{ label: 'Add provider', onClick: () => setAddingProvider(true), icon: 'plus' }}
         />
       )}
-      {phase === 'ready' && providers.length > 0 && (
+      {phase === 'ready' && shown.length > 0 && (
         <div className="table-wrap">
           <table className="tbl">
             <thead>
@@ -185,7 +197,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
               </tr>
             </thead>
             <tbody>
-              {providers.map((p) => {
+              {shown.map((p) => {
                 const pk = keys[p.name] || []
                 const live = pk.filter((k) => k.enabled !== false)
                 const totalWeight = live.reduce((n, k) => n + (Number(k.weight) || 0), 0)
@@ -317,7 +329,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           existing={editing.key}
           onClose={() => setEditing(null)}
           onSave={async (data) => {
-            const saved = await saveKey(editing.provider, editing.key?.id || null, data)
+            const saved = await saveKey(editing.provider, targetId(editing), data)
             setEditing(null)
             const refusal = await keyRefusal(saved?.id)
             notify(
