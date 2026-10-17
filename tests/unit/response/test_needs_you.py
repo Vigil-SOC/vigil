@@ -181,6 +181,8 @@ def test_needs_you_is_oldest_pending_approvals_only(client, seeded):
     assert from_run["reason"] == "Credential dumping is live."
     assert direct["reason"] == "Paused at the isolate step"
     assert none["reason"] == "because"
+    # Stored naive UTC; served with the offset so a browser does not read it as local.
+    assert direct["created_at"] == "2099-01-01T08:00:00+00:00"
     assert {item["source_id"] for item in mine}.isdisjoint({"ny-approved", "ny-auto"})
     # The column is naive UTC; a zoneless string reads as local time in a browser.
     assert direct["created_at"] == "2099-01-01T08:00:00+00:00"
