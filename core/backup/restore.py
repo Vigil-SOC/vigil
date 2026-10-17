@@ -50,6 +50,7 @@ from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
 from core.response.approval_service import ActionStatus
 from core.secrets_manager import EncryptedFileBackend
+from core.skills.skill_library import operator_skills_root
 from core.storage.config_service import get_config_service
 from core.storage.connection import (
     DatabaseConfig,
@@ -466,6 +467,18 @@ def _stage_locations(
         if target.exists() and target.is_dir() != is_dir:
             kind = "directory" if is_dir else "file"
             raise BackupError(f"{name}: {target} is not a {kind}")
+        outer = _enclosing(placed, target)
+        if outer is not None:
+            # The default skills folder sits in the State Directory, whose swap
+            # moves every entry aside, a staged skills copy with them. So it
+            # rides in that directory's staged copy instead, and wins over a
+            # skills/ folder the snapshot holds there: it was the live root.
+            dest = outer.staged / target.relative_to(outer.target.resolve())
+            if dest.exists():
+                shutil.rmtree(dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            continue
         if not is_dir:
             # Copied from the restic target, which outlives the swap.
             _remember_created(target.parent, created_dirs)
@@ -478,6 +491,16 @@ def _stage_locations(
             raise BackupError(f"staging path already exists: {dest}")
         shutil.move(str(src), str(dest))
         placed.append(_Placed(name, dest, target, is_dir=True))
+
+
+def _enclosing(placed: list[_Placed], target: Path) -> _Placed | None:
+    """A directory already staged whose target strictly holds ``target``, if any."""
+    inner = target.resolve()
+    for item in placed:
+        outer = item.target.resolve()
+        if item.is_dir and inner != outer and inner.is_relative_to(outer):
+            return item
+    return None
 
 
 def _remember_created(parent: Path, created: list[Path]) -> None:
@@ -498,10 +521,13 @@ def _target_for(name: str, settings, bifrost_data: str | None) -> Path:
     if name == "orchestrator_workdir":
         return Path(settings.orchestrator_workdir).resolve()
     if name == "skills":
-        raw = settings.vigil_skills_path.strip()
-        if not raw:
-            raise BackupError("skills were backed up but VIGIL_SKILLS_PATH is unset")
-        return Path(raw).resolve()
+        root = operator_skills_root(settings)
+        if root is None:
+            raise BackupError(
+                "skills were backed up but operator skills are off "
+                "(VIGIL_SKILLS_PATH is empty)"
+            )
+        return root.resolve()
     if name == "intent":
         return intent_file().resolve()
     if name == "env":

@@ -824,6 +824,13 @@ config:
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
   ORCHESTRATOR_DRY_RUN: "false"
 
+  # Operator skills (the Skills screen's saves and uploads). Empty turns them
+  # off. Unset, they would land in the State Directory, whose emptyDir default
+  # is cleared on restart and is not shared between backend replicas. With
+  # stateDirectory on ReadWriteMany storage, set this to null to use its
+  # skills/ folder (created on the first save), or to an existing directory.
+  VIGIL_SKILLS_PATH: ""
+
   # OTEL — disabled by default; turn on when an OTEL collector is reachable.
   VIGIL_OTEL_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"

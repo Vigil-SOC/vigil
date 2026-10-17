@@ -22,6 +22,7 @@ from core.llm.router.router import LLMRouter, ProviderSpec
 from core.skills.skill_library import LIBRARY_ROOT, parse_skill
 from services.api.errors import register_exception_handlers
 from services.api.routers import skills as skills_router
+from tests.unit.skills.conftest import skills_app
 
 pytestmark = pytest.mark.unit
 
@@ -31,9 +32,7 @@ BUNDLED_FILE = LIBRARY_ROOT / BUNDLED / "SKILL.md"
 
 
 def _app() -> TestClient:
-    app = FastAPI()
-    app.include_router(skills_router.router, prefix="/api/skills")
-    return TestClient(app)
+    return TestClient(skills_app())
 
 
 @pytest.fixture()
@@ -99,7 +98,18 @@ def test_list_marks_the_bundled_library(operator):
     assert by_name[BUNDLED]["bundled"] is True
 
 
-def test_unset_path_refuses_the_write(tmp_path, monkeypatch):
+def test_default_root_is_created_on_the_first_save(state_dir, monkeypatch):
+    monkeypatch.setattr(
+        "core.skills.skill_library.get_settings",
+        lambda: Settings(vigil_skills_path=None),
+    )
+    client = _app()
+    assert _write(client, "desk-check").status_code == 200
+    assert (state_dir / "skills" / "desk-check" / "SKILL.md").is_file()
+    assert client.get("/api/skills/desk-check").json()["operator_root_set"] is True
+
+
+def test_empty_path_refuses_the_write(tmp_path, monkeypatch):
     missing = tmp_path / "not-created"
     monkeypatch.setattr(
         "core.skills.skill_library.get_settings",
@@ -107,7 +117,7 @@ def test_unset_path_refuses_the_write(tmp_path, monkeypatch):
     )
     resp = _write(_app(), "desk-check")
     assert resp.status_code == 400
-    assert "unset" in resp.json()["detail"]
+    assert "skills are off" in resp.json()["detail"]
     assert not missing.exists()
 
 
