@@ -188,6 +188,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Pushed to Bifrost at startup (core/llm/bifrost/admin.py sync_env_provider_keys).
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       REDIS_URL: redis://redis:6379/0
