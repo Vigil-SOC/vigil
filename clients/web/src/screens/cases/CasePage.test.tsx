@@ -1157,6 +1157,41 @@ describe('case page', () => {
       expect(screen.queryByText('Recalled 3 rows')).not.toBeInTheDocument()
     })
 
+    it('labels each run row with its run, and an unread run is a row, not the error state', async () => {
+      testState.recordRows = [
+        { id: 'run:root:1', at: '2026-06-15T10:20:00Z', kind: 'run', source: 'run', chained: true, text: 'Root cause started', run_id: 'root-run' },
+        { id: 'run:gone:unread', at: '2026-06-15T10:15:00Z', kind: 'unread', source: 'run', chained: false, text: 'Could not read the record of run gone-run-1234 — boom', run_id: 'gone-run-1234' },
+        { id: 'run:run/1:1', at: '2026-06-15T10:00:00Z', kind: 'run', source: 'run', chained: true, text: 'Hunt started', run_id: 'run/1' },
+        { id: 'audit:1', at: '2026-06-15T10:09:00Z', kind: 'case_audit_logs', source: 'case_audit_logs', chained: false, text: 'M. Kaur closed the task' },
+      ]
+      testState.cases = [{
+        case_id: 'case-rec',
+        title: 'Record case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [
+          { ...investigation('completed', false, 'root-run'), investigation_id: null, workflow_id: 'root-cause', primary: false, created_at: '2026-06-15T10:20:00Z' },
+          { ...investigation('completed', false, 'run/1'), created_at: '2026-06-15T09:58:00Z' },
+        ],
+      }]
+      testState.runs['run/1'] = { hunt: HUNT }
+      testState.runs['root-run'] = { hunt: HUNT }
+      renderCase('case-rec')
+      fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
+      const row = async (text: string) => (await screen.findByText(text, { exact: false })).closest('.rec-row')
+      expect(await row('Hunt started')).toHaveTextContent('Incident response · 09:58')
+      expect(await row('Root cause started')).toHaveTextContent('root-cause · 10:20')
+      // a run the case does not list falls back to a short id
+      expect(await row('Could not read the record')).toHaveTextContent('gone-run')
+      expect(await row('Could not read the record')).toHaveTextContent('System')
+      expect(await row('Could not read the record')).not.toHaveTextContent('chained')
+      expect((await row('M. Kaur closed the task'))?.querySelector('.rec-run')).toBeNull()
+      expect(screen.queryByText('Couldn’t load the record')).not.toBeInTheDocument()
+    })
+
     it('shows the empty and loading states', async () => {
       testState.recordRows = []
       await openRecord()
@@ -1168,7 +1203,7 @@ describe('case page', () => {
       testState.recordRows = rows
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit and activity rows are not.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are hash-chained. Case audit and activity rows are not.')
     })
 
     it('Replay links to the run on Workflows, and closes the drawer', async () => {

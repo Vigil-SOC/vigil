@@ -1,5 +1,6 @@
 """Cases API endpoints."""
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -25,7 +26,7 @@ from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
-from core.cases.case_record import merge_record
+from core.cases.case_record import merge_record, unread_row
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.cases.case_state import case_run_refs, primary_ref
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
@@ -676,42 +677,58 @@ async def get_escalations(case_id: str, session: UnitOfWorkSession):
     return {"escalations": CaseEscalationSchema.dump_many(escalations)}
 
 
+async def _run_events(ref: dict) -> tuple[Optional[list], str]:
+    """One run's ledger, or None with the reason it could not be read."""
+    try:
+        events = await read_events(ref["run_id"])
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not read the record of run %s: %s", ref["run_id"], exc)
+        return None, str(exc)
+    if events is None:
+        return None, "the agent layer has no such run"
+    # The agent answers an unknown run with an empty list. A run that has ended
+    # wrote at least its start, so empty there is a run the agent never had; a
+    # live run may simply not have written yet.
+    if not events and not ref.get("live"):
+        return None, "the agent layer has no events for it"
+    return events, ""
+
+
 @router.get("/{case_id}/record", response_model=CaseRecordResponse)
 async def get_case_record(case_id: str, session: UnitOfWorkSession):
-    """The case record: the latest run's ledger, audit rows and activities.
+    """The case record: every run's ledger, audit rows and activities.
 
-    Newest first. The agent returns the ledger with snapshots off. Audit rows
-    are ``entity_type == case`` and ``entity_id`` this case — the table has no
-    ``case_id`` column. The run is the case's latest, an investigation's
-    ``run_id_for`` or a run started on the case, never the shadow adjudication,
-    and never a run another run on the case started (``primary_ref``).
+    Newest first. The agent returns each ledger with snapshots off, read
+    concurrently; a run that cannot be read is one row saying why, not a failed
+    record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
+    the table has no ``case_id`` column. ``run_id`` is the case's run
+    (``primary_ref``), which Replay, Verify chain and Export audit read.
     """
     case = data_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    refs = case_run_refs(
-        case_records_service.list_case_investigations(session, case_id),
-        case_records_service.list_case_runs(session, case_id),
-    )
-    latest = primary_ref([ref for ref, _ in refs])
-    events: list = []
-    run_id = None
-    investigation_id = None
-    if latest is not None:
-        investigation_id = latest["investigation_id"]
-        run_id = latest["run_id"]
-        try:
-            events = await read_events(run_id) or []
-        except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
-            logger.error("could not read the record for %s: %s", case_id, exc)
-            raise HTTPException(status_code=502, detail=str(exc)) from None
+    refs = [
+        ref
+        for ref, _ in case_run_refs(
+            case_records_service.list_case_investigations(session, case_id),
+            case_records_service.list_case_runs(session, case_id),
+        )
+    ]
+    primary = primary_ref(refs)
+    reads = await asyncio.gather(*(_run_events(ref) for ref in refs))
+    runs, unread = [], []
+    for ref, (events, reason) in zip(refs, reads):
+        if events is None:
+            unread.append(unread_row(ref["run_id"], ref.get("created_at"), reason))
+        else:
+            runs.append((ref["run_id"], events))
 
     audits = case_records_service.list_case_audit(session, case_id)
     return {
-        "run_id": run_id,
-        "investigation_id": investigation_id,
-        "rows": merge_record(events, audits, case.get("activities") or []),
+        "run_id": primary["run_id"] if primary else None,
+        "investigation_id": primary["investigation_id"] if primary else None,
+        "rows": merge_record(runs, audits, case.get("activities") or [], unread),
     }
 
 
