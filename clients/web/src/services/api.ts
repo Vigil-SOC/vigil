@@ -1418,4 +1418,20 @@ export const authApi = {
     api.post<{ message: string }>('/auth/change-password', body),
 }
 
+// Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.
+export const mfaApi = {
+  setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
+  verify: (code: string) =>
+    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
+      code,
+    } satisfies Schema<'MFAVerifyRequest'>),
+  regenerateRecoveryCodes: () =>
+    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes'),
+  // axios sends a DELETE body only through `data`
+  disable: (code: string) =>
+    api.delete<{ message: string }>('/auth/mfa', {
+      data: { code } satisfies Schema<'MFAVerifyRequest'>,
+    }),
+}
+
 export default api

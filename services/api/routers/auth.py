@@ -689,7 +689,7 @@ def setup_mfa(
     session: UnitOfWorkSession,
 ):
     """
-    Setup MFA for current user.
+    Setup MFA for current user. Returns 409 if MFA is already enabled.
 
     Args:
         current_user: Current authenticated user
@@ -700,6 +700,13 @@ def setup_mfa(
         they are returned by POST /mfa/verify once the first TOTP code is
         confirmed.
     """
+    # Re-running setup would silently replace the secret and switch MFA off.
+    if current_user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA is already enabled; turn it off before setting it up again",
+        )
+
     secret = AuthService.setup_mfa(current_user.user_id, session)
     if not secret:
         raise HTTPException(
@@ -774,33 +781,32 @@ def regenerate_recovery_codes(
 
 
 @router.delete("/mfa")
+@limiter.limit("5/minute")
 def disable_mfa(
+    request: Request,
+    body: MFAVerifyRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
     """
-    Disable MFA for current user.
+    Disable MFA for current user. Requires a current TOTP or recovery code.
 
     Args:
+        request: FastAPI request (used by the rate limiter).
+        body: A current authenticator code or an unused recovery code
         current_user: Current authenticated user
         session: Database session
 
     Returns:
         Success message
     """
-    try:
-        current_user.mfa_enabled = False
-        current_user.mfa_secret = None
-
-        logger.info(f"MFA disabled for user: {current_user.username}")
-        return {"message": "MFA disabled successfully"}
-
-    except Exception as e:
-        logger.error(f"MFA disable error: {e}")
+    if not AuthService.disable_mfa(current_user.user_id, body.code, session):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to disable MFA",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid MFA code or MFA is not enabled",
         )
+
+    return {"message": "MFA disabled successfully"}
 
 
 # Public self-registration was removed intentionally. All user creation

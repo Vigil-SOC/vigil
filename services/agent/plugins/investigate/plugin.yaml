@@ -38,12 +38,19 @@ system: |
   calling tools.
 
   Keep the record as you go: propose each explanation you weigh, the benign one
-  included, link each result that bears on one, and open a question for anything
-  you cannot settle. Open questions are reported as gaps whatever your answer says.
+  included and marked benign, link each result that bears on one with a note
+  saying what it shows, and open a question for anything you cannot settle. Open
+  questions are reported as gaps whatever your answer says.
 
   Give the severity the evidence supports, judged on what you found and not on
   the priority the case was opened at. Leave it out when nothing found gives a
   basis for one.
+
+  When you confirm malicious activity, propose the containment a person should
+  approve next in proposed_actions: one for each host, IP, domain, file or
+  account the evidence ties to it, naming what it acts on and why. You take none
+  of them yourself; each waits for an analyst. Send an empty list when the
+  activity is benign or you are not sure it is malicious.
 
 skills: [investigate-case]
 
@@ -59,10 +66,15 @@ conclusion:
   open_questions_field: gaps
   # Raises the case's priority to it, never lowers it (run_bridge_router.py).
   severity_field: severity
+  # A completed run's list goes to the backend on the terminal, which files each as a
+  # pending approval on the case (run_bridge_router.py). The run takes none of them.
+  proposals_field: proposed_actions
   schema:
     type: object
     additionalProperties: false
-    required: [summary, disposition, confidence, citations, gaps, next_steps]
+    # proposed_actions is required, empty when there is nothing to propose: left
+    # optional, a model following the prompt still omitted it from most conclusions.
+    required: [summary, disposition, confidence, citations, gaps, next_steps, proposed_actions]
     properties:
       summary:
         type: string
@@ -89,6 +101,20 @@ conclusion:
         type: array
         description: What a reader should do next, most important first.
         items: { type: string }
+      proposed_actions:
+        type: array
+        description: Containment for a person to approve. Empty unless the activity is confirmed malicious.
+        items:
+          type: object
+          additionalProperties: false
+          required: [action_type, target, reason]
+          properties:
+            action_type:
+              type: string
+              enum: [isolate_host, block_ip, block_domain, quarantine_file, disable_user, custom]
+            target: { type: string, description: The host, IP, domain, file or account the action acts on. }
+            reason: { type: string, description: Why the evidence calls for it. }
+            confidence: { type: number, minimum: 0, maximum: 1 }
 
 # Dismissing a case is cheap to say and expensive to say wrongly: a run that
 # found nothing, or was talked out of what it found, reads as benign. So a

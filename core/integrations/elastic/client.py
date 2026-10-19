@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.integrations._base.proxy import integration_proxy
 from core.integrations._base.search_params import validate_index
 from core.integrations._base.tls import tls_verify
 
@@ -53,6 +54,7 @@ class ElasticService:
             headers=headers,
             auth=auth,
             verify=tls_verify(self.verify_ssl, self.ca_cert_path),
+            proxy=integration_proxy("elastic-siem"),
             timeout=30.0,
         )
 
@@ -73,6 +75,7 @@ class ElasticService:
             headers=headers,
             auth=auth,
             verify=tls_verify(self.verify_ssl, self.ca_cert_path),
+            proxy=integration_proxy("elastic-siem"),
             timeout=30.0,
         )
 

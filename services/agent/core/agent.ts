@@ -8,6 +8,7 @@ import type {
   ConclusionPayload,
   DirectivePayload,
   NewEvent,
+  ProposedAction,
   ReviewPayload,
   RunKind,
   RunOutcome,
@@ -310,7 +311,15 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     review = await reviewOf(ctx, conclusion, callsIn(held));
     await harness.state.append(run_id, [event(options, "review", review)]);
   }
-  return end(ctx, "completed", summaryOf(options.plugin, conclusion, review), undefined, undefined, severityOf(options.plugin, conclusion));
+  return end(
+    ctx,
+    "completed",
+    summaryOf(options.plugin, conclusion, review),
+    undefined,
+    undefined,
+    severityOf(options.plugin, conclusion),
+    proposalsOf(options.plugin, conclusion),
+  );
 }
 
 // The registry and dispatch the run actually holds: the deployment's tools, the
@@ -1179,6 +1188,14 @@ export function severityOf(plugin: PluginManifest, conclusion: ConclusionPayload
   return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
 }
 
+// The actions the answer asks a person to approve, when its plugin names a field for
+// them. The backend checks each one on its own and files the valid ones.
+export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayload): ProposedAction[] {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.proposals_field : undefined;
+  const listed = field === undefined ? undefined : conclusion.value[field];
+  return Array.isArray(listed) ? (listed.filter((one) => typeof one === "object" && one !== null) as ProposedAction[]) : [];
+}
+
 // Why the guard moved the answer off what was asked; null when it did not.
 export function heldBecause(review: ReviewPayload): string | null {
   const guarded = review.guarded;
@@ -1258,6 +1275,7 @@ async function end(
   summary?: string | null,
   handoffs?: readonly TerminalHandoff[],
   severity?: Severity,
+  proposed: readonly ProposedAction[] = [],
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1272,6 +1290,7 @@ async function end(
     ...(deliver === undefined ? {} : { summary: deliver }),
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
     ...(severity === undefined ? {} : { severity }),
+    ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);

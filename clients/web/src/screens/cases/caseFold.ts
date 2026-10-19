@@ -32,9 +32,25 @@ export interface HypothesisRow {
   provenance: string
 }
 
+/**
+ * What a row that read no system is, named for what it is rather than by the hunt's role words
+ * (#2458): the critic's rebuttal, the deployment's own gap, an operator's declared gap, a query
+ * that could not run.
+ */
+const NOT_A_SYSTEM: Record<string, string> = {
+  critic: 'Reviewer',
+  deployment: 'Not connected',
+  operator: 'You',
+  dispatcher: 'Not answered',
+}
+
 /** The system an evidence row's rows came from, as the board names it; the hunt's domain word only when none is known. One reading for the trail and the citation chips. */
-export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'>): string {
-  return row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system
+export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'> & { is_gap?: boolean }): string {
+  if (row.origins.length > 0) return row.origins.map((one) => sourceBadge(one).label).join(', ')
+  const named = NOT_A_SYSTEM[row.source_system]
+  if (named) return named
+  // a query the hunt recorded as failed read nothing, whatever domain it was meant for
+  return row.is_gap ? NOT_A_SYSTEM.dispatcher : row.source_system
 }
 
 interface EvidenceRow {
