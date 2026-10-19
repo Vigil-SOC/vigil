@@ -20,7 +20,7 @@ import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
 import { KeepGoing, OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
-  IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
+  IN_FLIGHT, callLine, errMsg, fmtDuration, recordOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
   type HuntQuestion, type HuntRecall, type HuntStanding, type HuntStrength, type HuntView,
   type InvestigateDecisionView, type RecalledFrom, type RecalledWindow,
@@ -1095,6 +1095,7 @@ interface RootCauseView {
   cost_usd: number | null
   max_cost_usd: number | null
   steps: RootCauseStep[]
+  reason: string | null
   proven: number
   notices: string[]
   searches: number
@@ -1111,6 +1112,7 @@ function rootCauseOf(projection: unknown): RootCauseView | null {
     cost_usd: typeof view.cost_usd === 'number' ? view.cost_usd : null,
     max_cost_usd: typeof view.max_cost_usd === 'number' ? view.max_cost_usd : null,
     steps: view.steps,
+    reason: typeof view.reason === 'string' && view.reason ? view.reason : null,
     proven: typeof view.proven === 'number' ? view.proven : 0,
     notices: Array.isArray(view.notices) ? view.notices : [],
     searches: typeof view.searches === 'number' ? view.searches : 0,
@@ -1292,7 +1294,9 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
     ? Math.min(100, (cost / ceiling) * 100)
     : null
+  const verdict = verdictOf(d, trace ? trace.reason : undefined)
   return (
+    <>
     <div className="run-bar">
       <span className="pill" style={{ color: runStatusColor(d.status) }}><span className="dot" />{d.status}</span>
       {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
@@ -1317,6 +1321,8 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
         </>
       )}
     </div>
+    {verdict && <div className="text-[12.5px] text-tx-2 leading-[1.5] mt-2">{verdict}</div>}
+    </>
   )
 }
 
@@ -2125,8 +2131,10 @@ function RejectPhaseGate({
 
 function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) {
   const replay = useInvestigateReplay(d.run_id, inFlight)
+  const record = recordOf(d.projection)
   return (
     <>
+      {record && <InvestigationTabs record={record} />}
       {replay.kind === 'investigate' && <InvestigateDecisions decisions={replay.decisions} />}
       {replay.kind === 'failed' && (
         <div className="text-[12.5px] py-2" style={{ color: 'var(--crit)' }}>
@@ -2135,6 +2143,41 @@ function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) 
       )}
       <ComposeDetail d={d} suppressEmpty={replay.kind === 'pending' || replay.kind === 'investigate'} />
     </>
+  )
+}
+
+type RecordTab = 'hyp' | 'evidence' | 'questions'
+
+/** What an investigation weighed, with what, and left open: the hunt's own tables over
+ *  the record its projection carries. A view with nothing in it is not offered. */
+function InvestigationTabs({ record }: { record: HuntView }) {
+  const questions = record.open_questions ?? []
+  const tabs: [RecordTab, string, number][] = [
+    ['hyp', 'Explanations', record.hypotheses.length],
+    ...(record.evidence_count > 0 ? ([['evidence', 'Evidence', record.evidence_count]] as [RecordTab, string, number][]) : []),
+    ...(questions.length > 0 ? ([['questions', 'Open questions', questions.length]] as [RecordTab, string, number][]) : []),
+  ]
+  const [tab, setTab] = useState<RecordTab>('hyp')
+  const shown = tabs.some(([k]) => k === tab) ? tab : 'hyp'
+  return (
+    <HypLabels.Provider value={labelsOf(record.hypotheses)}>
+      <div className="detail-tabs" role="tablist" aria-label="Investigation views">
+        {tabs.map(([k, label, count]) => (
+          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+            {label}<span className="mono text-[10.5px] text-tx-3 ml-1.5">{count}</span>
+          </button>
+        ))}
+      </div>
+      {shown === 'hyp' && <HuntStandings hunt={record} />}
+      {shown === 'evidence' && <HuntEvidenceTable found={record.evidence ?? []} total={record.evidence_count} />}
+      {shown === 'questions' && (
+        <ul className="text-[12.5px] leading-[1.5] mt-3 mb-0" style={{ paddingLeft: 18 }}>
+          {questions.map((q) => (
+            <li key={q.question_id}>{q.question}{q.hypothesis_id && <> <span className="muted">· bears on</span> <Hyp id={q.hypothesis_id} /></>}</li>
+          ))}
+        </ul>
+      )}
+    </HypLabels.Provider>
   )
 }
 
@@ -2188,7 +2231,9 @@ function ComposeDetail({ d, suppressEmpty = false }: { d: WfRunDetail; suppressE
   const agentMeta = useAgentMeta()
   if (!d.result_summary && !d.phases?.length) {
     if (d.error || suppressEmpty) return null
-    return <div className="muted" style={{ padding: '10px 4px' }}>No additional detail recorded for this run.</div>
+    // No record at all, as against a record this run's kind leaves empty.
+    const unreadable = !d.hunt && (typeof d.projection !== 'object' || d.projection === null)
+    return <div className="muted" style={{ padding: '10px 4px' }}>{unreadable ? "Couldn't read this run's record" : 'No additional detail recorded for this run.'}</div>
   }
   return (
     <>

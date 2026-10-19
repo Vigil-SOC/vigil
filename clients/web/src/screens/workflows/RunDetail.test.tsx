@@ -308,7 +308,8 @@ describe('the report', () => {
       hunt: hunt({ report_markdown: 'the ledger says this' }),
     })
 
-    expect(screen.getByText('the ledger says this')).toBeInTheDocument()
+    // Once on the verdict line, once in the report.
+    expect(screen.getAllByText('the ledger says this')).toHaveLength(2)
     expect(screen.queryByText('stale row copy')).toBeNull()
   })
 
@@ -329,7 +330,7 @@ describe('the report', () => {
       }),
     })
 
-    expect(screen.getByText('Two unrelated things happened, not one.')).toBeInTheDocument()
+    expect(screen.getAllByText('Two unrelated things happened, not one.')).toHaveLength(2) // verdict line and account
     expect(screen.getByText(/A host beaconed to 45.77.53.176/)).toBeInTheDocument()
     // The duplicated half is gone, and so is the metadata the run bar already shows.
     expect(screen.queryByText(/a record nobody needs twice/)).toBeNull()
@@ -1372,11 +1373,22 @@ describe('investigate decisions from replay', () => {
     expect(screen.getByText('still here')).toBeInTheDocument()
   })
 
-  it('keeps the empty compose placeholder when replay 404s', async () => {
+  it('says the record could not be read when a run has no projection, hunt, phases or summary', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404 } })
     renderPanel({})
 
-    expect(await screen.findByText('No additional detail recorded for this run.')).toBeInTheDocument()
+    expect(await screen.findByText("Couldn't read this run's record")).toBeInTheDocument()
+    expect(screen.queryByText('No additional detail recorded for this run.')).toBeNull()
     expect(screen.queryByText('Decisions')).toBeNull()
+  })
+
+  it('keeps the compose placeholder for a projection it can read but that has nothing to show', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404 } })
+    renderPanel({ projection: { run_kind: 'lead' } })
+
+    expect(await screen.findByText('No additional detail recorded for this run.')).toBeInTheDocument()
   })
 
   it('leaves phases and the summary alone when replay 404s', async () => {

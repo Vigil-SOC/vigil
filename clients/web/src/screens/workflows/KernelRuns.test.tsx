@@ -4,12 +4,13 @@
    kernel-view-fixtures.ts. A change on either side that the other cannot read
    fails here rather than in front of an operator. */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 import { readFold } from '../cases/caseFold'
 import huntProjection from './__fixtures__/kernel-hunt-projection.json'
 import huntReplay from './__fixtures__/kernel-hunt-replay.json'
 import investigateProjection from './__fixtures__/kernel-investigate-projection.json'
+import heldProjection from './__fixtures__/kernel-investigate-held-projection.json'
 import investigateReplay from './__fixtures__/kernel-investigate-replay.json'
 
 vi.mock('../../services/api', () => ({
@@ -68,6 +69,11 @@ describe('a hunt run on the kernel', () => {
     expect(screen.getAllByText(/runs an unsanctioned sync client/).length).toBeGreaterThan(0)
   })
 
+  it('says what it concluded in one line, off its narrative', () => {
+    renderHunt()
+    expect(screen.getAllByText('the host beaconed').length).toBeGreaterThan(0)
+  })
+
   it('reads on the case page', () => {
     const fold = readFold({ status: 'completed', hunt: huntProjection })
     expect(fold).not.toBeNull()
@@ -97,6 +103,43 @@ describe('an investigate run on the kernel', () => {
     expect(screen.getByText('CONCLUDE')).toBeInTheDocument()
     expect(screen.getAllByText('get_finding').length).toBeGreaterThan(0)
     expect(screen.getAllByText('splunk_search').length).toBeGreaterThan(0)
+  })
+
+  const renderInvestigation = (projection: unknown) =>
+    render(<RunDetail d={{ run_id: 'run-1', status: 'completed', projection } as never} onSteered={() => {}} />)
+
+  it('opens on what it weighed, each explanation with where it stands and its tallies', async () => {
+    renderInvestigation(investigateProjection)
+
+    expect(await screen.findByRole('tab', { name: /Explanations/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getAllByRole('row')).toHaveLength(4) // header and three explanations
+    const row = screen.getAllByRole('row').find((r) => /authorized red-team engagement\./.test(r.textContent ?? '') && r.querySelector('td')) as HTMLElement
+    expect(within(row).getByText('active')).toBeInTheDocument()
+    expect(row.textContent).toContain('2 for')
+  })
+
+  it('lists the evidence and which explanation each piece bears on', async () => {
+    renderInvestigation(investigateProjection)
+    tabTo(/Evidence/)
+
+    expect(screen.getByText(/mimikatz-style tool run by user0201/)).toBeInTheDocument()
+    expect(screen.getAllByText('H3').length).toBeGreaterThan(0)
+    // No open questions in this record, so that tab is not offered.
+    expect(screen.queryByRole('tab', { name: /Open questions/ })).toBeNull()
+  })
+
+  it('lists what it left open, and a held dismissal reads the held value on its verdict line', async () => {
+    renderInvestigation(heldProjection)
+    tabTo(/Open questions/)
+
+    expect(screen.getByText(/Was user0201 the registered red-team operator/)).toBeInTheDocument()
+    expect(screen.getByText(/^Needs review — EDR detected credential dumping/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Benign/)).toBeNull()
+  })
+
+  it('says what it concluded in one line', async () => {
+    renderInvestigation(investigateProjection)
+    expect(await screen.findByText(/^Benign — EDR detected credential dumping/)).toBeInTheDocument()
   })
 
   it('reads on the case page, its answer and calls included', () => {

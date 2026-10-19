@@ -502,3 +502,83 @@ export function moveWord(action: string): string {
   const words = action.replace(/[_-]+/g, ' ').trim().toLowerCase()
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
+
+const num = (v: unknown) => (typeof v === 'number' ? v : undefined)
+const rowsOf = (raw: unknown): Record<string, unknown>[] =>
+  (Array.isArray(raw) ? raw : []).filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
+
+/** An investigation's record off its projection, in the hunt's row shapes so the hunt's
+ *  own tables lay it out. Null unless `hypotheses` is there: a legacy lead ledger or a
+ *  compose run has no record to show. */
+export function recordOf(projection: unknown): HuntView | null {
+  if (typeof projection !== 'object' || projection === null) return null
+  const p = projection as Record<string, unknown>
+  if (!Array.isArray(p.hypotheses)) return null
+  const evidence = rowsOf(p.evidence).map((e): HuntEvidence => ({
+    evidence_id: str(e.evidence_id),
+    iteration: num(e.iteration) ?? 0,
+    source_system: str(e.source_system),
+    summary: str(e.summary),
+    is_gap: e.is_gap === true,
+    gap_detail: typeof e.gap_detail === 'string' ? e.gap_detail : null,
+    ...(typeof e.captured_at === 'string' ? { captured_at: e.captured_at } : {}),
+    bears_on: rowsOf(e.bears_on).map((b) => ({ hypothesis_id: str(b.hypothesis_id), relation: str(b.relation) })),
+  }))
+  return {
+    status: str(p.status),
+    iteration: num(p.iterations) ?? 0,
+    evidence_count: num(p.evidence_count) ?? evidence.length,
+    hypotheses: rowsOf(p.hypotheses).map((h): HuntStanding => ({
+      hypothesis_id: str(h.hypothesis_id),
+      statement: str(h.statement),
+      status: str(h.status),
+      resolution_reason: typeof h.resolution_reason === 'string' ? h.resolution_reason : null,
+      ...(typeof h.provenance === 'string' ? { provenance: h.provenance } : {}),
+      ...(num(h.supports) !== undefined ? { supports: num(h.supports) } : {}),
+      ...(num(h.weakens) !== undefined ? { weakens: num(h.weakens) } : {}),
+    })),
+    evidence,
+    open_questions: rowsOf(p.open_questions).map((q): HuntQuestion => ({
+      question_id: str(q.question_id),
+      question: str(q.question),
+      hypothesis_id: typeof q.hypothesis_id === 'string' ? q.hypothesis_id : null,
+      ...(num(q.spawned_iteration) !== undefined ? { spawned_iteration: num(q.spawned_iteration) } : {}),
+    })),
+    report: null,
+  }
+}
+
+/** A structured conclusion leads with its disposition, which a clamped JSON line would cut off. */
+function answerText(answer: unknown): string {
+  if (typeof answer === 'string') return answer
+  if (answer == null) return ''
+  const o = answer as Record<string, unknown>
+  if (typeof o.summary === 'string' && o.summary) return [typeof o.disposition === 'string' ? wordOf(o.disposition) : '', o.summary].filter(Boolean).join(' — ')
+  return ''
+}
+
+/** "needs_review" → "Needs review". */
+const wordOf = (word: string) => {
+  const text = word.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** What a run concluded, in one line: the head's disposition once projections carry it,
+ *  and one headline per kind. Null when the run has neither. */
+export function verdictOf(d: WfRunDetail, rootCauseReason?: string | null): string | null {
+  const head = (d.hunt ?? (typeof d.projection === 'object' ? d.projection : null) ?? {}) as Record<string, unknown>
+  let headline = ''
+  if (d.hunt) {
+    headline = d.hunt.narrative?.summary
+      || (d.hunt.report_markdown ?? '').split('\n').map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean)
+      || ''
+  } else if (rootCauseReason !== undefined) {
+    headline = rootCauseReason ?? ''
+  } else {
+    const findings = rowsOf(head.findings)
+    headline = answerText(findings[0]?.answer)
+  }
+  const disposition = typeof head.disposition === 'string' && head.disposition ? wordOf(head.disposition) : ''
+  // An investigation's headline already leads with its answer's disposition.
+  return [headline.startsWith(disposition) ? '' : disposition, headline].filter(Boolean).join(' — ') || null
+}
