@@ -62,7 +62,6 @@ describe("a small first ask does not lower the ceiling for good", () => {
     terminationOf({
       budgets: { max_calls: 12, max_cost_usd: 5, max_wall_ms: 600_000, max_park_ms: DEFAULT_PARK_MS },
       thresholds: { max_iterations },
-      dispatch: { max_workers: 4 },
       runtime: { max_turns: 8 },
     } as unknown as Parameters<typeof terminationOf>[0]);
 
@@ -81,7 +80,6 @@ describe("a small first ask does not lower the ceiling for good", () => {
     const pinned = terminationOf({
       budgets: { max_calls: 12, max_cost_usd: 5, max_wall_ms: 600_000, max_park_ms: DEFAULT_PARK_MS },
       thresholds: { max_iterations: 3, hard_max_iterations: 4 },
-      dispatch: { max_workers: 4 },
       runtime: { max_turns: 8 },
     } as unknown as Parameters<typeof terminationOf>[0]);
     expect(pinned.hard_max_iterations).toBe(4);

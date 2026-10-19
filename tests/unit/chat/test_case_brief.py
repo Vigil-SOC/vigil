@@ -58,8 +58,8 @@ def reads(monkeypatch):
     monkeypatch.setattr(mod.case_records_service, "list_case_runs", lambda *_: [])
     monkeypatch.setattr(mod.catalog, "is_hunt", lambda *_: state["hunt"])
 
-    async def read(_run_id):
-        return state["view"]
+    async def read(run_id):
+        return state.get("views", {}).get(run_id, state["view"])
 
     monkeypatch.setattr(mod, "read_projection", read)
     monkeypatch.setattr(
@@ -74,7 +74,7 @@ def reads(monkeypatch):
 async def test_hunt_brief_lists_explanations_evidence_ids_and_how_to_cite(reads):
     brief = await mod.case_brief("CASE-1", MagicMock())
     assert "Key created" in brief and "f-1: access key created" in brief
-    assert "Newest run: r-1 (hunt)" in brief
+    assert "The case's run: r-1 (hunt)" in brief
     assert "h-1 [refuted] m.chen is compromised" in brief
     assert "- ev-0 | weakens h-1 | saw thing 0" in brief
     assert "exact evidence_id" in brief
@@ -116,6 +116,32 @@ async def test_instruction_like_row_is_withheld_and_markers_cannot_be_forged(rea
     assert brief.count("</case_data>") == 1
 
 
+async def test_a_handoff_root_cause_run_does_not_take_over_the_hunt(reads):
+    # The handoff's root-cause run is newer, so case_run_refs lists it first.
+    reads["refs"] = [
+        (
+            {
+                "run_id": "rca-1",
+                "workflow_id": "root-cause-analysis",
+                "status": "failed",
+                "spawned_by": "r-1",
+            },
+            "failed",
+        ),
+        ({"run_id": "r-1", "workflow_id": "threat-hunt"}, "completed"),
+    ]
+    reads["views"] = {"rca-1": {"findings": []}}
+    brief = await mod.case_brief("C", MagicMock())
+    assert "The case's run: r-1 (hunt)" in brief
+    assert "- ev-0 | weakens h-1 | saw thing 0" in brief
+    assert "- ev-1 |" in brief
+    assert "Run state (r-1): ended" in brief
+    assert (
+        "Follow-on run: rca-1 (root-cause-analysis), started by r-1: stopped" in brief
+    )
+    assert "Findings: none yet." not in brief
+
+
 async def test_lead_run_lists_findings(reads):
     reads["hunt"] = False
     reads["view"] = {"findings": [{"agent_id": "triage", "answer": "benign login"}]}
@@ -126,14 +152,14 @@ async def test_lead_run_lists_findings(reads):
 async def test_case_with_no_run_gets_title_state_and_alerts_only(reads):
     reads["refs"] = []
     brief = await mod.case_brief("C", MagicMock())
-    assert "Key created" in brief and "f-1" in brief and "Newest run" not in brief
+    assert "Key created" in brief and "f-1" in brief and "The case's run" not in brief
 
 
 async def test_unavailable_projection_still_gives_the_case_and_a_failed_read_gives_none(
     reads, monkeypatch
 ):
     reads["view"] = None
-    assert "Newest run" not in await mod.case_brief("C", MagicMock())
+    assert "The case's run" not in await mod.case_brief("C", MagicMock())
     reads["ds"].get_case.side_effect = RuntimeError("db down")
     assert await mod.case_brief("C", MagicMock()) == ""
     reads["ds"].get_case.side_effect = None

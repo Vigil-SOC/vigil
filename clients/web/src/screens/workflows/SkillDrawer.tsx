@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
 import { HoldButton } from '../../shared/HoldButton'
 import { Popup } from '../../shared/ui'
 import { skillsApi, type ApiSkillDetail, type ApiSkillTest } from '../../services/skillsApi'
 import { skillUsageText, type Skill } from '../../data/appData'
 
-const PATH_UNSET = 'The skills path is unset. Set VIGIL_SKILLS_PATH to a directory before saving.'
+const PATH_OFF = 'Skills are off (VIGIL_SKILLS_PATH is empty). Unset it, or set it to a directory, to save skills.'
+// The API answers 403 without it: a skill's description reaches every agent's prompt.
+const READ_ONLY = 'Your role can read skills but not save them. Saving needs the settings.write permission.'
 
 function errMsg(e: unknown): string {
   const r = e as { response?: { data?: { detail?: string } }; message?: string }
@@ -24,6 +27,7 @@ export function SkillDrawer({
   onSaved: () => void
 }) {
   const creating = name === null
+  const canWrite = useAuth().hasPermission('settings.write')
   const [detail, setDetail] = useState<ApiSkillDetail | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [skillName, setSkillName] = useState(name ?? '')
@@ -98,7 +102,7 @@ export function SkillDrawer({
   // POST /api/skills overwrites an operator skill of the same name, so a taken name is refused here.
   const nameTaken = !nameLocked && !needsNewName && existingNames.includes(skillName.trim())
   const ready = creating || detail !== null
-  const saveDisabled = busy || !ready || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim() || !body.trim()
+  const saveDisabled = busy || !ready || !canWrite || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim() || !body.trim()
 
   const save = () => {
     if (saveDisabled) return
@@ -166,7 +170,8 @@ export function SkillDrawer({
         {!ready && !loadError && <p className="text-[13px] text-tx-3">Loading skill…</p>}
         {ready && (
           <>
-            {pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_UNSET}</p>}
+            {!canWrite && <p className="text-[13px] text-tx-2 leading-[1.5]">{READ_ONLY}</p>}
+            {canWrite && pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_OFF}</p>}
             {detail?.bundled && (
               <p className="text-[13px] text-tx-2 leading-[1.5]">
                 Saving writes a new skill under the operator root and leaves the bundled directory unchanged.
@@ -288,9 +293,11 @@ export function SkillDrawer({
               )}
               <span className="vg-skill-foot-end">
                 <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
-                <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
-                  {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
-                </button>
+                {canWrite && (
+                  <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
+                    {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
+                  </button>
+                )}
               </span>
             </div>
           </>

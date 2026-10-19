@@ -300,8 +300,13 @@ async def _connect_external_services(mcp_client, registry):
     import asyncio
 
     try:
-        from core.llm.bifrost.admin import sync_all_provider_keys
+        from core.llm.bifrost.admin import (
+            sync_all_provider_keys,
+            sync_env_provider_keys,
+        )
 
+        # retries while Bifrost's store is busy after its own start
+        await asyncio.to_thread(sync_env_provider_keys)
         sync_all_provider_keys()
     except Exception as e:
         logger.warning(f"Bifrost provider sync skipped: {e}")
@@ -428,6 +433,7 @@ def _build_services(app: FastAPI):
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
+    from core.platform.process_health import ProcessHealth
     from core.response.approval_service import ApprovalService, register_pending_gauge
     from core.storage.database_data_service import DatabaseDataService
     from core.workflows.custom_workflow_service import CustomWorkflowService
@@ -441,6 +447,8 @@ def _build_services(app: FastAPI):
     # Long-lived, so its reconnect throttle applies across health probes; a fresh
     # service per probe would re-run init_database(create_tables=True) each time.
     app.state.health_storage = DatabaseDataService()
+    # One HTTP client and one cached answer for every caller of GET /api/processes.
+    app.state.process_health = ProcessHealth()
 
     app.state.approvals = ApprovalService()
     register_pending_gauge(app.state.approvals)
@@ -526,7 +534,8 @@ async def _startup(app: FastAPI):
             logger.error(
                 "SecretsManager init: write_backend=%s but expected=%s "
                 "(cryptography_available=%s, master_key_present=%s). "
-                "POST /api/config/secrets/reinit to retry without restart.",
+                "Install `cryptography` or fix SECRETS_BACKEND / the master key, "
+                "then restart the API, daemon and worker.",
                 _status["write_backend"],
                 _status["expected_write_backend"],
                 _status["cryptography_available"],
@@ -695,6 +704,13 @@ async def _shutdown(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during shutdown cleanup: {e}")
 
+    try:
+        process_health = getattr(app.state, "process_health", None)
+        if process_health is not None:
+            await process_health.aclose()
+    except Exception as e:
+        logger.warning("Error closing the process health client: %s", e)
+
     # Flush and shut down OTEL providers
     try:
         from core.telemetry import shutdown_telemetry
@@ -837,6 +853,18 @@ _SERVED_BY_THE_BACKEND = (
 )
 
 
+def inject_index_head(raw: str, context_path: str, tags: list[str]) -> str:
+    """Inject a ``<base>`` plus ``tags`` at the very top of ``<head>``.
+
+    The build references assets relatively (``./assets/...``), so at a deep URL
+    like ``/cases/abc`` they would resolve to ``/cases/assets/...`` and get the
+    app shell back. ``<base>`` pins them to the context root. It goes first
+    because a browser applies it only to URLs that follow it.
+    """
+    injected = "\n    ".join([f'<base href="{context_path}/">', *tags])
+    return raw.replace("<head>", f"<head>\n    {injected}", 1)
+
+
 def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool:
     """Whether a 404 at ``path`` is a client-side route rather than a miss.
 
@@ -938,8 +966,7 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
                     )
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug("extension allowlist meta injection skipped: %s", e)
-            injected = "\n    ".join(tags)
-            _index_html_cache = raw.replace("<head>", f"<head>\n    {injected}", 1)
+            _index_html_cache = inject_index_head(raw, _CONTEXT_PATH, tags)
         return _index_html_cache
 
     # When served under a context path, redirect the bare path (no trailing

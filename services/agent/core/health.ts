@@ -89,3 +89,9 @@ export function healthServer(ready: Ready): Server {
 export function healthPort(): number {
   return Number(process.env["AGENT_HEALTH_PORT"] ?? 6990);
 }
+
+// Unset keeps all interfaces, which containers need; host-native starts set it
+// to the API's loopback default.
+export function bindHost(): string | undefined {
+  return process.env["AGENT_BIND_HOST"] || undefined;
+}

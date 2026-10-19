@@ -31,15 +31,9 @@ from sqlalchemy import text
 # service unit job, which runs `-m "not external_service"` with no Postgres.
 _DB_MARKERS = ("external_service",)
 
-# Mirrors what CI's "Enable Postgres extensions" step installs. Both ship with
-# stock Postgres; pg_trgm is what the findings GIN index (gin_trgm_ops) needs.
-# Individually tolerant, matching DatabaseManager.create_tables(): a missing
-# extension should fail on the CREATE that needs it, naming the real problem,
-# rather than here.
-_EXTENSIONS = (
-    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
-    'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
-)
+# pg_trgm is deliberately absent: DatabaseManager.create_tables() enables it
+# itself, so this fixture exercises that path. Individually tolerant.
+_EXTENSIONS = ('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',)
 
 
 def _quote_ident(name: str) -> str:
@@ -143,6 +137,18 @@ def _isolate_database(request):
     """
     if any(request.node.get_closest_marker(m) for m in _DB_MARKERS):
         request.getfixturevalue("throwaway_database")
+
+
+@pytest.fixture(autouse=True)
+def _operator_skills_off(monkeypatch):
+    """No unit test loads the developer's own ~/.vigil/skills.
+
+    Unset, VIGIL_SKILLS_PATH is the State Directory's skills/ folder, which is
+    the real home here. Pinned empty (skills off) rather than moving VIGIL_DIR,
+    which platform/test_vigil_path.py needs unset. A test of the default
+    clears it; tests/unit/skills/conftest.py moves the State Directory too.
+    """
+    monkeypatch.setenv("VIGIL_SKILLS_PATH", "")
 
 
 # Episodic rows, shared because two suites seed them: #732's read tests and

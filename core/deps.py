@@ -19,6 +19,7 @@ from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.mcp.registry import MCPRegistry
 from core.platform.demo_data_service import DemoDataService
+from core.platform.process_health import ProcessHealth
 from core.response.approval_service import ApprovalService
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
@@ -60,6 +61,10 @@ def provide_integration_bridge(request: Request) -> IntegrationBridgeService:
 
 def provide_detection_rules(request: Request) -> DetectionRulesService:
     return request.app.state.detection_rules
+
+
+def provide_process_health(request: Request) -> ProcessHealth:
+    return request.app.state.process_health
 
 
 # None when the MCP SDK is not installed.

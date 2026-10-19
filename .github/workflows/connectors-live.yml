@@ -5,7 +5,8 @@ name: Live Connector Checks
 # per PR: a vendor's bad day must not turn someone's PR red. A probe whose
 # secret is not set skips as "not configured"; tests/live/ACCOUNTS.md lists the
 # accounts and secret names. The merged result is the connector matrix: the
-# job summary, and the connector-matrix artifact.
+# job summary, the connector-matrix artifact, and (from main) the status table
+# on vigilsoc.org/docs/integrations/.
 
 on:
   schedule:
@@ -207,6 +208,48 @@ jobs:
         with:
           name: connector-matrix
           path: connector-matrix.json
+      # Publish to vigilsoc.org/docs/integrations/ from main only, and only when
+      # every job wrote its report: a missing one would show its connectors as
+      # untested. Failing probes still publish.
+      - name: Check all reports exist
+        id: reports
+        if: github.ref == 'refs/heads/main'
+        run: |
+          for f in live-search-backends.json live-local.json live-free-tier.json; do
+            [ -f "$f" ] || { echo "::warning::$f missing; not publishing"; exit 0; }
+          done
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+      - name: Mint docs-repo token
+        id: app-token
+        if: steps.reports.outputs.complete == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+          owner: Vigil-SOC
+          repositories: vigil-soc.github.io
+      - uses: actions/checkout@v7
+        if: steps.reports.outputs.complete == 'true'
+        with:
+          repository: Vigil-SOC/vigil-soc.github.io
+          token: ${{ steps.app-token.outputs.token }}
+          path: docs-site
+      - name: Publish matrix to docs site
+        if: steps.reports.outputs.complete == 'true'
+        working-directory: docs-site
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # Probe detail strings are test evidence and stay out of the public file.
+        run: |
+          jq --arg run "$RUN_URL" \
+            '{ran_at, commit, run: $run, connectors: ([.connectors[] | {server, status, version}] | sort_by(.server))}' \
+            ../connector-matrix.json > _data/connector_matrix.json
+          git add _data/connector_matrix.json
+          if git diff --cached --quiet; then echo "No change"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update connector matrix from $RUN_URL"
+          git push origin HEAD:main
 
   notify:
     name: Notify on failure

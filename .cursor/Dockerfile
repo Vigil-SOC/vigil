@@ -227,5 +227,13 @@ USER ubuntu
 # compose default, the same value `start` and .env already use.
 ENV POSTGRES_PASSWORD=deeptempo_secure_password_change_me
 
+# Every pytest job in ci-cd.yml and nightly.yml sets TESTING=true. Without it a
+# test that enters TestClient as a context manager runs the real app lifespan,
+# which dials Bifrost, the model catalog and the MCP servers, and never
+# finishes (tests/unit/auth/test_token_type.py hangs even with the stack up).
+# `start` writes TESTING=false into .env, which every stack launcher sources,
+# so the live app still connects to its integrations.
+ENV TESTING=true
+
 # Chrome for Testing, into /home/ubuntu/.agent-browser (system libraries are already in place).
 RUN agent-browser install

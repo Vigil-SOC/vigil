@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import get_settings
 from core.secrets import get_secret
+from core.storage.schemas.case_account import CaseAccount
 from core.telemetry import inject_traceparent
 from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
 
@@ -207,6 +208,31 @@ async def read_verify(run_id: str) -> Optional[Dict[str, Any]]:
         detail = response.text[:400]
         raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
     return response.json()
+
+
+async def read_account(run_id: str) -> Optional[CaseAccount]:
+    """What ``run_id`` concluded, in the shape the case page reads.
+
+    None is serve's 404: a kind with no account, or a ledger it cannot read
+    one from. Anything else that is not a valid account raises, because a
+    reader opened the run and is owed the reason; an account that breaks the
+    contract is the agent layer's bug, not an empty run.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/account")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    return CaseAccount.model_validate(response.json())
 
 
 THREAT_HUNT_WORKFLOW_ID = "threat-hunt"

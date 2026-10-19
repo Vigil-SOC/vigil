@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, type RunFold } from './caseFold'
+import { actionWords, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, type RunFold } from './caseFold'
+import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 describe('actionWords', () => {
   it('has plain words for every hunt action', () => {
@@ -64,5 +65,29 @@ describe('recordChip', () => {
     expect(recordChip('resolution', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'run')).toBe('memory')
+  })
+})
+
+describe('an investigation\'s record', () => {
+  it('reads it through the hunt\'s parsers, and a lead with none keeps no record', () => {
+    const held = readFold({ status: 'completed', projection: heldProjection })
+    expect(foldRecord(held)?.hypotheses.map((h) => [h.hypothesis_id, h.supports, h.weakens])).toEqual([['h1', 1, 2], ['h2', 0, 0], ['h3', 2, 0]])
+    expect(foldRecord(held)?.openQuestions).toHaveLength(1)
+    expect(endedRun(held)?.line).toBe('Asked benign · held as needs review · 1 standing · 1 weakened · 1 forming')
+
+    const legacy = readFold({ status: 'completed', projection: { findings: [{ agent_id: 'lead', answer: 'benign' }] } })
+    expect(foldRecord(legacy)).toBeNull()
+    expect(endedRun(legacy)?.line).toBe('1 finding')
+  })
+})
+
+describe('the budget ceiling', () => {
+  it('is read off the head, and off budgets on a ledger written before the head carried it', () => {
+    const ceiling = (fold: RunFold | null) => fold?.maxCostUsd
+    expect(ceiling(readFold({ hunt: { max_cost_usd: 5, budgets: { max_cost_usd: 2 } } }))).toBe(5)
+    expect(ceiling(readFold({ hunt: { budgets: { max_cost_usd: 2 } } }))).toBe(2)
+    expect(ceiling(readFold({ projection: heldProjection }))).toBe(3)
+    expect(ceiling(readFold({ projection: { budgets: { max_cost_usd: 4 } } }))).toBe(4)
+    expect(ceiling(readFold({ projection: { max_cost_usd: 0 } }))).toBeNull()
   })
 })

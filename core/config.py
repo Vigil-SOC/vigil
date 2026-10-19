@@ -145,8 +145,10 @@ class Settings(BaseSettings):
     vigil_frontend_url: str = ""
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
     vigil_intent_path: str = ""
-    # One extra root of SKILL.md directories, read alongside core/skills/library.
-    vigil_skills_path: str = ""
+    # One extra root of SKILL.md directories, read alongside core/skills/library
+    # and written by the skills API. Unset (None) is the State Directory's
+    # skills/ folder; empty turns operator skills off, as the Helm chart does.
+    vigil_skills_path: Optional[str] = None
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
     # agent and scripts/migrate_schema.py can keep it in the environment.
@@ -294,6 +296,10 @@ class Settings(BaseSettings):
     # Separate from daemon_health_host, which is the client address the backend
     # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.
     daemon_bind_host: str = "0.0.0.0"  # nosec B104
+    # The inbound webhook listener is authenticated and meant to be reached by
+    # external senders, so it keeps its own address and does not follow
+    # daemon_bind_host (which host-native installs narrow to loopback).
+    daemon_webhook_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_health_port: int = 9091
 
     # Orchestrator

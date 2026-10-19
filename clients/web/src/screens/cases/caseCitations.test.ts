@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { caseCitations } from './caseCitations'
+import { caseCitations, evidenceInNote } from './caseCitations'
 import type { RunFold } from './caseFold'
 
 const fold = {
@@ -31,5 +31,17 @@ describe('caseCitations (#2285)', () => {
 
   it('offers only alerts on a run that is not a hunt', () => {
     expect(caseCitations(null, [{ finding_id: 'f1', title: null, description: null, source_link: null, entities: [] }]).map((c) => c.label)).toEqual(['alert · f1'])
+  })
+})
+
+describe('evidenceInNote (#2459)', () => {
+  it('takes a bracketed or parenthesised id list out, and returns each id once, in order', () => {
+    expect(evidenceInNote('abandoned: no change record [ev-b680, ev-6e07, ev-b680]')).toEqual({ text: 'abandoned: no change record', ids: ['ev-b680', 'ev-6e07'] })
+    expect(evidenceInNote('weakened (ev-1a; ev-2b) by the proxy rows.')).toEqual({ text: 'weakened by the proxy rows.', ids: ['ev-1a', 'ev-2b'] })
+  })
+
+  it('takes a bare id out of the prose, and leaves a note without ids as written', () => {
+    expect(evidenceInNote('the dump ev-77 came first.')).toEqual({ text: 'the dump came first.', ids: ['ev-77'] })
+    expect(evidenceInNote('waiting on logs')).toEqual({ text: 'waiting on logs', ids: [] })
   })
 })

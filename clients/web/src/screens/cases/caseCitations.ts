@@ -40,3 +40,24 @@ export function caseCitations(fold: RunFold | null, alerts: readonly CaseLinkedF
   }
   return out
 }
+
+/** An evidence row's id as a hunt writes it. */
+const EVIDENCE_ID = /\bev-[A-Za-z0-9]+\b/g
+/** A bracketed or parenthesised list of nothing but evidence ids, with the space before it. */
+const EVIDENCE_LIST = /\s*[[(]\s*ev-[A-Za-z0-9]+(?:\s*[,;]\s*ev-[A-Za-z0-9]+)*\s*[\])]/g
+
+/**
+ * A note with the evidence ids it cites taken out (#2459): "abandoned: … [ev-b680…, ev-6e07…]" reads
+ * "abandoned: …", and the ids come back once each, in order, to be named as chips or counted in words.
+ */
+export function evidenceInNote(note: string): { text: string; ids: string[] } {
+  const ids = [...new Set(note.match(EVIDENCE_ID) ?? [])]
+  if (ids.length === 0) return { text: note, ids }
+  const text = note
+    .replace(EVIDENCE_LIST, '')
+    .replace(EVIDENCE_ID, '')
+    .replace(/\s+([.,;:])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return { text, ids }
+}

@@ -12,7 +12,6 @@ import yaml
 
 from core.workflows.hunt_preflight import LEAD_TOOLS
 from core.workflows.playbook_resolver import CHECKPOINT_CLASSES, DEFAULT_CHECKPOINTS
-from core.workflows.workflows_service import WorkflowsService
 
 pytestmark = pytest.mark.unit
 
@@ -74,16 +73,3 @@ def test_the_investigate_lead_is_the_arch_lead():
     lead = yaml.safe_load((ARCH / "investigate/plugin.yaml").read_text())["roles"]["lead"]
 
     assert set(INVESTIGATE_CAPABILITIES) == set(lead["needs"])
-
-
-# The reader shows the roster as the helpers; a name the arch lacks would read as
-# a worker the lead can ask for and never gets.
-@pytest.mark.parametrize(
-    ("workflow_id", "arch"),
-    [("threat-hunt", "hunt/plugin.yaml"), ("shadow-adjudication", "adjudicate/plugin.yaml")],
-)
-def test_the_rostered_helpers_are_arch_workers(workflow_id, arch):
-    workers = yaml.safe_load((ARCH / arch).read_text())["roles"]["workers"]
-    phases = WorkflowsService().get_workflow(workflow_id).phases
-
-    assert {p["agent"] for p in phases} <= set(workers)

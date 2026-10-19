@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from core.integrations._base.proxy import integration_proxy
 from core.integrations._base.tls import tls_verify
 
 # urllib3.disable_warnings() used to live here to silence
@@ -75,6 +76,7 @@ class SplunkService:
         if self._session is None:
             self._session = httpx.Client(
                 verify=tls_verify(self.verify_ssl, self.ca_cert_path),
+                proxy=integration_proxy("splunk"),
                 timeout=DEFAULT_TIMEOUT,
                 follow_redirects=_FOLLOW_REDIRECTS,
                 headers={

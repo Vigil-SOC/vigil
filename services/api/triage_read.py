@@ -1,14 +1,17 @@
 """One read of the intake queue for the Triage screen.
 
-The strip and ``counts`` cover the whole ``intake_triggers`` table. Kind,
-source, and state narrow only the returned rows. Ranking is ``rank_intake_row``; this module
-does not keep a second sort key.
+The strip and ``counts`` cover the whole ``intake_triggers`` table, as SQL
+aggregates. Kind, source, and state narrow only the returned rows, in SQL before
+the cap; only the rows returned are loaded and presented. Ranking is
+``rank_intake_row``; this module does not keep a second sort key.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Optional
+
+from sqlalchemy import case, distinct, func, literal
 
 from core.federation.lag import source_collection_lag
 from core.findings.arrival_counts import arrivals_today_by_source, utc_day_bounds
@@ -168,62 +171,161 @@ def _sources(day: date, now: datetime) -> list[dict]:
     return sources
 
 
-def _load() -> tuple[list[dict], dict[str, dict], dict[str, str], set[str]]:
-    db = get_db_manager()
-    with db.session_scope() as session:
-        triggers = session.query(IntakeTrigger).all()
-        finding_ids = {row.finding_id for row in triggers if row.finding_id}
-        findings: dict[str, dict] = {}
-        if finding_ids:
-            for finding in session.query(Finding).filter(
-                Finding.finding_id.in_(finding_ids)
-            ):
-                findings[finding.finding_id] = {
-                    "finding_id": finding.finding_id,
-                    "severity": finding.severity,
-                    "data_source": finding.data_source,
-                    "external_id": finding.external_id,
-                    "evidence_links": list(finding.evidence_links or []),
-                    "entity_context": finding.entity_context,
-                    "title": finding.title,
-                    "description": finding.description,
-                }
-        inv_ids = {row.investigation_id for row in triggers if row.investigation_id}
-        workflows: dict[str, str] = {}
-        if inv_ids:
-            for inv_id, workflow_id in (
-                session.query(Investigation.investigation_id, Investigation.workflow_id)
-                .filter(Investigation.investigation_id.in_(inv_ids))
-                .all()
-            ):
-                workflows[inv_id] = workflow_id
-        merged = {row.merged_into for row in triggers if row.merged_into}
-        case_ids: set[str] = set()
-        if merged:
-            case_ids = {
-                case_id
-                for (case_id,) in session.query(Case.case_id)
-                .filter(Case.case_id.in_(merged))
-                .all()
-            }
-        rows = []
-        for row in triggers:
-            payload = row.payload if isinstance(row.payload, dict) else {}
-            rows.append(
-                {
-                    "id": row.id,
-                    "kind": row.kind,
-                    "state": row.state,
-                    "priority": row.priority,
-                    "finding_id": row.finding_id,
-                    "payload": payload,
-                    "investigation_id": row.investigation_id,
-                    "case_id": row.case_id,
-                    "merged_into": row.merged_into,
-                    "created_at": _naive(row.created_at),
-                    "decided_at": _naive(row.decided_at),
-                }
+def _source_column():
+    """``_source_text`` in SQL, over IntakeTrigger outer-joined to Finding."""
+    return case(
+        (IntakeTrigger.kind == "schedule", literal("Schedule")),
+        (IntakeTrigger.kind == "human_ask", literal("Ask")),
+        else_=func.coalesce(Finding.data_source, ""),
+    )
+
+
+def _joined(session, *columns):
+    return (
+        session.query(*columns)
+        .select_from(IntakeTrigger)
+        .outerjoin(Finding, Finding.finding_id == IntakeTrigger.finding_id)
+    )
+
+
+def _filtered(query, kind: Optional[str], source: Optional[str], state: Optional[str]):
+    if kind:
+        query = query.filter(IntakeTrigger.kind == kind)
+    if state:
+        query = query.filter(IntakeTrigger.state == state)
+    if source:
+        query = query.filter(_source_column() == source)
+    return query
+
+
+def _page_ids(
+    session,
+    kind: Optional[str],
+    source: Optional[str],
+    state: Optional[str],
+    now: datetime,
+    config: OrchestratorConfig,
+) -> tuple[list[int], int]:
+    """The ids of the rows shown, in order, and how many rows match."""
+    matched = _filtered(
+        _joined(session, func.count(IntakeTrigger.id)), kind, source, state
+    ).scalar()
+    # Every queued row, with only what rank_intake_row reads; never ORDER BY severity.
+    queued = []
+    for row_id, row_kind, priority, created, finding_id, severity in _filtered(
+        _joined(
+            session,
+            IntakeTrigger.id,
+            IntakeTrigger.kind,
+            IntakeTrigger.priority,
+            IntakeTrigger.created_at,
+            Finding.finding_id,
+            Finding.severity,
+        ).filter(IntakeTrigger.state == "queued"),
+        kind,
+        source,
+        state,
+    ).order_by(IntakeTrigger.id):
+        row = {
+            "id": row_id,
+            "kind": row_kind,
+            "priority": priority,
+            "created_at": _naive(created),
+        }
+        if finding_id is not None:
+            row["_finding"] = {"severity": severity}
+        queued.append(row)
+    queued.sort(
+        key=lambda row: rank_intake_row(
+            row,
+            now=now,
+            ttl_seconds=config.intake_ttl_seconds,
+            promote_fraction=config.intake_ttl_promote_fraction,
+        )
+    )
+    ids = [row["id"] for row in queued[:ROW_CAP]]
+    room = ROW_CAP - len(ids)
+    if room > 0:
+        # Newest decided first; a row with no decided_at sorts last.
+        ids += [
+            row_id
+            for (row_id,) in _filtered(
+                _joined(session, IntakeTrigger.id).filter(
+                    IntakeTrigger.state != "queued"
+                ),
+                kind,
+                source,
+                state,
             )
+            .order_by(IntakeTrigger.decided_at.desc().nullslast(), IntakeTrigger.id)
+            .limit(room)
+        ]
+    return ids, matched
+
+
+def _load(
+    session, ids: list[int]
+) -> tuple[list[dict], dict[str, dict], dict[str, str], set[str]]:
+    """The shown rows in ``ids`` order, and only their findings, workflows, cases."""
+    if not ids:
+        return [], {}, {}, set()
+    by_id = {
+        row.id: row
+        for row in session.query(IntakeTrigger).filter(IntakeTrigger.id.in_(ids))
+    }
+    triggers = [by_id[row_id] for row_id in ids if row_id in by_id]
+    finding_ids = {row.finding_id for row in triggers if row.finding_id}
+    findings: dict[str, dict] = {}
+    if finding_ids:
+        for finding in session.query(Finding).filter(
+            Finding.finding_id.in_(finding_ids)
+        ):
+            findings[finding.finding_id] = {
+                "finding_id": finding.finding_id,
+                "severity": finding.severity,
+                "data_source": finding.data_source,
+                "external_id": finding.external_id,
+                "evidence_links": list(finding.evidence_links or []),
+                "entity_context": finding.entity_context,
+                "title": finding.title,
+                "description": finding.description,
+            }
+    inv_ids = {row.investigation_id for row in triggers if row.investigation_id}
+    workflows: dict[str, str] = {}
+    if inv_ids:
+        for inv_id, workflow_id in (
+            session.query(Investigation.investigation_id, Investigation.workflow_id)
+            .filter(Investigation.investigation_id.in_(inv_ids))
+            .all()
+        ):
+            workflows[inv_id] = workflow_id
+    merged = {row.merged_into for row in triggers if row.merged_into}
+    case_ids: set[str] = set()
+    if merged:
+        case_ids = {
+            case_id
+            for (case_id,) in session.query(Case.case_id)
+            .filter(Case.case_id.in_(merged))
+            .all()
+        }
+    rows = []
+    for row in triggers:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        rows.append(
+            {
+                "id": row.id,
+                "kind": row.kind,
+                "state": row.state,
+                "priority": row.priority,
+                "finding_id": row.finding_id,
+                "payload": payload,
+                "investigation_id": row.investigation_id,
+                "case_id": row.case_id,
+                "merged_into": row.merged_into,
+                "created_at": _naive(row.created_at),
+                "decided_at": _naive(row.decided_at),
+            }
+        )
     return rows, findings, workflows, case_ids
 
 
@@ -292,48 +394,55 @@ def _present(
     }
 
 
-def _counts(rows: list[dict], findings: dict[str, dict]) -> dict:
+def _counts(session) -> dict:
     """Every intake row by kind, source, and state, before filters and the cap."""
     kinds: dict[str, int] = {}
     sources: dict[str, int] = {}
     states: dict[str, int] = {}
-    for row in rows:
-        kinds[row["kind"]] = kinds.get(row["kind"], 0) + 1
-        states[row["state"]] = states.get(row["state"], 0) + 1
-        name = _source_text(row["kind"], findings.get(row.get("finding_id") or ""))
+    total = 0
+    source = _source_column()
+    for kind, state, name, n in _joined(
+        session, IntakeTrigger.kind, IntakeTrigger.state, source, func.count()
+    ).group_by(IntakeTrigger.kind, IntakeTrigger.state, source):
+        total += n
+        kinds[kind] = kinds.get(kind, 0) + n
+        states[state] = states.get(state, 0) + n
         if name:
-            sources[name] = sources.get(name, 0) + 1
-    return {"total": len(rows), "kind": kinds, "source": sources, "state": states}
+            sources[name] = sources.get(name, 0) + n
+    return {"total": total, "kind": kinds, "source": sources, "state": states}
 
 
-def _strip(rows: list[dict], day: date) -> dict:
+def _strip(session, counts: dict, day: date) -> dict:
     start, end = utc_day_bounds(day)
-    created_today = [
-        row
-        for row in rows
-        if isinstance(row.get("created_at"), datetime)
-        and start <= row["created_at"] < end
-    ]
-    denominator = len(created_today)
-    numerator = sum(
-        1 for row in created_today if row["state"] in ("launched", "merged")
+    denominator, numerator = (
+        session.query(
+            func.count(IntakeTrigger.id),
+            func.count(IntakeTrigger.id).filter(
+                IntakeTrigger.state.in_(_PICKUP_STATES)
+            ),
+        )
+        .filter(IntakeTrigger.created_at >= start, IntakeTrigger.created_at < end)
+        .one()
     )
-    cases = {
-        row["case_id"]
-        for row in rows
-        if row["state"] == "launched"
-        and row.get("case_id")
-        and isinstance(row.get("decided_at"), datetime)
-        and start <= row["decided_at"] < end
-    }
+    cases = (
+        session.query(func.count(distinct(IntakeTrigger.case_id)))
+        .filter(
+            IntakeTrigger.state == "launched",
+            IntakeTrigger.case_id.isnot(None),
+            IntakeTrigger.case_id != "",
+            IntakeTrigger.decided_at >= start,
+            IntakeTrigger.decided_at < end,
+        )
+        .scalar()
+    )
     return {
         "picked_up": {
             "launched_or_merged": numerator,
             "created_today": denominator,
             "share": None if denominator == 0 else numerator / denominator,
         },
-        "waiting": sum(1 for row in rows if row["state"] == "queued"),
-        "cases_created_today": len(cases),
+        "waiting": counts["state"].get("queued", 0),
+        "cases_created_today": cases,
         "trust_floor": UNMEASURED,
     }
 
@@ -354,49 +463,26 @@ def triage_payload(
     if day is None:
         day = now.date()
     config = OrchestratorConfig()
-    stored, findings, workflows, case_ids = _load()
-    for row in stored:
+    with get_db_manager().session_scope() as session:
+        # One snapshot for every read: a row claimed between the queued and
+        # decided queries would otherwise be listed twice.
+        session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        counts = _counts(session)
+        strip = _strip(session, counts, day)
+        ids, matched = _page_ids(session, kind, source, state, now, config)
+        shown, findings, workflows, case_ids = _load(session, ids)
+    link_configs: dict[str, dict[str, str]] = {}
+    presented = []
+    for row in shown:
         finding = findings.get(row["finding_id"]) if row.get("finding_id") else None
         if finding is not None:
             row["_finding"] = finding
-    strip = _strip(stored, day)
-    counts = _counts(stored, findings)
-    queued = [row for row in stored if row["state"] == "queued"]
-    decided = [row for row in stored if row["state"] != "queued"]
-    queued.sort(
-        key=lambda row: rank_intake_row(
-            row,
-            now=now,
-            ttl_seconds=config.intake_ttl_seconds,
-            promote_fraction=config.intake_ttl_promote_fraction,
-        )
-    )
-    decided.sort(
-        key=lambda row: (
-            row["decided_at"]
-            if isinstance(row.get("decided_at"), datetime)
-            else datetime.min
-        ),
-        reverse=True,
-    )
-    link_configs: dict[str, dict[str, str]] = {}
-    presented = []
-    matched = 0
-    for row in queued + decided:
-        finding = findings.get(row["finding_id"]) if row.get("finding_id") else None
         workflow = _workflow(
             row["payload"], workflows.get(row.get("investigation_id") or "")
         )
-        item = _present(row, finding, workflow, case_ids, now, config, link_configs)
-        if kind and item["kind"] != kind:
-            continue
-        if state and item["state"] != state:
-            continue
-        if source and item["source"] != source:
-            continue
-        matched += 1
-        if len(presented) < ROW_CAP:
-            presented.append(item)
+        presented.append(
+            _present(row, finding, workflow, case_ids, now, config, link_configs)
+        )
     return {
         "rows": presented,
         "matched": matched,

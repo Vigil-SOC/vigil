@@ -21,7 +21,6 @@ export interface OrchestratorStatus {
   queued: number
   completed: number
   failed: number
-  pending_review: number
   total_investigations: number
   cost: OrchestratorCost
   stats: Record<string, number>
@@ -47,17 +46,15 @@ export interface Investigation {
 const STATUS_PRIORITY: Record<string, number> = {
   executing: 0,
   assigned: 1,
-  needs_rework: 2,
-  review_submitted: 3,
-  queued: 4,
-  completed: 5,
-  failed: 6,
+  queued: 2,
+  completed: 3,
+  failed: 4,
 }
 
 function sortInvestigations(list: Investigation[]): Investigation[] {
   return list.slice().sort((a, b) => {
-    const pa = STATUS_PRIORITY[a.status] ?? 4
-    const pb = STATUS_PRIORITY[b.status] ?? 4
+    const pa = STATUS_PRIORITY[a.status] ?? 2
+    const pb = STATUS_PRIORITY[b.status] ?? 2
     if (pa !== pb) return pa - pb
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
@@ -165,21 +162,25 @@ export function useAutoOps() {
     }
   }, [load])
 
+  // Restart queues a new investigation; the old one stays on record.
   const wake = useCallback(
-    (id: string) =>
-      run(`wake:${id}`, () => orchestratorApi.wakeInvestigation(id), 'Failed to restart investigation'),
+    async (id: string) => {
+      setNotice(null)
+      return run(
+        `wake:${id}`,
+        async () => {
+          const res = await orchestratorApi.wakeInvestigation(id)
+          setNotice(res.data?.message || 'New investigation queued.')
+        },
+        'Failed to restart investigation',
+      )
+    },
     [run],
   )
 
   const killInvestigation = useCallback(
     (id: string) =>
       run(`kill:${id}`, () => orchestratorApi.killInvestigation(id), 'Failed to kill investigation'),
-    [run],
-  )
-
-  const review = useCallback(
-    (id: string, action: 'approve' | 'rework', notes?: string) =>
-      run(`review:${id}`, () => orchestratorApi.reviewInvestigation(id, action, notes), 'Review failed'),
     [run],
   )
 
@@ -199,6 +200,5 @@ export function useAutoOps() {
     scanFindings,
     wake,
     killInvestigation,
-    review,
   }
 }

@@ -14,6 +14,44 @@ elif command -v docker-compose &>/dev/null; then
 else
     _DC_CMD=(docker compose)  # last resort; surfaces a clear error on use
 fi
+# --- WSL2 ---
+# True inside Windows Subsystem for Linux. Both probes are Linux-only and fail
+# quietly elsewhere (macOS has neither the variable nor /proc/version).
+is_wsl() {
+    [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# Open URL in the user's browser, never failing: it is a convenience, and the
+# URL is already printed in the ready banner. `open` is macOS only (on Debian
+# and Ubuntu `open` is openvt, which is not a browser launcher). WSL prefers
+# wslview, then explorer.exe (which exits 1 even when it opens the page).
+open_url() {
+    local url="$1"
+    if [ "$(uname -s)" = Darwin ]; then
+        open "$url" &>/dev/null || true
+    elif is_wsl && command -v wslview &>/dev/null; then
+        wslview "$url" &>/dev/null || true
+    elif is_wsl && command -v explorer.exe &>/dev/null; then
+        explorer.exe "$url" &>/dev/null || true
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "$url" &>/dev/null || true
+    fi
+    return 0
+}
+
+# One-time notices that only matter under WSL2. Never fatal.
+wsl_preflight() {
+    is_wsl || return 0
+    case "$REPO_ROOT" in
+        /mnt/[a-zA-Z]/*)
+            echo "Warning: this checkout is on the Windows drive ($REPO_ROOT)." >&2
+            echo "  Reloads, file permissions and Docker mounts are unreliable there." >&2
+            echo "  Clone Vigil inside the Linux home (~/vigil) instead." >&2
+            ;;
+    esac
+    return 0
+}
+
 # Containers reach the host-native Ollama via host.docker.internal, but
 # load_env exports the host-side OLLAMA_URL and shell env beats the compose
 # default - so rewrite it here, at the single container boundary.
@@ -94,12 +132,25 @@ save_project_container_logs() {
 docker_daemon_ready() { docker info &>/dev/null; }
 
 ensure_docker() {
-    command -v docker &>/dev/null || { echo "Docker is required but not installed." >&2; return 1; }
+    if ! command -v docker &>/dev/null; then
+        echo "Docker is required but not installed." >&2
+        is_wsl && echo "On WSL2, install Docker Desktop for Windows and turn on Settings > Resources > WSL integration for this distro." >&2
+        return 1
+    fi
     docker_daemon_ready && return 0
     echo "Docker daemon not reachable - starting Docker..."
     case "$(uname -s)" in
         Darwin) open -a Docker &>/dev/null || open -a "Docker Desktop" &>/dev/null || true ;;
-        Linux)  (systemctl start docker || sudo systemctl start docker) &>/dev/null || true ;;
+        Linux)
+            if is_wsl && ! systemctl cat docker.service &>/dev/null; then
+                # No docker.service in this distro: Docker is Docker Desktop on
+                # Windows, which this script cannot start. It is polled below.
+                echo "On WSL2, start Docker Desktop on Windows and enable WSL integration" >&2
+                echo "for this distro (Settings > Resources > WSL integration). Waiting..." >&2
+            else
+                (systemctl start docker || sudo systemctl start docker) &>/dev/null || true
+            fi
+            ;;
     esac
     local i=0
     while [ $i -lt 90 ]; do
@@ -146,9 +197,24 @@ service_container() {
 # process group, where Ctrl+C would kill it. Never fatal - Ollama is optional.
 ensure_ollama() {
     PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-        python3 "$REPO_ROOT/scripts/ollama_supervise.py" || \
+        python3 "$REPO_ROOT/scripts/ollama_supervise.py" || {
         echo "Warning: Ollama not started; see logs/ollama.log" >&2
+        is_wsl && wsl_ollama_notice
+    }
     return 0
+}
+
+# Under WSL2 the usual reason is that Ollama runs on Windows, whose localhost is
+# not the distro's (default NAT networking). Vigil starts either way; this only
+# says what is and is not reachable. Nothing here changes any address.
+wsl_ollama_notice() {
+    echo "  WSL2: no Ollama answered at ${OLLAMA_URL:-http://localhost:11434}. Local models are optional." >&2
+    echo "  - Ollama for Windows is not on WSL's localhost in the default (NAT) networking." >&2
+    echo "    Containers may still reach it through Docker Desktop (host.docker.internal);" >&2
+    echo "    the host-side model list will not. networkingMode=mirrored in .wslconfig" >&2
+    echo "    shares localhost with Windows (Windows 11 22H2 or later)." >&2
+    echo "  - Ollama inside this distro: https://ollama.com/download/linux, then run ./start.sh again." >&2
+    echo "  - Or skip local models and add a hosted provider under Settings > AI models." >&2
 }
 
 # --- Python toolchain ---
@@ -254,7 +320,8 @@ load_env() {
     if [ -f "$REPO_ROOT/.env" ]; then
         set -a; source "$REPO_ROOT/.env"; set +a
     elif [ -f "$REPO_ROOT/env.example" ]; then
-        cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
+        # Owner-only: it comes to hold the agent layer's token (ensure_agent_token).
+        (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
         set -a; source "$REPO_ROOT/.env"; set +a
     fi
 }
@@ -277,6 +344,73 @@ ensure_jwt_secret() {
     fi
     JWT_SECRET_KEY="$(cat "$file")"
     export JWT_SECRET_KEY
+}
+
+# --- Values in .env ---
+# The value .env gives KEY, as sourcing it does: the last assignment wins, an
+# `export` prefix is allowed, quotes are dropped, and so is a trailing comment or
+# CR. scripts/agent_up.sh reads its token through this, so it and the backend
+# (which reads .env through dotenv) agree on which line counts.
+_ENV_LINE_RE='^[[:space:]]*(export[[:space:]]+)?'
+env_file_value() {
+    local key="$1" file="${2:-$REPO_ROOT/.env}" v
+    v="$(sed -nE "s/${_ENV_LINE_RE}${key}=//p" "$file" | tail -1)"
+    v="${v%$'\r'}"
+    case "$v" in
+        \"*) v="${v#\"}"; v="${v%%\"*}" ;;
+        \'*) v="${v#\'}"; v="${v%%\'*}" ;;
+        *) v="${v%%[[:space:]]*}" ;;
+    esac
+    printf '%s' "$v"
+}
+
+# --- Agent layer token ---
+# The backend and the agent layer share AGENT_INTERNAL_TOKEN. env.example ships
+# it empty, and empty means scripts/agent_up.sh refuses to start, so no chat turn
+# or workflow run gets through. Unlike the JWT secret it goes in .env: agent_up.sh
+# and `docker compose --env-file .env` read it there. Fills an empty value once
+# (a value the caller exported, else a new one) and never replaces a set one.
+# Never fails: start.sh runs under set -e, and agent_up.sh says what is missing.
+ensure_agent_token() {
+    local env="$REPO_ROOT/.env" re="${_ENV_LINE_RE}AGENT_INTERNAL_TOKEN=" lines token
+    [ -f "$env" ] || return 0
+    lines="$(grep -cE "$re" "$env" || true)"
+    # Which line to fill is a guess with two, and a wrong guess splits the
+    # backend and the agent layer onto different tokens.
+    if [ "$lines" -gt 1 ]; then
+        echo "Warning: .env sets AGENT_INTERNAL_TOKEN $lines times; left as is (the last one counts)." >&2
+        return 0
+    fi
+    [ -n "$(env_file_value AGENT_INTERNAL_TOKEN "$env")" ] && return 0
+    token="${AGENT_INTERNAL_TOKEN:-}"
+    [ -n "$token" ] || token="$(openssl rand -hex 32 2>/dev/null)" || token=""
+    [ -n "$token" ] || token="$(od -An -tx1 -N32 /dev/urandom 2>/dev/null | tr -d ' \n')" || token=""
+    if [ -z "$token" ]; then
+        echo "Warning: could not generate AGENT_INTERNAL_TOKEN; set it in .env." >&2
+        return 0
+    fi
+    # Private while it holds the token. Rewritten in place (cat, not mv) so .env
+    # keeps its owner and mode; the line keeps its `export` and its CR, if any.
+    if ! (umask 077; T="$token" awk -v re="$re" '
+        !done && $0 ~ re {
+            print substr($0, 1, index($0, "AGENT_INTERNAL_TOKEN=") - 1) \
+                "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" (/\r$/ ? "\r" : "")
+            done = 1; next
+        }
+        { print }
+        END { if (!done) print "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" }
+    ' "$env" > "$env.tmp.$$"); then
+        rm -f "$env.tmp.$$"
+        echo "Warning: could not write AGENT_INTERNAL_TOKEN to .env" >&2
+        return 0
+    fi
+    if ! cat "$env.tmp.$$" > "$env"; then
+        echo "Warning: could not rewrite .env; the filled copy is $env.tmp.$$" >&2
+        return 0
+    fi
+    rm -f "$env.tmp.$$"
+    export AGENT_INTERNAL_TOKEN="$token"
+    echo "Set AGENT_INTERNAL_TOKEN in .env (the agent layer's key to the API)"
 }
 
 # Is this venv the one .python-version asks for, on this machine's architecture?
