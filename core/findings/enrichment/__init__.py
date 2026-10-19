@@ -21,7 +21,7 @@ from core.findings.enrichment.prompt import (
     build_techniques_string,
     summarize_finding,
 )
-from core.findings.enrichment.service import enrich
+from core.findings.enrichment.service import enrich, is_generated_analysis
 
 __all__ = [
     "EmptyProviderResponse",
@@ -36,6 +36,7 @@ __all__ = [
     "build_techniques_string",
     "enrich",
     "extract_json_block",
+    "is_generated_analysis",
     "parse_enrichment",
     "summarize_finding",
 ]

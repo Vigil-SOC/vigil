@@ -41,6 +41,7 @@ from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 from core.storage.models import User
+from core.telemetry import inject_traceparent
 from core.workflows.workflows_service import WorkflowsService
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
@@ -534,7 +535,11 @@ def _internal_headers() -> Dict[str, str]:
         raise HTTPException(
             status_code=503, detail="AGENT_INTERNAL_TOKEN is not configured"
         )
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    return {
+        **inject_traceparent(),
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
 
 
 @router.get("/models")

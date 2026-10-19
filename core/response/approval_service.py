@@ -655,8 +655,94 @@ def _kind_for_action(action: PendingAction) -> str:
     return "checkpoint" if checkpoint else "approval"
 
 
+def _checkpoint_fields(action: PendingAction) -> Dict[str, Any]:
+    """What a checkpoint's decision block shows beyond its title.
+
+    The checkpoint id ties the item to the run's own open checkpoint, so a page
+    reading both can tell the question it is showing has been answered. For a
+    hypothesis approval, the explanations being approved, each with where it came
+    from: the benign one is the claim the others are tested against.
+    """
+    params = action.parameters if isinstance(action.parameters, dict) else {}
+    checkpoint = params.get("checkpoint_id")
+    fields: Dict[str, Any] = {
+        "checkpoint_id": checkpoint if isinstance(checkpoint, str) else None,
+        "checkpoint_class": params.get("checkpoint_class") or None,
+        "hypotheses": [],
+    }
+    listed = params.get("hypotheses")
+    if isinstance(listed, list):
+        fields["hypotheses"] = [
+            {
+                "hypothesis_id": str(one.get("hypothesis_id") or ""),
+                "statement": str(one.get("statement") or ""),
+                "provenance": str(one.get("provenance") or ""),
+            }
+            for one in listed
+            if isinstance(one, dict) and one.get("statement")
+        ]
+    return fields
+
+
+# How a hunt says it is waiting on a checkpoint rather than stopped at a limit: the
+# reason its worker posts (services/agent plugins/hunt book.ts suspendedBecause and
+# its "awaiting " park reason). A checkpoint wait is already an approval row.
+_CHECKPOINT_WAITS = ("waiting for your approval", "awaiting ")
+
+# Kinds whose run parks at its own limits and takes Keep going (an extend directive).
+_EXTENDABLE_KINDS = ("hunt", "adjudicate")
+
+PARKED_TITLE = "Keep the hunt going?"
+
+
+def _parked_runs(pending_runs: set[str]) -> List[Dict[str, Any]]:
+    """Hunts stopped at a limit -- turns, time or budget -- and waiting on a person.
+
+    Nothing else asks for them: there is no approval row behind a parked hunt, so
+    the case read "Needs you 0" while it sat there. A run with a pending approval
+    is that approval's, and a run waiting on a checkpoint is not at a limit.
+    """
+    db = get_db_manager()
+    with db.session_scope() as session:
+        rows = (
+            session.query(WorkflowRun)
+            .filter(WorkflowRun.status == "paused")
+            .filter(WorkflowRun.deleted_at.is_(None))
+            .order_by(WorkflowRun.started_at.asc())
+            .all()
+        )
+        found = []
+        for row in rows:
+            ctx = row.trigger_context if isinstance(row.trigger_context, dict) else {}
+            reason = (row.reason or "").strip()
+            if row.run_id in pending_runs or not reason:
+                continue
+            if ctx.get("run_kind") not in _EXTENDABLE_KINDS:
+                continue
+            if reason.lower().startswith(_CHECKPOINT_WAITS):
+                continue
+            found.append(
+                {
+                    "kind": "parked",
+                    "source_id": row.run_id,
+                    "title": PARKED_TITLE,
+                    "reason": reason[:1].upper() + reason[1:],
+                    # Nothing records when it parked, and its start is not that.
+                    "created_at": "",
+                    "reversibility": Reversibility.REVERSIBLE.value,
+                    "case_id": _text_id(ctx.get("case_id")),
+                    "run_id": row.run_id,
+                    "checkpoint_id": None,
+                    "checkpoint_class": None,
+                    "hypotheses": [],
+                }
+            )
+        return found
+
+
 def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
-    """Pending rows that need a person, oldest first, with no cap.
+    """Pending rows that need a person, oldest first, with no cap, then the hunts
+    stopped at a limit.
 
     Not ``list_pending_approvals`` or ``list_actions``: those are newest-first,
     and ``list_actions`` stops at 500, which hides the oldest asks.
@@ -688,8 +774,15 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 "created_at": action.created_at,
                 "reversibility": action.reversibility,
                 "case_id": resolved,
+                "run_id": action.workflow_run_id,
+                **_checkpoint_fields(action),
             }
         )
+    pending_runs = {action.workflow_run_id for action in actions}
+    for parked in _parked_runs({run for run in pending_runs if run}):
+        if wanted is not None and parked["case_id"] != wanted:
+            continue
+        items.append(parked)
     return {"count": len(items), "items": items}
 
 

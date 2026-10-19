@@ -91,3 +91,17 @@ def test_fresh_executing_row_is_left_alone(caplog):
     orch._update_investigation_status.assert_not_called()
     assert orch.stats["stuck_agents_killed"] == 0
     assert not any("Supervision loop error" in r.message for r in caplog.records)
+
+
+def test_paused_rows_are_reconciled_but_never_stale_killed():
+    paused = dict(_dump_row("inv-parked", timedelta(days=2)), status="paused")
+    orch = _make_orchestrator([])
+    orch._get_investigations_by_status = lambda status: (
+        [paused] if status == "paused" else []
+    )
+
+    _run_one_iteration(orch)
+
+    # Reconciled so a resume or the park TTL reaches it; a long park is not stale.
+    orch._reconcile.assert_awaited_once_with("inv-parked")
+    orch._update_investigation_status.assert_not_called()

@@ -415,6 +415,27 @@ class AuthService:
             return False
 
     @staticmethod
+    @default_on_error(False)
+    def disable_mfa(user_id: str, code: str, session: Optional[Session] = None) -> bool:
+        """Turn MFA off after proving possession of a TOTP or recovery code.
+
+        Clears the secret and any remaining recovery codes. Returns False
+        (leaving MFA untouched) if MFA is not enabled or the code is wrong.
+        """
+        with unit_of_work(session) as session:
+            user = session.query(User).filter(User.user_id == user_id).first()
+            if not user or not user.mfa_enabled:
+                return False
+            if not AuthService.verify_mfa_code(user_id, code, session):
+                return False
+
+            user.mfa_enabled = False
+            user.mfa_secret = None
+            user.mfa_recovery_codes = []
+            logger.info(f"MFA disabled for user: {user.username}")
+            return True
+
+    @staticmethod
     def _generate_recovery_codes() -> tuple[list[str], list[str]]:
         """Return (plaintext, bcrypt-hashed) lists of 10 one-time recovery codes."""
         codes = [secrets.token_hex(4).upper() for _ in range(10)]

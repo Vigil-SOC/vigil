@@ -3,10 +3,10 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { DirectiveRepository } from "../../ledger/directives.js";
 import { LedgerRepository } from "../../ledger/repository.js";
-import { drain, steer } from "../../workflows/hunt/inbox.js";
-import { Journal } from "../../workflows/hunt/journal.js";
-import type { HuntKinds } from "../../workflows/hunt/ledger.js";
-import type { HuntState } from "../../workflows/hunt/types.js";
+import { drain, steer } from "../../plugins/hunt/inbox.js";
+import { Journal } from "../../plugins/hunt/journal.js";
+import type { HuntKinds } from "../../plugins/hunt/ledger.js";
+import type { HuntState } from "../../plugins/hunt/types.js";
 import { TEST_DSN } from "../support/testdb.js";
 
 // Two pools rather than one: the point of moving the inbox off a file is that the

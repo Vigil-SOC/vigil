@@ -17,27 +17,6 @@ logger = logging.getLogger(__name__)
 _DERIVED_MCP_URLS: Dict[str, str] = {}
 
 
-# Form-field names contributed by the shared proxy block (see
-# ``clients/web/src/config/integrations.ts``). These are meta-config — the
-# bridge translates them into HTTPS_PROXY / ALL_PROXY env vars (which
-# requests/httpx/urllib all honor) rather than emitting raw
-# ``<ID>_PROXY_*`` vars that downstream MCP servers wouldn't know to
-# read. PgBouncer / SSH-tunnel rewriting of the integration's host:port
-# also happens here.
-_PROXY_FORM_FIELDS = frozenset(
-    {
-        "proxy_type",
-        "proxy_host",
-        "proxy_port",
-        "proxy_username",
-        "proxy_password",
-        "ssh_private_key_path",
-        "ssh_key_passphrase",
-        "verify_proxy_tls",
-    }
-)
-
-
 class IntegrationBridgeService:
     """Bridges integration configs to MCP server configurations."""
 
@@ -114,95 +93,6 @@ class IntegrationBridgeService:
                 list(applied),
             )
         return applied
-
-    def _config_to_env_vars(self, integration_id: str, config: Dict) -> Dict[str, str]:
-        """
-        Convert integration configuration to environment variables.
-
-        Args:
-            integration_id: Integration identifier (e.g., 'virustotal')
-            config: Integration configuration dictionary
-
-        Returns:
-            Dictionary of environment variables with proper naming
-        """
-        env_vars = {}
-
-        # Add integration ID prefix for namespacing
-        # Convert kebab-case to UPPER_SNAKE_CASE
-        prefix = integration_id.upper().replace("-", "_")
-
-        for field_name, field_value in config.items():
-            # Proxy fields are translated separately below into
-            # HTTPS_PROXY / ALL_PROXY (and host/port rewrites), not
-            # exposed as <PREFIX>_PROXY_* — downstream MCP servers
-            # already speak the conventional env-var names.
-            if field_name in _PROXY_FORM_FIELDS:
-                continue
-
-            # Skip empty values
-            if field_value is None or field_value == "":
-                continue
-
-            # Convert boolean to string
-            if isinstance(field_value, bool):
-                field_value = "true" if field_value else "false"
-
-            # Convert field name to env var name
-            env_name = field_name.upper()
-
-            # Add prefix and set value
-            full_env_name = f"{prefix}_{env_name}"
-            env_vars[full_env_name] = str(field_value)
-
-        # Append proxy-derived env vars (HTTPS_PROXY etc.) when this
-        # integration's config asks for HTTP/SOCKS routing.
-        env_vars.update(self._proxy_env_vars(integration_id, config))
-
-        return env_vars
-
-    def _proxy_env_vars(self, integration_id: str, config: Dict) -> Dict[str, str]:
-        """Translate proxy_* form fields into env vars for the MCP child.
-
-        For ``http`` / ``socks5``: emits ``HTTPS_PROXY`` / ``ALL_PROXY``
-        (recognised by every common Python HTTP client).
-
-        For ``pgbouncer`` and ``ssh_tunnel``: returns ``{}`` here. Those
-        modes need host:port rewriting on URL-shaped fields, which is
-        more invasive than env injection — handled (or warned about) by
-        callers that actually open connections. Documented in the
-        accompanying plan as a v1 limitation for integration-side
-        tunneling.
-        """
-        proxy_type = (config.get("proxy_type") or "none").strip().lower()
-        if proxy_type in ("", "none"):
-            return {}
-
-        try:
-            from core.integrations.integration_secrets import secret_fields_for
-            from core.storage.db_proxy import ProxyConfig, child_env_for_proxy
-        except ImportError:  # pragma: no cover - defensive
-            return {}
-
-        secret_keys = secret_fields_for(integration_id)
-        proxy = ProxyConfig.from_dict(
-            config,
-            password_secret_key=secret_keys.get("proxy_password"),
-            passphrase_secret_key=secret_keys.get("ssh_key_passphrase"),
-        )
-        if proxy_type in ("http", "socks5"):
-            return child_env_for_proxy(proxy)
-
-        # pgbouncer / ssh_tunnel: log so operators know the bridge
-        # itself doesn't handle endpoint rewriting for MCP children.
-        logger.info(
-            "Integration %s configured proxy_type=%s; bridge does not "
-            "rewrite MCP server endpoints. Use http/socks5 for HTTP "
-            "integrations, or configure the proxy at the network layer.",
-            integration_id,
-            proxy_type,
-        )
-        return {}
 
     def is_integration_enabled(self, integration_id: str) -> bool:
         """

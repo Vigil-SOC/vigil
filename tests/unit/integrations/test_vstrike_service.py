@@ -336,11 +336,15 @@ def test_malformed_json_body_on_findings_returns_none():
     assert svc.find_findings_by_segment("dmz") is None
 
 
+# resolve() reads the stored config through this name.
+_CONFIG = "core.integrations._base.config.get_integration_config"
+
+
 def test_get_vstrike_service_returns_none_when_unconfigured(isolate_secrets):
     isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
     isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
     isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
-    with patch("core.config.get_integration_config", return_value={}):
+    with patch(_CONFIG, return_value={}):
         assert get_vstrike_service() is None
 
 
@@ -348,26 +352,27 @@ def test_get_vstrike_service_from_env(isolate_secrets):
     isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
     isolate_secrets.setenv("VSTRIKE_USERNAME", "alice")
     isolate_secrets.setenv("VSTRIKE_PASSWORD", "wonderland")
-    svc = get_vstrike_service()
+    with patch(_CONFIG, return_value={}):
+        svc = get_vstrike_service()
     assert svc is not None
     assert svc.base_url == "https://vstrike.example.com"
     assert svc.username == "alice"
     assert svc.password == "wonderland"
 
 
-def test_get_vstrike_service_falls_back_to_integration_config(isolate_secrets):
-    isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
-    isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
-    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
-    isolate_secrets.delenv("VSTRIKE_VERIFY_SSL", raising=False)
+def test_get_vstrike_service_from_store_without_env(monkeypatch):
+    """Configured only in Settings: url in the stored config, credentials in
+    the encrypted store, no VSTRIKE_* in the environment."""
+    import core.secrets_manager as sm
+
+    for key in list(os.environ):
+        if key.startswith("VSTRIKE_"):
+            monkeypatch.delenv(key)
+    store = {"VSTRIKE_USERNAME": "alice", "VSTRIKE_PASSWORD": "wonderland"}
+    monkeypatch.setattr(sm, "get_secret", lambda key, default=None: store.get(key))
     with patch(
-        "core.config.get_integration_config",
-        return_value={
-            "url": "https://cfg.example.com",
-            "username": "alice",
-            "password": "wonderland",
-            "verify_ssl": False,
-        },
+        _CONFIG,
+        return_value={"url": "https://cfg.example.com", "verify_ssl": False},
     ):
         svc = get_vstrike_service()
     assert svc is not None
@@ -384,7 +389,7 @@ def test_get_vstrike_service_ignores_legacy_api_key(isolate_secrets):
     isolate_secrets.setenv("VSTRIKE_API_KEY", "leftover-from-old-install")
     isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
     isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
-    with patch("core.config.get_integration_config", return_value={}):
+    with patch(_CONFIG, return_value={}):
         svc = get_vstrike_service()
     # Without username+password, an api_key alone is no longer enough.
     assert svc is None
@@ -405,7 +410,7 @@ def test_get_vstrike_service_with_only_ui_credentials(isolate_secrets):
     isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
     isolate_secrets.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
     isolate_secrets.setenv("VSTRIKE_PASSWORD", "secret")
-    with patch("core.config.get_integration_config", return_value={}):
+    with patch(_CONFIG, return_value={}):
         svc = get_vstrike_service()
     assert svc is not None
     assert svc.has_ui_credentials is True
@@ -416,32 +421,36 @@ def test_get_vstrike_service_returns_none_with_only_username(isolate_secrets):
     isolate_secrets.delenv("VSTRIKE_API_KEY", raising=False)
     isolate_secrets.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
     isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
-    with patch("core.config.get_integration_config", return_value={}):
+    with patch(_CONFIG, return_value={}):
         svc = get_vstrike_service()
     # Username alone is not enough.
     assert svc is None
 
 
-def test_get_vstrike_service_ui_credentials_from_integration_config(
-    isolate_secrets,
-):
-    isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
-    isolate_secrets.delenv("VSTRIKE_API_KEY", raising=False)
-    isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
-    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
-    with patch(
-        "core.config.get_integration_config",
-        return_value={
-            "url": "https://cfg.example.com",
-            "username": "alice",
-            "password": "wonderland",
-        },
-    ):
+def test_runner_env_pushes_the_names_the_vstrike_server_reads(monkeypatch):
+    """The runner child has no store, so resolve() there falls back to the env
+    names runner_env pushes — url must arrive as VSTRIKE_BASE_URL."""
+    import core.secrets_manager as sm
+    from core.integrations.mcp.runner import runner_env
+    from core.integrations.mcp.service import MCPServer
+
+    store = {"VSTRIKE_USERNAME": "alice", "VSTRIKE_PASSWORD": "wonderland"}
+    monkeypatch.setattr(sm, "get_secret", lambda key, default=None: store.get(key))
+    server = MCPServer(name="vstrike", command="python3", args=[], cwd=".", env={})
+    with patch(_CONFIG, return_value={"url": "https://cfg.example.com"}):
+        env = runner_env(server)
+    assert env == {
+        "VSTRIKE_BASE_URL": "https://cfg.example.com",
+        "VSTRIKE_USERNAME": "alice",
+        "VSTRIKE_PASSWORD": "wonderland",
+    }
+
+    # And the child, reading only that env, builds the service.
+    monkeypatch.setattr(sm, "get_secret", lambda key, default=None: env.get(key))
+    with patch(_CONFIG, return_value={}):
         svc = get_vstrike_service()
     assert svc is not None
-    assert svc.username == "alice"
-    assert svc.password == "wonderland"
-    assert svc.has_ui_credentials is True
+    assert svc.base_url == "https://cfg.example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -1215,3 +1224,17 @@ def test_ui_rightpanel_focus_forwards_extras_for_future_compat():
 
     args = mock_post.call_args.kwargs["json"]["params"]["arguments"]
     assert args == {"future_field": "x"}
+
+
+def test_catalog_gates_vstrike_on_credentials_only():
+    """A URL saved in Settings lives in the integration config, not the secret
+    store the backend's dormancy gate reads, so it must not gate the server."""
+    import json
+
+    from core.integrations.mcp.service import extract_required_env_vars
+
+    entry = json.loads((ROOT / "mcp-config.json").read_text())["mcpServers"]["vstrike"]
+    assert extract_required_env_vars(entry["env"], entry["args"]) == [
+        "VSTRIKE_PASSWORD",
+        "VSTRIKE_USERNAME",
+    ]

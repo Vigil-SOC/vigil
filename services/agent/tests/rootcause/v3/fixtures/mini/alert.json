@@ -1,0 +1,11 @@
+{
+  "id": "alert-mini-1",
+  "source": "edr:process",
+  "title": "Backup catalog deleted on HOST-7",
+  "observedAt": "2026-05-05T10:30:00Z",
+  "artifacts": [
+    { "kind": "host", "value": "HOST-7" },
+    { "kind": "event-id", "value": "E-900" }
+  ],
+  "raw": { "detector": "edr-rule-backup-delete" }
+}

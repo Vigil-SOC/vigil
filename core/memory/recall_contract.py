@@ -20,6 +20,8 @@ import re
 from enum import Enum
 from typing import Any, Dict, Mapping, Tuple
 
+from core.storage.schemas.case_account import ENTITY_TYPES
+
 
 class Trust(str, Enum):
     """Who concluded, as opposed to what the source is (**Source Tier**)."""
@@ -123,7 +125,7 @@ RECALL_TOOL = "recall_entity"
 # What the arch asks for; a ToolSpec binds it to the tool id via `provides`.
 RECALL_CAPABILITY = "entity_recall"
 
-# Keyed by the role names threathunt.yaml declares, not by a class called
+# Keyed by the role names plugins/hunt/plugin.yaml declares, not by a class called
 # "worker" that appears in no file. Empties are decisions: the lead never
 # queries, and narrative search — the lead's alone — ships no tool here.
 RECALL_GRANTS: Mapping[str, Tuple[str, ...]] = {
@@ -248,29 +250,19 @@ DROPPED_KINDS: Tuple[str, ...] = ("sightings", "verdicts", "gaps")
 DROPPED_REASONS: Tuple[str, ...] = ("per_key_cap", "overall_cap")
 
 # How a queried key is matched against a stored one. The rule is `defang` then
-# case-fold, in `services/agent/workflows/hunt/entities.ts`; Python reproduces
+# case-fold, in `services/agent/plugins/hunt/entities.ts`; Python reproduces
 # it. The exception is the half that breaks silently: an ARN's resource part and
 # an AWS key id are case-significant, so folding them makes two principals one
 # key and the join still returns rows, just the wrong ones.
 KEY_CASE_SENSITIVE_TYPES: Tuple[str, ...] = ("arn", "aws_key")
 
 # The entity types a key may name. Owned by ENTITY_TYPES in
-# services/agent/workflows/hunt/types.ts, which is what the harness extracts and
-# therefore what a Sighting can ever hold. A writer that mints outside this list
+# services/agent/plugins/hunt/types.ts, which is what the harness extracts and
+# therefore what a Sighting can ever hold, and mirrored once on this side by the
+# case account's schema, below memory. A writer that mints outside this list
 # -- a Case IOC typed `mutex`, say -- writes a key no reader will ever query,
 # which reads as an entity nobody has looked at rather than as a bad write.
-ENTITY_KEY_TYPES: Tuple[str, ...] = (
-    "ip",
-    "domain",
-    "host",
-    "url",
-    "email",
-    "hash",
-    "arn",
-    "aws_key",
-    "user",
-    "process",
-)
+ENTITY_KEY_TYPES: Tuple[str, ...] = ENTITY_TYPES
 
 # How many subjects one Verdict may name. ADR 0016 puts a Hypothesis at
 # "typically one to three" and argues at length against a Verdict naming the

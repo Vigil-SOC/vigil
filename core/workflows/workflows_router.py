@@ -6,7 +6,12 @@ from typing import Annotated, Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from core.agents.projections import read_projection, read_replay, read_verify
+from core.agents.projections import (
+    read_account,
+    read_projection,
+    read_replay,
+    read_verify,
+)
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import (
@@ -19,10 +24,15 @@ from core.deps import (
 )
 from core.documents.condense import condense
 from core.documents.extract import MAX_DOCUMENT_CHARS, DocumentRefused, extract_upload
-from core.memory.source_tier import InvestigationKind, resolve_source_tier
+from core.memory.source_tier import (
+    InvestigationKind,
+    SourceTier,
+    resolve_source_tier,
+)
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
+from core.storage.schemas.case_account import CaseAccount
 from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
@@ -471,16 +481,68 @@ async def execute_workflow(
 # ---------------------------------------------------------------------------
 
 
-def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
-    """Label each hunt evidence row with its Source Tier, as configured now.
+# Weakest first: a row resting on several systems is graded by the least of them.
+_TIER_ORDER = (SourceTier.NOT_EVIDENCE, SourceTier.FEED, SourceTier.TELEMETRY)
 
-    A display label, not stored: a gap row names no source, so it gets none.
+
+def _finding_sources(finding_ids: List[str]) -> Dict[str, str]:
+    """The ``data_source`` of each finding asked for that has one.
+
+    Fail-open: a read that cannot be served names no system, and the row keeps
+    the domain it was recorded under.
     """
-    for item in (folded or {}).get("evidence") or []:
-        if isinstance(item, dict) and not item.get("is_gap"):
+    if not finding_ids:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from core.storage.models.finding import Finding
+        from core.storage.unit_of_work import unit_of_work
+
+        with unit_of_work() as session:
+            rows = session.execute(
+                select(Finding.finding_id, Finding.data_source).where(
+                    Finding.finding_id.in_(finding_ids)
+                )
+            ).all()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not read the sources of %d findings", len(finding_ids))
+        return {}
+    return {finding_id: source for finding_id, source in rows if source}
+
+
+def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
+    """Label each hunt evidence row with where it came from and its Source Tier.
+
+    ``origins`` is the system its rows came from (#2287): the ``data_source`` of
+    the alerts it cites, or the integration that answered when it cites none.
+    The tier is that system's; a row naming no system is graded by its domain.
+    Display labels, as configured now and not stored: a gap row names no
+    source, so it gets neither.
+    """
+    rows = [
+        item
+        for item in (folded or {}).get("evidence") or []
+        if isinstance(item, dict) and not item.get("is_gap")
+    ]
+    cited = [
+        [one for one in item.get("finding_ids") or [] if isinstance(one, str)]
+        for item in rows
+    ]
+    sources = _finding_sources(sorted({one for ids in cited for one in ids}))
+    for item, ids in zip(rows, cited):
+        origins = list(dict.fromkeys(sources[one] for one in ids if one in sources))
+        served = item.get("served_by")
+        if not origins and isinstance(served, str) and served:
+            origins = [served]
+        if not origins:
             item["source_tier"] = resolve_source_tier(
                 str(item.get("source_system") or ""), InvestigationKind.HUNT
             ).value
+            continue
+        item["origins"] = origins
+        tiers = [resolve_source_tier(one, InvestigationKind.CASE) for one in origins]
+        item["source_tier"] = min(tiers, key=_TIER_ORDER.index).value
 
 
 @router.get("/workflows/runs/{run_id}")
@@ -511,6 +573,35 @@ async def get_workflow_run(
     else:
         row["projection"] = folded
     return row
+
+
+@router.get(
+    "/workflows/runs/{run_id}/account",
+    response_model=CaseAccount,
+    response_model_exclude_unset=True,
+)
+async def get_workflow_run_account(
+    run_id: str,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> CaseAccount:
+    """What a run concluded, in the one shape every loop fills.
+
+    Folded from the ledger on each read, so it is never stale. A section the
+    run's loop does not produce is absent, never null; a run whose loop keeps
+    no account is a 404.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        account = await read_account(run_id)
+    except Exception as exc:  # noqa: BLE001 — logged; the reader gets a fixed reason
+        logger.error("could not read the account of run %s: %s", run_id, exc)
+        raise HTTPException(
+            status_code=502, detail="The agent layer could not give this run's account"
+        ) from None
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"No account for run: {run_id}")
+    return account
 
 
 @router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)

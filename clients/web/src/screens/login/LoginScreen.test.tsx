@@ -77,6 +77,19 @@ describe('LoginScreen', () => {
     expect(screen.getByLabelText('Authentication code')).toBeInTheDocument()
   })
 
+  it('accepts an 8-character recovery code in the MFA step', async () => {
+    login.mockRejectedValueOnce(new Error('MFA_REQUIRED')).mockResolvedValueOnce(undefined)
+    renderLogin()
+    fireEvent.change(screen.getByLabelText('Username or email'), { target: { value: 'admin' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'admin123' } })
+    fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }))
+    const code = await screen.findByLabelText('Authentication code')
+    fireEvent.change(code, { target: { value: '3cfb-0b62' } })
+    expect(code).toHaveValue('3cfb0b62')
+    fireEvent.click(screen.getByRole('button', { name: /verify/i }))
+    await waitFor(() => expect(login).toHaveBeenLastCalledWith('admin', 'admin123', '3cfb0b62'))
+  })
+
   describe('sign-in errors', () => {
     async function submit() {
       renderLogin()

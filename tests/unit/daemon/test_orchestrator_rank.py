@@ -71,7 +71,6 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_investigation = AsyncMock()
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
-    orch._data_service = MagicMock()
     orch._attach_to_overlapping_case = MagicMock(
         return_value=(_Overlap.MERGED, "case-1")
     )

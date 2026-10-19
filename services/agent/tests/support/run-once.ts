@@ -21,8 +21,25 @@ function decision(schema: Record<string, unknown>): unknown {
   return { action: "CONCLUDE", rationale: "the skeleton concludes", [cites]: [] };
 }
 
+// Any other answer the run asks for, such as the narrator's account, gets the first
+// value its schema allows, so the run ends on what it was asked for.
+function fill(schema: Record<string, unknown>): unknown {
+  const options = schema["enum"];
+  if (Array.isArray(options)) return options[0];
+  const kind = schema["type"];
+  if (kind === "object") {
+    const properties = (schema["properties"] ?? {}) as Record<string, Record<string, unknown>>;
+    const required = (schema["required"] ?? []) as string[];
+    return Object.fromEntries(required.map((key) => [key, fill(properties[key] ?? { type: "string" })]));
+  }
+  if (kind === "array") return [];
+  if (kind === "number" || kind === "integer") return 0;
+  if (kind === "boolean") return false;
+  return "the skeleton concludes";
+}
+
 const provider = respondingProvider({
-  emit: (schema) => (isLead(schema) ? decision(schema) : { results: [] }),
+  emit: (schema) => (isLead(schema) ? decision(schema) : fill(schema)),
   ticks: 0,
 });
 

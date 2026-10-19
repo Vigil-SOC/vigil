@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { gunzipSync } from "node:zlib";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fromPayload, fromText } from "../../workflows/hunt/entities.js";
+import { fromPayload, fromText } from "../../plugins/hunt/entities.js";
 
 // The ledgers under tests/fixtures/runs are hunts over BOTS v3 rewritten by
 // scripts/sanitise-hunt-ledgers.ts. This is the gate on that rewrite: it asserts
@@ -92,10 +92,14 @@ const swept = [...files, PSEUDONYMS, ...replayed];
 
 const dirOf = (name: string): string => (replayed.includes(name) ? REPLAY : RUNS);
 
+// A kernel ledger's sha256:<hex> names its own content, an address rather than an observed
+// digest, so it alone is set aside; a bare digest is still held to the allowlist.
+const ADDRESS = /sha256:[0-9a-f]{64}/g;
+
 const textOf = (name: string): string =>
   name === PSEUDONYMS
     ? readFileSync(join(RUNS, name), "utf8")
-    : gunzipSync(readFileSync(join(dirOf(name), name))).toString("utf8");
+    : gunzipSync(readFileSync(join(dirOf(name), name))).toString("utf8").replace(ADDRESS, "sha256:address");
 
 // Parsed, so the payload-typed entities can be read the way the fold reads them.
 // A torn line is skipped rather than repaired: it is the subject of its own test.
@@ -132,8 +136,8 @@ describe("the committed fixtures carry nothing real", () => {
 
   // Counted so the sweep below cannot pass by reading nothing: a fixture that
   // stopped being found is a fixture that stopped being checked.
-  it("has the recorded run the replay gate reads", () => {
-    expect(replayed.filter((name) => name.endsWith(".jsonl.gz"))).toHaveLength(1);
+  it("has the recorded runs the replay gates read", () => {
+    expect(replayed.filter((name) => name.endsWith(".jsonl.gz"))).toEqual(["hunt-recall.jsonl.gz", "kernel-hunt.jsonl.gz"]);
   });
 
   it.each(swept)("%s holds no identifier outside the allowlist", (name) => {
