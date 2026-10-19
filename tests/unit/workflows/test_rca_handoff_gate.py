@@ -92,6 +92,26 @@ class TestProcessHandoff:
         start_rca.assert_called_once()
         # The RCA is teed onto the case that was just opened, not the agent-side id.
         assert start_rca.call_args.args[2] == "case-opened"
+        # And the hunt is filed under it, so the case lists the run that proved it.
+        svc.set_case.assert_called_once_with("run-1", "case-opened")
+
+    def test_a_case_that_did_not_open_files_the_hunt_nowhere(self):
+        svc = _run_service()
+        with patch.object(rbr, "_open_case", return_value=None), patch.object(
+            rbr, "_start_root_cause"
+        ) as start_rca:
+            rbr._process_handoff("run-1", HANDOFF, "", True, svc)
+        svc.set_case.assert_not_called()
+        assert start_rca.call_args.args[2] == "case-abc"
+
+    def test_a_hunt_started_on_a_case_is_not_refiled(self):
+        svc = _run_service()
+        with patch.object(rbr, "_record_handoff"), patch.object(
+            rbr, "_open_case"
+        ) as open_case, patch.object(rbr, "_start_root_cause"):
+            rbr._process_handoff("run-1", HANDOFF, "case-own", True, svc)
+        open_case.assert_not_called()
+        svc.set_case.assert_not_called()
 
     def test_a_second_arrival_tees_no_second_rca(self):
         # The /handoff push already teed the RCA; the terminal re-carries the same

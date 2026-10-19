@@ -310,7 +310,12 @@ def _process_handoff(
         _record_handoff(origin, run_id, handoff)
         case_id: Optional[str] = origin
     else:
-        case_id = _open_case(run_id, handoff) or handoff.case_id
+        opened = _open_case(run_id, handoff)
+        # The hunt is filed under the case it opened, or the case would hold its
+        # root-cause run but not the hunt that proved what it traces.
+        if opened:
+            run_service.set_case(run_id, opened)
+        case_id = opened or handoff.case_id
     if start_rca and not _rca_exists(run_id, handoff, run_service):
         _start_root_cause(run_id, handoff, case_id)
 
