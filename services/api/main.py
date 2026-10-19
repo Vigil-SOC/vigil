@@ -853,6 +853,18 @@ _SERVED_BY_THE_BACKEND = (
 )
 
 
+def inject_index_head(raw: str, context_path: str, tags: list[str]) -> str:
+    """Inject a ``<base>`` plus ``tags`` at the very top of ``<head>``.
+
+    The build references assets relatively (``./assets/...``), so at a deep URL
+    like ``/cases/abc`` they would resolve to ``/cases/assets/...`` and get the
+    app shell back. ``<base>`` pins them to the context root. It goes first
+    because a browser applies it only to URLs that follow it.
+    """
+    injected = "\n    ".join([f'<base href="{context_path}/">', *tags])
+    return raw.replace("<head>", f"<head>\n    {injected}", 1)
+
+
 def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool:
     """Whether a 404 at ``path`` is a client-side route rather than a miss.
 

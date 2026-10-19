@@ -4549,7 +4549,11 @@ export interface paths {
         put?: never;
         /**
          * Wake Investigation
-         * @description Wake a sleeping investigation for further work.
+         * @description Restart a finished investigation by queueing a new one on the same case.
+         *
+         *     A run's id is derived from its investigation id and its ledger is terminal
+         *     once finished, so the same investigation cannot run twice. The failure stays
+         *     on record; the restart is a fresh Human Ask over the same workflow and findings.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
