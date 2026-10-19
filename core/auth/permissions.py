@@ -41,6 +41,8 @@ def require_permission(
             )
         return user
 
+    # Introspectable by the role x route matrix test.
+    _check.permission, _check.unsafe_only = permission, unsafe_only
     return _check
 
 

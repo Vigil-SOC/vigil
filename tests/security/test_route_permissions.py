@@ -52,6 +52,12 @@ GATED_ROUTES = [
     ("POST", "/api/workflows/runs/r-1/resume", {}, "ai_decisions.approve"),
     (
         "POST",
+        "/api/ai/decisions/d-1/feedback",
+        {"human_decision": "agree"},
+        "ai_decisions.approve",
+    ),
+    (
+        "POST",
         "/api/workflows/runs/r-1/cancel",
         {"reason": "no"},
         "ai_decisions.approve",
@@ -70,6 +76,14 @@ GATED_ROUTES = [
     ),
     ("POST", "/api/workflows/w-1/execute", {}, "ai_chat.use"),
     ("POST", "/api/claude/chat/stream", {"messages": []}, "ai_chat.use"),
+    (
+        "POST",
+        "/api/skills",
+        {"name": "s", "description": "d", "body": "b"},
+        "settings.write",
+    ),
+    ("POST", "/api/skills/upload", None, "settings.write"),
+    ("DELETE", "/api/skills/s", None, "settings.write"),
 ]
 
 

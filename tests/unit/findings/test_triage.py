@@ -393,6 +393,35 @@ def test_source_filter_keeps_an_older_row_the_cap_would_drop():
         assert triage_payload(now=NOW, day=DAY, **narrow)["counts"] == counts
 
 
+def test_queued_rows_lead_when_decided_rows_outnumber_the_cap():
+    """The decided LIMIT leaves room for every queued row, ahead of them."""
+    _finding("tr-cap-q", "low", data_source="tr-cap")
+    _finding("tr-cap-d", "low", data_source="tr-cap")
+    waiting = _trigger(
+        state="queued", finding_id="tr-cap-q", created_at=NOW - timedelta(days=3)
+    )
+    with unit_of_work() as session:
+        session.add_all(
+            IntakeTrigger(
+                kind="detection",
+                state="launched",
+                finding_id="tr-cap-d",
+                priority="low",
+                payload={},
+                created_at=NOW,
+                decided_at=NOW - timedelta(minutes=i),
+            )
+            for i in range(ROW_CAP + 5)
+        )
+    payload = triage_payload(now=NOW, day=DAY, source="tr-cap")
+    rows = payload["rows"]
+    assert payload["matched"] == ROW_CAP + 6
+    assert len(rows) == ROW_CAP
+    assert rows[0]["id"] == waiting
+    decided = [row["decided_at"] for row in rows[1:]]
+    assert decided == sorted(decided, reverse=True)
+
+
 def test_finding_only_source_has_null_lag_and_is_not_quiet():
     _finding("tr-hook-f", "low", data_source="tr-hook", created_at=NOW)
     sources = {

@@ -10,6 +10,7 @@ vi.mock('../../services/api', () => ({
     getDarktrace: vi.fn(() => Promise.resolve({ data: {} })),
     setDarktrace: vi.fn(),
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
+    setDemoMode: vi.fn(),
     resetDemoData: vi.fn(),
   },
   kafkaApi: {
@@ -153,6 +154,29 @@ describe('manual upload', () => {
 
     expect(await screen.findByText('Regenerated 25 findings and 5 cases.')).toBeInTheDocument()
     expect(configApi.resetDemoData).toHaveBeenCalledOnce()
+  })
+
+  it('turns demo data off once confirmed, and says a restart is what applies it', async () => {
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true, source: 'config' } } as never)
+    vi.mocked(configApi.setDemoMode).mockResolvedValue({ data: { success: true, enabled: false } } as never)
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off demo data' }))
+    expect(configApi.setDemoMode).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
+
+    await waitFor(() => expect(configApi.setDemoMode).toHaveBeenCalledWith(false))
+    expect(await screen.findByRole('status')).toHaveTextContent('Restart the Vigil backend and daemon')
+    expect(screen.queryByRole('button', { name: 'Clear demo data' })).not.toBeInTheDocument()
+  })
+
+  it('offers no turn-off when the server environment sets demo mode', async () => {
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true, source: 'environment' } } as never)
+    renderPanel()
+
+    expect(await screen.findByRole('button', { name: 'Clear demo data' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Turn off demo data' })).not.toBeInTheDocument()
+    expect(screen.getByText(/set by the server.s environment/)).toBeInTheDocument()
   })
 
   it('clears the file input so the same file can be retried', async () => {

@@ -353,7 +353,8 @@ def _locations(staging: Path, bifrost_data: str | None) -> list[Location]:
             Path(settings.orchestrator_workdir),
             directory=True,
         ),
-        _skills(settings.vigil_skills_path),
+        # Unset, skills sit in the State Directory and are copied with it.
+        _skills(settings.vigil_skills_path or ""),
         _file_or_absent("intent", intent_file()),
         _file_or_absent("env", REPO_ROOT / ".env"),
         _bifrost(staging, bifrost_data),

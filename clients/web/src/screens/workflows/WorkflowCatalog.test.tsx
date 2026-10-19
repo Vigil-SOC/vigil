@@ -1,6 +1,6 @@
 /* The catalog is the board's card column with each workflow's week of runs, and
    each skill names the workflows whose agents are granted the library. */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import WorkflowsScreen from './WorkflowsScreen'
@@ -156,6 +156,11 @@ vi.mock('../../services/api', () => ({
   findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
   casesApi: { getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })) },
 }))
+// Skill writes need settings.write (the API answers 403 without it).
+const auth = vi.hoisted(() => ({ canWriteSkills: true }))
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasPermission: (p: string) => p !== 'settings.write' || auth.canWriteSkills }),
+}))
 vi.mock('../../services/skillsApi', () => ({
   skillsApi: {
     list: vi.fn(() => Promise.resolve([
@@ -199,6 +204,10 @@ const GRANT_INFO = 'Each of these is offered the whole library, not a chosen set
 const card = (name: string) => screen.getByText(name).closest('.wfk') as HTMLElement
 
 describe('workflow catalog cards', () => {
+  beforeEach(() => {
+    auth.canWriteSkills = true
+  })
+
   it('draws kind, triggers, command and the week\'s numbers, with no actions on the card', async () => {
     render(
       <MemoryRouter>
@@ -299,8 +308,30 @@ describe('workflow catalog cards', () => {
     expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit executive-summary' }))
-    expect(await screen.findByText(/path is unset/)).toBeInTheDocument()
+    expect(await screen.findByText(/Skills are off/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save new version' })).toBeDisabled()
+  })
+
+  it('offers no skill writes to a role that cannot change settings', async () => {
+    auth.canWriteSkills = false
+    vi.mocked(skillsApi.list).mockResolvedValueOnce([
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 1 },
+    ])
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
+    expect(await screen.findByText('desk-check')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Build a skill/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Import SKILL.md/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit desk-check' }))
+    expect(await screen.findByText(/can read skills but not save them/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull()
   })
 
   it('saves a bundled skill under a new name and deletes an operator skill after confirm', async () => {

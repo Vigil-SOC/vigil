@@ -17,7 +17,7 @@ import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import { newId } from "../../plugins/hunt/ids.js";
 import type { HuntKinds } from "../../plugins/hunt/journal.js";
 import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
-import { BASE_RATE_PROVENANCE, startHunt } from "../../plugins/hunt/opening.js";
+import { BASE_RATE_PROVENANCE, briefHypothesis, startHunt } from "../../plugins/hunt/opening.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
 import { huntSpecFor } from "../support/hunt.js";
 
@@ -115,7 +115,7 @@ describe("an adjudication is stamped and seeded as its own kind", () => {
     // The forward base rate, as any hunt gets: the finding is what is on trial,
     // so "this has a legitimate explanation" is the account the intent must beat.
     const [seeded] = [...ledger.projection.hypotheses.values()].filter((h) => h.provenance === BASE_RATE_PROVENANCE);
-    expect(seeded?.statement).toContain(`"${INTAKE_LINE}" has a legitimate explanation`);
+    expect(seeded?.statement).toContain(`"${briefHypothesis(INTAKE_LINE)}" has a legitimate explanation`);
     expect(seeded?.statement).not.toMatch(/initial-access vector/);
   });
 });

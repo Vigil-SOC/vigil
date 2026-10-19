@@ -87,7 +87,7 @@ def pytest_sessionfinish(session, exitstatus):
     path = os.environ.get("LIVE_CONNECTORS_REPORT")
     if not path or not _results:
         return
-    from tests.live.harness import connector_version
+    from tests.live.matrix import connector_version
 
     for result in _results.values():
         result["version"] = connector_version(result["server"])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import stat
 from pathlib import Path
 
 import pytest
@@ -10,11 +11,15 @@ import pytest
 from core.config import Settings
 from core.skills.skill_library import (
     LIBRARY_ROOT,
+    SkillConflict,
     SkillError,
+    install_uploaded_skill,
     load_skills,
+    operator_skills_root,
     parse_skill,
     read_skill,
     skill_roots,
+    write_operator_skill,
 )
 
 pytestmark = pytest.mark.unit
@@ -104,12 +109,49 @@ def test_earlier_root_wins_a_name_clash_and_missing_roots_are_fine(tmp_path):
     assert [s.path for s in skills] == [first]
 
 
-def test_skill_roots_is_the_library_then_the_setting():
+def test_skill_roots_is_the_library_then_the_setting(state_dir):
+    assert skill_roots(Settings(vigil_skills_path=None)) == [
+        LIBRARY_ROOT,
+        state_dir / "skills",
+    ]
     assert skill_roots(Settings(vigil_skills_path="")) == [LIBRARY_ROOT]
     assert skill_roots(Settings(vigil_skills_path="/opt/skills")) == [
         LIBRARY_ROOT,
         Path("/opt/skills"),
     ]
+
+
+def test_unset_path_is_the_state_directory_and_creates_nothing(state_dir, monkeypatch):
+    monkeypatch.delenv("VIGIL_SKILLS_PATH", raising=False)
+    settings = Settings()
+    assert settings.vigil_skills_path is None
+    assert operator_skills_root(settings) == state_dir / "skills"
+    assert not state_dir.exists()
+
+
+def test_first_write_creates_the_default_root_privately(state_dir):
+    settings = Settings(vigil_skills_path=None)
+    skill = write_operator_skill("desk-check", "Check the desk.", "# Steps\n", settings)
+    root = state_dir / "skills"
+    assert skill.path == root.resolve() / "desk-check"
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert "desk-check" in {s.name for s in load_skills(skill_roots(settings))}
+
+
+def test_a_full_root_refuses_a_new_skill_but_not_a_new_version(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.skills.skill_library.OPERATOR_SKILLS_MAX", 2)
+    settings = Settings(vigil_skills_path=str(tmp_path))
+    for name in ("one", "two"):
+        write_operator_skill(name, "d", "# Steps\n", settings)
+    (tmp_path / ".copy-scratch").mkdir()  # a write in flight is not a skill
+    with pytest.raises(SkillConflict, match="already 2 custom skills"):
+        write_operator_skill("three", "d", "# Steps\n", settings)
+    with pytest.raises(SkillConflict, match="already 2 custom skills"):
+        install_uploaded_skill(
+            "SKILL.md", b"---\nname: three\ndescription: d\n---\n\n# S\n", settings
+        )
+    write_operator_skill("one", "d2", "# Steps\n", settings, expected_version=1)
+    assert not (tmp_path / "three").exists()
 
 
 def test_read_skill_returns_the_body_without_frontmatter():

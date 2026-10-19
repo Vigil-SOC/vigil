@@ -1,5 +1,6 @@
 {
  "run_id": "run-1",
+ "run_kind": "hunt",
  "name": "beaconing on the finance segment",
  "scope": {
   "segment": "finance",
@@ -10,6 +11,7 @@
  "reason": "the agent stopped before the hunt could conclude (refused: h-3de60798 is still active: 192.0.2.10 runs an unsanctioned sync client. Resolve it before concluding again.): the host beaconed; one claim is still open",
  "iteration": 8,
  "cost_usd": 0,
+ "max_cost_usd": 5,
  "budgets": {
   "max_calls": 2304,
   "max_cost_usd": 5,

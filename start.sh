@@ -243,6 +243,9 @@ export DAEMON_BIND_HOST="${DAEMON_BIND_HOST:-$BIND_HOST}"
 export AGENT_BIND_HOST="${AGENT_BIND_HOST:-$BIND_HOST}"
 # Auth is on unless .env opts into DEV_MODE; the backend needs a signing secret.
 ensure_jwt_secret || exit 1
+# And the agent layer needs its token, or agent_up.sh refuses to start. Covers
+# an install that skipped setup_dev.sh.
+ensure_agent_token
 
 # `bifrost` only resolves inside the compose network. Rewrite before starting
 # services: bringing Ollama up syncs its catalog into Bifrost, and that runs
@@ -355,6 +358,9 @@ if [ "$DAEMON" -eq 0 ]; then
     start_agent_layer
     print_ready
     echo "Press Ctrl+C to stop"
+    # The foreground is the local path and leaves the SOC daemon out (#902). Said
+    # out loud, so an empty alert queue isn't read as a quiet day.
+    echo "SOC daemon not started: no alert polling or auto-triage. ./start.sh -d runs it."
 
     # Open browser once frontend is ready
     if [ "$SKIP_FRONTEND" -eq 0 ]; then

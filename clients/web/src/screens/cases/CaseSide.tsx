@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { casesApi } from '../../services/api'
 import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { MeterBar } from '../../shared/MeterBar'
@@ -86,34 +86,64 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, spend, anch
 }
 
 const ENTITIES_SHOWN = 3
-/** Past this a value (a hash, a long domain) keeps its head and tail and loses its middle. */
-const ENTITY_LONG = 20
+/** Before it is laid out, a value past this many characters is taken not to fit; the panel then measures it. */
+const ENTITY_LONG = 24
 const ENTITY_TAIL = 6
 
+/** The kinds a recall key is written with ("domain:cdn-invoicesync.net"); the board shows the value alone. */
+const ENTITY_KIND = /^(?:host|user|ip|domain|hash|email|url|file|process|account):(?=\S)/
+
+/** An entity as the panel shows it: the value without its kind, which stays on hover (#2459). */
+function entityShown(key: string): string {
+  return key.replace(ENTITY_KIND, '')
+}
+
 /**
- * One entity on one line. A long one is cut in the middle by CSS, so the whole
- * value stays in the DOM: selecting and copying it copies all of it.
+ * One entity on one line. A value that fits the column is shown whole; only one wider than it is
+ * cut in the middle (#2459), by CSS, so the whole value stays in the DOM: selecting and copying it
+ * copies all of it.
  */
-function Entity({ value }: { value: string }) {
-  const long = value.length > ENTITY_LONG
+function Entity({ entity }: { entity: string }) {
+  const value = entityShown(entity)
+  const ref = useRef<HTMLSpanElement>(null)
+  const [long, setLong] = useState(value.length > ENTITY_LONG)
+  useLayoutEffect(() => {
+    const box = ref.current
+    const head = box?.firstElementChild as HTMLElement | null
+    if (!box || !head || box.clientWidth === 0) return // not laid out: keep the guess
+    const tail = head.nextElementSibling as HTMLElement | null
+    setLong(head.scrollWidth + (tail?.offsetWidth ?? 0) > box.clientWidth)
+  }, [value])
+  // the head gives up only the room the tail takes, so the cut is no wider than it has to be
+  useLayoutEffect(() => {
+    const tail = ref.current?.querySelector<HTMLElement>('.side-ent-tail')
+    if (tail && tail.offsetWidth > 0) ref.current?.style.setProperty('--ent-tail', `${tail.offsetWidth + 2}px`)
+  }, [long, value])
   return (
-    <span className={`side-ent${long ? ' long' : ''}`} title={value}>
+    <span ref={ref} className={`side-ent${long ? ' long' : ''}`} title={entity}>
       <span className="side-ent-head">{long ? value.slice(0, -ENTITY_TAIL) : value}</span>
       {long && <span className="side-ent-tail">{value.slice(-ENTITY_TAIL)}</span>}
     </span>
   )
 }
 
-/** The first few entities, then "+N" for the rest (DESIGN.md §7, "Rows stay even"). */
+/** The first few entities, then "+N" for the rest (DESIGN.md §7, "Rows stay even"). One line per value, however many keys name it. */
 function Entities({ values }: { values: string[] }) {
   const [all, setAll] = useState(false)
-  const shown = all ? values : values.slice(0, ENTITIES_SHOWN)
+  const seen = new Set<string>()
+  const distinct = values.filter((value) => {
+    const shown = entityShown(value)
+    if (seen.has(shown)) return false
+    seen.add(shown)
+    return true
+  })
+  const shown = all ? distinct : distinct.slice(0, ENTITIES_SHOWN)
   return (
     <div className="side-ents">
-      {shown.map((value) => <Entity key={value} value={value} />)}
-      {values.length > ENTITIES_SHOWN && (
+      {shown.map((value) => <Entity key={value} entity={value} />)}
+      {distinct.length > ENTITIES_SHOWN && (
         <button type="button" className="side-more" aria-expanded={all} onClick={() => setAll((v) => !v)}>
-          {all ? 'Show fewer' : `+${values.length - ENTITIES_SHOWN}`}
+          {all ? 'Show fewer' : `+${distinct.length - ENTITIES_SHOWN}`}
         </button>
       )}
     </div>
