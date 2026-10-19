@@ -30,7 +30,9 @@ async def test_isolation_target_from_src_ip_or_src_ips(entity_context):
     await responder._create_response_action(
         {"finding_id": "f-1"}, "isolate", entity_context, "rule"
     )
-    assert service.create_isolation_action.call_args.kwargs["ip_address"] == "10.11.11.5"
+    assert (
+        service.create_isolation_action.call_args.kwargs["ip_address"] == "10.11.11.5"
+    )
 
 
 @pytest.mark.asyncio
