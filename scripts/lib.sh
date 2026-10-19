@@ -14,6 +14,44 @@ elif command -v docker-compose &>/dev/null; then
 else
     _DC_CMD=(docker compose)  # last resort; surfaces a clear error on use
 fi
+# --- WSL2 ---
+# True inside Windows Subsystem for Linux. Both probes are Linux-only and fail
+# quietly elsewhere (macOS has neither the variable nor /proc/version).
+is_wsl() {
+    [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# Open URL in the user's browser, never failing: it is a convenience, and the
+# URL is already printed in the ready banner. `open` is macOS only (on Debian
+# and Ubuntu `open` is openvt, which is not a browser launcher). WSL prefers
+# wslview, then explorer.exe (which exits 1 even when it opens the page).
+open_url() {
+    local url="$1"
+    if [ "$(uname -s)" = Darwin ]; then
+        open "$url" &>/dev/null || true
+    elif is_wsl && command -v wslview &>/dev/null; then
+        wslview "$url" &>/dev/null || true
+    elif is_wsl && command -v explorer.exe &>/dev/null; then
+        explorer.exe "$url" &>/dev/null || true
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "$url" &>/dev/null || true
+    fi
+    return 0
+}
+
+# One-time notices that only matter under WSL2. Never fatal.
+wsl_preflight() {
+    is_wsl || return 0
+    case "$REPO_ROOT" in
+        /mnt/[a-zA-Z]/*)
+            echo "Warning: this checkout is on the Windows drive ($REPO_ROOT)." >&2
+            echo "  Reloads, file permissions and Docker mounts are unreliable there." >&2
+            echo "  Clone Vigil inside the Linux home (~/vigil) instead." >&2
+            ;;
+    esac
+    return 0
+}
+
 # Containers reach the host-native Ollama via host.docker.internal, but
 # load_env exports the host-side OLLAMA_URL and shell env beats the compose
 # default - so rewrite it here, at the single container boundary.
@@ -94,12 +132,25 @@ save_project_container_logs() {
 docker_daemon_ready() { docker info &>/dev/null; }
 
 ensure_docker() {
-    command -v docker &>/dev/null || { echo "Docker is required but not installed." >&2; return 1; }
+    if ! command -v docker &>/dev/null; then
+        echo "Docker is required but not installed." >&2
+        is_wsl && echo "On WSL2, install Docker Desktop for Windows and turn on Settings > Resources > WSL integration for this distro." >&2
+        return 1
+    fi
     docker_daemon_ready && return 0
     echo "Docker daemon not reachable - starting Docker..."
     case "$(uname -s)" in
         Darwin) open -a Docker &>/dev/null || open -a "Docker Desktop" &>/dev/null || true ;;
-        Linux)  (systemctl start docker || sudo systemctl start docker) &>/dev/null || true ;;
+        Linux)
+            if is_wsl && ! systemctl cat docker.service &>/dev/null; then
+                # No docker.service in this distro: Docker is Docker Desktop on
+                # Windows, which this script cannot start. It is polled below.
+                echo "On WSL2, start Docker Desktop on Windows and enable WSL integration" >&2
+                echo "for this distro (Settings > Resources > WSL integration). Waiting..." >&2
+            else
+                (systemctl start docker || sudo systemctl start docker) &>/dev/null || true
+            fi
+            ;;
     esac
     local i=0
     while [ $i -lt 90 ]; do
@@ -146,9 +197,24 @@ service_container() {
 # process group, where Ctrl+C would kill it. Never fatal - Ollama is optional.
 ensure_ollama() {
     PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-        python3 "$REPO_ROOT/scripts/ollama_supervise.py" || \
+        python3 "$REPO_ROOT/scripts/ollama_supervise.py" || {
         echo "Warning: Ollama not started; see logs/ollama.log" >&2
+        is_wsl && wsl_ollama_notice
+    }
     return 0
+}
+
+# Under WSL2 the usual reason is that Ollama runs on Windows, whose localhost is
+# not the distro's (default NAT networking). Vigil starts either way; this only
+# says what is and is not reachable. Nothing here changes any address.
+wsl_ollama_notice() {
+    echo "  WSL2: no Ollama answered at ${OLLAMA_URL:-http://localhost:11434}. Local models are optional." >&2
+    echo "  - Ollama for Windows is not on WSL's localhost in the default (NAT) networking." >&2
+    echo "    Containers may still reach it through Docker Desktop (host.docker.internal);" >&2
+    echo "    the host-side model list will not. networkingMode=mirrored in .wslconfig" >&2
+    echo "    shares localhost with Windows (Windows 11 22H2 or later)." >&2
+    echo "  - Ollama inside this distro: https://ollama.com/download/linux, then run ./start.sh again." >&2
+    echo "  - Or skip local models and add a hosted provider under Settings > AI models." >&2
 }
 
 # --- Python toolchain ---

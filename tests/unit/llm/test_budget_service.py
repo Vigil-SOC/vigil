@@ -139,27 +139,20 @@ def test_get_settings_returns_normalized_defaults():
         from core.llm.cost.budget import get_settings
 
         s = get_settings()
-        assert s == {
-            "default_vk": "",
-            "budget_limit_usd": 0.0,
-            "enforcement_mode": "warning",
-        }
+        assert s == {"default_vk": ""}
 
 
-def test_set_settings_validates_enforcement_mode():
-    from core.llm.cost.budget import set_settings
+def test_get_settings_drops_legacy_keys():
+    """Rows written before the cap and mode were removed still carry them."""
+    stored = {"default_vk": "sk-bf-x", "budget_limit_usd": 5, "enforcement_mode": "x"}
+    with patch("core.llm.cost.budget._get_settings", return_value=stored):
+        from core.llm.cost.budget import get_settings
 
-    with pytest.raises(ValueError, match="enforcement_mode must be"):
-        set_settings(
-            default_vk="sk-bf-x",
-            budget_limit_usd=10.0,
-            enforcement_mode="bogus",
-            updated_by="tester",
-        )
+        assert get_settings() == {"default_vk": "sk-bf-x"}
 
 
-def test_stored_cap_and_mode_do_not_change_vk_header(monkeypatch):
-    """The stored cap and mode are ignored. x-bf-vk follows default_vk only."""
+def test_legacy_cap_and_mode_do_not_change_vk_header(monkeypatch):
+    """Old rows may still hold a cap and mode. x-bf-vk follows default_vk only."""
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setenv("LLM_BUDGET_UNLIMITED", "false")
     from core.llm.router.router import bifrost_headers

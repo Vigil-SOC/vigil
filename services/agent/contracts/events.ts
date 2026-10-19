@@ -178,7 +178,14 @@ export interface TerminalPayload {
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;
   handoffs?: TerminalHandoff[];
+  // How bad the run rated what it found, in case priorities, for the case it was
+  // started from. Only a completed run whose plugin names a severity_field sets it.
+  severity?: Severity;
 }
+
+// The ratings a run may conclude with: the case priorities, less unknown.
+export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
+export type Severity = (typeof SEVERITIES)[number];
 
 // Work the run finished by giving away, each carrying the document it hands over
 // rather than a pointer to one: the receiver has no access to this ledger.

@@ -146,11 +146,13 @@ def test_signed_in_user_is_who_changed_the_config(
         "/api/analytics/budget",
         json={
             "default_vk": "sk-bf-test",
+            # Older clients still send these. They are ignored, not rejected.
             "budget_limit_usd": 1,
             "enforcement_mode": "warning",
         },
     )
     assert budget.status_code == 200, budget.text
+    assert set(budget.json()) == {"default_vk"}
     budget_row = (
         _Query(session.rows, SystemConfig).filter_by(key="bifrost.virtual_keys").first()
     )

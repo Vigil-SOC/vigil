@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import pg from "pg";
 import { archFor, isHuntLike, registeredKinds } from "./plugins/kinds.js";
-import { cachedReady, handleHealth, type Ready } from "./core/health.js";
+import { bindHost, cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
@@ -398,7 +398,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   // the pool this process serves chat from.
   const serving = chatServer(new LedgerRepository(pool), cachedReady(serveReady(pool)), harnessFor, (runId) =>
     verifyLedger(pool, runId),
-  ).listen(chatPort());
+  ).listen(chatPort(), bindHost());
   const stop = () => {
     // Flushed once the open chats have drained, so their spans are not the ones lost.
     serving.close(() => void shutdownTracing());

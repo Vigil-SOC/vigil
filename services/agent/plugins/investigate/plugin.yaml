@@ -41,6 +41,10 @@ system: |
   included, link each result that bears on one, and open a question for anything
   you cannot settle. Open questions are reported as gaps whatever your answer says.
 
+  Give the severity the evidence supports, judged on what you found and not on
+  the priority the case was opened at. Leave it out when nothing found gives a
+  basis for one.
+
 skills: [investigate-case]
 
 # The hypothesis record is required: what the agent believes goes on it with
@@ -53,6 +57,8 @@ conclusion:
   summary_field: summary
   citations_field: citations
   open_questions_field: gaps
+  # Raises the case's priority to it, never lowers it (run_bridge_router.py).
+  severity_field: severity
   schema:
     type: object
     additionalProperties: false
@@ -67,6 +73,10 @@ conclusion:
       confidence:
         type: string
         enum: [low, medium, high]
+      severity:
+        type: string
+        description: How bad what was found is. Omit when nothing found supports a rating.
+        enum: [low, medium, high, critical]
       citations:
         type: array
         description: Refs of the tool results the answer rests on, such as r3.

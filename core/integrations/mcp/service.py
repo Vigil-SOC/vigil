@@ -278,12 +278,19 @@ class MCPService:
         self._initialize_servers()
 
     def _initialize_servers(self):
-        """
-        Initialize MCP server configurations from mcp-config.json.
+        """Merge the catalog from mcp-config.json into ``self.servers``.
 
-        Loads server configurations dynamically from the mcp-config.json file
-        to ensure consistency with MCP integration workflows.
-        Also includes servers for enabled integrations.
+        A file that does not parse is logged and leaves ``self.servers`` as is.
+        """
+        try:
+            self.servers.update(self.load_catalog())
+        except Exception as e:
+            logger.error(f"Error loading mcp-config.json: {e}")
+
+    def load_catalog(self) -> Dict[str, "MCPServer"]:
+        """Build the server catalog from mcp-config.json without touching
+        ``self.servers``. Raises when the file does not parse; a missing file
+        is an empty catalog.
         """
         python_exe_str = str(self.python_exe)
         project_path_str = str(self.project_root)
@@ -300,101 +307,91 @@ class MCPService:
         server_configs = []
 
         if mcp_config_path.exists():
-            try:
-                with open(mcp_config_path, "r") as f:
-                    mcp_config = json.load(f)
+            with open(mcp_config_path, "r") as f:
+                mcp_config = json.load(f)
 
-                for server_name, server_config in mcp_config.get(
-                    "mcpServers", {}
-                ).items():
-                    # Skip comment keys
-                    if server_name.startswith("_comment"):
-                        continue
+            for server_name, server_config in mcp_config.get("mcpServers", {}).items():
+                # Skip comment keys
+                if server_name.startswith("_comment"):
+                    continue
 
-                    # Convert config format from mcp-config.json to our internal format
-                    command = server_config.get("command", "python")
+                # Convert config format from mcp-config.json to our internal format
+                command = server_config.get("command", "python")
 
-                    # Use venv python if command is just "python" or "python3"
-                    if command in ["python", "python3"]:
-                        command = python_exe_str
+                # Use venv python if command is just "python" or "python3"
+                if command in ["python", "python3"]:
+                    command = python_exe_str
 
-                    # Get cwd, replace ${workspaceFolder} with actual path
-                    cwd = server_config.get("cwd", project_path_str)
-                    if "${workspaceFolder}" in cwd:
-                        cwd = cwd.replace("${workspaceFolder}", project_path_str)
+                # Get cwd, replace ${workspaceFolder} with actual path
+                cwd = server_config.get("cwd", project_path_str)
+                if "${workspaceFolder}" in cwd:
+                    cwd = cwd.replace("${workspaceFolder}", project_path_str)
 
-                    # Get environment variables and substitute ${VAR_NAME} patterns
-                    raw_env_strs = {
-                        k: str(v)
-                        for k, v in (server_config.get("env") or {}).items()
-                        if not k.startswith("_")
+                # Get environment variables and substitute ${VAR_NAME} patterns
+                raw_env_strs = {
+                    k: str(v)
+                    for k, v in (server_config.get("env") or {}).items()
+                    if not k.startswith("_")
+                }
+                # Inherit the backend's environment so servers that need
+                # runtime config not declared in mcp-config.json can connect
+                # — notably the POSTGRES_* vars DatabaseService reads for
+                # case/DB tools (vigil). Declared config env
+                # entries still take precedence. Required-credential
+                # detection scans the raw config above, not this spawn env,
+                # so dormancy behavior is unchanged.
+                env = os.environ.copy()  # noqa: ENV001 - MCP child env
+                # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
+                # would substitute to "" and root child paths at "/".
+                env.setdefault("VIGIL_DIR", str(vigil_path()))
+                # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
+                # not enough.
+                env.update(ca_bundle_env())
+                env.update(
+                    {
+                        k: self._substitute_env_vars(v, env)
+                        for k, v in raw_env_strs.items()
                     }
-                    # Inherit the backend's environment so servers that need
-                    # runtime config not declared in mcp-config.json can connect
-                    # — notably the POSTGRES_* vars DatabaseService reads for
-                    # case/DB tools (vigil). Declared config env
-                    # entries still take precedence. Required-credential
-                    # detection scans the raw config above, not this spawn env,
-                    # so dormancy behavior is unchanged.
-                    env = os.environ.copy()  # noqa: ENV001 - MCP child env
-                    # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
-                    # would substitute to "" and root child paths at "/".
-                    env.setdefault("VIGIL_DIR", str(vigil_path()))
-                    # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
-                    # not enough.
-                    env.update(ca_bundle_env())
-                    env.update(
-                        {
-                            k: self._substitute_env_vars(v, env)
-                            for k, v in raw_env_strs.items()
-                        }
-                    )
-                    env["PYTHONPATH"] = project_path_str
-
-                    # Get args and perform environment variable substitution
-                    raw_args = list(server_config.get("args") or [])
-                    args = [self._substitute_env_vars(arg, env) for arg in raw_args]
-
-                    # Capture declared credential placeholders *before*
-                    # substitution collapses missing vars to empty strings
-                    # — used by mcp_client to short-circuit connect when
-                    # required credentials aren't set.
-                    required_env_vars = extract_required_env_vars(
-                        raw_env_strs, raw_args
-                    )
-
-                    # Launch the image's baked copy of a pinned npx/uvx entry
-                    # instead of downloading it; anything not baked is as declared.
-                    command, args = installed_launch(command, args)
-
-                    server_configs.append(
-                        {
-                            "name": server_name,
-                            "command": command,
-                            "args": args,
-                            "cwd": cwd,
-                            "env": env,
-                            "required_env_vars": required_env_vars,
-                            "declared_env": list(raw_env_strs),
-                        }
-                    )
-
-                logger.info(
-                    f"Loaded {len(server_configs)} servers from mcp-config.json"
                 )
-            except Exception as e:
-                logger.error(f"Error loading mcp-config.json: {e}")
-                server_configs = []
+                env["PYTHONPATH"] = project_path_str
+
+                # Get args and perform environment variable substitution
+                raw_args = list(server_config.get("args") or [])
+                args = [self._substitute_env_vars(arg, env) for arg in raw_args]
+
+                # Capture declared credential placeholders *before*
+                # substitution collapses missing vars to empty strings
+                # — used by mcp_client to short-circuit connect when
+                # required credentials aren't set.
+                required_env_vars = extract_required_env_vars(raw_env_strs, raw_args)
+
+                # Launch the image's baked copy of a pinned npx/uvx entry
+                # instead of downloading it; anything not baked is as declared.
+                command, args = installed_launch(command, args)
+
+                server_configs.append(
+                    {
+                        "name": server_name,
+                        "command": command,
+                        "args": args,
+                        "cwd": cwd,
+                        "env": env,
+                        "required_env_vars": required_env_vars,
+                        "declared_env": list(raw_env_strs),
+                    }
+                )
+
+            logger.info(f"Loaded {len(server_configs)} servers from mcp-config.json")
         else:
             logger.warning("mcp-config.json not found")
-            server_configs = []
 
         # Dynamically update security-detections server env vars from DetectionRulesService
+        servers: Dict[str, MCPServer] = {}
         for config in server_configs:
             if config["name"] == "security-detections":
                 config = self._enrich_security_detections_env(config)
-            server = MCPServer(**config)
-            self.servers[config["name"]] = server
+            servers[config["name"]] = MCPServer(**config)
+        return servers
 
     def _enrich_security_detections_env(self, config: Dict) -> Dict:
         """

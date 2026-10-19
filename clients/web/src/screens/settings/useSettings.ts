@@ -730,11 +730,7 @@ export function useModelAssignment() {
 }
 
 export function useBudgets() {
-  const [settings, setSettings] = useState<BudgetSettings>({
-    default_vk: '',
-    budget_limit_usd: 0,
-    enforcement_mode: 'warning',
-  })
+  const [settings, setSettings] = useState<BudgetSettings>({ default_vk: '' })
   const [quota, setQuota] = useState<BudgetQuotaResponse | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)

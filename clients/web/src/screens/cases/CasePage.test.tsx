@@ -5,6 +5,8 @@ import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
 import { ToastProvider } from '../../shell/toast'
 import { approvalsApi, casesApi, orchestratorApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
+import investigateProjection from '../workflows/__fixtures__/kernel-investigate-projection.json'
+import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
@@ -562,6 +564,54 @@ describe('case page', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
     expect(await screen.findByText(/list users/)).toBeInTheDocument()
     expect(screen.getByText(/tool down/)).toBeInTheDocument()
+  })
+
+  function investigateCase(projection: unknown) {
+    testState.cases = [{
+      case_id: 'case-inv',
+      title: 'Investigate case',
+      status: 'open',
+      priority: 'medium',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [investigation('completed', false, 'run-inv')],
+    }]
+    testState.runs['run-inv'] = { status: 'completed', projection }
+    renderCase('case-inv')
+  }
+
+  it('shows a kernel investigation\'s record: explanations with their counts, linked rows with their stance', async () => {
+    investigateCase(investigateProjection)
+
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    const redTeam = (await screen.findByText('The activity is part of an authorized red-team engagement.')).closest('li') as HTMLElement
+    expect(within(redTeam).getByText('2 for')).toBeInTheDocument()
+    expect(within(redTeam).getByText('0 against')).toBeInTheDocument()
+    expect(within(redTeam).getByText('Standing')).toBeInTheDocument()
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 3 rows' })).toBeInTheDocument()
+    const finding = document.querySelector('[data-evidence-id="r2"]') as HTMLElement
+    expect(within(finding).getByText('Supports')).toBeInTheDocument()
+    expect(within(finding).getByText(/accessing lsass\.exe/)).toBeInTheDocument()
+    // Links that disagree show each stance under "bears on", none in the column.
+    const mixed = document.querySelector('[data-evidence-id="r9"]') as HTMLElement
+    expect(within(mixed).getByText(/^Supports The activity is part.*· Goes against The user/)).toBeInTheDocument()
+    expect(within(mixed).queryByText('Supports')).not.toBeInTheDocument()
+  })
+
+  it('shows a held dismissal as what it was held as, what was asked, and why; its open question as a blind spot', async () => {
+    investigateCase(heldProjection)
+
+    expect(await screen.findByText(/^Asked benign · held as needs review: the review was insufficient: Only the case note/)).toBeInTheDocument()
+    expect(screen.getByText(/^Needs review — EDR detected/)).toBeInTheDocument()
+    expect(screen.queryByText(/"disposition":"benign"/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
+    expect(await screen.findByText(/registered red-team operator on ws-0901/)).toBeInTheDocument()
+    expect(screen.getByText('Open question')).toBeInTheDocument()
   })
 
   it('keeps empty tabs in the strip', async () => {

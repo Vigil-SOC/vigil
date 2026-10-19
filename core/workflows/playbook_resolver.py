@@ -439,16 +439,14 @@ HUNT_CAPABILITIES = (
     "entity_recall",
 )
 
-# A hunt is bounded by iterations rather than phases, and each one costs a lead
-# turn, its workers and the critic. Separate ceilings: max_calls only backstops a
-# runaway turn, and the agent layer raises it to match the turn count a run asks for.
+# A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls
+# only backstops a runaway turn, and the agent layer raises it to match the turn
+# count a run asks for.
 HUNT_ITERATIONS = 8
 
-# A turn dispatches up to this many workers, each running its own tool loop, plus the
-# lead and the critic; the two spare turns per agent are the emission retries.
-# Mirrored from services/agent/plugins/hunt/types.ts and held to it by a ratchet.
-HUNT_MAX_WORKERS = 4
-CALLS_PER_ITERATION = (HUNT_MAX_WORKERS + 2) * (int(DEFAULT_RUNTIME["max_turns"]) + 2)
+# The model calls one iteration may spend: the hunt plugin's stated allowance
+# (services/agent/plugins/hunt/plugin.yaml), held to it by a ratchet.
+CALLS_PER_ITERATION = 60
 # 90 minutes of wall: at several minutes an iteration, a half-hour ceiling ends the
 # hunt on the clock with most of its cost budget unspent.
 HUNT_BUDGETS = {

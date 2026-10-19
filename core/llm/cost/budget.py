@@ -160,47 +160,23 @@ def get_settings() -> dict:
         val = _get_settings() or {}
     except Exception as e:
         logger.debug("budget_service: settings read failed: %s", e)
-        return {
-            "default_vk": "",
-            "budget_limit_usd": 0.0,
-            "enforcement_mode": "warning",
-        }
+        return {"default_vk": ""}
     if not isinstance(val, dict):
         return {}
-    return {
-        "default_vk": val.get("default_vk", "") or "",
-        "budget_limit_usd": float(val.get("budget_limit_usd") or 0),
-        "enforcement_mode": str(val.get("enforcement_mode") or "warning"),
-    }
+    return {"default_vk": val.get("default_vk", "") or ""}
 
 
-def set_settings(
-    *,
-    default_vk: str,
-    budget_limit_usd: float,
-    enforcement_mode: str,
-    updated_by: str,
-) -> dict:
+def set_settings(*, default_vk: str, updated_by: str) -> dict:
     """Persist the VK config. Caller (API handler) is admin-gated.
 
     ``updated_by`` is the signed-in user, stored on the audit row.
-    ``budget_limit_usd`` and ``enforcement_mode`` are stored for
-    compatibility. ``should_enforce`` does not read them.
     """
-    if enforcement_mode not in ("warning", "hard_stop"):
-        raise ValueError(
-            f"enforcement_mode must be 'warning' or 'hard_stop', got {enforcement_mode!r}"
-        )
     try:
         from core.storage.config_service import get_config_service
 
         get_config_service(user_id=updated_by).set_system_config(
             key=GLOBAL_KEY,
-            value={
-                "default_vk": default_vk or "",
-                "budget_limit_usd": float(budget_limit_usd),
-                "enforcement_mode": enforcement_mode,
-            },
+            value={"default_vk": default_vk or ""},
             description="Bifrost virtual-key configuration and budget settings",
             config_type="ai",
         )

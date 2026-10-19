@@ -360,6 +360,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     functionality_type: 'Log Analysis & SIEM',
     has_ui: true,
     proxy_supported: true,
+    proxy_note: 'Applies to the self-hosted REST client only, not the official or mcp-remote server.',
     fields: [
       {
         name: 'server_url',
@@ -416,7 +417,6 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     description: 'Observability pipeline for collecting, processing, enriching, and routing security data. Normalize logs, reduce volume, and optimize data flow before AI analysis.',
     functionality_type: 'Data Pipeline & Enrichment',
     has_ui: false,
-    proxy_supported: true,
     fields: [
       {
         name: 'server_url',

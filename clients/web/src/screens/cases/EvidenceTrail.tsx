@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
 import { LATER_RELEASE } from '../../shared/later'
-import { STANCE_WORD, TIER_WORD, evidenceSource, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
+import { STANCE_WORD, TIER_WORD, evidenceSource, foldRecord, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type RunRecord, type Stance } from './caseFold'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -19,7 +19,37 @@ interface TrailRow {
 
 const DASH = '—'
 
+/** "Supports X · Goes against Y" for a row that bears on several explanations; the statement alone for one. */
+function bearsOnLine(row: RunRecord['evidence'][number], record: RunRecord): string {
+  const statements = new Map(record.hypotheses.map((h) => [h.hypothesis_id, h.statement]))
+  return row.bears_on
+    .map((link) => {
+      const statement = statements.get(link.hypothesis_id) || link.hypothesis_id
+      return row.bears_on.length > 1 ? `${relationWord(link.relation)} ${statement}` : statement
+    })
+    .join(' · ')
+}
+
 function rowsOf(fold: RunFold): TrailRow[] {
+  if (fold.kind === 'lead' && fold.record) {
+    // An investigation tests no one explanation, so a row's stance is shown only where its links agree.
+    const record = fold.record
+    return record.evidence.map((row) => {
+      const relations = new Set(row.bears_on.map((link) => link.relation))
+      const [only] = relations
+      return {
+        id: row.evidence_id,
+        step: String(row.iteration),
+        observation: row.summary || DASH,
+        bearsOn: bearsOnLine(row, record),
+        links: row.bears_on.map((link) => link.relation),
+        source: evidenceSource(row) || DASH,
+        tier: DASH,
+        stance: relations.size === 1 && (only === 'supports' || only === 'weakens') ? only : null,
+        by: fold.findings[0]?.agent_id || 'agent',
+      }
+    })
+  }
   if (fold.kind === 'lead') {
     return fold.findings.map((row, i) => ({
       id: `${row.agent_id}-${i}`,
@@ -33,18 +63,12 @@ function rowsOf(fold: RunFold): TrailRow[] {
       by: row.agent_id || DASH,
     }))
   }
-  const statements = new Map(fold.hypotheses.map((h) => [h.hypothesis_id, h.statement]))
   const against = huntHypothesis(fold)?.hypothesis_id
   return fold.evidence.map((row) => ({
     id: row.evidence_id,
     step: String(row.iteration),
     observation: row.is_gap ? `${row.summary} (gap)` : row.summary || DASH,
-    bearsOn: row.bears_on
-      .map((link) => {
-        const statement = statements.get(link.hypothesis_id) || link.hypothesis_id
-        return row.bears_on.length > 1 ? `${relationWord(link.relation)} ${statement}` : statement
-      })
-      .join(' · '),
+    bearsOn: bearsOnLine(row, fold),
     links: row.bears_on.map((link) => link.relation),
     source: evidenceSource(row) || DASH,
     tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
@@ -54,7 +78,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
 }
 
 function header(fold: RunFold): string {
-  const count = fold.kind === 'hunt' ? fold.evidenceCount : fold.findings.length
+  const count = foldRecord(fold)?.evidenceCount ?? (fold.kind === 'lead' ? fold.findings.length : 0)
   const head = `Evidence trail · ${count} ${count === 1 ? 'row' : 'rows'}`
   if (fold.kind !== 'hunt') return head
   const shown = fold.evidence.length < count ? ` · showing ${fold.evidence.length} of ${count}` : ''
