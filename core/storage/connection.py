@@ -740,6 +740,18 @@ class DatabaseManager:
             raise RuntimeError("Database not initialized. Call initialize() first.")
 
         try:
+            # idx_finding_description uses gin_trgm_ops, so a fresh database
+            # needs pg_trgm first. No-op (and no privileges needed) if present.
+            try:
+                with self._engine.begin() as conn:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            except Exception as e:
+                raise RuntimeError(
+                    "pg_trgm is required for the findings description index "
+                    f"(idx_finding_description) but could not be enabled: {e}. "
+                    "Run `CREATE EXTENSION pg_trgm;` as a privileged user, or "
+                    "install postgresql-contrib."
+                ) from e
             Base.metadata.create_all(self._engine)
             logger.info("Database tables created successfully")
         except Exception as e:
