@@ -993,6 +993,17 @@
             "title": "Run Id",
             "type": "string"
           },
+          "spawned_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spawned By"
+          },
           "status": {
             "title": "Status",
             "type": "string"
