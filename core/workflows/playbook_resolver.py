@@ -455,6 +455,11 @@ HUNT_BUDGETS = {
     "max_wall_ms": 5_400_000,
 }
 
+# What a root-cause trace needs from the deployment. record and finish are the
+# trace's own tools; telemetry_search is the one an integration (a SIEM) answers, and
+# a handoff starts no trace the deployment cannot serve (run_bridge_router).
+ROOT_CAUSE_CAPABILITIES = ("telemetry_search",)
+
 # Above the harness defaults (8 turns, 12 calls) so the $15 and 90-minute ceilings
 # are what stop a trace, not the tool-turn cap.
 ROOT_CAUSE_MAX_TURNS = 1024
@@ -601,7 +606,9 @@ def resolve_root_cause(
             "max_wall_ms": HUNT_BUDGETS["max_wall_ms"],
         },
         "runtime": {**DEFAULT_RUNTIME, "max_turns": ROOT_CAUSE_MAX_TURNS},
-        "tools": _bound_capabilities(["telemetry_search"], _tool_catalogue(registry))
+        "tools": _bound_capabilities(
+            list(ROOT_CAUSE_CAPABILITIES), _tool_catalogue(registry)
+        )
         + [_record_tool(), _finish_tool()],
         "approvals": [],
         "thresholds": {},

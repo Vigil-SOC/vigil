@@ -2155,7 +2155,8 @@ export interface paths {
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
          *     ``case_id`` column. The run is the case's latest, an investigation's
-         *     ``run_id_for`` or a run started on the case, never the shadow adjudication.
+         *     ``run_id_for`` or a run started on the case, never the shadow adjudication,
+         *     and never a run another run on the case started (``primary_ref``).
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -4657,6 +4658,30 @@ export interface paths {
          * @description One alert in the feed item's shape, including noise-marked and older ones.
          */
         get: operations["get_api_overview_alerts_finding_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/processes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Processes
+         * @description State of the agent layer and the SOC daemon.
+         *
+         *     ``agent_layer`` and ``daemon`` are each ``running``, ``unhealthy``,
+         *     ``not_running`` or ``unknown``; ``agent_layer`` is ``no_token`` when this
+         *     server has no AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         */
+        get: operations["get_api_processes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7838,6 +7863,11 @@ export interface components {
              * @default 0
              */
             max_cost_usd: number;
+            /**
+             * Primary
+             * @default false
+             */
+            primary: boolean;
             /** Run Id */
             run_id: string;
             /** Status */
@@ -10967,9 +10997,9 @@ export interface components {
             human_decision: string;
             /**
              * Human Reviewer
-             * @description Name/ID of reviewer
+             * @description Ignored: the signed-in user is recorded as the reviewer.
              */
-            human_reviewer: string;
+            human_reviewer?: string | null;
             /**
              * Reasoning Grade
              * @description Reasoning quality grade (0-1)
@@ -19770,6 +19800,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_processes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */

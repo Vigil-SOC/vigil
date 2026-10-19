@@ -208,6 +208,10 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
+      # The daemon's /health and /status (setup checks, Kafka page). The default,
+      # localhost, is this container. Without --profile daemon the name doesn't
+      # resolve, which the checks report as not running.
+      DAEMON_HEALTH_HOST: soc-daemon
       # MCP servers run in mcp-runner, not here (#2303). The token comes from the
       # file mcp-runner-token writes unless MCP_RUNNER_TOKEN is set.
       MCP_RUNNER_URL: http://mcp-runner:6991

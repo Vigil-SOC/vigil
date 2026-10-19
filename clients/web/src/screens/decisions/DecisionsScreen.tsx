@@ -18,7 +18,7 @@ import {
   type ApprovalAction,
 } from './useDecisions'
 import { aiDecisionsApi, approvalsApi } from '../../services/api'
-import { EmptyState, Popup, Field, TextInput, Select, Rating, Slider, Dropdown, activateOnKey } from '../../shared/ui'
+import { EmptyState, Popup, Field, Select, Rating, Slider, Dropdown, activateOnKey } from '../../shared/ui'
 
 // One list, so a new tab cannot be added to the union and forgotten here --
 // an unknown ?tab= falls back silently, which a divergence would make invisible.
@@ -339,17 +339,14 @@ function ApprovalsTab({
 function FeedbackPopup({
   open,
   decision,
-  reviewer,
   onClose,
   onSubmitted,
 }: {
   open: boolean
   decision: Decision
-  reviewer: string
   onClose: () => void
   onSubmitted: () => void
 }) {
-  const [name, setName] = useState(reviewer)
   const [assessment, setAssessment] = useState<Assessment>('agree')
   const [accuracy, setAccuracy] = useState(3)
   const [reasoning, setReasoning] = useState(3)
@@ -360,15 +357,12 @@ function FeedbackPopup({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  useEffect(() => { if (open) setName(reviewer) }, [open, reviewer])
-
   const submit = async () => {
-    if (!name.trim()) { setErr('Enter your name to submit feedback.'); return }
     setBusy(true)
     setErr('')
     try {
+      // the server records the signed-in user as the reviewer
       await aiDecisionsApi.submitFeedback(decision.id, {
-        human_reviewer: name.trim(),
         human_decision: assessment,
         accuracy_grade: accuracy / 5,
         reasoning_grade: reasoning / 5,
@@ -388,9 +382,6 @@ function FeedbackPopup({
   return (
     <Popup open={open} onClose={onClose} title="Detailed feedback" width={620}>
       <div className="flex flex-col gap-3.5">
-        <Field label="Your name / analyst ID">
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. analyst_jones" autoFocus />
-        </Field>
         <Field label="Overall assessment">
           <div className="tabs">
             {(Object.keys(ASSESS_LABEL) as Assessment[]).map((a) => (
@@ -462,7 +453,6 @@ function DecisionsDetail({
   onSubmitted: () => void
 }) {
   const d = decisions.find((x) => x.id === id)
-  const [reviewer, setReviewer] = useState('')
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -478,12 +468,10 @@ function DecisionsDetail({
   }
 
   const submit = async (assessment: Assessment) => {
-    if (!reviewer.trim()) { setErr('Enter your name to submit feedback.'); return }
     setBusy(true)
     setErr('')
     try {
       await aiDecisionsApi.submitFeedback(d.id, {
-        human_reviewer: reviewer.trim(),
         human_decision: assessment,
         feedback_comment: comment.trim() || undefined,
       })
@@ -572,7 +560,6 @@ function DecisionsDetail({
           <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden span-2">
             <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Your review</h3></div>
             <div className="p-[18px]">
-              <TextInput value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="Your name / analyst ID" style={{ marginBottom: 12 }} />
               <div className="flex gap-2.5 mt-1 mb-3.5">
                 <button className="btn primary flex-1 justify-center" disabled={busy} onClick={() => submit('agree')}><Icon name="check2" /> Approve</button>
                 <button className="btn flex-1 justify-center" disabled={busy} onClick={() => submit('partial')}><Icon name="edit" /> Modify</button>
@@ -589,7 +576,7 @@ function DecisionsDetail({
         </div>
       </div>
 
-      <FeedbackPopup open={detailOpen} decision={d} reviewer={reviewer} onClose={() => setDetailOpen(false)} onSubmitted={onSubmitted} />
+      <FeedbackPopup open={detailOpen} decision={d} onClose={() => setDetailOpen(false)} onSubmitted={onSubmitted} />
     </div>
   )
 }

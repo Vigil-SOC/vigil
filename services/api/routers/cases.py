@@ -27,7 +27,7 @@ from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_record import merge_record
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
-from core.cases.case_state import case_run_refs
+from core.cases.case_state import case_run_refs, primary_ref
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -683,7 +683,8 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
     Newest first. The agent returns the ledger with snapshots off. Audit rows
     are ``entity_type == case`` and ``entity_id`` this case — the table has no
     ``case_id`` column. The run is the case's latest, an investigation's
-    ``run_id_for`` or a run started on the case, never the shadow adjudication.
+    ``run_id_for`` or a run started on the case, never the shadow adjudication,
+    and never a run another run on the case started (``primary_ref``).
     """
     case = data_service.get_case(case_id)
     if not case:
@@ -693,7 +694,7 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
         case_records_service.list_case_investigations(session, case_id),
         case_records_service.list_case_runs(session, case_id),
     )
-    latest = refs[0][0] if refs else None
+    latest = primary_ref([ref for ref, _ in refs])
     events: list = []
     run_id = None
     investigation_id = None

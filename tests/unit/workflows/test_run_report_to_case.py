@@ -68,6 +68,7 @@ def _terminate(update: TerminalUpdate, trigger_context: Dict[str, Any], cases: _
             authorization="Bearer x",
             run_service=runs,
             approvals=None,
+            registry=None,
         )
     return runs
 
@@ -188,7 +189,9 @@ class TestAHandoffLandsOnTheCaseTheRunCameFrom:
         cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
         with patch.object(rbr, "_source_is_hunt", return_value=True), patch.object(
             rbr, "_rca_exists", return_value=False
-        ), patch.object(rbr, "_start_root_cause") as start_rca:
+        ), patch.object(rbr, "_root_cause_unserved", return_value=[]), patch.object(
+            rbr, "_start_root_cause"
+        ) as start_rca:
             _terminate(
                 TerminalUpdate(outcome="completed", handoffs=[self.HANDOFF]),
                 {"case_id": "case-1"},
@@ -196,6 +199,38 @@ class TestAHandoffLandsOnTheCaseTheRunCameFrom:
             )
 
         assert start_rca.call_args.args[2] == "case-1"
+
+    # No SIEM is the first-install case: the run would fail on its first turn.
+    def test_with_telemetry_search_unbound_no_run_starts_and_the_case_says_why(self):
+        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
+        update = TerminalUpdate(outcome="completed", handoffs=[self.HANDOFF])
+        with patch.object(rbr, "_source_is_hunt", return_value=True), patch.object(
+            rbr, "_rca_exists", return_value=False
+        ), patch.object(rbr, "_start_root_cause") as start_rca, patch.object(
+            rbr, "_enqueue_root_cause"
+        ) as enqueue:
+            # registry=None binds no telemetry_search; the terminal re-carries the
+            # handoff the /handoff push already filed.
+            _terminate(update, {"case_id": "case-1"}, cases)
+            _terminate(update, {"case_id": "case-1"}, cases)
+
+        start_rca.assert_not_called()
+        enqueue.assert_not_called()
+        [said] = [
+            a
+            for a in _activities(cases, "case-1")
+            if a["activity_type"] == "agent_run_root_cause_not_started"
+        ]
+        assert said["description"].startswith(
+            "Root cause was not started: it needs a SIEM to search, and none is "
+            "connected."
+        )
+        assert "telemetry_search" not in said["description"]
+        assert said["details"] == {
+            "run_id": "run-1",
+            "handoff_id": "case-25aac39c",
+            "unbound": ["telemetry_search"],
+        }
 
 
 class TestAHuntWithNoCaseOpensOne:

@@ -52,6 +52,12 @@ GATED_ROUTES = [
     ("POST", "/api/workflows/runs/r-1/resume", {}, "ai_decisions.approve"),
     (
         "POST",
+        "/api/ai/decisions/d-1/feedback",
+        {"human_decision": "agree"},
+        "ai_decisions.approve",
+    ),
+    (
+        "POST",
         "/api/workflows/runs/r-1/cancel",
         {"reason": "no"},
         "ai_decisions.approve",
