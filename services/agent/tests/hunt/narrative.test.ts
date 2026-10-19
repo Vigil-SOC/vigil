@@ -99,16 +99,16 @@ describe("what the narrator is given", () => {
 
 
 describe("an account Vigil lays out when the model wrote none", () => {
-  it("restates the record, names what is unsettled, and says it is not the model's", async () => {
+  it("restates the record, gives no next steps, and says it is not the model's", async () => {
     const { ledger } = await newLedger({ hypotheses: ["a host beaconed out"] });
     const report = buildReport(ledger.projection);
     const laid = ledgerNarrative(ledger.projection, report, "the narrator did not answer: empty");
-    expect(laid).toMatchObject({ written_by: "vigil", model_id: "vigil", cost_usd: 0 });
+    expect(laid).toMatchObject({ written_by: "vigil", model_id: "vigil", cost_usd: 0, next_steps: [] });
     expect(laid.what_happened).toContain("**not settled** — a host beaconed out");
-    expect(laid.next_steps.some((step) => step.includes("a host beaconed out") && step.includes("ended before deciding it"))).toBe(true);
     const rendered = renderNarrative(laid).join("\n");
     expect(rendered).toContain("Laid out by Vigil from the ledger");
     expect(rendered).toContain("the narrator did not answer: empty");
     expect(rendered).not.toContain("Written from the ledger by vigil");
+    expect(rendered).not.toContain("What to do now");
   });
 });

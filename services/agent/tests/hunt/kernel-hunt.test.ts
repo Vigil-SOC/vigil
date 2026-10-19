@@ -279,5 +279,32 @@ describe("a hunt whose model writes no account", () => {
     expect(view.narrative?.what_happened).toContain("45.77.53.176");
     const terminal = await state.terminal(RUN);
     expect(terminal?.summary).toContain("Laid out by Vigil from the ledger");
+    expect(terminal?.summary).not.toContain("What to do now");
+  });
+
+  it("still ends when the ledger will not take the layout", async () => {
+    class NoNarrative extends InProcessState<HuntKinds> {
+      override async append(runId: string, events: Parameters<InProcessState<HuntKinds>["append"]>[1]): Promise<number> {
+        if (events.some((event) => event.kind === "narrative")) throw new Error("ledger refused");
+        return super.append(runId, events);
+      }
+    }
+    const state = new NoNarrative();
+    const steps: Step[] = [
+      () => ({ tool: "splunk_search", args: { sql: "select * from flows where src = '10.0.0.5'" } }),
+      (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request))] } }),
+      () => ({ tool: "conclude_hunt", args: { reason: "nothing more to look at" } }),
+    ];
+    await runHunt(harnessOf(specOf(), modelOf(steps, { narrator: {} }), state), {
+      run_id: RUN,
+      run_kind: "hunt",
+      spec: specOf(),
+      actions: archFor("hunt").actions,
+      queue: new InProcessDirectiveQueue(),
+    });
+
+    const events = (await state.read(RUN)) as readonly HuntEvent[];
+    expect(huntProjection(RUN, events).narrative).toBeNull();
+    expect(await state.terminal(RUN)).not.toBeNull();
   });
 });

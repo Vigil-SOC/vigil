@@ -281,8 +281,15 @@ async function narrate(ctx: PluginContext, projection: Projection, built: Return
     log.error("hunt ended without the model's account of it", { run_id: ctx.options.run_id, ...errorFields(error) });
     const narrative = ledgerNarrative(projection, built, error instanceof Error ? error.message : String(error));
     const event: NewEvent<HuntKinds> = { run_id: ctx.options.run_id, run_kind: ctx.options.run_kind, kind: "narrative", payload: narrative };
-    await state(ctx).append(ctx.options.run_id, [event]);
-    return narrative;
+    try {
+      await state(ctx).append(ctx.options.run_id, [event]);
+      return narrative;
+    } catch (appendError) {
+      // Still fail-open: a ledger that will not take the layout must not take the
+      // hunt's ending down with it.
+      log.error("hunt ended without an account of it", { run_id: ctx.options.run_id, ...errorFields(appendError) });
+      return null;
+    }
   }
 }
 

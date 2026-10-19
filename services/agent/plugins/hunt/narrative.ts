@@ -160,10 +160,9 @@ export function renderNarrative(narrative: Narrative): string[] {
     "",
     narrative.what_happened,
     "",
-    "## What to do now",
-    "",
-    ...steps,
-    "",
+    // Vigil's own layout has no steps to give, and "nothing supports an action"
+    // would be a judgement it cannot make either.
+    ...(narrative.written_by === "vigil" ? [] : ["## What to do now", "", ...steps, ""]),
     narrative.written_by === "vigil"
       ? `_Laid out by Vigil from the ledger at ${narrative.written_at}, because the model wrote no account (${narrative.missing_because ?? "no reason recorded"}). It restates the record and draws no conclusions._`
       : `_Written from the ledger by ${narrative.model_id} at ${narrative.written_at}. The verdicts and findings below are the hunt's own record; this section is an account of them._`,
@@ -184,26 +183,14 @@ const SALIENCE_ORDER = ["anomalous", "notable", "routine"];
 
 // The account a hunt still owes when the model wrote none: its own record, laid out
 // as one, and marked as Vigil's so nobody mistakes it for the model's judgement. Every
-// sentence is a count or a line already on the ledger -- it says what the record holds
-// and draws nothing from it, which is the judgement the model was there to make.
+// line is already on the ledger -- it says what the record holds and draws nothing
+// from it, so it has no next steps: what to do is the judgement the model was there
+// to make.
 export function ledgerNarrative(projection: Projection, report: HuntReport, missingBecause: string): Narrative {
   const verdicts = report.hypotheses;
-  const count = (status: string) => verdicts.filter((one) => STANDING[one.status] === status).length;
   const gathered = [...projection.evidence.values()].filter((record) => !isGap(record));
-  const unsettled = verdicts.filter((one) => one.status === "active" || one.status === "inconclusive");
 
-  const tally = [
-    `${count("proven") + count("proven and handed to incident response")} proven`,
-    `${count("ruled out")} ruled out`,
-    `${unsettled.length} not settled`,
-  ].join(", ");
-  const summary = [
-    `This hunt ended ${report.outcome ?? "without a verdict"}: ${report.reason}.`,
-    verdicts.length === 0 ? "It recorded no explanations." : `Of ${verdicts.length} explanation(s), ${tally}.`,
-    `It gathered ${gathered.length} observation(s)` +
-      (report.gaps.length === 0 ? "" : `, and ${report.gaps.length} quer${report.gaps.length === 1 ? "y" : "ies"} could not be answered`) +
-      (report.handoffs.length === 0 ? "." : `, and handed ${report.handoffs.length} case(s) to incident response.`),
-  ].join(" ");
+  const summary = `This hunt ended ${report.outcome ?? "without a verdict"}: ${report.reason}.`;
 
   const standing = verdicts.map(
     (one) => `- **${STANDING[one.status] ?? one.status}** — ${one.statement}${one.resolution_reason === null ? "" : ` (${one.resolution_reason})`}`,
@@ -222,16 +209,10 @@ export function ledgerNarrative(projection: Projection, report: HuntReport, miss
     ...(unseen.length === 0 ? [] : ["", "### What could not be seen", unseen.join("\n")]),
   ].join("\n");
 
-  const next_steps = [
-    ...report.handoffs.map((handoff) => `Follow the escalation ${handoff.case_id} — ${handoff.rationale}`),
-    ...unsettled.map((one) => `Settle ${one.hypothesis_id}: ${one.statement} — the hunt ended before deciding it`),
-    ...report.gaps.slice(0, 3).map((gap) => `Get a source that answers: ${gap.query_intent || gap.summary} — the hunt could not look`),
-  ].slice(0, 8);
-
   return {
     summary,
     what_happened,
-    next_steps,
+    next_steps: [],
     model_id: "vigil",
     written_at: new Date().toISOString(),
     cost_usd: 0,
