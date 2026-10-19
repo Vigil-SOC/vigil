@@ -7839,10 +7839,13 @@ export interface components {
              * @default 0
              */
             max_cost_usd: number;
+            /**
+             * Primary
+             * @default false
+             */
+            primary: boolean;
             /** Run Id */
             run_id: string;
-            /** Spawned By */
-            spawned_by?: string | null;
             /** Status */
             status: string;
             /** Workflow Id */

@@ -139,11 +139,12 @@ def spawned_by(triggered_by: Optional[str]) -> Optional[str]:
 
 
 def primary_ref(refs: Sequence[dict]) -> Optional[dict]:
-    """The run a case page reads: the newest one that no other run on the case started.
+    """The case's run: the newest ref no run on the case started.
 
     A hunt's handoff starts a root-cause run on the case it escalates, and that run
-    is newer than the hunt; it is the hunt's follow-up, not the case's run. Newest
-    first in, as ``case_run_refs`` returns them.
+    is newer than the hunt; it is the hunt's follow-up, not the case's run. A ref
+    whose starter is not on the case counts as unstarted. Newest first in, as
+    ``case_run_refs`` returns them.
     """
     listed = {ref["run_id"] for ref in refs}
     for ref in refs:
@@ -190,6 +191,9 @@ def detail_fields(
 ) -> dict:
     """Extras on ``GET /cases/{id}``. Inputs are newest first; so is the output."""
     refs = case_run_refs(investigations, runs, steps)
+    primary = primary_ref([ref for ref, _ in refs])
+    for ref, _ in refs:
+        ref["primary"] = ref is primary
     return {
         "combined_state": combined_state(case_status, [state for _, state in refs]),
         "investigations": [ref for ref, _ in refs],

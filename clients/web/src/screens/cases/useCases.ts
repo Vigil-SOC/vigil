@@ -18,16 +18,8 @@ export interface CaseInvestigationRef {
   budget_health: string
   iteration_count: number
   created_at?: string | null
-  /** The run whose handoff started this one, when one did. */
-  spawned_by?: string | null
-}
-
-/** The run a case page reads: the newest one no other run on the case started. A
- *  hunt's handoff starts a root-cause run on the case, newer than the hunt, that is
- *  the hunt's follow-up rather than the case's run. Newest first in. */
-export function primaryRun(investigations: readonly CaseInvestigationRef[]): CaseInvestigationRef | null {
-  const listed = new Set(investigations.map((item) => item.run_id))
-  return investigations.find((item) => !item.spawned_by || !listed.has(item.spawned_by)) ?? investigations[0] ?? null
+  /** The case's run, the one its page reads; set by the API, not a follow-up a handoff started. */
+  primary?: boolean
 }
 
 export interface CaseClosureView {
@@ -186,7 +178,7 @@ function asInvestigations(raw: unknown): CaseInvestigationRef[] {
       budget_health: typeof o.budget_health === 'string' ? o.budget_health : 'healthy',
       iteration_count: typeof o.iteration_count === 'number' ? o.iteration_count : 0,
       created_at: typeof o.created_at === 'string' ? o.created_at : null,
-      spawned_by: typeof o.spawned_by === 'string' && o.spawned_by ? o.spawned_by : null,
+      primary: o.primary === true,
     }]
   })
 }

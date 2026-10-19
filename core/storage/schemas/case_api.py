@@ -91,8 +91,8 @@ class CaseInvestigationRef(BaseModel):
     budget_health: str = "healthy"
     iteration_count: int = 0
     created_at: Optional[str] = None
-    # The run whose handoff started this one, when one did.
-    spawned_by: Optional[str] = None
+    # The case's run: the one the page reads, not a follow-up a handoff started.
+    primary: bool = False
 
 
 class CaseClosureView(BaseModel):

@@ -175,12 +175,12 @@ def test_the_page_reads_the_case_run_not_the_follow_up_it_started():
     refs = detail_fields("open", [], None, [rca, hunt])["investigations"]
     assert [ref["run_id"] for ref in refs] == ["run-rca", "run-hunt"]
     assert refs[0]["spawned_by"] == "run-hunt"
-    assert primary_ref(refs)["run_id"] == "run-hunt"
+    assert [ref["primary"] for ref in refs] == [False, True]
 
 
 def test_a_follow_up_whose_starter_is_not_on_the_case_is_the_case_run():
     rca = _run("run-rca", "running", datetime(2026, 10, 8))
     rca.triggered_by = "handoff:run-elsewhere:case-1"
     refs = detail_fields("open", [], None, [rca])["investigations"]
-    assert primary_ref(refs)["run_id"] == "run-rca"
+    assert [ref["primary"] for ref in refs] == [True]
     assert primary_ref([]) is None
