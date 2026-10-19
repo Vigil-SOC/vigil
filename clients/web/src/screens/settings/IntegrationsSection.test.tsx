@@ -250,10 +250,36 @@ describe('Integrations: Connected table', () => {
     expect(mcpApi.reloadServers).toHaveBeenCalledTimes(1)
     expect(notify).not.toHaveBeenCalled()
 
-    finish({ data: { success: true, message: 'MCP servers reloaded successfully', total_servers: 4, servers: [] } })
-    await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', 'Tool servers reloaded. 4 servers configured.'))
+    finish({
+      data: {
+        success: true, message: 'MCP servers reloaded successfully', total_servers: 4, servers: [],
+        reconnected: ['ip-geolocation'], disconnected: ['virustotal'], failed: {},
+      },
+    })
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith('ok', 'Tool servers reloaded. 4 servers configured. Reconnected Ip Geolocation. Stopped Virustotal.'),
+    )
     await waitFor(() => expect(vi.mocked(mcpApi.listServers).mock.calls.length).toBeGreaterThan(reads))
     expect(await screen.findByRole('button', { name: 'Reload servers' })).toBeEnabled()
+  })
+
+  it('Reload servers names the servers that did not come back', async () => {
+    vi.mocked(mcpApi.reloadServers).mockResolvedValue({
+      data: {
+        success: false, message: 'MCP servers reloaded; 1 server(s) failed', total_servers: 4, servers: [],
+        reconnected: [], disconnected: [], failed: { 'ip-geolocation': 'connect failed' },
+      },
+    } as never)
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        'err',
+        'Tool servers reloaded, but not every server came back. 4 servers configured. Failed: Ip Geolocation (connect failed).',
+      ),
+    )
   })
 
   it('Reload servers toasts the server’s reason when it fails, and still re-reads the list', async () => {

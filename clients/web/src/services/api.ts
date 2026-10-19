@@ -430,10 +430,14 @@ export const caseSearchApi = {
 }
 
 export interface ReloadServersResponse {
+  /** false when any server in `failed` could not be reconnected or disconnected */
   success: boolean
   message: string
   total_servers: number
   servers: string[]
+  reconnected: string[]
+  disconnected: string[]
+  failed: Record<string, string | null>
 }
 
 export const mcpApi = {
@@ -444,8 +448,9 @@ export const mcpApi = {
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
 
-  // Re-reads mcp-config.json and integration URLs into the server catalog.
-  // Sessions already open are left as they are. Needs integrations.write.
+  // Re-reads mcp-config.json and integration URLs into the server catalog, then
+  // reconnects changed servers and stops removed or disabled ones. A file that
+  // does not parse answers 422 and changes nothing. Needs integrations.write.
   reloadServers: () => api.post<ReloadServersResponse>('/mcp/servers/reload'),
 
   // Vigil's own MCP surface: whether it listens, and what may open it.

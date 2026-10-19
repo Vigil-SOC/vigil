@@ -61,20 +61,30 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     reloadInt()
   }
 
-  // Refresh only re-reads; this asks the backend to rebuild its tool server catalog
+  // Refresh only re-reads; this asks the backend to re-read mcp-config.json and
+  // apply it: changed servers reconnect, removed or disabled ones stop
   const onReloadServers = async () => {
     setReloadingServers(true)
     try {
-      const res = await mcpApi.reloadServers()
-      const n = res.data?.total_servers
-      notify('ok', typeof n === 'number' ? `Tool servers reloaded. ${n} server${n === 1 ? '' : 's'} configured.` : 'Tool servers reloaded.')
+      const { data } = await mcpApi.reloadServers()
+      const n = data?.total_servers
+      const failed = Object.entries(data?.failed ?? {})
+      const parts = [typeof n === 'number' ? `${n} server${n === 1 ? '' : 's'} configured.` : '']
+      if (data?.reconnected?.length) parts.push(`Reconnected ${data.reconnected.map(prettyServerName).join(', ')}.`)
+      if (data?.disconnected?.length) parts.push(`Stopped ${data.disconnected.map(prettyServerName).join(', ')}.`)
+      if (failed.length) {
+        const why = failed.map(([name, err]) => `${prettyServerName(name)}${err ? ` (${err})` : ''}`).join(', ')
+        notify('err', ['Tool servers reloaded, but not every server came back.', ...parts, `Failed: ${why}.`].filter(Boolean).join(' '))
+      } else {
+        notify('ok', ['Tool servers reloaded.', ...parts].filter(Boolean).join(' '))
+      }
     } catch (e) {
       const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
       const detail = err.response?.data?.detail
       notify('err', `Could not reload tool servers: ${typeof detail === 'string' ? detail : err.message || 'unknown error'}.`)
     } finally {
       setReloadingServers(false)
-      // after a failure too: the catalog may have been cleared before the error
+      // sessions may have changed even when some failed; a 4xx changed nothing, and the re-read is cheap
       reload()
     }
   }
@@ -248,7 +258,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
             onClick={onReloadServers}
             disabled={reloadingServers}
             aria-busy={reloadingServers}
-            title="Re-reads tool server settings, so new or changed servers show up without restarting Vigil. Servers already connected keep their current session."
+            title="Re-reads tool server settings and applies them without restarting Vigil: new servers appear, changed ones reconnect, and removed or disabled ones stop. Unchanged servers keep their session."
           >
             <Icon name="gear" /> {reloadingServers ? 'Reloading…' : 'Reload servers'}
           </button>
