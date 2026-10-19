@@ -13,6 +13,8 @@ const modelParameters = vi.fn()
 const createKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const routability = vi.fn()
+const createProvider = vi.fn(() => Promise.resolve({ data: { name: 'openai' } }))
+const setProviderBaseUrl = vi.fn(() => Promise.resolve({ data: {} }))
 
 // This mock replaces the module wholesale, so anything the panel reaches for and
 // does not find here is `undefined` at the call site rather than a missing-export
@@ -28,7 +30,8 @@ vi.mock('../../services/bifrostApi', () => ({
     createKey: (...a: unknown[]) => createKey(...(a as [])),
     updateKey: (...a: unknown[]) => updateKey(...(a as [])),
     routability: () => routability(),
-    createProvider: vi.fn(),
+    createProvider: (...a: unknown[]) => createProvider(...(a as [])),
+    setProviderBaseUrl: (...a: unknown[]) => setProviderBaseUrl(...(a as [])),
     removeProvider: vi.fn(),
     removeKey: vi.fn(),
   },
@@ -41,6 +44,7 @@ vi.mock('../../services/bifrostApi', () => ({
       ? ((v as { env_var?: string }).env_var ?? '')
       : '',
   COMMON_PROVIDERS: ['anthropic', 'openai', 'ollama', 'vertex'],
+  BASE_URL_PROVIDERS: ['openai', 'anthropic'],
 }))
 
 // Fenced to two of the four the provider actually has.
@@ -247,5 +251,50 @@ describe('the page head’s Add provider', () => {
     expect(opened).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: 'Add provider' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Add key' }).length).toBeGreaterThan(0)
+  })
+})
+
+describe('a provider’s base URL', () => {
+  const mountProviders = async (providers: unknown[]) => {
+    listProviders.mockResolvedValue({ data: { providers } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={notify} addProviderRequested onAddProviderOpened={() => {}} />)
+    await screen.findByRole('dialog', { name: 'Add provider' })
+  }
+  const notify = vi.fn()
+
+  it('is written right after the provider is created', async () => {
+    await mountProviders([{ name: 'anthropic' }])
+    fireEvent.change(screen.getByPlaceholderText('anthropic'), { target: { value: 'openai' } })
+    fireEvent.change(screen.getByPlaceholderText(/llm\.internal\.example/), {
+      target: { value: ' http://10.0.0.5:8000/v1 ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.5:8000/v1'))
+    expect(createProvider).toHaveBeenCalledWith('openai')
+  })
+
+  it('is not offered for a provider whose URL lives on its key', async () => {
+    await mountProviders([{ name: 'anthropic' }])
+    fireEvent.change(screen.getByPlaceholderText('anthropic'), { target: { value: 'ollama' } })
+    expect(screen.queryByPlaceholderText(/llm\.internal\.example/)).not.toBeInTheDocument()
+  })
+
+  it('shows the stored host on the provider and edits it in place', async () => {
+    listProviders.mockResolvedValue({
+      data: { providers: [{ name: 'openai', network_config: { base_url: 'http://10.0.0.5:8000' } }] },
+    })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText(/http:\/\/10\.0\.0\.5:8000/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Edit provider'))
+    const field = await screen.findByDisplayValue('http://10.0.0.5:8000')
+    fireEvent.change(field, { target: { value: 'http://10.0.0.6:9000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.6:9000'))
   })
 })

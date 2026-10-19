@@ -1091,6 +1091,18 @@ def test_sync_provider_base_url_skips_empty_and_stock_openai():
     assert all(c["method"] == "GET" and "/keys" not in c["url"] for c in rec.calls)
 
 
+def test_sync_provider_base_url_leaves_a_host_set_in_bifrost_when_row_is_blank():
+    # The Settings panel sets the host on Bifrost's document, where no Vigil row
+    # knows of it; a blank row must not read as "clear it".
+    rec = _RecordingClient(
+        provider_payload=_provider_doc(base_url="http://10.0.0.5:8000")
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        assert bifrost_admin.sync_provider_base_url("openai", None) is True
+        assert bifrost_admin.sync_provider_base_url("openai", "  ") is True
+    assert _provider_puts(rec) == []
+
+
 def test_sync_provider_base_url_returns_false_when_provider_missing():
     rec = _RecordingClient(provider_status=404, provider_payload=None)
     with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
