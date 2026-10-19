@@ -8,6 +8,7 @@ import pytest
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import (
     TerminalHandoff,
+    TerminalUpdate,
     _source_is_hunt,
     _start_root_cause,
 )
@@ -208,3 +209,62 @@ def test_root_cause_resolves_off_the_hunt_grant():
     assert config["budgets"]["max_wall_ms"] == 5_400_000
     assert config["budgets"]["max_calls"] > 12
     assert config["runtime"]["max_turns"] > 8
+
+
+class _FiledRuns:
+    """A run row whose set_case writes the case in, as the database would."""
+
+    def __init__(self):
+        self.trigger_context = {"run_kind": "hunt"}
+
+    def get_run(self, run_id):
+        return {"run_id": run_id, "trigger_context": dict(self.trigger_context)}
+
+    def set_case(self, run_id, case_id):
+        if self.trigger_context.get("case_id"):
+            return False
+        self.trigger_context = {**self.trigger_context, "case_id": case_id}
+        return True
+
+    def finalize_run(self, run_id, **kwargs):
+        pass
+
+    def find_run_by_trigger(self, *args, **kwargs):
+        return None
+
+
+class TestATerminalWithTwoHandoffs:
+    def test_the_second_handoff_lands_on_the_case_the_first_opened(self):
+        # A case-less hunt whose terminal carries two handoffs: the first opens the
+        # case and files the hunt on it; the second hands onto that case, not a new one.
+        other = TerminalHandoff(case_id="case-abc", title="Second", markdown="Second.")
+        runs = _FiledRuns()
+        update = TerminalUpdate(
+            outcome="completed", handoffs=[HANDOFF, other], summary=""
+        )
+        with patch.object(
+            rbr, "_open_case", return_value="case-A"
+        ) as open_case, patch.object(
+            rbr, "_record_handoff"
+        ) as record_handoff, patch.object(
+            rbr, "_start_root_cause"
+        ), patch.object(
+            rbr, "_source_is_hunt", return_value=True
+        ), patch.object(
+            rbr, "withdraw_for_run"
+        ), patch.object(
+            rbr, "authorise"
+        ):
+            rbr.record_terminal(
+                run_id="run-1",
+                update=update,
+                authorization="Bearer x",
+                run_service=runs,
+                approvals=None,
+            )
+        open_case.assert_called_once()
+        assert runs.trigger_context["case_id"] == "case-A"
+        # The first opened the case itself; the second is the one filed onto it.
+        record_handoff.assert_called_once()
+        assert record_handoff.call_args.args[0] == "case-A"
+        assert record_handoff.call_args.args[2] is other

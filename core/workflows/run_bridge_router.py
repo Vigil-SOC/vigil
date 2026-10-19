@@ -228,7 +228,14 @@ def record_terminal(
     # so re-sending them here is a safety net rather than a second of either.
     start_rca = _source_is_hunt(run_id)
     for handoff in update.handoffs:
-        _process_handoff(run_id, handoff, origin, start_rca, run_service)
+        # Read again per handoff: the one before may have filed the hunt under its case.
+        _process_handoff(
+            run_id,
+            handoff,
+            _origin_case(run_id, run_service),
+            start_rca,
+            run_service,
+        )
 
 
 # A handoff pushed the moment the hunt journals it, ahead of the terminal that will
