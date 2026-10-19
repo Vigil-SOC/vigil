@@ -226,7 +226,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                       <td>
                         <div className="flex flex-col">
                           <span className="font-medium">{p.name}</span>
-                          <span className="text-xs text-tx-3 break-all">
+                          <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
                             {p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}
                             <BaseUrlTag provider={p} />
                           </span>
@@ -256,7 +256,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     <td>
                       <div className="flex flex-col">
                         <span className="font-medium">{k.name}</span>
-                        <span className="text-xs text-tx-3 break-all">
+                        <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
                           {p.name}{k.enabled === false ? ' · Disabled' : ''}
                           <BaseUrlTag provider={p} />
                         </span>
@@ -408,7 +408,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
 /* ---------------- Provider base URL ---------------- */
 function BaseUrlTag({ provider }: { provider: BifrostProvider }) {
   const url = provider.network_config?.base_url
-  return url ? <span className="font-mono" title="Base URL"> · {url}</span> : null
+  return url ? <span className="font-mono" title={url}> · {url}</span> : null
 }
 
 function EditProviderButton({
