@@ -1006,7 +1006,7 @@ describe('case page', () => {
     expect(await screen.findByRole('heading', { name: '—' })).toBeInTheDocument()
     expect(screen.getAllByText(/^Closed by ada/)).toHaveLength(2)
     expect(document.body.textContent).not.toMatch(/Invalid Date/)
-    expect(screen.getByText('No findings yet.')).toBeInTheDocument()
+    expect(await screen.findByText('No findings yet.')).toBeInTheDocument()
   })
 
   it('says so while the run loads', async () => {
