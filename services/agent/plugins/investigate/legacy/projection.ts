@@ -10,6 +10,8 @@ export interface LeadProjection {
   run_id: string;
   // Only investigate registers this projection.
   run_kind: "investigate";
+  // The ceiling every projection carries in its head, off budgets below. Null with them.
+  max_cost_usd: number | null;
   // What the run was granted, off its opening event. Null when the ledger has none.
   budgets: BudgetLimits | null;
   status: "running" | "waiting_approval" | "terminal";
@@ -103,6 +105,7 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
   return {
     run_id: runId,
     run_kind: "investigate",
+    max_cost_usd: budgets?.max_cost_usd ?? null,
     budgets,
     status: terminal !== null ? "terminal" : open !== null ? "waiting_approval" : "running",
     outcome: terminal?.outcome ?? null,

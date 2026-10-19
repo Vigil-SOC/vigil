@@ -3,6 +3,7 @@ import type {
   CallClass,
   CallPayload,
   HypothesisPayload,
+  HypothesisStatus,
   LinkPayload,
   PatchPayload,
   QuestionPayload,
@@ -97,6 +98,69 @@ export function recordOf(events: readonly { kind: string; payload: unknown }[]):
     }
   }
   return view;
+}
+
+// --- the rows a screen reads --------------------------------------------------
+
+export interface BearsOn {
+  hypothesis_id: string;
+  relation: Stance;
+}
+
+export interface RecordStanding {
+  hypothesis_id: string;
+  statement: string;
+  status: HypothesisStatus;
+  supports: number;
+  weakens: number;
+  // The evidence rows the caller counts that take no stance on this belief.
+  neither: number;
+  resolution_reason: string | null;
+  provenance: string;
+}
+
+export interface RecordQuestion {
+  question_id: string;
+  question: string;
+  hypothesis_id: string | null;
+}
+
+export interface RecordRows {
+  hypotheses: RecordStanding[];
+  // Keyed by evidence id: evidence attached to nothing has no entry.
+  bears_on: Map<string, BearsOn[]>;
+  open_questions: RecordQuestion[];
+}
+
+// What any ledger that keeps a record shows a reader. `evidence` is the rows the caller
+// counts neither over, which differs by plugin. A row linked to the same hypothesis twice
+// was re-weighed: the later stance stands, where the first one was.
+export function recordRows(
+  record: { hypotheses: ReadonlyMap<string, HypothesisPayload>; links: readonly LinkPayload[]; questions: ReadonlyMap<string, QuestionPayload> },
+  evidence: Iterable<string>,
+): RecordRows {
+  const links = [...new Map(record.links.map((link) => [`${link.evidence_id} ${link.hypothesis_id}`, link])).values()];
+  const counted = [...evidence];
+  const bears_on = new Map<string, BearsOn[]>();
+  for (const { evidence_id, hypothesis_id, relation } of links) bears_on.set(evidence_id, [...(bears_on.get(evidence_id) ?? []), { hypothesis_id, relation }]);
+  const hypotheses = [...record.hypotheses.values()].map(({ hypothesis_id, statement, status, resolution_reason, provenance }) => {
+    const own = links.filter((link) => link.hypothesis_id === hypothesis_id);
+    const taken = new Set(own.filter((link) => link.relation !== "neither").map((link) => link.evidence_id));
+    return {
+      hypothesis_id,
+      statement,
+      status,
+      supports: own.filter((link) => link.relation === "supports").length,
+      weakens: own.filter((link) => link.relation === "weakens").length,
+      neither: counted.filter((id) => !taken.has(id)).length,
+      resolution_reason,
+      provenance,
+    };
+  });
+  const open_questions = [...record.questions.values()]
+    .filter((question) => question.status === "open")
+    .map(({ question_id, question, hypothesis_id }) => ({ question_id, question, hypothesis_id }));
+  return { hypotheses, bears_on, open_questions };
 }
 
 export interface VisibilityGap {

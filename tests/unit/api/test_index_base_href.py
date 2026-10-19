@@ -33,6 +33,7 @@ def test_base_precedes_every_url_bearing_tag(context_path, href):
     html = inject_index_head(RAW, context_path, ['<meta name="x" content="y">'])
 
     base = html.index(f'<base href="{href}">')
+    assert base < html.index("<meta charset")
     assert base < html.index('<meta name="x"')
     assert base < html.index("<script")
     assert base < html.index("<link")
