@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, type RunFold } from './caseFold'
+import { actionWords, agentRows, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
 import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 describe('actionWords', () => {
@@ -78,5 +78,48 @@ describe('an investigation\'s record', () => {
     const legacy = readFold({ status: 'completed', projection: { findings: [{ agent_id: 'lead', answer: 'benign' }] } })
     expect(foldRecord(legacy)).toBeNull()
     expect(endedRun(legacy)?.line).toBe('1 finding')
+  })
+})
+
+describe('a root-cause run', () => {
+  const head = {
+    run_id: 'run-rca',
+    run_kind: 'root_cause',
+    status: 'terminal',
+    outcome: 'concluded',
+    reason: 'origin proven',
+    cost_usd: 0.4,
+    max_cost_usd: 2,
+    steps: [{ step_id: 's1', proven: true }],
+    proven: 1,
+    notices: ['a notice'],
+    searches: 3,
+    recent_searches: [{ tool: 'search', args: '{}', rows: 2, failed: false }],
+    open_checkpoint: null,
+  }
+
+  it('folds to its head only, and every reader shows nothing for it', () => {
+    const fold = readFold({ status: 'completed', projection: head })
+    expect(fold).toMatchObject({ kind: 'head', outcome: 'concluded', reason: 'origin proven', costUsd: 0.4, maxCostUsd: 2, openCheckpoint: null, calls: [], moves: [] })
+    expect(foldRecord(fold)).toBeNull()
+    expect(visibilityGaps(fold)).toEqual([])
+    expect(agentRows(fold)).toEqual([])
+    expect(strongestRows(fold)).toEqual([])
+    expect(stoppedRun(fold)).toBeNull()
+    expect(endedRun(fold)?.line).toBe('0 findings')
+  })
+
+  it('still folds without run_kind, through the projection key as before', () => {
+    const { run_kind: _kind, ...bare } = head // eslint-disable-line @typescript-eslint/no-unused-vars
+    const fold = readFold({ status: 'completed', projection: bare })
+    expect(fold?.kind).toBe('lead')
+    expect(foldRecord(fold)).toBeNull()
+    expect(visibilityGaps(fold)).toEqual([])
+  })
+
+  it('leaves hunt and lead folds as they were, and reads the hunt ceiling off the head or its budgets', () => {
+    expect(readFold({ status: 'running', hunt: { iteration: 1, budgets: { max_cost_usd: 5 } } })).toMatchObject({ kind: 'hunt', maxCostUsd: 5 })
+    expect(readFold({ status: 'running', hunt: { run_kind: 'hunt', iteration: 1, max_cost_usd: 3, budgets: { max_cost_usd: 5 } } })).toMatchObject({ kind: 'hunt', maxCostUsd: 3 })
+    expect(readFold({ status: 'running', projection: { max_cost_usd: 1, findings: [] } })).toMatchObject({ kind: 'lead', maxCostUsd: 1 })
   })
 })
