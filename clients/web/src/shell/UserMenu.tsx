@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
+import TwoStepDialog from './TwoStepDialog'
 
 const FEEDBACK_BASE =
   import.meta.env.VITE_FEEDBACK_URL ||
@@ -42,6 +43,7 @@ export default function UserMenu({
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
   const [version, setVersion] = useState('')
+  const [twoStepOpen, setTwoStepOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
@@ -142,6 +144,11 @@ export default function UserMenu({
           <Icon name={scheme === 'dark' ? 'sun' : 'moon'} size={15} />
           {scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         </button>
+        <button role="menuitem" onClick={() => { setOpen(false); setTwoStepOpen(true) }}>
+          <Icon name="shield" size={15} />
+          Two-step sign-in
+          <span className="user-pop-note">{user.mfa_enabled ? 'On' : 'Off'}</span>
+        </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings
         </button>
@@ -150,6 +157,8 @@ export default function UserMenu({
         </button>
       </div>
     ) : null
+
+  const twoStep = <TwoStepDialog open={twoStepOpen} onClose={() => setTwoStepOpen(false)} />
 
   return (
     <div className="user-menu" ref={ref}>
@@ -163,6 +172,7 @@ export default function UserMenu({
         <span>{initials}</span>
       </button>
       {menu && (root ? createPortal(menu, root) : menu)}
+      {root ? createPortal(twoStep, root) : twoStep}
     </div>
   )
 }
