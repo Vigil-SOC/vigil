@@ -60,10 +60,12 @@ class _ChildSession(PersistentServerSession):
     async def connect(self) -> bool:
         errlog = os.fdopen(self._errlog_fd, "wb", buffering=0)
         try:
-            self.stdio_context = stdio_client(self.server_params, errlog=errlog)  # type: ignore[arg-type]
-            self.read_stream, self.write_stream = await self.stdio_context.__aenter__()
+            self.transport_context = stdio_client(self.server_params, errlog=errlog)  # type: ignore[arg-type]
+            self.read_stream, self.write_stream = (
+                await self.transport_context.__aenter__()
+            )
             # The suspended generator's frame holds the anyio Process.
-            self.process = self.stdio_context.gen.ag_frame.f_locals.get("process")  # type: ignore[attr-defined]
+            self.process = self.transport_context.gen.ag_frame.f_locals.get("process")  # type: ignore[attr-defined]
             errlog.close()  # the child holds its own copy
             self.session_context = ClientSession(self.read_stream, self.write_stream)
             self.session = await self.session_context.__aenter__()

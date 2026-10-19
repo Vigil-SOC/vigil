@@ -107,7 +107,6 @@ def get_orchestrator_status():
     active = [i for i in investigations if i.get("status") in ("assigned", "executing")]
     completed = [i for i in investigations if i.get("status") == "completed"]
     failed = [i for i in investigations if i.get("status") == "failed"]
-    review = [i for i in investigations if i.get("status") == "review_submitted"]
 
     # Waiting room is intake_triggers. Count it here like GET /intake;
     # swallowing a miss as 0 would look like an empty queue.
@@ -135,7 +134,6 @@ def get_orchestrator_status():
         "queued": queued,
         "completed": len(completed),
         "failed": len(failed),
-        "pending_review": len(review),
         "total_investigations": len(investigations),
         "cost": cost_summary,
         "stats": stats,
@@ -354,7 +352,7 @@ def wake_investigation(investigation_id: str):
                 status_code=404, detail=f"Investigation not found: {investigation_id}"
             )
 
-        if inv.get("status") not in ("sleeping", "needs_rework", "completed", "failed"):
+        if inv.get("status") not in ("sleeping", "completed", "failed"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot wake investigation in status '{inv.get('status')}'",
@@ -395,72 +393,6 @@ def kill_investigation(investigation_id: str):
         orch.workdir.write_state(investigation_id, state)
 
         return {"success": True, "message": f"Investigation {investigation_id} killed"}
-    except HTTPException:
-        raise
-
-
-class ReviewRequest(BaseModel):
-    action: str  # 'approve' or 'rework'
-    notes: Optional[str] = None
-
-
-@router.post("/investigations/{investigation_id}/review")
-def review_investigation(investigation_id: str, request: ReviewRequest):
-    """Human review of an investigation: approve or request rework."""
-    if request.action not in ("approve", "rework"):
-        raise HTTPException(
-            status_code=400, detail="action must be 'approve' or 'rework'"
-        )
-
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=503, detail="Orchestrator not available")
-
-        inv = orch.get_investigation(investigation_id)
-        if not inv:
-            raise HTTPException(
-                status_code=404, detail=f"Investigation not found: {investigation_id}"
-            )
-
-        if inv.get("status") != "review_submitted":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Investigation is in '{inv.get('status')}' status, not 'review_submitted'",
-            )
-
-        new_status = "completed" if request.action == "approve" else "needs_rework"
-        orch._update_investigation_status(investigation_id, new_status, request.notes)
-
-        from core.storage.connection import get_db_manager
-        from core.storage.models import Investigation as InvestigationModel
-
-        with get_db_manager().session_scope() as session:
-            db_inv = (
-                session.query(InvestigationModel)
-                .filter_by(investigation_id=investigation_id)
-                .first()
-            )
-            if db_inv:
-                db_inv.master_review_notes = request.notes or (
-                    "Approved by human reviewer"
-                    if request.action == "approve"
-                    else "Rework requested by human reviewer"
-                )
-
-        if request.action == "rework":
-            state = orch.workdir.read_state(investigation_id)
-            state["status"] = "executing"
-            state.pop("failure_reason", None)
-            orch.workdir.write_state(investigation_id, state)
-            orch._update_investigation_status(investigation_id, "assigned")
-
-        return {
-            "success": True,
-            "action": request.action,
-            "new_status": new_status if request.action == "approve" else "assigned",
-            "message": f"Investigation {request.action}d",
-        }
     except HTTPException:
         raise
 

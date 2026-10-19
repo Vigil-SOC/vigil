@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
 from core.llm.outage import report_outage, report_recovered
+from core.storage.service import DAEMON_ENRICHMENT_KEYS
 from core.time import utcnow
 from services.daemon.config import ProcessingConfig, ResponseConfig
 from services.daemon.probes import ACTIONS as TRIAGE_ACTIONS
@@ -50,19 +51,6 @@ TRIAGE_KEYS = (
 # models (Gemini 2.5, OpenAI reasoning) spend output tokens before it; the
 # gateway's 2048 default cut REASONING off mid-sentence (#2315).
 TRIAGE_MAX_TOKENS = 8192
-
-# Finding-dict keys that triage/enrich produce; cached together in the
-# ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
-_AI_ANALYSIS_KEYS = (
-    "ai_triage",
-    "ai_triage_error",
-    "enrichment",
-    "enriched_at",
-    "triage_confidence",
-    "category",
-    "recommended_action",
-    "triage_reasoning",
-)
 
 
 class FindingProcessor:
@@ -543,14 +531,19 @@ class FindingProcessor:
             updates["severity"] = finding["severity"]
         if finding.get("status"):
             updates["status"] = finding["status"]
-        ai_enrichment = {k: finding[k] for k in _AI_ANALYSIS_KEYS if k in finding}
-        if ai_enrichment:
-            updates["ai_enrichment"] = ai_enrichment
+        ai_enrichment = {k: finding[k] for k in DAEMON_ENRICHMENT_KEYS if k in finding}
 
-        if not updates:
+        # Both report failure by returning False rather than raising.
+        if ai_enrichment:
+            # Replaces only the triage keys; a generated analysis survives.
+            ok = self._data_service.write_ai_enrichment(
+                finding_id, ai_enrichment, daemon=True, **updates
+            )
+        elif updates:
+            ok = self._data_service.update_finding(finding_id, **updates)
+        else:
             return
-        # update_finding reports failure by returning False rather than raising.
-        if not self._data_service.update_finding(finding_id, **updates):
+        if not ok:
             logger.error(
                 "Failed to persist triage result for %s; the enrichment backfill "
                 "will re-queue it",
@@ -837,9 +830,9 @@ REASONING: [Brief explanation]
         if feed_hits:
             enrichment["threat_indicators"] = feed_hits
 
-        # enriched_at is always stamped as an "attempt" marker (it is one of
-        # _AI_ANALYSIS_KEYS): a clean finding with no hits must still leave the
-        # backfill's `ai_enrichment IS NULL` set, or it re-queues every sweep.
+        # enriched_at is always stamped as an "attempt" marker (one of
+        # DAEMON_ENRICHMENT_KEYS): a clean finding with no hits must still leave
+        # the backfill set, or it re-queues every sweep.
         finding["enriched_at"] = utcnow().isoformat()
         if enrichment:
             finding["enrichment"] = enrichment

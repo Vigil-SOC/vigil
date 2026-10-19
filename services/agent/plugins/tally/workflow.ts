@@ -1,7 +1,7 @@
 import type { RunOutcome } from "../../contracts/events.js";
 import { runAgent, type AgentKinds } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
-import { DEFAULT_BUDGETS, DEFAULT_DISPATCH, type RunSpec } from "../../core/spec.js";
+import { DEFAULT_BUDGETS, type RunSpec } from "../../core/spec.js";
 import { loadPlugin } from "../index.js";
 import type { TallyKinds, TallyPayload } from "./vocabulary.js";
 
@@ -57,8 +57,7 @@ function specOf(options: TallyOptions): RunSpec {
     approvals: [...(options.approvals ?? [])],
     thresholds: {},
     arch: "tally",
-    roles: { workers: {} },
-    dispatch: DEFAULT_DISPATCH,
+    roles: {},
     digest: {},
     name: "tally",
     description: "",

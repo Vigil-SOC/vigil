@@ -7,13 +7,13 @@ import { okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../cor
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
-import type { RunSpec, ToolSpec } from "../../core/spec.js";
+import { narrowFinding, type RunSpec, type ToolSpec } from "../../core/spec.js";
 import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "./adapters.js";
 import { pendingCheckpoints } from "./checkpoints.js";
 import { suppressedEntities } from "./frontier.js";
-import { huntSpec } from "./config.js";
+import { allowanceOf, huntSpec } from "./config.js";
 import { expandFrom } from "./expand.js";
 import { citedFindings } from "./findings.js";
 import { Journal, type HuntKinds } from "./journal.js";
@@ -106,11 +106,11 @@ function huntRecord(ctx: PluginContext, ports: HuntPorts): RecordBackend {
   };
 }
 
-// One agent does the workers' querying itself, so its turn budget is the iteration
-// budget times the fan-out it replaces; hard ceilings scale too unless pinned.
+// The agent's turn budget is the iterations asked for times the allowance per
+// iteration; a pinned hard ceiling scales the same way.
 export function kernelSpec(spec: RunSpec): RunSpec {
   const asked = huntSpec(spec).budgets.max_iterations;
-  const factor = spec.dispatch.max_workers + 2;
+  const factor = allowanceOf(spec).turns_per_iteration;
   const pinned = spec.thresholds["hard_max_iterations"];
   return {
     ...spec,
@@ -128,7 +128,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
 
   return {
     open: async (ctx, base) => {
-      await startHunt(state(ctx), ports.queue, ctx.options.run_id, huntSpec(kernelSpec(base.spec as RunSpec)), base.started_by, ctx.options.run_kind);
+      await startHunt(state(ctx), ports.queue, ctx.options.run_id, huntSpec(kernelSpec(base.spec as RunSpec)), base.started_by, ctx.options.run_kind, ctx.options.plugin.needs);
     },
 
     tools: (ctx) => [...huntTools(ctx, ports), ...expandTool(ctx)],
@@ -394,6 +394,7 @@ function statusOf(projection: Projection): Record<string, unknown> {
 
 // --- tools ---------------------------------------------------------------------
 
+// plugin.yaml's finding, for a ledger journaled before the spec carried one.
 const RESULT_ITEM_FALLBACK = {
   type: "object",
   additionalProperties: false,
@@ -408,19 +409,23 @@ const RESULT_ITEM_FALLBACK = {
     weakens: { type: "array", items: { type: "string" } },
     query_failed: { type: "boolean", description: "True when the query behind this row failed, timed out or returned nothing." },
     attacker_influenceable: { type: "boolean" },
-    rests_on: { type: "array", items: { type: "object" } },
+    rests_on: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["field", "authored"],
+        properties: { field: { type: "string" }, authored: { type: "string", enum: ["sensor", "adversary", "third_party"] } },
+      },
+    },
     attack_technique: { type: "string" },
   },
 };
 
-// The workers' result shape, narrowed at spec build to the playbook's data domains
-// and techniques: the agent records findings in exactly the shape a worker did.
+// The plugin's finding shape, narrowed at spec build to the playbook's data domains and
+// techniques. A ledger journaled before the spec carried one narrows the fallback here.
 function resultItem(spec: RunSpec): Record<string, unknown> {
-  for (const worker of Object.values(spec.roles.workers)) {
-    const results = (worker.output_schema?.["properties"] as Record<string, { items?: Record<string, unknown> }> | undefined)?.["results"];
-    if (results?.items !== undefined) return results.items;
-  }
-  return RESULT_ITEM_FALLBACK;
+  return spec.finding ?? narrowFinding(RESULT_ITEM_FALLBACK, spec.sections);
 }
 
 // What the agent said when it stopped: its summary, or prose from a ledger

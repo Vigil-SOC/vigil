@@ -61,6 +61,8 @@ COPY --chown=vigil:vigil VERSION      ./VERSION
 COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
 # Declared intent. .dockerignore excludes *.md except this file.
 COPY --chown=vigil:vigil INTENT.md    ./INTENT.md
+# The MCP catalog: the daemon starts servers in the MCP runner by these names.
+COPY --chown=vigil:vigil mcp-config.json ./mcp-config.json
 
 # Persistent investigation artifacts (mount a PVC here in K8s) and user home state
 RUN mkdir -p /app/data/investigations /home/vigil/.vigil /home/vigil/security-detections \

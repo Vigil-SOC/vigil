@@ -1,11 +1,12 @@
 # .github/workflows/release.yml
 #
 # Triggered when release-please merges a release PR and pushes a vX.Y.Z tag.
-# Builds and publishes three OCI images to ghcr.io:
+# Builds and publishes four OCI images to ghcr.io:
 #
 #   ghcr.io/vigil-soc/vigil-backend:<tag>   (FastAPI API + bundled SPA)
 #   ghcr.io/vigil-soc/vigil-daemon:<tag>    (headless SOC daemon)
 #   ghcr.io/vigil-soc/vigil-agent:<tag>     (TypeScript agent: worker + serve)
+#   ghcr.io/vigil-soc/vigil-mcp-runner:<tag> (MCP servers, each under its own uid)
 #
 # The llm-worker Deployment reuses the backend image (different command), and
 # agent-worker/agent-serve are the same arrangement over the agent image: one
@@ -207,6 +208,80 @@ jobs:
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
   # ---------------------------------------------------------------------------
+  # Build + push: MCP runner (infra/helm mcpRunner, compose mcp-runner)
+  # ---------------------------------------------------------------------------
+  build-mcp-runner:
+    name: Build MCP runner image
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write          # keyless cosign signing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/vigil-soc/vigil-mcp-runner
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=vigil-mcp-runner
+            org.opencontainers.image.description=Vigil SOC — MCP server runner
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push MCP runner
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.mcp-runner
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-mcp-runner:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-mcp-runner:buildcache,mode=max
+          build-args: |
+            VIGIL_VERSION=${{ github.ref_name }}
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-mcp-runner
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  # ---------------------------------------------------------------------------
   # Build + push: agent (worker and serve run the same image)
   # ---------------------------------------------------------------------------
   build-agent:
@@ -288,7 +363,7 @@ jobs:
     name: Smoke test images
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
-    needs: [version, build-backend, build-daemon, build-agent]
+    needs: [version, build-backend, build-daemon, build-agent, build-mcp-runner]
     permissions:
       packages: read
 
@@ -436,7 +511,10 @@ jobs:
             | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
           echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
           echo "daemon=$DAEMON"   >> "$GITHUB_OUTPUT"
+          MCP_RUNNER=$(docker manifest inspect ghcr.io/vigil-soc/vigil-mcp-runner:${{ needs.version.outputs.version }} \
+            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
           echo "agent=$AGENT"     >> "$GITHUB_OUTPUT"
+          echo "mcp_runner=$MCP_RUNNER" >> "$GITHUB_OUTPUT"
 
       - name: Append image refs to release notes
         uses: softprops/action-gh-release@v3
@@ -455,10 +533,12 @@ jobs:
             | `ghcr.io/vigil-soc/vigil-backend` | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.backend }}` |
             | `ghcr.io/vigil-soc/vigil-daemon`  | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.daemon }}`  |
             | `ghcr.io/vigil-soc/vigil-agent`   | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.agent }}`   |
+            | `ghcr.io/vigil-soc/vigil-mcp-runner` | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.mcp_runner }}` |
 
             ```bash
             # Pull by tag
             docker pull ghcr.io/vigil-soc/vigil-backend:${{ needs.version.outputs.version }}
             docker pull ghcr.io/vigil-soc/vigil-daemon:${{ needs.version.outputs.version }}
             docker pull ghcr.io/vigil-soc/vigil-agent:${{ needs.version.outputs.version }}
+            docker pull ghcr.io/vigil-soc/vigil-mcp-runner:${{ needs.version.outputs.version }}
             ```

@@ -14,7 +14,9 @@
 ARG PYTHON_VERSION=3.12
 
 # ---------------------------------------------------------------------------
-# Node runtime and the catalog's npx connectors, as in Dockerfile.backend.
+# Node runtime and the catalog's npx connectors, installed at their pins so the
+# image never fetches them at start. Only node and the prefix reach the runtime
+# stage; npm stays here. Target arch: this code runs in the image.
 # ---------------------------------------------------------------------------
 FROM node:22-slim AS mcp-node
 # npm's bundled tar unpacks every package below:
@@ -61,7 +63,9 @@ COPY --from=python-deps /install/deps /usr/local
 COPY --from=mcp-node /usr/local/bin/node /usr/local/bin/node
 COPY --from=mcp-node /opt/vigil/mcp/npm /opt/vigil/mcp/npm
 
-# Baked uvx connectors, as in Dockerfile.backend.
+# Baked uvx connectors, one uv tool venv each, on the image's own interpreter
+# and the uv that requirements.lock pins. Hardlinked from a cache dropped in the
+# same layer, so the venvs share one copy of their common dependencies.
 COPY infra/docker/mcp-packages/uv-tools.txt /tmp/uv-tools.txt
 RUN grep -v '^#' /tmp/uv-tools.txt > /tmp/uv-tools.list \
     && UV_TOOL_DIR=/opt/vigil/mcp/uv-tools \

@@ -5,7 +5,7 @@
 # verbatim from the Medic contracts and gated by ruff in .github/workflows/medic.yml.
 repos:
   - repo: https://github.com/psf/black
-    rev: 26.5.1
+    rev: 26.10.0
     hooks:
       - id: black
         files: ^(services|core)/

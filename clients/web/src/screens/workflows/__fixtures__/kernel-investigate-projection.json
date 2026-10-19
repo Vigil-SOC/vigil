@@ -159,6 +159,96 @@
  "gaps": [],
  "unbound": [],
  "recall": null,
+ "hypotheses": [
+  {
+   "hypothesis_id": "h1",
+   "statement": "The user ws-0901\\reader is accessing lsass.exe to dump credentials for later use in the environment.",
+   "status": "active",
+   "supports": 1,
+   "weakens": 2,
+   "neither": 0,
+   "resolution_reason": null,
+   "provenance": "agent"
+  },
+  {
+   "hypothesis_id": "h2",
+   "statement": "The user ws-0901\\reader is a security admin, and is using approved tooling to audit credentials.",
+   "status": "active",
+   "supports": 0,
+   "weakens": 0,
+   "neither": 3,
+   "resolution_reason": null,
+   "provenance": "agent"
+  },
+  {
+   "hypothesis_id": "h3",
+   "statement": "The activity is part of an authorized red-team engagement.",
+   "status": "active",
+   "supports": 2,
+   "weakens": 0,
+   "neither": 1,
+   "resolution_reason": null,
+   "provenance": "agent"
+  }
+ ],
+ "evidence": [
+  {
+   "evidence_id": "r9",
+   "iteration": 3,
+   "source_system": "splunk_search",
+   "summary": "1 row(s) from splunk_search [ { \"time\": \"2026-10-01T10:00:00Z\", \"host\": \"ws-0901\", \"source\": \"sysmon\", \"event\": \"process_create\", \"detail\": \"mimikatz-style tool run by user0201; host tagged 'red-team-range' in the asset inventory\" } ]",
+   "is_gap": false,
+   "gap_detail": null,
+   "captured_at": "2026-10-10T08:21:48.650Z",
+   "bears_on": [
+    {
+     "hypothesis_id": "h3",
+     "relation": "supports"
+    },
+    {
+     "hypothesis_id": "h1",
+     "relation": "weakens"
+    }
+   ]
+  },
+  {
+   "evidence_id": "r3",
+   "iteration": 1,
+   "source_system": "case_records",
+   "summary": "1 row(s) from case_records [ { \"case_id\": \"c-4001\", \"note\": \"Red-team engagement RT-2026-09 runs 2026-09-28 to 2026-10-03. Registered operator accounts: user0201. Registered hosts: ws-0901. Contact: security engineering.\" } ]",
+   "is_gap": false,
+   "gap_detail": null,
+   "captured_at": "2026-10-10T08:21:25.227Z",
+   "bears_on": [
+    {
+     "hypothesis_id": "h1",
+     "relation": "weakens"
+    },
+    {
+     "hypothesis_id": "h3",
+     "relation": "supports"
+    }
+   ]
+  },
+  {
+   "evidence_id": "r2",
+   "iteration": 1,
+   "source_system": "get_finding",
+   "summary": "1 row(s) from get_finding [ { \"finding_id\": \"f-4001\", \"host\": \"ws-0901\", \"user\": \"user0201\", \"detection\": \"lsass access by known hacktool\", \"severity\": \"high\" } ]",
+   "is_gap": false,
+   "gap_detail": null,
+   "captured_at": "2026-10-10T08:21:25.227Z",
+   "bears_on": [
+    {
+     "hypothesis_id": "h1",
+     "relation": "supports"
+    }
+   ]
+  }
+ ],
+ "evidence_count": 3,
+ "open_questions": [],
+ "held": null,
  "engine": "plugin",
  "kernel": {
   "run_id": "run-1",

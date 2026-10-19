@@ -89,7 +89,7 @@ async def test_the_409_names_every_blocking_run(session):
 
     _case(session, "case-1")
     _investigation(session, "inv-1", "case-1", "executing")
-    _investigation(session, "inv-2", "case-1", "review_submitted")
+    _investigation(session, "inv-2", "case-1", "waiting_approval")
 
     with pytest.raises(HTTPException) as exc:
         await cases.delete_case("case-1", session)
