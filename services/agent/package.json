@@ -18,6 +18,10 @@
     "ledger:verify": "tsx ledger/verify.ts"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.223.0",
+    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
     "ajv": "^8.20.0",
     "bullmq": "5.81.3",
     "openai": "^4.104.0",

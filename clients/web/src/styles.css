@@ -6194,11 +6194,19 @@
    }
 
    /* ---------- Triage queue: follows the Triage board and tokens.json ---------- */
+   /* The screen is view-full: head, tiles and chips on top, the card takes the rest and scrolls inside */
    .tq-page {
-      padding: 20px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      padding: 20px 26px 0;
       display: flex;
       flex-direction: column;
       gap: 14px;
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto; /* only when the head, tiles and chips outgrow a short window */
+   }
+
+   .tq-page > * {
+      flex-shrink: 0;
    }
 
    .tq-head {
@@ -6330,10 +6338,13 @@
    }
 
    .tq-card {
+      flex: 1 1 0; /* the rows scroll inside the card instead of growing the page */
+      min-height: 230px; /* room for an ⓘ popover under a short list */
+      padding-bottom: 96px; /* bottom room so the Ask Vigil button never covers the last row */
       background: var(--bg1);
       border: 1px solid var(--ln0);
       border-radius: 14px;
-      overflow: hidden;
+      overflow: auto;
    }
 
    /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
@@ -6342,15 +6353,21 @@
    }
 
    .tq-table thead th {
-      position: static;
+      position: sticky;
+      top: 0;
+      z-index: 2; /* above the rows scrolling under it */
       padding: 11px 16px;
-      background: transparent;
+      background: var(--bg1);
       border-bottom: 0;
       font-size: 11px;
       font-weight: 700;
       letter-spacing: 0;
       text-transform: none;
       color: var(--tx2);
+   }
+
+   .tq-table tbody tr {
+      scroll-margin-top: 44px; /* a focused row clears the pinned header */
    }
 
    .tq-table tbody td {

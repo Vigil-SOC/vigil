@@ -16,6 +16,7 @@ from core.deps import provide_approvals, provide_workflow_runs
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
+from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
 from core.workflows.workflow_run_service import WorkflowRunService
 
@@ -604,7 +605,7 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
 # What the analyst reads under a checkpoint's question. Never the class name or a
 # threshold: those are config, not an explanation.
 _CHECKPOINT_REASONS = {
-    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "hypothesis_approval": "Vigil wants your go-ahead on the explanations it will test.",
     "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
     "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
     "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",
@@ -668,7 +669,7 @@ def list_decisions(
                     actor=action.approved_by or "analyst",
                     answer=answer,
                     text=action.rejection_reason or "",
-                    resolved_at=action.approved_at or utcnow().isoformat(),
+                    resolved_at=action.approved_at or _iso_utc(utcnow()),
                 )
             )
     return Decisions(decisions=decided)

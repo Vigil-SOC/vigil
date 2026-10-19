@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header
@@ -45,6 +46,8 @@ async def rates(
 
     provider_type, model_id = priced_as(provider_type, model_id)
     resolved = get_registry().get_rates(model_id, provider_type)
+    if resolved["pricing_source"] == "unknown" and await _reread_rates(provider_type):
+        resolved = get_registry().get_rates(model_id, provider_type)
 
     # Carried through rather than resolved away: a $0 call priced from a real
     # catalog entry and a $0 call nobody could price look identical on a ledger,
@@ -59,6 +62,38 @@ async def rates(
         "source": resolved["pricing_source"],
         "fetched_at": resolved["rates_fetched_at"],
     }
+
+
+# A provider added after this process last read the gateway's datasheet has no
+# rates here until the next catalogue refresh, up to five minutes later, and a hunt
+# started in that window parks on its first iteration as unpriced (#2290). The API
+# runs more than one worker and only the one that took the write syncs at once, so
+# the read happens where the question lands: one sheet, at most once per type per
+# interval, since an id the gateway truly cannot price asks on every call.
+_REREAD_INTERVAL_S = 30.0
+_last_reread: Dict[str, float] = {}
+
+
+async def _reread_rates(provider_type: str) -> bool:
+    """Read ``provider_type``'s datasheet into this process. True when it answered."""
+    from core.llm.providers.registry import VALID_PROVIDER_TYPES
+
+    if provider_type not in VALID_PROVIDER_TYPES:
+        return False
+    now = time.monotonic()
+    last = _last_reread.get(provider_type)
+    if last is not None and now - last < _REREAD_INTERVAL_S:
+        return False
+    _last_reread[provider_type] = now
+
+    from core.llm.bifrost.admin import record_gateway_rates
+
+    try:
+        sheets = await record_gateway_rates([provider_type])
+    except Exception as exc:  # noqa: BLE001 - unpriced stays the answer
+        logger.debug("rate re-read for %s failed: %s", provider_type, exc)
+        return False
+    return any(sheets.values())
 
 
 # The virtual key the agent sends as x-bf-vk, or null when the budget is not

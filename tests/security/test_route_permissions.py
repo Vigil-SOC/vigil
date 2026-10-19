@@ -29,7 +29,6 @@ RUN_ID = "9c1c2d3e-0000-4000-8000-000000000592"
 GATED_ROUTES = [
     ("POST", "/api/config/postgresql", {"connection_string": "x"}, "settings.write"),
     ("POST", "/api/config/claude", {"api_key": "x"}, "settings.write"),
-    ("POST", "/api/config/secrets/reinit", {}, "settings.write"),
     ("POST", "/api/config/secrets/migrate-to-encrypted", None, "settings.write"),
     ("POST", "/api/config/force-manual-approval", {"enabled": True}, "settings.write"),
     ("POST", "/api/config/integrations", {"integrations": {}}, "integrations.write"),

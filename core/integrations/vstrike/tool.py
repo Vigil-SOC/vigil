@@ -261,7 +261,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
             {
                 "error": "VStrike not configured",
                 "message": (
-                    "Set VSTRIKE_BASE_URL + VSTRIKE_API_KEY or configure the "
+                    "Set VSTRIKE_BASE_URL + VSTRIKE_USERNAME + VSTRIKE_PASSWORD or configure the "
                     "integration in Settings > Integrations."
                 ),
             }

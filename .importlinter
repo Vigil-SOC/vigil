@@ -102,6 +102,7 @@ forbidden_modules =
     tools
     services.api
     services.daemon
+    services.mcp_runner
     services.medic_gateway
     services.worker
 
@@ -118,5 +119,6 @@ forbidden_modules =
     tools
     services.api
     services.daemon
+    services.mcp_runner
     services.medic
     services.worker

@@ -57,19 +57,19 @@ def _virustotal_domain(payload: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Shodan. Any free account has an API key. dns_lookup is GET /dns/resolve, which
-# 401s without a valid key (checked) and is not the credit-metered part of the
-# API (search filters are). ip_lookup (/shodan/host/{ip}) and cve_lookup
-# (cvedb.shodan.io) are not probed: both answer with no key or a bad one, so a
-# pass would say nothing about the credential.
+# Shodan. Any free account has an API key. api_info is GET /api-info, which 401s
+# without a valid key (checked) and costs no credits. dns_lookup answers a free
+# key with "Requires membership or higher", and ip_lookup (/shodan/host/{ip})
+# and the cvedb tools answer with no key or a bad one, so a pass there would say
+# nothing about the credential.
 # ---------------------------------------------------------------------------
 
 
-def _shodan_dns(payload: Any) -> str:
+def _shodan_api_info(payload: Any) -> str:
     assert isinstance(payload, dict), f"unexpected answer: {_text(payload)[:300]}"
-    rows = {r["Hostname"]: r["IP Address"] for r in payload.get("DNS Resolutions") or []}
-    assert rows.get("dns.google") in {"8.8.8.8", "8.8.4.4"}, f"dns.google resolved to {rows}"
-    return f"dns.google -> {rows['dns.google']}"
+    plan = payload.get("Plan")
+    assert plan and plan != "Unknown", f"no plan in the answer: {_text(payload)[:300]}"
+    return f"plan {plan}"
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ def _pagerduty_me(payload: Any) -> str:
 
 # ---------------------------------------------------------------------------
 # Okta. Any org has at least the admin who minted the token, so a one-user
-# listing is never empty. The image answers a failed call with an error string
+# listing is never empty. The server answers a failed call with an error string
 # rather than {"users": [...]}, which the shape check turns into a failure.
 # ---------------------------------------------------------------------------
 
@@ -155,7 +155,7 @@ PROBES = [
         {"domain": "google.com", "relationships": []},
         expect=_virustotal_domain,
     ),
-    Probe("shodan", "dns_lookup", {"hostnames": ["dns.google"]}, expect=_shodan_dns),
+    Probe("shodan", "api_info", {}, expect=_shodan_api_info),
     Probe(
         "firecrawl",
         "firecrawl_scrape",
@@ -164,16 +164,8 @@ PROBES = [
         timeout=90.0,
     ),
     Probe("pagerduty", "get_user_data", {}, expect=_pagerduty_me),
-    # Needs OKTA_DOMAIN and OKTA_API_TOKEN, and docker.
+    # Needs OKTA_DOMAIN and OKTA_API_TOKEN; the first uvx fetch clones and installs.
     Probe("okta", "list_okta_users", {"max_results": 1}, expect=_okta_users, timeout=120.0),
-    Probe(
-        "gcp-scc",
-        "top_vulnerability_findings",
-        {"project_id": os.environ.get("LIVE_GCP_SCC_PROJECT_ID", ""), "max_findings": 1},
-        expect=_scc_findings,
-        requires=("GOOGLE_APPLICATION_CREDENTIALS", "LIVE_GCP_SCC_PROJECT_ID"),
-        timeout=120.0,
-    ),
 ]
 
 
@@ -183,10 +175,39 @@ async def test_connector(probe, mcp_client, request):
 
 
 # ---------------------------------------------------------------------------
-# Cloudflare, in-repo. The server is a no-op unless the integration is enabled
-# in the integration config, and resolves its token and account from the
-# environment (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID). So the probe gives
-# the server a throwaway VIGIL_DIR whose config enables it, as Settings would.
+# File-based cloud credentials stay with stdio children. The ADC JSON that
+# google-github-actions/auth writes, and the AWS shared-credentials profile
+# below, are files on the job host that a runner child (its own uid and HOME)
+# cannot read; #2303 leaves file-based credentials out of the runner epic, so
+# these two run as stdio children and the matrix shows them as `stdio`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stdio_only(monkeypatch):
+    monkeypatch.delenv("MCP_RUNNER_URL", raising=False)
+
+
+GCP_SCC = Probe(
+    "gcp-scc",
+    "top_vulnerability_findings",
+    {"project_id": os.environ.get("LIVE_GCP_SCC_PROJECT_ID", ""), "max_findings": 1},
+    expect=_scc_findings,
+    requires=("GOOGLE_APPLICATION_CREDENTIALS", "LIVE_GCP_SCC_PROJECT_ID"),
+    timeout=120.0,
+)
+
+
+@pytest.mark.parametrize("probe", [GCP_SCC], ids=repr)
+async def test_gcp_scc(probe, stdio_only, mcp_client, request):
+    await check(probe, mcp_client, request)
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare, in-repo. The server resolves its token and account from the
+# environment (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID). The probe still
+# gives this process a throwaway VIGIL_DIR whose config enables it, as Settings
+# would: resolve() runs here and pushes what it finds to the server.
 #
 # cf_lookup_ip_threat is GET /accounts/{id}/firewall/access_rules/rules. It is
 # read-only and needs the token's "Account Firewall Access Rules: Read"
@@ -267,5 +288,5 @@ def aws_profile(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("probe", [AWS_SECURITY], ids=repr)
-async def test_aws_security(probe, aws_profile, mcp_client, request):
+async def test_aws_security(probe, stdio_only, aws_profile, mcp_client, request):
     await check(probe, mcp_client, request)

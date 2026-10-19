@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../contracts/events.js";
-import { PROVER_TOOL, type RootCauseKinds, type StepPayload } from "../../workflows/rootcause/proof.js";
-import { rootCauseReplay } from "../../workflows/rootcause/replay.js";
+import { PROVER_TOOL, type RootCauseKinds, type StepPayload } from "../../plugins/rootcause/proof.js";
+import { rootCauseReplay } from "../../plugins/rootcause/replay.js";
 
 const RUN = "5a2c2d3e-0000-4000-8000-000000000c40";
 

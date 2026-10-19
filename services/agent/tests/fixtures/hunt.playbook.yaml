@@ -10,11 +10,11 @@ scope:
   window_days: 7
 
 directives:
-  workers: |
+  lead: |
     The data set is a seven-day export of endpoint, authentication and network
     records for the finance segment only. Anything outside it is not missing, it
     was never collected.
-  threat_intel: |
+  critic: |
     The indicator feed was snapshotted on the first day of the window.
 ---
 Finance reported a workstation that stays busy overnight. Nothing has been

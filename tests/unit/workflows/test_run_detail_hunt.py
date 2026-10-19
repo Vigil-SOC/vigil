@@ -104,3 +104,101 @@ async def test_a_hunt_run_with_no_fold_still_reads(monkeypatch):
     )
 
     assert detail["hunt"] is None
+
+
+# #2287: a row names the system its rows came from, and is graded by it, not by the
+# hunt's domain word. The alerts it cites win; the integration that answered stands in.
+@pytest.mark.asyncio
+async def test_a_hunt_row_names_the_system_its_rows_came_from(monkeypatch):
+    fold = {
+        "evidence": [
+            {
+                "evidence_id": "e1",
+                "source_system": "process_lineage",
+                "finding_ids": ["dl-003", "dl-005", "gone"],
+                "served_by": None,
+                "is_gap": False,
+            },
+            {
+                "evidence_id": "e2",
+                "source_system": "proxy",
+                "finding_ids": ["dl-004", "dl-001"],
+                "is_gap": False,
+            },
+            {
+                "evidence_id": "e3",
+                "source_system": "net_flow",
+                "finding_ids": [],
+                "served_by": "splunk-selfhosted",
+                "is_gap": False,
+            },
+            {"evidence_id": "e4", "source_system": "dns", "is_gap": False},
+            {"evidence_id": "e5", "source_system": "deployment", "is_gap": True},
+        ]
+    }
+    asked = []
+
+    async def _reads(_run_id, _evidence_limit=None):
+        return fold
+
+    def _sources(ids):
+        asked.append(ids)
+        known = {
+            "dl-001": "proofpoint",
+            "dl-003": "crowdstrike",
+            "dl-004": "zscaler",
+            "dl-005": "crowdstrike",
+        }
+        return {one: known[one] for one in ids if one in known}
+
+    monkeypatch.setattr(router, "read_projection", _reads)
+    monkeypatch.setattr(router, "_finding_sources", _sources)
+
+    detail = await router.get_workflow_run(
+        "run-5", _runs_for("threat-hunt"), WorkflowsService()
+    )
+
+    process, proxy, flow, dns, gap = detail["hunt"]["evidence"]
+    # One read for the whole page, not one per row.
+    assert asked == [["dl-001", "dl-003", "dl-004", "dl-005", "gone"]]
+    assert process["origins"] == ["crowdstrike"]
+    assert process["source_tier"] == "telemetry"
+    assert proxy["origins"] == ["zscaler", "proofpoint"]
+    assert proxy["source_tier"] == "telemetry"
+    assert flow["origins"] == ["splunk-selfhosted"]
+    assert flow["source_tier"] == "telemetry"
+    # No system known: the domain is all it can be graded by, and is a declared one.
+    assert "origins" not in dns
+    assert dns["source_tier"] == "telemetry"
+    assert "origins" not in gap and "source_tier" not in gap
+
+
+# A system the tier map grades a feed pulls a row resting on it down with it.
+@pytest.mark.asyncio
+async def test_a_row_resting_on_several_systems_takes_the_weakest_tier(monkeypatch):
+    fold = {
+        "evidence": [
+            {
+                "evidence_id": "e1",
+                "source_system": "proxy",
+                "finding_ids": ["a", "b"],
+                "is_gap": False,
+            }
+        ]
+    }
+
+    async def _reads(_run_id, _evidence_limit=None):
+        return fold
+
+    monkeypatch.setattr(router, "read_projection", _reads)
+    monkeypatch.setattr(
+        router,
+        "_finding_sources",
+        lambda ids: {"a": "crowdstrike", "b": "virustotal"},
+    )
+
+    detail = await router.get_workflow_run(
+        "run-6", _runs_for("threat-hunt"), WorkflowsService()
+    )
+
+    assert detail["hunt"]["evidence"][0]["source_tier"] == "feed"

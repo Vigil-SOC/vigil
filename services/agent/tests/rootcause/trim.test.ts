@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolResult } from "../../contracts/tool.js";
-import { SHOWN_EVENTS, shown as shownAt } from "../../workflows/rootcause/trim.js";
+import { SHOWN_EVENTS, shown as shownAt } from "../../plugins/rootcause/trim.js";
 
 const CAP = 20_000;
 const shown = (result: ToolResult) => shownAt(result, CAP);
