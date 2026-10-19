@@ -2,10 +2,10 @@
 # ==============================================================================
 # Vigil SOC Bootstrap Script (Debian 13 / Ubuntu)
 # ==============================================================================
-# Installs Docker CE from Docker's official APT repository, clones the Vigil SOC
-# repository, prepares the .env configuration (JWT_SECRET_KEY,
-# AGENT_INTERNAL_TOKEN, and COMPOSE_FILE), and prints instructions for starting
-# and managing Vigil SOC with Docker Compose.
+# Installs Docker CE from Docker's official APT repository, ensures Node.js 20+
+# is available for the frontend and TypeScript agent layer, clones the Vigil SOC
+# repository, initializes the environment via scripts/lib.sh, and directs the
+# operator to ./start.sh and ./shutdown_all.sh.
 #
 # Usage:
 #   ./scripts/bootstrap.sh
@@ -103,8 +103,8 @@ ${SUDO} apt-get install -y \
   docker-buildx-plugin \
   docker-compose-plugin
 
-# Step 5: Enable Docker service and configure user permissions
-echo "--> [5/8] Enabling Docker service and configuring user permissions..."
+# Step 5: Enable Docker service, configure user permissions, and ensure Node.js 20+
+echo "--> [5/8] Enabling Docker service and checking host prerequisites for start.sh..."
 ${SUDO} systemctl enable --now docker
 
 TARGET_USER="${SUDO_USER:-${USER:-$(id -un)}}"
@@ -114,6 +114,24 @@ if [ "${TARGET_USER}" != "root" ]; then
     ${SUDO} usermod -aG docker "${TARGET_USER}"
     NEED_NEWGRP=true
     echo "    Added user '${TARGET_USER}' to the 'docker' group."
+  fi
+fi
+
+# start.sh requires Node.js 20+ and npm on the host for the frontend and TypeScript agent layer.
+if ! command -v node >/dev/null 2>&1 || ! node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)" 2>/dev/null || ! command -v npm >/dev/null 2>&1; then
+  echo "    Installing Node.js 20+ (required by ./start.sh for frontend and agent layer)..."
+  CANDIDATE_MAJOR="$(apt-cache policy nodejs 2>/dev/null | awk '/Candidate:/ { split($2, a, "."); gsub(/[^0-9]/, "", a[1]); print a[1] }')"
+  if [ -n "${CANDIDATE_MAJOR}" ] && [ "${CANDIDATE_MAJOR}" -ge 20 ] 2>/dev/null; then
+    # Debian 13 (Trixie) ships Node.js 20+ and npm directly in main
+    ${SUDO} apt-get install -y nodejs npm
+  else
+    # Older Ubuntu/Debian releases: install Node.js 20 LTS from NodeSource
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+      ${SUDO} gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | \
+      ${SUDO} tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+    ${SUDO} apt-get update
+    ${SUDO} apt-get install -y nodejs
   fi
 fi
 
@@ -128,48 +146,23 @@ else
   git clone --branch "${VIGIL_BRANCH}" "${VIGIL_REPO_URL}" "${VIGIL_DIR}"
 fi
 
-# Step 7: Prepare .env configuration for Docker Compose
-echo "--> [7/8] Preparing Vigil environment and secrets..."
-ENV_FILE="${VIGIL_DIR}/.env"
-if [ ! -f "${ENV_FILE}" ]; then
-  (umask 077; cp "${VIGIL_DIR}/env.example" "${ENV_FILE}")
-  echo "    Created ${ENV_FILE} from env.example."
-fi
-
-# Ensure ~/.vigil/jwt_secret and populate JWT_SECRET_KEY in .env (required by backend container)
-VIGIL_STATE_DIR="${HOME}/.vigil"
-JWT_SECRET_FILE="${VIGIL_STATE_DIR}/jwt_secret"
-if [ ! -s "${JWT_SECRET_FILE}" ]; then
-  mkdir -p "${VIGIL_STATE_DIR}"
-  chmod 700 "${VIGIL_STATE_DIR}"
-  (umask 177; openssl rand -base64 48 | tr -d '\n' > "${JWT_SECRET_FILE}")
-fi
-JWT_SECRET_VAL="$(cat "${JWT_SECRET_FILE}")"
-
-if grep -qE '^JWT_SECRET_KEY=""' "${ENV_FILE}"; then
-  JWT_ESCAPED="$(printf '%s' "${JWT_SECRET_VAL}" | sed -e 's/[\/&|]/\\&/g')"
-  sed -i "s|^JWT_SECRET_KEY=\"\"|JWT_SECRET_KEY=\"${JWT_ESCAPED}\"|" "${ENV_FILE}"
-  echo "    Generated and set JWT_SECRET_KEY in ${ENV_FILE}."
-fi
-
-# Populate AGENT_INTERNAL_TOKEN in .env (required for agent-worker / agent-serve communication)
-if grep -qE '^AGENT_INTERNAL_TOKEN=""' "${ENV_FILE}"; then
-  AGENT_TOKEN_VAL="$(openssl rand -hex 32)"
-  sed -i "s|^AGENT_INTERNAL_TOKEN=\"\"|AGENT_INTERNAL_TOKEN=\"${AGENT_TOKEN_VAL}\"|" "${ENV_FILE}"
-  echo "    Generated and set AGENT_INTERNAL_TOKEN in ${ENV_FILE}."
-fi
-
-# Point COMPOSE_FILE to infra/docker/docker-compose.yml and link infra/docker/.env -> ../../.env
-# so plain `docker compose` commands work directly from ${VIGIL_DIR}.
-if ! grep -qE '^COMPOSE_FILE=' "${ENV_FILE}"; then
-  printf '\n# Docker Compose file location (enables running `docker compose` from repo root)\nCOMPOSE_FILE="%s/infra/docker/docker-compose.yml"\n' "${VIGIL_DIR}" >> "${ENV_FILE}"
-fi
-ln -sf ../../.env "${VIGIL_DIR}/infra/docker/.env"
+# Step 7: Initialize environment using Vigil's native scripts/lib.sh helpers
+# (avoids conflicting with start.sh's ~/.vigil/jwt_secret and .env expectations)
+echo "--> [7/8] Initializing Vigil environment via scripts/lib.sh..."
+(
+  cd "${VIGIL_DIR}"
+  # shellcheck disable=SC1091
+  source "${VIGIL_DIR}/scripts/lib.sh"
+  load_env
+  ensure_jwt_secret
+  ensure_agent_token
+)
 
 # Step 8: Verify installation & print instructions
-echo "--> [8/8] Verifying Docker installation..."
+echo "--> [8/8] Verifying installation..."
 docker --version
 docker compose version
+node --version
 
 echo ""
 echo "=============================================================================="
@@ -177,12 +170,11 @@ echo " Vigil SOC Bootstrap Complete!"
 echo "=============================================================================="
 echo ""
 echo " Repository location: ${VIGIL_DIR}"
-echo " Environment config:  ${ENV_FILE}"
 echo ""
 if [ "${NEED_NEWGRP}" = true ]; then
   echo " NOTE: Your user (${TARGET_USER}) was just added to the 'docker' group."
-  echo " Run the following command (or log out and back in) so group permissions"
-  echo " take effect in your current shell:"
+  echo " Run the following command (or log out and back in) before starting Vigil"
+  echo " so Docker permissions take effect in your current shell:"
   echo ""
   echo "   newgrp docker"
   echo ""
@@ -191,17 +183,15 @@ echo " 1. Navigate to the Vigil directory:"
 echo ""
 echo "      cd ${VIGIL_DIR}"
 echo ""
-echo " 2. Start Vigil SOC with Docker Compose for the first time:"
+echo " 2. Start Vigil SOC for the first time using ./start.sh:"
 echo ""
-echo "      docker compose up -d"
+echo "      ./start.sh          # Interactive foreground mode (Ctrl+C to stop)"
+echo "      ./start.sh -d       # Background daemon mode (includes 24/7 SOC daemon)"
 echo ""
-echo "    (Optional: include the 24/7 autonomous SOC daemon and LLM worker:)"
-echo "      docker compose --profile daemon up -d"
+echo " 3. Once started, open the Vigil console in your browser to create your"
+echo "    initial administrator account:"
 echo ""
-echo " 3. Once the containers are running, open the Vigil console in your browser"
-echo "    to create your initial administrator account:"
-echo ""
-echo "      http://localhost:6987"
+echo "      http://localhost:6988"
 echo ""
 echo "------------------------------------------------------------------------------"
 echo " Managing Vigil SOC in the future:"
@@ -210,10 +200,10 @@ echo " Whenever you open a new terminal session, return to this directory first:
 echo ""
 echo "   cd ${VIGIL_DIR}"
 echo ""
-echo " From ${VIGIL_DIR}, you can run any Docker Compose command:"
-echo "   docker compose ps                  # Check container status"
-echo "   docker compose logs -f             # Follow live container logs"
-echo "   docker compose stop                # Stop containers (preserving state)"
-echo "   docker compose up -d               # Start containers in the background"
-echo "   docker compose down                # Stop and remove containers"
+echo " From ${VIGIL_DIR}, use Vigil's lifecycle scripts (or docker compose):"
+echo "   ./start.sh                         # Start in foreground"
+echo "   ./start.sh -d                      # Start in background with SOC daemon"
+echo "   ./shutdown_all.sh                  # Stop native processes (keep containers up)"
+echo "   ./shutdown_all.sh -d               # Stop everything (preserving data volumes)"
+echo "   docker compose -f infra/docker/docker-compose.yml ps"
 echo "=============================================================================="
