@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -52,23 +51,6 @@ def build_client():
     from core.integrations.mcp.service import MCPService
 
     return MCPClient(MCPService(project_root=REPO_ROOT))
-
-
-def connector_version(server: str) -> str:
-    """The pinned upstream version from ``mcp-config.json``, or ``in-repo``."""
-    entry = json.loads((REPO_ROOT / "mcp-config.json").read_text())["mcpServers"][server]
-    args = entry.get("args", [])
-    for i, arg in enumerate(args):
-        if arg.startswith("-") or (i and args[i - 1] == "--with"):  # --with: a helper, not the connector
-            continue
-        name = arg.rsplit("/", 1)[-1]
-        if "@sha256:" in name:  # an image digest: enough of it to tell two apart
-            return name[: name.index("@sha256:") + 20]
-        if re.search(r"(?:@|==)v?\d[\w.\-]*$", name):
-            return name
-    if entry.get("command") == "python3":
-        return "in-repo"
-    return entry.get("args", ["unknown"])[-1]
 
 
 def transport(client, server: str) -> Optional[str]:
