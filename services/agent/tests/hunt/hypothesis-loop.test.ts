@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
-import { BASE_RATE_PROVENANCE, NULL_HYPOTHESIS, nullHypothesisFor } from "../../plugins/hunt/opening.js";
+import { BASE_RATE_PROVENANCE, NULL_HYPOTHESIS, briefHypothesis, nullHypothesisFor } from "../../plugins/hunt/opening.js";
 import { scoredFrontier } from "../../plugins/hunt/frontier.js";
 import { unclassified } from "../../plugins/hunt/strength.js";
 import { evidenceFrom } from "../../plugins/hunt/adapters.js";
@@ -31,8 +31,8 @@ describe("the null is on the board before anything is argued", () => {
     // literal (not nullHypothesisFor(...) recomputed) so a phrasing regression in
     // the function is caught here rather than cancelling itself out on both sides.
     const expectedNull =
-      'the activity described in "a credential is used from new infrastructure" has a legitimate explanation' +
-      " — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action";
+      'The activity behind "a credential is used from new infrastructure" has a legitimate explanation' +
+      " — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action.";
 
     const [seeded] = nulls(started);
     expect(seeded!.statement).toBe(expectedNull);
@@ -54,9 +54,28 @@ describe("the null is on the board before anything is argued", () => {
 describe("nullHypothesisFor phrases the base rate against the activity under test", () => {
   it("names the first non-empty hypothesis in the benign account", () => {
     expect(nullHypothesisFor(["", "  ", "lateral movement over SMB"])).toBe(
-      'the activity described in "lateral movement over SMB" has a legitimate explanation' +
-        " — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action",
+      'The activity behind "lateral movement over SMB" has a legitimate explanation' +
+        " — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action.",
     );
+  });
+
+  // The round-2 walk's PDF hypothesis: quoted whole, the benign account restated it.
+  it("names a long hypothesis by its opening words, as a sentence of its own", () => {
+    const pdf =
+      "A finance workstation that opened an invoice-themed ISO attachment has executed rundll32.exe from a shortcut" +
+      " and is beaconing over HTTPS to DUSKY LANTERN infrastructure, and the operator has since accessed LSASS memory" +
+      " on that host to harvest credentials.";
+    const statement = nullHypothesisFor([pdf]);
+    expect(statement).toBe(
+      'The activity behind "A finance workstation that opened an invoice-themed ISO…" has a legitimate explanation' +
+        " — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action.",
+    );
+    expect(statement).not.toContain("LSASS");
+  });
+
+  it("stops the brief at the hypothesis's first sentence", () => {
+    expect(briefHypothesis("Host 10.0.0.5 beacons out. It also scans the subnet.")).toBe("Host 10.0.0.5 beacons out");
+    expect(briefHypothesis('  "lateral movement over SMB."  ')).toBe("lateral movement over SMB");
   });
 
   it("falls back to the generic null when no hypothesis is given", () => {

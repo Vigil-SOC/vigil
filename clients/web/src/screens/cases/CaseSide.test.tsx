@@ -38,18 +38,18 @@ const fold = {
   maxCostUsd: null,
 } as unknown as RunFold
 
-function renderSide() {
+function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'] }: { keys?: string[]; entities?: string[] } = {}) {
   return render(
     <aside className="case-side">
       <CaseSide
         caseId="case-1"
-        linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities: ['FIN-WS-114', 'priya.nair'] }]}
+        linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
         owner="—"
         latest={null}
         workflowNames={{}}
         sla={null}
         closed={false}
-        fold={fold}
+        fold={{ ...fold, recall: { ...(fold as unknown as { recall: object }).recall, keys } } as unknown as RunFold}
         latestFold={null}
       />
     </aside>,
@@ -76,11 +76,26 @@ describe('case side panel Entities (#2284)', () => {
   it('cuts a long hash in the middle on screen while the whole value stays in the DOM to copy', () => {
     renderSide()
     const hash = document.querySelector(`.side-ent[title="hash:${SHA_A}"]`) as HTMLElement
-    expect(hash.textContent).toBe(`hash:${SHA_A}`)
+    expect(hash.textContent).toBe(SHA_A)
     expect(within(hash).getByText(SHA_A.slice(-6))).toHaveClass('side-ent-tail')
     // a short value is not split
     fireEvent.click(screen.getByRole('button', { name: '+3' }))
     expect(document.querySelector('.side-ent[title="FIN-WS-114"] .side-ent-tail')).toBeNull()
+  })
+})
+
+describe('case side panel Entities show values that fit whole (#2459)', () => {
+  it('shows a domain whole, without its kind, which stays on hover', () => {
+    renderSide()
+    const domain = document.querySelector('.side-ent[title="domain:cdn-invoicesync.net"]') as HTMLElement
+    expect(domain.textContent).toBe('cdn-invoicesync.net')
+    expect(domain).not.toHaveClass('long')
+    expect(domain.querySelector('.side-ent-tail')).toBeNull()
+  })
+
+  it('lists a value once when a recall key and an alert both name it', () => {
+    renderSide({ keys: ['host:FIN-WS-114'], entities: ['FIN-WS-114'] })
+    expect(Array.from(document.querySelectorAll('.side-ent')).map((el) => el.textContent)).toEqual(['FIN-WS-114'])
   })
 })
 
