@@ -106,6 +106,17 @@ describe('IntegrationWizard drawer', () => {
     expect(screen.getByText('Poor')).toBeInTheDocument()
   })
 
+  it('a passing connector test (no servers) reads as a pass, not an error', async () => {
+    test.mockResolvedValue({
+      data: { success: true, message: 'Connector reachable and it accepted the session secret.', status: {} },
+    } as never)
+    open()
+    fireEvent.click(screen.getByRole('button', { name: 'Save and verify' }))
+    const msg = await screen.findByText('Connector reachable and it accepted the session secret.')
+    expect(msg.closest('.settings-banner')).toHaveClass('ok')
+    expect(screen.queryByText(/connects to each server/)).not.toBeInTheDocument()
+  })
+
   it('error: a 400 says to save first; an unavailable MCP client is its own state', async () => {
     test.mockRejectedValueOnce({ response: { status: 400, data: { detail: 'Integration not configured' } } })
     open()

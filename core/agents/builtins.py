@@ -101,6 +101,7 @@ BUILTIN_AGENTS = [
         "specialization": "Alert Triage & Prioritization",
         "recommended_tools": [
             "list_findings",
+            "search_findings",
             "get_finding",
             "create_case",
             "recall_entity",
@@ -129,6 +130,7 @@ BUILTIN_AGENTS = [
         "specialization": "Deep Security Investigations",
         "recommended_tools": [
             "list_findings",
+            "search_findings",
             "get_finding",
             "create_approval_action",
             "vstrike_ui_legend_apply",
@@ -161,6 +163,7 @@ BUILTIN_AGENTS = [
         "specialization": "Proactive Threat Hunting",
         "recommended_tools": [
             "list_findings",
+            "search_findings",
             "create_approval_action",
             "recall_entity",
             "read_skill",
@@ -190,6 +193,7 @@ BUILTIN_AGENTS = [
         "specialization": "Signal Correlation & Pattern Analysis",
         "recommended_tools": [
             "list_findings",
+            "search_findings",
             "create_case",
             "get_technique_rollup",
             "recall_entity",
@@ -257,6 +261,7 @@ Confidence scoring:
             "get_case",
             "list_cases",
             "list_findings",
+            "search_findings",
             "recall_entity",
             "read_skill",
             "list_learning_episodes",
@@ -289,6 +294,7 @@ For any report request (technical report, executive summary, board brief) call r
             "identify_gaps",
             "analyze_coverage",
             "list_findings",
+            "search_findings",
             "reconstruct_run",
             "check_detection_candidate",
         ],
@@ -338,6 +344,7 @@ check_detection_candidate lints and replays a candidate Sigma rule against event
         "recommended_tools": [
             "get_finding",
             "list_findings",
+            "search_findings",
             "cf_lookup_ip_threat",
             "cf_lookup_domain_threat",
             "recall_entity",
@@ -364,6 +371,7 @@ check_detection_candidate lints and replays a candidate Sigma rule against event
         "specialization": "Compliance & Policy",
         "recommended_tools": [
             "list_findings",
+            "search_findings",
             "get_finding",
             "list_cases",
             "list_completed_hunts",
@@ -441,6 +449,7 @@ check_detection_candidate lints and replays a candidate Sigma rule against event
         "specialization": "Network Security Analysis",
         "recommended_tools": [
             "list_findings",
+            "search_findings",
             "get_finding",
             "cf_lookup_ip_threat",
             "cf_lookup_domain_threat",

@@ -13,7 +13,7 @@ from weakref import WeakKeyDictionary
 from bullmq import Queue
 
 from core.config import get_settings
-from core.telemetry import get_meter
+from core.telemetry import get_meter, inject_traceparent
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,11 @@ async def close_run_queue() -> None:
 
 
 async def enqueue_run(job: Dict[str, Any], job_id: Optional[str] = None) -> str:
+    # Rides the job so the agent worker's spans continue this request's trace.
+    # Absent when tracing is off, and then the job carries nothing.
+    traceparent = inject_traceparent().get("traceparent")
+    if traceparent:
+        job = {**job, "traceparent": traceparent}
     queue = _run_queue()
     try:
         # jobId is the run id for a start, so a double POST dedupes in BullMQ. A

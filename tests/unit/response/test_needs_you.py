@@ -217,3 +217,107 @@ def test_case_id_filter_uses_the_resolved_id(client, seeded):
         client.get("/api/approvals/needs-you", params={"case_id": "ny-case-inv"}).json()
     )
     assert [item["source_id"] for item in from_inv] == ["ny-from-inv"]
+
+
+@pytest.fixture
+def hunts(throwaway_database):
+    """Hunt runs paused for different reasons, each on its own case."""
+
+    def run(run_id: str, reason: str, run_kind: str = "hunt", status: str = "paused"):
+        return WorkflowRun(
+            run_id=run_id,
+            workflow_id="threat-hunt",
+            workflow_name="threat-hunt",
+            status=status,
+            reason=reason,
+            trigger_context={"case_id": f"case-{run_id}", "run_kind": run_kind},
+            started_at=OLDER,
+        )
+
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                run("ny-capped", "ran out of turns: iteration 48 of 48, spent $0.12"),
+                run("ny-gated", "Waiting for your approval: Approve and start this"),
+                run("ny-awaiting", "awaiting verdict_review checkpoint cp-1: Mark"),
+                run("ny-answered", "ran out of turns: iteration 3 of 3"),
+                run("ny-compose", "phase 2 waits", run_kind="compose"),
+                run("ny-running", "", status="running"),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                _approval(
+                    "ny-gate",
+                    OLDER,
+                    title="Approve and start this hunt on 2 explanations",
+                    workflow_run_id="ny-gated",
+                    parameters={
+                        "checkpoint_id": "cp-gate",
+                        "checkpoint_class": "hypothesis_approval",
+                        "hypotheses": [
+                            {
+                                "hypothesis_id": "h-1",
+                                "statement": "FIN-WS-114 beacons",
+                                "provenance": "operator",
+                            },
+                            {
+                                "hypothesis_id": "h-0",
+                                "statement": "it is backup traffic",
+                                "provenance": "base_rate",
+                            },
+                        ],
+                    },
+                ),
+                # An approval still pending on the run makes it that approval's.
+                _approval(
+                    "ny-other",
+                    OLDER,
+                    workflow_run_id="ny-answered",
+                    parameters={"checkpoint_id": "cp-2"},
+                ),
+            ]
+        )
+    yield
+    with unit_of_work() as session:
+        session.query(ApprovalAction).filter(
+            ApprovalAction.action_id.in_(["ny-gate", "ny-other"])
+        ).delete(synchronize_session=False)
+        session.query(WorkflowRun).filter(WorkflowRun.run_id.like("ny-%")).delete(
+            synchronize_session=False
+        )
+
+
+def test_a_hunt_stopped_at_a_limit_needs_a_person(client, hunts):
+    body = client.get("/api/approvals/needs-you").json()
+    parked = [item for item in body["items"] if item["kind"] == "parked"]
+
+    assert [item["source_id"] for item in parked] == ["ny-capped"]
+    [capped] = parked
+    assert capped["case_id"] == "case-ny-capped"
+    assert capped["run_id"] == "ny-capped"
+    assert capped["title"] == "Keep the hunt going?"
+    assert capped["reason"] == "Ran out of turns: iteration 48 of 48, spent $0.12"
+    # The case list and Home count it like any other item.
+    assert body["count"] == len(body["items"])
+
+    one_case = client.get(
+        "/api/approvals/needs-you", params={"case_id": "case-ny-capped"}
+    ).json()
+    assert [item["source_id"] for item in one_case["items"]] == ["ny-capped"]
+
+
+def test_a_hypothesis_approval_carries_what_is_being_approved(client, hunts):
+    body = client.get(
+        "/api/approvals/needs-you", params={"case_id": "case-ny-gated"}
+    ).json()
+    [gate] = body["items"]
+    assert gate["kind"] == "checkpoint"
+    assert gate["checkpoint_id"] == "cp-gate"
+    assert gate["checkpoint_class"] == "hypothesis_approval"
+    assert gate["run_id"] == "ny-gated"
+    assert [(h["statement"], h["provenance"]) for h in gate["hypotheses"]] == [
+        ("FIN-WS-114 beacons", "operator"),
+        ("it is backup traffic", "base_rate"),
+    ]

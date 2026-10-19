@@ -28,6 +28,7 @@ from core.auth.auth_service import (
 )
 from core.auth.password_reset import (
     generate_reset_token,
+    reset_link,
     verify_reset_token,
 )
 from core.auth.password_validator import (
@@ -631,8 +632,10 @@ async def change_password(
     if not await asyncio.to_thread(
         AuthService.verify_password, body.current_password, current_user.password_hash
     ):
+        # 400, not 401: the session is valid, a body field is wrong. A 401 would
+        # make the web client refresh and retry, spending two rate-limit slots.
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
         )
 
@@ -686,7 +689,7 @@ def setup_mfa(
     session: UnitOfWorkSession,
 ):
     """
-    Setup MFA for current user.
+    Setup MFA for current user. Returns 409 if MFA is already enabled.
 
     Args:
         current_user: Current authenticated user
@@ -697,6 +700,13 @@ def setup_mfa(
         they are returned by POST /mfa/verify once the first TOTP code is
         confirmed.
     """
+    # Re-running setup would silently replace the secret and switch MFA off.
+    if current_user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA is already enabled; turn it off before setting it up again",
+        )
+
     secret = AuthService.setup_mfa(current_user.user_id, session)
     if not secret:
         raise HTTPException(
@@ -771,33 +781,32 @@ def regenerate_recovery_codes(
 
 
 @router.delete("/mfa")
+@limiter.limit("5/minute")
 def disable_mfa(
+    request: Request,
+    body: MFAVerifyRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
     """
-    Disable MFA for current user.
+    Disable MFA for current user. Requires a current TOTP or recovery code.
 
     Args:
+        request: FastAPI request (used by the rate limiter).
+        body: A current authenticator code or an unused recovery code
         current_user: Current authenticated user
         session: Database session
 
     Returns:
         Success message
     """
-    try:
-        current_user.mfa_enabled = False
-        current_user.mfa_secret = None
-
-        logger.info(f"MFA disabled for user: {current_user.username}")
-        return {"message": "MFA disabled successfully"}
-
-    except Exception as e:
-        logger.error(f"MFA disable error: {e}")
+    if not AuthService.disable_mfa(current_user.user_id, body.code, session):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to disable MFA",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid MFA code or MFA is not enabled",
         )
+
+    return {"message": "MFA disabled successfully"}
 
 
 # Public self-registration was removed intentionally. All user creation
@@ -821,23 +830,24 @@ def password_reset_request(
     via the configured email backend. The default ConsoleBackend sends nothing;
     with DEV_MODE on it logs the link.
     """
+    settings = get_settings()
     user = session.query(User).filter(User.email == body.email).first()
     if user and user.is_active:
         token = generate_reset_token(user.user_id)
-        frontend_base = get_settings().vigil_frontend_url.rstrip("/")
+        frontend_base = settings.vigil_frontend_url
         if frontend_base:
-            reset_link = f"{frontend_base}/reset-password?token={token}"
+            link = reset_link(frontend_base, token)
         else:
             # Fall back to a raw token so a dev console backend still shows
             # something actionable when VIGIL_FRONTEND_URL isn't set.
-            reset_link = f"(token) {token}"
+            link = f"(token) {token}"
         subject = "Vigil SOC — password reset"
         body_text = (
             f"Hello {user.full_name or user.username},\n\n"
             "A password reset was requested for this account. Use the link "
             "below to choose a new password. The link is valid for one hour "
             "and can only be used once.\n\n"
-            f"{reset_link}\n\n"
+            f"{link}\n\n"
             "If you did not request this reset, you can ignore this email."
         )
         send_email(to=user.email, subject=subject, body=body_text)
@@ -848,11 +858,25 @@ def password_reset_request(
         # here because the DB lookup already dominates the timing.
         logger.info("Password reset requested for unknown/inactive email")
 
-    return {
-        "message": (
-            "If that email matches an active account, a reset link has been sent."
+    return {"message": _reset_request_message(settings)}
+
+
+def _reset_request_message(settings) -> str:
+    """What the requester is told. Depends only on how mail is configured,
+    never on the account, so the reply still can't enumerate emails."""
+    # Any value but smtp falls back to the console backend (get_email_backend).
+    if settings.vigil_email_backend.strip().lower() == "smtp":
+        return "If that email matches an active account, a reset link has been sent."
+    if settings.dev_mode:
+        return (
+            "Email isn't set up on this server. If that email matches an active "
+            "account, its reset link or token has been written to the server log."
         )
-    }
+    return (
+        "Email isn't set up on this server, so no reset link was sent. Ask an "
+        "administrator to issue one with scripts/reset-password.sh (on a compose "
+        "install: docker exec deeptempo-backend python scripts/reset_password.py)."
+    )
 
 
 @router.post("/password-reset/confirm")

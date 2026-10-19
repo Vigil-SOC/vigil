@@ -82,3 +82,34 @@ describe('foldStatus processes', () => {
     ).toEqual({ level: 'fair', sentence: 'Agent layer is not running.' })
   })
 })
+
+describe('foldStatus tool servers', () => {
+  const mcp = (statuses: NonNullable<StatusReads['mcp']>['statuses']): StatusReads => ({
+    health: null,
+    federation: null,
+    mcp: { statuses },
+    routability: null,
+  })
+
+  it('reads a fresh install as clear: rules not fetched and servers not used yet are not faults', () => {
+    expect(
+      foldStatus(
+        mcp([
+          { name: 'security-detections', status: 'not_set_up', enabled: true },
+          { name: 'splunk-selfhosted', status: 'on_demand', enabled: true },
+        ]),
+      ),
+    ).toEqual({ level: 'good', sentence: 'No problems reported.' })
+  })
+
+  it('still names an enabled server that went down', () => {
+    expect(
+      foldStatus(
+        mcp([
+          { name: 'security-detections', status: 'not_set_up', enabled: true },
+          { name: 'splunk-selfhosted', status: 'disconnected', enabled: true },
+        ]),
+      ),
+    ).toEqual({ level: 'fair', sentence: 'MCP server splunk-selfhosted is disconnected.' })
+  })
+})

@@ -714,8 +714,9 @@ class SecretsManager:
         Args:
             keys: Optional explicit allow-list. When None, every key in
                 the dotenv file is considered.
-            remove_from_dotenv: When False, copy to encrypted but don't
-                delete the dotenv source — useful for dry-run validation.
+            remove_from_dotenv: When False, still write every value to the
+                encrypted store; only the dotenv copy is left in place.
+                This is not a preview.
 
         Returns:
             Structured report::
@@ -800,7 +801,6 @@ _secrets_manager: Optional[SecretsManager] = None
 def get_secrets_manager(
     write_backend: Optional[str] = None,
     enable_keyring: Optional[bool] = None,
-    force_reload: bool = False,
 ) -> SecretsManager:
     """
     Get or create the global secrets manager instance.
@@ -811,16 +811,12 @@ def get_secrets_manager(
         enable_keyring: Whether to enable keyring for reading secrets
                        Can be set via ENABLE_KEYRING env var or general config
                        Default: False (prevents macOS keychain prompts)
-        force_reload: When True, drop the cached singleton and rebuild it.
-                     Useful for recovering a process that picked the wrong
-                     write backend on first init (e.g. cryptography wasn't
-                     yet importable) without bouncing uvicorn. Exposed via
-                     POST /api/config/secrets/reinit.
+
+    The write backend is chosen once per process. If it isn't the expected
+    one (``cryptography`` missing, wrong ``SECRETS_BACKEND``, unusable
+    master key), fix the cause and restart the API, daemon and worker.
     """
     global _secrets_manager
-
-    if force_reload:
-        _secrets_manager = None
 
     if _secrets_manager is None:
         # Check environment variable for backend preference

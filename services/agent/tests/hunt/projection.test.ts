@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { AgentEvent } from "../../contracts/events.js";
-import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
-import { EVIDENCE_SHOWN, huntProjection } from "../../workflows/hunt/projection.js";
-import { ScriptedDisconfirmationCritic } from "../support/scripted-hunt.js";
-import { replay } from "../../workflows/hunt/replay.js";
-import { controllerFor, evidenceOn, newLedger, provable, validateOn, type Started } from "../support/hunt.js";
+import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../plugins/hunt/checkpoints.js";
+import { EVIDENCE_SHOWN, huntProjection } from "../../plugins/hunt/projection.js";
+import { replay } from "../../plugins/hunt/replay.js";
+import { bookOf, evidenceOn, newLedger, provable, validate, type Started } from "../support/hunt.js";
 
 async function project(started: Started) {
   await started.ledger.flush();
@@ -278,9 +277,10 @@ describe("what the Watch page reads off a hunt", () => {
   it("lists each critic verdict off the payload, uncapped and in ledger order", async () => {
     const started = await newLedger({ checkpoints: { verdict_review: "auto" } });
     const hypothesisId = started.hypothesisIds[0]!;
-    await controllerFor(started.ledger, [validateOn(hypothesisId, provable(started.ledger, hypothesisId))], {
-      critic: new ScriptedDisconfirmationCritic(true),
-    }).advanceIteration();
+    const book = bookOf(started.ledger);
+    book.advanceTo(1);
+    provable(started.ledger, hypothesisId);
+    validate(started.ledger, hypothesisId, true);
     // Newer than the cap could hold: the evidence list drops them, the reviews do not.
     for (let i = 0; i < EVIDENCE_SHOWN + 1; i += 1) evidenceOn(started.ledger, hypothesisId);
     const view = await project(started);
@@ -292,11 +292,27 @@ describe("what the Watch page reads off a hunt", () => {
   });
 
   it("carries the lead's model time on each move and the replay, and omits it on old ledgers", async () => {
+    // A controller ledger's decision, timed: the hunt agent writes none, but the
+    // ledgers the controller wrote still have to read as they did.
     const started = await newLedger();
-    await controllerFor(started.ledger, [{ action: "INVESTIGATE", rationale: "look", query_intent: "baseline" }]).advanceIteration();
+    started.ledger.append({
+      kind: "decision",
+      payload: {
+        decision: { action: "INVESTIGATE", rationale: "look", query_intent: "baseline" },
+        decision_id: "dec-1",
+        iteration: 1,
+        model_id: "m",
+        prompt_version: "v1",
+        cost_usd: 0.01,
+        duration_ms: 42,
+        // What the lead was shown, as a controller ledger records it.
+        digest_presented: {},
+        created_at: new Date().toISOString(),
+      } as never,
+    });
     const view = await project(started);
 
-    expect(view.moves[0]!.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(view.moves[0]!.duration_ms).toBe(42);
     expect(replay(started.ledger.log).decisions[0]!.duration_ms).toBe(view.moves[0]!.duration_ms);
 
     // An older ledger: the record has no duration, so the key is absent, not 0 or null.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DISTIL_SCHEMA_VERSION, huntDistil } from "../../workflows/hunt/distil.js";
-import { NULL_CHECK_PROVENANCE } from "../../workflows/hunt/strength.js";
+import { DISTIL_SCHEMA_VERSION, huntDistil } from "../../plugins/hunt/distil.js";
+import { NULL_CHECK_PROVENANCE } from "../../plugins/hunt/strength.js";
 import { evidenceOn, newLedger, relate } from "../support/hunt.js";
 
 describe("huntDistil carries the techniques the evidence cited", () => {

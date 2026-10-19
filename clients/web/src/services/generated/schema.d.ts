@@ -454,12 +454,12 @@ export interface paths {
         };
         /**
          * Get Budget Settings
-         * @description Return the persisted Bifrost VK + budget config.
+         * @description Return the persisted Bifrost VK config.
          */
         get: operations["get_api_analytics_budget"];
         /**
          * Put Budget Settings
-         * @description Update the Bifrost VK + budget config.
+         * @description Update the Bifrost VK config.
          *
          *     Admin operation. The dispatch path picks up the change on the next
          *     runtime-config TTL tick (~60s). When ``DEV_MODE=true`` or
@@ -977,9 +977,11 @@ export interface paths {
         post?: never;
         /**
          * Disable Mfa
-         * @description Disable MFA for current user.
+         * @description Disable MFA for current user. Requires a current TOTP or recovery code.
          *
          *     Args:
+         *         request: FastAPI request (used by the rate limiter).
+         *         body: A current authenticator code or an unused recovery code
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -1027,7 +1029,7 @@ export interface paths {
         put?: never;
         /**
          * Setup Mfa
-         * @description Setup MFA for current user.
+         * @description Setup MFA for current user. Returns 409 if MFA is already enabled.
          *
          *     Args:
          *         current_user: Current authenticated user
@@ -2886,40 +2888,14 @@ export interface paths {
          *     the conflict is reported so an operator can resolve it manually.
          *
          *     Body is optional. Pass ``{"keys": ["FOO_BAR"]}`` to migrate only a
-         *     subset, or ``{"remove_from_dotenv": false}`` for a dry-copy that
-         *     leaves the source file alone.
+         *     subset. ``{"remove_from_dotenv": false}`` is NOT a preview: it still
+         *     writes every value to ``secrets.enc`` and only leaves the dotenv copy
+         *     in place.
+         *
+         *     Returns the report with 200 on success (conflicts included), 503 when
+         *     the encrypted backend is unavailable, and 500 when any key errored.
          */
         post: operations["post_api_config_secrets_migrate-to-encrypted"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/secrets/reinit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Secrets Reinit
-         * @description Drop the cached secrets-manager singleton and rebuild it.
-         *
-         *     Useful when the long-running process picked the wrong write backend
-         *     on first init (e.g. ``SECRETS_BACKEND`` was stale in os.environ when
-         *     the very first ``set_secret`` call ran during startup). After this
-         *     call the manager re-evaluates backend availability fresh.
-         *
-         *     Pass ``{"write_backend": "encrypted"}`` to force a specific backend
-         *     regardless of what's currently in ``os.environ`` — useful when you
-         *     just edited ``.env`` to switch from dotenv to encrypted but haven't
-         *     bounced the process.
-         */
-        post: operations["post_api_config_secrets_reinit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4194,13 +4170,22 @@ export interface paths {
         put?: never;
         /**
          * Reload Servers
-         * @description Reload MCP server configurations from ``mcp-config.json`` and
-         *     the integration bridge, picking up newly enabled/disabled
-         *     integrations without restarting the backend.
+         * @description Reload the catalog from ``mcp-config.json`` and apply it to running servers.
          *
-         *     Reinitialises the process-wide ``MCPService`` in place so both the
-         *     API and the ``MCPClient`` see the new catalog. Previously-enabled
-         *     servers are reconnected automatically.
+         *     The new catalog is built first; if the file does not parse, the old
+         *     catalog and every session stay as they were and the route answers 422
+         *     naming the error. Otherwise, for each server with a live session:
+         *
+         *     * removed from the file, or now disabled: disconnected (stopped in the
+         *       runner too) and its tools withdrawn from agents;
+         *     * changed spawn config: reconnected on the new config. A stdio child
+         *       compares command, args, cwd and declared env; a server in the MCP runner
+         *       compares only its declared env and credentials, because the runner
+         *       launches from its own catalog and ignores command, args and cwd;
+         *     * unchanged: left alone.
+         *
+         *     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
+         *     what happened; ``success`` is false if any reconnect or disconnect failed.
          */
         post: operations["post_api_mcp_servers_reload"];
         delete?: never;
@@ -4220,10 +4205,20 @@ export interface paths {
          * Get Servers Status
          * @description Session state for every catalog server.
          *
-         *     ``status`` is ``running`` only while that server's persistent session is
-         *     connected. With no MCP client, every server is disconnected: the catalog
-         *     has no session state of its own. Dormant reconnect stays on
-         *     ``GET /connections/status``.
+         *     ``status`` is one of:
+         *
+         *     * ``running`` while that server's persistent session is connected;
+         *     * ``not_set_up`` while the install lacks what the server serves from
+         *       (security-detections before its rules are fetched). The row names the
+         *       reason and ``setup_action``, the one action that fixes it;
+         *     * ``on_demand`` when nothing has dialled the server yet and it connects on
+         *       its first call: every server with eager connect off, and one held back
+         *       for setup until this process next uses it (the fetch may have run in
+         *       another worker). Not down;
+         *     * ``disconnected`` otherwise. With no MCP client every server is: the
+         *       catalog has no session state of its own.
+         *
+         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
@@ -4536,26 +4531,6 @@ export interface paths {
          * @description Kill a specific running investigation.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_kill"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orchestrator/investigations/{investigation_id}/review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Review Investigation
-         * @description Human review of an investigation: approve or request rework.
-         */
-        post: operations["post_api_orchestrator_investigations_investigation_id_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5304,40 +5279,6 @@ export interface paths {
         get: operations["get_api_storage_health"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/storage/init-schema": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Init Schema
-         * @description Provision Vigil's tables into an **empty** target database.
-         *
-         *     Split out of /reconnect, and deliberately narrow. ``create_all`` is
-         *     ``checkfirst=True``: it creates what's missing and silently skips tables
-         *     that already exist, whatever shape they're in. That makes it correct for an
-         *     empty database and useless — actively misleading — for a drifted one.
-         *
-         *     So this refuses anything but ``state == "empty"``:
-         *       - ``drifted`` -> scripts/migrate_schema.py owns that (it has the real
-         *         ALTER TABLE migrations); create_all here would report success and
-         *         change nothing.
-         *       - ``ok`` -> nothing to do.
-         *
-         *     Refusing on non-empty also means a mistyped host can't scatter ~50 tables
-         *     through an unrelated production database.
-         */
-        post: operations["post_api_storage_init-schema"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6486,129 +6427,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/webhooks/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Webhooks
-         * @description List all configured webhooks.
-         *
-         *     Returns:
-         *         List of webhooks
-         */
-        get: operations["get_api_webhooks"];
-        put?: never;
-        /**
-         * Create Webhook
-         * @description Create a new webhook.
-         *
-         *     Args:
-         *         data: Webhook configuration
-         *
-         *     Returns:
-         *         Created webhook
-         */
-        post: operations["post_api_webhooks"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Update Webhook
-         * @description Update a webhook.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *         data: Update data
-         *
-         *     Returns:
-         *         Updated webhook
-         */
-        put: operations["put_api_webhooks_webhook_id"];
-        post?: never;
-        /**
-         * Delete Webhook
-         * @description Delete a webhook.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *
-         *     Returns:
-         *         Success status
-         */
-        delete: operations["delete_api_webhooks_webhook_id"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}/deliveries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Webhook Deliveries
-         * @description Get webhook delivery history.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *         limit: Maximum deliveries to return
-         *
-         *     Returns:
-         *         Delivery history
-         */
-        get: operations["get_api_webhooks_webhook_id_deliveries"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Webhook
-         * @description Test a webhook by sending a test payload.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *
-         *     Returns:
-         *         Test result
-         */
-        post: operations["post_api_webhooks_webhook_id_test"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/workflows": {
         parameters: {
             query?: never;
@@ -6754,6 +6572,30 @@ export interface paths {
          *     so nothing is hidden while a worker is still writing to it.
          */
         delete: operations["delete_api_workflows_runs_run_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/runs/{run_id}/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workflow Run Account
+         * @description What a run concluded, in the one shape every loop fills.
+         *
+         *     Folded from the ledger on each read, so it is never stale. A section the
+         *     run's loop does not produce is absent, never null; a run whose loop keeps
+         *     no account is a 404.
+         */
+        get: operations["get_api_workflows_runs_run_id_account"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -7382,6 +7224,34 @@ export interface components {
              */
             local_ollama_recovery_retry_limit: number;
         };
+        /** Account */
+        Account: {
+            /** Entities */
+            entities?: string[];
+            /** Name */
+            name: string;
+            /** Note */
+            note?: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "attacker" | "victim" | "legitimate";
+            /** Run Id */
+            run_id: string;
+            /** Seen As */
+            seen_as?: string[];
+        };
+        /** AccountRun */
+        AccountRun: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * Run Kind
+             * @enum {string}
+             */
+            run_kind: "hunt" | "root_cause" | "adjudicate" | "investigate" | "compose" | "chat" | "tally" | "subagent";
+        };
         /**
          * ActivityAdd
          * @description Add activity to case.
@@ -7468,6 +7338,16 @@ export interface components {
         AutostartRequest: {
             /** Services */
             services: string[];
+        };
+        /** Bearing */
+        Bearing: {
+            /** On */
+            on: string;
+            /**
+             * Stance
+             * @enum {string}
+             */
+            stance: "supports" | "weakens" | "neither";
         };
         /** Body_attach_case_document_api_cases__case_id__attachments_post */
         Body_attach_case_document_api_cases__case_id__attachments_post: {
@@ -7560,48 +7440,23 @@ export interface components {
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
             /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
-            /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /**
          * BudgetSettingsUpdate
-         * @description Admin-intent body for PUT /budget. All fields required so the API
-         *     can't be used to silently drop a setting via an empty PATCH.
-         *     budget_limit_usd and enforcement_mode are stored for compatibility
-         *     and ignored at dispatch.
+         * @description Admin-intent body for PUT /budget. The spend ceiling lives on the
+         *     virtual key in Bifrost, not here. Unknown fields are ignored, so older
+         *     clients that still send budget_limit_usd / enforcement_mode get a 200.
          */
         BudgetSettingsUpdate: {
-            /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
             /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /** ByPriorityResponse */
         ByPriorityResponse: {
@@ -7612,6 +7467,34 @@ export interface components {
         ByStatusResponse: {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
+        };
+        /** CaseAccount */
+        CaseAccount: {
+            /** Accounts */
+            accounts?: components["schemas"]["Account"][];
+            chain?: components["schemas"]["Chain"];
+            /** Entities */
+            entities?: components["schemas"]["EntityItem"][];
+            /** Escalations */
+            escalations?: components["schemas"]["Escalation"][];
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceItem"][];
+            /** Explanations */
+            explanations?: components["schemas"]["Explanation"][];
+            /** Gaps */
+            gaps?: components["schemas"]["Gap"][];
+            narrative?: components["schemas"]["Narrative"];
+            /** Next Steps */
+            next_steps?: components["schemas"]["NextStep"][];
+            /** Runs */
+            runs: components["schemas"]["AccountRun"][];
+            /** Schema Version */
+            schema_version: number;
+            /** Steps */
+            steps?: components["schemas"]["Step"][];
+            /** Timeline */
+            timeline?: components["schemas"]["TimelineEntry"][];
+            verdict?: components["schemas"]["Verdict"];
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -8465,6 +8348,56 @@ export interface components {
             /** Watchers */
             watchers: components["schemas"]["CaseWatcherSchema"][];
         };
+        /** Chain */
+        Chain: {
+            /** Alternatives */
+            alternatives?: components["schemas"]["ChainPath"][];
+            /** Events */
+            events: components["schemas"]["ChainEvent"][];
+            /** Run Id */
+            run_id: string;
+            /** Score */
+            score?: number;
+        };
+        /** ChainEvent */
+        ChainEvent: {
+            /** At */
+            at?: string;
+            /** Causes */
+            causes?: string;
+            /** Confidence */
+            confidence?: number;
+            /** Entities */
+            entities?: string[];
+            /** Id */
+            id: string;
+            /** Operated By */
+            operated_by?: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin?: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Ran As */
+            ran_as?: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Text */
+            text: string;
+            /** Tie */
+            tie?: components["schemas"]["ChainTie"];
+            /** Together With */
+            together_with?: string[];
+            /** Why Origin */
+            why_origin?: string;
+        };
         /**
          * ChainOfCustodyAdd
          * @description Add chain of custody entry.
@@ -8476,6 +8409,27 @@ export interface components {
             notes?: string | null;
             /** User */
             user: string;
+        };
+        /** ChainPath */
+        ChainPath: {
+            /** Path */
+            path: string[];
+            /** Score */
+            score?: number;
+        };
+        /** ChainTie */
+        ChainTie: {
+            /** Confidence */
+            confidence?: number;
+            /** Id */
+            id?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Text */
+            text?: string;
         };
         /**
          * ChangePasswordRequest
@@ -8985,6 +8939,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EntityItem */
+        EntityItem: {
+            /**
+             * Indicator
+             * @constant
+             */
+            indicator?: true;
+            /** Key */
+            key: string;
+            /** Run Id */
+            run_id: string;
+        };
+        /** Escalation */
+        Escalation: {
+            /** At */
+            at?: string;
+            /** Case Id */
+            case_id: string;
+            /** Explanation Id */
+            explanation_id?: string;
+            /** Rationale */
+            rationale: string;
+            /** Run Id */
+            run_id: string;
+        };
         /**
          * EscalationAdd
          * @description Escalate case.
@@ -9056,6 +9035,50 @@ export interface components {
             /** Tags */
             tags?: string[] | null;
         };
+        /** EvidenceItem */
+        EvidenceItem: {
+            /**
+             * Absence
+             * @constant
+             */
+            absence?: true;
+            /** Attested */
+            attested?: boolean;
+            /** Bears On */
+            bears_on?: components["schemas"]["Bearing"][];
+            /** Checks */
+            checks?: components["schemas"]["ValueCheck"][];
+            /** Claim */
+            claim: string;
+            /** Entities */
+            entities?: string[];
+            /** Id */
+            id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Salience
+             * @enum {string}
+             */
+            salience?: "routine" | "notable" | "anomalous";
+            /** Source */
+            source?: string;
+            /** Source Ref */
+            source_ref?: string;
+            /** Source Refs */
+            source_refs?: string[];
+            /**
+             * Strength
+             * @enum {string}
+             */
+            strength?: "direct" | "corroborating" | "circumstantial";
+            /** Techniques */
+            techniques?: string[];
+            /** Turn */
+            turn?: number;
+            /** Why */
+            why?: string;
+        };
         /** ExclusionCreate */
         ExclusionCreate: {
             /**
@@ -9123,6 +9146,31 @@ export interface components {
         ExclusionRemove: {
             /** Reason */
             reason?: string | null;
+        };
+        /** Explanation */
+        Explanation: {
+            /** Claim */
+            claim: string;
+            /** Id */
+            id: string;
+            /** Reason */
+            reason?: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "adversary" | "benign";
+            /** Run Id */
+            run_id: string;
+            /**
+             * Standing
+             * @enum {string}
+             */
+            standing: "proven" | "supported" | "open" | "inconclusive" | "weakened" | "ruled_out" | "set_aside";
+            /** Subjects */
+            subjects?: string[];
+            /** Techniques */
+            techniques?: string[];
         };
         /** FederationGlobalSettings */
         FederationGlobalSettings: {
@@ -9313,6 +9361,20 @@ export interface components {
             specialization?: string | null;
             /** System Prompt Override */
             system_prompt_override?: string | null;
+        };
+        /** Gap */
+        Gap: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind?: "visibility" | "open_question" | "disputed";
+            /** On */
+            on?: string;
+            /** Run Id */
+            run_id: string;
+            /** Text */
+            text: string;
         };
         /**
          * GeneralConfig
@@ -9713,7 +9775,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder";
             /** Provider */
             provider: string;
             /** Routable */
@@ -9923,18 +9985,59 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** Narrative */
+        Narrative: {
+            /** Missing Because */
+            missing_because?: string;
+            /** Model Id */
+            model_id?: string;
+            /** Run Id */
+            run_id: string;
+            /** Summary */
+            summary: string;
+            /** What Happened */
+            what_happened?: string;
+            /**
+             * Written By
+             * @constant
+             */
+            written_by?: "vigil";
+        };
+        /** NeedsYouHypothesis */
+        NeedsYouHypothesis: {
+            /**
+             * Hypothesis Id
+             * @default
+             */
+            hypothesis_id: string;
+            /**
+             * Provenance
+             * @default
+             */
+            provenance: string;
+            /** Statement */
+            statement: string;
+        };
         /** NeedsYouItem */
         NeedsYouItem: {
             /** Case Id */
             case_id?: string | null;
+            /** Checkpoint Class */
+            checkpoint_class?: string | null;
+            /** Checkpoint Id */
+            checkpoint_id?: string | null;
             /** Created At */
             created_at: string;
+            /** Hypotheses */
+            hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /** Kind */
             kind: string;
             /** Reason */
             reason: string;
             /** Reversibility */
             reversibility: string;
+            /** Run Id */
+            run_id?: string | null;
             /** Source Id */
             source_id: string;
             /** Title */
@@ -9946,6 +10049,13 @@ export interface components {
             count: number;
             /** Items */
             items?: components["schemas"]["NeedsYouItem"][];
+        };
+        /** NextStep */
+        NextStep: {
+            /** Run Id */
+            run_id: string;
+            /** Text */
+            text: string;
         };
         /** NoiseMarkResponse */
         NoiseMarkResponse: {
@@ -10369,13 +10479,6 @@ export interface components {
             config: string;
             /** Playbook */
             playbook: string;
-        };
-        /** ReviewRequest */
-        ReviewRequest: {
-            /** Action */
-            action: string;
-            /** Notes */
-            notes?: string | null;
         };
         /**
          * Routability
@@ -10837,6 +10940,25 @@ export interface components {
              */
             status: "running" | "paused";
         };
+        /** Step */
+        Step: {
+            /** At */
+            at?: string;
+            /** Cost Usd */
+            cost_usd?: number;
+            /** Duration Ms */
+            duration_ms?: number;
+            /** Kind */
+            kind: string;
+            /** N */
+            n: number;
+            /** Refs */
+            refs?: string[];
+            /** Run Id */
+            run_id: string;
+            /** Text */
+            text: string;
+        };
         /**
          * SubmitFeedbackRequest
          * @description Request model for submitting feedback on an AI decision.
@@ -11019,11 +11141,15 @@ export interface components {
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */
             outcome: string;
+            /** Proposed Actions */
+            proposed_actions?: unknown[];
             /**
              * Reason
              * @default
              */
             reason: string;
+            /** Severity */
+            severity?: string | null;
             /**
              * Summary
              * @default
@@ -11040,6 +11166,41 @@ export interface components {
              * @default dark
              */
             theme: string;
+        };
+        /** TimelineEntry */
+        TimelineEntry: {
+            /** At */
+            at?: string;
+            /** Confidence */
+            confidence?: number;
+            /**
+             * Legitimate
+             * @constant
+             */
+            legitimate?: true;
+            /** On Chain */
+            on_chain?: boolean;
+            /** Operated By */
+            operated_by?: string;
+            /** Ran As */
+            ran_as?: string;
+            /** Ref */
+            ref?: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source?: string;
+            /** Stage */
+            stage?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status?: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Techniques */
+            techniques?: string[];
+            /** Text */
+            text: string;
         };
         /**
          * TimelineEvent
@@ -11297,6 +11458,48 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** ValueCheck */
+        ValueCheck: {
+            /** Claimed */
+            claimed: unknown;
+            /** Field */
+            field: string;
+            /** Found */
+            found?: unknown;
+            /** Found Field */
+            found_field?: string;
+            /** Ref */
+            ref?: string;
+            /**
+             * Rounded
+             * @constant
+             */
+            rounded?: true;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "match" | "differs" | "absent";
+        };
+        /** Verdict */
+        Verdict: {
+            /** Basis */
+            basis?: string;
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence?: "low" | "medium" | "high";
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "malicious" | "suspicious" | "benign" | "false_positive" | "inconclusive" | "needs_review";
+            /** Headline */
+            headline: string;
+            /** Run Id */
+            run_id: string;
+        };
         /**
          * WatcherAdd
          * @description Add watcher to case.
@@ -11308,41 +11511,6 @@ export interface components {
             } | null;
             /** User Id */
             user_id: string;
-        };
-        /**
-         * WebhookCreate
-         * @description Create webhook.
-         */
-        WebhookCreate: {
-            /**
-             * Active
-             * @default true
-             */
-            active: boolean;
-            /** Events */
-            events: string[];
-            /** Name */
-            name: string;
-            /** Secret */
-            secret?: string | null;
-            /** Url */
-            url: string;
-        };
-        /**
-         * WebhookUpdate
-         * @description Update webhook.
-         */
-        WebhookUpdate: {
-            /** Active */
-            active?: boolean | null;
-            /** Events */
-            events?: string[] | null;
-            /** Name */
-            name?: string | null;
-            /** Secret */
-            secret?: string | null;
-            /** Url */
-            url?: string | null;
         };
         /** WorkflowDetailResponse */
         WorkflowDetailResponse: {
@@ -11502,19 +11670,6 @@ export interface components {
              * @default true
              */
             remove_from_dotenv: boolean;
-        };
-        /**
-         * _SecretsReinitRequest
-         * @description Optional override for the reinit endpoint.
-         *
-         *     The running process's ``os.environ`` may have a stale
-         *     ``SECRETS_BACKEND`` from launch time. ``write_backend`` here lets an
-         *     admin force the rebuilt singleton onto a specific backend without
-         *     bouncing uvicorn.
-         */
-        _SecretsReinitRequest: {
-            /** Write Backend */
-            write_backend?: string | null;
         };
     };
     responses: never;
@@ -13226,7 +13381,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MFAVerifyRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -16630,43 +16789,6 @@ export interface operations {
             };
         };
     };
-    post_api_config_secrets_reinit: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["_SecretsReinitRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_config_secrets_status: {
         parameters: {
             query?: never;
@@ -17754,7 +17876,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;
@@ -19491,43 +19613,6 @@ export interface operations {
             };
         };
     };
-    post_api_orchestrator_investigations_investigation_id_review: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                investigation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_orchestrator_investigations_investigation_id_wake: {
         parameters: {
             query?: never;
@@ -20823,37 +20908,6 @@ export interface operations {
         };
     };
     get_api_storage_health: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_storage_init-schema": {
         parameters: {
             query?: never;
             header?: {
@@ -22533,7 +22587,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;
@@ -22725,210 +22779,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowDetailResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_webhooks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_webhooks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebhookCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_api_webhooks_webhook_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebhookUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_webhooks_webhook_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_webhooks_webhook_id_deliveries: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_webhooks_webhook_id_test: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -23266,6 +23116,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_workflows_runs_run_id_account: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseAccount"];
                 };
             };
             /** @description Validation Error */

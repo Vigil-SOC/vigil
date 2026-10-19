@@ -22,8 +22,8 @@ we do not backport to earlier minors.
 | Older `0.x` minors | ❌ | No backports. What may change between releases is in [VERSIONING.md](VERSIONING.md). |
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
-Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`,
-`vigil-agent`) and the Helm chart at `infra/helm/vigil/` follow the same window.
+Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`, `vigil-agent`,
+`vigil-mcp-runner`) and the Helm chart at `infra/helm/vigil/` follow the same window.
 Chart `version` and `appVersion` move in lockstep, so the chart version
 identifies the app release it deploys.
 
@@ -39,7 +39,7 @@ cosign verify \
   ghcr.io/vigil-soc/vigil-backend:<version>
 ```
 
-The same invocation works for `vigil-daemon` and `vigil-agent`.
+The same invocation works for `vigil-daemon`, `vigil-agent` and `vigil-mcp-runner`.
 
 ---
 

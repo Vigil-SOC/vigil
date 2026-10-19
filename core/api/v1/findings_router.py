@@ -158,7 +158,9 @@ def get_findings(
     min_anomaly_score: Optional[float] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(
-        None, description="Text search across finding IDs, descriptions, entity context"
+        None,
+        description="Text search across finding IDs, descriptions, entity context; "
+        "whitespace/comma-separated terms must all match",
     ),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),

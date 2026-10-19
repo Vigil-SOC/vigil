@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, it, expect, beforeAll, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 import { NAV } from '../data/data'
+import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
 
@@ -691,6 +692,56 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'New case' })).toBeInTheDocument()
   })
 
+  describe('the case drawer and browser history', () => {
+    let navigate: NavigateFunction = () => {}
+    function Probe() {
+      navigate = useNavigate()
+      return null
+    }
+    const renderWithHistory = () =>
+      render(
+        <ColorSchemeProvider>
+          <MemoryRouter initialEntries={['/dashboard']}>
+            <Probe />
+            <Routes>
+              <Route path="/">
+                <Route index element={<LandingRedirect />} />
+                <Route path=":screen" element={<ConsoleAt />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </ColorSchemeProvider>,
+      )
+    const openDrawer = async () => {
+      clickScreen('Cases')
+      fireEvent.click(await screen.findByText('Defense Evasion: Obfuscated Loader'))
+      return screen.findByRole('dialog', { name: 'Case' })
+    }
+
+    it('comes back to the case on Back from a page the drawer led to, as Watch it run and Replay do', async () => {
+      renderWithHistory()
+      await openDrawer()
+      // Watch it run: the drawer closes as the link takes the page to the run.
+      act(() => navigate('/workflows?run=run-1'))
+      fireEvent.keyDown(window, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
+      act(() => navigate(-1))
+      const back = await screen.findByRole('dialog', { name: 'Case' })
+      expect(within(back).getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
+    })
+
+    it('stays closed on Back once the case was closed where it was open', async () => {
+      renderWithHistory()
+      const drawer = await openDrawer()
+      fireEvent.click(within(drawer).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
+      act(() => navigate('/workflows'))
+      act(() => navigate(-1))
+      await screen.findByRole('button', { name: 'New case' })
+      expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+    })
+  })
+
   describe('⌘K Tab', () => {
     const ask = (text: string) => {
       const input = screen.getByRole('combobox', { name: /Find a case/ })
@@ -1048,6 +1099,17 @@ describe('SocConsole', () => {
       data: { auto_response_enabled: false, force_manual_approval: false },
     } as never)
     renderConsole()
+    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+  })
+
+  it('re-reads the autonomy badge when Settings saves Ask first / Act', async () => {
+    renderConsole()
+    expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
+
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: true, force_manual_approval: true },
+    } as never)
+    act(() => notifyAutonomyChanged())
     expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
 

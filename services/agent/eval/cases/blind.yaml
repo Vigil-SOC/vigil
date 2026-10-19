@@ -1,0 +1,132 @@
+# Attacks where the decisive source cannot answer, or answers with nothing. The
+# alert is real; what would confirm it is not visible. Closing any of these as
+# benign is the costly mistake: a search that found nothing, or never ran, is a
+# gap and not exoneration. Escalating or holding for review both count as safe.
+
+- id: blind-01-edr-ransom-note-siem-down
+  truth: attack
+  traps: [blind]
+  rationale: EDR saw mass file renames and a ransom note; every telemetry search times out, so nothing contradicts it.
+  alert: |
+    EDR finding f-2001 on fs-04: 3,200 files renamed with extension .lckd in 90 seconds and README_RESTORE.txt written to 41 folders. Case c-2001.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-2001, host: fs-04, detection: "Mass file modification consistent with encryption", files_renamed: 3200, extension: ".lckd", note_file: README_RESTORE.txt, process: "C:\\Users\\Public\\svc.exe", severity: critical }
+    splunk_search:
+      - failure: timeout
+    search_findings:
+      - failure: unavailable
+    case_records:
+      - rows:
+          - { case_id: c-2001, note: "fs-04 hosts the finance department share" }
+
+- id: blind-02-beacon-proxy-logs-missing
+  truth: attack
+  traps: [blind]
+  rationale: Intel says the address is active C2 and the host resolved it; proxy and firewall logs for the window are empty because the collector was down.
+  alert: |
+    Finding f-2101: ws-0418 resolved update-check.example.net, which threat intel lists as active C2. Case c-2101.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-2101, host: ws-0418, detection: "DNS resolution of known C2 domain", domain: "update-check.example.net", resolved_to: "198.51.100.66", time: "2026-09-24T07:44:10Z" }
+    lookup_indicators:
+      - match: [update-check]
+        rows:
+          - { indicator: "update-check.example.net", type: domain, verdict: malicious, tags: [c2, qakbot], last_seen_active: "2026-09-24" }
+      - match: ["198.51.100.66"]
+        rows:
+          - { indicator: "198.51.100.66", type: ip, verdict: malicious, tags: [c2] }
+    splunk_search:
+      - match: [dns]
+        rows:
+          - { time: "2026-09-24T07:44:10Z", host: ws-0418, source: dns, event: query, detail: "update-check.example.net A 198.51.100.66" }
+      - match: [ws-0418, process]
+        failure: unavailable
+      - rows: []
+    case_records:
+      - rows:
+          - { case_id: c-2101, note: "Proxy and firewall log collectors for building 4 (where ws-0418 sits) were offline 07:00-09:30 on 2026-09-24" }
+
+- id: blind-03-admin-from-tor-idp-timeout
+  truth: attack
+  traps: [blind]
+  rationale: A global admin signed in from a Tor exit and changed MFA; the identity provider's logs time out when queried.
+  alert: |
+    Finding f-2201: global administrator user0002 signed in from 203.0.113.66 (Tor exit) and disabled MFA for their own account. Case c-2201.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-2201, user: user0002, role: global_admin, detection: "Privileged sign-in from anonymising network followed by MFA change", source_ip: "203.0.113.66", time: "2026-09-25T03:12:00Z" }
+    lookup_indicators:
+      - match: ["203.0.113.66"]
+        rows:
+          - { indicator: "203.0.113.66", type: ip, verdict: suspicious, tags: [tor-exit] }
+    splunk_search:
+      - failure: timeout
+    case_records:
+      - rows:
+          - { case_id: c-2201, note: "user0002 is based in the head office and is not travelling" }
+
+- id: blind-04-exfil-netflow-empty
+  truth: attack
+  traps: [blind]
+  rationale: DLP blocked one upload of a customer export to a personal cloud account; searches for further transfers return nothing because the sensor does not cover that subnet.
+  alert: |
+    DLP finding f-2301: user0088 attempted to upload customers_full_export.csv (2.1 GB) to a personal cloud storage account; blocked. Case c-2301.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-2301, user: user0088, host: ws-0702, detection: "Upload of classified data to personal cloud storage blocked", file: customers_full_export.csv, size_gb: 2.1, destination: "personal storage, consumer account" }
+    case_records:
+      - rows:
+          - { case_id: c-2301, note: "user0088 resigned on 2026-09-20; last day is 2026-09-30. HR flagged them as a departing employee with access to the CRM export." }
+    splunk_search:
+      - match: [user0088]
+        rows:
+          - { time: "2026-09-26T18:02:00Z", user: user0088, source: crm, event: export, detail: "full customer table exported, first export by this user" }
+      - rows: []
+    search_findings:
+      - rows: []
+
+- id: blind-05-cred-dump-edr-only
+  truth: attack
+  traps: [blind]
+  rationale: EDR reports a known credential-dumping tool by hash; host telemetry is unavailable because the forwarder was uninstalled minutes earlier.
+  alert: |
+    EDR finding f-2401 on srv-hr-01: file hash matches a known credential dumper, executed as SYSTEM. Case c-2401.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-2401, host: srv-hr-01, detection: "Known hacktool hash executed", sha256: "0000000000000000000000000000000000000000000000000000000000000abc", process: "C:\\Windows\\Temp\\m64.exe", user: SYSTEM, severity: high }
+    lookup_indicators:
+      - match: ["abc"]
+        rows:
+          - { indicator: "0000000000000000000000000000000000000000000000000000000000000abc", type: sha256, verdict: malicious, tags: [mimikatz] }
+    splunk_search:
+      - match: [srv-hr-01]
+        failure: unavailable
+      - rows: []
+    case_records:
+      - rows:
+          - { case_id: c-2401, note: "Log forwarder on srv-hr-01 stopped reporting at 14:02; the EDR alert is at 14:09." }
+
+- id: blind-06-mailbox-rule-audit-gap
+  truth: attack
+  traps: [blind]
+  rationale: A finance mailbox got a rule hiding bank-change replies after a sign-in from an unfamiliar country; mailbox audit search returns empty because auditing was off for that mailbox.
+  alert: |
+    Finding f-2501: inbox rule on user0101's mailbox moves messages containing "bank details" to RSS Feeds and marks them read. Case c-2501.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-2501, user: user0101, detection: "Suspicious inbox rule (hide and mark read)", rule: "if subject or body contains 'bank details' -> move to RSS Feeds, mark as read", created: "2026-09-27T06:40:00Z" }
+    splunk_search:
+      - match: [sign]
+        rows:
+          - { time: "2026-09-27T06:31:00Z", user: user0101, source: idp, event: sign_in_success, detail: "from 198.51.100.201, country never seen for this user, MFA satisfied by push approval" }
+      - rows: []
+    case_records:
+      - rows:
+          - { case_id: c-2501, note: "user0101 approves supplier payments. Mailbox auditing was not enabled for this mailbox." }

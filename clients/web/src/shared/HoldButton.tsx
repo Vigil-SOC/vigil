@@ -6,13 +6,15 @@ const HOLD_MS = 1600
 
 interface HoldButtonProps {
   label: string
+  /** Spoken name when several holds share a label; defaults to the label. */
+  name?: string
   /** Replaces the label once the action has gone through; the button then stops taking holds. */
   done?: string
   disabled: boolean
   onConfirm: () => void
 }
 
-export function HoldButton({ label, done, disabled, onConfirm }: HoldButtonProps) {
+export function HoldButton({ label, name, done, disabled, onConfirm }: HoldButtonProps) {
   const [holding, setHolding] = useState(false)
   const timer = useRef<number | null>(null)
   const locked = disabled || done !== undefined
@@ -50,7 +52,7 @@ export function HoldButton({ label, done, disabled, onConfirm }: HoldButtonProps
       type="button"
       className={holding ? 'btn danger home-hold holding' : 'btn danger home-hold'}
       disabled={locked}
-      aria-label={done ?? `${label}. Press and hold to confirm; this cannot be undone.`}
+      aria-label={done ?? `${name ?? label}. Press and hold to confirm; this cannot be undone.`}
       onPointerDown={(event) => {
         if (event.button != null && event.button !== 0) return
         event.currentTarget.setPointerCapture?.(event.pointerId)

@@ -19,6 +19,7 @@
   "dependencies": {
     "axios": "^1.20.0",
     "date-fns": "^4.1.0",
+    "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.1.0",
@@ -33,6 +34,7 @@
     "@eslint/js": "^9.39.4",
     "@testing-library/jest-dom": "^6.1.5",
     "@testing-library/react": "^14.1.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",

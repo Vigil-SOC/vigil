@@ -71,6 +71,7 @@ class MCPServer:
         cwd: str,
         env: Dict[str, str],
         required_env_vars: Optional[List[str]] = None,
+        declared_env: Optional[List[str]] = None,
     ):
         self.name = name
         self.command = command
@@ -80,6 +81,9 @@ class MCPServer:
         # Credential placeholders declared in mcp-config.json for this
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
+        # The env names mcp-config.json declares; ``env`` also carries the
+        # backend's own environment, which only a stdio child inherits.
+        self.declared_env: List[str] = list(declared_env or [])
 
 
 class MCPService:
@@ -120,9 +124,6 @@ class MCPService:
         if not self.python_exe.is_file():
             self.python_exe = Path(sys.executable)
 
-        # Load enabled state (servers default to disabled)
-        self._enabled_servers: Dict[str, bool] = self._load_enabled_state()
-
         # Initialize servers
         self.servers: Dict[str, MCPServer] = {}
         self._initialize_servers()
@@ -141,12 +142,15 @@ class MCPService:
             logger.warning(f"Could not load MCP enabled state: {e}")
         return {}
 
-    def _save_enabled_state(self) -> None:
+    def _save_enabled_state(self, enabled: Dict[str, bool]) -> None:
         """Persist the enabled/disabled state to disk."""
         try:
             write_path = vigil_path(self._STATE_FILENAME, write=True)
-            with open(write_path, "w") as f:
-                json.dump({"enabled": self._enabled_servers}, f, indent=2)
+            # Replaced whole: the other worker and the daemon read it on every check.
+            tmp = write_path.with_name(f".{write_path.name}.{os.getpid()}")
+            with open(tmp, "w") as f:
+                json.dump({"enabled": enabled}, f, indent=2)
+            os.replace(tmp, write_path)
         except Exception as e:
             logger.error(f"Could not save MCP enabled state: {e}")
 
@@ -160,17 +164,22 @@ class MCPService:
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
         # add-on. Safe to default-on: it declares no env placeholder (its config
-        # comes from Settings via resolve(), #1113), so with nothing configured
-        # it starts and answers "Splunk not configured", not failing a boot.
+        # comes from Settings via resolve(), #1113), so MCPClient gates it on the
+        # resolved config instead. Dormant until Splunk is saved, then it starts.
         "splunk-selfhosted",
     }
 
-    def is_server_enabled(self, server_name: str) -> bool:
-        """Check whether a server is enabled. Internal platform servers default to True; all others default to False."""
-        return self._enabled_servers.get(
-            server_name,
-            server_name in self._DEFAULT_ENABLED,
-        )
+    def is_server_enabled(
+        self, server_name: str, state: Optional[Dict[str, bool]] = None
+    ) -> bool:
+        """Check whether a server is enabled. Internal platform servers default to True; all others default to False.
+
+        Read from the file on every check: the other API worker and the daemon
+        toggle the same file, and share the runner's one copy of each server.
+        """
+        if state is None:
+            state = self._load_enabled_state()
+        return state.get(server_name, server_name in self._DEFAULT_ENABLED)
 
     def set_server_enabled(self, server_name: str, enabled: bool) -> bool:
         """
@@ -180,14 +189,49 @@ class MCPService:
         """
         if server_name not in self.servers:
             return False
-        self._enabled_servers[server_name] = enabled
-        self._save_enabled_state()
+        state = self._load_enabled_state()
+        state[server_name] = enabled
+        self._save_enabled_state(state)
         logger.info(f"Server '{server_name}' {'enabled' if enabled else 'disabled'}")
         return True
 
+    # The server that answers from detection rules the install has to fetch
+    # first. ``POST /api/detection-rules/update-all`` is that fetch.
+    DETECTIONS_SERVER = "security-detections"
+    FETCH_RULES = "fetch_detection_rules"
+    _NO_RULES = "No detection rules have been fetched on this install yet."
+
+    def setup_required(self, server_name: str) -> Optional[str]:
+        """Why ``server_name`` cannot start yet, or None when nothing stops it.
+
+        Not a failure and not a missing credential: security-detections
+        searches rule repositories, and a fresh install has none until they are
+        fetched (#2291). Started anyway it indexes nothing and answers every
+        search with nothing. Read fresh on each call, so a fetch made by another
+        worker counts here too; the server's env takes the paths it found.
+        """
+        if server_name != self.DETECTIONS_SERVER:
+            return None
+        try:
+            env = self._detection_rules.saved_mcp_env_vars()
+        except Exception as exc:  # noqa: BLE001 - a status read must not raise
+            logger.warning("Could not read the detection rule sources: %s", exc)
+            env = {}
+        if not env:
+            return self._NO_RULES
+        server = self.servers.get(server_name)
+        if server is not None:
+            server.env = {**(server.env or {}), **env}
+        return None
+
+    def setup_action(self, server_name: str) -> Optional[str]:
+        """The one action that sets ``server_name`` up, for a client to offer."""
+        return self.FETCH_RULES if server_name == self.DETECTIONS_SERVER else None
+
     def get_all_enabled_states(self) -> Dict[str, bool]:
         """Return a dict of server_name -> enabled for every known server."""
-        return {name: self.is_server_enabled(name) for name in self.servers}
+        state = self._load_enabled_state()
+        return {name: self.is_server_enabled(name, state) for name in self.servers}
 
     def _substitute_env_vars(
         self, value: str, env: Optional[Dict[str, str]] = None
@@ -234,12 +278,19 @@ class MCPService:
         self._initialize_servers()
 
     def _initialize_servers(self):
-        """
-        Initialize MCP server configurations from mcp-config.json.
+        """Merge the catalog from mcp-config.json into ``self.servers``.
 
-        Loads server configurations dynamically from the mcp-config.json file
-        to ensure consistency with MCP integration workflows.
-        Also includes servers for enabled integrations.
+        A file that does not parse is logged and leaves ``self.servers`` as is.
+        """
+        try:
+            self.servers.update(self.load_catalog())
+        except Exception as e:
+            logger.error(f"Error loading mcp-config.json: {e}")
+
+    def load_catalog(self) -> Dict[str, "MCPServer"]:
+        """Build the server catalog from mcp-config.json without touching
+        ``self.servers``. Raises when the file does not parse; a missing file
+        is an empty catalog.
         """
         python_exe_str = str(self.python_exe)
         project_path_str = str(self.project_root)
@@ -256,100 +307,91 @@ class MCPService:
         server_configs = []
 
         if mcp_config_path.exists():
-            try:
-                with open(mcp_config_path, "r") as f:
-                    mcp_config = json.load(f)
+            with open(mcp_config_path, "r") as f:
+                mcp_config = json.load(f)
 
-                for server_name, server_config in mcp_config.get(
-                    "mcpServers", {}
-                ).items():
-                    # Skip comment keys
-                    if server_name.startswith("_comment"):
-                        continue
+            for server_name, server_config in mcp_config.get("mcpServers", {}).items():
+                # Skip comment keys
+                if server_name.startswith("_comment"):
+                    continue
 
-                    # Convert config format from mcp-config.json to our internal format
-                    command = server_config.get("command", "python")
+                # Convert config format from mcp-config.json to our internal format
+                command = server_config.get("command", "python")
 
-                    # Use venv python if command is just "python" or "python3"
-                    if command in ["python", "python3"]:
-                        command = python_exe_str
+                # Use venv python if command is just "python" or "python3"
+                if command in ["python", "python3"]:
+                    command = python_exe_str
 
-                    # Get cwd, replace ${workspaceFolder} with actual path
-                    cwd = server_config.get("cwd", project_path_str)
-                    if "${workspaceFolder}" in cwd:
-                        cwd = cwd.replace("${workspaceFolder}", project_path_str)
+                # Get cwd, replace ${workspaceFolder} with actual path
+                cwd = server_config.get("cwd", project_path_str)
+                if "${workspaceFolder}" in cwd:
+                    cwd = cwd.replace("${workspaceFolder}", project_path_str)
 
-                    # Get environment variables and substitute ${VAR_NAME} patterns
-                    raw_env_strs = {
-                        k: str(v)
-                        for k, v in (server_config.get("env") or {}).items()
-                        if not k.startswith("_")
+                # Get environment variables and substitute ${VAR_NAME} patterns
+                raw_env_strs = {
+                    k: str(v)
+                    for k, v in (server_config.get("env") or {}).items()
+                    if not k.startswith("_")
+                }
+                # Inherit the backend's environment so servers that need
+                # runtime config not declared in mcp-config.json can connect
+                # — notably the POSTGRES_* vars DatabaseService reads for
+                # case/DB tools (vigil). Declared config env
+                # entries still take precedence. Required-credential
+                # detection scans the raw config above, not this spawn env,
+                # so dormancy behavior is unchanged.
+                env = os.environ.copy()  # noqa: ENV001 - MCP child env
+                # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
+                # would substitute to "" and root child paths at "/".
+                env.setdefault("VIGIL_DIR", str(vigil_path()))
+                # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
+                # not enough.
+                env.update(ca_bundle_env())
+                env.update(
+                    {
+                        k: self._substitute_env_vars(v, env)
+                        for k, v in raw_env_strs.items()
                     }
-                    # Inherit the backend's environment so servers that need
-                    # runtime config not declared in mcp-config.json can connect
-                    # — notably the POSTGRES_* vars DatabaseService reads for
-                    # case/DB tools (vigil). Declared config env
-                    # entries still take precedence. Required-credential
-                    # detection scans the raw config above, not this spawn env,
-                    # so dormancy behavior is unchanged.
-                    env = os.environ.copy()  # noqa: ENV001 - MCP child env
-                    # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
-                    # would substitute to "" and root child paths at "/".
-                    env.setdefault("VIGIL_DIR", str(vigil_path()))
-                    # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
-                    # not enough.
-                    env.update(ca_bundle_env())
-                    env.update(
-                        {
-                            k: self._substitute_env_vars(v, env)
-                            for k, v in raw_env_strs.items()
-                        }
-                    )
-                    env["PYTHONPATH"] = project_path_str
-
-                    # Get args and perform environment variable substitution
-                    raw_args = list(server_config.get("args") or [])
-                    args = [self._substitute_env_vars(arg, env) for arg in raw_args]
-
-                    # Capture declared credential placeholders *before*
-                    # substitution collapses missing vars to empty strings
-                    # — used by mcp_client to short-circuit connect when
-                    # required credentials aren't set.
-                    required_env_vars = extract_required_env_vars(
-                        raw_env_strs, raw_args
-                    )
-
-                    # Launch the image's baked copy of a pinned npx/uvx entry
-                    # instead of downloading it; anything not baked is as declared.
-                    command, args = installed_launch(command, args)
-
-                    server_configs.append(
-                        {
-                            "name": server_name,
-                            "command": command,
-                            "args": args,
-                            "cwd": cwd,
-                            "env": env,
-                            "required_env_vars": required_env_vars,
-                        }
-                    )
-
-                logger.info(
-                    f"Loaded {len(server_configs)} servers from mcp-config.json"
                 )
-            except Exception as e:
-                logger.error(f"Error loading mcp-config.json: {e}")
-                server_configs = []
+                env["PYTHONPATH"] = project_path_str
+
+                # Get args and perform environment variable substitution
+                raw_args = list(server_config.get("args") or [])
+                args = [self._substitute_env_vars(arg, env) for arg in raw_args]
+
+                # Capture declared credential placeholders *before*
+                # substitution collapses missing vars to empty strings
+                # — used by mcp_client to short-circuit connect when
+                # required credentials aren't set.
+                required_env_vars = extract_required_env_vars(raw_env_strs, raw_args)
+
+                # Launch the image's baked copy of a pinned npx/uvx entry
+                # instead of downloading it; anything not baked is as declared.
+                command, args = installed_launch(command, args)
+
+                server_configs.append(
+                    {
+                        "name": server_name,
+                        "command": command,
+                        "args": args,
+                        "cwd": cwd,
+                        "env": env,
+                        "required_env_vars": required_env_vars,
+                        "declared_env": list(raw_env_strs),
+                    }
+                )
+
+            logger.info(f"Loaded {len(server_configs)} servers from mcp-config.json")
         else:
             logger.warning("mcp-config.json not found")
-            server_configs = []
 
         # Dynamically update security-detections server env vars from DetectionRulesService
+        servers: Dict[str, MCPServer] = {}
         for config in server_configs:
             if config["name"] == "security-detections":
                 config = self._enrich_security_detections_env(config)
-            server = MCPServer(**config)
-            self.servers[config["name"]] = server
+            servers[config["name"]] = MCPServer(**config)
+        return servers
 
     def _enrich_security_detections_env(self, config: Dict) -> Dict:
         """
