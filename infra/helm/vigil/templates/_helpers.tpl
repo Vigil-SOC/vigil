@@ -73,6 +73,62 @@ Per-component names and labels.
 {{- printf "%s-agent-serve" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "vigil.mcpRunner.fullname" -}}
+{{- printf "%s-mcp-runner" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Secret holding MCP_RUNNER_TOKEN: the operator's when secrets.existingSecret or
+externalSecret supplies one (it must carry that key), else the chart's own.
+Never the app Secret the chart templates itself.
+*/}}
+{{- define "vigil.mcpRunner.tokenSecret" -}}
+{{- if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled -}}
+{{- include "vigil.secret.fullname" . -}}
+{{- else -}}
+{{- include "vigil.mcpRunner.fullname" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+MCP_RUNNER_URL and MCP_RUNNER_TOKEN for the backend and daemon; nothing when the
+runner is off. The token ref is optional so an existingSecret without the key
+leaves only the runner unready, not the app (the runner's own ref is required).
+*/}}
+{{- define "vigil.mcpRunnerEnv" -}}
+{{- if .Values.mcpRunner.enabled }}
+- name: MCP_RUNNER_URL
+  value: {{ printf "http://%s:6991" (include "vigil.mcpRunner.fullname" .) | quote }}
+- name: MCP_RUNNER_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vigil.mcpRunner.tokenSecret" . }}
+      key: MCP_RUNNER_TOKEN
+      optional: true
+{{- end }}
+{{- end -}}
+
+{{/*
+Detection rule repositories: read-write on the backend, which clones into them,
+read-only on the runner. Nothing when detectionRules.volume is unset.
+*/}}
+{{- define "vigil.detectionRulesVolumeMount" -}}
+{{- if .context.Values.detectionRules.volume }}
+- name: detection-rules
+  mountPath: /home/vigil/security-detections
+  {{- if .readOnly }}
+  readOnly: true
+  {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "vigil.detectionRulesVolume" -}}
+{{- with .Values.detectionRules.volume }}
+- name: detection-rules
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end -}}
+
 {{- define "vigil.postgres.fullname" -}}
 {{- printf "%s-postgres" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -167,6 +223,7 @@ The "llmWorker" component always reuses the backend image.
          which command the Deployment runs (infra/docker/Dockerfile.agent). */ -}}
   {{- if eq $comp "agentWorker" -}}{{- $suffix = "agent" -}}{{- end -}}
   {{- if eq $comp "agentServe" -}}{{- $suffix = "agent" -}}{{- end -}}
+  {{- if eq $comp "mcpRunner" -}}{{- $suffix = "mcp-runner" -}}{{- end -}}
   {{- $repo = printf "%s/%s-%s" $registry $ns $suffix -}}
 {{- end -}}
 {{- if eq $tag "" -}}

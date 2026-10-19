@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { InProcessState } from "../../core/state.js";
 import { SpecError } from "../../core/spec.js";
 import { toolsFrom } from "../../tools/remote.js";
-import { expandFrom } from "../../workflows/hunt/expand.js";
-import type { HuntKinds } from "../../workflows/hunt/ledger.js";
+import { expandFrom } from "../../plugins/hunt/expand.js";
+import type { HuntKinds } from "../../plugins/hunt/ledger.js";
 import type { NewEvent } from "../../contracts/events.js";
 
 const RUN = "3c1c2d3e-0000-4000-8000-000000000700";

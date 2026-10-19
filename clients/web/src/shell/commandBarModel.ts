@@ -135,8 +135,8 @@ export const ATTACH_TYPES = ['.pdf', '.docx', '.pptx', '.xlsx', '.png', '.jpg', 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024
 export const PASTED_NAME = 'Pasted text'
 
-/** The hunt already on this document: its case when it has one, else its run. */
-export type RunningHunt = { caseId?: string; runId?: string }
+/** The hunt already on this document: its case when it has one, else its run, and where it stands. */
+export type RunningHunt = { caseId?: string; runId?: string; status?: string }
 
 /** A hypothesis proposed from the attached document by the coverage check; null until asked. */
 export type HuntProposal =
@@ -186,24 +186,34 @@ export function runningHunt(attachment: HuntAttachment | null): RunningHunt | nu
 /** The coverage check's answer as a proposal. A report already being hunted still gets one, and names that hunt. */
 export function proposalFrom(answer: {
   status?: string
-  in_flight?: { run_id?: string | null; case_id?: string | null }[]
+  in_flight?: { run_id?: string | null; case_id?: string | null; status?: string | null }[]
   proposal?: { hypothesis?: unknown; hypothesis_subjects?: Record<string, string[]>; approve_hypotheses?: boolean } | null
 }): HuntProposal {
   const hypothesis = answer.proposal?.hypothesis
   if (typeof hypothesis === 'string' && hypothesis.trim()) {
-    const hunt = answer.in_flight?.[0]
+    // Newest first across both states, so a paused one can lead a running one: name the live hunt.
+    const hunts = answer.in_flight ?? []
+    const hunt = hunts.find((row) => row.status === 'running') ?? hunts[0]
     return {
       status: 'proposed',
       hypothesis,
       subjects: answer.proposal?.hypothesis_subjects,
       approve: answer.proposal?.approve_hypotheses,
-      ...(answer.status === 'running' && { running: { caseId: hunt?.case_id ?? undefined, runId: hunt?.run_id ?? undefined } }),
+      ...(answer.status === 'running' && { running: { caseId: hunt?.case_id ?? undefined, runId: hunt?.run_id ?? undefined, status: hunt?.status ?? undefined } }),
     }
   }
   if (answer.status === 'running') {
-    return { status: 'none', reason: 'A hunt is already running on what this document covers. Type a hypothesis to start another.' }
+    const hunts = answer.in_flight ?? []
+    const state = hunts.some((row) => row.status === 'running') || hunts.length === 0 ? 'running' : 'paused'
+    return { status: 'none', reason: `A hunt on this document is ${state}. Type a hypothesis to start another.` }
   }
   return { status: 'none', reason: 'No hypothesis could be proposed from this document. Type one to hunt with it.' }
+}
+
+/** The note for a hunt already on the document: its real state, and that Run starts another. */
+export function huntStateNote(hunt: RunningHunt): string {
+  const state = hunt.status === 'paused' ? 'paused' : hunt.status === 'running' ? 'running' : 'in progress'
+  return `A hunt on this document is ${state}${hunt.caseId ? ` (case ${hunt.caseId})` : ''}. Run starts a new one.`
 }
 
 /** A case title from a hypothesis: whole words only, never past ``max`` characters. */
@@ -294,14 +304,13 @@ export function commandPreview(
       if (attachment?.status === 'reading') return { line: `Reading ${attachment.name}…`, disabled: true }
       if (attachment?.status === 'refused') return { line: attachment.reason, disabled: true }
       const hypothesis = huntHypothesis(a, attachment)
+      const running = runningHunt(attachment)
       if (hypothesis) {
         return {
           line: `Start a threat hunt: ${hypothesis}`,
           disabled: false,
           ...(!a && {
-            note: runningHunt(attachment)
-              ? 'A hunt is already running on what this document covers.'
-              : 'Proposed from the document. Type your own to replace it.',
+            note: running ? huntStateNote(running) : 'Proposed from the document. Type your own to replace it.',
           }),
         }
       }

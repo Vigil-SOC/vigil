@@ -66,8 +66,11 @@ RUN npm ci --omit=dev \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY --from=build /build/dist ./dist
-# tsc emits only .js; arch/registry.ts resolves the arch YAMLs next to itself.
-COPY --from=build /build/arch/*.yaml ./dist/arch/
+# tsc emits only .js; plugins/kinds.ts and plugins/registry.ts resolve each
+# plugin's plugin.yaml next to themselves, so the plugin directories ship as they
+# are, and the repo's one skill library (core/skills/library) beside them.
+COPY --from=build /build/plugins/ ./dist/plugins/
+COPY core/skills/library/ ./dist/skills/
 
 RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 

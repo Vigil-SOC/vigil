@@ -66,7 +66,7 @@ def test_carries_the_fields_a_workflow_owns():
 def test_kinds_match_the_typescript_vocabulary():
     """DIRECTIVE_KINDS is declared in two languages, so drift is the failure mode."""
     declared = (
-        REPO / "services" / "agent" / "workflows" / "hunt" / "types.ts"
+        REPO / "services" / "agent" / "plugins" / "hunt" / "types.ts"
     ).read_text()
     block = declared.split("export const DIRECTIVE_KINDS = [")[1].split("]")[0]
     assert sorted(DIRECTIVE_KINDS) == sorted(

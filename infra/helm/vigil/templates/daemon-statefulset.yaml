@@ -33,6 +33,11 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- if .Values.mcpRunner.enabled }}
+        {{- /* The set value, not the rendered Secret: a generated token is drawn
+               again on every include. */}}
+        checksum/mcp-runner-token: {{ .Values.secrets.mcpRunnerToken | default "" | sha256sum }}
+        {{- end }}
         {{- with .Values.daemon.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -67,6 +72,7 @@ spec:
             {{- include "vigil.env" . | nindent 12 }}
             {{- include "vigil.stateEnv" . | nindent 12 }}
             {{- include "vigil.caBundleEnv" . | nindent 12 }}
+            {{- include "vigil.mcpRunnerEnv" . | nindent 12 }}
             {{- with .Values.daemon.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

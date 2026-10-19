@@ -48,7 +48,29 @@ describe('/hunt preview with an attachment', () => {
     const answer = { status: 'running', in_flight: [{ run_id: 'r1', case_id: 'c1' }], proposal: { hypothesis: 'H1' } }
     const proposal = proposalFrom(answer)
     expect(proposal).toMatchObject({ status: 'proposed', hypothesis: 'H1', running: { caseId: 'c1', runId: 'r1' } })
-    expect(commandPreview('hunt', '', JIRA, READY(proposal))).toMatchObject({ disabled: false, note: expect.stringContaining('already running') })
+    expect(commandPreview('hunt', '', JIRA, READY(proposal))).toMatchObject({ disabled: false, note: expect.stringContaining('A hunt on this document is') })
+  })
+
+  it('names the hunt\'s real state: paused is not running', () => {
+    const note = (status: string | undefined, caseId: string | null = 'c1') =>
+      commandPreview('hunt', '', JIRA, READY(proposalFrom({ status: 'running', in_flight: [{ run_id: 'r1', case_id: caseId, status }], proposal: { hypothesis: 'H1' } }))).note
+    expect(note('paused')).toBe('A hunt on this document is paused (case c1). Run starts a new one.')
+    expect(note('running')).toBe('A hunt on this document is running (case c1). Run starts a new one.')
+    expect(note(undefined, null)).toBe('A hunt on this document is in progress. Run starts a new one.')
+  })
+
+  it('names the live hunt when a newer paused one leads', () => {
+    const proposal = proposalFrom({
+      status: 'running',
+      in_flight: [{ run_id: 'r2', case_id: 'c2', status: 'paused' }, { run_id: 'r1', case_id: 'c1', status: 'running' }],
+      proposal: { hypothesis: 'H1' },
+    })
+    expect(proposal).toMatchObject({ running: { caseId: 'c1', status: 'running' } })
+  })
+
+  it('says paused, not running, when the only hunt is paused and nothing is proposed', () => {
+    const none = proposalFrom({ status: 'running', in_flight: [{ run_id: 'r1', status: 'paused' }] })
+    expect(none).toMatchObject({ status: 'none', reason: expect.stringContaining('is paused') })
   })
 
   it('stays disabled while reading, when refused, and with no proposal', () => {
