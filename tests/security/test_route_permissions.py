@@ -76,6 +76,14 @@ GATED_ROUTES = [
     ),
     ("POST", "/api/workflows/w-1/execute", {}, "ai_chat.use"),
     ("POST", "/api/claude/chat/stream", {"messages": []}, "ai_chat.use"),
+    (
+        "POST",
+        "/api/skills",
+        {"name": "s", "description": "d", "body": "b"},
+        "settings.write",
+    ),
+    ("POST", "/api/skills/upload", None, "settings.write"),
+    ("DELETE", "/api/skills/s", None, "settings.write"),
 ]
 
 

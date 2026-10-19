@@ -9,7 +9,6 @@ DELETE /api/cases/templates/{template_id}
 DELETE /api/conversations/{conversation_id}
 DELETE /api/detection-rules/sources/{source_id}
 DELETE /api/findings/{finding_id}/noise
-DELETE /api/skills/{name}
 DELETE /api/sla-policies/{policy_id}
 DELETE /api/workflows/custom/{workflow_id}
 DELETE /api/workflows/runs/{run_id}
@@ -59,9 +58,6 @@ POST /api/orchestrator/investigations/{investigation_id}/wake
 POST /api/orchestrator/scan-findings
 POST /api/services/{name}/restart
 POST /api/services/{name}/stop
-POST /api/skills
-POST /api/skills/
-POST /api/skills/upload
 POST /api/skills/{name}/test
 POST /api/sla-policies/
 POST /api/sla-policies/{policy_id}/set-default

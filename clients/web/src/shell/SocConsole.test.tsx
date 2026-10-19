@@ -5,6 +5,7 @@ import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
+import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
@@ -50,6 +51,14 @@ function renderConsole(path = '/dashboard') {
 
 // Literals are inlined below because vi.mock is hoisted.
 vi.mock('../services/api', () => ({
+  caseMetricsApi: {
+    getSummary: () => Promise.resolve({ data: {} }),
+    getMTTD: () => Promise.resolve({ data: {} }),
+    getMTTR: () => Promise.resolve({ data: {} }),
+    getByPriority: () => Promise.resolve({ data: {} }),
+    getByStatus: () => Promise.resolve({ data: {} }),
+    getAnalystPerformance: () => Promise.resolve({ data: {} }),
+  },
   casesApi: {
     getAll: () =>
       Promise.resolve({
@@ -311,6 +320,7 @@ const defaultViewportWidth = window.innerWidth
 afterEach(() => {
   authState.allow = () => true
   localStorage.clear()
+  sessionStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
   vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   vi.mocked(consoleApi.getHealth).mockResolvedValue({
@@ -530,39 +540,96 @@ describe('SocConsole', () => {
     }
   })
 
-  it('shows Finish setup with the open step count and links to /setup', async () => {
-    const step = (done: boolean) => ({ id: 'x', title: 'x', state_line: '', done, href: '/x' })
-    const read = (...steps: boolean[]) =>
+  describe('Finish setup chip', () => {
+    const tip = (n: number) =>
+      `Finish setting up Vigil: ${n === 1 ? '1 step is' : `${n} steps are`} left. Opens the setup steps on Home.`
+    // ids a, b, c...; true = done
+    const read = (...done: boolean[]) =>
       vi.mocked(configApi.getSetupSteps).mockResolvedValue({
-        data: { steps: steps.map(step), alerts_exist: 0, demo_enabled: false },
+        data: {
+          steps: done.map((d, i) => {
+            const id = String.fromCharCode(97 + i)
+            return { id, title: `Step ${id}`, state_line: '', done: d, href: `/${id}` }
+          }),
+          alerts_exist: 1,
+          demo_enabled: false,
+        },
       } as never)
 
-    read(true, false, false)
-    const first = renderConsole()
-    const chip = await screen.findByRole('link', { name: 'Finish setting up Vigil: 2 steps are left. Opens the setup guide.' })
-    expect(chip).toHaveTextContent('Finish setup')
-    expect(chip).toHaveTextContent('2 left')
-    expect(chip).toHaveAttribute('href', '/setup')
-    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    expect(screen.getByRole('menuitem', { name: 'Setup guide 2 left' })).toBeInTheDocument()
-    first.unmount()
+    afterEach(() => {
+      vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+        data: { steps: [], alerts_exist: 1, demo_enabled: false },
+      } as never)
+    })
 
-    read(true, false)
-    const second = renderConsole()
-    expect(await screen.findByRole('link', { name: 'Finish setting up Vigil: 1 step is left. Opens the setup guide.' })).toHaveTextContent('1 left')
-    // a step finished elsewhere shows on the next screen change
-    read(true, true)
-    clickScreen('Cases')
-    await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
-    second.unmount()
+    it('counts the open steps and links to the setup steps on Home', async () => {
+      read(true, false, false)
+      const first = renderConsole()
+      const chip = await screen.findByRole('link', { name: tip(2) })
+      expect(chip).toHaveTextContent('Finish setup')
+      expect(chip).toHaveTextContent('2 left')
+      expect(chip).toHaveAttribute('href', '/home?section=setup')
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.getByRole('menuitem', { name: 'Finish setup 2 left' })).toBeInTheDocument()
+      first.unmount()
 
-    vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('boom'))
-    renderConsole()
-    await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
-    expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
-    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
-      data: { steps: [], alerts_exist: 1, demo_enabled: false },
-    } as never)
+      read(true, false)
+      const second = renderConsole()
+      expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
+      // a step finished elsewhere shows on the next screen change
+      read(true, true)
+      clickScreen('Cases')
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      second.unmount()
+
+      vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('boom'))
+      renderConsole()
+      await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+      expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+    })
+
+    it('leaves out steps hidden with Not now, and shows no chip once every open step is hidden', async () => {
+      read(true, false, false)
+      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
+      const first = renderConsole()
+      expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.getByRole('menuitem', { name: 'Finish setup 1 left' })).toBeInTheDocument()
+      first.unmount()
+
+      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
+      renderConsole()
+      await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+      await screen.findByText('Security operations overview')
+      expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
+    })
+
+    it('drops a step hidden on Home without a screen change', async () => {
+      read(false, false)
+      renderConsole('/home')
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      const calls = vi.mocked(configApi.getSetupSteps).mock.calls.length
+      const setup = await screen.findByRole('region', { name: 'Setup' })
+      fireEvent.click((await within(setup).findAllByRole('button', { name: 'Not now' }))[0])
+      expect(await screen.findByRole('link', { name: tip(1) })).toBeInTheDocument()
+      fireEvent.click(within(setup).getByRole('button', { name: 'Not now' }))
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      expect(within(setup).getByText('Nothing to suggest right now.')).toBeInTheDocument()
+      // the chip recounted from the hidden list, not a fresh read
+      expect(vi.mocked(configApi.getSetupSteps).mock.calls.length).toBe(calls)
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
+    })
+
+    it('shows no chip for people who cannot open Home', async () => {
+      authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+      read(false, false)
+      renderConsole()
+      await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+      await screen.findByText('Security operations overview')
+      expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+    })
   })
 
   it('puts the status chip in the nav row, with no separate strip', async () => {
