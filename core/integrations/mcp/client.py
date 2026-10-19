@@ -27,6 +27,9 @@ except ImportError:
             ClientSession = Any
             StdioServerParameters = Any
 
+from core.integrations._base.config import missing as missing_fields
+from core.integrations._base.config import resolve
+from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
 from core.integrations.mcp.child_env import ca_bundle_env
 from core.integrations.mcp.runner import (
     RunnerError,
@@ -35,9 +38,20 @@ from core.integrations.mcp.runner import (
     runner_url,
 )
 from core.integrations.mcp.service import MCPService
+from core.integrations.opensearch.descriptor import OPENSEARCH, OPENSEARCH_REQUIRED
+from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
+
+# Servers whose tool.py reads its config through resolve(), so there is no
+# ${VAR} placeholder to gate on. Not keyed off descriptor.mcp_server_names: the
+# official "splunk" server shares that descriptor but reads SPLUNK_MCP_URL.
+_DESCRIPTOR_GATED = {
+    "splunk-selfhosted": (SPLUNK, SPLUNK_SELFHOSTED_REQUIRED),
+    "elastic": (ELASTIC, ELASTIC_REQUIRED),
+    "opensearch": (OPENSEARCH, OPENSEARCH_REQUIRED),
+}
 
 
 @asynccontextmanager
@@ -468,14 +482,19 @@ class MCPClient:
     def _missing_credentials_for(self, server) -> List[str]:
         # Resolves through get_secret, so a credential saved via the integration
         # wizard (encrypted store, not the process env) does not read as dormant.
+        gated = _DESCRIPTOR_GATED.get(getattr(server, "name", None))
+        if gated:
+            descriptor, required = gated
+            try:
+                return list(missing_fields(resolve(descriptor), *required))
+            except Exception as exc:  # noqa: BLE001
+                # A DB or decrypt failure must not read as configured.
+                logger.warning(
+                    "Config lookup for %s failed: %s", server.name, type(exc).__name__
+                )
+                return list(required)
         required = getattr(server, "required_env_vars", None) or []
-        if not required:
-            return []
-        missing: List[str] = []
-        for var in required:
-            if not get_secret(var):
-                missing.append(var)
-        return missing
+        return [var for var in required if not get_secret(var)]
 
     def setup_required(self, server_name: str) -> Optional[str]:
         """Why ``server_name`` is not set up yet, or None (see ``MCPService``)."""

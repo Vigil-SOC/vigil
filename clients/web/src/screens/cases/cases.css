@@ -400,7 +400,7 @@
 .side-ents { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .side-ent { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; }
 .side-ent-head { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
-.side-ent.long .side-ent-head { max-width: calc(100% - 4.2em); } /* room for the six-character tail */
+.side-ent.long .side-ent-head { max-width: calc(100% - var(--ent-tail, 4.2em)); } /* room for the six-character tail, as measured */
 
 .side-cost { display: flex; justify-content: space-between; gap: 8px; }
 .side-level { font-weight: 650; }
@@ -1405,6 +1405,8 @@
 
 /* where the answer wrote the id: in the line, like a word */
 .case-composer .md .cite-chip { margin: 0 1px; vertical-align: 1px; }
+/* the same row or alert again in one paragraph: named, not chipped twice (#2459) */
+.case-composer .md .cite-again { color: var(--tx0); font-weight: 600; }
 
 .case-composer .cite-chip:hover {
   background: var(--ac);
@@ -1712,3 +1714,20 @@
 
 .case-stopped .needs-keep-going .btn,
 .case-needs .needs-keep-going .btn { height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+
+/* the rows an explanation's note cites, as chips once the row is opened (#2459) */
+.case-page .case-expl-cites { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-left: 6px; vertical-align: middle; }
+.case-page .case-expl-cites .cite-chip {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--ac-ln);
+  border-radius: 999px;
+  background: var(--ac-bg);
+  color: var(--tx0);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.case-page .case-expl-cites .cite-chip:hover { background: var(--ac); color: var(--ac-tx); }

@@ -14,12 +14,11 @@ interface Props {
   busy: string | null
   wake: (id: string) => unknown
   killInvestigation: (id: string) => unknown
-  review: (id: string, action: 'approve' | 'rework', notes?: string) => unknown
 }
 
 type TabKey = 'overview' | 'files' | 'reasoning' | 'custody'
 
-export default function InvestigationDetail({ id, onBack, openChat, busy, wake, killInvestigation, review }: Props) {
+export default function InvestigationDetail({ id, onBack, openChat, busy, wake, killInvestigation }: Props) {
   const navigate = useNavigate()
   const { detail, reasoning, coc, phase, error, reload } = useInvestigationDetail(id)
   const [tab, setTab] = useState<TabKey>('overview')
@@ -50,7 +49,7 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
     ['custody', 'Chain of custody'],
   ]
 
-  const canWake = detail && ['sleeping', 'needs_rework', 'failed', 'completed'].includes(detail.status)
+  const canWake = detail && ['sleeping', 'failed', 'completed'].includes(detail.status)
   const canKill = detail && ['executing', 'assigned'].includes(detail.status)
 
   return (
@@ -110,7 +109,7 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
         {phase === 'ready' && detail && (
           <>
             {tab === 'overview' && (
-              <OverviewTab detail={detail} busy={busy} onReview={(action, notes) => runAndReload(review(id, action, notes))} />
+              <OverviewTab detail={detail} />
             )}
             {tab === 'files' && <FilesTab id={id} files={files} />}
             {tab === 'reasoning' && <ReasoningTab interactions={reasoning as unknown as Interaction[]} />}
@@ -122,15 +121,7 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
   )
 }
 
-function OverviewTab({
-  detail, busy, onReview,
-}: {
-  detail: InvestigationDetailData
-  busy: string | null
-  onReview: (action: 'approve' | 'rework', notes?: string) => void
-}) {
-  const [notes, setNotes] = useState('')
-  const reviewing = busy === `review:${detail.investigation_id}`
+function OverviewTab({ detail }: { detail: InvestigationDetailData }) {
   const actions = detail.proposed_actions || []
   const log = detail.recent_log || []
 
@@ -160,30 +151,6 @@ function OverviewTab({
         </div>
       )}
 
-      {detail.status === 'review_submitted' && (
-        <div className="card card-sq">
-          <div className="card-h"><h3 className="text-[14px]">Human review</h3></div>
-          <div className="card-b flex flex-col gap-3">
-            <textarea
-              className="field-input"
-              rows={3}
-              placeholder="Review notes (optional)"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              style={{ resize: 'vertical', minHeight: 64, width: '100%' }}
-            />
-            <div className="flex gap-2.5">
-              <button className="btn primary" disabled={reviewing} onClick={() => onReview('approve', notes || undefined)}>
-                <Icon name="check2" /> Approve
-              </button>
-              <button className="btn ghost" disabled={reviewing} onClick={() => onReview('rework', notes || undefined)}>
-                <Icon name="refresh" /> Request rework
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {log.length > 0 && (
         <div className="card card-sq">
           <div className="card-h"><h3 className="text-[14px]">Recent activity</h3></div>
@@ -203,7 +170,7 @@ function OverviewTab({
         </div>
       )}
 
-      {!detail.summary && !actions.length && detail.status !== 'review_submitted' && !log.length && !detail.last_error && (
+      {!detail.summary && !actions.length && !log.length && !detail.last_error && (
         <div className="text-sm text-tx-3 py-10 text-center">No overview details recorded yet.</div>
       )}
     </div>

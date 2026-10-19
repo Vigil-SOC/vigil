@@ -17,15 +17,21 @@ vi.mock('./useSettings', () => ({ useModelAssignment: () => assignment() }))
 vi.mock('../../services/api', () => ({ agentsApi: { listCustom: () => listCustom(), updateCustom: vi.fn() } }))
 
 const key = (url?: string) => ({ id: 'k', name: 'k', ollama_key_config: url ? { url } : undefined })
-const providersReady = (over = {}) => ({
-  providers: [{ name: 'anthropic' }, { name: 'ollama' }, { name: 'bedrock' }],
-  keys: { anthropic: [key(), key()], ollama: [key('http://localhost:11434')], bedrock: [] },
-  verdicts: { providers: { anthropic: true, ollama: false, bedrock: false }, keys: {} },
-  phase: 'ready',
-  error: null,
-  reload: vi.fn(),
-  ...over,
-})
+const providersReady = (over: { providers?: { name: string }[]; shown?: { name: string }[] } & Record<string, unknown> = {}) => {
+  const providers = over.providers ?? [{ name: 'anthropic' }, { name: 'ollama' }, { name: 'bedrock' }]
+  return {
+    providers,
+    // the hook leaves out providers that only hold unset seed keys
+    shown: over.shown ?? providers,
+    keys: { anthropic: [key(), key()], ollama: [key('http://localhost:11434')], bedrock: [] },
+    seeds: {},
+    verdicts: { providers: { anthropic: true, ollama: false, bedrock: false }, keys: {} },
+    phase: 'ready',
+    error: null,
+    reload: vi.fn(),
+    ...over,
+  }
+}
 const MODELS = [
   { model_id: 'sonnet', provider_id: 'anthropic-default', provider_type: 'anthropic', display_name: 'Sonnet' },
   { model_id: 'haiku', provider_id: 'anthropic-default', provider_type: 'anthropic', display_name: 'Haiku' },
