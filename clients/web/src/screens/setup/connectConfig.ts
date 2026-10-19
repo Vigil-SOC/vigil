@@ -1,9 +1,8 @@
-import { PROXY_FIELDS, type IntegrationMetadata } from '../../config/integrationSchema'
+import { fieldsWithProxy, type IntegrationMetadata } from '../../config/integrationSchema'
 
 export type ConnectConfig = Record<string, unknown>
 
-export const fieldsOf = (i: IntegrationMetadata) =>
-  i.proxy_supported ? [...i.fields, ...PROXY_FIELDS] : i.fields
+export const fieldsOf = fieldsWithProxy
 
 /**
  * Required fields still empty. A stored secret satisfies its check (it comes back

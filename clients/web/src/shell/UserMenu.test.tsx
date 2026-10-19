@@ -93,6 +93,7 @@ describe('UserMenu', () => {
       'Switch to light mode',
       'Two-step sign-inOff',
       'Settings',
+      'Change password',
       'Sign out',
     ])
     expect(menu).toHaveTextContent('admin')

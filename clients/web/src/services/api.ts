@@ -18,6 +18,10 @@ const api = axios.create({
 // 0 to disable the timeout for the life of the SSE connection.
 export const LLM_TIMEOUT = 180_000
 
+// Switching an MCP server on starts it and waits for it. A first start of an
+// npx/uvx server downloads the package, which can take well over 15s.
+export const MCP_START_TIMEOUT = 180_000
+
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
 function readCookie(name: string): string | null {
@@ -446,7 +450,7 @@ export const mcpApi = {
   getStatuses: () => api.get('/mcp/servers/status'),
 
   setServerEnabled: (name: string, enabled: boolean) =>
-    api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+    api.put(`/mcp/servers/${name}/enabled`, { enabled }, { timeout: MCP_START_TIMEOUT }),
 
   // Re-reads mcp-config.json and integration URLs into the server catalog, then
   // reconnects changed servers and stops removed or disabled ones. A file that
@@ -1399,15 +1403,19 @@ export const bootstrapApi = {
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
 }
 
-// Public password reset. `request` answers the same whether or not the email
-// matches an account; the emailed link lands on /reset-password?token=…
 export const authApi = {
+  // Public password reset. `request` answers the same whether or not the email
+  // matches an account; the emailed link lands on /reset-password?token=…
   requestPasswordReset: (email: string) =>
     api.post<{ message: string }>('/auth/password-reset/request', {
       email,
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
     api.post<{ message: string }>('/auth/password-reset/confirm', payload),
+  /** Revokes every token the user holds and clears the auth cookies, so the
+   *  caller is signed out once this resolves. */
+  changePassword: (body: Schema<'ChangePasswordRequest'>) =>
+    api.post<{ message: string }>('/auth/change-password', body),
 }
 
 // Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.

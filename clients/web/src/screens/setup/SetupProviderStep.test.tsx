@@ -32,12 +32,12 @@ vi.mock('../../services/api', () => ({
 
 const models = (...names: string[]) => ({ data: { models: names.map((name) => ({ name })), total: names.length } })
 
-/** Bifrost holds `held`: provider -> its keys. */
-function gateway(held: Record<string, unknown[]>, routable: Record<string, boolean> | null = {}) {
+/** Bifrost holds `held`: provider -> its keys. `keys` is the backend's per-key verdict. */
+function gateway(held: Record<string, unknown[]>, routable: Record<string, boolean> | null = {}, keys: Record<string, unknown> = {}) {
   vi.mocked(bifrostApi.listProviders).mockResolvedValue({ data: { providers: Object.keys(held).map((name) => ({ name })) } } as never)
   vi.mocked(bifrostApi.listKeys).mockImplementation(((name: string) =>
     Promise.resolve({ data: { keys: held[name] || [], total: 0 } })) as never)
-  if (routable) vi.mocked(bifrostApi.routability).mockResolvedValue({ data: { providers: routable, keys: {} } } as never)
+  if (routable) vi.mocked(bifrostApi.routability).mockResolvedValue({ data: { providers: routable, keys } } as never)
   else vi.mocked(bifrostApi.routability).mockRejectedValue(new Error('down'))
 }
 
@@ -81,6 +81,36 @@ describe('SetupProviderStep', () => {
     await screen.findByLabelText('API key')
     expect(screen.queryByText('Poor')).not.toBeInTheDocument()
     expect(screen.getByText(/Couldn’t check whether the gateway’s keys can route/)).toBeInTheDocument()
+  })
+
+  it('does not pre-select a provider the gateway lists with no key', async () => {
+    gateway({ anthropic: [], openai: [], vertex: [] }, { anthropic: false, openai: false, vertex: false })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    expect(await screen.findByText(/Pick where AI runs/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    paste('API key', 'sk-ant-real')
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }))
+    await waitFor(() => expect(bifrostApi.createKey).toHaveBeenCalledWith('anthropic', expect.objectContaining({ value: 'sk-ant-real' })))
+    expect(bifrostApi.createProvider).not.toHaveBeenCalled()
+  })
+
+  it('treats a seeded key the backend calls a placeholder as not set up, and a first key replaces it', async () => {
+    const seed = { id: 'seed1', name: 'default-anthropic-key', models: ['*'], weight: 1, value: { value: '', ref: 'env.ANTHROPIC_API_KEY', type: 'env' } }
+    gateway({ anthropic: [seed] }, { anthropic: false }, { seed1: { provider: 'anthropic', routable: false, health: 'placeholder' } })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    expect(await screen.findByText(/Pick where AI runs/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    paste('API key', 'sk-ant-real')
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }))
+    await waitFor(() => expect(bifrostApi.updateKey).toHaveBeenCalledWith('anthropic', 'seed1', expect.objectContaining({ value: 'sk-ant-real' })))
+    expect(bifrostApi.createKey).not.toHaveBeenCalled()
+    expect(bifrostApi.createProvider).not.toHaveBeenCalled()
   })
 
   it('creates the provider and key, shows models from providerModels, never echoes the key', async () => {

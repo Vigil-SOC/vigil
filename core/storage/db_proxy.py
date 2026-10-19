@@ -5,9 +5,9 @@ its own metadata Postgres or a DB-shaped integration target:
 
 * ``pgbouncer`` — connection pooler in front of Postgres. Just an endpoint
   rewrite; the wire protocol is unchanged.
-* ``http`` / ``socks5`` — a generic egress proxy. Honored by HTTP-based
-  integration clients (we propagate ``HTTPS_PROXY`` / ``ALL_PROXY`` to
-  child processes that read them). Not applicable to Postgres directly.
+* ``http`` / ``socks5`` — a generic egress proxy. Integration httpx clients
+  pass ``http_proxy_url`` as ``proxy=`` (see ``integrations/_base/proxy.py``).
+  Not applicable to Postgres directly.
 * ``ssh_tunnel`` — open a local SSH forward via ``sshtunnel`` and rewrite
   the effective ``(host, port)`` to point at ``127.0.0.1:<local_port>``.
 
@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Tuple
+from urllib.parse import quote
 
 from core.secrets_manager import get_secret
 
@@ -183,7 +184,7 @@ def apply(
     if proxy_type in ("http", "socks5"):
         if not proxy.proxy_host or not proxy.proxy_port:
             raise ValueError(f"{proxy_type} proxy requires proxy_host and proxy_port")
-        url = _http_proxy_url(proxy)
+        url = http_proxy_url(proxy)
         return AppliedProxy(
             host=target_host,
             port=target_port,
@@ -208,13 +209,11 @@ def apply(
     return AppliedProxy(host=target_host, port=target_port)
 
 
-def _http_proxy_url(proxy: ProxyConfig) -> str:
+def http_proxy_url(proxy: ProxyConfig) -> str:
     """Build an ``http://``/``socks5://`` proxy URL for client libraries."""
 
     scheme = "http" if proxy.proxy_type == "http" else "socks5"
     if proxy.proxy_username:
-        from urllib.parse import quote
-
         creds = quote(proxy.proxy_username, safe="")
         if proxy.proxy_password:
             creds = f"{creds}:{quote(proxy.proxy_password, safe='')}"
@@ -267,30 +266,6 @@ def _open_ssh_tunnel(
     return forwarder, local_host, local_port
 
 
-def child_env_for_proxy(proxy: ProxyConfig) -> Dict[str, str]:
-    """Return env-var overrides that should be merged into a child
-    process so its HTTP client respects the proxy.
-
-    Targets the conventional ``HTTPS_PROXY`` / ``HTTP_PROXY`` /
-    ``ALL_PROXY`` variables, which ``requests``, ``httpx``, and ``urllib``
-    all honor by default. Empty dict when proxy is disabled or non-HTTP.
-    """
-
-    if not proxy.enabled or proxy.proxy_type not in ("http", "socks5"):
-        return {}
-    url = _http_proxy_url(proxy)
-    env = {
-        "HTTPS_PROXY": url,
-        "HTTP_PROXY": url,
-        "ALL_PROXY": url,
-        # lowercase aliases for tools that only check those
-        "https_proxy": url,
-        "http_proxy": url,
-        "all_proxy": url,
-    }
-    return env
-
-
 __all__ = [
     "AppliedProxy",
     "PROXY_SECRET_FIELDS",
@@ -298,5 +273,5 @@ __all__ = [
     "PROXY_TYPES_NONE",
     "ProxyConfig",
     "apply",
-    "child_env_for_proxy",
+    "http_proxy_url",
 ]
