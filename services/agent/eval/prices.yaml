@@ -1,0 +1,14 @@
+# USD per million tokens, by the bare model id the gateway reports. The runner
+# serves these to the engine in place of the backend's pricing catalogue, so a
+# run's cost is computed exactly as production computes it. Check them against
+# the provider's current price list before trusting a cost comparison.
+claude-opus-5-5:   { input: 15.0, output: 75.0, cache_read: 1.5, cache_write: 18.75 }
+claude-sonnet-5-5: { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 }
+claude-fable-5-1:  { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 }
+claude-haiku-4-5-20251001: { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25 }
+claude-haiku-4-5:  { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25 }
+# Vertex Gemini, prompts under 200k tokens. Verify against Google's price list.
+gemini-2.5-pro:   { input: 1.25, output: 10.0, cache_read: 0.125, cache_write: 1.25 }
+gemini-2.5-flash: { input: 0.30, output: 2.50, cache_read: 0.03, cache_write: 0.30 }
+# OpenRouter list price, 2026-10-13 (openrouter.ai/api/v1/models), prompts under 100k tokens.
+claude-haiku-5.5: { input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125 }

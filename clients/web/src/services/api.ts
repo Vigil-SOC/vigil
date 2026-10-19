@@ -142,13 +142,21 @@ export const aiDecisionsApi = {
 }
 
 export interface NeedsYouItem {
-  kind: 'checkpoint' | 'approval'
+  /** `parked`: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. */
+  kind: 'checkpoint' | 'approval' | 'parked'
   source_id: string
   title: string
   reason: string
+  /** '' when nothing recorded when it started waiting. */
   created_at: string
   reversibility: string
   case_id: string | null
+  run_id?: string | null
+  /** The run's own checkpoint this item answers, so a page reading the run can tell it was answered. */
+  checkpoint_id?: string | null
+  checkpoint_class?: string | null
+  /** A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat. */
+  hypotheses?: { hypothesis_id: string; statement: string; provenance: string }[]
 }
 
 export const approvalsApi = {
@@ -202,7 +210,7 @@ export const findingsApi = {
   delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    // may restart a local Bifrost gateway, then wait on a local model
+    // may restart the Bifrost gateway, then wait on the configured model
     api.post(`/findings/${id}/enrich`, null, {
       params: { force_regenerate },
       timeout: LLM_TIMEOUT,
@@ -851,10 +859,11 @@ export const detectionRulesApi = {
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
   
+  // A clone or pull runs for minutes (the server allows 300 s per repository).
   updateSource: (sourceId: string) =>
-    api.post(`/detection-rules/sources/${sourceId}/update`),
+    api.post(`/detection-rules/sources/${sourceId}/update`, undefined, { timeout: 0 }),
   
-  updateAll: () => api.post('/detection-rules/update-all'),
+  updateAll: () => api.post('/detection-rules/update-all', undefined, { timeout: 0 }),
   
   getStats: () => api.get('/detection-rules/stats'),
   
@@ -903,7 +912,7 @@ export interface GeneratedDraft {
 }
 
 /** What a hunt lead was shown before one decision. Mirrors `Digest` in
- *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
+ *  services/agent/plugins/hunt/types.ts; only what the console renders is typed. */
 export interface ReplayDigest {
   iteration: number
   narrative: string
@@ -922,9 +931,10 @@ export interface ReplayedDecision {
   action: string
   target: string | null
   cost_usd: number
-  /** False when the ledger predates digest_seq and the prefix had to be inferred. */
+  /** False when the digest was not rebuilt exactly; always false now nothing is rebuilt. */
   exact: boolean
-  rebuilt: ReplayDigest
+  /** Null: the digest builder went with the controller, so the record is shown as journaled. */
+  rebuilt: ReplayDigest | null
   recorded: ReplayDigest
   mismatch: string | null
 }
@@ -979,7 +989,9 @@ export const workflowApi = {
   // every prompt transcript
   listRuns: (id: string, params: { limit?: number; offset?: number; status?: string } = {}) =>
     api.get(`/workflows/${id}/runs`, { params }),
-  getRun: (runId: string) => api.get(`/workflows/runs/${runId}`),
+  // A hunt lists its newest rows; evidenceLimit asks for more of them.
+  getRun: (runId: string, evidenceLimit?: number) =>
+    api.get(`/workflows/runs/${runId}`, evidenceLimit ? { params: { evidence_limit: evidenceLimit } } : undefined),
   // What one decision was shown, rebuilt against the record. Folds the whole ledger on
   // the agent side, so it is asked for on a click and never on the getRun poll.
   getReplay: (runId: string, decisionId: string) =>
@@ -1051,8 +1063,6 @@ export const orchestratorApi = {
     api.post('/orchestrator/scan-findings', {
       severities: severities || ['critical', 'high'],
     }, { timeout: LLM_TIMEOUT }),
-  reviewInvestigation: (id: string, action: 'approve' | 'rework', notes?: string) =>
-    api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getChainOfCustody: (id: string) =>
     api.get(`/orchestrator/investigations/${id}/chain-of-custody`),
@@ -1371,6 +1381,17 @@ export const triageApi = {
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
+}
+
+// Public password reset. `request` answers the same whether or not the email
+// matches an account; the emailed link lands on /reset-password?token=…
+export const authApi = {
+  requestPasswordReset: (email: string) =>
+    api.post<{ message: string }>('/auth/password-reset/request', {
+      email,
+    } satisfies Schema<'PasswordResetRequest'>),
+  confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
+    api.post<{ message: string }>('/auth/password-reset/confirm', payload),
 }
 
 export default api

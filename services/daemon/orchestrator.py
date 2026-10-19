@@ -2,8 +2,8 @@
 
 The orchestrator runs three loops:
   1. Intake loop: picks up new findings/tasks and creates investigations
-  2. Supervision loop: monitors running agents, detects stuck/runaway ones
-  3. Review loop: approves investigations the agent concluded as completed
+  2. Supervision loop: monitors running agents, reconciles finished ones
+  3. Distil loop: turns finished hunts and closed cases into memory
 
 It does NOT maintain a persistent Claude conversation.
 All routine operations are pure Python logic.
@@ -121,6 +121,14 @@ def _count_queued_intake_rows() -> int:
 SCHEDULE_RUN_CEILING = 1
 
 
+# A hunt parked out of turns or budget, waiting on Keep going. A park on an
+# approval checkpoint ("awaiting ...") is not: it is waiting_approval while the
+# checkpoint is open and resumes on its own once answered.
+def _parked_on_a_person(projection: Dict[str, Any]) -> bool:
+    reason = projection.get("reason") or ""
+    return projection.get("status") == "parked" and not reason.startswith("awaiting ")
+
+
 def _count_investigations_in_flight() -> int:
     with get_db_manager().session_scope() as session:
         return (
@@ -182,10 +190,10 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
     nested = finding.get("ai_enrichment")
     if not isinstance(nested, dict) or not nested:
         return finding
-    from services.daemon.processor import _AI_ANALYSIS_KEYS
+    from core.storage.service import DAEMON_ENRICHMENT_KEYS
 
     lifted = dict(finding)
-    for key in _AI_ANALYSIS_KEYS:
+    for key in DAEMON_ENRICHMENT_KEYS:
         if key in nested and lifted.get(key) is None:
             lifted[key] = nested[key]
     return lifted
@@ -418,6 +426,51 @@ def _mint_case(session, spec: CaseSpec) -> str:
     return case_id
 
 
+# Intake rows only ever name Postgres findings, so these read Postgres directly
+# rather than through DatabaseDataService, which answers from the demo service
+# in demo mode and would never see them (#2236).
+def _load_finding(finding_id: str) -> Optional[Dict]:
+    """The finding as ``FindingSchema`` dumps it, or None if missing or unreadable."""
+    from core.storage.schemas import FindingSchema
+    from core.storage.service import DatabaseService
+
+    try:
+        finding = DatabaseService().get_finding(finding_id)
+    except Exception as e:
+        logger.error("Failed to read finding %s: %s", finding_id, e)
+        return None
+    return FindingSchema.dump(finding) if finding else None
+
+
+def _open_case_holding(finding_id: str) -> Optional[str]:
+    """The newest not-closed Case already linked to this finding, or None. Raises on a failed read."""
+    from sqlalchemy import select
+
+    from core.storage.models import Case, case_findings
+
+    with get_db_manager().session_scope() as session:
+        return session.execute(
+            select(Case.case_id)
+            .join(case_findings, case_findings.c.case_id == Case.case_id)
+            .where(case_findings.c.finding_id == finding_id, Case.status != "closed")
+            .order_by(Case.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+
+def _attach_finding(case_id: str, finding_id: str) -> bool:
+    """Link the finding to the case. False on any failure, never raises."""
+    from core.storage.service import DatabaseService
+
+    try:
+        return bool(DatabaseService().add_finding_to_case(case_id, finding_id))
+    except Exception as e:
+        logger.error(
+            "Failed to attach finding %s to case %s: %s", finding_id, case_id, e
+        )
+        return False
+
+
 def _record_human_ask_document(
     session, case_id: Optional[str], document: Optional[str]
 ) -> None:
@@ -428,9 +481,8 @@ def _record_human_ask_document(
     hashed, which is wrong for a URL and worse for a path a caller chose.
 
     Written straight onto the launch session rather than through
-    ``CaseEvidenceService``: that service's constructor mkdirs an evidence
-    directory, and this path stores no file. A mkdir that fails would take the
-    launch down with it, and the row is the same either way.
+    ``CaseEvidenceService``: this path stores no file, so it has no use for the
+    evidence store, and the row is the same either way.
     """
     if not case_id or not document:
         return
@@ -494,14 +546,12 @@ class Orchestrator:
         self.workdir = WorkdirManager(config.workdir_base)
         self.shared_intel = SharedIntelligence()
 
-        self._data_service = None
         self._hourly_paused = False
 
         self.stats = {
             "investigations_created": 0,
             "investigations_completed": 0,
             "investigations_failed": 0,
-            "reviews_completed": 0,
             "stuck_agents_killed": 0,
             "dedup_prevented": 0,
             "total_cost_usd": 0.0,
@@ -526,20 +576,9 @@ class Orchestrator:
         self._abandon_in_flight()
         logger.warning("Orchestrator KILLED - all agents stopped")
 
-    def _init_services(self):
-        if self._data_service is None:
-            try:
-                from core.storage.database_data_service import DatabaseDataService
-
-                self._data_service = DatabaseDataService()
-                logger.info("Orchestrator: Database service initialized")
-            except Exception as e:
-                logger.error(f"Orchestrator: Failed to init data service: {e}")
-
     async def run(self, shutdown_event: asyncio.Event):
         """Main orchestrator entry point, called by SOCDaemon."""
         self._shutdown_event = shutdown_event
-        self._init_services()
 
         if not self._enabled:
             logger.info(
@@ -560,10 +599,11 @@ class Orchestrator:
             )
             logger.info(f"  Dry run: {self.config.dry_run}")
 
+            await self._complete_legacy_review_rows()
+
             tasks = [
                 asyncio.create_task(self._intake_loop(shutdown_event)),
                 asyncio.create_task(self._supervision_loop(shutdown_event)),
-                asyncio.create_task(self._review_loop(shutdown_event)),
                 asyncio.create_task(self._distil_loop(shutdown_event)),
             ]
 
@@ -731,19 +771,40 @@ class Orchestrator:
 
         Overlap with only caseless live runs (hunts, legacy) is not a merge:
         False, so the row proceeds to Claim and opens its own Case.
+
+        A finding already on a not-closed Case merges into it even when that
+        Case's investigation has finished and ``check_overlap`` no longer
+        names it (#2245). A closed Case does not count: the finding reopens.
         """
+        finding_id = finding.get("finding_id", "unknown")
+        try:
+            holding = _open_case_holding(finding_id)
+        except Exception as e:
+            logger.error(
+                "Failed to read open cases for finding %s; leaving queued: %s",
+                finding_id,
+                e,
+            )
+            return True
+        if holding:
+            self._count_dedup_prevented()
+            self._decide_trigger(
+                trigger_id,
+                state="merged",
+                reason="finding_on_open_case",
+                merged_into=holding,
+            )
+            return True
+
         overlapping = self.shared_intel.check_overlap(finding)
         if not overlapping:
             return False
-        finding_id = finding.get("finding_id", "unknown")
         outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
         if outcome is _Overlap.LAUNCH:
             return False
         if outcome is _Overlap.HOLD:
             return True
-        self.stats["dedup_prevented"] += 1
-        if _dedup_prevented is not None:
-            _dedup_prevented.add(1)
+        self._count_dedup_prevented()
         self._decide_trigger(
             trigger_id,
             state="merged",
@@ -751,6 +812,11 @@ class Orchestrator:
             merged_into=merged_into,
         )
         return True
+
+    def _count_dedup_prevented(self) -> None:
+        self.stats["dedup_prevented"] += 1
+        if _dedup_prevented is not None:
+            _dedup_prevented.add(1)
 
     async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
         kind = row.get("kind")
@@ -850,11 +916,7 @@ class Orchestrator:
             case_id = investigation.get("case_id")
             if not case_id:
                 continue
-            # No data service reads as a failed attach: logged, never raised.
-            added = bool(self._data_service) and self._data_service.add_finding_to_case(
-                case_id, finding_id
-            )
-            if added:
+            if _attach_finding(case_id, finding_id):
                 logger.info(
                     f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
                 )
@@ -879,12 +941,7 @@ class Orchestrator:
         hypothesis = item.get("hypothesis")
         hypothesis_subjects = item.get("hypothesis_subjects")
 
-        findings = []
-        if self._data_service and finding_ids:
-            for fid in finding_ids:
-                f = self._data_service.get_finding(fid)
-                if f:
-                    findings.append(f)
+        findings = [f for f in map(_load_finding, finding_ids) if f]
 
         mint = None
         if not case_id and finding_ids:
@@ -1101,7 +1158,9 @@ class Orchestrator:
 
                 # Before anything reads a row: the row is a copy of the ledger,
                 # and a supervisor deciding on a stale copy decides on nothing.
-                for status in ("executing", "waiting_approval"):
+                # Paused rows too: a resume or the park TTL's terminal reaches
+                # them only here. They are never stale- or cost-checked below.
+                for status in ("executing", "waiting_approval", "paused"):
                     for inv in self._get_investigations_by_status(status):
                         reconciling = _inv_as_dict(inv).get("investigation_id")
                         if reconciling:
@@ -1483,6 +1542,15 @@ class Orchestrator:
             self._update_investigation_status(inv_id, "waiting_approval")
             return
 
+        # A hunt parked without a checkpoint (out of turns or budget) waits on a
+        # person: paused, holding no slot, and announced once per park.
+        if _parked_on_a_person(projection):
+            reason = projection.get("reason") or "Parked"
+            was = self._update_investigation_status(inv_id, "paused", activity=reason)
+            if was is not None and was != "paused":
+                await self._notify_parked(inv_id, reason)
+            return
+
         if projection.get("status") != "terminal":
             self._update_investigation_status(inv_id, "executing")
             return
@@ -1490,13 +1558,20 @@ class Orchestrator:
         outcome = projection.get("outcome")
         reason = projection.get("reason") or ""
         if outcome == "completed":
-            self._update_investigation_status(inv_id, "review_submitted", reason)
+            await self._complete_investigation(inv_id, reason)
         else:
             self._update_investigation_status(inv_id, "failed", reason or str(outcome))
 
+    async def _notify_parked(self, inv_id: str, reason: str) -> None:
+        title = f"Run paused: {inv_id}"
+        body = f"Investigation {inv_id} is paused and waiting on a person: {reason}"
+        self._send_notification(inv_id, "run_paused", title, body, priority="high")
+        await self._send_slack_for_notification(title, body)
+
     # The heartbeat. A failure here is logged loudly on purpose (#147): swallowed
     # quietly, last_activity_at stops moving and the supervisor stale-kills a run
-    # that is perfectly healthy.
+    # that is perfectly healthy. A run parked on a person is not stamped;
+    # the first reconcile after a resume stamps it again.
     def _record_progress(self, inv_id: str, projection: Dict[str, Any]) -> None:
         try:
             from core.storage.connection import get_db_manager
@@ -1516,7 +1591,8 @@ class Orchestrator:
                 inv.iteration_count = (
                     projection.get("iteration", 0) if counted is None else counted
                 )
-                inv.last_activity_at = utcnow()
+                if not _parked_on_a_person(projection):
+                    inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")
                 if cost is not None:
@@ -1608,34 +1684,6 @@ class Orchestrator:
         # Unknown spend reads as over the cap, including on a cold start.
         return spent is None or spent >= limit
 
-    # -------------------------------------------------------------------------
-    # Review Loop
-    # -------------------------------------------------------------------------
-
-    async def _review_loop(self, shutdown_event: asyncio.Event):
-        """Review completed investigations."""
-        while not shutdown_event.is_set():
-            try:
-                if not self._enabled:
-                    await self._sleep(shutdown_event, 10)
-                    continue
-
-                submitted = self._get_investigations_by_status("review_submitted")
-                for inv in submitted:
-                    inv_dict = _inv_as_dict(inv)
-                    inv_id = inv_dict.get("investigation_id")
-                    if not inv_id:
-                        continue
-
-                    await self._review_investigation(inv_id)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Review loop error: {e}", exc_info=True)
-
-            await self._sleep(shutdown_event, self.config.loop_interval)
-
     # Its own loop rather than a step of the supervision one: the Distils are not
     # supervising anything, they read terminals and closures the rest of the
     # system has already left behind. Slower than the others because nothing
@@ -1724,43 +1772,57 @@ class Orchestrator:
                 written["failed"],
             )
 
-    async def _review_investigation(self, inv_id: str):
-        """Approve an investigation that reached review.
+    async def _complete_legacy_review_rows(self) -> None:
+        """Finish rows a pre-#2324 daemon left in ``review_submitted``."""
+        for inv in self._get_investigations_by_status("review_submitted"):
+            inv_id = _inv_as_dict(inv).get("investigation_id")
+            if not inv_id:
+                continue
+            # One bad row must not keep the loops from starting.
+            try:
+                await self._complete_investigation(inv_id)
+            except Exception:
+                logger.error("Completing %s failed", inv_id, exc_info=True)
 
-        ``_reconcile`` only moves a run here when the terminal outcome is
-        ``completed``. That conclusion is the review; the workdir is not
-        scored again.
+    async def _complete_investigation(
+        self, inv_id: str, notes: Optional[str] = None
+    ) -> None:
+        """Finish a run whose terminal outcome is ``completed``.
+
+        That outcome is the review (#1085); there is no second one. The status
+        is claimed first so a later reconcile of the same run does nothing.
         """
+        if not self._claim_completion(inv_id, notes):
+            return
+
         state = self.workdir.read_state(inv_id)
         proposed_actions = state.get("proposed_actions", [])
         rule = decision_rule("review.terminal_outcome", "completed")
 
-        self._update_investigation_status(inv_id, "completed")
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
             _inv_completed.add(1)
-        self.stats["reviews_completed"] += 1
         self.shared_intel.close_investigation(inv_id, state.get("case_id"))
 
         self.workdir.append_log(
             inv_id,
             {
-                "event": "review_passed",
+                "event": "investigation_completed",
                 "proposed_actions_count": len(proposed_actions),
             },
         )
 
         logger.info(
-            f"Investigation {inv_id} APPROVED ({len(proposed_actions)} actions)"
+            f"Investigation {inv_id} COMPLETED ({len(proposed_actions)} actions)"
         )
 
         self._log_ai_decision(
-            decision_type="review_approve",
+            decision_type="investigation_complete",
             inv_id=inv_id,
             reasoning=(
                 f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
             ),
-            action="approve",
+            action="complete",
             confidence=1.0,
             rule=rule,
         )
@@ -2127,9 +2189,9 @@ class Orchestrator:
 
     def _hydrate_detection_finding(self, row: Dict) -> Optional[Dict]:
         finding_id = row.get("finding_id")
-        if not finding_id or not self._data_service:
+        if not finding_id:
             return None
-        finding = self._data_service.get_finding(finding_id)
+        finding = _load_finding(finding_id)
         return lift_ai_enrichment(finding) if finding else None
 
     def _decide_trigger(
@@ -2216,9 +2278,15 @@ class Orchestrator:
         except Exception:
             return None
 
+    # Returns the status the row had, or None when it was not read. Activity is
+    # the park reason a paused row shows; any other status clears it.
     def _update_investigation_status(
-        self, inv_id: str, status: str, notes: Optional[str] = None
-    ):
+        self,
+        inv_id: str,
+        status: str,
+        notes: Optional[str] = None,
+        activity: Optional[str] = None,
+    ) -> Optional[str]:
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import Investigation
@@ -2230,13 +2298,42 @@ class Orchestrator:
                     .first()
                 )
                 if inv:
+                    was = inv.status
                     inv.status = status
+                    inv.current_activity = activity
                     if notes:
                         inv.master_review_notes = notes
                     if status == "completed":
                         inv.completed_at = utcnow()
+                    return was
         except Exception as e:
             logger.error(f"Failed to update investigation status: {e}")
+        return None
+
+    def _claim_completion(self, inv_id: str, notes: Optional[str]) -> bool:
+        """Move a row to ``completed`` in one locked step; False if already there."""
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import Investigation
+
+            with get_db_manager().session_scope() as session:
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .with_for_update()
+                    .first()
+                )
+                if inv is None or inv.status == "completed":
+                    return False
+                inv.status = "completed"
+                inv.current_activity = None
+                inv.completed_at = utcnow()
+                if notes:
+                    inv.master_review_notes = notes
+                return True
+        except Exception as e:
+            logger.error(f"Failed to complete investigation {inv_id}: {e}")
+            return False
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost breakdown across all investigations."""

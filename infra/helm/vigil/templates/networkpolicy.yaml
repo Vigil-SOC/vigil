@@ -195,6 +195,39 @@ spec:
     {{- end }}
 ---
 {{- end }}
+{{- if .Values.mcpRunner.enabled }}
+{{- /*
+The runner's control and MCP routes answer the backend and daemon only. No
+probe rule: its probes are exec, so the kubelet never dials the port. No egress
+rule either: the Postgres and Redis policies below admit named components, and
+the runner is not one. With the Bitnami subcharts, enable their own
+networkPolicy to keep it that way.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vigil.fullname" . }}-mcp-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "mcp-runner") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "mcp-runner") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "backend") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "daemon") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6991
+---
+{{- end }}
 {{- /* NetworkPolicy for MVP Postgres only. Bitnami's chart has its own
        networkPolicy.* config — enable that there instead. */ -}}
 {{- if and .Values.postgresql.enabled (not .Values.postgresql.bitnami.enabled) }}

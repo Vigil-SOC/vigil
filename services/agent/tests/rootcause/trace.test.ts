@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { CheckpointPayload, DispatchPayload, TerminalPayload } from "../../contracts/events.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
@@ -8,13 +8,13 @@ import { nullMemory } from "../../core/memory.js";
 import { registryOf } from "../../core/registry.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
-import { PROVER_TOOL, proveLink, proveOrigin, redact, type Observation, type StepPayload } from "../../workflows/rootcause/proof.js";
-import { finishFrom, recordFrom } from "../../workflows/rootcause/tools.js";
-import { runRootCause, type RootCauseKinds } from "../../workflows/rootcause/workflow.js";
+import { PROVER_TOOL, proveLink, proveOrigin, redact, type Observation, type StepPayload } from "../../plugins/rootcause/proof.js";
+import { finishFrom, recordFrom } from "../../plugins/rootcause/tools.js";
+import { runRootCause, type RootCauseKinds } from "../../plugins/rootcause/workflow.js";
 import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import type { Provider, ProviderEvent, TurnRequest } from "../../core/provider.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 
 const RUN = "5a2c2d3e-0000-4000-8000-000000000c38";
 const AT = "2024-01-02T03:00:00Z";

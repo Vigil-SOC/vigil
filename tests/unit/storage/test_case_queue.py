@@ -17,6 +17,7 @@ from core.storage.models import (
     Investigation,
     SLAPolicy,
     WorkflowRun,
+    WorkflowRunPhase,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
@@ -574,7 +575,16 @@ def test_strip_needs_you_counts_open_cases_in_the_set(session):
 
 
 def _run(
-    session, run_id: str, case_id: str, *, status: str, started_at: datetime, **context
+    session,
+    run_id: str,
+    case_id: str,
+    *,
+    status: str,
+    started_at: datetime,
+    cost: float = 1.4989,
+    iteration_count: int | None = None,
+    max_cost_usd: float | None = None,
+    **context,
 ):
     session.add(
         WorkflowRun(
@@ -584,7 +594,9 @@ def _run(
             status=status,
             trigger_context={"case_id": case_id, **context},
             started_at=started_at,
-            total_cost_usd=1.4989,
+            total_cost_usd=cost,
+            iteration_count=iteration_count,
+            max_cost_usd=max_cost_usd,
         )
     )
     session.flush()
@@ -631,6 +643,7 @@ def test_a_hunt_case_reads_its_run_in_one_query(session):
     assert hunt.combined_state == "paused"
     assert hunt.workflow_id == "threat-hunt"
     assert hunt.cost_usd == pytest.approx(1.4989)
+    # Nothing reported and nothing asked: no step, no cap.
     assert (hunt.iteration_count, hunt.max_cost_usd) == (0, 0.0)
     # The newest ref is the finished run, the newest live one the investigation.
     assert by_id["mixed"].combined_state == "executing"
@@ -641,3 +654,64 @@ def test_a_hunt_case_reads_its_run_in_one_query(session):
     paused, total = repo.queue(state="paused", now=NOW)
     assert (_ids(paused), total) == (["hunt"], 1)
     assert repo.strip(now=NOW).by_state == {"paused": 1, "executing": 1, "open": 1}
+
+
+def test_a_case_with_only_a_run_ref_lists_its_step_cap_and_state(session):
+    # A /hunt case at the last of 8 iterations, parked, $0.4452 of its $15.
+    _case(session, "hunt")
+    _run(
+        session,
+        "run-hunt",
+        "hunt",
+        status="paused",
+        started_at=NOW,
+        cost=0.4452,
+        iteration_count=8,
+        max_cost_usd=15,
+    )
+    repo = CaseRepository(session)
+
+    rows, _ = repo.queue(now=NOW)
+    item = queue_item(rows[0], NOW)
+    assert item.combined_state == "paused"
+    assert item.iteration_count == 8
+    assert item.cost_usd == pytest.approx(0.4452)
+    assert item.max_cost_usd == 15
+    assert item.budget_health == "healthy"
+    # The chips count what the rows read: paused, not executing.
+    assert repo.strip(now=NOW).by_state == {"paused": 1}
+
+
+def test_a_run_that_reported_nothing_reads_its_asked_cap_and_recorded_phases(session):
+    _case(session, "asked")
+    _case(session, "garbled")
+    _case(session, "compose")
+    _run(session, "run-asked", "asked", status="running", started_at=NOW, max_cost_usd=None)
+    session.get(WorkflowRun, "run-asked").trigger_context = {
+        "case_id": "asked",
+        "max_cost_usd": 7.5,
+    }
+    _run(session, "run-garbled", "garbled", status="running", started_at=NOW)
+    session.get(WorkflowRun, "run-garbled").trigger_context = {
+        "case_id": "garbled",
+        "max_cost_usd": "lots",
+    }
+    _run(session, "run-compose", "compose", status="running", started_at=NOW)
+    for order in (1, 2, 3):
+        session.add(
+            WorkflowRunPhase(
+                run_id="run-compose",
+                phase_id=f"p{order}",
+                phase_order=order,
+                agent_id="a",
+                status="completed",
+            )
+        )
+    session.flush()
+
+    rows, _ = CaseRepository(session).queue(now=NOW)
+    by_id = {row.case_id: row for row in rows}
+    assert by_id["asked"].max_cost_usd == 7.5
+    assert by_id["garbled"].max_cost_usd == 0
+    assert by_id["compose"].iteration_count == 3
+    assert by_id["asked"].iteration_count == 0

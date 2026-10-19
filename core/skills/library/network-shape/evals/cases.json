@@ -1,0 +1,24 @@
+[
+  {
+    "name": "a regular low-jitter interval is quantified",
+    "input": "Flows from 10.0.4.17 to 192.0.2.44:443 over 6 hours: 72 connections; gaps between them in seconds: mean 300, standard deviation 4; bytes out per connection about 900, bytes in about 300. Characterise the shape.",
+    "expect": [
+      "jitter",
+      "300s"
+    ]
+  },
+  {
+    "name": "a busy host is not a beacon",
+    "input": "Proxy host PRX-1 made 41,000 connections to 3,200 destinations in an hour, with intervals spread from milliseconds to minutes. Is this beaconing?",
+    "expect": [
+      "periodic"
+    ]
+  },
+  {
+    "name": "no telemetry search is a visibility gap",
+    "input": "This deployment exposes only the findings store; no flow, HTTP or DNS search is available. An alert says WS-9 'may be beaconing'. Characterise WS-9's traffic shape.",
+    "expect": [
+      "gap"
+    ]
+  }
+]

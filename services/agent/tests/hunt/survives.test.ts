@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
 import { GatewayExhausted } from "../../core/limiter.js";
@@ -10,9 +10,9 @@ import type { Provider, ProviderEvent, TurnRequest } from "../../core/provider.j
 import { registryOf } from "../../core/registry.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import type { HuntKinds } from "../../workflows/hunt/journal.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import type { HuntKinds } from "../../plugins/hunt/journal.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 

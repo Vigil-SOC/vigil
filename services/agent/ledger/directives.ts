@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
-import type { DirectiveQueue } from "../workflows/hunt/ports.js";
-import type { Directive } from "../workflows/hunt/types.js";
+import type { DirectiveQueue } from "../plugins/hunt/ports.js";
+import type { Directive } from "../plugins/hunt/types.js";
 
 // The operator's queue in Postgres. It writes agent_directives and never
 // agent_events: enqueuing is open to any process, journaling is not.

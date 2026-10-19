@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, username_has_permission
+from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -35,6 +37,9 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 Args = Dict[str, Any]
 
 
+# A page of findings is what a hunt groups alerts by, so each carries the hosts,
+# users and indicators it names (#2277), bounded; the raw record stays behind
+# get_finding, which a hunt opens only for the alerts worth reading in full.
 def _compact(finding: Args) -> Args:
     return {
         "finding_id": finding.get("finding_id"),
@@ -45,18 +50,26 @@ def _compact(finding: Args) -> Args:
         "timestamp": finding.get("timestamp"),
         "status": finding.get("status"),
         "summary": (finding.get("description") or "")[:200],
+        "entities": finding_entity_summary(finding.get("entity_context")),
     }
 
 
+# Addresses each IP facet of a search lists; the rest are counted, not named.
+TOP_IPS = 10
+
+
 # Listing and searching differ only in the search filter and the default sort,
-# so one page query serves both rather than two that drift apart.
+# so one page query serves both rather than two that drift apart. The counts
+# cover every match, not the page, and come before it so a capped result keeps
+# them (#2312).
 def _page(data: Any, args: Args, *, search: bool) -> Args:
     filters = {key: args.get(key) for key in ("severity", "data_source", "status")}
     if search:
         filters["search_query"] = args.get("query", "")
     limit = args.get("limit", 20)
     offset = args.get("offset", 0)
-    total = data.count_findings(**filters)
+    counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
+    total = counts.pop("total")
     findings = data.get_findings(
         limit=limit,
         offset=offset,
@@ -66,6 +79,7 @@ def _page(data: Any, args: Args, *, search: bool) -> Args:
     )
     page = {
         "total": total,
+        **counts,
         "offset": offset,
         "limit": limit,
         "has_more": (offset + limit) < total,
@@ -74,22 +88,9 @@ def _page(data: Any, args: Args, *, search: bool) -> Args:
     return {"query": filters["search_query"], **page} if search else page
 
 
-def _findings_stats(data: Any, args: Args) -> Args:
-    tally: Dict[str, Dict[str, int]] = {
-        "by_severity": {},
-        "by_data_source": {},
-        "by_status": {},
-    }
-    findings = data.get_findings(limit=10000)
-    for finding in findings:
-        for key, field in (
-            ("by_severity", "severity"),
-            ("by_data_source", "data_source"),
-            ("by_status", "status"),
-        ):
-            value = finding.get(field) or "unknown"
-            tally[key][value] = tally[key].get(value, 0) + 1
-    return {"total_findings": len(findings), **tally}
+def _findings_stats(data: Any) -> Args:
+    summary = data.get_findings_summary()
+    return {"total_findings": summary.pop("total"), **summary}
 
 
 def _data():
@@ -146,7 +147,7 @@ def search_findings(**args: Any) -> Args:
 
 
 def get_findings_stats(**_args: Any) -> Args:
-    return _findings_stats(_data(), {})
+    return _findings_stats(_data())
 
 
 def get_finding(*, finding_id: str) -> Any:
@@ -347,16 +348,104 @@ async def list_completed_hunts(*, start: str, end: str, limit: int = 200) -> Any
     return await pack_completed_hunts(start=start, end=end, limit=limit)
 
 
+# A whole replay carries two digests per decision and ran to ~450,000 characters,
+# which the tool result cap truncated to nothing useful. The tool answers a
+# bounded summary of a step or range instead: no digests, the latest steps when
+# none is asked for, and a hard ceiling on the text either way.
+REPLAY_MAX_STEPS = 5
+REPLAY_MAX_RECALLED = 5
+REPLAY_NOTE_CHARS = 200
+REPLAY_MAX_CHARS = 8_000
+
+
+def _step(value: Any, name: str) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise TypeError(f"replay_hunt {name} must be a whole step number") from None
+
+
+def _clip(text: Any, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _replay_summary(report: Args, first: Optional[int], last: Optional[int]) -> Args:
+    decisions = [d for d in report.get("decisions") or [] if isinstance(d, dict)]
+    if first is None and last is None:
+        picked = decisions[-REPLAY_MAX_STEPS:]
+        window = "latest steps"
+    else:
+        lo = first if first is not None else 0
+        picked = [
+            d
+            for d in decisions
+            if lo
+            <= int(d.get("iteration") or 0)
+            <= (last if last is not None else 10**9)
+        ]
+        window = f"steps {lo} to {last if last is not None else 'the end'}"
+    omitted = max(len(picked) - REPLAY_MAX_STEPS, 0)
+    picked = picked[:REPLAY_MAX_STEPS]
+    steps = [
+        {
+            "step": d.get("iteration"),
+            "decision_id": d.get("decision_id"),
+            "action": d.get("action"),
+            "target": d.get("target"),
+            "cost_usd": d.get("cost_usd"),
+            "reproduced": d.get("mismatch") is None,
+            "mismatch": _clip(d.get("mismatch"), REPLAY_NOTE_CHARS) or None,
+            "exact": d.get("exact"),
+        }
+        for d in picked
+    ]
+    recalled = [str(n) for n in report.get("recalled") or []]
+    summary: Args = {
+        "hunt_id": report.get("hunt_id"),
+        "window": window,
+        "steps_in_run": len(decisions),
+        "steps": steps,
+        "recalled": [
+            _clip(n, REPLAY_NOTE_CHARS) for n in recalled[:REPLAY_MAX_RECALLED]
+        ],
+    }
+    if omitted:
+        summary["omitted_steps"] = (
+            f"{omitted} more steps matched; ask for a narrower step or range"
+        )
+    if len(recalled) > REPLAY_MAX_RECALLED:
+        summary["omitted_recalled"] = len(recalled) - REPLAY_MAX_RECALLED
+    # Shed from the oldest end until it fits, saying so rather than cutting a row.
+    while len(json.dumps(summary, default=str)) > REPLAY_MAX_CHARS and summary["steps"]:
+        summary["steps"] = summary["steps"][1:]
+        summary["omitted_steps"] = (
+            "output limit reached; ask for a narrower step or range"
+        )
+    return summary
+
+
 # None from the read is "nothing to replay"; a model needs a body, not null.
-async def replay_hunt(*, run_id: str, decision_id: Optional[str] = None) -> Any:
+async def replay_hunt(
+    *,
+    run_id: str,
+    decision_id: Optional[str] = None,
+    step: Any = None,
+    from_step: Any = None,
+    to_step: Any = None,
+) -> Any:
     if not run_id:
         raise TypeError("replay_hunt is missing a required argument: run_id")
+    first, last = _step(from_step, "from_step"), _step(to_step, "to_step")
+    only = _step(step, "step")
+    if only is not None:
+        first = last = only
     report = await read_replay(str(run_id), decision_id or None)
-    return (
-        report
-        if report is not None
-        else {"error": f"Nothing to replay for run {run_id}"}
-    )
+    if report is None:
+        return {"error": f"Nothing to replay for run {run_id}"}
+    return _replay_summary(report, first, last)
 
 
 _SECURITY_TOOLS = frozenset(

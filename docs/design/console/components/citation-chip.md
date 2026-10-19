@@ -1,2 +1,2 @@
 # Citation chip
-22px, radius 999, 1px `ac-ln`, `ac-bg`, 11px mono: "step 3 · CrowdStrike". Hover inverts to `ac` fill. Click opens the Evidence tab with that row highlighted (`ac-bg`). Appears under any answer from the record.
+22px, radius 999, 1px `ac-ln`, `ac-bg`, 11px mono: "step 3 · CrowdStrike". Hover inverts to `ac` fill. Click opens the Evidence tab with that row highlighted (`ac-bg`). Appears under any answer from the record. An id of the case's evidence, alerts or explanations that the answer writes is drawn as its chip where it stands in the text (an alert as "alert · <title>", opening the alert in a new tab; an explanation as "explanation · <statement>", opening the Explanations tab); the row under the answer lists each cited evidence row once (#2285).

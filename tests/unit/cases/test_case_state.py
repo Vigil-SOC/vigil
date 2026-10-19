@@ -101,6 +101,24 @@ def test_a_run_started_on_the_case_is_listed_newest_first_beside_investigations(
     assert refs[0]["max_cost_usd"] == 0 and refs[0]["iteration_count"] == 0
 
 
+def test_a_run_ref_carries_the_runs_iteration_cap_and_budget_health():
+    hunt = _run("run-hunt", "paused", datetime(2026, 10, 7), cost=13.9)
+    hunt.iteration_count = 8
+    hunt.max_cost_usd = 15
+    ref = detail_fields("open", [], None, [hunt])["investigations"][0]
+    assert (ref["iteration_count"], ref["max_cost_usd"]) == (8, 15.0)
+    assert ref["budget_health"] == "critical"
+
+
+def test_a_run_ref_falls_back_to_the_asked_cap_and_the_phases_recorded():
+    run = _run("run-1", "running", datetime(2026, 10, 7))
+    run.trigger_context = {"case_id": "case-1", "max_cost_usd": 7.5}
+    ref = detail_fields("open", [], None, [run], {"run-1": 3})["investigations"][0]
+    assert (ref["iteration_count"], ref["max_cost_usd"]) == (3, 7.5)
+    run.trigger_context = {"case_id": "case-1", "max_cost_usd": "lots"}
+    assert detail_fields("open", [], None, [run])["investigations"][0]["max_cost_usd"] == 0
+
+
 def test_the_investigations_own_run_is_listed_once():
     inv = _inv("executing")
     inv.created_at = datetime(2026, 10, 7)

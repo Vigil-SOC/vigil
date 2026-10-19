@@ -1,27 +1,29 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { callsPerIteration, DEFAULT_BUDGETS, type Budgets } from "../../workflows/hunt/types.js";
-import { scoredFrontier } from "../../workflows/hunt/digest.js";
+import { buildSpec, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
+import { kernelSpec } from "../../plugins/hunt/hooks.js";
+import { archFor } from "../../plugins/kinds.js";
+import { DEFAULT_BUDGETS, HUNT_ALLOWANCE, type Budgets } from "../../plugins/hunt/types.js";
+import { scoredFrontier } from "../../plugins/hunt/frontier.js";
 import {
   DEFAULT_TERMINATION,
   DEFAULT_VERDICTS,
   huntSpec,
   type Termination,
-} from "../../workflows/hunt/config.js";
-import { pendingCheckpoints } from "../../workflows/hunt/checkpoints.js";
-import { boundBy, boundReason, HuntParked } from "../../workflows/hunt/controller.js";
-import { steer } from "../../workflows/hunt/inbox.js";
-import type { DirectiveQueue } from "../../workflows/hunt/ports.js";
-import { ScriptedDecisionProvider } from "../support/scripted-hunt.js";
-import type { Journal } from "../../workflows/hunt/journal.js";
-import { buildReport, renderReport } from "../../workflows/hunt/report.js";
-import { terminationVerdict } from "../../workflows/hunt/termination.js";
+} from "../../plugins/hunt/config.js";
+import { pendingCheckpoints } from "../../plugins/hunt/checkpoints.js";
+import { steer } from "../../plugins/hunt/inbox.js";
+import { Journal } from "../../plugins/hunt/journal.js";
+import { boundBy, boundReason } from "../../plugins/hunt/opening.js";
+import type { DirectiveQueue } from "../../plugins/hunt/ports.js";
+import { buildReport, renderReport } from "../../plugins/hunt/report.js";
+import { terminationVerdict } from "../../plugins/hunt/termination.js";
 import {
-  CONCLUDE,
-  controllerFor,
+  bookOf,
   finalized,
   gapLock,
   huntSpecFor,
-  INVESTIGATE,
   newLedger,
   question,
   reopen,
@@ -33,55 +35,65 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const FIXTURES = join(import.meta.dirname, "..", "fixtures");
+
 const CAPPED: Budgets = { max_iterations: 1, max_calls: 12, max_cost_usd: 10, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 };
 
+// What the hunt plugin's before hook does at every boundary: operator input
+// first, then answers that reached the ledger some other way.
+async function boundary(ledger: Journal) {
+  const book = bookOf(ledger);
+  await book.applyDirectives();
+  book.reconcile();
+  await ledger.flush();
+  return book;
+}
+
+// The hunt used its turns: what the finish hook does when the kernel caps it.
+async function usedTurns(ledger: Journal, turns = ledger.projection.hunt.budgets.max_iterations) {
+  const book = bookOf(ledger);
+  book.advanceTo(turns);
+  const ended = book.atCeiling("the hunt used its turns");
+  await ledger.flush();
+  return ended;
+}
+
 describe("the predicate, not the recommendation", () => {
-  it("refuses CONCLUDE while a hypothesis is active, without spending a re-prompt", async () => {
+  it("refuses to conclude while a hypothesis is active", async () => {
     const { ledger } = await newLedger();
-    const provider = new ScriptedDecisionProvider([CONCLUDE, CONCLUDE]);
-    const controller = controllerFor(ledger, [], { provider });
 
-    const result = await controller.advanceIteration();
+    const result = bookOf(ledger).conclude("nothing further to run");
 
-    expect(result.hunt_status).toBe("active");
-    expect(result.hunt_outcome).toBeNull();
-    expect(result.note).toMatch(/CONCLUDE refused: .* is still active/);
-
-    // A refusal is not an invalid emission: the decision stands on the record,
-    // and it cost exactly one call.
-    expect(ledger.projection.decisions).toHaveLength(1);
-    expect(ledger.projection.decisions[0]!.decision.action).toBe("CONCLUDE");
-    expect(ledger.projection.decisions[0]!.rejected_attempts).toBeUndefined();
-    expect(provider.seenDigests).toHaveLength(1);
-
-    // And the reason reaches the next digest, so the lead can act on it rather
-    // than re-emitting the same recommendation.
-    await controller.advanceIteration();
-    expect(provider.seenDigests[1]!.directives.join(" ")).toMatch(/CONCLUDE refused/);
+    expect(result.concluded).toBe(false);
+    expect(result.said).toMatch(/refused: .* is still active/);
+    expect(ledger.projection.hunt.status).toBe("active");
+    expect(ledger.projection.hunt.outcome).toBeNull();
+    // Re-asking the lead and the digest it read went with the controller: the
+    // refusal is the tool's result, which the agent reads on its next turn.
   });
 
-  it("refuses CONCLUDE when a lead at or above the floor is still open", async () => {
+  it("refuses to conclude when a lead at or above the floor is still open", async () => {
     const { ledger, hypothesisIds } = await newLedger();
     resolve(ledger, hypothesisIds[0]!);
     question(ledger, "who else used this key?", { entity_key: "aws_key:AKIA1", spawned_iteration: 1 });
 
-    const result = await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+    const result = bookOf(ledger).conclude("nothing further to run");
 
-    expect(result.hunt_status).toBe("active");
-    expect(result.note).toMatch(/who else used this key\?/);
-    expect(result.note).toMatch(/priority floor of 5/);
+    expect(ledger.projection.hunt.status).toBe("active");
+    expect(result.said).toMatch(/who else used this key\?/);
+    expect(result.said).toMatch(/priority floor of 5/);
   });
 
   it("completes and auto-parks the sub-floor leads as backlog", async () => {
     const { ledger, hypothesisIds } = await newLedger();
     resolve(ledger, hypothesisIds[0]!);
-    // Already covered by a lead a worker took, so it is not novel: below the floor.
+    // Already covered by a lead that was taken, so it is not novel: below the floor.
     question(ledger, "recheck 10.0.0.9", { entity_key: "ip:10.0.0.9", status: "closed" });
     const parked = question(ledger, "recheck 10.0.0.9 next quarter", { entity_key: "ip:10.0.0.9" });
 
-    const result = await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+    expect(bookOf(ledger).conclude("nothing further to run").concluded).toBe(true);
 
-    expect(result.hunt_outcome).toBe("completed");
+    expect(ledger.projection.hunt.outcome).toBe("completed");
     expect(ledger.projection.questions.get(parked)!.status).toBe("parked");
     expect(ledger.projection.questions.get(parked)!.closed_reason).toMatch(/below the priority floor/);
 
@@ -94,12 +106,15 @@ describe("the predicate, not the recommendation", () => {
   it("ends data_starved rather than completed when a hypothesis was gap-locked", async () => {
     const { ledger, hypothesisIds } = await newLedger();
     await gapLock(ledger, hypothesisIds[0]!);
-    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("inconclusive");
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("active");
 
-    const result = await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+    bookOf(ledger).conclude("nothing further to run");
 
-    // A hunt that could not see is not a hunt that finished.
-    expect(result.hunt_outcome).toBe("data_starved");
+    // A hunt that could not see is not a hunt that finished, and it keeps the status
+    // its rulings earned rather than reading as if evidence had turned.
+    expect(ledger.projection.hunt.outcome).toBe("data_starved");
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("active");
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
     expect(finalized(ledger)[0]!.gaps).toHaveLength(DEFAULT_VERDICTS.gap_lock_threshold);
   });
 
@@ -152,26 +167,24 @@ describe("the predicate, not the recommendation", () => {
 describe("the budget checkpoint", () => {
   async function parkedHunt(overrides: SpecOverrides = {}) {
     const started = await newLedger({ budgets: CAPPED, ...overrides });
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
-    return { ...started, result };
+    const ended = await usedTurns(started.ledger);
+    return { ...started, ended };
   }
 
-  it("parks instead of terminating, and refuses to step while parked", async () => {
-    const { ledger, result } = await parkedHunt();
+  it("parks instead of terminating, and says why while parked", async () => {
+    const { ledger, ended } = await parkedHunt();
 
-    expect(result.hunt_status).toBe("parked");
+    expect(ended).toBe("parked");
+    expect(ledger.projection.hunt.status).toBe("parked");
     expect(ledger.projection.hunt.outcome).toBeNull();
     expect(ledger.projection.hunt.parked_at).not.toBeNull();
-    expect(ledger.projection.hunt.parked_reason).toMatch(/ran out of turns|spent its allowance/);
+    expect(ledger.projection.hunt.parked_reason).toMatch(/ran out of turns/);
 
-    await expect(controllerFor(ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
-    // Named, and answerable: it says which checkpoint is open, what bound the hunt, and
-    // the three ways out. Before it raised one, the park was invisible -- nothing
-    // pending for the console to announce, so a run waiting on a person showed as one
-    // still working while the watchdog re-enqueued it every sweep.
-    await expect(controllerFor(ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(
-      /ran out of turns|spent its allowance/,
-    );
+    // A boundary with nothing answered leaves it where it is, and what the console
+    // shows on the run row names what bound the hunt and the ways out.
+    await boundary(ledger);
+    expect(ledger.projection.hunt.status).toBe("parked");
+    expect(bookOf(ledger).suspendedBecause()).toMatch(/ran out of turns.*Keep going.*conclude/s);
   });
 
   // A budget park is not an approval gate, so it raises no checkpoint: a checkpoint
@@ -191,10 +204,10 @@ describe("the budget checkpoint", () => {
   // The round trip an operator actually makes: the hunt parks, they extend, it runs on.
   it("runs on when an extension answers the park", async () => {
     const { ledger, state, queue, runId } = await parkedHunt();
-    steer(queue, runId, "extend", "2 more iterations and $4");
+    await steer(queue, runId, "extend", "2 more iterations and $4");
 
     const resumed = await reopen({ ledger, state, queue, runId });
-    await controllerFor(resumed, [INVESTIGATE]).advanceIteration();
+    await boundary(resumed);
 
     expect(resumed.projection.hunt.status).toBe("active");
     expect(resumed.projection.hunt.budgets.max_iterations).toBeGreaterThan(1);
@@ -204,77 +217,90 @@ describe("the budget checkpoint", () => {
   // than resuming it into an immediate second park.
   it("stays parked when the extension bought no turn", async () => {
     const { ledger, state, queue, runId } = await parkedHunt();
-    steer(queue, runId, "extend", "nothing in particular");
+    await steer(queue, runId, "extend", "nothing in particular");
 
     const resumed = await reopen({ ledger, state, queue, runId });
-    await expect(controllerFor(resumed, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
+    await boundary(resumed);
 
     expect(resumed.projection.hunt.status).toBe("parked");
   });
 
-  // The iteration that crosses the cost ceiling is by definition the one that never
-  // reached a decision, so a counter patched at decision time always under-reported a
-  // hunt parked on cost -- and an extension compared against that stale figure could
-  // un-park a hunt the harness would refuse on its next call.
+  // The turn that crosses the cost ceiling is the one the harness refused, so a counter
+  // patched at decision time under-reported it, and an extension could un-park too early.
   it("parks on cost at what was actually spent, and an extension that buys nothing keeps it parked", async () => {
     const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
-    const { ledger, state, queue, runId, spend } = await newLedger({ budgets });
-    const result = await controllerFor(ledger, [INVESTIGATE], { costPerDecision: 1.5, spend }).advanceIteration();
+    const started = await newLedger({ budgets });
+    const { queue, runId, spend } = started;
+    await spend(1.5, "hunt_agent");
+    const spent = await reopen(started);
+    expect(await usedTurns(spent, 1)).toBe("parked");
 
-    expect(result.hunt_status).toBe("parked");
-    expect(ledger.projection.hunt.cost_usd).toBe(1.5);
-    expect(ledger.projection.hunt.parked_reason).toMatch(/spent its allowance: \$1\.5000 of \$1\.00/);
+    expect(spent.projection.hunt.cost_usd).toBe(1.5);
+    expect(spent.projection.hunt.parked_reason).toMatch(/spent its allowance: \$1\.5000 of \$1\.00/);
 
     // The overshoot is $0.50; $0.25 raises the ceiling to $1.25 and buys no turn.
     await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 0.25, wall_ms: 0 } });
-    const short = await reopen({ ledger, state, queue, runId });
-    await expect(controllerFor(short, [INVESTIGATE], { spend }).advanceIteration()).rejects.toThrow(HuntParked);
+    const short = await reopen(started, spent);
+    await boundary(short);
     expect(short.projection.hunt.status).toBe("parked");
     expect(short.projection.hunt.budgets.max_cost_usd).toBe(1.25);
-    expect(short.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/leaves no room .* stays parked/);
 
     await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 1, wall_ms: 0 } });
-    const resumed = await reopen({ ledger, state, queue, runId }, short);
-    const next = await controllerFor(resumed, [INVESTIGATE], { spend }).advanceIteration();
-    expect(next.hunt_status).toBe("active");
-    expect(next.iteration).toBe(2);
+    const resumed = await reopen(started, short);
+    await boundary(resumed);
+    expect(resumed.projection.hunt.status).toBe("active");
     expect(resumed.projection.hunt.budgets.max_cost_usd).toBe(2.25);
   });
 
-  // The park the issue describes: the pool refused a call partway through an
-  // iteration, so no decision landed and nothing but the spend events says what it
-  // cost. The resume folds those, and extend() has to be measured against them.
-  it("measures an extension against the spend of the iteration that was refused", async () => {
+  // An extension that buys no room says so, rather than leaving a silent park.
+  it("says so when an extension leaves no room", async () => {
+    const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
+    const started = await newLedger({ budgets });
+    await started.spend(1.5, "hunt_agent");
+    const spent = await reopen(started);
+    await usedTurns(spent, 1);
+
+    await steer(started.queue, started.runId, "extend", "", { grant: { iterations: 0, cost_usd: 0.25, wall_ms: 0 } });
+    const short = await reopen(started, spent);
+    await boundary(short);
+
+    expect(short.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/leaves no room .* stays parked/);
+  });
+
+  // The park the issue describes: the pool refused a call mid-turn, so only the spend
+  // events say what it cost. The resume folds those, and extend() is measured against them.
+  it("measures an extension against the spend of the turn that was refused", async () => {
     const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
     const started = await newLedger({ budgets });
     const { ledger, queue, runId, spend } = started;
-    await spend(0.7, "lead");
-    await spend(0.8, "threat_hunter");
-    controllerFor(ledger, []).parkOnRefusal("cost_exhausted");
+    await spend(0.7, "hunt_agent");
+    await spend(0.8, "critic");
+    bookOf(ledger).parkOnRefusal("cost_exhausted");
     expect(ledger.projection.hunt.cost_usd).toBe(0);
 
     await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 0.25, wall_ms: 0 } });
     const resumed = await reopen(started);
     expect(resumed.projection.hunt.cost_usd).toBe(1.5);
-    await expect(controllerFor(resumed, [INVESTIGATE], { spend }).advanceIteration()).rejects.toThrow(HuntParked);
+    await boundary(resumed);
     expect(resumed.projection.hunt.status).toBe("parked");
-    expect(resumed.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/leaves no room/);
 
     await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 1, wall_ms: 0 } });
     const again = await reopen(started, resumed);
-    expect((await controllerFor(again, [INVESTIGATE], { spend }).advanceIteration()).hunt_status).toBe("active");
+    await boundary(again);
+    expect(again.projection.hunt.status).toBe("active");
   });
 
   it("concludes rather than parking when the budget runs out on a finished hunt", async () => {
     const { ledger, hypothesisIds } = await newLedger({ budgets: CAPPED });
     resolve(ledger, hypothesisIds[0]!);
 
-    const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
+    const ended = await usedTurns(ledger);
 
     // Nothing was left to do, so there is nothing to ask an operator about, and
     // budget_terminated would say the hunt stopped short when it did not.
-    expect(result.hunt_status).toBe("terminal");
-    expect(result.hunt_outcome).toBe("completed");
+    expect(ended).toBe("concluded");
+    expect(ledger.projection.hunt.status).toBe("terminal");
+    expect(ledger.projection.hunt.outcome).toBe("completed");
     expect(ledger.projection.hunt.termination_reason).toMatch(/budget ran out/);
     expect(finalized(ledger)).toHaveLength(1);
   });
@@ -286,18 +312,18 @@ describe("the budget checkpoint", () => {
     await gapLock(ledger, hypothesisIds[0]!);
 
     // Blind, not finished — and still not budget_terminated.
-    expect((await controllerFor(ledger, [INVESTIGATE]).advanceIteration()).hunt_outcome).toBe("data_starved");
+    await usedTurns(ledger);
+    expect(ledger.projection.hunt.outcome).toBe("data_starved");
   });
 
   it("un-parks on an extend that grants headroom", async () => {
     const { ledger, queue, runId } = await parkedHunt();
     await steer(queue, runId, "extend", "+3 iterations");
 
-    const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(ledger);
 
     expect(ledger.projection.hunt.budgets.max_iterations).toBe(4);
-    expect(result.iteration).toBe(2);
-    expect(result.hunt_status).toBe("active");
+    expect(ledger.projection.hunt.status).toBe("active");
   });
 
   // The console sends the amount as a typed grant rather than as prose: `extend ""`
@@ -307,10 +333,10 @@ describe("the budget checkpoint", () => {
     const { ledger, queue, runId } = await parkedHunt();
     await steer(queue, runId, "extend", "", { grant: { iterations: 3, cost_usd: 0, wall_ms: 0 } });
 
-    const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(ledger);
 
     expect(ledger.projection.hunt.budgets.max_iterations).toBe(4);
-    expect(result.hunt_status).toBe("active");
+    expect(ledger.projection.hunt.status).toBe("active");
   });
 
   // A grant is arithmetic on a ceiling: max_iterations + NaN is NaN, and `used >= NaN`
@@ -327,14 +353,23 @@ describe("the budget checkpoint", () => {
     ).rejects.toThrow(/cost_usd/);
   });
 
-  it("clamps an extend to the hard ceiling and says that it clamped", async () => {
+  it("clamps an extend to the hard ceiling", async () => {
     const { ledger, queue, runId } = await parkedHunt({ termination: { hard_max_iterations: 3, hard_max_calls: 36, hard_max_cost_usd: 12 } });
     await steer(queue, runId, "extend", "+50 iterations and $500");
 
-    await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(ledger);
 
     expect(ledger.projection.hunt.budgets.max_iterations).toBe(3);
     expect(ledger.projection.hunt.budgets.max_cost_usd).toBe(12);
+  });
+
+  // A clamped extension says it was clamped.
+  it("says that it clamped", async () => {
+    const { ledger, queue, runId } = await parkedHunt({ termination: { hard_max_iterations: 3, hard_max_calls: 36, hard_max_cost_usd: 12 } });
+    await steer(queue, runId, "extend", "+50 iterations and $500");
+
+    await boundary(ledger);
+
     expect(ledger.projection.directives.map((directive) => directive.text).join(" ")).toMatch(
       /clamped to the hard ceiling/,
     );
@@ -344,15 +379,19 @@ describe("the budget checkpoint", () => {
     const { ledger, queue, runId } = await parkedHunt({ termination: { hard_max_iterations: 1, hard_max_calls: 12, hard_max_cost_usd: 10 } });
     await steer(queue, runId, "extend", "+5 iterations");
 
-    await expect(controllerFor(ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
-    expect(ledger.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/stays parked/);
+    await boundary(ledger);
+
+    expect(ledger.projection.hunt.status).toBe("parked");
+    expect(ledger.projection.hunt.budgets.max_iterations).toBe(1);
   });
 
   it("keeps the hunt parked when the grant cannot be read", async () => {
     const { ledger, queue, runId } = await parkedHunt();
     await steer(queue, runId, "extend", "give it a bit more room");
 
-    await expect(controllerFor(ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
+    await boundary(ledger);
+
+    expect(ledger.projection.hunt.status).toBe("parked");
     expect(ledger.projection.hunt.budgets.max_iterations).toBe(1);
     expect(ledger.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/granted nothing/);
   });
@@ -361,8 +400,10 @@ describe("the budget checkpoint", () => {
     const { ledger, queue, runId, hypothesisIds } = await parkedHunt();
     await steer(queue, runId, "conclude", "we are done spending on this");
 
+    await boundary(ledger);
+
     // Not completed: the predicate never passed, the money ran out.
-    expect((await controllerFor(ledger, []).advanceIteration()).hunt_outcome).toBe("budget_terminated");
+    expect(ledger.projection.hunt.outcome).toBe("budget_terminated");
     expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("inconclusive");
   });
 
@@ -373,9 +414,9 @@ describe("the budget checkpoint", () => {
     const { ledger, queue, runId, hypothesisIds } = await newLedger();
     await steer(queue, runId, "conclude", "conclude on what you have");
 
-    const result = await controllerFor(ledger, []).advanceIteration();
+    await boundary(ledger);
 
-    expect(result.hunt_outcome).toBe("completed");
+    expect(ledger.projection.hunt.outcome).toBe("completed");
     expect(ledger.projection.hunt.termination_reason).toMatch(/an operator asked the hunt to conclude on what it had/);
     // The numbers without the claim: neither arm ran out, so neither is said to have.
     expect(ledger.projection.hunt.termination_reason).not.toMatch(/ran out|spent its allowance/);
@@ -386,17 +427,19 @@ describe("the budget checkpoint", () => {
     const { ledger, queue, runId } = await parkedHunt();
     await steer(queue, runId, "abort", "operator halted the hunt");
 
-    expect((await controllerFor(ledger, []).advanceIteration()).hunt_outcome).toBe("aborted");
+    await boundary(ledger);
+
+    expect(ledger.projection.hunt.outcome).toBe("aborted");
   });
 
   it("expires a hunt parked past the TTL the next time it is touched", async () => {
     const { ledger } = await parkedHunt({ termination: { park_ttl_ms: 86_400_000 } });
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * 86_400_000);
 
-    const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(ledger);
 
     // Lazy expiry: no timer ran, the hunt was simply looked at.
-    expect(result.hunt_outcome).toBe("aborted");
+    expect(ledger.projection.hunt.outcome).toBe("aborted");
     expect(ledger.projection.hunt.termination_reason).toMatch(/park TTL/);
   });
 
@@ -404,7 +447,9 @@ describe("the budget checkpoint", () => {
     const { ledger } = await parkedHunt({ termination: { park_ttl_ms: 86_400_000 } });
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3_600_000);
 
-    await expect(controllerFor(ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
+    await boundary(ledger);
+
+    expect(ledger.projection.hunt.status).toBe("parked");
     expect(ledger.projection.hunt.outcome).toBeNull();
   });
 });
@@ -412,16 +457,16 @@ describe("the budget checkpoint", () => {
 describe("outcome precedence and coercion", () => {
   it("never downgrades an outcome already on the record", async () => {
     const { ledger } = await newLedger();
-    const controller = controllerFor(ledger, []);
+    const book = bookOf(ledger);
 
-    controller.terminate("data_starved");
-    controller.terminate("completed");
+    book.terminate("data_starved");
+    book.terminate("completed");
     expect(ledger.projection.hunt.outcome).toBe("data_starved");
 
     // Upward is not a downgrade: an abort discovered later is the truth.
-    controller.terminate("aborted");
+    book.terminate("aborted");
     expect(ledger.projection.hunt.outcome).toBe("aborted");
-    controller.terminate("budget_terminated");
+    book.terminate("budget_terminated");
     expect(ledger.projection.hunt.outcome).toBe("aborted");
   });
 
@@ -429,7 +474,7 @@ describe("outcome precedence and coercion", () => {
     "coerces every still-active hypothesis to inconclusive when a hunt ends %s",
     async (outcome) => {
       const { ledger, hypothesisIds } = await newLedger({ hypotheses: ["h one", "h two"] });
-      controllerFor(ledger, []).terminate(outcome);
+      bookOf(ledger).terminate(outcome);
 
       const hypotheses = hypothesisIds.map((id) => ledger.projection.hypotheses.get(id)!);
       expect(hypotheses.map((hypothesis) => hypothesis.status)).toEqual(["inconclusive", "inconclusive"]);
@@ -443,7 +488,7 @@ describe("outcome precedence and coercion", () => {
     const { ledger, hypothesisIds } = await newLedger({ hypotheses: ["h one", "h two"] });
     ledger.patch("hypothesis", hypothesisIds[0]!, { status: "proven", resolution_reason: "survived" });
 
-    controllerFor(ledger, []).terminate("aborted");
+    bookOf(ledger).terminate("aborted");
 
     expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("proven");
     expect(ledger.projection.hypotheses.get(hypothesisIds[1]!)!.status).toBe("inconclusive");
@@ -456,37 +501,35 @@ describe("Finalize runs on every terminal path", () => {
       "completed",
       async (ledger, ids) => {
         resolve(ledger, ids[0]!);
-        await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+        bookOf(ledger).conclude("nothing further to run");
       },
     ],
     [
       "data_starved",
       async (ledger, ids) => {
         await gapLock(ledger, ids[0]!);
-        await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+        bookOf(ledger).conclude("nothing further to run");
       },
     ],
     [
       "budget_terminated",
       async (ledger, _ids, runId, queue) => {
+        await usedTurns(ledger);
         await steer(queue, runId, "conclude", "accepted");
-        await controllerFor(ledger, []).advanceIteration();
+        await boundary(ledger);
       },
     ],
     [
       "aborted",
       async (ledger, _ids, runId, queue) => {
         await steer(queue, runId, "abort", "halted");
-        await controllerFor(ledger, []).advanceIteration();
+        await boundary(ledger);
       },
     ],
   ];
 
   it.each(DRIVERS)("journals exactly one report when a hunt ends %s", async (outcome, drive) => {
     const started = outcome === "budget_terminated" ? await newLedger({ budgets: CAPPED }) : await newLedger();
-    if (outcome === "budget_terminated") {
-      await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
-    }
     await drive(started.ledger, started.hypothesisIds, started.runId, started.queue);
 
     expect(started.ledger.projection.hunt.outcome).toBe(outcome);
@@ -499,20 +542,19 @@ describe("Finalize runs on every terminal path", () => {
 
   it("finalizes exactly once when a lower-precedence terminate follows", async () => {
     const { ledger } = await newLedger();
-    const controller = controllerFor(ledger, []);
-    controller.terminate("aborted");
-    controller.terminate("completed");
+    const book = bookOf(ledger);
+    book.terminate("aborted");
+    book.terminate("completed");
     expect(finalized(ledger)).toHaveLength(1);
   });
 
   it("rebuilds the same report from the ledger alone", async () => {
     const { ledger, state, queue, runId, hypothesisIds } = await newLedger();
     await gapLock(ledger, hypothesisIds[0]!);
-    await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+    bookOf(ledger).conclude("nothing further to run");
     await ledger.flush();
 
     // Replay-derived, so it works on any ledger rather than only on the writer's.
-    const { Journal } = await import("../../workflows/hunt/journal.js");
     const rebuilt = buildReport((await Journal.open(state, queue, runId)).projection);
     expect(rebuilt).toEqual(finalized(ledger)[0]);
   });
@@ -521,7 +563,7 @@ describe("Finalize runs on every terminal path", () => {
     const { ledger, hypothesisIds } = await newLedger();
     await gapLock(ledger, hypothesisIds[0]!);
     question(ledger, "was the key used elsewhere?", { entity_key: "aws_key:AKIA1", spawned_iteration: -5 });
-    await controllerFor(ledger, [CONCLUDE]).advanceIteration();
+    bookOf(ledger).conclude("nothing further to run");
 
     const rendered = renderReport(finalized(ledger)[0]!);
     expect(rendered).toMatch(/could not see well enough/);
@@ -534,7 +576,7 @@ describe("Finalize runs on every terminal path", () => {
   it("reports a parked hypothesis as backlog, not as a verdict", async () => {
     const { ledger, hypothesisIds } = await newLedger();
     resolve(ledger, hypothesisIds[0]!);
-    controllerFor(ledger, []).terminate("aborted", "operator halted the hunt");
+    bookOf(ledger).terminate("aborted", "operator halted the hunt");
 
     const report = finalized(ledger)[0]!;
     expect(report.parked_hypotheses).toHaveLength(1);
@@ -576,18 +618,14 @@ describe("turns and model calls are different budgets", () => {
       budgets: { max_iterations: 1, max_calls: 999, max_cost_usd: 999, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 },
     });
 
-    const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
-    expect(result.hunt_status).toBe("parked");
+    await usedTurns(ledger, 1);
+    expect(boundBy(ledger.projection.hunt)).toBe("iterations");
+    expect(ledger.projection.hunt.status).toBe("parked");
   });
 
-  // Off this spec's own fan-out, not the shipped arch's: the fixture dispatches
-  // one worker where threathunt.yaml dispatches four, and a ceiling read off the
-  // shipped shape would be wrong for both.
   it("raises the call ceiling with the turns asked for, so calls stay a backstop", () => {
     const spec = specWith({ max_iterations: 20 });
-    const perTurn = callsPerIteration(spec.dispatch.max_workers, spec.runtime.max_turns);
-    expect(spec.budgets.max_calls).toBe(20 * perTurn);
-    expect(perTurn).toBeGreaterThan(1);
+    expect(spec.budgets.max_calls).toBe(20 * 60);
   });
 
   it("leaves a call ceiling already above the derived one alone", () => {
@@ -669,4 +707,44 @@ describe("which arm of the budget stopped the run", () => {
   it("names nothing while both have room", () => {
     expect(boundBy(at(1, 0.5))).toBeNull();
   });
+});
+
+// The ceilings the retired fan-out arithmetic gave a hunt -- (4 workers + 2) turns an
+// iteration, each 8 + 2 calls -- now stated as the plugin's allowance. Per iteration,
+// so a hunt asking for any count runs to exactly what it did.
+describe("a hunt's turn and call ceilings", () => {
+  // At the runtime every resolved hunt is handed, where the old arithmetic gave
+  // (4 + 2) turns and (4 + 2) x (max_turns + 2) calls an iteration.
+  const shipped = {
+    ...buildSpec(
+      { arch: archFor("hunt").arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") },
+      archFor("hunt").actions,
+      archFor("hunt").owned,
+    ),
+    runtime: DEFAULT_RUNTIME,
+  };
+  const before = { turns: 4 + 2, calls: (4 + 2) * (DEFAULT_RUNTIME.max_turns + 2) };
+  // A spec journaled before the allowance was stated, carrying the fields that preceded
+  // it: a resume reads the ledger's spec as written, so it must still run to the same ceilings.
+  const journaled = JSON.parse(readFileSync(join(FIXTURES, "ledgers", "pre-allowance-hunt-run.jsonl"), "utf8")).payload.spec;
+  const { allowance: _, finding: __, ...unstated } = shipped;
+  const recorded = { ...unstated, ...journaled, roles: { ...shipped.roles, ...journaled.roles } } as RunSpec;
+
+  it("states the allowance the shipped hunt has always run to", () => {
+    expect(shipped.allowance).toEqual({ turns_per_iteration: before.turns, calls_per_iteration: before.calls });
+    expect(HUNT_ALLOWANCE).toEqual(shipped.allowance);
+  });
+
+  for (const [name, spec] of [["shipped", shipped], ["recorded before the allowance", recorded]] as const) {
+    it.each([1, 3, 8, 20])(`gives a %i-iteration hunt the turns and calls an iteration always had (${name})`, (iterations) => {
+      const asked = { ...spec, thresholds: { ...spec.thresholds, max_iterations: iterations } };
+      expect(kernelSpec(asked).thresholds["max_iterations"]).toBe(iterations * before.turns);
+      expect(huntSpec(asked).budgets.max_calls).toBe(Math.max(spec.budgets.max_calls, iterations * before.calls));
+    });
+
+    it(`scales a pinned hard ceiling the same way (${name})`, () => {
+      const pinned = { ...spec, thresholds: { ...spec.thresholds, max_iterations: 3, hard_max_iterations: 5 } };
+      expect(kernelSpec(pinned).thresholds["hard_max_iterations"]).toBe(5 * before.turns);
+    });
+  }
 });

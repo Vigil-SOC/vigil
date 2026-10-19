@@ -28,6 +28,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
+import { LATER_RELEASE } from '../../shared/later'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
@@ -54,7 +55,6 @@ const STATE_OPTIONS = [
   { value: 'assigned', label: 'Assigned' },
   { value: 'executing', label: 'Executing' },
   { value: 'waiting_approval', label: 'Waiting approval' },
-  { value: 'review_submitted', label: 'In review' },
   { value: 'closed', label: 'Closed' },
 ]
 
@@ -360,7 +360,7 @@ function CasesTable({
                     onClick={() => onSelect(c.id)}
                     onKeyDown={(e) => { if (e.target === e.currentTarget) activateOnKey(() => onSelect(c.id))(e) }}
                   >
-                    <span role="cell" title="Coming in a later release" onClick={(e) => e.stopPropagation()}>
+                    <span role="cell" title={LATER_RELEASE} onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" className="cg-check" disabled aria-label={`Select case ${c.id}`} />
                     </span>
                     <span role="cell" className="cg-id" title={c.id}>{c.id}</span>

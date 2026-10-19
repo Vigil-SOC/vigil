@@ -23,13 +23,14 @@ from core.time import utcnow
 
 # The two senses of "not finished", kept together because they differ by one
 # status and drift apart when they do not share a home. LIVE is the record the
-# Case owns; IN_FLIGHT is the subset holding an agent slot, which a run under
-# review has already given back.
+# Case owns; IN_FLIGHT is the subset holding an agent slot, which a run parked
+# waiting on a person (``paused``) has already given back. A completed run no
+# longer waits in review (#2324).
 LIVE_INVESTIGATION_STATUSES = (
     "assigned",
     "executing",
     "waiting_approval",
-    "review_submitted",
+    "paused",
 )
 IN_FLIGHT_INVESTIGATION_STATUSES = (
     "assigned",
@@ -40,7 +41,7 @@ IN_FLIGHT_INVESTIGATION_STATUSES = (
 # own. The case reads them as a running run ``executing`` and a held one ``paused``.
 RUN_LIVE_STATE = {"running": "executing", "paused": "paused"}
 # What a case's combined state may take from a run or an investigation.
-LIVE_CASE_STATES = LIVE_INVESTIGATION_STATUSES + ("paused",)
+LIVE_CASE_STATES = LIVE_INVESTIGATION_STATUSES
 
 
 class Investigation(Base):
@@ -267,6 +268,11 @@ class WorkflowRun(Base):
     # this side finalized the run (a cancel, a queue that refused the job).
     outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # How far a hunt has got and the ceiling it runs under, as the agent layer last
+    # reported them. Null for a run that never has (compose, or a hunt before its first
+    # iteration lands), which the case list then reads from the trigger context.
+    iteration_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_cost_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True)
     # Set when an operator removes the run from History. The row and its ledger stay.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

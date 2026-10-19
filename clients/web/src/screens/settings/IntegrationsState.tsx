@@ -19,7 +19,7 @@ const Ctx = createContext<IntegrationsState | null>(null)
 export function IntegrationsStateProvider({ children }: { children: ReactNode }) {
   const mcp = useMcpServers()
   const int = useIntegrationsConfig()
-  const { servers, statuses, enabled, errors, missingCredentials } = mcp
+  const { servers, statuses, enabled, errors, missingCredentials, setups } = mcp
   const { config } = int
   const kept = useRef(new Set<string>())
   const phase: Phase = mcp.phase === 'error' ? 'error' : mcp.phase === 'ready' && int.phase === 'ready' ? 'ready' : 'loading'
@@ -31,11 +31,12 @@ export function IntegrationsStateProvider({ children }: { children: ReactNode })
         enabled,
         errors,
         missingCredentials,
+        setups,
         enabledIntegrations: config.enabled_integrations,
         integrations: config.integrations,
         lastTest: config.last_test,
       }), kept.current),
-    [phase, servers, statuses, enabled, errors, missingCredentials, config],
+    [phase, servers, statuses, enabled, errors, missingCredentials, setups, config],
   )
   const attention = useMemo(() => rows.filter(needsAttention), [rows])
   return <Ctx.Provider value={{ mcp, int, phase, rows, attention }}>{children}</Ctx.Provider>

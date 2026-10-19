@@ -1,0 +1,24 @@
+[
+  {
+    "name": "a measured interval rests on the sensor",
+    "input": "You measured from flow records that 10.0.4.17 connects to 192.0.2.44 every 300s with 4s jitter, 72 times. The adversary chose that interval. How do you fill rests_on for the interval?",
+    "expect": [
+      "sensor"
+    ]
+  },
+  {
+    "name": "a user agent rests on the adversary and is influenceable",
+    "input": "An HTTP record shows User-Agent 'Mozilla/5.0 (UpdaterSvc)' from WS-31 to 198.51.100.9. How do you record what the User-Agent rests on?",
+    "expect": [
+      "adversary",
+      "attacker_influenceable"
+    ]
+  },
+  {
+    "name": "an empty search is still recorded",
+    "input": "A DNS search for lookups of exfil-drop.example across all hosts in the last 7 days returned zero rows. Should this be recorded, and how?",
+    "expect": [
+      "nothing matched"
+    ]
+  }
+]

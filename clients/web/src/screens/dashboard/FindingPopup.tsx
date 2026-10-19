@@ -38,14 +38,15 @@ interface Enrichment {
   indicators?: { malicious_ips?: string[]; suspicious_domains?: string[] }
   analysis_notes?: string
   raw_response?: string
+  generated_at?: string
 }
 
 const ENRICHMENT_PROGRESS = [
-  'Preparing a local AI analysis…',
-  'Reviewing the finding with your local model…',
-  'Still analysing — local models often take a minute or two.',
-  'Checking the local AI gateway and automatically retrying if needed. Please keep this window open…',
-  'Local gateway recovery can take up to a minute. The analysis is still running…',
+  'Preparing the AI analysis…',
+  'Reviewing the finding with your configured model…',
+  'Still analysing — this can take a minute or two.',
+  'Checking the AI gateway and automatically retrying if needed. Please keep this window open…',
+  'Gateway recovery can take up to a minute. The analysis is still running…',
 ]
 
 const RISK_COLOR: Record<string, string> = {
@@ -212,7 +213,9 @@ export default function FindingPopup({
         const data = res.data as RawFinding
         setRaw(data)
         setStatus((data as { status?: string }).status || '')
-        if (data.ai_enrichment) {
+        // The daemon writes triage keys into ai_enrichment too; only a
+        // generated analysis carries generated_at.
+        if (data.ai_enrichment?.generated_at) {
           setEnrichment(data.ai_enrichment)
           setEnrichPhase('ready')
         }

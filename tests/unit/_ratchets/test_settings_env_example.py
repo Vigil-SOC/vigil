@@ -72,6 +72,7 @@ NOT_SETTINGS = ENV_CREDENTIAL_NAMES | {
     # Read by the TypeScript agent processes themselves, not by Settings.
     "AGENT_HEALTH_PORT",
     "AGENT_HTTP_PORT",
+    "VIGIL_OTEL_CAPTURE_CONTENT",
     # Agent (services/agent/core/db.ts) and scripts/migrate_schema.py.
     # Python DatabaseConfig reads the encrypted DSN / POSTGRES_* instead (#752).
     "DATABASE_URL",

@@ -180,7 +180,7 @@ SECURITY_DETECTION_TOOLS = [
 DEEPTEMPO_FINDING_TOOLS = [
     {
         "name": "list_findings",
-        "description": "List security findings with server-side pagination and compact summaries. Returns compact finding summaries (use get_finding for full details). Supports filtering by severity, data_source, status, and pagination via offset/limit.",
+        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the raw source record. Supports filtering by severity, data_source, status, and pagination via offset/limit.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -232,13 +232,13 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "search_findings",
-        "description": "Search findings by text query across finding IDs, descriptions, and entity context. Returns compact summaries with pagination. Use get_finding for full details on specific results.",
+        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_status, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the raw source record behind a specific result.',
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text search query (searches finding IDs, descriptions, entity context)",
+                    "description": 'Text search across finding IDs, descriptions and entity context. Terms split on whitespace or commas; a finding must match every term (e.g. "10.0.0.1 10.0.0.2" finds findings naming both hosts).',
                 },
                 "severity": {
                     "type": "string",
@@ -268,12 +268,12 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_findings_stats",
-        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source, status, and top MITRE techniques. Use this to get an overview before drilling into specific findings.",
+        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source and status. Takes no filters: for counts over a subset, use search_findings. Use this to get an overview before drilling into specific findings.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_finding",
-        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques and related context.",
+        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques, every entity it names, and the raw source record under entity_context.source_evidence.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -547,8 +547,11 @@ DEEPTEMPO_FINDING_TOOLS = [
             "Replay a completed threat hunt: for each decision the hunt lead "
             "took, the digest it was shown is rebuilt from the ledger and "
             "compared with the one recorded (rebuilt, recorded, mismatch), "
-            "alongside what memory recalled for the hunt. Pass decision_id "
-            "to narrow the report to one decision."
+            "alongside what memory recalled for the hunt. Answers a bounded "
+            "summary, not the digests: pass step (or from_step and to_step) "
+            "for the steps you need, or decision_id for one decision; with "
+            "none it answers the latest few steps. What a run is doing now, "
+            "or why it stopped, is in the case brief, not here."
         ),
         "input_schema": {
             "type": "object",
@@ -560,6 +563,18 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "decision_id": {
                     "type": "string",
                     "description": "Replay only this decision",
+                },
+                "step": {
+                    "type": "integer",
+                    "description": "Replay only this step (iteration)",
+                },
+                "from_step": {
+                    "type": "integer",
+                    "description": "First step of a range",
+                },
+                "to_step": {
+                    "type": "integer",
+                    "description": "Last step of a range",
                 },
             },
             "required": ["run_id"],

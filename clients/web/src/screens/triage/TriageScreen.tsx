@@ -250,7 +250,7 @@ function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
   )
 }
 
-const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) => {
+const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, setViewFull }) => {
   const [searchParams, setSearchParams] = useSearchParams()
   const kind = searchParams.get('kind') ?? ''
   const source = searchParams.get('source') ?? ''
@@ -290,6 +290,11 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
     const id = setInterval(load, POLL_MS)
     return () => clearInterval(id)
   }, [load])
+
+  // the queue fills the view and scrolls inside its card (as Cases, #2151)
+  useEffect(() => {
+    setViewFull(true)
+  }, [setViewFull])
 
   const toggle = (id: number) => setOpenId((current) => (current === id ? null : id))
 
@@ -396,7 +401,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
             setFilter={setFilter}
             clear={() => setSearchParams({}, { replace: true })}
           />
-          <div className="tq-card">
+          <div className="tq-card" data-testid="triage-scroll">
             <DataTable
               className="tbl tq-table"
               columns={columns}

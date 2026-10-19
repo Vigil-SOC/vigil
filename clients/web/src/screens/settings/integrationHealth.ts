@@ -28,6 +28,8 @@ export interface ServerRow {
   word: string
   note: string
   lastTest?: LastTest
+  /** the one action that sets the server up, while it waits on one */
+  setupAction?: string
 }
 
 interface HealthInput {
@@ -36,6 +38,8 @@ interface HealthInput {
   enabled: Record<string, boolean>
   errors: Record<string, string>
   missingCredentials: Record<string, string[]>
+  /** servers that cannot start until the install provides something */
+  setups?: Record<string, { reason: string; action?: string }>
   enabledIntegrations: string[]
   integrations: Record<string, Record<string, unknown>>
   lastTest: Record<string, LastTest>
@@ -55,14 +59,18 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const failedTest = lastTest?.success === false
     // "Missing X" already says what a "missing credentials: X" error does
     const repeatsMissing = (t: string) => missing.length > 0 && /missing credentials/i.test(t)
-    const notes = [
+    const faults = [
       missing.length ? `Missing ${missing.join(', ')}` : '',
       i.errors[name] || '',
       failedTest ? lastTest.error || 'Last test failed' : '',
     ].filter((n, idx, all) => n && all.indexOf(n) === idx && !(idx > 0 && repeatsMissing(n)))
+    // waiting on setup or on a first call is a state, not a fault
+    const setup = i.setups?.[name]
+    const waiting = setup ? 'Not set up' : i.statuses[name] === 'on_demand' ? 'Starts on first use' : ''
+    const notes = setup ? [setup.reason, ...faults] : faults
     // a server nobody connected has no health to report
     const connected = isEnabled || configured
-    const level: Level = !connected ? null : notes.length ? 'poor' : isRunning ? 'good' : null
+    const level: Level = !connected ? null : faults.length ? 'poor' : isRunning ? 'good' : null
     return {
       name,
       integration,
@@ -75,9 +83,10 @@ export function buildRows(i: HealthInput): ServerRow[] {
       masterMixed: isExtension && configured !== isEnabled,
       connected,
       level,
-      word: level ? '' : isEnabled ? 'Not running' : integration && !configured ? 'Not set up' : 'Off',
+      word: level ? '' : isEnabled ? waiting || 'Not running' : integration && !configured ? 'Not set up' : 'Off',
       note: notes.join(' — '),
       lastTest,
+      setupAction: setup?.action,
     }
   })
 }

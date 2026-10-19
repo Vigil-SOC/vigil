@@ -110,6 +110,7 @@ class CaseLinkedFinding(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     source_link: Optional[str] = None
+    entities: list[str] = []
 
 
 class CaseDetailResponse(CaseSchema):
