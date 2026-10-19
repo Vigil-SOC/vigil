@@ -1,11 +1,13 @@
 // What the case page reads off GET /workflows/runs/{id}. Hunt-like runs arrive
 // under `hunt`; every other kind arrives under `projection`.
+import { sourceBadge } from '../../config/sourceBadges'
 
 export interface CallRow {
   question: string
   tool: string
   result_length: number
-  cost_usd: number
+  /** Null when nothing priced it: shown as not recorded, never as $0. */
+  cost_usd: number | null
   duration_ms?: number
   iteration?: number
 }
@@ -30,6 +32,11 @@ export interface HypothesisRow {
   provenance: string
 }
 
+/** The system an evidence row's rows came from, as the board names it; the hunt's domain word only when none is known. One reading for the trail and the citation chips. */
+export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'>): string {
+  return row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system
+}
+
 interface EvidenceRow {
   evidence_id: string
   iteration: number
@@ -39,6 +46,8 @@ interface EvidenceRow {
   gap_detail: string | null
   /** Stamped by the API on non-gap hunt rows; a display label, as configured now. */
   source_tier: string | null
+  /** The systems its rows came from (a cited alert's data_source, or the integration that answered); empty when none is known. */
+  origins: string[]
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
@@ -90,10 +99,28 @@ interface RunMeta {
   huntStatus: string
 }
 
+/** The question a run is stopped on, as the run itself holds it. */
+export interface OpenCheckpointRow {
+  checkpoint_id: string
+  checkpoint_class: string
+  question: string
+  raised_at: string
+  /** A hypothesis approval's explanations, with where each came from where the run recorded it. */
+  hypotheses: { hypothesis_id: string; statement: string; provenance: string }[]
+}
+
+export interface OpenQuestionRow {
+  question_id: string
+  question: string
+}
+
 interface HuntFold {
   kind: 'hunt'
   run: RunMeta
   iteration: number
+  openCheckpoint: OpenCheckpointRow | null
+  /** Leads the hunt opened and has not closed. */
+  openQuestions: OpenQuestionRow[]
   doing: string
   worker: string
   moves: MoveRow[]
@@ -109,8 +136,27 @@ interface HuntFold {
   maxCostUsd: number | null
 }
 
+/** What a run's record holds: the explanations it weighed, the rows linked to them, the questions left open. */
+export interface RunRecord {
+  hypotheses: HypothesisRow[]
+  evidence: EvidenceRow[]
+  evidenceCount: number
+  openQuestions: OpenQuestionRow[]
+}
+
+/** A dismissal the reviewer guard held for a person: what the run asked for, what it ends on, and why. */
+export interface HeldRow {
+  field: string
+  asked: string
+  final: string
+  reason: string
+}
+
 interface LeadFold {
   kind: 'lead'
+  /** A kernel investigation's record; null for a run that keeps none. */
+  record: RunRecord | null
+  held: HeldRow | null
   run: RunMeta
   iterations: number
   doing: string
@@ -155,7 +201,8 @@ export function wordDisplay(word: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED'] as const
+// The kernel hunt's moves (services/agent plugins/hunt/words.ts) come after the controller's.
+const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED', 'RECORD', 'LINK', 'PROPOSE', 'QUERY', 'QUESTION', 'READ'] as const
 type HuntAction = (typeof HUNT_ACTIONS)[number]
 
 function isHuntAction(token: string): token is HuntAction {
@@ -187,6 +234,18 @@ export function actionWords(token: string): string {
       return 'Start incident response on a proven explanation'
     case 'STALLED':
       return 'Stalled, no decision made'
+    case 'RECORD':
+      return 'Record evidence'
+    case 'LINK':
+      return 'Weigh evidence against the explanations'
+    case 'PROPOSE':
+      return 'Propose an explanation'
+    case 'QUERY':
+      return 'Query the estate'
+    case 'QUESTION':
+      return 'Open or close a lead'
+    case 'READ':
+      return 'Read the board'
     default: {
       const unhandled: never = token
       return unhandled
@@ -284,6 +343,9 @@ function str(value: unknown): string {
 function answerText(answer: unknown): string {
   if (typeof answer === 'string') return answer
   if (answer == null) return ''
+  // A structured conclusion leads with its disposition, which a clamped JSON line would cut off.
+  const o = answer as Record<string, unknown>
+  if (typeof o.summary === 'string' && o.summary) return [typeof o.disposition === 'string' ? wordDisplay(o.disposition) : '', o.summary].filter(Boolean).join(' — ')
   try {
     return JSON.stringify(answer)
   } catch {
@@ -300,7 +362,7 @@ function callsOf(raw: unknown): CallRow[] {
       question: str(o.question),
       tool: str(o.tool),
       result_length: num(o.result_length) ?? 0,
-      cost_usd: num(o.cost_usd) ?? 0,
+      cost_usd: num(o.cost_usd),
       ...(typeof o.duration_ms === 'number' ? { duration_ms: o.duration_ms } : {}),
       ...(typeof o.iteration === 'number' ? { iteration: o.iteration } : {}),
     }]
@@ -337,20 +399,24 @@ function recallOf(raw: unknown): RecallView | null {
   return { keys, gaps, sightings, verdicts, unavailable }
 }
 
-function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
-  const moves = Array.isArray(raw.moves) ? raw.moves : []
-  // The server sends moves newest first.
-  const rows = moves.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const o = item as Record<string, unknown>
-    return [{
-      doing: str(o.query_intent) || actionWords(str(o.action)),
-      worker: str(o.worker_agent_id),
-      at: typeof o.created_at === 'string' ? o.created_at : null,
-      iteration: num(o.iteration),
-    }]
-  })
-  const hypotheses = Array.isArray(raw.hypotheses)
+function checkpointOf(raw: unknown): OpenCheckpointRow | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (!str(o.checkpoint_id)) return null
+  const context = o.context && typeof o.context === 'object' ? (o.context as Record<string, unknown>) : {}
+  const hypotheses = Array.isArray(context.hypotheses)
+    ? context.hypotheses.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const h = item as Record<string, unknown>
+        return str(h.statement) ? [{ hypothesis_id: str(h.hypothesis_id), statement: str(h.statement), provenance: str(h.provenance) }] : []
+      })
+    : []
+  return { checkpoint_id: str(o.checkpoint_id), checkpoint_class: str(o.checkpoint_class), question: str(o.question), raised_at: str(o.raised_at), hypotheses }
+}
+
+/** The record rows a hunt projection carries, and a kernel investigation's carries in the same shapes. */
+function recordOf(raw: Record<string, unknown>): RunRecord {
+  const hypotheses: HypothesisRow[] = Array.isArray(raw.hypotheses)
     ? raw.hypotheses.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
         const o = item as Record<string, unknown>
@@ -366,7 +432,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
         }]
       })
     : []
-  const evidence = Array.isArray(raw.evidence)
+  const evidence: EvidenceRow[] = Array.isArray(raw.evidence)
     ? raw.evidence.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
         const o = item as Record<string, unknown>
@@ -385,21 +451,54 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           is_gap: o.is_gap === true,
           gap_detail: typeof o.gap_detail === 'string' ? o.gap_detail : null,
           source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
+          origins: Array.isArray(o.origins) ? o.origins.filter((one): one is string => typeof one === 'string' && one !== '') : [],
           bears_on: bears,
         }]
       })
     : []
+  return {
+    hypotheses,
+    evidence,
+    evidenceCount: num(raw.evidence_count) ?? evidence.length,
+    openQuestions: Array.isArray(raw.open_questions)
+      ? raw.open_questions.flatMap((item) => {
+          if (!item || typeof item !== 'object') return []
+          const o = item as Record<string, unknown>
+          return str(o.question) ? [{ question_id: str(o.question_id), question: str(o.question) }] : []
+        })
+      : [],
+  }
+}
+
+function heldOf(raw: unknown): HeldRow | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  return str(o.asked) && str(o.final) ? { field: str(o.field), asked: str(o.asked), final: str(o.final), reason: str(o.reason) } : null
+}
+
+function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
+  const moves = Array.isArray(raw.moves) ? raw.moves : []
+  // The server sends moves newest first.
+  const rows = moves.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{
+      doing: str(o.query_intent) || actionWords(str(o.action)),
+      worker: str(o.worker_agent_id),
+      at: typeof o.created_at === 'string' ? o.created_at : null,
+      iteration: num(o.iteration),
+    }]
+  })
   const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
     iteration: num(raw.iteration) ?? 0,
+    openCheckpoint: checkpointOf(raw.open_checkpoint),
+    ...recordOf(raw),
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
     moves: rows,
-    hypotheses,
-    evidence,
-    evidenceCount: num(raw.evidence_count) ?? evidence.length,
     calls: callsOf(raw.calls),
     recall: recallOf(raw.recall),
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
@@ -438,6 +537,9 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     : []
   return {
     kind: 'lead',
+    // A legacy lead ledger keeps no record, so carries none of its fields.
+    record: Array.isArray(raw.hypotheses) ? recordOf(raw) : null,
+    held: heldOf(raw.held),
     run,
     iterations: num(raw.iterations) ?? 0,
     doing: rows[0]?.doing ?? '',
@@ -464,6 +566,17 @@ export function readFold(body: unknown): RunFold | null {
   return null
 }
 
+/** The record a run keeps, a hunt's or an investigation's; null for a run that tests no explanations. */
+export function foldRecord(fold: RunFold | null): RunRecord | null {
+  if (!fold) return null
+  return fold.kind === 'hunt' ? fold : fold.record
+}
+
+/** "Asked benign · held as needs review": the answer the guard would not let stand, in words. */
+export function heldLine(held: HeldRow): string {
+  return `Asked ${held.asked.replace(/_/g, ' ')} · held as ${held.final.replace(/_/g, ' ')}`
+}
+
 /** A run that is not going on and did not conclude: parked or paused (it can wake), or failed (it cannot). */
 export interface StoppedRun {
   state: 'paused' | 'stopped'
@@ -471,6 +584,8 @@ export interface StoppedRun {
   line: string
   /** The reason as the server wrote it; '' when none was recorded. */
   raw: string
+  /** A hunt parked at one of its own limits (turns, time or budget), not on a question: Keep going lifts it. */
+  atLimit: boolean
 }
 
 const ENDED = ['failed', 'cancelled', 'canceled']
@@ -485,7 +600,54 @@ export function stoppedRun(fold: RunFold | null): StoppedRun | null {
   const line = first
     ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
     : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
-  return { state: stopped ? 'stopped' : 'paused', line, raw }
+  const atLimit = !stopped && fold.kind === 'hunt' && huntStatus === 'parked' && fold.openCheckpoint === null
+  return { state: stopped ? 'stopped' : 'paused', line, raw, atLimit }
+}
+
+/** A run that ended for good without failing: what it found, in one statement read off the ledger's own
+ *  verdicts, and the open question it could not conclude past, when its reason names one. */
+export interface EndedRun {
+  /** "1 proven · 1 inconclusive"; for a run that tests no explanations, its findings. */
+  line: string
+  /** The reason as the server wrote it, model prose included; '' when none was recorded. */
+  raw: string
+  question: OpenQuestionRow | null
+}
+
+// The termination predicate's refusal names the question it would not conclude past.
+const BLOCKED_BY = /\bopen question (q-[\w-]+)/
+
+const ENDED_ORDER = ['proven', 'handed_off', 'standing', 'weakened', 'forming', 'inconclusive', 'parked', 'ruled out']
+
+export function endedRun(fold: RunFold | null): EndedRun | null {
+  if (!fold || ENDED.includes(fold.run.status)) return null
+  if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return null
+  const record = foldRecord(fold)
+  if (!record) return { line: plural(fold.kind === 'lead' ? fold.findings.length : 0, 'finding'), raw: fold.reason, question: null }
+  const tally = new Map<string, number>()
+  for (const row of record.hypotheses) {
+    const word = explanationWord(row.status, row.supports, row.weakens)
+    tally.set(word, (tally.get(word) ?? 0) + 1)
+  }
+  const rank = (word: string) => (ENDED_ORDER.indexOf(word) < 0 ? ENDED_ORDER.length : ENDED_ORDER.indexOf(word))
+  const line = [...tally.keys()].sort((a, b) => rank(a) - rank(b)).map((word) => `${tally.get(word)} ${word.replace(/_/g, ' ')}`).join(' · ')
+  const cited = BLOCKED_BY.exec(fold.reason)?.[1]
+  const held = fold.kind === 'lead' && fold.held ? heldLine(fold.held) : ''
+  return {
+    line: [held, line || 'No explanation was tested'].filter(Boolean).join(' · '),
+    raw: fold.reason,
+    question: cited ? record.openQuestions.find((q) => q.question_id === cited) ?? null : null,
+  }
+}
+
+/** Model or worker text as one plain line: list markers, headings and emphasis dropped, so no raw markdown shows. */
+export function plainLine(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)]|#{1,6})\s+/, '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/(\*\*|__|`)/g, '')
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {

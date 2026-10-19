@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "runs": [{ "run_id": "2026-10-13T11-42-42", "run_kind": "root_cause" }],
+  "verdict": {
+    "run_id": "2026-10-13T11-42-42",
+    "disposition": "malicious",
+    "confidence": "medium",
+    "headline": "Began with: Phishing email delivered Invoice_40517.xlsm to adam.hartley@northwind.com from billing@nvoicehub-support.com (spf fail, dkim none, dmarc fail)",
+    "basis": "True Positive (root cause not fully confirmed): 1 confirmed upstream event(s) explain the alert."
+  },
+  "evidence": [
+    {
+      "id": "V5",
+      "run_id": "2026-10-13T11-42-42",
+      "claim": "Single EDR ProcessRollup2 record on ACCT-WS-007 at 14:02:11Z: vssadmin.exe delete shadows /all /quiet ran as UserName adam.hartley, parent svchost-helper.dll (ParentProcessId 6402).",
+      "source": "crowdstrike:falcon:edr",
+      "turn": 1,
+      "strength": "direct",
+      "source_ref": "tc_25",
+      "source_refs": ["tc_25"],
+      "bears_on": [{ "on": "N1", "stance": "supports" }]
+    },
+    {
+      "id": "V7",
+      "run_id": "2026-10-13T11-42-42",
+      "claim": "EDR ProcessRollup2 on ACCT-WS-007: powershell.exe -nop -w hidden -enc (TargetProcessId 6188), parent EXCEL.EXE PID 6120, UserName adam.hartley.",
+      "source": "crowdstrike:falcon:edr",
+      "turn": 3,
+      "strength": "direct",
+      "source_ref": "tc_31",
+      "source_refs": ["tc_31", "tc_32"],
+      "bears_on": [{ "on": "N3", "stance": "supports" }]
+    },
+    {
+      "id": "S5",
+      "run_id": "2026-10-13T11-42-42",
+      "claim": "Over the whole data range the only Windows Security record mentioning svc-monitor is the single 4728 group-add at 11:43. No 4624, 4768, 4672 or any other event has TargetUserName=svc-monitor.",
+      "source": "WinEventLog:Security",
+      "absence": true,
+      "source_ref": "tc_73",
+      "source_refs": ["tc_73"]
+    }
+  ],
+  "chain": {
+    "run_id": "2026-10-13T11-42-42",
+    "score": 0.16,
+    "events": [
+      {
+        "id": "N1",
+        "run_id": "2026-10-13T11-42-42",
+        "text": "Volume shadow copies deleted on ACCT-WS-007",
+        "at": "2026-09-02T14:02:11Z",
+        "source": "crowdstrike:falcon:edr",
+        "status": "confirmed",
+        "confidence": 0.95,
+        "ran_as": "adam.hartley",
+        "entities": ["host:acct-ws-007", "user:adam.hartley"]
+      },
+      {
+        "id": "N2",
+        "run_id": "2026-10-13T11-42-42",
+        "text": "rundll32 loaded C:\\Users\\Public\\svchost-helper.dll,Start as PID 6402, ran-as adam.hartley on ACCT-WS-007; this process (PID 6402) later executed the vssadmin",
+        "at": "2026-09-02T08:32:00Z",
+        "source": "crowdstrike:falcon:edr",
+        "status": "suspected",
+        "confidence": 0.76,
+        "causes": "N1",
+        "tie": { "id": "E2", "status": "suspected", "confidence": 0.76 }
+      },
+      {
+        "id": "N3",
+        "run_id": "2026-10-13T11-42-42",
+        "text": "powershell.exe -nop -w hidden -enc (PID 6188) launched by the macro, running as adam.hartley but controlled by the attacker, spawned the rundll32 that loaded svchost-helper.dll",
+        "at": "2026-09-02T08:31:09Z",
+        "source": "crowdstrike:falcon:edr",
+        "status": "suspected",
+        "confidence": 0.83,
+        "causes": "N2",
+        "tie": { "id": "E4", "status": "suspected", "confidence": 0.83 },
+        "together_with": ["N4"],
+        "ran_as": "adam.hartley",
+        "operated_by": "nvoicehub-support.com (198.51.100.77) attacker infrastructure"
+      },
+      {
+        "id": "N4",
+        "run_id": "2026-10-13T11-42-42",
+        "text": "stage2 download: powershell on ACCT-WS-007 resolved updates.nvoicehub-support.com and connected to 198.51.100.77:443, fetching the payload that became svchost-helper.dll",
+        "at": "2026-09-02T08:31Z",
+        "source": "crowdstrike:falcon:edr",
+        "status": "suspected",
+        "confidence": 0.83,
+        "causes": "N2",
+        "tie": { "id": "E7", "status": "suspected", "confidence": 0.5 }
+      },
+      {
+        "id": "N5",
+        "run_id": "2026-10-13T11-42-42",
+        "text": "EXCEL.EXE opened C:\\Users\\adam.hartley\\Downloads\\Invoice_40517.xlsm (PID 6120, parent explorer.exe) as adam.hartley, and its macro launched the powershell loader",
+        "at": "2026-09-02T08:31:05Z",
+        "source": "crowdstrike:falcon:edr",
+        "status": "confirmed",
+        "confidence": 0.97,
+        "causes": "N3",
+        "tie": { "id": "E12", "status": "suspected", "confidence": 0.83 }
+      },
+      {
+        "id": "N6",
+        "run_id": "2026-10-13T11-42-42",
+        "text": "Phishing email delivered Invoice_40517.xlsm to adam.hartley@northwind.com from billing@nvoicehub-support.com (spf fail, dkim none, dmarc fail, verdict delivered)",
+        "source": "email:gateway",
+        "status": "suspected",
+        "confidence": 0.8,
+        "causes": "N5",
+        "tie": { "id": "E16", "status": "suspected", "confidence": 0.64 },
+        "ran_as": "billing@nvoicehub-support.com",
+        "origin": "suspected",
+        "why_origin": "This phishing email is the earliest event in the chain; it delivered the xlsm that adam.hartley opened, launching the macro->powershell->rundll32 implant chain. No EDR or other source records an upstream cause for the attachment's arrival."
+      }
+    ],
+    "alternatives": [
+      { "path": ["N1", "N2", "N5", "N6"], "score": 0.23 },
+      { "path": ["N1", "N2", "N4"], "score": 0.23 }
+    ]
+  },
+  "timeline": [
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "text": "Phishing email delivered Invoice_40517.xlsm to adam.hartley@northwind.com from billing@nvoicehub-support.com",
+      "ref": "N6",
+      "source": "email:gateway",
+      "status": "suspected",
+      "confidence": 0.8,
+      "on_chain": true,
+      "ran_as": "billing@nvoicehub-support.com"
+    },
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "text": "Kerberos TGT request (4768) for TargetUserName lena.fox from 10.9.40.27 (ACCT-WS-007) at ~11:11Z",
+      "at": "2026-09-02T11:11:01Z",
+      "ref": "N17",
+      "source": "WinEventLog:Security",
+      "status": "confirmed",
+      "confidence": 0.9,
+      "on_chain": false,
+      "legitimate": true,
+      "ran_as": "lena.fox"
+    },
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "text": "~4.8 GB outbound SSL transfer from ACCT-WS-007 (10.9.40.27) to 203.0.113.66:443 at ~13:11, exfiltrating the fin.7z archive using the compromised host",
+      "at": "2026-09-02T13:11:00Z",
+      "ref": "N9",
+      "source": "zeek:conn",
+      "status": "confirmed",
+      "confidence": 0.87,
+      "on_chain": false,
+      "operated_by": "svchost-helper.dll implant (PID 6402, nvoicehub-support.com attacker)"
+    }
+  ],
+  "accounts": [
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "name": "the attacker (an operator the logs do not name)",
+      "role": "attacker",
+      "note": "operated the malicious actions",
+      "seen_as": ["nvoicehub-support.com"],
+      "entities": ["domain:nvoicehub-support.com"]
+    },
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "name": "adam.hartley",
+      "role": "victim",
+      "note": "victim account, used by the attacker; the person is not the attacker",
+      "entities": ["user:adam.hartley"]
+    },
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "name": "lena.fox",
+      "role": "legitimate",
+      "note": "legitimate user; its activity here was routine work the attack passed through; not the attacker",
+      "entities": ["user:lena.fox"]
+    }
+  ],
+  "entities": [
+    { "key": "host:acct-ws-007", "run_id": "2026-10-13T11-42-42", "indicator": true },
+    { "key": "ip:203.0.113.66", "run_id": "2026-10-13T11-42-42", "indicator": true },
+    { "key": "process:vssadmin.exe delete shadows /all /quiet", "run_id": "2026-10-13T11-42-42", "indicator": true },
+    { "key": "hash:9f2e1c7b4a5d6e8f03b1c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6", "run_id": "2026-10-13T11-42-42", "indicator": true }
+  ],
+  "gaps": [
+    {
+      "run_id": "2026-10-13T11-42-42",
+      "text": "Disputed explains E4: powershell.exe -nop -w hidden -enc (PID 6188) -> N2 at 0.83.",
+      "kind": "disputed",
+      "on": "N3"
+    }
+  ],
+  "steps": [
+    { "run_id": "2026-10-13T11-42-42", "n": 1, "kind": "STRENGTHEN", "text": "P0 strengthen N1 — symptom N1 is not confirmed yet (0.50)", "refs": ["N1"] },
+    { "run_id": "2026-10-13T11-42-42", "n": 6, "kind": "TEST", "text": "P1 test R1.P1 in email:gateway: an email with attachment_name Invoice_40517.xlsm recipient adam.hartley, with its sender/verdict/spf/dkim", "refs": ["R1.P1"] }
+  ]
+}

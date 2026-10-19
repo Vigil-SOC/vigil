@@ -1,0 +1,22 @@
+{{- /*
+ClusterIP only and not in the Ingress: the backend and daemon reach this at
+MCP_RUNNER_URL. The bearer token and the NetworkPolicy keep it internal.
+*/ -}}
+{{- if .Values.mcpRunner.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vigil.mcpRunner.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "mcp-runner") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 6991
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "mcp-runner") | nindent 4 }}
+{{- end }}

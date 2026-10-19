@@ -17,5 +17,6 @@
     "noEmit": true
   },
   "include": ["**/*.ts"],
+  // Nothing may be added here: tests/core/tsconfig-exclusions.test.ts holds the list.
   "exclude": ["node_modules"]
 }

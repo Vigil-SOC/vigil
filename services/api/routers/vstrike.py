@@ -258,7 +258,7 @@ def health_check() -> VStrikeHealthResponse:
             reachable=False,
             base_url=None,
             message=(
-                "VStrike not configured. Set VSTRIKE_BASE_URL + VSTRIKE_API_KEY "
+                "VStrike not configured. Set VSTRIKE_BASE_URL + VSTRIKE_USERNAME + VSTRIKE_PASSWORD "
                 "or configure the integration in Settings."
             ),
         )

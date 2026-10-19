@@ -34,7 +34,7 @@ class ProcessingConfig:
     enrich_backfill_interval: int = 300  # seconds between sweeps
     enrich_backfill_batch: int = 50  # findings re-queued per sweep
     enrich_backfill_max_age_hours: int = (
-        168  # only backfill findings newer than this (7d)
+        168  # only backfill findings stored within this window (7d), not by event time
     )
 
 

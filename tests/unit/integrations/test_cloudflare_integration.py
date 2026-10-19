@@ -2,7 +2,7 @@
 
 Covers:
 - core/integrations/cloudflare/tool.py — the MCP server fails closed (no-op + clear error)
-  when the integration is disabled, and the REST helpers shape arguments
+  when no API token resolves, and the REST helpers shape arguments
   correctly when enabled (Cloudflare API itself is mocked).
 - services/threat_feed_service.py — STIX 2.1 indicator parsing.
 - core/integrations/cloudflare/cloudflare_webhooks_router.py — the Cloudy receiver returns 503
@@ -44,19 +44,11 @@ def _import_cloudflare_tool():
     return mod
 
 
-def test_config_returns_none_when_integration_disabled():
-    cf = _import_cloudflare_tool()
-    with patch.object(cf, "is_integration_enabled", return_value=False):
-        assert cf._config() is None
-
-
 def test_config_returns_none_when_token_missing():
     cf = _import_cloudflare_tool()
     # The token comes from the secrets store via the descriptor-driven resolver,
     # not from get_integration_config — that store never holds a secret.
-    with patch.object(cf, "is_integration_enabled", return_value=True), patch.object(
-        cf, "resolve", return_value={"account_id": "abc", "api_token": None}
-    ):
+    with patch.object(cf, "resolve", return_value={"account_id": "abc", "api_token": None}):
         assert cf._config() is None
 
 
