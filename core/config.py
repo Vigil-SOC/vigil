@@ -294,6 +294,10 @@ class Settings(BaseSettings):
     # Separate from daemon_health_host, which is the client address the backend
     # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.
     daemon_bind_host: str = "0.0.0.0"  # nosec B104
+    # The inbound webhook listener is authenticated and meant to be reached by
+    # external senders, so it keeps its own address and does not follow
+    # daemon_bind_host (which host-native installs narrow to loopback).
+    daemon_webhook_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_health_port: int = 9091
 
     # Orchestrator

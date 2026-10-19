@@ -736,7 +736,7 @@ class DataPoller:
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(
-            runner, get_settings().daemon_bind_host, self.config.webhook_port
+            runner, get_settings().daemon_webhook_bind_host, self.config.webhook_port
         )
 
         logger.info(f"Webhook server starting on port {self.config.webhook_port}")

@@ -238,6 +238,9 @@ _CALLER_BIND_HOST="${BIND_HOST:-}"
 load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
+# Daemon and agent listeners follow BIND_HOST unless the operator opts out.
+export DAEMON_BIND_HOST="${DAEMON_BIND_HOST:-$BIND_HOST}"
+export AGENT_BIND_HOST="${AGENT_BIND_HOST:-$BIND_HOST}"
 # Auth is on unless .env opts into DEV_MODE; the backend needs a signing secret.
 ensure_jwt_secret || exit 1
 
