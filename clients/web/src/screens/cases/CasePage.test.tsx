@@ -5,6 +5,8 @@ import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
 import { ToastProvider } from '../../shell/toast'
 import { approvalsApi, casesApi, orchestratorApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
+import investigateProjection from '../workflows/__fixtures__/kernel-investigate-projection.json'
+import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
@@ -44,6 +46,7 @@ vi.mock('../../services/api', () => ({
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
     getRun: vi.fn((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })),
     verifyRun: vi.fn(),
+    steer: vi.fn(() => Promise.resolve({ data: {} })),
   },
   orchestratorApi: { exportInvestigation: vi.fn() },
   findingsApi: { getById: vi.fn() },
@@ -238,7 +241,9 @@ describe('case page', () => {
     expect(row).toHaveTextContent('search')
     expect(row).toHaveTextContent('12 chars')
     expect(row).toHaveTextContent('$0.01')
-    expect(row).toHaveTextContent('—')
+    // a latency the ledger never recorded says so, never a zero
+    expect(row).toHaveTextContent('not recorded')
+    expect(row).not.toHaveTextContent('0.0 s')
   })
 
   const huntCase = (id: string) => {
@@ -288,6 +293,35 @@ describe('case page', () => {
     expect(screen.getByText('confirmed by the hash')).toBeInTheDocument()
     expect(screen.getByText('waiting on logs')).toBeInTheDocument()
     expect(screen.getByText('sent to the reviewer')).toBeInTheDocument()
+  })
+
+  // #2459: an abandoned explanation's note cited raw ev- ids.
+  it('names the rows an explanation\'s note cites in words, and as chips that open them once the row is opened', async () => {
+    huntCase('case-note')
+    testState.runs['run-case-note'] = {
+      hunt: {
+        ...HUNT,
+        hypotheses: [
+          { hypothesis_id: 'hb', statement: 'The activity has a legitimate explanation', status: 'parked', supports: 0, weakens: 2, resolution_reason: 'abandoned: not supported by sensor-attested records. [ev-b6809427f57f, ev-6e0731e4c66b]', provenance: 'base_rate' },
+        ],
+        evidence: [
+          { evidence_id: 'ev-b6809427f57f', iteration: 4, source_system: 'endpoint', summary: 'lsass dump', is_gap: false, gap_detail: null, source_tier: 'telemetry', origins: ['crowdstrike'], bears_on: [{ hypothesis_id: 'hb', relation: 'weakens' }] },
+        ],
+        evidence_count: 2,
+      },
+    }
+    renderCase('case-note')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    const note = await screen.findByText(/abandoned: not supported by sensor-attested records\./)
+    expect(note).toHaveTextContent('abandoned: not supported by sensor-attested records. · 2 evidence rows')
+    expect(note.textContent).not.toMatch(/ev-/)
+
+    fireEvent.click(note)
+    const chip = within(note).getByRole('button', { name: 'step 4 · CrowdStrike' })
+    expect(note).toHaveTextContent('and 1 older row')
+    fireEvent.click(chip)
+    expect(await screen.findByRole('tab', { name: /^Evidence/, selected: true })).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelector('[data-evidence-id="ev-b6809427f57f"]')).toHaveClass('cite-target'))
   })
 
   it('keeps reading the hunt run once a newer root-cause run is on the case, and links to it', async () => {
@@ -395,6 +429,89 @@ describe('case page', () => {
     const act = within(first).getByRole('button', { name: 'Actions for this row' })
     expect(act).toBeDisabled()
     expect(act).toHaveAttribute('title', 'Coming in a later release')
+  })
+
+  // #2287: the system the rows came from, not the hunt's domain word; the domain only when no system is known.
+  it('names the system each evidence row came from, with its tier beside it', async () => {
+    testState.cases = [{
+      case_id: 'case-origin',
+      title: 'Origin case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-origin')],
+    }]
+    const base = { gap_detail: null, is_gap: false, bears_on: [] }
+    testState.runs['run-origin'] = {
+      hunt: {
+        ...HUNT,
+        evidence_count: 3,
+        evidence: [
+          { ...base, evidence_id: 'o1', iteration: 2, source_system: 'process_lineage', summary: 'rundll32 loaded msupdate64.dll', source_tier: 'telemetry', origins: ['crowdstrike'] },
+          { ...base, evidence_id: 'o2', iteration: 3, source_system: 'proxy', summary: 'beacon and email', source_tier: 'telemetry', origins: ['zscaler', 'proofpoint'] },
+          { ...base, evidence_id: 'o3', iteration: 4, source_system: 'dns', summary: 'one lookup', source_tier: 'telemetry' },
+        ],
+      },
+    }
+    renderCase('case-origin')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
+    await waitFor(() => expect(row('o1')).not.toBeNull())
+    expect(within(row('o1')).getByText('CrowdStrike')).toBeInTheDocument()
+    expect(within(row('o1')).getByText('Telemetry')).toBeInTheDocument()
+    expect(within(row('o1')).queryByText('process_lineage')).not.toBeInTheDocument()
+    expect(within(row('o2')).getByText('Zscaler, Proofpoint')).toBeInTheDocument()
+    expect(within(row('o3')).getByText('dns')).toBeInTheDocument()
+  })
+
+  // #2458: rows marked Neither name where they came from too, and say once that they bear on nothing.
+  it('names every Neither row\'s source and says once that it bears on neither explanation', async () => {
+    testState.cases = [{
+      case_id: 'case-neither',
+      title: 'Neither case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-neither')],
+    }]
+    const neither = [{ hypothesis_id: 'h1', relation: 'neither' }, { hypothesis_id: 'h2', relation: 'neither' }]
+    const base = { gap_detail: null, is_gap: false, source_tier: 'telemetry', bears_on: neither }
+    testState.runs['run-neither'] = {
+      hunt: {
+        ...HUNT,
+        evidence_count: 6,
+        evidence: [
+          { ...base, evidence_id: 'n1', iteration: 15, source_system: 'dns', summary: 'findings-index lookup', origins: ['vigil_alerts'] },
+          { ...base, evidence_id: 'n2', iteration: 10, source_system: 'endpoint', summary: 'recall and search', origins: ['vigil'] },
+          { ...base, evidence_id: 'n3', iteration: 6, source_system: 'critic', summary: 'strongest benign explanation', source_tier: 'not_evidence', bears_on: [] },
+          { ...base, evidence_id: 'n4', iteration: 0, source_system: 'deployment', summary: 'No SIEM is connected', is_gap: true, source_tier: undefined, bears_on: [neither[0]] },
+          { ...base, evidence_id: 'n5', iteration: 10, source_system: 'proxy', summary: 'post-11-Oct check', is_gap: true, source_tier: undefined },
+          { ...base, evidence_id: 'n6', iteration: 4, source_system: 'okta', summary: 'new session', bears_on: [{ hypothesis_id: 'h1', relation: 'supports' }, { hypothesis_id: 'h2', relation: 'neither' }] },
+        ],
+      },
+    }
+    renderCase('case-neither')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
+    await waitFor(() => expect(row('n1')).not.toBeNull())
+    const source = (id: string) => row(id).querySelector('.ev-src .ev-line')?.textContent
+    expect(source('n1')).toBe('Vigil alerts')
+    expect(source('n2')).toBe('Vigil')
+    expect(source('n3')).toBe('Reviewer')
+    expect(source('n4')).toBe('Not connected')
+    expect(source('n5')).toBe('Not answered')
+    for (const id of ['n1', 'n2', 'n4', 'n5']) {
+      expect(within(row(id)).getByText('Bears on neither explanation')).toBeInTheDocument()
+      expect(within(row(id)).queryByText(/The host is owned|Still forming/)).not.toBeInTheDocument()
+    }
+    // A link either way is named; the explanation it bears on neither way is not.
+    expect(within(row('n6')).getByText('Supports The host is owned')).toBeInTheDocument()
   })
 
   it('totals the Evidence header over every row, against the hunt\'s own explanation, and pages older rows in', async () => {
@@ -523,6 +640,54 @@ describe('case page', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
     expect(await screen.findByText(/list users/)).toBeInTheDocument()
     expect(screen.getByText(/tool down/)).toBeInTheDocument()
+  })
+
+  function investigateCase(projection: unknown) {
+    testState.cases = [{
+      case_id: 'case-inv',
+      title: 'Investigate case',
+      status: 'open',
+      priority: 'medium',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [investigation('completed', false, 'run-inv')],
+    }]
+    testState.runs['run-inv'] = { status: 'completed', projection }
+    renderCase('case-inv')
+  }
+
+  it('shows a kernel investigation\'s record: explanations with their counts, linked rows with their stance', async () => {
+    investigateCase(investigateProjection)
+
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    const redTeam = (await screen.findByText('The activity is part of an authorized red-team engagement.')).closest('li') as HTMLElement
+    expect(within(redTeam).getByText('2 for')).toBeInTheDocument()
+    expect(within(redTeam).getByText('0 against')).toBeInTheDocument()
+    expect(within(redTeam).getByText('Standing')).toBeInTheDocument()
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 3 rows' })).toBeInTheDocument()
+    const finding = document.querySelector('[data-evidence-id="r2"]') as HTMLElement
+    expect(within(finding).getByText('Supports')).toBeInTheDocument()
+    expect(within(finding).getByText(/accessing lsass\.exe/)).toBeInTheDocument()
+    // Links that disagree show each stance under "bears on", none in the column.
+    const mixed = document.querySelector('[data-evidence-id="r9"]') as HTMLElement
+    expect(within(mixed).getByText(/^Supports The activity is part.*· Goes against The user/)).toBeInTheDocument()
+    expect(within(mixed).queryByText('Supports')).not.toBeInTheDocument()
+  })
+
+  it('shows a held dismissal as what it was held as, what was asked, and why; its open question as a blind spot', async () => {
+    investigateCase(heldProjection)
+
+    expect(await screen.findByText(/^Asked benign · held as needs review: the review was insufficient: Only the case note/)).toBeInTheDocument()
+    expect(screen.getByText(/^Needs review — EDR detected/)).toBeInTheDocument()
+    expect(screen.queryByText(/"disposition":"benign"/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
+    expect(await screen.findByText(/registered red-team operator on ws-0901/)).toBeInTheDocument()
+    expect(screen.getByText('Open question')).toBeInTheDocument()
   })
 
   it('keeps empty tabs in the strip', async () => {
@@ -719,7 +884,7 @@ describe('case page', () => {
       expect(rows).toHaveLength(2)
       expect(rows[0]).toHaveTextContent('okta')
       expect(rows[0]).toHaveTextContent('1,240 chars')
-      expect(rows[0]).toHaveTextContent('0.8 s')
+      expect(rows[0]).toHaveTextContent('800 ms')
       expect(rows[1]).toHaveClass('gap')
       expect(rows[1]).toHaveTextContent('list users — tool down')
       expect(rows[1]).toHaveTextContent('No source')
@@ -889,7 +1054,7 @@ describe('case page', () => {
     expect(within(side).getByText('Beacon to rare host')).toBeInTheDocument()
     expect(within(side).queryByText('console alert')).not.toBeInTheDocument()
     // The Entities row is what the linked alerts name, once each, while the run recalls none.
-    expect(within(side).getByText('web-1, alice, db-2')).toBeInTheDocument()
+    expect(Array.from(side.querySelectorAll('.side-ent')).map((el) => el.textContent)).toEqual(['web-1', 'alice', 'db-2'])
     expect(within(side).getByText('no door')).toBeInTheDocument()
     expect(within(side).queryByText('gone')).not.toBeInTheDocument()
     const link = within(side).getByRole('link', { name: 'Open in source' })
@@ -1199,22 +1364,30 @@ describe('case page', () => {
     testState.convos = [{
       id: 'conv-hunt',
       case_id: 'case-hunt',
-      messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not.' }],
+      messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not, and h1 is ruled out.' }],
     }]
     const { showCase } = renderDetail('case-hunt')
 
-    expect(await screen.findByRole('button', { name: 'e1' })).toBeInTheDocument()
+    // the chip names the step and source the row came from (#2285), where the answer wrote the id and once under it
+    const chips = await screen.findAllByRole('button', { name: 'step 2 · elastic' })
+    expect(chips).toHaveLength(2)
+    expect(chips[0]).toHaveAttribute('title', 'no login')
+    expect(screen.queryByRole('button', { name: 'e1' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'ghost-9' })).not.toBeInTheDocument()
     expect(screen.queryByText('no login')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'e1' }))
+    fireEvent.click(chips[1])
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
     const row = (await screen.findByText('no login')).closest('[data-evidence-id]')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
     expect(row).toHaveClass('cite-target')
 
+    // an explanation the answer names is a chip too, and opens the Explanations tab
+    fireEvent.click(screen.getByRole('button', { name: 'explanation · The host is owned' }))
+    expect(screen.getByRole('tab', { name: /^Explanations/ })).toHaveAttribute('aria-selected', 'true')
+
     showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByText(/The row e1 matters/)).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText(/ghost-9 does not/)).not.toBeInTheDocument())
   })
 
   const decCase = {
@@ -1231,7 +1404,7 @@ describe('case page', () => {
   const queue = (...items: NeedsYouItem[]) =>
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: items.length, items } } as never)
   const irreversible = () =>
-    need({ source_id: 'act-irr', title: 'Isolate host', reason: '', kind: 'checkpoint', reversibility: 'irreversible' })
+    need({ source_id: 'act-irr', title: 'Isolate host', reason: '', reversibility: 'irreversible' })
 
   it('shows a reversible and an irreversible ask with their own controls', async () => {
     testState.cases = [decCase]
@@ -1453,7 +1626,7 @@ describe('case page', () => {
     try {
       testState.cases = [{ case_id: 'case-dec', title: 'Decision case', status: 'open', priority: 'high', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [] }]
       vi.mocked(approvalsApi.needsYou).mockResolvedValue({
-        data: { count: 3, items: [need({ reason: '' }), need({ source_id: 'a2', title: 'Two', created_at: '2026-06-15T05:00:00Z' }), need({ source_id: 'a3', title: 'Three', created_at: 'garbage' })] },
+        data: { count: 3, items: [need({ reason: '', kind: 'checkpoint' }), need({ source_id: 'a2', title: 'Two', kind: 'checkpoint', created_at: '2026-06-15T05:00:00Z' }), need({ source_id: 'a3', title: 'Three', kind: 'checkpoint', created_at: 'garbage' })] },
       } as never)
       renderCase('case-dec')
       expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
@@ -1465,6 +1638,51 @@ describe('case page', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('gives a paused run the full block and collapses proposed actions into rows', async () => {
+    testState.cases = [decCase]
+    const proposals = ['Isolate WS-1', 'Isolate WS-2', 'Disable bob', 'Block 5.6.7.8', 'Disable eve'].map((title, i) =>
+      need({ source_id: `p${i}`, title, reversibility: i === 1 ? 'irreversible' : 'reversible' }),
+    )
+    queue(...proposals, need({ source_id: 'cp', kind: 'checkpoint', title: 'Proceed to containment?' }))
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    renderCase('case-dec')
+
+    expect(await screen.findByRole('heading', { name: 'Proceed to containment?' })).toBeInTheDocument()
+    expect(document.querySelectorAll('.case-needs article')).toHaveLength(1)
+    const rows = screen.getByRole('list', { name: 'Proposed actions' })
+    expect(within(rows).getAllByRole('listitem')).toHaveLength(3)
+    expect(screen.getByText('+2 more proposed actions')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
+    expect(within(rows).getAllByRole('listitem')).toHaveLength(5)
+    expect(within(rows).getByRole('button', { name: /^Hold to approve Isolate WS-2\. Press and hold/ })).toBeInTheDocument()
+
+    // a row approves through the same fuse and leaves at once
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve Disable bob' }))
+      expect(screen.queryByText('Disable bob')).not.toBeInTheDocument()
+      await tick(8000)
+      expect(approvalsApi.approve).toHaveBeenCalledWith('p2')
+    } finally {
+      vi.useRealTimers()
+    }
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(document.querySelector('.case-needs-strip')?.textContent).toContain('Proceed to containment?')
+  })
+
+  it('names how many proposals wait when no run is paused', async () => {
+    testState.cases = [decCase]
+    queue(need(), need({ source_id: 'a2', title: 'Isolate WS-1' }), need({ source_id: 'a3', title: 'Disable bob' }))
+    renderCase('case-dec')
+
+    expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'More proposed actions · 2' })).toBeInTheDocument()
+    expect(document.querySelector('.case-reason')?.textContent).toBe('3 proposed actions')
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(document.querySelector('.case-needs-strip')?.textContent).toContain('3 proposed actions')
   })
 
   it('shows the error and renders nothing without items', async () => {
@@ -1665,6 +1883,24 @@ describe('case page', () => {
       expect(onBack).toHaveBeenCalledTimes(1)
     })
 
+    it('full page: a closed dialog that stays mounted (the Ask Vigil dock) does not stop Escape; an open one does', async () => {
+      testState.cases = [open('case-9')]
+      const onBack = vi.fn()
+      renderDetail('case-9', { onBack })
+      await screen.findByRole('heading', { name: 'Frame case' })
+      const dock = document.createElement('aside')
+      dock.setAttribute('role', 'dialog')
+      dock.setAttribute('aria-hidden', 'true')
+      document.body.appendChild(dock)
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+
+      dock.setAttribute('aria-hidden', 'false')
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+      dock.remove()
+    })
+
     it('opens Edit and Merge from the ⋯ menu; Merge loads its own picker', async () => {
       testState.cases = [open('case-9'), { ...open('case-10'), title: 'Other case' }]
       renderDetail('case-9')
@@ -1780,7 +2016,8 @@ describe('case page', () => {
       const panel = await side()
       expect(await panel.findByText('Incident response')).toBeInTheDocument()
       expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.00')
-      expect(await panel.findByText('host-1, ada')).toBeInTheDocument()
+      expect(await panel.findByText('host-1')).toHaveClass('side-ent-head')
+      expect(panel.getByText('ada')).toHaveClass('side-ent-head')
       expect(panel.getByText('$1.00 of $2.00')).toBeInTheDocument()
       expect(panel.getByText('Fair')).toHaveClass('fair')
       const meter = panel.getByRole('meter')
@@ -2055,9 +2292,11 @@ describe('following a live run', () => {
     expect(screen.queryByRole('region', { name: 'Run state' })).not.toBeInTheDocument()
   })
 
-  it('says handed off in Findings so far', async () => {
+  it('says handed off in Findings so far, as a word beside the explanation rather than a list bullet', async () => {
     open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
-    expect(await screen.findByText('handed off — Still forming')).toBeInTheDocument()
+    const row = (await screen.findByText('Still forming')).closest('li') as HTMLElement
+    expect(row.closest('ul')).toHaveClass('case-findings')
+    expect(within(row).getByText('Handed off')).toHaveClass('case-expl-pill')
   })
 })
 
@@ -2174,5 +2413,197 @@ describe('watching a run, its cost and its agents', () => {
     const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')
     expect(rows[1]).toHaveTextContent('who logged in')
     expect(screen.queryByText('ABANDON')).not.toBeInTheDocument()
+  })
+})
+
+describe('a kernel hunt on its case', () => {
+  const run = (hunt: Record<string, unknown>, over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'active', ...hunt }, ...over })
+  const open = (id: string, body: unknown, state = 'executing') => {
+    testState.cases = [{ ...openCase(id), combined_state: state, investigations: [investigation(state, state === 'executing', `run-${id}`)] }]
+    testState.runs[`run-${id}`] = body
+    renderCase(id)
+  }
+  let queued: NeedsYouItem[] = []
+  const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+  beforeEach(() => {
+    queued = []
+    vi.mocked(approvalsApi.needsYou).mockImplementation(() => Promise.resolve({ data: { count: queued.length, items: queued } }) as never)
+  })
+
+  const GATE = {
+    checkpoint_id: 'cp-1',
+    checkpoint_class: 'hypothesis_approval',
+    question: 'Approve and start this hunt on 2 explanations',
+    raised_at: '2026-06-15T09:00:00Z',
+    context: {
+      hypotheses: [
+        { hypothesis_id: 'h1', statement: 'FIN-WS-114 is beaconing to cdn-invoicesync.net after rundll32 ran from Temp', provenance: 'operator' },
+        { hypothesis_id: 'h0', statement: 'the activity has a legitimate explanation and is not adversary action', provenance: 'base_rate' },
+      ],
+    },
+  }
+  const gated = () => run({ status: 'pending_approval', open_checkpoint: GATE }, { status: 'paused', reason: 'Waiting for your approval: Approve and start this hunt on 2 explanations' })
+  const served = (): NeedsYouItem => need({
+    kind: 'checkpoint', source_id: 'act-gate', title: GATE.question, reason: 'Vigil wants your go-ahead on the explanations it will test.',
+    case_id: 'case-gate', checkpoint_id: 'cp-1', checkpoint_class: 'hypothesis_approval',
+    hypotheses: GATE.context.hypotheses,
+  })
+
+  it('names every explanation it asks you to approve, the benign one labelled, and counts as the Explanations tab does', async () => {
+    queued = [served()]
+    open('case-gate', gated(), 'waiting_approval')
+    const block = (await screen.findByRole('heading', { name: GATE.question })).closest('article') as HTMLElement
+    const listed = within(block).getByRole('list', { name: 'What you are approving' })
+    const rows = within(listed).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveTextContent('Yours, to test')
+    expect(rows[0]).toHaveTextContent('FIN-WS-114 is beaconing to cdn-invoicesync.net after rundll32 ran from Temp')
+    expect(rows[1]).toHaveTextContent('The benign explanation it is tested against')
+    expect(rows[1]).toHaveTextContent('the activity has a legitimate explanation and is not adversary action')
+    // "2 explanations" in the ask, as the Explanations tab will count them
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Explanations/ })).toHaveTextContent('2'))
+  })
+
+  it('shows the decision with its Approve the moment the run waits, before the approvals queue has served it', async () => {
+    open('case-gate', gated(), 'waiting_approval')
+    const block = (await screen.findByRole('heading', { name: GATE.question })).closest('article') as HTMLElement
+    expect(within(block).getByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(within(block).getAllByRole('listitem')).toHaveLength(2)
+    // no paused strip without its block
+    expect(screen.queryByRole('region', { name: 'Run state' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Waiting for your approval/)).not.toBeInTheDocument()
+
+    // Approve goes through the queue's own item once it is there.
+    queued = [served()]
+    fireEvent.click(within(block).getByRole('button', { name: 'Approve' }))
+    expect(await screen.findByText(`Approving: ${GATE.question}`)).toBeInTheDocument()
+  })
+
+  it('says approved at once after Approve and never flips back to waiting while the run catches up', async () => {
+    queued = [served()]
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    open('case-gate', gated(), 'waiting_approval')
+    await screen.findByRole('heading', { name: GATE.question })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      const state = screen.getByRole('region', { name: 'Run state' })
+      expect(state).toHaveTextContent('Approved')
+      expect(document.querySelector('.state-pill')).toHaveTextContent('Executing')
+
+      queued = []
+      for (const ms of [4000, 4000, 1, 5000, 5000]) {
+        await tick(ms) // the fuse commits, the queue empties, the run is still parked on cp-1
+        expect(screen.queryByText(/Waiting for your approval/)).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+        expect(screen.getByRole('region', { name: 'Run state' })).toHaveTextContent('Approved')
+      }
+      expect(approvalsApi.approve).toHaveBeenCalledWith('act-gate')
+
+      // The run reads the answer and goes on: the live card takes over.
+      testState.runs['run-case-gate'] = run({ status: 'active', iteration: 4 })
+      testState.cases = testState.cases.map((c) => ({ ...c, combined_state: 'executing' }))
+      await tick(5000)
+      expect(await screen.findByText('Now · step 4')).toBeInTheDocument()
+      expect(screen.queryByText('Approved')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  const PARKED = run({ status: 'parked', reason: 'ran out of turns: iteration 48 of 48, having spent $0.1200 of $15.00' }, { status: 'paused' })
+
+  it('offers Keep going on a hunt parked at its limit, sends the run page\'s extend, and counts it as needing you', async () => {
+    queued = [need({ kind: 'parked', source_id: 'run-case-cap', run_id: 'run-case-cap', title: 'Keep the hunt going?', reason: 'Ran out of turns: iteration 48 of 48, having spent $0.1200 of $15.00', created_at: '', case_id: 'case-cap' })]
+    open('case-cap', PARKED, 'open')
+    const block = (await screen.findByRole('heading', { name: 'Keep the hunt going?' })).closest('article') as HTMLElement
+    expect(document.querySelector('.state-pill')).toHaveTextContent('Needs you')
+    expect(block).toHaveTextContent('Ran out of turns: iteration 48 of 48')
+    expect(within(block).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    fireEvent.click(within(block).getByRole('button', { name: '+3 turns' }))
+    await waitFor(() => expect(workflowApi.steer).toHaveBeenCalledWith('run-case-cap', 'extend', '', { grant: { iterations: 3, cost_usd: 0, wall_ms: 0 } }))
+    expect(await within(block).findByRole('status')).toHaveTextContent('Keep going sent: +3 turns')
+  })
+
+  it('offers Keep going on the paused card too, before the queue has listed the parked hunt', async () => {
+    open('case-cap2', PARKED, 'open')
+    const state = await screen.findByRole('region', { name: 'Run state' })
+    expect(state).toHaveTextContent('Ran out of turns')
+    expect(within(state).getByRole('group', { name: 'Keep going' })).toBeInTheDocument()
+  })
+
+  it('offers nothing new on a run that ended for good', async () => {
+    open('case-done', run({ status: 'terminal', outcome: 'completed', reason: 'concluded' }, { status: 'completed' }), 'open')
+    expect(await screen.findByRole('region', { name: 'Run outcome' })).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Keep going' })).not.toBeInTheDocument()
+  })
+
+  it('ends the Now card with the run: one outcome off the verdicts, the prose behind the ⓘ, the open question as a decision', async () => {
+    const prose = 'Accurate standing: h-1 should be reported as inconclusive, not proven, pending the host.'
+    open('case-ended', run({
+      status: 'terminal',
+      outcome: 'completed',
+      reason: `the agent stopped before the hunt could conclude (refused: open question q-fd133cef scores 8, at or above the priority floor of 5: Which host carries dl-005?): ${prose}`,
+      open_questions: [{ question_id: 'q-fd133cef', question: 'Which host carries dl-005 and dl-003?', entity_key: null, hypothesis_id: null, spawned_iteration: 30 }],
+      hypotheses: [
+        { ...HUNT.hypotheses[0], status: 'proven', supports: 5, weakens: 0, statement: 'A finance workstation is beaconing' },
+        { ...HUNT.hypotheses[1], status: 'inconclusive', statement: 'the benign account' },
+      ],
+    }, { status: 'completed' }), 'open')
+
+    const outcome = await screen.findByRole('region', { name: 'Run outcome' })
+    expect(outcome).toHaveTextContent('Ended')
+    expect(outcome).toHaveTextContent('1 proven · 1 inconclusive')
+    expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Stop to ask you/)).not.toBeInTheDocument()
+    expect(screen.queryByText(prose, { exact: false })).not.toBeInTheDocument()
+    expect(within(outcome).getByRole('button', { name: 'What the run reported' })).toBeInTheDocument()
+
+    const left = screen.getByRole('region', { name: 'Left open' })
+    expect(within(left).getByRole('heading', { name: 'Which host carries dl-005 and dl-003?' })).toBeInTheDocument()
+    expect(within(left).getByRole('button', { name: 'Ask about this' })).toBeInTheDocument()
+    // Findings so far says the same verdicts the outcome does.
+    expect(screen.getByText('A finance workstation is beaconing').closest('li')).toHaveTextContent('Proven')
+  })
+
+  it('names the hunt lead as the agent on the case and shows the move in words', async () => {
+    open('case-words2', run({
+      moves: [{ decision_id: 'r9', query_intent: 'Searched alerts for HTTPS beaconing', action: 'QUERY', worker_agent_id: 'Hunt lead', iteration: 3, created_at: '2026-06-15T09:14:00Z' }],
+    }))
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing')
+    expect(now).not.toHaveTextContent('{')
+    const agents = screen.getByRole('table', { name: 'Agents' })
+    expect(agents).toHaveTextContent('Hunt lead')
+  })
+
+  it('says not recorded for a cost the run never priced, and shows a sub-cent turn to the digit', async () => {
+    open('case-costs', run({
+      calls: [
+        { question: 'q', tool: 'search_findings', result_length: 10, cost_usd: null, duration_ms: 8, iteration: 1 },
+        { question: 'q', tool: 'lookup_indicators', result_length: 10, cost_usd: 0.0015, iteration: 2 },
+      ],
+    }))
+    fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
+    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+    const [unpriced, priced] = Array.from(card.querySelectorAll('li'))
+    expect(unpriced).toHaveTextContent('not recorded')
+    expect(unpriced).toHaveTextContent('8 ms')
+    expect(unpriced).not.toHaveTextContent('$0.00')
+    expect(priced).toHaveTextContent('$0.0015')
+    expect(priced).toHaveTextContent('not recorded') // its latency
+  })
+
+  it('says "Coming in a later release" on every drawn but not live control, never the internal wording', async () => {
+    open('case-later', run({ evidence: [...HUNT.evidence, { evidence_id: 'g1', iteration: 1, source_system: 'deployment', summary: 'no telemetry search', is_gap: true, gap_detail: null, source_tier: null, bears_on: [] }] }))
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    for (const name of ['+ Add an explanation', 'Rule one out']) {
+      expect(await screen.findByRole('button', { name })).toHaveAttribute('title', 'Coming in a later release')
+    }
+    fireEvent.click(screen.getByRole('tab', { name: /Memory and blind spots/ }))
+    expect(await screen.findByRole('button', { name: 'Record a blind spot' })).toHaveAttribute('title', 'Coming in a later release')
+    expect(document.querySelector('[title*="phase-2"], [aria-label*="phase-2"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Tell' })).toHaveAttribute('title', 'Coming in a later release')
   })
 })

@@ -1,0 +1,12 @@
+---
+name: eval case
+
+objectives:
+  - Decide whether the alert is an attack, benign activity, or something the available telemetry cannot settle, and say which.
+
+directives:
+  lead: |
+    Work the alert to a conclusion a reader can act on. Name the evidence the
+    conclusion rests on and any question you could not answer.
+---
+An alert has been raised. Its details are in the run's prompt.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
+import { loadPlugin } from "../../plugins/index.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
@@ -8,12 +9,15 @@ import type { Harness } from "../../core/loop.js";
 import { nullMemory, recalling } from "../../core/memory.js";
 import { registryOf } from "../../core/registry.js";
 import type { Memory } from "../../core/seams.js";
-import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type RunSpec } from "../../core/spec.js";
+import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from "../../core/spec.js";
+import { replayFrames } from "../../core/replay.js";
 import { InProcessState } from "../../core/state.js";
 import type { StreamEvent } from "../../core/stream.js";
-import { chatEvents } from "../../workflows/chat/sse.js";
-import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from "../../workflows/chat/workflow.js";
-import { huntNotes } from "../../workflows/hunt/recall.js";
+import { chatEvents } from "../../plugins/chat/sse.js";
+import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from "../../plugins/chat/workflow.js";
+import type { CallPayload } from "../../contracts/events.js";
+import { conversationHistory } from "../../core/agent.js";
+import { huntNotes } from "../../plugins/hunt/recall.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -63,8 +67,12 @@ function harnessOf(script: readonly ScriptedTurn[], state = new InProcessState()
   };
 }
 
-async function converse(harness: Harness, turns: readonly Turn[] = ASKED): Promise<{ seen: StreamEvent<string>[]; report: ChatReport }> {
-  const stream = runChat(harness, { run_id: RUN, spec: specOf(), turns });
+async function converse(
+  harness: Harness,
+  turns: readonly Turn[] = ASKED,
+  extra: { spec?: RunSpec; agent_id?: string } = {},
+): Promise<{ seen: StreamEvent<string>[]; report: ChatReport }> {
+  const stream = runChat(harness, { run_id: RUN, spec: extra.spec ?? specOf(), turns, ...(extra.agent_id === undefined ? {} : { agent_id: extra.agent_id }) });
   const seen: StreamEvent<string>[] = [];
   for (;;) {
     const next = await stream.next();
@@ -135,10 +143,10 @@ describe("the conversation is the run", () => {
 });
 
 describe("what the workflow refuses", () => {
-  it("refuses an arch whose lead answers in JSON", () => {
-    const spec = { ...specOf(), roles: { workers: {}, lead: { prompt: "x", description: "", output_schema: {}, tools: [], needs: [] } } };
-    const stream = runChat(harnessOf([]), { run_id: RUN, spec, turns: ASKED });
-    return expect(stream.next()).rejects.toThrow(SpecError);
+  // What a conversation answers in is the chat plugin's to say, not the arch's: a
+  // person is answered in prose whatever an arch's lead declares.
+  it("answers in prose, which is what the chat plugin declares", () => {
+    expect(loadPlugin("chat").manifest.conclusion).toEqual({ schema: null });
   });
 
   it("refuses a turn with nothing said in it", () => {
@@ -196,6 +204,122 @@ describe("the opening turn is the one the prefix caches on", () => {
     expect(await opening(ASKED)).toEqual(
       await opening([...ASKED, { role: "assistant", content: "nothing odd" }, { role: "user", content: "sure?" }]),
     );
+  });
+});
+
+describe("what the request says about its agent and its model", () => {
+  it("credits each tool call to the conversation's agent, and to none without one (#1560)", async () => {
+    const credited: (string | undefined)[] = [];
+    const ask = async (agent_id?: string) => {
+      const harness = harnessOf([{ calls: [{ tool: "findings", args: "{}" }] }, { content: "ok" }]);
+      harness.dispatch = {
+        invoke: (tool, args, signal, agentId) => {
+          credited.push(agentId);
+          return localDispatch.invoke(tool, args, signal, agentId);
+        },
+      };
+      await converse(harness, ASKED, agent_id === undefined ? {} : { agent_id });
+    };
+
+    await ask("triage-agent");
+    await ask();
+    expect(credited).toEqual(["triage-agent", undefined]);
+  });
+
+  it("folds a long thread sooner on a small-window model, and not at all without a window (#2125)", async () => {
+    const turns: Turn[] = [
+      ...ASKED,
+      { role: "assistant", content: "a".repeat(30_000) },
+      { role: "user", content: "and the next hop?" },
+      { role: "assistant", content: "b".repeat(30_000) },
+      { role: "user", content: "anything else?" },
+    ];
+    const folds = async (spec: RunSpec) => {
+      const { seen } = await converse(harnessOf([{ content: "ok" }]), turns, { spec });
+      return seen.filter((event) => event.type === "folded").length;
+    };
+
+    expect(await folds(specOf(`${CONFIG}context_window: 16384\n`))).toBeGreaterThan(0);
+    expect(await folds(specOf())).toBe(0);
+  });
+
+  it("replays a turn the window folded exactly as it was sent, off the ledger alone", async () => {
+    const turns: Turn[] = [
+      ...ASKED,
+      { role: "assistant", content: "a".repeat(30_000) },
+      { role: "user", content: "and the next hop?" },
+      { role: "assistant", content: "b".repeat(30_000) },
+      { role: "user", content: "anything else?" },
+    ];
+    const state = new InProcessState();
+    await converse(harnessOf([{ content: "ok" }], state), turns, { spec: specOf(`${CONFIG}context_window: 16384\n`) });
+
+    const frames = (await state.read(RUN)).filter((event) => event.kind === "frame");
+    expect(frames.some((event) => (event.payload as { fold: { folded: number } }).fold.folded > 0)).toBe(true);
+    const replayed = replayFrames(await state.read(RUN));
+    expect(replayed.frames.length).toBeGreaterThan(0);
+    expect(replayed.frames.map((frame) => frame.mismatch)).toEqual(replayed.frames.map(() => null));
+  });
+});
+
+describe("a follow-up keeps what its earlier answers read (#2281)", () => {
+  const ANSWERED = "10.0.0.4 is FIN-WS-114, and it beacons to 203.0.113.47";
+  const FOLLOW_UP: Turn[] = [...ASKED, { role: "assistant", content: ANSWERED }, { role: "user", content: "who was logged on?" }];
+
+  it("carries the first answer's tool calls and results into the second turn's request", async () => {
+    const state = new InProcessState();
+    await converse(harnessOf([{ calls: [{ tool: "findings", args: '{"host": "10.0.0.4"}' }] }, { content: ANSWERED }], state));
+
+    const second = harnessOf([{ content: "jdoe" }], state);
+    await converse(second, FOLLOW_UP);
+
+    const messages = (second.provider as ScriptedProvider).requests[0]!.messages;
+    const answer = messages.findIndex((message) => message.role === "assistant" && message.content === ANSWERED);
+    const asked = messages[answer + 1]!;
+    expect(asked.role).toBe("user");
+    expect(asked.content).toContain("<vigil:earlier_reads>");
+    expect(asked.content).toContain('findings {"host": "10.0.0.4"}');
+    expect(asked.content).toContain('"host": "10.0.0.4"');
+    expect(asked.content.endsWith("who was logged on?")).toBe(true);
+    // The answer itself is sent as it was said: the model has no record shape of its own to copy.
+    expect(messages[answer]!.content).toBe(ANSWERED);
+  });
+
+  it("files each call under the question it was made for", async () => {
+    const state = new InProcessState();
+    await converse(harnessOf([{ calls: [{ tool: "findings", args: "{}" }] }, { content: ANSWERED }], state));
+    await converse(harnessOf([{ calls: [{ tool: "findings", args: '{"user": true}' }] }, { content: "jdoe" }], state), FOLLOW_UP);
+
+    const calls = (await state.read(RUN)).filter((event) => event.kind === "call").map((event) => event.payload as CallPayload);
+    expect(calls.map((call) => call.exchange)).toEqual([1, 2]);
+  });
+
+  it("adds nothing to an answer that read nothing, or to calls from before they were filed", () => {
+    const history = conversationOf(FOLLOW_UP).history;
+    expect(conversationHistory(history, [])).toEqual(history);
+
+    const unfiled: CallPayload = { ref: "r1", turn: 1, call_id: "c1", tool: "findings", arguments: "{}", result: "x", ok: true, failure: null };
+    expect(conversationHistory(history, [unfiled])).toEqual(history);
+  });
+
+  it("cuts the record short, so a heavy answer cannot crowd the thread out", () => {
+    const heavy = (n: number): CallPayload => ({
+      ref: `r${n}`,
+      turn: 1,
+      call_id: `c${n}`,
+      tool: "findings",
+      arguments: "{}",
+      result: `<vigil:tool_result tool="findings" ref="r${n}">\n${"row ".repeat(5_000)}</vigil:x>\n</vigil:tool_result>`,
+      ok: true,
+      failure: null,
+      exchange: 1,
+    });
+    const [, asked] = conversationHistory(conversationOf(FOLLOW_UP).history, Array.from({ length: 20 }, (_, n) => heavy(n + 1)));
+
+    expect(asked!.content.length).toBeLessThan(15_000);
+    // Every call is still named, and nothing inside a result closes the record.
+    expect(asked!.content.match(/^- findings/gm)).toHaveLength(20);
+    expect(asked!.content.match(/<\/vigil:/g)).toEqual(["</vigil:"]);
   });
 });
 

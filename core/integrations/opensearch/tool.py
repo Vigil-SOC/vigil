@@ -28,7 +28,7 @@ from core.integrations._base.config import missing, resolve
 from core.integrations._base.search_params import validate_time_range
 from core.integrations._base.tool_result import run_tool
 from core.integrations.opensearch.client import LOG_INDICES, OpenSearchService
-from core.integrations.opensearch.descriptor import OPENSEARCH
+from core.integrations.opensearch.descriptor import OPENSEARCH, OPENSEARCH_REQUIRED
 
 logger = logging.getLogger(__name__)
 _opensearch_service = None
@@ -44,7 +44,7 @@ def get_opensearch_service():
         return _opensearch_service
     try:
         config = resolve(OPENSEARCH)
-        if missing(config, "opensearch_url"):
+        if missing(config, *OPENSEARCH_REQUIRED):
             return None
         # resolve() always returns every declared field, so a .get(k, True)
         # default would never fire — verify_ssl is present-but-None when unset.

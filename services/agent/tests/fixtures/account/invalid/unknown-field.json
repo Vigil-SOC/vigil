@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12",
+      "run_kind": "hunt"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-1",
+      "run_id": "f10a0c02-6c2a-4577-9069-d22ecaf50e12",
+      "claim": "c",
+      "payload": {
+        "dest_ip": "45.77.53.176"
+      }
+    }
+  ]
+}

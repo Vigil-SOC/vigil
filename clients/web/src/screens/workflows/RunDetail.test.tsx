@@ -1115,6 +1115,20 @@ describe('opening a move for the digest it was shown', () => {
     expect(screen.getByText(/Nothing recalled/)).toBeInTheDocument()
   })
 
+  it('shows a controller decision as recorded and claims no rebuild', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.getReplay).mockResolvedValueOnce({
+      data: report({ decisions: [{ ...report().decisions[0], exact: false, rebuilt: null, mismatch: null }], recalled: [] }),
+    } as never)
+    renderPanel({ hunt: hunt({ moves }) })
+    tabTo(/Moves/)
+    fireEvent.click(screen.getByText(/start on the flow telemetry/))
+
+    expect(await screen.findByText('as recorded — not rebuilt')).toBeInTheDocument()
+    expect(screen.queryByText('rebuild matches the record')).not.toBeInTheDocument()
+    expect(screen.queryByText(/prefix inferred/)).not.toBeInTheDocument()
+  })
+
   it('reads out a refusal rather than leaving the row blank', async () => {
     const { workflowApi } = await import('../../services/api')
     vi.mocked(workflowApi.getReplay).mockRejectedValueOnce({ response: { data: { detail: 'Nothing to replay for run: run-1' } } })

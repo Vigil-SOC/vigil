@@ -5,17 +5,10 @@ topology, adjacent-asset lookup, and blast-radius computation during
 investigations. This service is consumed by `services/api/routers/vstrike.py` (proxy
 endpoints) and `core/integrations/vstrike/tool.py` (MCP server).
 
-Two auth modes are supported:
-
-1. Bearer API key (legacy topology path) — set `VSTRIKE_API_KEY`. Used for
-   `/api/v1/topology/*` and `/api/v1/findings`.
-2. Username + password (new UI control / MCP path) — set `VSTRIKE_USERNAME`
-   and `VSTRIKE_PASSWORD`. The service POSTs to `/mcp-login` to exchange them
-   for a JSON Web Token, then uses the JWT to call MCP tools (`ui-login-token`,
-   `network-list`, `ui-network-load`) at `MCP_RPC_PATH` via JSON-RPC.
-
-Either mode (or both) is sufficient to construct the service. The
-`has_ui_credentials` property lets callers branch.
+Auth is username + password (`VSTRIKE_USERNAME`, `VSTRIKE_PASSWORD`): the
+service POSTs to `/mcp-login` to exchange them for a JSON Web Token, then uses
+the JWT for REST calls and for MCP tools (`ui-login-token`, `network-list`,
+`ui-network-load`) at `MCP_RPC_PATH` via JSON-RPC.
 """
 
 from __future__ import annotations
@@ -28,8 +21,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.integrations._base.config import missing, resolve
 from core.integrations._base.tls import tls_verify
-from core.secrets import get_secret
+from core.integrations.vstrike.descriptor import VSTRIKE
 
 logger = logging.getLogger(__name__)
 
@@ -886,70 +880,20 @@ class VStrikeService:
         return self._call_mcp_tool("ui-rightpanel-focus", dict(extra))
 
 
-def _config_value(key: str, config: Optional[Dict[str, Any]]) -> Optional[str]:
-    if config is None:
-        return None
-    value = config.get(key)
-    return value if isinstance(value, str) and value else None
-
-
 def get_vstrike_service() -> Optional[VStrikeService]:
-    """Construct a VStrikeService from env / encrypted store, or None.
+    """Construct a VStrikeService from the resolved integration config, or None.
 
-    Configured when ``VSTRIKE_BASE_URL`` is set AND ``VSTRIKE_USERNAME`` +
-    ``VSTRIKE_PASSWORD`` are both present. Credentials are looked up via
-    Vigil's secrets manager (encrypted store → env → dotenv → keyring,
-    in priority order). The non-secret ``url``, ``verify_ssl`` and
-    ``ca_cert_path`` values can come from the same chain, or from
-    ``IntegrationConfig`` (DB) and its JSON back-compat mirror via
-    ``core.config.get_integration_config``.
-
-    The legacy ``VSTRIKE_API_KEY`` / ``api_key`` field is deprecated —
-    Vigil now exchanges username + password for a JWT internally on first
-    call and refreshes it on 401. Old api_key values left over in the
-    secrets store are tolerated but ignored.
+    Configured when ``url``, ``username`` and ``password`` all resolve.
+    ``resolve()`` reads the stored config and encrypted store where the process
+    has them (backend, stdio) and the ``VSTRIKE_*`` env otherwise (runner).
     """
-    base_url = get_secret("VSTRIKE_BASE_URL")
-    username = get_secret("VSTRIKE_USERNAME")
-    password = get_secret("VSTRIKE_PASSWORD")
-    verify_ssl_value = get_secret("VSTRIKE_VERIFY_SSL")
-    ca_cert_path = get_secret("VSTRIKE_CA_CERT_PATH")
-    verify_ssl_env: Optional[bool] = None
-    if verify_ssl_value is not None:
-        verify_ssl_env = verify_ssl_value.lower() != "false"
-
-    # Non-secret fields (and any legacy plaintext username/password) may
-    # still live in the integration config — read it once for back-compat.
-    config: Optional[Dict[str, Any]] = None
-    try:
-        from core.config import get_integration_config
-
-        config = get_integration_config("vstrike")
-    except Exception as e:
-        logger.debug("VStrike integration config not loaded: %s", e)
-        config = None
-
-    base_url = base_url or _config_value("url", config)
-    username = username or _config_value("username", config)
-    password = password or _config_value("password", config)
-    ca_cert_path = ca_cert_path or _config_value("ca_cert_path", config)
-
-    if not base_url:
+    cfg = resolve(VSTRIKE)
+    if missing(cfg, "url", "username", "password"):
         return None
-    if not (username and password):
-        return None
-
-    if verify_ssl_env is not None:
-        verify_ssl = verify_ssl_env
-    elif config is not None and "verify_ssl" in config:
-        verify_ssl = bool(config.get("verify_ssl", True))
-    else:
-        verify_ssl = True
-
     return VStrikeService(
-        base_url=base_url,
-        verify_ssl=verify_ssl,
-        username=username,
-        password=password,
-        ca_cert_path=ca_cert_path,
+        base_url=cfg["url"],
+        verify_ssl=True if cfg["verify_ssl"] is None else cfg["verify_ssl"],
+        username=cfg["username"],
+        password=cfg["password"],
+        ca_cert_path=cfg["ca_cert_path"],
     )

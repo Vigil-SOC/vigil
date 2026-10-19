@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor, isHuntLike, registeredKinds } from "../../arch/registry.js";
+import { archFor, isHuntLike, registeredKinds } from "../../plugins/kinds.js";
 import { buildSpec, parseConfig, SpecError, type SpecPaths } from "../../core/spec.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -83,34 +83,32 @@ describe("the registry resolves a run kind to an arch", () => {
   });
 });
 
-describe("the shipped arches", () => {
-  it("loads threathunt.yaml unmodified, as a fan-out with a lead", () => {
+describe("the arch layer each plugin.yaml carries", () => {
+  // The allowance is the turn and call ceilings the retired fan-out arithmetic produced
+  // ((4 workers + 2) turns, times 8 + 2 calls each); a hunt runs to exactly these.
+  it("reads the hunt's as a lead and a critic, with its allowance and finding shape", () => {
     const spec = huntSpec();
-    expect(spec.arch).toBe("threathunt");
-    expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
-    expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
-    expect(spec.roles.critic).toBeDefined();
-    expect(spec.digest["evidence_window"]).toBe(25);
+    expect(spec.arch).toBe("hunt");
+    expect(spec.allowance).toEqual({ turns_per_iteration: 6, calls_per_iteration: 60 });
+    expect(Object.keys(spec.roles)).toEqual(["lead", "critic"]);
+    expect(spec.finding?.["required"]).toEqual(["source_system", "summary", "salience", "why_notable", "payload"]);
+    expect(spec.roles.lead?.tools).toEqual(["expand"]);
+    expect(spec.roles.critic?.prompt).toContain("disconfirmation critic");
+    expect(spec.roles.critic?.output_schema?.["required"]).toContain("benign_explanation_stands");
   });
 
-  // The hunt loop with an adjudicator's brief: same workers, critic and fan-out as
-  // threathunt.yaml, a lead that proposes a workflow and may not hand off to IR.
-  it("loads adjudicate.yaml as the hunt fan-out, minus HANDOFF_IR, plus proposed_workflow", () => {
+  // An adjudication is a hunt run as a second opinion: the same allowance, finding and critic.
+  it("reads the adjudicator's as the hunt's", () => {
+    const hunt = huntSpec();
     const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch }, archFor("adjudicate").actions);
     expect(spec.arch).toBe("adjudicate");
-    expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
-    expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
+    expect(spec.allowance).toEqual(hunt.allowance);
+    expect(spec.finding).toEqual(hunt.finding);
     expect(spec.roles.critic).toBeDefined();
-    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
-    expect(properties["action"]?.enum).not.toContain("HANDOFF_IR");
-    expect(properties["action"]?.enum).toContain("CONCLUDE");
-    expect(properties["proposed_workflow"]).toEqual({ type: ["string", "null"] });
-    expect(spec.roles.lead?.output_schema?.["required"]).not.toContain("proposed_workflow");
-    expect(spec.roles.lead?.prompt).toContain("You execute nothing");
   });
 
-  // The other shape the indirection has to carry: one role, its tools, no fan-out.
-  it("loads rootcause.yaml as one investigator answering in prose", () => {
+  // The other shape the indirection has to carry: one role, its tools, nothing to count.
+  it("reads root cause's as one investigator answering in prose", () => {
     const spec = buildSpec(
       {
         arch: archFor("root_cause").arch,
@@ -132,44 +130,28 @@ describe("the shipped arches", () => {
       archFor("root_cause").owned,
     );
     expect(spec.arch).toBe("rootcause");
-    expect(spec.dispatch.topology).toBe("single");
-    expect(spec.roles.workers).toEqual({});
+    expect(spec.allowance).toBeUndefined();
     expect(spec.roles.critic).toBeUndefined();
     expect(spec.roles.lead?.output_schema).toBeNull();
     expect(spec.roles.lead?.tools).toEqual(["record", "finish"]);
     expect(spec.roles.lead?.needs).toEqual(["telemetry_search"]);
   });
 
-  it("loads investigate.yaml as a single lead with no workers and no critic", () => {
+  it("reads investigate's as a single lead and no critic", () => {
     const spec = buildSpec(CASE, archFor("investigate").actions);
     expect(spec.arch).toBe("investigate");
-    expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });
-    expect(spec.roles.workers).toEqual({});
+    expect(spec.finding).toBeUndefined();
     expect(spec.roles.critic).toBeUndefined();
     expect(spec.roles.lead?.needs).toEqual([
       "case_records", "get_finding", "telemetry_search", "findings_search", "indicator_lookup",
     ]);
   });
 
-  it("generates the roster from the worker registry and narrows worker_agent_id to it", () => {
+  it("layers playbook directives onto the roles rather than replacing them", () => {
     const spec = huntSpec();
-    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
-    expect(spec.roles.lead?.prompt).toContain("- network_analyst — traffic shape");
-    expect(properties["worker_agent_id"]?.enum).toEqual(["threat_hunter", "network_analyst", "threat_intel", null]);
-  });
-
-  // A single-lead arch has no roster to generate and nothing to narrow it to.
-  it("leaves the lead schema alone when the arch declares no workers", () => {
-    const spec = buildSpec(CASE, archFor("investigate").actions);
-    expect(spec.roles.lead?.prompt).not.toContain("Workers you may dispatch");
-    expect(spec.roles.lead?.output_schema?.["properties"]).not.toHaveProperty("worker_agent_id");
-  });
-
-  it("layers playbook directives onto the arch prompts rather than replacing them", () => {
-    const spec = huntSpec();
-    expect(spec.roles.lead?.prompt).toContain("You are the Hunt Lead");
-    expect(spec.roles.workers["threat_intel"]?.prompt).toContain("snapshotted on the first day");
-    expect(spec.roles.workers["network_analyst"]?.prompt).toContain("seven-day export");
+    expect(spec.roles.lead?.prompt).toContain("seven-day export");
+    expect(spec.roles.critic?.prompt).toContain("disconfirmation critic");
+    expect(spec.roles.critic?.prompt).toContain("snapshotted on the first day");
     expect(spec.name).toBe("beaconing on the finance segment");
     expect(spec.narrative).toContain("stays busy overnight");
   });
@@ -204,7 +186,7 @@ describe("the three files are disjoint", () => {
 
 describe("the loader refuses an arch it could not honour", () => {
   it("rejects an action no workflow handles", () => {
-    expect(() => loadArchOnly(archOf("dispatch: { mode: serial }", "FLY"))).toThrow(
+    expect(() => loadArchOnly(archOf("", "FLY"))).toThrow(
       /roles\.lead declares action\(s\) no workflow handles: FLY/,
     );
   });
@@ -214,34 +196,23 @@ describe("the loader refuses an arch it could not honour", () => {
     expect(() => loadArchOnly(body)).toThrow(/needs a non-empty action enum/);
   });
 
-  // mode is checked rather than coerced, so it is not a field nothing reads.
-  it("rejects a topology nothing implements, at load rather than at run", () => {
-    expect(() => loadArchOnly(archOf("dispatch: { topology: hive }"))).toThrow(/no topology hive/);
+  // Worker roles and a dispatch policy went with the workers; an arch still naming
+  // them is refused rather than read as something nothing honours.
+  it("refuses the retired worker roles and dispatch policy", () => {
+    expect(() => loadArchOnly(archOf("dispatch: { mode: parallel }"))).toThrow(/dispatch belongs in no file/);
+    const body = archOf("").concat("\n  workers:\n    scout:\n      prompt: Look.");
+    expect(() => loadArchOnly(body)).toThrow(/unknown role group\(s\): workers/);
   });
 
-  it("rejects single declaring workers it would never dispatch to", () => {
-    const body = archOf("dispatch: { topology: single }").concat(
-      "\n  workers:\n    scout:\n      description: looks\n      prompt: Look.\n      output_schema: { type: object }",
+  it("refuses an allowance that is not two positive integers", () => {
+    expect(() => loadArchOnly(archOf("allowance: { turns_per_iteration: 0, calls_per_iteration: 60 }"))).toThrow(
+      /allowance\.turns_per_iteration must be a positive integer, got 0/,
     );
-    expect(() => loadArchOnly(body)).toThrow(/single dispatches to nobody/);
-  });
-
-  it("rejects fan_out with no workers to fan out to", () => {
-    expect(() => loadArchOnly(archOf("dispatch: { topology: fan_out }"))).toThrow(/needs workers/);
-  });
-
-  it("defaults to single when an arch declares no workers", () => {
-    expect(loadArchOnly(archOf("")).dispatch.topology).toBe("single");
-  });
-
-  it("rejects a dispatch mode that contradicts its worker count", () => {
-    expect(() => loadArchOnly(archOf("dispatch: { mode: serial, max_workers: 3 }"))).toThrow(
-      /dispatch\.mode serial is max_workers 1, so 3 contradicts it/,
-    );
+    expect(() => loadArchOnly(archOf("allowance: { workers: 4 }"))).toThrow(/unknown allowance key\(s\): workers/);
   });
 
   it("rejects a role granted a tool the config does not declare", () => {
-    const body = archOf("dispatch: { mode: serial }").replace("  lead:\n", "  lead:\n    tools: [nowhere]\n");
+    const body = archOf("").replace("  lead:\n", "  lead:\n    tools: [nowhere]\n");
     expect(() => loadArchOnly(body)).toThrow(/arch role lead needs tool\(s\) the config does not declare: nowhere/);
   });
 

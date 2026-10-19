@@ -19,7 +19,15 @@ const SOURCE_BADGES: Record<string, SourceBadge> = {
   aws_security_hub: { label: 'Security Hub', color: '#e88b1a', icon: 'shield' },
   darktrace: { label: 'Darktrace', color: '#8a90a6', icon: 'eye' },
   cloudflare_cloudy: { label: 'Cloudflare', color: '#8a90a6', icon: 'shield' },
+  zscaler: { label: 'Zscaler', color: '#8a90a6', icon: 'shield' },
+  proofpoint: { label: 'Proofpoint', color: '#8a90a6', icon: 'shield' },
+  infoblox: { label: 'Infoblox', color: '#8a90a6', icon: 'search' },
   webhook: { label: 'Webhook', color: '#8a90a6', icon: 'link' },
+  // Vigil's own stores, named on a hunt evidence row its turn read off Vigil (#2458).
+  vigil: { label: 'Vigil', color: '#a78bfa', icon: 'bot' },
+  vigil_alerts: { label: 'Vigil alerts', color: '#a78bfa', icon: 'bot' },
+  vigil_memory: { label: 'Vigil memory', color: '#a78bfa', icon: 'bot' },
+  vigil_threat_intel: { label: 'Vigil threat intel', color: '#a78bfa', icon: 'bot' },
   // The daemon's known-answer self-test (#923), not a connector.
   probe: { label: 'Probe', color: '#a78bfa', icon: 'bot' },
 }
