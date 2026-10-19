@@ -259,10 +259,10 @@ class SplunkService:
                 session, query, earliest_time, latest_time, max_count
             )
         except SplunkSearchError as e:
-            logger.error(f"Splunk search failed: {e}")
+            logger.error("Splunk search failed: %s", e)
             raise
         except _HTTP_ERRORS as e:
-            logger.error(f"Splunk search request failed: {e}")
+            logger.error("Splunk search request failed: %s", e)
             raise SplunkSearchError(
                 f"Splunk request failed: {type(e).__name__}: {e}"
             ) from e
