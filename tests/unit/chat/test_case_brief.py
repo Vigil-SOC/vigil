@@ -56,9 +56,15 @@ def reads(monkeypatch):
         mod.case_records_service, "list_case_investigations", lambda *_: []
     )
     monkeypatch.setattr(mod.case_records_service, "list_case_runs", lambda *_: [])
-    monkeypatch.setattr(mod.catalog, "is_hunt", lambda *_: state["hunt"])
+    monkeypatch.setattr(
+        mod.catalog,
+        "is_hunt",
+        lambda _w, wid: state["hunt"] and wid in ("w", "threat-hunt"),
+    )
 
     async def read(run_id):
+        if "read" in state:
+            return await state["read"](run_id)
         return state.get("views", {}).get(run_id, state["view"])
 
     monkeypatch.setattr(mod, "read_projection", read)
@@ -116,30 +122,111 @@ async def test_instruction_like_row_is_withheld_and_markers_cannot_be_forged(rea
     assert brief.count("</case_data>") == 1
 
 
-async def test_a_handoff_root_cause_run_does_not_take_over_the_hunt(reads):
-    # The handoff's root-cause run is newer, so case_run_refs lists it first.
+def _runs(reads, *extra):
+    """The case's hunt r-1 plus ``extra`` refs, newest first as case_run_refs lists them."""
+    started = [({**ref, "spawned_by": "r-1"}, state) for ref, state in extra]
     reads["refs"] = [
-        (
-            {
-                "run_id": "rca-1",
-                "workflow_id": "root-cause-analysis",
-                "status": "failed",
-                "spawned_by": "r-1",
-            },
-            "failed",
-        ),
+        *started,
         ({"run_id": "r-1", "workflow_id": "threat-hunt"}, "completed"),
     ]
-    reads["views"] = {"rca-1": {"findings": []}}
+
+
+RCA = (
+    {
+        "run_id": "rca-1",
+        "workflow_id": "root-cause-analysis",
+        "status": "failed",
+        "spawned_by": "r-1",
+    },
+    "failed",
+)
+
+
+async def test_a_handoff_root_cause_run_gets_its_own_section_not_the_hunts(reads):
+    _runs(reads, RCA)
+    reads["views"] = {
+        "rca-1": {
+            "run_kind": "root_cause",
+            "status": "terminal",
+            "outcome": "inconclusive",
+            "reason": "no transfer found",
+            "proven": 2,
+            "steps": [{"claim": "STEP-TEXT-NEVER-CARRIED"}],
+        }
+    }
     brief = await mod.case_brief("C", MagicMock())
-    assert "The case's run: r-1 (hunt)" in brief
-    assert "- ev-0 | weakens h-1 | saw thing 0" in brief
-    assert "- ev-1 |" in brief
-    assert "Run state (r-1): ended" in brief
-    assert (
-        "Follow-on run: rca-1 (root-cause-analysis), started by r-1: stopped" in brief
+    assert brief.index("The case's run: r-1 (hunt)") < brief.index(
+        "Another run on this case: rca-1 (root-cause run)"
     )
-    assert "Findings: none yet." not in brief
+    assert "- ev-0 | weakens h-1 | saw thing 0" in brief
+    assert "Run state (r-1): ended" in brief and "Run state (rca-1)" not in brief
+    assert "Outcome: inconclusive" in brief and "Proven steps: 2" in brief
+    assert "STEP-TEXT-NEVER-CARRIED" not in brief
+
+
+async def test_every_run_reads_its_own_rows_and_the_rules_say_not_to_rule(reads):
+    other = ({"run_id": "r-2", "workflow_id": "investigate"}, "completed")
+    _runs(reads, other)
+    reads["views"] = {
+        "r-2": {
+            "findings": [{"agent_id": "triage", "answer": "transfer to 10.0.0.9"}],
+            "disposition": "escalate",
+        }
+    }
+    brief = await mod.case_brief("C", MagicMock())
+    assert "Another run on this case: r-2 (lead investigation)" in brief
+    assert "disposition escalate" in brief
+    assert "triage: transfer to 10.0.0.9" in brief and "- ev-1 |" in brief
+    assert "do not rule on which run is right" in brief
+
+
+async def test_one_unreadable_run_is_one_line_and_the_rest_of_the_brief_stands(reads):
+    _runs(reads, ({"run_id": "r-2", "workflow_id": "investigate"}, "completed"))
+
+    async def read(run_id):
+        if run_id == "r-2":
+            raise RuntimeError("agent layer down")
+        return reads["view"]
+
+    reads["read"] = read
+    brief = await mod.case_brief("C", MagicMock())
+    assert (
+        "r-2 (lead investigation) | investigate | its record could not be read" in brief
+    )
+    assert "- ev-0 | weakens h-1 | saw thing 0" in brief
+    reads["views"] = {"r-2": None}
+    brief = await mod.case_brief("C", MagicMock())
+    assert (
+        "r-2 (lead investigation) | investigate | its record could not be read" in brief
+    )
+
+
+async def test_three_runs_with_a_full_hunt_stay_within_the_cap_and_the_case_run_keeps_most(
+    reads,
+):
+    wide = "w" * 400
+    view = _hunt(n=50)
+    for i, row in enumerate(view["evidence"]):
+        row["evidence_id"] = f"ev-{i:02d}-" + "i" * 70
+        row["summary"] = wide
+    reads["view"] = view
+    answers = [{"agent_id": f"a{i}", "answer": wide} for i in range(10)]
+    reads["views"] = {
+        "r-2": {"findings": answers},
+        "r-3": {"findings": answers},
+    }
+    _runs(
+        reads,
+        ({"run_id": "r-3", "workflow_id": "investigate"}, "completed"),
+        ({"run_id": "r-2", "workflow_id": "investigate"}, "completed"),
+    )
+    brief = await mod.case_brief("C", MagicMock())
+    body = brief.split(mod.OPEN + "\n")[1].split("\n" + mod.CLOSE)[0]
+    assert len(body) <= mod.MAX_BRIEF_CHARS
+    hunt_rows = body.count("\n- ev-")
+    other_rows = body.count("\n- a")
+    assert 0 < other_rows and other_rows / 2 <= hunt_rows < 50
+    assert "r-2 (lead" in body and "r-3 (lead" in body
 
 
 async def test_lead_run_lists_findings(reads):
@@ -159,7 +246,7 @@ async def test_unavailable_projection_still_gives_the_case_and_a_failed_read_giv
     reads, monkeypatch
 ):
     reads["view"] = None
-    assert "The case's run" not in await mod.case_brief("C", MagicMock())
+    assert "its record could not be read" in await mod.case_brief("C", MagicMock())
     reads["ds"].get_case.side_effect = RuntimeError("db down")
     assert await mod.case_brief("C", MagicMock()) == ""
     reads["ds"].get_case.side_effect = None

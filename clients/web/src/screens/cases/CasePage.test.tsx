@@ -1353,6 +1353,34 @@ describe('case page', () => {
     })
   })
 
+  it('offers "Where do the runs disagree?" only on a case with more than one run, and seeds the composer', async () => {
+    const hunt = { ...investigation('executing', true, 'run-hunt'), workflow_id: 'threat-hunt' }
+    testState.cases = [{
+      case_id: 'case-two',
+      title: 'Two runs',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [hunt],
+    }]
+    testState.runs['run-hunt'] = { hunt: HUNT }
+    testState.runs['run-rerun'] = { hunt: HUNT }
+    const view = renderCase('case-two')
+    await screen.findByRole('heading', { name: 'Findings so far' })
+    expect(screen.queryByRole('button', { name: 'Where do the runs disagree?' })).not.toBeInTheDocument()
+    view.unmount()
+
+    testState.cases[0].investigations = [hunt, { ...hunt, run_id: 'run-rerun', primary: false }]
+    renderCase('case-two')
+    fireEvent.click(await screen.findByRole('button', { name: 'Where do the runs disagree?' }))
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.case_id).toBe('case-two')
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: "Where do this case's runs disagree, and what did each one say?" })
+  })
+
   it('sends an incoming seed as typed on the case thread, then clears it', async () => {
     testState.cases = [{
       case_id: 'case-hunt',

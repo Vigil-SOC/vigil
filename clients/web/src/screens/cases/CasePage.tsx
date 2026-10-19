@@ -76,6 +76,7 @@ const EXPL_TONE: Record<string, string> = {
 }
 
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
+const DISAGREE_ASK = "Where do this case's runs disagree, and what did each one say?"
 
 function Mark({ text }: { text: string }) {
   return (
@@ -1250,6 +1251,12 @@ export function CasePage({
   }, [onExpand, onBack])
 
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
+  // The composer's brief carries every run, so a case with more than one can be asked where they part.
+  const disagree = investigations.length > 1 && (
+    <div className="case-disagree">
+      <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>Where do the runs disagree?</button>
+    </div>
+  )
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsShown > 0).tone
   const running = !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
@@ -1348,6 +1355,7 @@ export function CasePage({
                     </div>
                   </div>
                 </section>
+                {disagree}
                 {doors}
               </>
             ) : (
@@ -1360,6 +1368,7 @@ export function CasePage({
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
+                  {disagree}
                 </section>
                 {running && (
                   <>

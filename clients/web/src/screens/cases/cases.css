@@ -619,6 +619,8 @@
 
 .case-page .case-closed p { margin: 0; }
 
+.case-page section > .case-disagree { margin-top: 10px; }
+
 .case-page .case-closed-rows {
   list-style: none;
   margin: 0;
