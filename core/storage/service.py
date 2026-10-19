@@ -5,10 +5,15 @@ Provides high-level database operations for cases, findings, and related entitie
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import String, and_
+from sqlalchemy import case as sql_case
+from sqlalchemy import cast, distinct, func, literal, or_, select, true
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
@@ -78,6 +83,37 @@ def _set_mitre_prediction_rows(finding: Finding, mitre_predictions: Any) -> None
         )
 
 
+# Keys daemon triage owns inside ``findings.ai_enrichment``; every other key
+# belongs to the on-demand AI analysis. Each writer replaces only its own keys
+# (``write_ai_enrichment``), so neither wipes the other (#2316).
+DAEMON_ENRICHMENT_KEYS = (
+    "ai_triage",
+    "ai_triage_error",
+    "enrichment",
+    "enriched_at",
+    "triage_confidence",
+    "category",
+    "recommended_action",
+    "triage_reasoning",
+)
+
+
+def merge_ai_enrichment(
+    stored: Optional[Dict[str, Any]], new: Dict[str, Any], *, daemon: bool
+) -> Dict[str, Any]:
+    """The other writer's keys from ``stored``, plus this writer's from ``new``.
+
+    Not ``{**stored, **new}``: a writer's keys missing from ``new`` are dropped,
+    so a failed re-triage clears a stale ``ai_triage``.
+    """
+
+    def owned(key: str) -> bool:
+        return (key in DAEMON_ENRICHMENT_KEYS) == daemon
+
+    kept = {k: v for k, v in (stored or {}).items() if not owned(k)}
+    return {**kept, **{k: v for k, v in new.items() if owned(k)}}
+
+
 # ``Finding.cases`` is mapped ``lazy="selectin"``, so without an override every
 # Finding load also SELECTs each linked case row (all of its JSONB) and then
 # drops it: no read path or ``FindingSchema`` uses it (#1439). Read paths that
@@ -108,6 +144,91 @@ def findings_by_technique_stmt(
     if limit is not None:
         stmt = stmt.limit(limit)
     return stmt
+
+
+# entity_context keys naming a finding's source and destination addresses, as
+# the ingesters write them: each a string or a list of strings.
+IP_FACET_KEYS = {
+    "by_source_ip": ("src_ip", "src_ips", "source_ips"),
+    "by_destination_ip": ("dst_ip", "dst_ips", "dest_ips"),
+}
+
+
+def _finding_filters(
+    severity: Optional[str] = None,
+    data_source: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    min_anomaly_score: Optional[float] = None,
+    status: Optional[str] = None,
+    search_query: Optional[str] = None,
+    exclusions: str = "include",
+) -> list:
+    """WHERE clauses every findings list, count and summary filters by."""
+    filters = []
+    if severity:
+        filters.append(Finding.severity == severity)
+    if data_source:
+        filters.append(Finding.data_source == data_source)
+    if cluster_id is not None:
+        filters.append(Finding.cluster_id == cluster_id)
+    if min_anomaly_score is not None:
+        filters.append(Finding.anomaly_score >= min_anomaly_score)
+    if status:
+        filters.append(Finding.status == status)
+    # each whitespace/comma-separated term must match one of the text columns
+    for term in re.split(r"[\s,]+", search_query or ""):
+        if not term:
+            continue
+        pattern = f"%{term}%"
+        filters.append(
+            or_(
+                Finding.finding_id.ilike(pattern),
+                Finding.description.ilike(pattern),
+                cast(Finding.entity_context, String).ilike(pattern),
+            )
+        )
+    exclusion_filter = exclusion_view_filter(exclusions)
+    if exclusion_filter is not None:
+        filters.append(exclusion_filter)
+    return filters
+
+
+def _top_ips(session, criteria: list, keys, limit: int):
+    """``({address: findings naming it}, distinct addresses)`` over the matches:
+    the ``limit`` busiest, read from ``keys`` of ``entity_context``."""
+    matched = select(Finding.finding_id, Finding.entity_context).where(*criteria)
+    matched = matched.subquery()
+    context = matched.c.entity_context
+
+    def as_array(key):
+        value = context[key]
+        kind = func.jsonb_typeof(value)
+        return sql_case(
+            (kind == "array", value),
+            (kind == "string", func.jsonb_build_array(value)),
+            else_=func.jsonb_build_array(),
+        )
+
+    merged = as_array(keys[0])
+    for key in keys[1:]:
+        merged = merged.op("||", return_type=JSONB)(as_array(key))
+    element = func.jsonb_array_elements(merged).table_valued("value").lateral()
+    ip = func.btrim(element.c.value.op("#>>", return_type=String)(literal("{}")))
+    named = (
+        select(matched.c.finding_id, ip.label("ip"))
+        .select_from(matched.join(element, true()))
+        .where(func.jsonb_typeof(element.c.value) == "string")
+        .subquery()
+    )
+    findings = func.count(distinct(named.c.finding_id))
+    rows = session.execute(
+        select(named.c.ip, findings, func.count().over())
+        .where(named.c.ip != "")
+        .group_by(named.c.ip)
+        .order_by(findings.desc(), named.c.ip)
+        .limit(limit)
+    ).all()
+    return {row[0]: int(row[1]) for row in rows}, int(rows[0][2]) if rows else 0
 
 
 class DatabaseService:
@@ -382,7 +503,8 @@ class DatabaseService:
             cluster_id: Filter by cluster ID
             min_anomaly_score: Minimum anomaly score
             status: Filter by status
-            search_query: Text search across finding_id, description, entity_context
+            search_query: Terms (split on whitespace/commas) that must all match
+                finding_id, description or entity_context
             limit: Maximum number of results
             offset: Offset for pagination
             sort_by: Column to sort by (timestamp, anomaly_score, severity, created_at)
@@ -397,38 +519,21 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             query = select(Finding).options(*_FINDING_READ_OPTIONS)
 
-            filters = []
-            if severity:
-                filters.append(Finding.severity == severity)
-            if data_source:
-                filters.append(Finding.data_source == data_source)
-            if cluster_id is not None:
-                filters.append(Finding.cluster_id == cluster_id)
-            if min_anomaly_score is not None:
-                filters.append(Finding.anomaly_score >= min_anomaly_score)
-            if status:
-                filters.append(Finding.status == status)
+            filters = _finding_filters(
+                severity=severity,
+                data_source=data_source,
+                cluster_id=cluster_id,
+                min_anomaly_score=min_anomaly_score,
+                status=status,
+                search_query=search_query,
+                exclusions=exclusions,
+            )
             if timestamp_start is not None:
                 filters.append(Finding.timestamp >= timestamp_start)
             if timestamp_end is not None:
                 filters.append(Finding.timestamp <= timestamp_end)
             if dated_only:
                 filters.append(Finding.timestamp.isnot(None))
-            if search_query:
-                from sqlalchemy import String, cast
-
-                search_clauses = [
-                    Finding.finding_id.ilike(f"%{search_query}%"),
-                    cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
-                ]
-                if hasattr(Finding, "description"):
-                    search_clauses.append(
-                        Finding.description.ilike(f"%{search_query}%")
-                    )
-                filters.append(or_(*search_clauses))
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                filters.append(exclusion_filter)
 
             if filters:
                 query = query.where(and_(*filters))
@@ -460,11 +565,15 @@ class DatabaseService:
     def get_findings_missing_enrichment(
         self, limit: int = 100, max_age_hours: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Findings stored but never enriched (ai_enrichment IS NULL) or whose
-        triage failed without a later success (ai_triage_error recorded, no
-        ai_triage — #965), oldest first. Returns dicts (FindingSchema.dump inside
-        the session) so callers get detached-safe data. ``max_age_hours`` bounds
-        the working set so ancient, un-enrichable findings aren't retried forever."""
+        """Findings the daemon never triaged — ai_enrichment NULL, or holding
+        only an on-demand analysis (none of ai_triage, ai_triage_error,
+        enriched_at — #2316) — or whose triage failed without a later success
+        (ai_triage_error recorded, no ai_triage — #965), oldest-stored first.
+        Returns dicts (FindingSchema.dump inside the session) so callers get
+        detached-safe data. ``max_age_hours`` bounds the working set by
+        ``created_at`` (when Vigil stored the row), not the event ``timestamp``,
+        so replayed or undated findings still get triaged (#2320) while
+        un-enrichable ones aren't retried forever."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
@@ -472,6 +581,9 @@ class DatabaseService:
                 .where(
                     or_(
                         Finding.ai_enrichment.is_(None),
+                        ~Finding.ai_enrichment.has_any(
+                            pg_array(["ai_triage", "ai_triage_error", "enriched_at"])
+                        ),
                         and_(
                             Finding.ai_enrichment.has_key("ai_triage_error"),
                             ~Finding.ai_enrichment.has_key("ai_triage"),
@@ -481,8 +593,8 @@ class DatabaseService:
             )
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
-                query = query.where(Finding.timestamp >= cutoff)
-            query = query.order_by(Finding.timestamp.asc()).limit(limit)
+                query = query.where(Finding.created_at >= cutoff)
+            query = query.order_by(Finding.created_at.asc()).limit(limit)
             return FindingSchema.dump_many(session.execute(query).scalars().all())
 
     @default_on_error(0)
@@ -501,36 +613,15 @@ class DatabaseService:
         """
         with self.db_manager.session_scope() as session:
             query = select(func.count()).select_from(Finding)
-
-            filters = []
-            if severity:
-                filters.append(Finding.severity == severity)
-            if data_source:
-                filters.append(Finding.data_source == data_source)
-            if cluster_id is not None:
-                filters.append(Finding.cluster_id == cluster_id)
-            if min_anomaly_score is not None:
-                filters.append(Finding.anomaly_score >= min_anomaly_score)
-            if status:
-                filters.append(Finding.status == status)
-            if search_query:
-                from sqlalchemy import String, cast
-
-                filters.append(
-                    or_(
-                        Finding.finding_id.ilike(f"%{search_query}%"),
-                        (
-                            Finding.description.ilike(f"%{search_query}%")
-                            if hasattr(Finding, "description")
-                            else Finding.finding_id.ilike(f"%{search_query}%")
-                        ),
-                        cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
-                    )
-                )
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                filters.append(exclusion_filter)
-
+            filters = _finding_filters(
+                severity=severity,
+                data_source=data_source,
+                cluster_id=cluster_id,
+                min_anomaly_score=min_anomaly_score,
+                status=status,
+                search_query=search_query,
+                exclusions=exclusions,
+            )
             if filters:
                 query = query.where(and_(*filters))
 
@@ -538,20 +629,34 @@ class DatabaseService:
 
     @default_on_error(None)
     def summarize_findings(
-        self, exclusions: str = "include"
+        self,
+        severity: Optional[str] = None,
+        data_source: Optional[str] = None,
+        cluster_id: Optional[str] = None,
+        min_anomaly_score: Optional[float] = None,
+        status: Optional[str] = None,
+        search_query: Optional[str] = None,
+        exclusions: str = "include",
+        top_ips: int = 0,
     ) -> Optional[Dict[str, Any]]:
-        """``{total, by_severity, by_data_source}`` over every matching finding.
+        """``{total, by_severity, by_data_source, by_status}`` over every match.
 
-        Counted and grouped in SQL under the same exclusion filter as
-        ``count_findings``, so ``total`` agrees with the list endpoint's total
-        however many rows there are (#1438). A null or empty severity or data
-        source is bucketed as ``"unknown"``. ``None`` means the query failed.
+        Counted and grouped in SQL under the same filters as ``count_findings``,
+        so ``total`` agrees with the list total however many rows there are
+        (#1438). A null or empty value is bucketed as ``"unknown"``. ``top_ips``
+        adds ``by_source_ip``/``by_destination_ip``: the busiest addresses, each
+        counted once per finding naming it (#2312). ``None`` means it failed.
         """
+        criteria = _finding_filters(
+            severity=severity,
+            data_source=data_source,
+            cluster_id=cluster_id,
+            min_anomaly_score=min_anomaly_score,
+            status=status,
+            search_query=search_query,
+            exclusions=exclusions,
+        )
         with self.db_manager.session_scope() as session:
-            criteria = []
-            exclusion_filter = exclusion_view_filter(exclusions)
-            if exclusion_filter is not None:
-                criteria.append(exclusion_filter)
 
             def grouped(column) -> Dict[str, int]:
                 counts: Dict[str, int] = {}
@@ -559,16 +664,24 @@ class DatabaseService:
                 for value, count in session.execute(stmt).all():
                     key = value or "unknown"
                     counts[key] = counts.get(key, 0) + int(count)
-                return counts
+                return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
             total = session.execute(
                 select(func.count()).select_from(Finding).where(*criteria)
             ).scalar()
-            return {
+            summary: Dict[str, Any] = {
                 "total": int(total or 0),
                 "by_severity": grouped(Finding.severity),
                 "by_data_source": grouped(Finding.data_source),
+                "by_status": grouped(Finding.status),
             }
+            if top_ips:
+                for facet, keys in IP_FACET_KEYS.items():
+                    top, distinct = _top_ips(session, criteria, keys, top_ips)
+                    summary[facet] = top
+                    if distinct > len(top):
+                        summary[f"{facet}_omitted"] = distinct - len(top)
+            return summary
 
     @default_on_error(False)
     def update_finding(self, finding_id: str, **updates) -> bool:
@@ -619,6 +732,43 @@ class DatabaseService:
             finding.updated_at = utcnow()
             session.flush()
             logger.info(f"Updated finding: {finding_id}")
+            return True
+
+    @default_on_error(False)
+    def write_ai_enrichment(
+        self,
+        finding_id: str,
+        ai_enrichment: Dict[str, Any],
+        *,
+        daemon: bool,
+        **updates,
+    ) -> bool:
+        """Replace one writer's keys in ``ai_enrichment`` and keep the other's.
+
+        ``daemon`` picks the writer: triage owns ``DAEMON_ENRICHMENT_KEYS``, the
+        AI analysis owns the rest. Merges against the row locked ``FOR UPDATE``,
+        not the caller's (possibly stale) copy, so a concurrent triage and
+        Generate don't lose each other's write. ``updates`` are plain column
+        sets applied in the same transaction (the daemon's severity/status).
+        """
+        with self.db_manager.session_scope() as session:
+            finding = session.execute(
+                select(Finding)
+                .options(
+                    lazyload(Finding.mitre_prediction_rows), lazyload(Finding.cases)
+                )
+                .where(Finding.finding_id == finding_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if not finding:
+                logger.warning("Finding not found: %s", finding_id)
+                return False
+            finding.ai_enrichment = merge_ai_enrichment(
+                finding.ai_enrichment, ai_enrichment, daemon=daemon
+            )
+            for key, value in updates.items():
+                setattr(finding, key, value)
+            finding.updated_at = utcnow()
             return True
 
     @default_on_error(False)

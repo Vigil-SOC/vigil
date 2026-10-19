@@ -1,5 +1,7 @@
+import { SpanStatusCode } from "@opentelemetry/api";
 import type { RegisteredTool, ToolPrincipal, ToolResult } from "../contracts/tool.js";
 import type { ToolDispatch } from "./seams.js";
+import { capture, traceHeaders, traced } from "./tracing.js";
 
 export interface RemoteOptions {
   url: string;
@@ -66,56 +68,73 @@ export function deadline(timeoutMs: number, signal?: AbortSignal): Deadline {
 // knows whether a tool runs in this process. Bounds travel and are applied there.
 export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   const call = options.fetch ?? globalThis.fetch;
-  return {
-    invoke: async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal, agentId?: string): Promise<ToolResult> => {
-      // A tool the registry answers itself never leaves the process: every call routes
-      // through this dispatch, so a local implementation was otherwise unreachable.
-      if (tool.local) return tool.invoke(args);
+  const send = async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal, agentId?: string): Promise<ToolResult> => {
+    // A tool the registry answers itself never leaves the process: every call routes
+    // through this dispatch, so a local implementation was otherwise unreachable.
+    if (tool.local) return tool.invoke(args);
 
-      // The tool's timeout and the run's abort both end this call, so whichever
-      // fires first does: a lost lease must not wait out a 30s tool.
-      const held = deadline(tool.bounds.timeoutMs, signal);
+    // The tool's timeout and the run's abort both end this call, so whichever
+    // fires first does: a lost lease must not wait out a 30s tool.
+    const held = deadline(tool.bounds.timeoutMs, signal);
 
-      // Unwired around the whole call, body included: reading the body is still
-      // work the run's abort should be able to stop.
+    // Unwired around the whole call, body included: reading the body is still
+    // work the run's abort should be able to stop.
+    try {
+      let response: Response;
       try {
-        let response: Response;
-        try {
-          response = await call(options.url, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
-            body: JSON.stringify({
-              tool: tool.id,
-              args,
-              bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
-              ...(options.principal === undefined ? {} : { principal: options.principal }),
-              // The agent rides the call, not the dispatch options: one
-              // dispatch serves every phase of a compose run (#1560).
-              ...(agentId === undefined ? {} : { agent_id: agentId }),
-            }),
-            signal: held.signal,
-          });
-        } catch (error) {
-          // The far side never answered, so nothing is known about the tool itself.
-          // The run first, and before the deadline: when both have fired, nobody is
-          // waiting for this answer, and an aborted run is not a tool that failed.
-          if (signal?.aborted === true) return unavailable("the run was aborted");
-          // Read off the timer rather than off the error's name: a run whose own
-          // signal is a timeout aborts with a TimeoutError, which is the run's
-          // deadline and not this tool's.
-          if (held.timedOut()) return { ok: false, failure: { kind: "timeout", timeoutMs: tool.bounds.timeoutMs } };
-          return unavailable(error instanceof Error ? error.message : String(error));
-        }
-
-        if (!response.ok) return unavailable(`the endpoint answered ${response.status}`);
-        try {
-          return resultOf(await response.json());
-        } catch (error) {
-          return unavailable(error instanceof Error ? error.message : String(error));
-        }
-      } finally {
-        held.release();
+        response = await call(options.url, {
+          method: "POST",
+          // The tool span's context, so the backend's spans for this call nest under it.
+          headers: { "content-type": "application/json", authorization: `Bearer ${options.token}`, ...traceHeaders() },
+          body: JSON.stringify({
+            tool: tool.id,
+            args,
+            bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
+            ...(options.principal === undefined ? {} : { principal: options.principal }),
+            // The agent rides the call, not the dispatch options: one
+            // dispatch serves every phase of a compose run (#1560).
+            ...(agentId === undefined ? {} : { agent_id: agentId }),
+          }),
+          signal: held.signal,
+        });
+      } catch (error) {
+        // The far side never answered, so nothing is known about the tool itself.
+        // The run first, and before the deadline: when both have fired, nobody is
+        // waiting for this answer, and an aborted run is not a tool that failed.
+        if (signal?.aborted === true) return unavailable("the run was aborted");
+        // Read off the timer rather than off the error's name: a run whose own
+        // signal is a timeout aborts with a TimeoutError, which is the run's
+        // deadline and not this tool's.
+        if (held.timedOut()) return { ok: false, failure: { kind: "timeout", timeoutMs: tool.bounds.timeoutMs } };
+        return unavailable(error instanceof Error ? error.message : String(error));
       }
+
+      if (!response.ok) return unavailable(`the endpoint answered ${response.status}`);
+      try {
+        return resultOf(await response.json());
+      } catch (error) {
+        return unavailable(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      held.release();
+    }
+  };
+
+  return {
+    invoke: (tool, args, signal, agentId) => {
+      const attributes = {
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": tool.id,
+        ...(agentId === undefined ? {} : { "gen_ai.agent.id": agentId }),
+      };
+      return traced(`execute_tool ${tool.id}`, attributes, async (span) => {
+        capture(span, "gen_ai.tool.call.arguments", args);
+        const result = await send(tool, args, signal, agentId);
+        // A failed tool is a result the model reads, not a throw, so it is marked here.
+        if (!result.ok) span.setStatus({ code: SpanStatusCode.ERROR, message: result.failure.kind });
+        capture(span, "gen_ai.tool.call.result", result);
+        return result;
+      });
     },
   };
 }

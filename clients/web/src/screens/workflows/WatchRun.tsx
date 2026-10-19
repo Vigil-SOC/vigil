@@ -17,6 +17,8 @@ interface Step {
   key: string
   /** The ledger iteration the panels read as of; an investigate step is its own number. */
   iteration: number
+  /** The number the player shows, in the unit the run's step limit counts; its position when absent. */
+  number?: number
   action: string
   worker: string | null
   at: string | null
@@ -74,6 +76,8 @@ function huntSteps(hunt: HuntView): Step[] {
   return [...(hunt.moves ?? [])].reverse().map((m) => ({
     key: m.decision_id,
     iteration: m.iteration,
+    // a hunt's step is a turn of its lead, which is what Limits counts against max_iterations
+    number: m.iteration,
     action: m.action,
     worker: m.worker_agent_id ?? null,
     at: m.created_at ?? null,
@@ -287,7 +291,7 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
       <StepMark mark={mark} />
       <div className="flex flex-col gap-[5px] min-w-0 grow">
         <button
-          type="button" onClick={onPick} title={`Go to step ${i + 1}`}
+          type="button" onClick={onPick} title={`Go to step ${step.number ?? i + 1}`}
           className="flex items-baseline gap-2 w-full p-0 bg-transparent text-left cursor-pointer"
           style={{ opacity: mark === 'pending' ? 0.5 : 1 }}
         >
@@ -306,7 +310,8 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
         {shown && !step.entry && (
           <>
             {/* the run's error can stand in for the rationale; it is never the model's words */}
-            {!(error && (step.rationale === '' || step.rationale === error)) && <Words label="model text" text={step.rationale || '—'} />}
+            {/* a step whose model said nothing before acting shows no empty label */}
+            {step.rationale !== '' && !(error && step.rationale === error) && <Words label="model text" text={step.rationale} />}
             {error && <Words label="error" text={error} />}
           </>
         )}
@@ -345,8 +350,10 @@ function Segments({ n, cursor, playing, ended, onJump, labels }: { n: number; cu
 }
 
 /** The player and the three columns. Owns the one selected step the panels read. */
-function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: boolean; halt: Halt | null; note: string | null; panels: (at: number) => ReactNode }) {
+function Replay({ steps, total, live, halt, note, panels }: { steps: Step[]; total?: number; live: boolean; halt: Halt | null; note: string | null; panels: (at: number) => ReactNode }) {
   const last = steps.length - 1
+  const numberOf = (i: number) => steps[i]?.number ?? i + 1
+  const of = Math.max(total ?? steps.length, numberOf(last))
   // a run opens on its newest step; a live one follows it until the viewer moves, and Replay restarts from step 1
   const [cursor, setCursor] = useState(last)
   const [follow, setFollow] = useState(live)
@@ -398,10 +405,10 @@ function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: bool
         >
           <Icon name={playing ? 'pause' : 'play'} size={15} style={playing ? undefined : { fill: 'currentColor' }} />
         </button>
-        <Segments n={steps.length} cursor={at} playing={playing} ended={!live} onJump={jump} labels={steps.map((s, i) => `Step ${i + 1}: ${titled(s.action)}`)} />
+        <Segments n={steps.length} cursor={at} playing={playing} ended={!live} onJump={jump} labels={steps.map((s, i) => `Step ${numberOf(i)}: ${titled(s.action)}`)} />
         {stopped
           ? <span className="min-w-0 max-w-[45%] truncate text-[12px] font-semibold text-[var(--tx1)]" title={haltCaption(halt)}>{haltCaption(halt)}</span>
-          : <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">{`Step ${at + 1} of ${steps.length} · ${titled(step.action)}`}</span>}
+          : <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">{`Step ${numberOf(at)} of ${of} · ${titled(step.action)}`}</span>}
         <span className="text-[12px] text-[var(--tx2)] whitespace-nowrap">{time ? `${time} · ${clock}` : clock}</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.8fr)] gap-3.5 items-start">
@@ -443,9 +450,9 @@ function HuntReplay({ d, hunt, live, halt }: { d: WfRunDetail; hunt: HuntView | 
   // moves are capped at the newest few; a shorter list than the iteration count is a prefix cut off
   const cut = steps.length < hunt.iteration
   const panels = (at: number) => (
-    <HuntPanels runId={d.run_id} hunt={hunt} iteration={steps[at].iteration} decisionId={steps[at].key} last={at === steps.length - 1} />
+    <HuntPanels runId={d.run_id} hunt={hunt} iteration={steps[at].iteration} at={steps[at].at} decisionId={steps[at].key} last={at === steps.length - 1} />
   )
-  return <Replay key={d.run_id} steps={steps} live={live} halt={halt} note={cut ? `Showing the last ${steps.length} steps` : null} panels={panels} />
+  return <Replay key={d.run_id} steps={steps} total={hunt.iteration} live={live} halt={halt} note={cut ? `Showing the last ${steps.length} steps` : null} panels={panels} />
 }
 
 function InvestigateReplay({ d, live, halt }: { d: WfRunDetail; live: boolean; halt: Halt | null }) {

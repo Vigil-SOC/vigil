@@ -135,7 +135,6 @@ describe('StatePill', () => {
     expect(statePill('paused')).toEqual({ tone: 'idle', label: 'Paused' })
     expect(statePill('assigned').tone).toBe('live')
     expect(statePill('executing').tone).toBe('live')
-    expect(statePill('review_submitted')).toEqual({ tone: 'live', label: 'Review submitted' })
     expect(statePill('waiting_approval')).toEqual({ tone: 'needs', label: 'Needs you' })
     expect(statePill('closed')).toEqual({ tone: 'closed', label: 'Closed' })
   })

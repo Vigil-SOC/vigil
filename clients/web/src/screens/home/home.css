@@ -423,12 +423,6 @@
   border-radius: 14px;
 }
 
-.home-screen .home-clear h3 {
-  margin: 0;
-  font-size: 15px;
-  color: var(--good);
-}
-
 .home-screen .home-clear p {
   margin: 0;
   color: var(--tx2);

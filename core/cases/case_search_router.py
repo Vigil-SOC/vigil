@@ -56,19 +56,3 @@ async def search_by_ioc(ioc_value: str, ioc_type: Optional[str] = None):
     """
     cases = search_service.search_by_ioc(ioc_value, ioc_type)
     return {"cases": cases}
-
-
-@router.get("/related/{case_id}")
-async def get_related_cases(case_id: str, max_results: int = 10):
-    """
-    Find cases related to a given case.
-
-    Args:
-        case_id: Case ID
-        max_results: Maximum results to return
-
-    Returns:
-        Related cases with similarity scores
-    """
-    related = search_service.get_related_cases(case_id, max_results)
-    return {"related_cases": related}

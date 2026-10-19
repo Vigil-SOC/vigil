@@ -16,6 +16,7 @@ from core.deps import provide_approvals, provide_workflow_runs
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
+from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
 from core.workflows.workflow_run_service import WorkflowRunService
 
@@ -87,6 +88,11 @@ class StatusUpdate(BaseModel):
     cost_usd: Optional[float] = None
 
 
+class ProgressUpdate(BaseModel):
+    iteration: int = Field(..., ge=0)
+    max_cost_usd: float = Field(..., ge=0)
+
+
 class CheckpointRaised(BaseModel):
     checkpoint_id: str
     checkpoint_class: str
@@ -153,6 +159,21 @@ def record_status(
     authorise(authorization, "run status")
     run_service.set_status(
         run_id, update.status, reason=update.reason, cost_usd=update.cost_usd
+    )
+
+
+# How far a hunt has got, after each iteration whatever it left the run as. Its own
+# route because /status carries a state and a paused or ending iteration has no new one.
+@router.post("/{run_id}/progress", status_code=204)
+def record_progress(
+    run_id: str,
+    update: ProgressUpdate,
+    authorization: Optional[str] = Header(default=None),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> None:
+    authorise(authorization, "run progress")
+    run_service.set_progress(
+        run_id, iteration=update.iteration, max_cost_usd=update.max_cost_usd
     )
 
 
@@ -584,7 +605,7 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
 # What the analyst reads under a checkpoint's question. Never the class name or a
 # threshold: those are config, not an explanation.
 _CHECKPOINT_REASONS = {
-    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "hypothesis_approval": "Vigil wants your go-ahead on the explanations it will test.",
     "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
     "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
     "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",
@@ -648,7 +669,7 @@ def list_decisions(
                     actor=action.approved_by or "analyst",
                     answer=answer,
                     text=action.rejection_reason or "",
-                    resolved_at=action.approved_at or utcnow().isoformat(),
+                    resolved_at=action.approved_at or _iso_utc(utcnow()),
                 )
             )
     return Decisions(decisions=decided)

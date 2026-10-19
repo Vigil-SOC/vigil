@@ -6,6 +6,7 @@ import CommandBar from './CommandBar'
 import CaseDrawer from './CaseDrawer'
 import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
+import shellCss from './shell.css?inline'
 
 const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, getIntegrations, apiGet, apiPost } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
@@ -688,7 +689,7 @@ describe('CommandBar', () => {
         checkCoverage.mockResolvedValueOnce({
           data: {
             status: 'running',
-            in_flight: [{ run_id: 'wfr-live', case_id: 'case-live' }],
+            in_flight: [{ run_id: 'wfr-live', case_id: 'case-live', status: 'running' }],
             proposal: { hypothesis: PROPOSED, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true },
           },
         })
@@ -696,10 +697,36 @@ describe('CommandBar', () => {
         await openHunt(input)
         pick(pdf())
         expect(await screen.findByText(`Start a threat hunt: ${PROPOSED}`)).toBeInTheDocument()
-        expect(screen.getByText(/A hunt is already running on what this document covers/)).toBeInTheDocument()
+        expect(screen.getByText('A hunt on this document is running (case case-live). Run starts a new one.')).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
         fireEvent.click(screen.getByRole('button', { name: 'Open its case' }))
         expect(onOpenCase).toHaveBeenCalledWith('case-live')
+      })
+
+      it('calls a paused hunt paused, not running', async () => {
+        checkCoverage.mockResolvedValueOnce({
+          data: {
+            status: 'running',
+            in_flight: [{ run_id: 'wfr-old', case_id: 'case-old', status: 'paused' }],
+            proposal: { hypothesis: PROPOSED, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true },
+          },
+        })
+        const { input } = renderHunt()
+        await openHunt(input)
+        pick(pdf())
+        expect(await screen.findByText('A hunt on this document is paused (case case-old). Run starts a new one.')).toBeInTheDocument()
+        expect(screen.queryByText(/is running|already running/)).not.toBeInTheDocument()
+      })
+
+      it('keeps Attach text disabled, and styled as disabled, until text is pasted', async () => {
+        const { input } = renderHunt()
+        await openHunt(input, 'credential access')
+        fireEvent.click(screen.getByRole('button', { name: 'Paste text' }))
+        expect(screen.getByRole('button', { name: 'Attach text' })).toBeDisabled()
+        // jsdom paints no CSS: the disabled treatment must exist in the stylesheet that outranks the outlined .btn
+        expect(shellCss).toMatch(/\.vg-command-attach \.btn:disabled[^{]*\{[^}]*color: var\(--tx3\)/)
+        fireEvent.change(screen.getByLabelText('Intelligence text'), { target: { value: REPORT } })
+        expect(screen.getByRole('button', { name: 'Attach text' })).toBeEnabled()
       })
 
       it('shows a refusal in the preview and clears it with Remove', async () => {

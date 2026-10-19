@@ -1,87 +1,56 @@
 import { describe, expect, it } from "vitest";
-import type { CheckpointPayload, ResolutionPayload } from "../../contracts/events.js";
-import type { HuntKinds } from "../../workflows/hunt/ledger.js";
-import type { InProcessState } from "../../core/state.js";
-import { steer } from "../../workflows/hunt/inbox.js";
-import type { DecisionProvider } from "../../workflows/hunt/ports.js";
-import type { DecisionResult, Digest } from "../../workflows/hunt/types.js";
-import { LeadParked } from "../../workflows/hunt/adapters.js";
-import { HuntParked } from "../../workflows/hunt/controller.js";
-import { CONCLUDE, controllerFor, newLedger } from "../support/hunt.js";
+import { pendingCheckpoints, resolutionOf, resolveCheckpoint } from "../../plugins/hunt/checkpoints.js";
+import { steer } from "../../plugins/hunt/inbox.js";
+import { Journal } from "../../plugins/hunt/journal.js";
+import { bookOf, newLedger } from "../support/hunt.js";
 
-// The Hunt Lead does not read the controller's journal. It runs inside
-// core/stream.ts, which folds the *durable* ledger to decide whether the run is
-// still answerable, and refuses to emit while a checkpoint is open. So a lead
-// stand-in that reads the buffer would agree with the controller no matter what,
-// and prove nothing. This one reads what the real one reads.
-//
-// Faithful to core/stream.ts settled() (raised minus answered, first open wins)
-// and to what decisionProvider throws when that fold comes back parked.
-function leadOverDurableLedger(state: InProcessState<HuntKinds>, runId: string): DecisionProvider {
-  return {
-    decide: async (_digest: Digest): Promise<DecisionResult> => {
-      const raised: string[] = [];
-      const answered = new Set<string>();
-      for (const event of await state.read(runId, { since: 0 })) {
-        if (event.kind === "checkpoint") raised.push((event.payload as CheckpointPayload).checkpoint_id);
-        if (event.kind === "resolution") answered.add((event.payload as ResolutionPayload).checkpoint_id);
-      }
-      const open = raised.find((id) => !answered.has(id));
-      if (open !== undefined) {
-        throw new LeadParked(`the ledger holds an open checkpoint, ${open}`);
-      }
-      return { decision: CONCLUDE as never, model_id: "test", prompt_version: "test", cost_usd: 0 };
-    },
-  };
-}
-
-describe("an approval the lead cannot see is an approval that did not happen", () => {
-  it("makes the resolution durable before asking the lead to decide", async () => {
+// Every hunt tool opens the stored ledger and flushes it (withBook), so what must hold is
+// that an approval, once applied, is on the durable record.
+describe("an approval nobody can see is an approval that did not happen", () => {
+  it("releases the start gate and leaves the answer on the durable ledger", async () => {
     const started = await newLedger({ checkpoints: { hypothesis_approval: "ask" } });
+    expect(started.ledger.projection.hunt.status).toBe("pending_approval");
     const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
 
     // What the console does when the operator presses approve on the gate.
-    await steer(started.queue, started.runId, "approve", "start it", {
-      checkpoint_id: checkpoint!.checkpoint_id,
-    });
+    await steer(started.queue, started.runId, "approve", "start it", { checkpoint_id: checkpoint!.checkpoint_id });
 
-    const controller = controllerFor(started.ledger, [], {
-      provider: leadOverDurableLedger(started.state, started.runId),
-    });
+    // The before hook's pass: directives, then whatever answers reached the ledger.
+    const book = bookOf(started.ledger);
+    expect(await book.applyDirectives()).toBe(false);
+    book.reconcile();
+    await started.ledger.flush();
 
-    // The approval releases the hunt in the same pass, so the lead is asked for a
-    // decision inside this call. Before the flush, the resolution was still in the
-    // controller's buffer: the lead folded a ledger holding an open checkpoint,
-    // refused three times, and the hunt died having spent nothing and proven
-    // nothing — with the operator's approval sitting on the record.
-    await expect(controller.advanceIteration()).resolves.toBeDefined();
+    const durable = await Journal.open(started.state, started.queue, started.runId);
+    expect(durable.projection.hunt.status).toBe("active");
+    expect(pendingCheckpoints(durable.projection)).toHaveLength(0);
+    expect(resolutionOf(durable.projection, checkpoint!.checkpoint_id)?.answer).toBe("approve");
   });
 
-  // The companion to tests/core/resume.test.ts, which already holds this line at
-  // the resume seam: "No terminal at all: the run is still answerable, and writing
-  // one would have thrown away the answer the operator was in the middle of
-  // giving." The decide loop is the other way in, and it treated a park as a dead
-  // call — burning the re-ask budget on a condition no re-ask can change, then
-  // ending the hunt as failed instead of leaving it answerable.
-  it("parks rather than failing when the lead stops on a checkpoint nobody has answered", async () => {
-    const started = await newLedger({ checkpoints: { hypothesis_approval: "auto" } });
+  // An answer journaled straight to the ledger (the console's other way in) is
+  // reconciled on the next pass, so a resume never asks the operator twice.
+  it("reconciles an answer that reached the ledger without a directive", async () => {
+    const started = await newLedger({ checkpoints: { hypothesis_approval: "ask" } });
+    const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
+    started.ledger.append({ kind: "resolution", payload: resolveCheckpoint(checkpoint!, "approve", "analyst", "go") });
+    await started.ledger.flush();
 
-    // Raised straight into the store, so hunt.status stays active and only the
-    // lead's fold sees it: whatever opens a checkpoint the controller's own status
-    // does not reflect, the run must stay answerable rather than die.
-    await started.state.append(started.runId, [
-      {
-        run_id: started.runId,
-        run_kind: "hunt",
-        kind: "checkpoint",
-        payload: { checkpoint_id: "cp-rogue", checkpoint_class: "scope_extension", question: "widen to a second index?" },
-      } as never,
-    ]);
+    const ledger = await Journal.open(started.state, started.queue, started.runId);
+    bookOf(ledger).reconcile();
+    expect(ledger.projection.hunt.status).toBe("active");
 
-    const controller = controllerFor(started.ledger, [], {
-      provider: leadOverDurableLedger(started.state, started.runId),
-    });
+    // Idempotent: a second pass applies nothing twice.
+    const length = ledger.log.length;
+    bookOf(ledger).reconcile();
+    expect(ledger.log.length).toBe(length);
+  });
 
-    await expect(controller.advanceIteration()).rejects.toThrow(HuntParked);
+  it("ends the hunt when the start gate is rejected", async () => {
+    const started = await newLedger({ checkpoints: { hypothesis_approval: "ask" } });
+    const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
+    await steer(started.queue, started.runId, "reject", "wrong premise", { checkpoint_id: checkpoint!.checkpoint_id });
+
+    expect(await bookOf(started.ledger).applyDirectives()).toBe(true);
+    expect(started.ledger.projection.hunt.outcome).toBe("aborted");
   });
 });

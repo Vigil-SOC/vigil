@@ -40,6 +40,8 @@ export interface CaseLinkedFinding {
   title: string | null
   description: string | null
   source_link: string | null
+  /** Hosts and users the alert names. */
+  entities: string[]
 }
 
 /** Matches ``CaseRepository`` page size. */
@@ -189,6 +191,7 @@ function asLinkedFindings(raw: unknown): CaseLinkedFinding[] {
       title: typeof o.title === 'string' ? o.title : null,
       description: typeof o.description === 'string' ? o.description : null,
       source_link: typeof o.source_link === 'string' && o.source_link ? o.source_link : null,
+      entities: Array.isArray(o.entities) ? o.entities.filter((e): e is string => typeof e === 'string') : [],
     }]
   })
 }

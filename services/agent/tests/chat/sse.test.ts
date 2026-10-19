@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Outcome } from "../../core/loop.js";
 import type { StreamEvent } from "../../core/stream.js";
-import { chatEvents, sse, type ChatEvent } from "../../workflows/chat/sse.js";
+import { chatEvents, sse, type ChatEvent } from "../../plugins/chat/sse.js";
 
 const CONSOLE = join(import.meta.dirname, "..", "..", "..", "..", "clients", "web", "src", "shell", "Chat.tsx");
 

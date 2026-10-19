@@ -10,6 +10,7 @@ import Loader from './routing/Loader'
 // lazy, so a refresh on any route only pulls that screen's module graph
 const SocConsole = lazy(() => import('./shell/SocConsole'))
 const SocLogin = lazy(() => import('./screens/login/LoginScreen'))
+const ResetPassword = lazy(() => import('./screens/login/ResetPasswordScreen'))
 const SetupScreen = lazy(() => import('./screens/setup/SetupScreen'))
 
 function App() {
@@ -24,6 +25,8 @@ function App() {
         <Routes>
           {/* Public — the login screen is the single sign-in surface. */}
           <Route path="/login" element={<SocLogin />} />
+          {/* Public — the emailed password-reset link lands here. */}
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* OUTSIDE SetupGate so it stays reachable while unconfigured (no redirect loop). */}
           <Route

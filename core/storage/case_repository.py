@@ -19,7 +19,6 @@ from sqlalchemy import (
     cast,
     exists,
     func,
-    literal,
     or_,
     select,
     union_all,
@@ -34,6 +33,7 @@ from core.storage.models import (
     Finding,
     Investigation,
     WorkflowRun,
+    WorkflowRunPhase,
     case_findings,
 )
 from core.storage.models.workflow import (
@@ -77,10 +77,18 @@ def _case_runs():
     The SQL of ``case_state.case_run_refs``. A run started on the case with
     ``trigger_context.case_id`` and no ``Investigation`` row (``/hunt``) is a
     ref; an investigation's own run is not, since it carries that
-    investigation's id. Its state is the run's word, its cost the run's total,
-    and it has no iteration count or cap of its own.
+    investigation's id. Its state is the run's word and its cost the run's total.
+    Its iteration is what the run reported, else the phases it has recorded, and
+    its cap what it reported, else the cap it was asked for: ``case_state.run_cap``.
+    Both are columns of the run or a scalar subquery, so a page stays one query.
     """
     run_case_id = WorkflowRun.trigger_context["case_id"].astext
+    asked_cap = WorkflowRun.trigger_context["max_cost_usd"].astext
+    steps = (
+        select(func.count())
+        .where(WorkflowRunPhase.run_id == WorkflowRun.run_id)
+        .scalar_subquery()
+    )
     investigations = select(
         Investigation.case_id.label("ref_case_id"),
         Investigation.investigation_id.label("ref_id"),
@@ -96,9 +104,18 @@ def _case_runs():
         run_case_id.label("ref_case_id"),
         WorkflowRun.run_id.label("ref_id"),
         WorkflowRun.workflow_id.label("workflow_id"),
-        literal(0).label("iteration_count"),
+        func.coalesce(WorkflowRun.iteration_count, steps).label("iteration_count"),
         cast(WorkflowRun.total_cost_usd, Float).label("cost_usd"),
-        literal(0.0).label("max_cost_usd"),
+        # A number only: a trigger context is whatever the caller sent, and one
+        # unreadable cap must not fail the page.
+        func.coalesce(
+            cast(WorkflowRun.max_cost_usd, Float),
+            case(
+                (asked_cap.op("~")(r"^[0-9]+(\.[0-9]+)?$"), cast(asked_cap, Float)),
+                else_=None,
+            ),
+            0.0,
+        ).label("max_cost_usd"),
         case(
             *((WorkflowRun.status == k, v) for k, v in RUN_LIVE_STATE.items()),
             else_=WorkflowRun.status,

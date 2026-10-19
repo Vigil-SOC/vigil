@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { RunJob } from "../../contracts/job.js";
-import { InProcessLeases, LEASE_TTL_MS } from "../../core/leases.js";
+import { LEASE_TTL_MS } from "../../core/leases.js";
+import { InProcessLeases } from "../support/in-process-leases.js";
 import { seedFrom } from "../../core/budget.js";
 import { InProcessState } from "../../core/state.js";
 import { advance, resolveSpec, sweepOnce, type Enqueue } from "../../worker.js";
@@ -13,7 +14,9 @@ import type { ScriptedTurn } from "../support/scripted-provider.js";
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const RUN = "7d3c2d3e-0000-4000-8000-000000000633";
 
-const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "done", citations: [] } }];
+// The investigate plugin's answer, stopping twice: the second answers the kernel's ask to
+// keep going, since the run has looked at nothing.
+const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { calls: [] }, { emit: { summary: "nothing to pursue", disposition: "inconclusive", confidence: "low", citations: [], gaps: [], next_steps: [] } }];
 
 let config: string;
 let state: InProcessState;

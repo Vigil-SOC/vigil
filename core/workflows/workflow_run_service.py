@@ -128,6 +128,25 @@ class WorkflowRunService:
             logger.error("Could not set run status %s: %s", run_id, e)
             return False
 
+    def set_progress(self, run_id: str, *, iteration: int, max_cost_usd: float) -> bool:
+        """Record how far a hunt has got, for the case list.
+
+        Overwrites: the agent layer reports after every iteration, so the last
+        write stands. A run already finished is left alone, as in ``set_status``.
+        """
+        try:
+            db = get_db_manager()
+            with db.session_scope() as session:
+                row = session.get(WorkflowRun, run_id)
+                if row is None or row.status not in ("running", "paused"):
+                    return False
+                row.iteration_count = iteration
+                row.max_cost_usd = max_cost_usd
+            return True
+        except SQLAlchemyError as e:
+            logger.error("Could not set run progress %s: %s", run_id, e)
+            return False
+
     def finalize_run(
         self,
         run_id: str,

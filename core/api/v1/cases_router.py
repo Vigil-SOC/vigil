@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -29,13 +30,18 @@ from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_state import detail_fields
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.cases.combined_state import queue_item
+from core.cases.linked_entities import (
+    LINKED_SOURCE,
+    finding_entities,
+    linked_iocs,
+)
 from core.deps import provide_workflows
 from core.findings.source_link import resolve_source_link
 from core.response.approval_service import needs_you
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import CaseClosureInfo, User
+from core.storage.models import CaseClosureInfo, Finding, User, case_findings
 from core.storage.schemas import (
     CaseClosureInfoSchema,
     CaseEvidenceSchema,
@@ -383,6 +389,7 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
                 finding_id=row.finding_id,
                 title=row.title,
                 description=row.description,
+                entities=finding_entities(row.entity_context),
                 source_link=resolve_source_link(
                     {
                         "evidence_links": list(row.evidence_links or []),
@@ -420,7 +427,8 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     investigations = case_records_service.list_case_investigations(session, case_id)
     closure = session.get(CaseClosureInfo, case_id)
     runs = case_records_service.list_case_runs(session, case_id)
-    case.update(detail_fields(case.get("status"), investigations, closure, runs))
+    steps = case_records_service.run_step_counts(session, [run.run_id for run in runs])
+    case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
     case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 
@@ -658,11 +666,28 @@ def add_ioc(case_id: str, data: IOCAdd):
 
 
 @router.get("/{case_id}/iocs", response_model=CaseIOCListResponse)
-def get_iocs(case_id: str, ioc_type: Optional[str] = None):
-    """Get all IOCs for case."""
+def get_iocs(case_id: str, session: UnitOfWorkSession, ioc_type: Optional[str] = None):
+    """Get all IOCs for case: the ones recorded, then those its linked alerts name.
+
+    The alerts' are read from their ``entity_context`` and carry no ``ioc_id``;
+    one already recorded is not listed twice.
+    """
     ioc_service = CaseIOCService()
-    iocs = ioc_service.get_case_iocs(case_id, ioc_type)
-    return {"iocs": CaseIOCSchema.dump_many(iocs)}
+    recorded = ioc_service.get_case_iocs(case_id, session=session)
+    iocs = [i for i in recorded if not ioc_type or i.ioc_type == ioc_type]
+    contexts = session.scalars(
+        select(Finding.entity_context)
+        .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
+        .where(case_findings.c.case_id == case_id)
+        .order_by(Finding.finding_id)
+    ).all()
+    held = [(ioc.ioc_type or "", ioc.value or "") for ioc in recorded]
+    derived = [
+        {"case_id": case_id, "ioc_type": kind, "value": value, "source": LINKED_SOURCE}
+        for kind, value in linked_iocs(contexts, held)
+        if not ioc_type or kind == ioc_type.lower()
+    ]
+    return {"iocs": [*CaseIOCSchema.dump_many(iocs), *derived]}
 
 
 @router.post(

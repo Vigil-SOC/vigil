@@ -334,15 +334,15 @@ const INTEGRATIONS: IntegrationMetadata[] = [
       },
       {
         name: 'mint_secret',
-        label: 'Session Mint Secret',
+        label: 'Session secret',
         type: 'password',
         required: true,
         helpText:
-          'Shared HMAC secret Vigil uses to request short-lived, user-scoped session tokens from the connector (matches the connector\'s CONNECTOR_BFF_SESSION_MINT_SECRET). Stored encrypted server-side; never sent to the browser.',
+          'Shared secret Vigil sends as a bearer token when it calls the connector\'s POST /session server-to-server to get short-lived, user-scoped session tokens (matches the connector\'s CONNECTOR_BFF_SESSION_MINT_SECRET). Stored encrypted server-side; never sent to the browser.',
       },
       {
         name: 'mcp_token',
-        label: 'MCP Bearer Token',
+        label: 'Agent access token',
         type: 'password',
         required: true,
         helpText:

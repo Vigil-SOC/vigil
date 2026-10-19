@@ -2,9 +2,9 @@
 // frozen by the ADR 0012 goldens, so everything here is presentation over the
 // same records.
 import { describe, expect, it } from "vitest";
-import { citedTechniques } from "../../workflows/hunt/strength.js";
-import { buildReport, groupedGaps, renderReport, type HuntReport, type VisibilityGap } from "../../workflows/hunt/report.js";
-import { DEFAULT_BUDGETS } from "../../workflows/hunt/types.js";
+import { citedTechniques } from "../../plugins/hunt/strength.js";
+import { buildReport, groupedGaps, renderReport, type HuntReport, type VisibilityGap } from "../../plugins/hunt/report.js";
+import { DEFAULT_BUDGETS } from "../../plugins/hunt/types.js";
 import { evidenceOn, newLedger } from "../support/hunt.js";
 
 // A fan-out hands every worker the same query_intent, so four failed workers

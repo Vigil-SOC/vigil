@@ -526,10 +526,28 @@ class DetectionRulesService:
         Combines multiple paths per format with commas, matching the MCP server's
         expected SIGMA_PATHS, SPLUNK_PATHS, ELASTIC_PATHS, KQL_PATHS, STORY_PATHS format.
         """
+        return self._mcp_env_vars(self.sources)
+
+    def saved_mcp_env_vars(self) -> Dict[str, str]:
+        """``get_mcp_env_vars`` over the sources as last saved, not as loaded.
+
+        Another process may have fetched the rules since this one loaded them:
+        the API runs more than one worker, and each holds its own copy. Reads
+        the file without rescanning, so it is cheap enough for a status poll.
+        Empty when no source has rules on disk.
+        """
+        try:
+            with open(self.config_path, "r") as f:
+                sources = json.load(f).get("sources", [])
+        except (OSError, ValueError, AttributeError):
+            sources = self.sources
+        return self._mcp_env_vars(sources)
+
+    def _mcp_env_vars(self, sources: List[Dict[str, Any]]) -> Dict[str, str]:
         paths_by_format: Dict[str, List[str]] = defaultdict(list)
         story_paths: List[str] = []
 
-        for source in self.sources:
+        for source in sources:
             if source.get("status") != "ready":
                 continue
 
