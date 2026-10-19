@@ -89,6 +89,7 @@ describe('foldStatus tool servers', () => {
     federation: null,
     mcp: { statuses },
     routability: null,
+    processes: null,
   })
 
   it('reads a fresh install as clear: rules not fetched and servers not used yet are not faults', () => {
