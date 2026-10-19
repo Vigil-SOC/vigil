@@ -109,7 +109,7 @@ export function rootCauseV3Replay(runId: string, events: readonly AgentEvent<Rec
     const step = byTurn.get(event.payload.turn);
     if (step === undefined) continue;
     steps.push({ kind: "notice", recorded_at: event.ts, text: `Turn ${step.n}: ${step.move} ${step.targetId}. ${step.reason}` });
-    for (const q of step.queries) steps.push({ kind: "search", recorded_at: event.ts, tool: "splunk", args: q.query.slice(0, 500), rows: q.rows ?? 0, failed: q.rows === undefined });
+    for (const q of step.queries) steps.push({ kind: "search", recorded_at: event.ts, tool: "splunk", args: q.query.slice(0, 500), rows: q.rows ?? 0, failed: q.failed === true, ...(q.error === undefined ? {} : { failure: q.error }) });
   }
   if (folded.graph !== null) for (const link of chainOf(folded.graph)) steps.push({ kind: "step", recorded_at: last, ...link });
   return { run_id: runId, run_kind: "root_cause", ...(budgets === undefined ? {} : { budgets }), steps, engine: "rootcause-v3", moves: folded.steps };

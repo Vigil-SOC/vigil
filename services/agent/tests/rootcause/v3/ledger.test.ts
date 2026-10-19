@@ -155,4 +155,29 @@ describe("rootcause v3 ledger", () => {
     expect(folded.theories!.find((t) => t.id === "R1.H1")).toMatchObject({ support: 1, status: "replaced" });
     expect(folded.theories!.find((t) => t.id === "PROBES")!.predictions.map((p) => p.id)).toEqual(["PROBE1", "PROBE2"]);
   });
+
+  it("reads a search's count wherever its output puts it, and calls a search failed only when it did not answer", () => {
+    const { events, push } = journal(cfg);
+    const entry = (id: string, type: string, payload: unknown) => ({ id, ts: "", runId: "r1", turn: 1, correlationId: "N1", relatedIds: [], type, payload });
+    push("rootcause_turn", {
+      turn: 1,
+      entries: [
+        entry("T1", "decision", { move: "expand", targetId: "N1", reason: "why" }),
+        entry("T2", "query", { toolCallId: "tc_1", input: { spl: "index=lab | stats count by host", purpose: "map hosts" } }),
+        entry("T3", "tool-output", { toolCallId: "tc_1", ok: true, output: "purpose: map hosts\nwindow: 2026-05-05T06:00 → 18:00\n1,204 events matched, 3 results (showing 3 of 3)\nhost=a" }),
+        entry("T4", "query", { toolCallId: "tc_2", input: { spl: "index=lab | stats count by dest_port" } }),
+        entry("T5", "tool-output", { toolCallId: "tc_2", ok: false, output: "refused: mapping searches do not group by destination ports\nmore" }),
+        entry("T6", "query", { toolCallId: "tc_3", input: { spl: "index=lab x" } }),
+        entry("T7", "tool-output", { toolCallId: "tc_3", ok: true, output: "purpose: x\n0 events matched" }),
+      ],
+    });
+    const [step] = fold(events).steps;
+    expect(step!.queries).toEqual([
+      { ref: "tc_1", query: "index=lab | stats count by host", rows: 1204, purpose: "map hosts" },
+      { ref: "tc_2", query: "index=lab | stats count by dest_port", failed: true, error: "refused: mapping searches do not group by destination ports" },
+      { ref: "tc_3", query: "index=lab x", rows: 0 },
+    ]);
+    const searches = rootCauseV3Replay("r1", events as never).steps.filter((x) => x.kind === "search");
+    expect(searches.map((x) => (x as { failed: boolean }).failed)).toEqual([false, true, false]);
+  });
 });
