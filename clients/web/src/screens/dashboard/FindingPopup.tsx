@@ -1,6 +1,6 @@
 /* The embedded VStrike NetworkContextPanel is deliberately not ported: it needs
    the VStrike provider, which isn't mounted under the console shell. */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
@@ -187,6 +187,9 @@ export default function FindingPopup({
   const [confirmDel, setConfirmDel] = useState(false)
   const [triageNote, setTriageNote] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
+  const [triaging, setTriaging] = useState(false)
+  // the finding the triage note belongs to; a reply for any other finding is dropped
+  const triageFor = useRef<string | null>(null)
 
   // excluding an address from here, while looking at the finding that names it
   const { notify } = useToast()
@@ -205,6 +208,7 @@ export default function FindingPopup({
     setEnrichment(null)
     setEnrichPhase('idle')
     setEnrichError(null)
+    triageFor.current = id
     setTriageNote(null)
     setTriageError(null)
     setExcludeIp(null)
@@ -311,12 +315,15 @@ export default function FindingPopup({
   }
 
   const sendToTriage = () => {
-    if (!id) return
+    if (!id || triaging) return
+    const target = id
+    setTriaging(true)
     setTriageNote(null)
     setTriageError(null)
-    sendFindingToTriage(id)
-      .then(setTriageNote)
-      .catch(() => setTriageError(SEND_TO_TRIAGE_FAILED))
+    sendFindingToTriage(target)
+      .then(note => { if (triageFor.current === target) setTriageNote(note) })
+      .catch(() => { if (triageFor.current === target) setTriageError(SEND_TO_TRIAGE_FAILED) })
+      .finally(() => setTriaging(false))
   }
 
   const doDelete = () => {
@@ -541,13 +548,13 @@ export default function FindingPopup({
 
           {/* actions */}
           <div className="fp-actions">
-            <button className="btn ghost" onClick={sendToTriage}>Send to triage</button>
+            <button className="btn ghost" onClick={sendToTriage} disabled={triaging}>Send to triage</button>
             <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={acting}>
               <Icon name="trash" size={14} /> Delete finding
             </button>
           </div>
-          {triageNote && <p>{triageNote}</p>}
-          {triageError && <p role="alert">{triageError}</p>}
+          {triageNote && <div className="field-hint" style={{ marginTop: 10 }}>{triageNote}</div>}
+          {triageError && <div className="field-hint err" role="alert" style={{ marginTop: 10 }}>{triageError}</div>}
         </>
       )}
 
