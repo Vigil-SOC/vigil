@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { narrativeInput, renderNarrative, type Narrative } from "../../workflows/hunt/narrative.js";
-import { buildReport, renderReport } from "../../workflows/hunt/report.js";
+import { narrativeInput, renderNarrative, type Narrative } from "../../plugins/hunt/narrative.js";
+import { buildReport, renderReport } from "../../plugins/hunt/report.js";
 import { newLedger } from "../support/hunt.js";
 
 const WRITTEN: Narrative = {

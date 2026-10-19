@@ -4,6 +4,7 @@ import { FilterChip } from '../../shared/FilterChip'
 import { EmptyState, TextInput } from '../../shared/ui'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import { categoryLabels, type CatalogEntry } from './integrationCatalog'
+import { EXPERIMENTAL_NOTE } from './integrationsData'
 
 interface Props {
   entries: CatalogEntry[]
@@ -63,6 +64,7 @@ export default function AddIntegrationTab({ entries, busy, onConnect, onTurnOn, 
             <div key={e.key} className="int-card">
               <div className="int-card-head">
                 <span className="int-card-name" title={e.name}>{e.name}</span>
+                {e.experimental && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
                 <span className={`int-card-state${e.connected ? ' on' : ''}`}>{e.connected ? 'Connected' : 'Available'}</span>
               </div>
               <p className="int-card-line" title={`${e.category} · ${e.description}`}>{e.category} · {e.description}</p>

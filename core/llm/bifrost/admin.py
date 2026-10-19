@@ -79,6 +79,21 @@ _STOCK_OPENAI_HOSTS = frozenset(
     host for host in DEFAULT_ALLOWED_PROVIDER_HOSTS if host.endswith(".openai.com")
 )
 
+# What a provider Vigil creates in Bifrost starts with: the network settings
+# ``infra/docker/bifrost/config.json`` seeds every provider it declares with,
+# since a hunt's model call can stream for minutes.
+_NEW_PROVIDER_NETWORK = {
+    "default_request_timeout_in_seconds": 1800,
+    "stream_idle_timeout_in_seconds": 300,
+    "max_retries": 0,
+}
+
+# A new key's allow-list. Bifrost v2.2.1 routes nothing for a key whose
+# ``models`` is empty, and lists nothing for it either -- including through
+# ``/api/models/details``, the only catalogue a type with no fetcher has. So an
+# empty list is never a narrowing anyone chose: it is a key that cannot route.
+_ALL_MODELS = ["*"]
+
 # Fields Bifrost accepts on PUT /api/providers/{name}. Everything else on the
 # GET document is read-back (name, status, config_hash, keys, ...).
 _PROVIDER_WRITE_FIELDS = frozenset(
@@ -166,6 +181,8 @@ def _upsert_provider_key(
 
     ``models`` replaces the allow-list; omit it to carry the existing one
     forward. There is no models-only update — every write carries the secret.
+    A key that would be left with an empty allow-list gets ``*`` instead (see
+    ``_ALL_MODELS``): that is every new key, until a sync narrows it.
     """
     keys = _get_provider_keys(provider_name, client)
     if keys is None:
@@ -184,7 +201,8 @@ def _upsert_provider_key(
     body["value"] = key_value
     if models is not None:
         body["models"] = models
-    body.setdefault("models", [])
+    if not body.get("models"):
+        body["models"] = list(_ALL_MODELS)
 
     verb = "PUT" if existing else "POST"
     url = (
@@ -254,12 +272,48 @@ def _delete_provider_keys(provider_name: str, client: httpx.Client) -> bool:
     return ok
 
 
+def _ensure_provider(provider_name: str, client: httpx.Client) -> bool:
+    """Create ``provider_name`` in Bifrost if it is absent. True when it exists.
+
+    Bifrost declares only what ``config.json`` seeds. A provider type Vigil
+    accepts beyond those -- ``openrouter`` -- has nowhere to put its key on a
+    fresh install until it is created, and a key push to it answers 404.
+    """
+    try:
+        r = client.get(_provider_url(provider_name), timeout=_DEFAULT_TIMEOUT)
+        if r.status_code != 404:
+            r.raise_for_status()
+            return True
+        r = client.post(
+            f"{_bifrost_base_url()}/api/providers",
+            json={
+                "provider": provider_name,
+                "network_config": dict(_NEW_PROVIDER_NETWORK),
+            },
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        if r.status_code >= 400:
+            logger.warning(
+                "Bifrost: creating provider %s returned %s: %s",
+                provider_name,
+                r.status_code,
+                r.text[:200],
+            )
+            return False
+        logger.info("Bifrost: created provider %s", provider_name)
+        return True
+    except Exception as e:
+        logger.warning("Bifrost: could not create provider %s: %s", provider_name, e)
+        return False
+
+
 def push_provider_key(provider_name: str, key_value: str) -> bool:
     """Set ``provider_name``'s Bifrost credential to ``key_value``.
 
-    Creates the key if the provider has none, otherwise replaces the existing
-    one in place. An empty ``key_value`` clears the credential by deleting the
-    key. The existing model allow-list is carried forward untouched.
+    Creates the provider if Bifrost lacks it and the key if the provider has
+    none, otherwise replaces the existing key in place. An empty ``key_value``
+    clears the credential by deleting the key. The existing model allow-list is
+    carried forward; a new key allows every model until a sync narrows it.
 
     Returns True on success. Any failure is logged and returns False so the
     caller's CRUD flow never breaks on a Bifrost hiccup — callers that surface
@@ -273,6 +327,8 @@ def push_provider_key(provider_name: str, key_value: str) -> bool:
     with httpx.Client() as client:
         if not key_value:
             return _delete_provider_keys(provider_name, client)
+        if not _ensure_provider(provider_name, client):
+            return False
         ok = _upsert_provider_key(provider_name, client, key_value=key_value)
         if ok:
             logger.info("Bifrost: pushed updated key for provider %s", provider_name)
@@ -383,6 +439,38 @@ def sync_provider_models(
                 len(normalized),
                 provider_type,
             )
+        return ok
+
+
+def open_allow_list(provider_type: str, *, key_value: Optional[str]) -> bool:
+    """Leave ``provider_type``'s key able to route without narrowing it.
+
+    For a type whose only catalogue is Bifrost's own (``openrouter``): Bifrost
+    lists that catalogue through the key's allow-list, so pushing the listing
+    back as the allow-list could only freeze it where it stands -- and from an
+    empty key both are empty, which is how a fresh install's OpenRouter routed
+    nothing (#2290). The allow-list a key has is kept, an operator's narrowing
+    included; only an empty one is rewritten, to ``*``.
+    """
+    if provider_type in _UNMANAGED_PROVIDER_TYPES:
+        return True
+    with httpx.Client() as client:
+        keys = _get_provider_keys(provider_type, client)
+        if keys is None:
+            return False
+        if any(k.get("models") for k in keys):
+            return True
+        if not key_value:
+            if keys:
+                logger.warning(
+                    "Bifrost: provider %s has a key that allows no model, and no "
+                    "secret here to rewrite it with",
+                    provider_type,
+                )
+            return False
+        ok = _upsert_provider_key(provider_type, client, key_value=key_value)
+        if ok:
+            logger.info("Bifrost: opened the model allow-list for %s", provider_type)
         return ok
 
 
@@ -505,7 +593,8 @@ async def sync_all_provider_models() -> Dict[str, Any]:
        the gateway uses the custom host rather than the stock OpenAI cloud.
     5. Unions per-provider-type across rows and PUTs that to Bifrost's
        allow-list via the admin API, so LLM traffic routes for every
-       model the dropdown shows.
+       model the dropdown shows. A type whose catalogue is Bifrost's own
+       keeps its allow-list instead (``open_allow_list``).
 
     Because all four surfaces (dropdown cache, live-meta cache, Bifrost
     host, Bifrost allow-list) are written in the same pass, they cannot drift.
@@ -711,6 +800,14 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
                 type_seen.add(mid)
                 type_union.append(mid)
 
+        if provider_type not in _DISCOVERABLE:
+            # ``type_union`` is the gateway's catalogue read back through the
+            # key's allow-list; see ``open_allow_list``.
+            bifrost_results[provider_type] = open_allow_list(
+                provider_type, key_value=type_key
+            )
+            continue
+
         if not type_union:
             # Preserve bootstrap: don't overwrite Bifrost's allow-list
             # with an empty list if every row failed and there are no
@@ -861,6 +958,10 @@ _CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
     # An alias Google keeps pointed at a served model; the catalogue lists pins
     # retired for new keys (gemini-2.0/2.5-flash) that the marker sweep would pick.
     "gemini": ("gemini-flash-latest",),
+    # A mid-tier model that calls tools well. In a ~500-model catalogue the
+    # marker sweep lands on whichever "flash" id sorts first (a ByteDance Seed
+    # model, on 14 Oct 2026).
+    "openrouter": ("anthropic/claude-haiku-5.5", "anthropic/claude-haiku-4.5"),
 }
 
 

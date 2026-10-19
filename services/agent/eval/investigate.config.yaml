@@ -1,0 +1,72 @@
+# The eval's deployment, shared by every engine under test. MODEL is replaced per
+# run with the model being evaluated; nothing else differs between engines.
+model: MODEL
+# Live LLM testing runs Haiku 5.5 through OpenRouter at high effort, for both engines.
+provider: openrouter
+effort: high
+
+budgets:
+  max_calls: 40
+  max_wall_ms: 900000
+  max_cost_usd: 3.00
+
+runtime:
+  max_turns: 16
+  result_cap: 8000
+  # Must be positive; the eval's memory is empty, so nothing is recalled.
+  recall_limit: 1
+
+# Answered from the case file by eval/estate.ts, never by a real system.
+tools:
+  - id: case_records
+    kind: remote
+    provides: case_records
+    description: Read the case records held for an investigation.
+    parameters:
+      type: object
+      properties:
+        case_id: { type: string, description: The case whose records to read. }
+      required: [case_id]
+    max_rows: 100
+    timeout_ms: 15000
+  - id: get_finding
+    kind: remote
+    provides: get_finding
+    description: Get detailed information about a specific finding by ID.
+    parameters:
+      type: object
+      properties:
+        finding_id: { type: string, description: "The finding ID, e.g. f-1001" }
+      required: [finding_id]
+  - id: splunk_search
+    kind: remote
+    provides: telemetry_search
+    description: Search the raw telemetry (process, authentication, network, DNS, proxy and cloud audit logs). Write the query in SQL over a table named events with columns time, host, user, source, event, detail.
+    parameters:
+      type: object
+      properties:
+        sql: { type: string }
+      required: [sql]
+  - id: search_findings
+    kind: remote
+    provides: findings_search
+    description: Search the findings detection has already scored, by entity or keyword.
+    parameters:
+      type: object
+      properties:
+        query: { type: string }
+  - id: lookup_indicators
+    kind: remote
+    provides: indicator_lookup
+    description: Look observables (IPs, domains, hashes) up in the threat-intelligence database.
+    parameters:
+      type: object
+      required: [values]
+      properties:
+        values: { type: array, items: { type: string } }
+
+# No gates: an eval run must not park waiting for a person.
+approvals: []
+
+thresholds:
+  min_corroborating_sources: 2

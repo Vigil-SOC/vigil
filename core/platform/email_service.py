@@ -55,7 +55,8 @@ class ConsoleBackend(EmailBackend):
             return
         logger.warning(
             "[email/console] not sent: to=%s subject=%r (body withheld; set "
-            "VIGIL_EMAIL_BACKEND=smtp to deliver mail)",
+            "VIGIL_EMAIL_BACKEND=smtp to deliver mail, or issue a password reset "
+            "link with scripts/reset-password.sh)",
             mask_email(to),
             subject,
         )

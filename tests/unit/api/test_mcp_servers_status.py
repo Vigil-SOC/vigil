@@ -42,6 +42,8 @@ def test_status_route_reads_the_stubbed_client(client):
         get_last_error=lambda name: {"virustotal": "connection refused"}.get(name),
         get_missing_credentials=lambda name: {"virustotal": ["VT_API_KEY"]}.get(name),
         retry_dormant_if_ready=AsyncMock(),
+        was_dialled=lambda name: True,
+        held_for_setup=lambda name: False,
     )
     client.app.dependency_overrides[provide_mcp_client] = lambda: stub
     servers, enabled = _catalog()

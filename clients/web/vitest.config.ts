@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    // read as text by tests that assert a rule exists: shell.css by CommandBar.test.tsx (the disabled
+    // treatment), cases.css by CaseSide.test.tsx (the side panel wraps rather than scrolling sideways)
+    css: { include: [/shell\.css/, /cases\.css/] },
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     // Don't pick up test files inside agent worktrees — those copies of

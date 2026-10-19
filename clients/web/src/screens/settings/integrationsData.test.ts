@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
+  EXPERIMENTAL_SERVERS,
   getIntegrationForServer,
   MCP_CATEGORIES,
   SERVER_TO_INTEGRATION,
+  WIP_SERVERS,
 } from './integrationsData'
 
 // Both Splunk servers share the descriptor id `splunk`. The self-hosted one is
@@ -31,5 +33,16 @@ describe('getIntegrationForServer', () => {
     const siem = MCP_CATEGORIES.find((c) => c.servers.includes('splunk-selfhosted'))
     expect(siem?.servers).toContain('splunk')
     expect(siem?.servers).toContain('splunk-selfhosted')
+  })
+})
+
+describe('EXPERIMENTAL_SERVERS', () => {
+  // a misspelt server name would silently drop the label from its card
+  it('names only servers the console shows, none of them already hidden as WIP', () => {
+    const shown = new Set(MCP_CATEGORIES.flatMap((c) => c.servers))
+    for (const server of EXPERIMENTAL_SERVERS) {
+      expect(shown.has(server), server).toBe(true)
+      expect(WIP_SERVERS.has(server), server).toBe(false)
+    }
   })
 })

@@ -100,6 +100,8 @@ An integration is one of two things:
 
 What an integration can do depends on its server: some are read-only lookups, others can act (for example, Microsoft Defender isolation or Carbon Black quarantine). The integrations docs list each one's tools.
 
+Some integrations are marked **Experimental** in Settings. These are CrowdStrike Falcon, SentinelOne, Microsoft Sentinel, the official Splunk MCP server, Google SecOps, Google Threat Intelligence, Joe Sandbox, vStrike, Atomic Red Team and CAPE Sandbox. The project has no free instance of these to test against (Atomic Red Team runs an operator's own runner; CAPE needs a KVM host), so they have never been run against a live one. They may not work. If you run one, please open an issue saying whether it worked, with your Vigil version.
+
 Enable and configure integrations under **Settings → Integrations**, or generate one from API docs with the **Custom Integration Builder**. If you build an integration you find useful, someone else will too. Please contribute it.
 
 **Vigil's own MCP server.** Vigil serves its SOC operations (findings, cases, approvals, hunts) at `/mcp`, the same tools its agents use. The finding, case, and approval tools that mirror frozen `/api/v1` operations are frozen: their names and input schemas are pinned in [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json). The rest are served under the `0.x` terms in [`SECURITY.md`](SECURITY.md#supported-versions).
@@ -118,6 +120,8 @@ cp env.example .env   # set AGENT_INTERNAL_TOKEN (see below)
 ```
 
 Then open http://localhost:6988 and create the admin account on the bootstrap screen.
+
+Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the console needs HTTPS: Chromium accepts them on `http://localhost`, but reached by IP or hostname over plain HTTP (or in Safari, even on localhost) sign-in fails. Set `VIGIL_COOKIE_SECURE=false` only for loopback or SSH-tunnel access (see `env.example`).
 
 `start.sh` provisions the pinned Python with [uv](https://docs.astral.sh/uv/), installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional), initializes the schema and reference data, and launches the API, the agent layer, and the frontend. No LogLM or cloud API key is needed to reach a running UI.
 
@@ -142,6 +146,28 @@ Then open http://localhost:6988 and create the admin account on the bootstrap sc
 - **Git**.
 - **No system Python needed**: `start.sh` provisions the version pinned in `.python-version` with uv, independent of any Python you already have.
 - **An LLM provider** (optional to reach the UI): Anthropic (default), OpenAI, Google Vertex, or Ollama (local, no key). Configure it under **Settings → AI models → Providers & Keys**; see the [Bifrost notes](https://vigilsoc.org/docs/bifrost/). With no provider key, `scripts/local_model.sh` serves a small local model Bifrost can reach and prints the model id to use.
+
+### Windows (WSL2)
+
+> **Not yet tested on real Windows hardware.** The scripts have been checked on macOS and Linux only, and the WSL2 handling is covered by stubbed unit tests. Please report what breaks.
+
+`start.sh` is a bash script, so run Vigil inside WSL2, not in PowerShell or Git Bash.
+
+- **WSL2 with Ubuntu** (`wsl --install -d Ubuntu` in an administrator PowerShell, then reboot). Inside Ubuntu: `sudo apt update && sudo apt install -y git curl`.
+- **Docker Desktop for Windows**, running, with **Settings → Resources → WSL integration** turned on for your Ubuntu distro. `docker ps` must work inside Ubuntu before you start.
+- **Node.js 20+ inside Ubuntu**, for example with [nvm](https://github.com/nvm-sh/nvm). A Windows Node install is not visible to the scripts.
+- **Clone into the Linux home** (`~/vigil`), not under `/mnt/c`. On the Windows drive, auto-reload, file permissions and Docker mounts are slow or unreliable; `start.sh` warns if it finds itself there. The repo's `.gitattributes` keeps shell scripts on LF line endings even if Git for Windows made the checkout. That only applies to files checked out after it: if `start.sh` fails with `$'\r': command not found`, the clone predates it. Clone again inside Ubuntu, or run `git rm -r --cached -q . && git reset --hard` in the checkout (this discards uncommitted changes).
+- **Memory.** WSL2 takes up to half of the machine's RAM by default, and Docker Desktop runs inside it. On an 8 GB laptop, put this in `%UserProfile%\.wslconfig` and run `wsl --shutdown` in PowerShell:
+
+  ```ini
+  [wsl2]
+  memory=6GB
+  ```
+
+  On 8 GB, keep the local model small (`qwen2.5:1.5b`, about 1 GB) or use a hosted provider.
+- **Ollama** is optional. Ollama for Windows listens on Windows' localhost, which WSL2 does not share in its default networking, so `start.sh` will report it as not found (the containers may still reach it through Docker Desktop; the model list on the host side will not). Either install Ollama inside Ubuntu, or turn on `networkingMode=mirrored` under `[wsl2]` (Windows 11 22H2 or later). Neither setup is verified. `scripts/local_model.sh` stops with an explanation under Docker Desktop.
+
+Open http://localhost:6988 in your Windows browser; `start.sh` tries `wslview`, then `explorer.exe`, and the URL is in the ready banner either way.
 
 ### Run
 
@@ -335,6 +361,7 @@ Guides live at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**:
 | [Helm](https://vigilsoc.org/docs/helm/) | Chart values, secrets, install |
 | [Splunk testing](https://vigilsoc.org/docs/splunk-testing/) · [Postgres → Splunk](https://vigilsoc.org/docs/postgres-to-splunk/) | Test data and export scripts |
 | [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
+| [Operator endpoints](docs/operator-endpoints.md) | API routes with no console screen: secrets backend status, dotenv → encrypted migration, schema init |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure |
 | [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
 

@@ -1,0 +1,24 @@
+[
+  {
+    "name": "volumes and intervals come from the telemetry not the findings",
+    "input": "A finding says host DB-03 had 'anomalous outbound traffic' with anomaly score 0.91. You need to know how many bytes left and at what interval. Where do you look, and why?",
+    "expect": [
+      "telemetry"
+    ]
+  },
+  {
+    "name": "what is already noticed comes from the findings",
+    "input": "Before querying raw logs, you want to know whether detection already flagged anything for user m.chen this week. Which surface answers that?",
+    "expect": [
+      "findings"
+    ]
+  },
+  {
+    "name": "a cross-domain hypothesis needs both surfaces",
+    "input": "Hypothesis: a phished identity was used to sign in and then the same host started a large upload. Which surfaces do you use, and in what order?",
+    "expect": [
+      "findings",
+      "telemetry"
+    ]
+  }
+]

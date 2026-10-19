@@ -106,6 +106,33 @@ async def test_dispatch_bifrost_for_ollama():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_carries_why_the_reply_ended():
+    # A reasoning model that spent max_tokens thinking returns "length" and little
+    # else; a caller can only tell that from a reply that ended if it is passed on.
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="", tool_calls=None),
+                finish_reason="length",
+            )
+        ],
+        model="openrouter/anthropic/claude-haiku-5.5",
+        usage=SimpleNamespace(prompt_tokens=5, completion_tokens=300),
+    )
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        out = await router.dispatch(
+            provider=_ollama_spec(), messages=[{"role": "user", "content": "hi"}]
+        )
+    assert out["finish_reason"] == "length"
+    assert out["content"] == ""
+
+
+@pytest.mark.asyncio
 async def test_dispatch_bifrost_maps_enabled_ollama_thinking_to_reasoning_effort():
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(

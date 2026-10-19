@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { fold, type HuntEvent } from "../../workflows/hunt/ledger.js";
-import { evidenceStrength } from "../../workflows/hunt/strength.js";
-import { DEFAULT_BUDGETS, type EvidenceRecord, type HuntState, type Hypothesis, type LinkRelation } from "../../workflows/hunt/types.js";
+import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
+import { evidenceStrength } from "../../plugins/hunt/strength.js";
+import { DEFAULT_BUDGETS, type EvidenceRecord, type HuntState, type Hypothesis, type LinkRelation } from "../../plugins/hunt/types.js";
 
 // The Hunt Lead is shown the same observation every iteration and rules on it every
 // iteration. Appending those rulings made one record carry a link per turn -- and
