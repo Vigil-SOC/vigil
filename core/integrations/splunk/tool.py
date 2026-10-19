@@ -128,8 +128,11 @@ _WHY_THE_SPAN_MATTERS = (
     "back empty while reading as though nothing was there.\n"
     "`earliest` takes a relative offset (-15y), an ISO 8601 timestamp "
     "(2018-08-19T00:00:00) or an epoch second. It does NOT take Splunk's console "
-    "form (08/19/2018:00:00:00), which returns nothing here. There is no `latest` "
-    "parameter; the window always ends now, which covers any past span."
+    "form (08/19/2018:00:00:00), which returns nothing here.\n"
+    "The window ends now unless the query bounds it. To end it earlier -- a count of "
+    "events before a time T -- put `latest=<epoch seconds>` in spl_query, e.g. "
+    '`"<value>" latest=1704164400 | stats count`. An inline `latest=` rejects ISO '
+    "times, so convert to epoch first."
 )
 # Without this a bare `index=x term` search returns whole events, and nothing else the
 # model sees says a count would usually do. stats/count stay the endorsed shape.

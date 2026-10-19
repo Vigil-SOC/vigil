@@ -105,8 +105,10 @@ def test_names_the_time_formats_that_work_and_the_one_that_does_not(monkeypatch)
     assert "2018-08-19T00:00:00" in described
     assert "epoch second" in described
     assert "08/19/2018:00:00:00" in described and "does NOT take" in described
-    # There is no such parameter, so telling it to set one would waste a turn.
-    assert "no `latest` parameter" in described
+    # An inline `latest=<epoch>` overrides the job's "now" end; root cause's
+    # "count before T" proof depends on the model knowing that.
+    assert "always ends now" not in described
+    assert "`latest=<epoch seconds>` in spl_query" in described
 
 
 # nl_search takes no time range at all, so the same map is a warning rather than
