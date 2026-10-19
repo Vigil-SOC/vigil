@@ -286,9 +286,12 @@ async def test_v1_start_refuses_a_disabled_workflow_and_accepts_an_enabled_one(s
 
 
 @pytest.mark.asyncio
-async def test_triage_routes_a_disabled_workflow_to_the_fallback(session):
+async def test_triage_routes_a_disabled_workflow_to_the_fallback(session, monkeypatch):
     from services.daemon.orchestrator import Orchestrator
 
+    monkeypatch.setattr(
+        "services.daemon.orchestrator._open_case_holding", lambda _fid: None
+    )
     _disable(session, "full-investigation")
     orch = object.__new__(Orchestrator)
     orch.shared_intel = MagicMock()

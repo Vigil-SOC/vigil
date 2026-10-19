@@ -1,6 +1,6 @@
 ---
 name: threat-hunt
-version: 1
+version: 2
 description: "Proactive, hypothesis-driven threat hunting across all available data sources with network analysis, malware examination, and intelligence enrichment."
 use_case: "Proactive threat hunting -- start with a hypothesis or IOC and systematically search for evidence across network, endpoint, and threat intel sources."
 trigger_examples:
@@ -99,7 +99,7 @@ objectives:
   - "Enrich every observable and attribute where the evidence supports it"
   - "Report the hypothesis as confirmed, refuted or inconclusive, with reasons"
 # The roster, not an order: the lead dispatches whichever of these the question in
-# front of it needs. Their prompts and tool grants live in arch/threathunt.yaml,
+# front of it needs. Their tool grants live in plugins/hunt/plugin.yaml,
 # so what stands here is who can be asked and what each is for.
 phases:
   - id: threat_hunter

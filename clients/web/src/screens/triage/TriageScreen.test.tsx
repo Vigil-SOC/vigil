@@ -388,4 +388,21 @@ describe('TriageScreen', () => {
     renderScreen('/triage?kind=schedule')
     expect(await screen.findByText('Nothing in the queue matches these filters.')).toBeInTheDocument()
   })
+
+  it('fills the view, with the table and its header in the scroll box and the tiles and chips above it', async () => {
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
+    const setViewFull = vi.fn()
+    render(
+      <MemoryRouter initialEntries={['/triage']}>
+        <TriageScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={openCase} setViewFull={setViewFull} />
+      </MemoryRouter>,
+    )
+    const strip = await screen.findByLabelText('Intake strip')
+    expect(setViewFull).toHaveBeenCalledWith(true)
+    const box = screen.getByTestId('triage-scroll')
+    expect(within(box).getByRole('table')).toBeInTheDocument()
+    expect(within(box).getAllByRole('columnheader').length).toBeGreaterThan(0)
+    expect(box).not.toContainElement(strip)
+    expect(box).not.toContainElement(screen.getByRole('group', { name: 'Filters' }))
+  })
 })

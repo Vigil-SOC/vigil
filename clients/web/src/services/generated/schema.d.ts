@@ -454,12 +454,12 @@ export interface paths {
         };
         /**
          * Get Budget Settings
-         * @description Return the persisted Bifrost VK + budget config.
+         * @description Return the persisted Bifrost VK config.
          */
         get: operations["get_api_analytics_budget"];
         /**
          * Put Budget Settings
-         * @description Update the Bifrost VK + budget config.
+         * @description Update the Bifrost VK config.
          *
          *     Admin operation. The dispatch path picks up the change on the next
          *     runtime-config TTL tick (~60s). When ``DEV_MODE=true`` or
@@ -2148,7 +2148,7 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: the latest run's ledger, then this case's audit rows.
+         * @description The case record: the latest run's ledger, audit rows and activities.
          *
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
@@ -2886,40 +2886,14 @@ export interface paths {
          *     the conflict is reported so an operator can resolve it manually.
          *
          *     Body is optional. Pass ``{"keys": ["FOO_BAR"]}`` to migrate only a
-         *     subset, or ``{"remove_from_dotenv": false}`` for a dry-copy that
-         *     leaves the source file alone.
+         *     subset. ``{"remove_from_dotenv": false}`` is NOT a preview: it still
+         *     writes every value to ``secrets.enc`` and only leaves the dotenv copy
+         *     in place.
+         *
+         *     Returns the report with 200 on success (conflicts included), 503 when
+         *     the encrypted backend is unavailable, and 500 when any key errored.
          */
         post: operations["post_api_config_secrets_migrate-to-encrypted"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/secrets/reinit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Secrets Reinit
-         * @description Drop the cached secrets-manager singleton and rebuild it.
-         *
-         *     Useful when the long-running process picked the wrong write backend
-         *     on first init (e.g. ``SECRETS_BACKEND`` was stale in os.environ when
-         *     the very first ``set_secret`` call ran during startup). After this
-         *     call the manager re-evaluates backend availability fresh.
-         *
-         *     Pass ``{"write_backend": "encrypted"}`` to force a specific backend
-         *     regardless of what's currently in ``os.environ`` — useful when you
-         *     just edited ``.env`` to switch from dotenv to encrypted but haven't
-         *     bounced the process.
-         */
-        post: operations["post_api_config_secrets_reinit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4194,13 +4168,22 @@ export interface paths {
         put?: never;
         /**
          * Reload Servers
-         * @description Reload MCP server configurations from ``mcp-config.json`` and
-         *     the integration bridge, picking up newly enabled/disabled
-         *     integrations without restarting the backend.
+         * @description Reload the catalog from ``mcp-config.json`` and apply it to running servers.
          *
-         *     Reinitialises the process-wide ``MCPService`` in place so both the
-         *     API and the ``MCPClient`` see the new catalog. Previously-enabled
-         *     servers are reconnected automatically.
+         *     The new catalog is built first; if the file does not parse, the old
+         *     catalog and every session stay as they were and the route answers 422
+         *     naming the error. Otherwise, for each server with a live session:
+         *
+         *     * removed from the file, or now disabled: disconnected (stopped in the
+         *       runner too) and its tools withdrawn from agents;
+         *     * changed spawn config: reconnected on the new config. A stdio child
+         *       compares command, args, cwd and declared env; a server in the MCP runner
+         *       compares only its declared env and credentials, because the runner
+         *       launches from its own catalog and ignores command, args and cwd;
+         *     * unchanged: left alone.
+         *
+         *     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
+         *     what happened; ``success`` is false if any reconnect or disconnect failed.
          */
         post: operations["post_api_mcp_servers_reload"];
         delete?: never;
@@ -4220,10 +4203,20 @@ export interface paths {
          * Get Servers Status
          * @description Session state for every catalog server.
          *
-         *     ``status`` is ``running`` only while that server's persistent session is
-         *     connected. With no MCP client, every server is disconnected: the catalog
-         *     has no session state of its own. Dormant reconnect stays on
-         *     ``GET /connections/status``.
+         *     ``status`` is one of:
+         *
+         *     * ``running`` while that server's persistent session is connected;
+         *     * ``not_set_up`` while the install lacks what the server serves from
+         *       (security-detections before its rules are fetched). The row names the
+         *       reason and ``setup_action``, the one action that fixes it;
+         *     * ``on_demand`` when nothing has dialled the server yet and it connects on
+         *       its first call: every server with eager connect off, and one held back
+         *       for setup until this process next uses it (the fetch may have run in
+         *       another worker). Not down;
+         *     * ``disconnected`` otherwise. With no MCP client every server is: the
+         *       catalog has no session state of its own.
+         *
+         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
@@ -4536,26 +4529,6 @@ export interface paths {
          * @description Kill a specific running investigation.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_kill"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orchestrator/investigations/{investigation_id}/review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Review Investigation
-         * @description Human review of an investigation: approve or request rework.
-         */
-        post: operations["post_api_orchestrator_investigations_investigation_id_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5280,40 +5253,6 @@ export interface paths {
         get: operations["get_api_storage_health"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/storage/init-schema": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Init Schema
-         * @description Provision Vigil's tables into an **empty** target database.
-         *
-         *     Split out of /reconnect, and deliberately narrow. ``create_all`` is
-         *     ``checkfirst=True``: it creates what's missing and silently skips tables
-         *     that already exist, whatever shape they're in. That makes it correct for an
-         *     empty database and useless — actively misleading — for a drifted one.
-         *
-         *     So this refuses anything but ``state == "empty"``:
-         *       - ``drifted`` -> scripts/migrate_schema.py owns that (it has the real
-         *         ALTER TABLE migrations); create_all here would report success and
-         *         change nothing.
-         *       - ``ok`` -> nothing to do.
-         *
-         *     Refusing on non-empty also means a mistyped host can't scatter ~50 tables
-         *     through an unrelated production database.
-         */
-        post: operations["post_api_storage_init-schema"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6462,129 +6401,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/webhooks/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Webhooks
-         * @description List all configured webhooks.
-         *
-         *     Returns:
-         *         List of webhooks
-         */
-        get: operations["get_api_webhooks"];
-        put?: never;
-        /**
-         * Create Webhook
-         * @description Create a new webhook.
-         *
-         *     Args:
-         *         data: Webhook configuration
-         *
-         *     Returns:
-         *         Created webhook
-         */
-        post: operations["post_api_webhooks"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Update Webhook
-         * @description Update a webhook.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *         data: Update data
-         *
-         *     Returns:
-         *         Updated webhook
-         */
-        put: operations["put_api_webhooks_webhook_id"];
-        post?: never;
-        /**
-         * Delete Webhook
-         * @description Delete a webhook.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *
-         *     Returns:
-         *         Success status
-         */
-        delete: operations["delete_api_webhooks_webhook_id"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}/deliveries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Webhook Deliveries
-         * @description Get webhook delivery history.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *         limit: Maximum deliveries to return
-         *
-         *     Returns:
-         *         Delivery history
-         */
-        get: operations["get_api_webhooks_webhook_id_deliveries"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Webhook
-         * @description Test a webhook by sending a test payload.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *
-         *     Returns:
-         *         Test result
-         */
-        post: operations["post_api_webhooks_webhook_id_test"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/workflows": {
         parameters: {
             query?: never;
@@ -7536,48 +7352,23 @@ export interface components {
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
             /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
-            /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /**
          * BudgetSettingsUpdate
-         * @description Admin-intent body for PUT /budget. All fields required so the API
-         *     can't be used to silently drop a setting via an empty PATCH.
-         *     budget_limit_usd and enforcement_mode are stored for compatibility
-         *     and ignored at dispatch.
+         * @description Admin-intent body for PUT /budget. The spend ceiling lives on the
+         *     virtual key in Bifrost, not here. Unknown fields are ignored, so older
+         *     clients that still send budget_limit_usd / enforcement_mode get a 200.
          */
         BudgetSettingsUpdate: {
-            /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
             /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /** ByPriorityResponse */
         ByPriorityResponse: {
@@ -9689,7 +9480,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder";
             /** Provider */
             provider: string;
             /** Routable */
@@ -9899,18 +9690,41 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** NeedsYouHypothesis */
+        NeedsYouHypothesis: {
+            /**
+             * Hypothesis Id
+             * @default
+             */
+            hypothesis_id: string;
+            /**
+             * Provenance
+             * @default
+             */
+            provenance: string;
+            /** Statement */
+            statement: string;
+        };
         /** NeedsYouItem */
         NeedsYouItem: {
             /** Case Id */
             case_id?: string | null;
+            /** Checkpoint Class */
+            checkpoint_class?: string | null;
+            /** Checkpoint Id */
+            checkpoint_id?: string | null;
             /** Created At */
             created_at: string;
+            /** Hypotheses */
+            hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
             /** Kind */
             kind: string;
             /** Reason */
             reason: string;
             /** Reversibility */
             reversibility: string;
+            /** Run Id */
+            run_id?: string | null;
             /** Source Id */
             source_id: string;
             /** Title */
@@ -10345,13 +10159,6 @@ export interface components {
             config: string;
             /** Playbook */
             playbook: string;
-        };
-        /** ReviewRequest */
-        ReviewRequest: {
-            /** Action */
-            action: string;
-            /** Notes */
-            notes?: string | null;
         };
         /**
          * Routability
@@ -11002,6 +10809,8 @@ export interface components {
              * @default
              */
             reason: string;
+            /** Severity */
+            severity?: string | null;
             /**
              * Summary
              * @default
@@ -11287,41 +11096,6 @@ export interface components {
             /** User Id */
             user_id: string;
         };
-        /**
-         * WebhookCreate
-         * @description Create webhook.
-         */
-        WebhookCreate: {
-            /**
-             * Active
-             * @default true
-             */
-            active: boolean;
-            /** Events */
-            events: string[];
-            /** Name */
-            name: string;
-            /** Secret */
-            secret?: string | null;
-            /** Url */
-            url: string;
-        };
-        /**
-         * WebhookUpdate
-         * @description Update webhook.
-         */
-        WebhookUpdate: {
-            /** Active */
-            active?: boolean | null;
-            /** Events */
-            events?: string[] | null;
-            /** Name */
-            name?: string | null;
-            /** Secret */
-            secret?: string | null;
-            /** Url */
-            url?: string | null;
-        };
         /** WorkflowDetailResponse */
         WorkflowDetailResponse: {
             /** Agent */
@@ -11480,19 +11254,6 @@ export interface components {
              * @default true
              */
             remove_from_dotenv: boolean;
-        };
-        /**
-         * _SecretsReinitRequest
-         * @description Optional override for the reinit endpoint.
-         *
-         *     The running process's ``os.environ`` may have a stale
-         *     ``SECRETS_BACKEND`` from launch time. ``write_backend`` here lets an
-         *     admin force the rebuilt singleton onto a specific backend without
-         *     bouncing uvicorn.
-         */
-        _SecretsReinitRequest: {
-            /** Write Backend */
-            write_backend?: string | null;
         };
     };
     responses: never;
@@ -16608,43 +16369,6 @@ export interface operations {
             };
         };
     };
-    post_api_config_secrets_reinit: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["_SecretsReinitRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_config_secrets_status: {
         parameters: {
             query?: never;
@@ -17732,7 +17456,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;
@@ -19469,43 +19193,6 @@ export interface operations {
             };
         };
     };
-    post_api_orchestrator_investigations_investigation_id_review: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                investigation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_orchestrator_investigations_investigation_id_wake: {
         parameters: {
             query?: never;
@@ -20768,37 +20455,6 @@ export interface operations {
         };
     };
     get_api_storage_health: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_storage_init-schema": {
         parameters: {
             query?: never;
             header?: {
@@ -22478,7 +22134,7 @@ export interface operations {
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
                 status?: string | null;
-                /** @description Text search across finding IDs, descriptions, entity context */
+                /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
                 limit?: number;
@@ -22670,210 +22326,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowDetailResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_webhooks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_webhooks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebhookCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_api_webhooks_webhook_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebhookUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_webhooks_webhook_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_webhooks_webhook_id_deliveries: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_webhooks_webhook_id_test: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

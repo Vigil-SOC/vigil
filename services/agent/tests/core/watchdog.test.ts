@@ -14,7 +14,9 @@ import type { ScriptedTurn } from "../support/scripted-provider.js";
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const RUN = "7d3c2d3e-0000-4000-8000-000000000633";
 
-const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "done", citations: [], proposed_actions: [] } }];
+// The investigate plugin's answer, stopping twice: the second answers the kernel's ask to
+// keep going, since the run has looked at nothing.
+const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { calls: [] }, { emit: { summary: "nothing to pursue", disposition: "inconclusive", confidence: "low", citations: [], gaps: [], next_steps: [], proposed_actions: [] } }];
 
 let config: string;
 let state: InProcessState;

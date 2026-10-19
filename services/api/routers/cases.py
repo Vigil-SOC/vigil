@@ -678,14 +678,15 @@ async def get_escalations(case_id: str, session: UnitOfWorkSession):
 
 @router.get("/{case_id}/record", response_model=CaseRecordResponse)
 async def get_case_record(case_id: str, session: UnitOfWorkSession):
-    """The case record: the latest run's ledger, then this case's audit rows.
+    """The case record: the latest run's ledger, audit rows and activities.
 
     Newest first. The agent returns the ledger with snapshots off. Audit rows
     are ``entity_type == case`` and ``entity_id`` this case — the table has no
     ``case_id`` column. The run is the case's latest, an investigation's
     ``run_id_for`` or a run started on the case, never the shadow adjudication.
     """
-    if not data_service.get_case(case_id):
+    case = data_service.get_case(case_id)
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
     refs = case_run_refs(
@@ -709,7 +710,7 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
     return {
         "run_id": run_id,
         "investigation_id": investigation_id,
-        "rows": merge_record(events, audits),
+        "rows": merge_record(events, audits, case.get("activities") or []),
     }
 
 

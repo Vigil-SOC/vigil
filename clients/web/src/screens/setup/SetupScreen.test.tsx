@@ -704,8 +704,8 @@ describe('SetupScreen', () => {
       it('are left out for LogLM, which has no federation source', async () => {
         await openStep(['loglm'])
         fireEvent.change(screen.getByLabelText(/^Connector URL/), { target: { value: 'https://loglm.test' } })
-        fireEvent.change(screen.getByLabelText(/^Session Mint Secret/), { target: { value: 's1' } })
-        fireEvent.change(screen.getByLabelText(/^MCP Bearer Token/), { target: { value: 's2' } })
+        fireEvent.change(screen.getByLabelText(/^Session secret/), { target: { value: 's1' } })
+        fireEvent.change(screen.getByLabelText(/^Agent access token/), { target: { value: 's2' } })
         vi.mocked(federationApi.listSources).mockClear()
         testConnection()
         expect(await screen.findByText('Connected to LogLM')).toBeInTheDocument()

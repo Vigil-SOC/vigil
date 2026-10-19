@@ -10,7 +10,7 @@ import { InProcessState } from "../../core/state.js";
 import { advance, handle, MAX_STALLED_RESUMES, resolveSpec, specOf } from "../../worker.js";
 import { SpecError } from "../../core/spec.js";
 import type { HarnessFactory } from "../../harness.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -61,7 +61,7 @@ function rewriteBudget(iterations: number): void {
 
 describe("resolving a run", () => {
   it("routes the run kind through the registry to its arch file", async () => {
-    expect((await resolveSpec(startJob())).arch).toBe("threathunt");
+    expect((await resolveSpec(startJob())).arch).toBe("hunt");
   });
 
   // Startup, not runtime: the kind is resolved before the ledger opens.
@@ -71,8 +71,8 @@ describe("resolving a run", () => {
 
   it("lets an explicit arch path override the registry's default", async () => {
     const job = startJob();
-    job.request.arch = join(import.meta.dirname, "..", "..", "arch", "threathunt.yaml");
-    expect((await resolveSpec(job)).dispatch.max_workers).toBe(4);
+    job.request.arch = join(import.meta.dirname, "..", "..", "plugins", "hunt", "plugin.yaml");
+    expect((await resolveSpec(job)).allowance).toEqual({ turns_per_iteration: 6, calls_per_iteration: 60 });
   });
 
   // Per-run, so it rides the job rather than the playbook the reference names --
@@ -109,14 +109,15 @@ describe("the arch a run started under is journaled", () => {
     await advance(state, leases, startJob(), scriptedHarness(CONCLUDE));
 
     const opened = await specOf(state, RUN);
-    expect(opened?.arch).toBe("threathunt");
+    expect(opened?.arch).toBe("hunt");
     // The turn count is the one that binds; max_calls is a backstop the hunt
     // raises off it, so this asserts the relationship rather than the arithmetic
-    // -- the multiplier is a property of this arch's fan-out, not of the budget.
+    // -- the multiplier is the plugin's allowance, not a property of the budget.
     // Cast because the harness's budget type has no turn count -- that is the
     // whole point of the split, and the journaled spec carries the hunt's.
     const budgets = opened?.budgets as unknown as { max_iterations: number; max_calls: number; max_cost_usd: number };
-    expect(budgets.max_iterations).toBe(8);
+    // The turn budget is the iteration budget times the plugin's allowance: 8 x 6.
+    expect(budgets.max_iterations).toBe(48);
     expect(budgets.max_calls).toBeGreaterThan(budgets.max_iterations);
     expect(budgets.max_cost_usd).toBe(5);
   });
@@ -336,6 +337,24 @@ describe("a run waiting on a person", () => {
   });
 });
 
+// Every body posted to the run mirror while run() runs.
+async function mirrorPosts(run: () => Promise<void>): Promise<{ url: string; body: unknown }[]> {
+  const posted: { url: string; body: unknown }[] = [];
+  const real = globalThis.fetch;
+  process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (init?.body !== undefined) posted.push({ url: String(url), body: JSON.parse(String(init.body)) });
+    return { ok: true, status: 200, json: async () => ({ decisions: [] }) } as Response;
+  }) as typeof globalThis.fetch;
+  try {
+    await run();
+  } finally {
+    globalThis.fetch = real;
+    delete process.env["VIGIL_RUNS_URL"];
+  }
+  return posted;
+}
+
 // Hunt already journals a gateway 402 as budget_exhausted. Lead and compose let
 // the throw leave the workflow, so BullMQ and the sweeper retry it until the stall
 // guard abandons the run for "failing without saying so" and the 402 is gone.
@@ -381,23 +400,6 @@ describe("a run the gateway refuses because its budget is spent", () => {
     };
   }
 
-  async function mirrorPosts(run: () => Promise<void>): Promise<{ url: string; body: unknown }[]> {
-    const posted: { url: string; body: unknown }[] = [];
-    const real = globalThis.fetch;
-    process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (init?.body !== undefined) posted.push({ url: String(url), body: JSON.parse(String(init.body)) });
-      return { ok: true, status: 200, json: async () => ({ decisions: [] }) } as Response;
-    }) as typeof globalThis.fetch;
-    try {
-      await run();
-    } finally {
-      globalThis.fetch = real;
-      delete process.env["VIGIL_RUNS_URL"];
-    }
-    return posted;
-  }
-
   it.each(["investigate", "compose"] as const)("ends a %s run on the first attempt and leaves nothing for the sweeper", async (kind) => {
     const state = new InProcessState();
     const posted = await mirrorPosts(async () => {
@@ -427,38 +429,56 @@ describe("a run the gateway refuses because its budget is spent", () => {
   });
 });
 
-describe("an investigation that concludes with proposals", () => {
-  it("hands them to the backend on the terminal it reports", async () => {
-    const proposal = { action_type: "block_ip", target: "45.77.53.176", reason: "the beacon's destination" };
-    const cfg = join(mkdtempSync(join(tmpdir(), "vigil-propose-")), "vigil.config.yaml");
-    copyFileSync(join(FIXTURES, "case.config.yaml"), cfg);
-    const job: RunJob = {
-      schema_version: 1,
-      run_id: RUN,
-      run_kind: "investigate",
-      tenant_id: null,
-      enqueued_at: new Date().toISOString(),
-      enqueued_by: "test",
-      reason: "start",
-      request: { arch: "", playbook: join(FIXTURES, "case.playbook.yaml"), config: cfg, prompt: "go" },
-    };
-    const script: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "beaconing", citations: [], proposed_actions: [proposal] } }];
+// A start that fails before its ledger opens has no terminal to journal and nothing
+// for settle() to read, but its workflow_runs row was created running. #2391.
+describe("a start that fails before its ledger opens", () => {
+  const RUNS = "http://backend/internal/runs";
 
-    const posted: { url: string; body: unknown }[] = [];
-    const real = globalThis.fetch;
-    process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (init?.body !== undefined) posted.push({ url: String(url), body: JSON.parse(String(init.body)) });
-      return { ok: true, status: 200, json: async () => ({ decisions: [] }) } as Response;
-    }) as typeof globalThis.fetch;
-    try {
-      await advance(new InProcessState(), leases, job, scriptedHarness(script));
-    } finally {
-      globalThis.fetch = real;
-      delete process.env["VIGIL_RUNS_URL"];
+  async function terminals(run: () => Promise<void>): Promise<unknown[]> {
+    return (await mirrorPosts(run)).filter((one) => one.url === `${RUNS}/${RUN}/terminal`).map((one) => one.body);
+  }
+
+  // A reference resolves its own config, so a config path beside one is refused.
+  function refused(kind: RunJob["run_kind"]): Extract<RunJob, { reason: "start" }> {
+    const job = startJob(kind);
+    return { ...job, request: { ...job.request, playbook: "workflow:triage" } };
+  }
+
+  it.each(["hunt", "compose"] as const)("tells the console a %s run whose spec is refused failed, once", async (kind) => {
+    const job = refused(kind);
+    let caught: unknown;
+    const posted = await terminals(async () => {
+      caught = await handle(new InProcessState(), leases, job, new InProcessDirectiveQueue(), scriptedHarness(CONCLUDE), false).catch((error: unknown) => error);
+    });
+
+    expect(caught).toBeInstanceOf(UnrecoverableError);
+    expect(posted).toEqual([{ outcome: "failed", reason: (caught as Error).message, summary: "" }]);
+    expect(await leases.sweep(60_000, 10)).toEqual([]);
+  });
+
+  // Postgres going away as the run event is journaled: BullMQ retries it, so only
+  // the attempt nothing follows may say failed.
+  class Unwritable extends InProcessState {
+    override async append(): Promise<never> {
+      throw new Error("connection terminated unexpectedly");
     }
+  }
 
-    const terminal = posted.find((one) => one.url.endsWith(`${RUN}/terminal`));
-    expect(terminal?.body).toMatchObject({ outcome: "completed", proposed_actions: [proposal] });
+  it.each([[false, 0], [true, 1]] as const)("on a retryable error with final=%s posts %i terminals", async (final, count) => {
+    const posted = await terminals(async () => {
+      await expect(
+        handle(new Unwritable(), leases, startJob(), new InProcessDirectiveQueue(), scriptedHarness(CONCLUDE), final),
+      ).rejects.toThrow("connection terminated unexpectedly");
+    });
+
+    expect(posted).toEqual(count === 0 ? [] : [{ outcome: "failed", reason: "connection terminated unexpectedly", summary: "" }]);
+  });
+
+  it("says nothing for a resume that finds no ledger", async () => {
+    const posted = await terminals(async () => {
+      await expect(advance(new InProcessState(), leases, resumeJob(), scriptedHarness(CONCLUDE))).rejects.toThrow(/has no ledger/);
+    });
+
+    expect(posted).toEqual([]);
   });
 });

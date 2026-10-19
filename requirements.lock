@@ -86,7 +86,7 @@ docstring-parser==0.18.0
     # via anthropic
 email-validator==2.3.0
     # via -r requirements.txt
-faker==40.37.0
+faker==40.43.0
     # via -r requirements.txt
 fastapi==0.141.1
     # via -r requirements.txt
@@ -170,7 +170,7 @@ numpy==2.5.3
     # via -r requirements.txt
 openai==3.3.1
     # via -r requirements.txt
-opentelemetry-api==1.45.0
+opentelemetry-api==1.45.1
     # via
     #   -r requirements.txt
     #   mcp
@@ -186,45 +186,45 @@ opentelemetry-api==1.45.0
     #   opentelemetry-instrumentation-sqlalchemy
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-exporter-http-transport==0.66b0
+opentelemetry-exporter-http-transport==0.66b1
     # via opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-common==0.66b0
+opentelemetry-exporter-otlp-common==0.66b1
     # via
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-proto-common==1.45.0
+opentelemetry-exporter-otlp-proto-common==1.45.1
     # via
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-proto-grpc==1.45.0
+opentelemetry-exporter-otlp-proto-grpc==1.45.1
     # via -r requirements.txt
-opentelemetry-exporter-otlp-proto-http==1.45.0
+opentelemetry-exporter-otlp-proto-http==1.45.1
     # via -r requirements.txt
 opentelemetry-exporter-prometheus==0.66b0
     # via -r requirements.txt
-opentelemetry-instrumentation==0.66b0
+opentelemetry-instrumentation==0.66b1
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-instrumentation-logging
     #   opentelemetry-instrumentation-redis
     #   opentelemetry-instrumentation-sqlalchemy
-opentelemetry-instrumentation-asgi==0.66b0
+opentelemetry-instrumentation-asgi==0.66b1
     # via opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-fastapi==0.66b0
+opentelemetry-instrumentation-fastapi==0.66b1
     # via -r requirements.txt
-opentelemetry-instrumentation-logging==0.66b0
+opentelemetry-instrumentation-logging==0.66b1
     # via -r requirements.txt
-opentelemetry-instrumentation-redis==0.66b0
+opentelemetry-instrumentation-redis==0.66b1
     # via -r requirements.txt
-opentelemetry-instrumentation-sqlalchemy==0.66b0
+opentelemetry-instrumentation-sqlalchemy==0.66b1
     # via -r requirements.txt
-opentelemetry-proto==1.45.0
+opentelemetry-proto==1.45.1
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-sdk==1.45.0
+opentelemetry-sdk==1.45.1
     # via
     #   -r requirements.txt
     #   opentelemetry-exporter-otlp-common
@@ -232,7 +232,7 @@ opentelemetry-sdk==1.45.0
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-exporter-prometheus
     #   opentelemetry-semantic-conventions-ai
-opentelemetry-semantic-conventions==0.66b0
+opentelemetry-semantic-conventions==0.66b1
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
@@ -244,7 +244,7 @@ opentelemetry-semantic-conventions==0.66b0
     #   opentelemetry-semantic-conventions-ai
 opentelemetry-semantic-conventions-ai==0.5.1
     # via -r requirements.txt
-opentelemetry-util-http==0.66b0
+opentelemetry-util-http==0.66b1
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
@@ -353,6 +353,8 @@ reportlab==5.0.1
 requests==2.34.2
     # via
     #   -r requirements.txt
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
     #   stix2
     #   taxii2-client
 respx==0.23.1
@@ -365,7 +367,7 @@ s3transfer==0.19.2
     # via boto3
 semver==2.13.0
     # via bullmq
-sentry-sdk==2.70.0
+sentry-sdk==2.72.0
     # via -r requirements.txt
 simplejson==4.1.1
     # via stix2
@@ -440,7 +442,6 @@ urllib3==2.8.0
     # via
     #   -r requirements.txt
     #   botocore
-    #   opentelemetry-exporter-http-transport
     #   requests
     #   sentry-sdk
 uv==0.12.23

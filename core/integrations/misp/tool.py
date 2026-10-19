@@ -19,6 +19,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.proxy import integration_proxy
 from core.integrations._base.tls import tls_verify
 from core.integrations._base.tool_result import run_tool
 from core.integrations.misp.descriptor import MISP
@@ -86,6 +87,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 json={"value": value},
                 timeout=30,
                 verify=tls_verify(verify, ca_cert_path),
+                proxy=integration_proxy("misp"),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -107,6 +109,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 json={"limit": limit, "returnFormat": "json"},
                 timeout=30,
                 verify=tls_verify(verify, ca_cert_path),
+                proxy=integration_proxy("misp"),
             )
             resp.raise_for_status()
             data = resp.json()

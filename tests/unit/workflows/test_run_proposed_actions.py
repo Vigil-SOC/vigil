@@ -22,7 +22,14 @@ from core.workflows.run_bridge_router import TerminalUpdate, record_terminal
 
 pytestmark = pytest.mark.unit
 
-ARCH = Path(__file__).resolve().parents[3] / "services" / "agent" / "arch"
+PLUGIN = (
+    Path(__file__).resolve().parents[3]
+    / "services"
+    / "agent"
+    / "plugins"
+    / "investigate"
+    / "plugin.yaml"
+)
 
 ISOLATE = {
     "action_type": "isolate_host",
@@ -274,9 +281,10 @@ class TestNothingIsProposedWhere:
 
 # The lead is offered exactly the actions this side will file; one it could name
 # and this side drops would be a proposal lost with only a log line to show for it.
-def test_the_arch_offers_the_actions_the_bridge_files():
-    lead = yaml.safe_load((ARCH / "investigate.yaml").read_text())["roles"]["lead"]
-    item = lead["output_schema"]["properties"]["proposed_actions"]["items"]
+def test_the_plugin_offers_the_actions_the_bridge_files():
+    conclusion = yaml.safe_load(PLUGIN.read_text())["conclusion"]
+    assert conclusion["proposals_field"] == "proposed_actions"
+    item = conclusion["schema"]["properties"]["proposed_actions"]["items"]
 
     offered = item["properties"]["action_type"]["enum"]
     assert offered == list(rbr.PROPOSAL_TITLES)

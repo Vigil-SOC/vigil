@@ -48,6 +48,15 @@ tools:
       properties:
         query: { type: string }
         severity: { type: string }
+  - id: get_finding
+    kind: remote
+    provides: get_finding
+    description: one finding's whole record, its raw source evidence included
+    parameters:
+      type: object
+      required: [finding_id]
+      properties:
+        finding_id: { type: string }
   - id: lookup_indicators
     kind: remote
     provides: indicator_lookup
