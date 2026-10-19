@@ -29,6 +29,8 @@ import {
 } from './providerResidency'
 
 type CardId = 'anthropic' | 'openai' | 'cloud' | 'ollama'
+// 'other' is the Another provider field: naming a provider there deselects every card.
+type Pick = CardId | 'other'
 
 // copy is the board's, verbatim
 const CARDS: { id: CardId; title: string; name: string; body: string; providers: readonly string[]; kind: 'key' | 'cloud' | 'local' }[] = [
@@ -68,7 +70,7 @@ const CARDS: { id: CardId; title: string; name: string; body: string; providers:
 
 export default function SetupProviderStep({ onRoutable }: { onRoutable: () => void }) {
   const { providers, keys, verdicts, phase, error, reload, saveKey, addProvider } = useBifrostProviders()
-  const [picked, setPicked] = useState<CardId | null>(null)
+  const [picked, setPicked] = useState<Pick | null>(null)
   const [cloudPick, setCloudPick] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
   const [busy, setBusy] = useState(false)
@@ -106,7 +108,8 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
   const record = (name: string, o: Outcome) => setOutcomes((prev) => ({ ...prev, [name]: o }))
 
   // first card, in card order, whose provider Bifrost already lists
-  const selectedId = picked ?? CARDS.find((c) => c.providers.some(held))?.id ?? null
+  const selectedId =
+    picked === 'other' ? null : (picked ?? CARDS.find((c) => c.providers.some(held))?.id ?? null)
   const card = CARDS.find((c) => c.id === selectedId)
   const cloudProvider = cloudPick ?? CLOUD_PROVIDERS.find(held) ?? 'bedrock'
   const provider = card ? (card.id === 'cloud' ? cloudProvider : card.providers[0]) : null
@@ -247,24 +250,6 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
             ))}
           </div>
 
-          {card && provider && (
-            <ProviderKeyCard
-              key={provider}
-              kind={card.kind}
-              provider={provider}
-              name={card.name}
-              existing={keyOf(provider)}
-              outcome={outcomes[provider]}
-              busy={busy}
-              onTest={test}
-              onPickCloud={setCloudPick}
-              onOpenDialog={() => openDialog(provider)}
-            />
-          )}
-          {!card && phase === 'ready' && (
-            <p className="su-note">Pick where AI runs to add its key. You can come back to this later.</p>
-          )}
-
           <div className="flex flex-col gap-2">
             <Field
               label="Another provider"
@@ -275,7 +260,12 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
                   className="field-input grow"
                   list="setup-bf-providers"
                   value={newProvider}
-                  onChange={(e) => setNewProvider(e.target.value)}
+                  // Typing a name is the choice; focus alone is not, since Tab passes
+                  // through here on the way from the cards to the key form.
+                  onChange={(e) => {
+                    setNewProvider(e.target.value)
+                    setPicked(e.target.value.trim() || another ? 'other' : null)
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
@@ -295,18 +285,36 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
               </div>
             </Field>
             {another_ && <OutcomeBanner outcome={another_} />}
-            {legacy.length > 0 && (
-              <p className="su-note">
-                Also set up outside the gateway:{' '}
-                {legacy.map((p, i) => (
-                  <span key={p.provider_id}>
-                    {i > 0 && '; '}
-                    <span className="font-medium">{p.name}</span> ({residencyCopy(legacyStaysOnSite(p))})
-                  </span>
-                ))}
-              </p>
-            )}
           </div>
+
+          {card && provider && (
+            <ProviderKeyCard
+              key={provider}
+              kind={card.kind}
+              provider={provider}
+              name={card.name}
+              existing={keyOf(provider)}
+              outcome={outcomes[provider]}
+              busy={busy}
+              onTest={test}
+              onPickCloud={setCloudPick}
+              onOpenDialog={() => openDialog(provider)}
+            />
+          )}
+          {!card && picked !== 'other' && phase === 'ready' && (
+            <p className="su-note">Pick where AI runs to add its key. You can come back to this later.</p>
+          )}
+          {legacy.length > 0 && (
+            <p className="su-note">
+              Also set up outside the gateway:{' '}
+              {legacy.map((p, i) => (
+                <span key={p.provider_id}>
+                  {i > 0 && '; '}
+                  <span className="font-medium">{p.name}</span> ({residencyCopy(legacyStaysOnSite(p))})
+                </span>
+              ))}
+            </p>
+          )}
         </>
       )}
 
