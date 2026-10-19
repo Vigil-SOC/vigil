@@ -59,8 +59,10 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
 
-# One build for the API and the backup service. A second image tag would
-# compile this Dockerfile twice on the first `up`.
+# One build for the API and the backup services. A second image tag would
+# compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
+# backend and backup both wait on, carries it: two services building one tag race
+# to export it, and a fresh `compose build` fails with "already exists" (#2455).
 x-backend-build: &backend-build
   context: ../..
   dockerfile: infra/docker/Dockerfile.backend
@@ -176,8 +178,10 @@ services:
 
   # SOC Backend API
   backend:
+    # Built by backup-pre-upgrade (see x-backend-build). Never pulled: there is
+    # no such image on a registry, and the pull's error would be noise.
     image: vigil-backend:local
-    build: *backend-build
+    pull_policy: never
     container_name: deeptempo-backend
     environment:
       <<: *intent-env
@@ -262,8 +266,10 @@ services:
   # command with a one-shot create, and overrides the state/workdir/repo
   # mounts for the host.
   backup: &backup
+    # Built by backup-pre-upgrade (see x-backend-build). Never pulled: there is
+    # no such image on a registry, and the pull's error would be noise.
     image: vigil-backend:local
-    build: *backend-build
+    pull_policy: never
     environment:
       HOME: /home/vigil
       POSTGRES_HOST: postgres
@@ -307,6 +313,11 @@ services:
   # would make it wait on itself.
   backup-pre-upgrade:
     <<: *backup
+    # The one service that builds vigil-backend:local. start.sh runs it with
+    # `run --build`, and every other user of the image waits on it. The default
+    # pull policy, not the merged-in `never`.
+    build: *backend-build
+    pull_policy: missing
     entrypoint:
       - python
       - -m
@@ -644,9 +655,11 @@ services:
   # The MCP runner's bearer, generated once into its own volume: root:1000 0440,
   # so the runner (root) and backend and soc-daemon (uid 1000) read it, and no
   # server, each under its own uid, does. MCP_RUNNER_TOKEN set wins over it.
+  # The one service that builds vigil-mcp-runner:local; mcp-runner waits on it
+  # and only uses the image (see x-backend-build for why one builder).
   mcp-runner-token:
     image: vigil-mcp-runner:local
-    build: &mcp-runner-build
+    build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.mcp-runner
       args:
@@ -674,8 +687,9 @@ services:
   # Holds no app secret, no ~/.vigil and no POSTGRES_*, and is on mcp-network
   # only, so it cannot resolve postgres or redis.
   mcp-runner:
+    # Built by mcp-runner-token; never pulled (see backend).
     image: vigil-mcp-runner:local
-    build: *mcp-runner-build
+    pull_policy: never
     container_name: deeptempo-mcp-runner
     environment:
       # Its own bearer, not AGENT_INTERNAL_TOKEN. Empty means every route 503s.
