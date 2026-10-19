@@ -271,8 +271,6 @@ export interface CaseRecordRow {
   source: string
   chained: boolean
   text: string
-  /** The run a run row is from; absent on audit and activity rows. */
-  run_id?: string | null
 }
 
 export interface CaseRecordResponse {
@@ -563,6 +561,33 @@ export interface IntegrationTestResult {
   credentials?: { success: boolean; message: string }
 }
 
+export type RatchetEvidence = { kind: string; id: string; summary: string; at: string }
+
+/** The autonomy hold. Numbers come from the ratchet endpoint, not the screen. */
+export type AutonomyRatchet = {
+  holding: boolean
+  due: boolean
+  reason: string
+  evidence: RatchetEvidence[]
+  demoted_at: string | null
+  promoted_at: string | null
+  promoted_by: string | null
+  promotion_reason: string | null
+  environment_wins: boolean
+  will_restore_act: boolean
+  blocked_by_environment: boolean
+  may_promote: boolean
+  graded: number
+  disagreements: number
+  rejections: number
+  window_hours: number
+  min_graded: number
+  disagree_rate: number
+  min_disagreements: number
+  min_rejections: number
+  review_threshold: number
+}
+
 export const configApi = {
   
   getS3: () => api.get('/config/s3'),
@@ -611,6 +636,10 @@ export const configApi = {
     api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
       '/config/autonomy',
     ),
+
+  getRatchet: () => api.get<AutonomyRatchet>('/autonomy/ratchet'),
+  syncRatchet: () => api.post<AutonomyRatchet>('/autonomy/ratchet/sync'),
+  promoteRatchet: (reason: string) => api.post<AutonomyRatchet>('/autonomy/ratchet/promote', { reason }),
   
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),

@@ -1158,6 +1158,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/ratchet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Ratchet
+         * @description The hold and the live window. Does not write.
+         */
+        get: operations["get_api_autonomy_ratchet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/ratchet/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote
+         * @description Give autonomy back. The ratchet cannot do this on its own.
+         */
+        post: operations["post_api_autonomy_ratchet_promote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/ratchet/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Catch Up
+         * @description Commit a tightening the rule has already decided. Never loosens.
+         *
+         *     Any signed-in console may catch the daemon up. Promotion is separate
+         *     and takes ``settings.write``.
+         */
+        post: operations["post_api_autonomy_ratchet_sync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bifrost/routability": {
         parameters: {
             query?: never;
@@ -2150,13 +2213,13 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: every run's ledger, audit rows and activities.
+         * @description The case record: the latest run's ledger, audit rows and activities.
          *
-         *     Newest first. The agent returns each ledger with snapshots off, read
-         *     concurrently; a run that cannot be read is one row saying why, not a failed
-         *     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
-         *     the table has no ``case_id`` column. ``run_id`` is the case's run
-         *     (``primary_ref``), which Replay, Verify chain and Export audit read.
+         *     Newest first. The agent returns the ledger with snapshots off. Audit rows
+         *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
+         *     ``case_id`` column. The run is the case's latest, an investigation's
+         *     ``run_id_for`` or a run started on the case, never the shadow adjudication,
+         *     and never a run another run on the case started (``primary_ref``).
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -4549,11 +4612,7 @@ export interface paths {
         put?: never;
         /**
          * Wake Investigation
-         * @description Restart a finished investigation by queueing a new one on the same case.
-         *
-         *     A run's id is derived from its investigation id and its ledger is terminal
-         *     once finished, so the same investigation cannot run twice. The failure stays
-         *     on record; the restart is a fresh Human Ask over the same workflow and findings.
+         * @description Wake a sleeping investigation for further work.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
@@ -8059,8 +8118,6 @@ export interface components {
             id: string;
             /** Kind */
             kind: string;
-            /** Run Id */
-            run_id?: string | null;
             /** Source */
             source: string;
             /** Text */
@@ -9090,6 +9147,20 @@ export interface components {
             turn?: number;
             /** Why */
             why?: string;
+        };
+        /**
+         * EvidenceRow
+         * @description One disagreement the hold is shown with.
+         */
+        EvidenceRow: {
+            /** At */
+            at: string;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Summary */
+            summary: string;
         };
         /** ExclusionCreate */
         ExclusionCreate: {
@@ -10393,6 +10464,62 @@ export interface components {
             iteration: number;
             /** Max Cost Usd */
             max_cost_usd: number;
+        };
+        /**
+         * PromoteRequest
+         * @description Why a person is giving autonomy back.
+         */
+        PromoteRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * RatchetResponse
+         * @description Whether Vigil is holding a tighter stance, and the rule that decides it.
+         */
+        RatchetResponse: {
+            /** Blocked By Environment */
+            blocked_by_environment: boolean;
+            /** Demoted At */
+            demoted_at: string | null;
+            /** Disagree Rate */
+            disagree_rate: number;
+            /** Disagreements */
+            disagreements: number;
+            /** Due */
+            due: boolean;
+            /** Environment Wins */
+            environment_wins: boolean;
+            /** Evidence */
+            evidence: components["schemas"]["EvidenceRow"][];
+            /** Graded */
+            graded: number;
+            /** Holding */
+            holding: boolean;
+            /** May Promote */
+            may_promote: boolean;
+            /** Min Disagreements */
+            min_disagreements: number;
+            /** Min Graded */
+            min_graded: number;
+            /** Min Rejections */
+            min_rejections: number;
+            /** Promoted At */
+            promoted_at: string | null;
+            /** Promoted By */
+            promoted_by: string | null;
+            /** Promotion Reason */
+            promotion_reason: string | null;
+            /** Reason */
+            reason: string;
+            /** Rejections */
+            rejections: number;
+            /** Review Threshold */
+            review_threshold: number;
+            /** Will Restore Act */
+            will_restore_act: boolean;
+            /** Window Hours */
+            window_hours: number;
         };
         /**
          * RecalculateCostRequest
@@ -13602,6 +13729,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_autonomy_ratchet: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RatchetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_ratchet_promote: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RatchetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_ratchet_sync: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RatchetResponse"];
                 };
             };
             /** @description Validation Error */

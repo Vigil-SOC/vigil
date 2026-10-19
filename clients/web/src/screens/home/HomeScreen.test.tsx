@@ -15,6 +15,9 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getSetupSteps: vi.fn(),
     setDemoMode: vi.fn(),
+    getRatchet: vi.fn(),
+    syncRatchet: vi.fn(),
+    promoteRatchet: vi.fn(),
   },
   triageApi: {
     get: vi.fn(),
@@ -68,6 +71,9 @@ const doneSteps = [
 
 beforeEach(() => {
   sessionStorage.clear()
+  vi.mocked(configApi.getRatchet).mockResolvedValue({
+    data: { holding: false, due: false, evidence: [] },
+  } as never)
   vi.mocked(configApi.getSetupSteps).mockResolvedValue({
     data: { steps: doneSteps, alerts_exist: 3, demo_enabled: false },
   } as never)
@@ -731,5 +737,57 @@ describe('Home', () => {
     await flush()
     expect(screen.getByText('Approved: Isolate host')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Autonomy ratchet', () => {
+  const held = {
+    holding: true,
+    due: false,
+    reason: 'Analysts marked 2 of 4 graded decisions as disagree or partial in the last 24 hours.',
+    evidence: [{ kind: 'decision', id: 'd1', summary: 'disagree: isolate the host', at: '2026-10-19T17:00:00' }],
+    demoted_at: '2026-10-19T17:05:00',
+    promoted_at: null,
+    promoted_by: null,
+    promotion_reason: null,
+    environment_wins: false,
+    will_restore_act: true,
+    blocked_by_environment: false,
+    may_promote: true,
+    graded: 4,
+    disagreements: 2,
+    rejections: 0,
+    window_hours: 24,
+    min_graded: 4,
+    disagree_rate: 0.4,
+    min_disagreements: 2,
+    min_rejections: 2,
+    review_threshold: 0.85,
+  }
+
+  beforeEach(() => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+  })
+
+  it('shows the hold and asks for a reason before a promotion can be held', async () => {
+    vi.mocked(configApi.getRatchet).mockResolvedValue({ data: held } as never)
+    renderHome()
+
+    expect(await screen.findByRole('heading', { name: 'Vigil tightened itself' })).toBeInTheDocument()
+    expect(screen.getByText(/2 of 4 graded decisions/)).toBeInTheDocument()
+    expect(screen.getByText('disagree: isolate the host')).toBeInTheDocument()
+    const promote = screen.getByRole('button', { name: /Promote autonomy/ })
+    expect(promote).toBeDisabled()
+
+    fireEvent.change(screen.getByPlaceholderText('A short sentence an auditor can read later'), {
+      target: { value: 'Reviewed the two isolates.' },
+    })
+    expect(promote).toBeEnabled()
+  })
+
+  it('stays off the board when Vigil has not tightened itself', async () => {
+    renderHome()
+    await screen.findByText('Board clear.')
+    expect(screen.queryByRole('heading', { name: 'Vigil tightened itself' })).not.toBeInTheDocument()
   })
 })

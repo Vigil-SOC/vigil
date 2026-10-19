@@ -141,6 +141,16 @@ class TaskScheduler:
             )
         )
 
+        # Tighten autonomy when analysts have been disagreeing. Never loosens.
+        self._tasks.append(
+            ScheduledTask(
+                name="autonomy_ratchet",
+                func=self._run_autonomy_ratchet,
+                interval=300,
+                enabled=True,
+            )
+        )
+
         # Sandbox poller — only runs when auto-submit is enabled
         if _sandbox_poll_enabled():
             self._tasks.append(
@@ -456,6 +466,12 @@ class TaskScheduler:
             return
         poller = ThreatFeedPoller()
         return await poller.run_once()
+
+    async def _run_autonomy_ratchet(self):
+        """Commit a tightening when the disagreement window is over the line."""
+        from core.response.autonomy_ratchet import sync_ratchet
+
+        await asyncio.to_thread(sync_ratchet)
 
     async def _run_health_check(self):
         """Run system health check."""

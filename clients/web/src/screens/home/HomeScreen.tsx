@@ -9,6 +9,7 @@ import { briefText } from '../../shared/brief'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
+import { AutonomyRatchet } from './AutonomyRatchet'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -410,6 +411,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
           </div>
         )}
         {error && <p role="alert">{error}</p>}
+        <AutonomyRatchet />
         {!noAlerts && (
           <section aria-label="Setup">
             {sectionHead(
