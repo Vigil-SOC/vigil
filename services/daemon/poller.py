@@ -360,7 +360,7 @@ class DataPoller:
 
         # After a successful poll, look back to that timestamp (rounded up one
         # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
-        # Cap at 60 minutes: an uncapped window can exceed the ~60s job timeout,
+        # Cap at 60 minutes: an uncapped window can exceed the ~110s job deadline,
         # fail, and then retry the same window forever. First run keeps the
         # fixed interval window.
         last = self._splunk_state.last_poll_time
@@ -378,9 +378,8 @@ class DataPoller:
             "`notable` | head 100",
         ]
 
-        # search() returns None on any error (it logs and swallows them), so a
-        # query failed if it returned None or raised. An empty list ran and
-        # found nothing; it falls through, since on non-ES installs
+        # search() raises on any error, so a query failed if it raised. An empty
+        # result ran and found nothing; it falls through, since on non-ES installs
         # `index=notable` is empty by design and the fallbacks must be reached.
         # A failed query raises, so the loop counts an error and leaves
         # last_poll_time alone, else a fallback's results would hide the events
@@ -390,22 +389,21 @@ class DataPoller:
         findings = []
         for i, query in enumerate(queries):
             try:
-                # search() polls its job with time.sleep for up to ~60s,
+                # search() polls its job with time.sleep for up to ~110s,
                 # which would otherwise freeze the whole daemon loop.
-                results = await asyncio.to_thread(
-                    self._splunk_service.search,
-                    query=query,
-                    earliest_time=earliest_time,
-                    latest_time="now",
-                    max_count=100,
-                )
-                error = "search returned no result" if results is None else None
+                results = (
+                    await asyncio.to_thread(
+                        self._splunk_service.search,
+                        query=query,
+                        earliest_time=earliest_time,
+                        latest_time="now",
+                        max_count=100,
+                    )
+                ).results
             except Exception as e:
-                results, error = None, str(e)
-            if results is None:
-                logger.warning("Splunk query failed (%s): %s", query, error)
+                logger.warning("Splunk query failed (%s): %s", query, e)
                 if i < len(queries) - 1:
-                    raise RuntimeError(f"Splunk: query failed ({query}): {error}")
+                    raise RuntimeError(f"Splunk: query failed ({query}): {e}") from e
                 continue
             if results:
                 findings.extend(results)

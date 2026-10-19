@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from core.integrations.splunk.client import SearchResult
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -27,7 +29,7 @@ def _load(monkeypatch, rows, service=object()):
         def search(self, query, earliest_time="-24h", max_count=1000):
             if rows is None:
                 raise RuntimeError("splunk is unreachable")
-            return rows
+            return SearchResult(rows)
 
     monkeypatch.setattr(
         module, "get_splunk_service", lambda: (None if service is None else _Service())
@@ -141,7 +143,7 @@ def test_looks_again_after_a_deployment_that_was_not_configured_yet(monkeypatch)
         def search(self, query, earliest_time="-24h", max_count=1000):
             if unreachable["still"]:
                 raise RuntimeError("splunk is unreachable")
-            return _ROWS
+            return SearchResult(_ROWS)
 
     monkeypatch.setattr(module, "get_splunk_service", lambda: _Service())
     assert _describe(module)["splunk_execute"] == module._RESULT_SIZE_GUIDANCE

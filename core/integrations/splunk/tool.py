@@ -221,12 +221,12 @@ def _telemetry_summary() -> str:
     try:
         rows = service.search(
             _SUMMARY_SPL, earliest_time="-20y", max_count=_SUMMARY_ROWS
-        )
+        ).results
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not summarise Splunk telemetry: %s", exc)
         return ""
 
-    by_index = _fold_by_index(list(rows or []))
+    by_index = _fold_by_index(list(rows))
     if not by_index:
         return ""
 
@@ -330,30 +330,30 @@ async def handle_call_tool(name: str, arguments: dict | None):
             return result({"error": "spl_query required"})
         splunk = get_splunk_service()
         if not splunk:
-            return result({"error": "Splunk not configured", "spl": spl})
+            return result({"error": "Splunk not configured"})
         try:
             # search() polls the job with time.sleep; keep it off the MCP loop.
-            results = await asyncio.to_thread(
+            found = await asyncio.to_thread(
                 splunk.search,
                 spl,
                 args.get("earliest", _ALL_TIME),
                 "now",
                 args.get("max_results", 100),
             )
-            if results is None:
-                return result(
-                    {"error": "Splunk search failed or timed out", "query": spl}
-                )
-            return result(
-                {
-                    "success": True,
-                    "query": spl,
-                    "count": len(results),
-                    "results": results,
-                }
-            )
+            payload = {
+                "success": True,
+                "query": spl,
+                "count": len(found.results),
+                "event_count": found.event_count,
+                "results": found.results,
+            }
+            if found.warnings:
+                payload["warnings"] = found.warnings
+            return result(payload)
         except Exception as e:
-            return result({"error": str(e), "query": spl})
+            # The SPL is not echoed: mcp_tools._failure_kind scans this text
+            # for "timeout", and a query that contains it is not a timeout.
+            return result({"error": str(e)})
 
     elif name == "splunk_search_ip":
         ip = args.get("ip_address")
@@ -363,13 +363,16 @@ async def handle_call_tool(name: str, arguments: dict | None):
         if not splunk:
             return result({"error": "Splunk not configured"})
         try:
-            results = await asyncio.to_thread(
+            found = await asyncio.to_thread(
                 splunk.search_by_ip, ip, args.get("hours") or _ALL_TIME_HOURS
             )
-            if results is None:
-                return result({"error": "Splunk search failed or timed out", "ip": ip})
             return result(
-                {"success": True, "ip": ip, "count": len(results), "results": results}
+                {
+                    "success": True,
+                    "ip": ip,
+                    "count": len(found.results),
+                    "results": found.results,
+                }
             )
         except Exception as e:
             return result({"error": str(e)})
@@ -382,19 +385,15 @@ async def handle_call_tool(name: str, arguments: dict | None):
         if not splunk:
             return result({"error": "Splunk not configured"})
         try:
-            results = await asyncio.to_thread(
+            found = await asyncio.to_thread(
                 splunk.search_by_hostname, host, args.get("hours") or _ALL_TIME_HOURS
             )
-            if results is None:
-                return result(
-                    {"error": "Splunk search failed or timed out", "hostname": host}
-                )
             return result(
                 {
                     "success": True,
                     "hostname": host,
-                    "count": len(results),
-                    "results": results,
+                    "count": len(found.results),
+                    "results": found.results,
                 }
             )
         except Exception as e:
@@ -407,36 +406,27 @@ async def handle_call_tool(name: str, arguments: dict | None):
         spl_result = generate_spl(query)
         splunk = get_splunk_service()
         if not splunk:
-            return result(
-                {"error": "Splunk not configured", "generated_spl": spl_result}
-            )
+            return result({"error": "Splunk not configured"})
         try:
-            results = await asyncio.to_thread(
+            found = await asyncio.to_thread(
                 splunk.search,
                 spl_result["spl_query"],
                 _ALL_TIME,
                 "now",
                 args.get("max_results", 100),
             )
-            if results is None:
-                return result(
-                    {
-                        "error": "Splunk search failed or timed out",
-                        "spl": spl_result["spl_query"],
-                    }
-                )
             return result(
                 {
                     "success": True,
                     "query": query,
                     "spl": spl_result["spl_query"],
                     "pattern": spl_result["pattern"],
-                    "count": len(results),
-                    "results": results,
+                    "count": len(found.results),
+                    "results": found.results,
                 }
             )
         except Exception as e:
-            return result({"error": str(e), "spl": spl_result["spl_query"]})
+            return result({"error": str(e)})
 
     return result({"error": f"Unknown tool: {name}"})
 

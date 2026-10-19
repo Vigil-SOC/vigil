@@ -748,7 +748,11 @@ class TestParkedRun:
         orch, row = self._orchestrator(status="waiting_approval")
         # Answered, so no open checkpoint, but the worker has not resumed yet.
         await self._reconcile(
-            orch, {"status": "parked", "reason": "awaiting budget_anomaly checkpoint c1: go on?"}
+            orch,
+            {
+                "status": "parked",
+                "reason": "awaiting budget_anomaly checkpoint c1: go on?",
+            },
         )
 
         assert row["status"] == "executing"
