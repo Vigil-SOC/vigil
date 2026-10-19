@@ -875,6 +875,23 @@ def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool
     )
 
 
+def inject_index_head(raw: str, context_path: str, extra_tags=()) -> str:
+    """index.html with the context root and runtime meta tags injected.
+
+    The bundle's asset URLs are relative (vite ``base: './'``), so without a
+    ``<base>`` the shell served at ``/cases/abc`` asks for
+    ``/cases/assets/...`` and gets the shell back as text/html. The base goes
+    first: the browser only applies it to URLs that follow it.
+    """
+    tags = [
+        f'<base href="{context_path}/">',
+        f'<meta name="vigil-base-path" content="{context_path}">',
+        *extra_tags,
+    ]
+    injected = "\n    ".join(tags)
+    return raw.replace("<head>", f"<head>\n    {injected}", 1)
+
+
 # Vigil's own MCP server, given an address. Mounted before the SPA catch-all so
 # /mcp reaches the server rather than index.html, and behind a gate that decides
 # whether the surface is open at all and, if it is, whose request this is.
@@ -937,7 +954,7 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
         global _index_html_cache
         if _index_html_cache is None:
             raw = (frontend_build_dir / "index.html").read_text()
-            tags = [f'<meta name="vigil-base-path" content="{_CONTEXT_PATH}">']
+            tags = []
             # Expose the connector allowlist to the SPA (same source as the CSP +
             # SSRF guard). A <meta>, not an inline <script>, because CSP is
             # script-src 'self'.
@@ -954,8 +971,7 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
                     )
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug("extension allowlist meta injection skipped: %s", e)
-            injected = "\n    ".join(tags)
-            _index_html_cache = raw.replace("<head>", f"<head>\n    {injected}", 1)
+            _index_html_cache = inject_index_head(raw, _CONTEXT_PATH, tags)
         return _index_html_cache
 
     # When served under a context path, redirect the bare path (no trailing
