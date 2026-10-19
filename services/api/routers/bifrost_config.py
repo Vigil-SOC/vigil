@@ -354,7 +354,9 @@ class KeyVerdict(BaseModel):
 
     provider: str
     routable: bool
-    health: Literal["healthy", "unverified", "unverifiable", "rejected", "disabled"]
+    health: Literal[
+        "healthy", "unverified", "unverifiable", "rejected", "disabled", "placeholder"
+    ]
     description: Optional[str] = None
 
 

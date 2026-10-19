@@ -32,12 +32,12 @@ vi.mock('../../services/api', () => ({
 
 const models = (...names: string[]) => ({ data: { models: names.map((name) => ({ name })), total: names.length } })
 
-/** Bifrost holds `held`: provider -> its keys. */
-function gateway(held: Record<string, unknown[]>, routable: Record<string, boolean> | null = {}) {
+/** Bifrost holds `held`: provider -> its keys. `keys` is the backend's per-key verdict. */
+function gateway(held: Record<string, unknown[]>, routable: Record<string, boolean> | null = {}, keys: Record<string, unknown> = {}) {
   vi.mocked(bifrostApi.listProviders).mockResolvedValue({ data: { providers: Object.keys(held).map((name) => ({ name })) } } as never)
   vi.mocked(bifrostApi.listKeys).mockImplementation(((name: string) =>
     Promise.resolve({ data: { keys: held[name] || [], total: 0 } })) as never)
-  if (routable) vi.mocked(bifrostApi.routability).mockResolvedValue({ data: { providers: routable, keys: {} } } as never)
+  if (routable) vi.mocked(bifrostApi.routability).mockResolvedValue({ data: { providers: routable, keys } } as never)
   else vi.mocked(bifrostApi.routability).mockRejectedValue(new Error('down'))
 }
 
@@ -81,6 +81,36 @@ describe('SetupProviderStep', () => {
     await screen.findByLabelText('API key')
     expect(screen.queryByText('Poor')).not.toBeInTheDocument()
     expect(screen.getByText(/Couldn’t check whether the gateway’s keys can route/)).toBeInTheDocument()
+  })
+
+  it('does not pre-select a provider the gateway lists with no key', async () => {
+    gateway({ anthropic: [], openai: [], vertex: [] }, { anthropic: false, openai: false, vertex: false })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    expect(await screen.findByText(/Pick where AI runs/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    paste('API key', 'sk-ant-real')
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }))
+    await waitFor(() => expect(bifrostApi.createKey).toHaveBeenCalledWith('anthropic', expect.objectContaining({ value: 'sk-ant-real' })))
+    expect(bifrostApi.createProvider).not.toHaveBeenCalled()
+  })
+
+  it('treats a seeded key the backend calls a placeholder as not set up, and a first key replaces it', async () => {
+    const seed = { id: 'seed1', name: 'default-anthropic-key', models: ['*'], weight: 1, value: { value: '', ref: 'env.ANTHROPIC_API_KEY', type: 'env' } }
+    gateway({ anthropic: [seed] }, { anthropic: false }, { seed1: { provider: 'anthropic', routable: false, health: 'placeholder' } })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    expect(await screen.findByText(/Pick where AI runs/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    paste('API key', 'sk-ant-real')
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }))
+    await waitFor(() => expect(bifrostApi.updateKey).toHaveBeenCalledWith('anthropic', 'seed1', expect.objectContaining({ value: 'sk-ant-real' })))
+    expect(bifrostApi.createKey).not.toHaveBeenCalled()
+    expect(bifrostApi.createProvider).not.toHaveBeenCalled()
   })
 
   it('creates the provider and key, shows models from providerModels, never echoes the key', async () => {
@@ -148,6 +178,51 @@ describe('SetupProviderStep', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add key/ }))
     expect(await screen.findByText('Add key · vertex')).toBeInTheDocument()
     expect(bifrostApi.createProvider).toHaveBeenCalledWith('vertex')
+  })
+
+  it('puts Another provider above the key form, and naming one there deselects the cards', async () => {
+    gateway({ openai: [key({ name: 'openai-key' })] }, { openai: true })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    const apiKey = await screen.findByLabelText('API key')
+    const another = screen.getByLabelText(/Another provider/)
+    expect(another.compareDocumentPosition(apiKey) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    // Tab passes through the field on the way to the key form; focus alone changes nothing.
+    fireEvent.focus(another)
+    expect(screen.getByRole('button', { name: /OpenAI/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('API key')).toBeInTheDocument()
+
+    fireEvent.change(another, { target: { value: 'gemini' } })
+    for (const name of [/Anthropic/, /OpenAI/, /Your cloud account/, /Local \(Ollama\)/]) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false')
+    }
+    expect(screen.queryByLabelText('API key')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Pick where AI runs/)).not.toBeInTheDocument()
+
+    // Clearing the name before adding chooses nothing again.
+    fireEvent.change(another, { target: { value: '' } })
+    expect(screen.getByRole('button', { name: /OpenAI/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('API key')).toBeInTheDocument()
+
+    fireEvent.change(another, { target: { value: 'gemini' } })
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByLabelText('API key')).toBeInTheDocument()
+  })
+
+  it('adding another provider leaves no card selected after the reload', async () => {
+    gateway({ anthropic: [key()] }, { anthropic: true })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    await screen.findByLabelText('API key')
+    fireEvent.change(screen.getByLabelText(/Another provider/), { target: { value: 'gemini' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(bifrostApi.createProvider).toHaveBeenCalledWith('gemini'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByLabelText('API key')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/Another provider/)).toHaveValue('')
   })
 
   it('keeps Retry on a Bifrost read error and hides the cards', async () => {

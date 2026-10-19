@@ -188,41 +188,49 @@ def test_the_role_grants_agree(ts: str):
     )
 
 
-def test_every_granted_role_is_a_role_the_arch_declares():
-    declared = frozenset(re.findall(r"^ {2,4}(\w+):$", ARCH.read_text(), re.M))
+# The plugin declares the lead and the critic; the other grant keys are the roster
+# the threat-hunt definition names, whose querying the plugin's one agent now does.
+def _hunt_roles() -> tuple[dict, frozenset]:
+    import yaml
+
+    from core.workflows.workflows_service import WorkflowsService
+
+    plugin = yaml.safe_load(ARCH.read_text())
+    rostered = WorkflowsService().get_workflow("threat-hunt").agents
+    return plugin, frozenset(plugin["roles"]) | frozenset(rostered)
+
+
+def test_every_granted_role_is_a_role_the_hunt_names():
+    _, declared = _hunt_roles()
     missing = frozenset(py.RECALL_GRANTS) - declared
     assert not missing, (
-        "RECALL_GRANTS names roles plugins/hunt/plugin.yaml does not declare, and a grant "
-        "on a role that does not exist is dropped silently:\n  "
+        "RECALL_GRANTS names roles neither plugins/hunt/plugin.yaml nor the threat-hunt "
+        "roster declares, and a grant on a role that does not exist is dropped silently:\n  "
         + "\n  ".join(sorted(missing))
     )
 
 
-def test_the_arch_asks_for_what_the_grants_declare():
-    # Where the grant takes effect (#732). RECALL_GRANTS says which roles hold
-    # entity_recall; `needs` in plugins/hunt/plugin.yaml is the only thing that makes it
-    # so, and bindCapabilities drops an unasked-for capability silently -- the
-    # role runs without the tool and nothing says why.
-    sections = re.split(r"^ {2,4}(\w+):$", ARCH.read_text(), flags=re.M)
-    asked = {}
-    for role, body in zip(sections[1::2], sections[2::2]):
-        needs = re.search(r"needs: \[([^\]]*)\]", body)
-        asked[role] = (
-            frozenset(re.findall(r"[\w-]+", needs.group(1))) if needs else frozenset()
-        )
-
+def test_the_plugin_asks_for_what_the_grants_declare():
+    # Where the grant takes effect (#732). The agent doing the rostered roles'
+    # querying holds what the plugin's `needs` asks for, and the binding drops an
+    # unasked-for capability silently -- the run goes without the tool and nothing
+    # says why. The lead and the critic hold only what their own role asks for.
+    plugin, _ = _hunt_roles()
+    roles = plugin["roles"]
+    agent = frozenset(plugin.get("needs") or ())
     holds = {
         role: (
             (py.RECALL_CAPABILITY,)
-            if py.RECALL_CAPABILITY in asked.get(role, ())
+            if py.RECALL_CAPABILITY
+            in (roles[role].get("needs") or () if role in roles else agent)
             else ()
         )
         for role in py.RECALL_GRANTS
     }
     assert holds == dict(py.RECALL_GRANTS), (
-        "threathunt.yaml's `needs` disagree with RECALL_GRANTS. A role granted "
-        "recall in the contract and not in the arch runs without the tool, and "
-        "the binding drops it silently rather than failing."
+        "plugins/hunt/plugin.yaml's `needs` disagree with RECALL_GRANTS. A role "
+        "granted recall in the contract and not in the plugin runs without the "
+        "tool, and the binding drops it silently rather than failing."
     )
 
 

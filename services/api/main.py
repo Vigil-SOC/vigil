@@ -526,7 +526,8 @@ async def _startup(app: FastAPI):
             logger.error(
                 "SecretsManager init: write_backend=%s but expected=%s "
                 "(cryptography_available=%s, master_key_present=%s). "
-                "POST /api/config/secrets/reinit to retry without restart.",
+                "Install `cryptography` or fix SECRETS_BACKEND / the master key, "
+                "then restart the API, daemon and worker.",
                 _status["write_backend"],
                 _status["expected_write_backend"],
                 _status["cryptography_available"],

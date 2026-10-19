@@ -288,7 +288,11 @@ def test_the_agent_layer_internal_surface_is_exempt_from_csrf():
 
 
 def test_enforcing_csrf_lets_cookieless_internal_through_and_rejects_api():
-    from services.api.middleware.csrf import CSRFMiddleware, _parse_exempt_paths
+    from services.api.middleware.csrf import (
+        COOKIE_MISSING_DETAIL,
+        CSRFMiddleware,
+        _parse_exempt_paths,
+    )
 
     app = FastAPI()
     app.add_middleware(
@@ -313,7 +317,39 @@ def test_enforcing_csrf_lets_cookieless_internal_through_and_rejects_api():
 
     rejected = client.post("/api/cases/")
     assert rejected.status_code == 403
-    assert rejected.json()["detail"] == "CSRF token missing or invalid"
+    assert rejected.json()["detail"] == COOKIE_MISSING_DETAIL
+
+
+def test_csrf_rejection_names_a_dropped_cookie_apart_from_a_mismatch():
+    """A cookie the browser dropped (Secure over plain HTTP) has to tell the
+    operator about HTTPS, not report a generic CSRF failure."""
+    from services.api.middleware.csrf import (
+        COOKIE_MISSING_DETAIL,
+        CSRF_COOKIE_NAME,
+        CSRF_HEADER_NAME,
+        CSRFMiddleware,
+    )
+
+    app = FastAPI()
+    app.add_middleware(CSRFMiddleware, enabled=True, report_only=False, exempt_paths=())
+
+    @app.post("/api/auth/login")
+    def login():
+        return {"ok": True}
+
+    client = TestClient(app)
+    missing = client.post("/api/auth/login", headers={CSRF_HEADER_NAME: "abc"})
+    assert missing.status_code == 403
+    assert missing.json()["detail"] == COOKIE_MISSING_DETAIL
+    assert "HTTPS" in COOKIE_MISSING_DETAIL
+
+    client.cookies.set(CSRF_COOKIE_NAME, "abc")
+    mismatched = client.post("/api/auth/login", headers={CSRF_HEADER_NAME: "xyz"})
+    assert mismatched.status_code == 403
+    assert mismatched.json()["detail"] == "CSRF token missing or invalid"
+
+    matched = client.post("/api/auth/login", headers={CSRF_HEADER_NAME: "abc"})
+    assert matched.status_code == 200
 
 
 def test_the_shipped_configs_do_not_take_the_exemption_away():

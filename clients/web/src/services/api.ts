@@ -18,6 +18,10 @@ const api = axios.create({
 // 0 to disable the timeout for the life of the SSE connection.
 export const LLM_TIMEOUT = 180_000
 
+// Switching an MCP server on starts it and waits for it. A first start of an
+// npx/uvx server downloads the package, which can take well over 15s.
+export const MCP_START_TIMEOUT = 180_000
+
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
 function readCookie(name: string): string | null {
@@ -429,13 +433,29 @@ export const caseSearchApi = {
   }) => api.post('/case-search/', data),
 }
 
+export interface ReloadServersResponse {
+  /** false when any server in `failed` could not be reconnected or disconnected */
+  success: boolean
+  message: string
+  total_servers: number
+  servers: string[]
+  reconnected: string[]
+  disconnected: string[]
+  failed: Record<string, string | null>
+}
+
 export const mcpApi = {
   listServers: () => api.get('/mcp/servers'),
 
   getStatuses: () => api.get('/mcp/servers/status'),
 
   setServerEnabled: (name: string, enabled: boolean) =>
-    api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+    api.put(`/mcp/servers/${name}/enabled`, { enabled }, { timeout: MCP_START_TIMEOUT }),
+
+  // Re-reads mcp-config.json and integration URLs into the server catalog, then
+  // reconnects changed servers and stops removed or disabled ones. A file that
+  // does not parse answers 422 and changes nothing. Needs integrations.write.
+  reloadServers: () => api.post<ReloadServersResponse>('/mcp/servers/reload'),
 
   // Vigil's own MCP surface: whether it listens, and what may open it.
   getSurface: () => api.get('/mcp/surface'),
@@ -764,8 +784,6 @@ export const ingestionApi = {
 
 export interface BudgetSettings {
   default_vk: string
-  budget_limit_usd: number
-  enforcement_mode: 'warning' | 'hard_stop'
 }
 
 interface BifrostBudgetTier {
@@ -1067,8 +1085,6 @@ export const orchestratorApi = {
     api.post('/orchestrator/scan-findings', {
       severities: severities || ['critical', 'high'],
     }, { timeout: LLM_TIMEOUT }),
-  reviewInvestigation: (id: string, action: 'approve' | 'rework', notes?: string) =>
-    api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getChainOfCustody: (id: string) =>
     api.get(`/orchestrator/investigations/${id}/chain-of-custody`),
@@ -1389,15 +1405,19 @@ export const bootstrapApi = {
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
 }
 
-// Public password reset. `request` answers the same whether or not the email
-// matches an account; the emailed link lands on /reset-password?token=…
 export const authApi = {
+  // Public password reset. `request` answers the same whether or not the email
+  // matches an account; the emailed link lands on /reset-password?token=…
   requestPasswordReset: (email: string) =>
     api.post<{ message: string }>('/auth/password-reset/request', {
       email,
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
     api.post<{ message: string }>('/auth/password-reset/confirm', payload),
+  /** Revokes every token the user holds and clears the auth cookies, so the
+   *  caller is signed out once this resolves. */
+  changePassword: (body: Schema<'ChangePasswordRequest'>) =>
+    api.post<{ message: string }>('/auth/change-password', body),
 }
 
 export default api

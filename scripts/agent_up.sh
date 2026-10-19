@@ -58,6 +58,7 @@ cd services/agent
 start() {
     rotate_log "$ROOT/logs/agent-$1.log"
     AGENT_HEALTH_PORT=6990 AGENT_HTTP_PORT=6989 \
+    AGENT_BIND_HOST="${AGENT_BIND_HOST:-${BIND_HOST:-127.0.0.1}}" \
         nohup node_modules/.bin/tsx "$1.ts" > "$ROOT/logs/agent-$1.log" 2>&1 &
     echo $! > "$ROOT/logs/agent-$1.pid"
 }

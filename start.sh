@@ -217,6 +217,7 @@ done
 [ "$ALL_PROFILES" -eq 1 ] && EXTRA_SERVICES="$EXTRA_SERVICES pgadmin splunk kafka jaeger prometheus grafana otel-collector"
 
 # --- Prerequisites ---
+wsl_preflight
 ensure_docker || exit 1
 
 SKIP_FRONTEND=0
@@ -237,6 +238,9 @@ _CALLER_BIND_HOST="${BIND_HOST:-}"
 load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
+# Daemon and agent listeners follow BIND_HOST unless the operator opts out.
+export DAEMON_BIND_HOST="${DAEMON_BIND_HOST:-$BIND_HOST}"
+export AGENT_BIND_HOST="${AGENT_BIND_HOST:-$BIND_HOST}"
 # Auth is on unless .env opts into DEV_MODE; the backend needs a signing secret.
 ensure_jwt_secret || exit 1
 
@@ -354,7 +358,7 @@ if [ "$DAEMON" -eq 0 ]; then
 
     # Open browser once frontend is ready
     if [ "$SKIP_FRONTEND" -eq 0 ]; then
-        (sleep 3 && open "http://localhost:6988/" 2>/dev/null || xdg-open "http://localhost:6988/" 2>/dev/null) &
+        (sleep 3 && open_url "http://localhost:6988/") &
     fi
 
     wait

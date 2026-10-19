@@ -7,8 +7,8 @@ import { Field, NumberInput, PasswordInput, Popup, Select, TextInput, ToggleRow 
 import { Banner, extractApiError } from '../../shared/formKit'
 import { relativeTime, type LastTest } from './integrationHealth'
 import {
-  PROXY_FIELDS,
   SECTION_LABELS,
+  fieldsWithProxy,
   type IntegrationField,
   type IntegrationMetadata,
 } from '../../config/integrationSchema'
@@ -65,10 +65,7 @@ export default function IntegrationWizard({
     if (lastTest) setTested(lastTest)
   }, [lastTest])
 
-  const fields = useMemo(
-    () => (integration.proxy_supported ? [...integration.fields, ...PROXY_FIELDS] : integration.fields),
-    [integration],
-  )
+  const fields = useMemo(() => fieldsWithProxy(integration), [integration])
   const mainFields = fields.filter((f) => !f.section)
   const sections = useMemo(() => {
     const groups: Record<string, IntegrationField[]> = {}
@@ -189,7 +186,7 @@ export default function IntegrationWizard({
       {mainFields.map(renderField)}
 
       {Object.entries(sections).map(([name, secFields]) => (
-        <div key={name} className="card card-sq">
+        <div key={name} className="card card-sq shrink-0">
           <button
             className="card-h w-full text-left"
             style={{ cursor: 'pointer' }}
@@ -354,10 +351,11 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
   const { result } = probe
   if (result.reason === 'not_testable') return note('This integration has no server Vigil can test.')
   const servers = result.servers ?? []
+  // A connector integration has no servers; its message says what was checked.
   return (
     <>
-      {note('Vigil connects to each server behind this integration with the saved settings, then reads from the service with the saved URL and credentials.')}
-      {servers.length === 0 && <Banner kind="err">{result.message || 'Nothing was tested.'}</Banner>}
+      {servers.length > 0 && note('Vigil connects to each server behind this integration with the saved settings, then reads from the service with the saved URL and credentials.')}
+      {servers.length === 0 && <Banner kind={result.success ? 'ok' : 'err'}>{result.message || 'Nothing was tested.'}</Banner>}
       {servers.map((sv) => (
         <div key={sv.name} className={`int-probe ${sv.success ? 'pass' : 'fail'}`}>
           <span className="int-probe-ic"><Icon name={sv.success ? 'check2' : 'close'} size={15} /></span>

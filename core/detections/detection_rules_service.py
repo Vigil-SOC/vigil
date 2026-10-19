@@ -59,6 +59,14 @@ DEFAULT_SOURCES = [
 
 # Names a git clone may take under base_dir (derived from the repo URL).
 _CLONE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Remote git URLs only: network schemes or scp-style user@host:path. This keeps
+# git's command-running transports (ext::, fd::), local paths and option-like
+# strings out of `git clone`. The host never starts with '-'.
+_GIT_URL_RE = re.compile(
+    r"^(?:(?:https?|ssh|git)://(?:[^\s/@]+@)?[A-Za-z0-9\[][^\s/]*/\S+"
+    r"|[A-Za-z0-9_][\w.-]*@[A-Za-z0-9][\w.-]*:\S+)$"
+)
+_GIT_ALLOWED_PROTOCOLS = "http:https:ssh:git"
 
 LOCAL_ROOTS_ENV = "VIGIL_DETECTION_LOCAL_ROOTS"
 
@@ -324,6 +332,10 @@ class DetectionRulesService:
             if not url:
                 raise ValueError("Git URL is required for type 'git'")
             # Derive clone name from URL
+            if not _GIT_URL_RE.match(url):
+                raise ValueError(
+                    "Git URL must be an http(s)://, ssh://, git:// or user@host:path URL"
+                )
             clone_name = url.rstrip("/").split("/")[-1].replace(".git", "")
             if not _CLONE_NAME_RE.match(clone_name):
                 raise ValueError(f"Cannot derive a clone directory from URL: {url}")
@@ -576,13 +588,20 @@ class DetectionRulesService:
 
     def _git_clone(self, url: str, target_path: str):
         """Clone a git repository with shallow depth."""
+        # Re-checked here: update_source clones from a URL read back from config.
+        if not _GIT_URL_RE.match(url):
+            raise ValueError(f"Refusing to clone unsupported git URL: {url}")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Cloning {url} to {target_path}...")
+        # Overrides any protocol.<name>.allow in the host's git config.
+        env = dict(os.environ)  # noqa: ENV001 - child process env
+        env["GIT_ALLOW_PROTOCOL"] = _GIT_ALLOWED_PROTOCOLS
         result = subprocess.run(
-            ["git", "clone", "--quiet", "--depth", "1", url, target_path],
+            ["git", "clone", "--quiet", "--depth", "1", "--", url, target_path],
             capture_output=True,
             text=True,
             timeout=300,
+            env=env,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Git clone failed: {result.stderr.strip()}")
