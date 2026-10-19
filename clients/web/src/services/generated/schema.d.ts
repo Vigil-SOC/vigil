@@ -5259,40 +5259,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/storage/init-schema": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Init Schema
-         * @description Provision Vigil's tables into an **empty** target database.
-         *
-         *     Split out of /reconnect, and deliberately narrow. ``create_all`` is
-         *     ``checkfirst=True``: it creates what's missing and silently skips tables
-         *     that already exist, whatever shape they're in. That makes it correct for an
-         *     empty database and useless — actively misleading — for a drifted one.
-         *
-         *     So this refuses anything but ``state == "empty"``:
-         *       - ``drifted`` -> scripts/migrate_schema.py owns that (it has the real
-         *         ALTER TABLE migrations); create_all here would report success and
-         *         change nothing.
-         *       - ``ok`` -> nothing to do.
-         *
-         *     Refusing on non-empty also means a mistyped host can't scatter ~50 tables
-         *     through an unrelated production database.
-         */
-        post: operations["post_api_storage_init-schema"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/storage/reconnect": {
         parameters: {
             query?: never;
@@ -20668,37 +20634,6 @@ export interface operations {
         };
     };
     get_api_storage_health: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_storage_init-schema": {
         parameters: {
             query?: never;
             header?: {

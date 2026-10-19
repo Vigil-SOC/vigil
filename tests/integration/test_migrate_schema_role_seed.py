@@ -9,8 +9,8 @@ then receives a literal ``:`` and raises a syntax error.
 
 The migration only runs its ``INSERT`` when ``roles`` is empty, which is why no
 compose- or Helm-provisioned database hits it: ``database/init/06_auth_tables.sql``
-seeds that table. Databases built by ``create_all`` alone — the storage_status
-"create schema" endpoint, and dev/test databases — do hit it.
+seeds that table. Databases built by ``create_all`` alone — dev/test
+databases, for example — do hit it.
 
 These tests use a scratch database containing *only* the ``roles`` table, taken
 verbatim from ``database/init/06_auth_tables.sql``. ``create_all`` is
