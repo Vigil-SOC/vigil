@@ -10,7 +10,7 @@ import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/ans
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
-import { healthPort, healthServer } from "./core/health.js";
+import { bindHost, healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
 import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
@@ -421,6 +421,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         summary: terminal.summary ?? "",
         cost_usd: await spentOn(state, job.run_id),
         handoffs: terminal.handoffs ?? [],
+        ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
       });
     }
     told.delete(job.run_id);
@@ -763,7 +764,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count
   // have nothing to say to each other.
-  const probes = healthServer(workerReady(running.worker)).listen(healthPort());
+  const probes = healthServer(workerReady(running.worker)).listen(healthPort(), bindHost());
   const stop = () => {
     probes.close();
     void running.close().finally(shutdownTracing);

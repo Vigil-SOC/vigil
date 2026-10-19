@@ -55,7 +55,7 @@ function optionsOf(spec: RunSpec, plugin: PluginManifest, extra: Partial<AgentOp
 
 const STOP: ScriptedTurn = { calls: [] };
 
-function concluded(disposition: string, citations: string[]): ScriptedTurn {
+function concluded(disposition: string, citations: string[], extra: Record<string, unknown> = {}): ScriptedTurn {
   return {
     emit: {
       summary: `the lockouts are ${disposition}`,
@@ -64,6 +64,7 @@ function concluded(disposition: string, citations: string[]): ScriptedTurn {
       citations,
       gaps: [],
       next_steps: ["reach the owning team"],
+      ...extra,
     },
   };
 }
@@ -102,8 +103,25 @@ describe("the kernel runs a plugin to a conclusion", () => {
     // A disposition nobody guards is not reviewed.
     expect((events.find((one) => one.kind === "review")?.payload as ReviewPayload).stance).toBe("skipped");
     expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", summary: "the lockouts are malicious" });
+    // An answer that rates nothing leaves the case's priority alone.
+    expect(await state.terminal(RUN)).not.toHaveProperty("severity");
     // The engine is stamped on the journaled spec, so a resume and every reader know it.
     expect(isAgentRun(events)).toBe(true);
+  });
+
+  // The case's priority is raised from this on the far side, so it rides the terminal.
+  it("carries the severity the answer rated onto the terminal", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [{ tool: "get_finding", args: '{"finding_id":"f-1"}' }] },
+      STOP,
+      concluded("malicious", ["r1"], { severity: "critical" }),
+    ]);
+
+    await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+
+    expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", severity: "critical" });
   });
 
   it("tells the model its skills and how to cite, in a prefix that does not move", async () => {
@@ -326,6 +344,7 @@ describe("plugins load from their directory", () => {
     const plugin = quiet(pluginFor("investigate"));
     expect(plugin.skills.map((one) => one.name)).toEqual(["investigate-case"]);
     expect(plugin.guard).toMatchObject({ field: "disposition", fallback: "needs_review" });
+    expect(plugin.conclusion).toMatchObject({ severity_field: "severity" });
     expect(pluginGrants(plugin, specOf().tools)["agent"]).toEqual(
       expect.arrayContaining(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators", "load_skill"]),
     );
@@ -352,6 +371,24 @@ guard:
   reviewer_prompt: r
 `;
     expect(() => parsePlugin(manifest, [])).toThrow(SpecError);
+  });
+
+  it("refuses a severity_field rated in anything but case priorities", () => {
+    const manifest = (levels: string) => `
+id: x
+description: d
+system: s
+conclusion:
+  summary_field: summary
+  severity_field: severity
+  schema:
+    type: object
+    properties:
+      summary: { type: string }
+      severity: { type: string, enum: [${levels}] }
+`;
+    expect(() => parsePlugin(manifest("low, high"), [])).not.toThrow();
+    expect(() => parsePlugin(manifest("low, severe"), [])).toThrow(SpecError);
   });
 
   it("refuses a skill without front matter", () => {

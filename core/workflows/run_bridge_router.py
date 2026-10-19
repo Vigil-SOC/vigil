@@ -76,6 +76,9 @@ class TerminalUpdate(BaseModel):
     summary: str = ""
     cost_usd: Optional[float] = None
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
+    # How bad the run rated what it found, for the case it was started from. A free
+    # string: an unrecognised rating is ignored, not grounds to refuse the terminal.
+    severity: Optional[str] = None
 
 
 class CitedFindings(BaseModel):
@@ -212,6 +215,9 @@ def record_terminal(
     origin = _origin_case(run_id, run_service)
     if origin:
         _record_report(origin, run_id, update)
+        # Only a run that reached its conclusion has rated anything.
+        if update.outcome == "completed":
+            _raise_priority(origin, run_id, update.severity)
 
     # A threat hunt that proved a compromise tees up the backward root-cause run.
     # Computed once: an RCA's own handoff
@@ -351,6 +357,44 @@ def _record_report(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception(
             "could not record the report of %s on case %s", run_id, case_id
+        )
+
+
+# The ratings a concluding run may give, which are the case priorities a human sets.
+# unknown is the absence of one, so it is never a conclusion.
+CONCLUDED_SEVERITIES = ("critical", "high", "medium", "low")
+
+
+# The run's rating of what it found, as its case's priority. Only ever raised:
+# lowering a case is a dismissal, which the investigate guard and agent closure
+# own, so a conclusion rated below the case's priority leaves it alone.
+def _raise_priority(case_id: str, run_id: str, severity: Optional[str]) -> None:
+    from core.cases.case_workflow_service import preferred_merge_priority
+    from core.storage.database_data_service import DatabaseDataService
+
+    rated = (severity or "").strip().lower()
+    if rated not in CONCLUDED_SEVERITIES:
+        return
+    try:
+        data = DatabaseDataService()
+        case = data.get_case(case_id)
+        if not case:
+            return
+        current = str(case.get("priority") or "").strip().lower() or "unknown"
+        if preferred_merge_priority(current, rated) == current:
+            return
+        if not data.update_case(case_id, priority=rated):
+            logger.error("could not raise the priority of case %s", case_id)
+            return
+        _add_activity(
+            case_id,
+            "agent_run_priority",
+            f"Priority raised from {current} to {rated} by the investigation",
+            {"run_id": run_id, "from": current, "to": rated},
+        )
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception(
+            "could not apply the severity of %s to case %s", run_id, case_id
         )
 
 

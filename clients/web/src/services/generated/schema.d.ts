@@ -454,12 +454,12 @@ export interface paths {
         };
         /**
          * Get Budget Settings
-         * @description Return the persisted Bifrost VK + budget config.
+         * @description Return the persisted Bifrost VK config.
          */
         get: operations["get_api_analytics_budget"];
         /**
          * Put Budget Settings
-         * @description Update the Bifrost VK + budget config.
+         * @description Update the Bifrost VK config.
          *
          *     Admin operation. The dispatch path picks up the change on the next
          *     runtime-config TTL tick (~60s). When ``DEV_MODE=true`` or
@@ -5259,40 +5259,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/storage/init-schema": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Init Schema
-         * @description Provision Vigil's tables into an **empty** target database.
-         *
-         *     Split out of /reconnect, and deliberately narrow. ``create_all`` is
-         *     ``checkfirst=True``: it creates what's missing and silently skips tables
-         *     that already exist, whatever shape they're in. That makes it correct for an
-         *     empty database and useless — actively misleading — for a drifted one.
-         *
-         *     So this refuses anything but ``state == "empty"``:
-         *       - ``drifted`` -> scripts/migrate_schema.py owns that (it has the real
-         *         ALTER TABLE migrations); create_all here would report success and
-         *         change nothing.
-         *       - ``ok`` -> nothing to do.
-         *
-         *     Refusing on non-empty also means a mistyped host can't scatter ~50 tables
-         *     through an unrelated production database.
-         */
-        post: operations["post_api_storage_init-schema"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/storage/reconnect": {
         parameters: {
             query?: never;
@@ -6435,129 +6401,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/webhooks/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Webhooks
-         * @description List all configured webhooks.
-         *
-         *     Returns:
-         *         List of webhooks
-         */
-        get: operations["get_api_webhooks"];
-        put?: never;
-        /**
-         * Create Webhook
-         * @description Create a new webhook.
-         *
-         *     Args:
-         *         data: Webhook configuration
-         *
-         *     Returns:
-         *         Created webhook
-         */
-        post: operations["post_api_webhooks"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Update Webhook
-         * @description Update a webhook.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *         data: Update data
-         *
-         *     Returns:
-         *         Updated webhook
-         */
-        put: operations["put_api_webhooks_webhook_id"];
-        post?: never;
-        /**
-         * Delete Webhook
-         * @description Delete a webhook.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *
-         *     Returns:
-         *         Success status
-         */
-        delete: operations["delete_api_webhooks_webhook_id"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}/deliveries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Webhook Deliveries
-         * @description Get webhook delivery history.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *         limit: Maximum deliveries to return
-         *
-         *     Returns:
-         *         Delivery history
-         */
-        get: operations["get_api_webhooks_webhook_id_deliveries"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/webhooks/{webhook_id}/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Webhook
-         * @description Test a webhook by sending a test payload.
-         *
-         *     Args:
-         *         webhook_id: Webhook ID
-         *
-         *     Returns:
-         *         Test result
-         */
-        post: operations["post_api_webhooks_webhook_id_test"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/workflows": {
         parameters: {
             query?: never;
@@ -7509,48 +7352,23 @@ export interface components {
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
             /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
-            /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /**
          * BudgetSettingsUpdate
-         * @description Admin-intent body for PUT /budget. All fields required so the API
-         *     can't be used to silently drop a setting via an empty PATCH.
-         *     budget_limit_usd and enforcement_mode are stored for compatibility
-         *     and ignored at dispatch.
+         * @description Admin-intent body for PUT /budget. The spend ceiling lives on the
+         *     virtual key in Bifrost, not here. Unknown fields are ignored, so older
+         *     clients that still send budget_limit_usd / enforcement_mode get a 200.
          */
         BudgetSettingsUpdate: {
-            /**
-             * Budget Limit Usd
-             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
-             * @default 0
-             */
-            budget_limit_usd: number;
             /**
              * Default Vk
              * @default
              */
             default_vk: string;
-            /**
-             * Enforcement Mode
-             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
-             * @default warning
-             */
-            enforcement_mode: string;
         };
         /** ByPriorityResponse */
         ByPriorityResponse: {
@@ -10989,6 +10807,8 @@ export interface components {
              * @default
              */
             reason: string;
+            /** Severity */
+            severity?: string | null;
             /**
              * Summary
              * @default
@@ -11273,41 +11093,6 @@ export interface components {
             } | null;
             /** User Id */
             user_id: string;
-        };
-        /**
-         * WebhookCreate
-         * @description Create webhook.
-         */
-        WebhookCreate: {
-            /**
-             * Active
-             * @default true
-             */
-            active: boolean;
-            /** Events */
-            events: string[];
-            /** Name */
-            name: string;
-            /** Secret */
-            secret?: string | null;
-            /** Url */
-            url: string;
-        };
-        /**
-         * WebhookUpdate
-         * @description Update webhook.
-         */
-        WebhookUpdate: {
-            /** Active */
-            active?: boolean | null;
-            /** Events */
-            events?: string[] | null;
-            /** Name */
-            name?: string | null;
-            /** Secret */
-            secret?: string | null;
-            /** Url */
-            url?: string | null;
         };
         /** WorkflowDetailResponse */
         WorkflowDetailResponse: {
@@ -20698,37 +20483,6 @@ export interface operations {
             };
         };
     };
-    "post_api_storage_init-schema": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_storage_reconnect: {
         parameters: {
             query?: never;
@@ -22570,210 +22324,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowDetailResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_webhooks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_webhooks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebhookCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_api_webhooks_webhook_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebhookUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_webhooks_webhook_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_webhooks_webhook_id_deliveries: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_webhooks_webhook_id_test: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                webhook_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
