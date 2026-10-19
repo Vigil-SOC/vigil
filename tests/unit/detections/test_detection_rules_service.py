@@ -115,3 +115,53 @@ def test_local_path_must_sit_under_an_allowed_root(service, tmp_path, monkeypatc
     monkeypatch.setenv("VIGIL_DETECTION_LOCAL_ROOTS", str(outside))
     get_settings.cache_clear()
     assert service.add_source("Outside", "local", "sigma", path=str(outside))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ext::sh -c touch% /tmp/pwned/repo",
+        "fd::3/repo",
+        "--upload-pack=touch /tmp/x/repo",
+        "/srv/repos/local",
+        "file:///srv/repos/local",
+        "-oProxyCommand=id@host:repo",
+    ],
+)
+def test_git_url_must_be_a_remote_url(service, url):
+    with patch.object(service, "_git_clone") as clone:
+        with pytest.raises(ValueError, match="Git URL"):
+            service.add_source("Bad", "git", "sigma", url=url)
+    clone.assert_not_called()
+
+
+@pytest.mark.unit
+def test_git_clone_restricts_transports_and_ends_options(service):
+    with patch("core.detections.detection_rules_service.subprocess.run") as run:
+        run.return_value.returncode = 0
+        service._git_clone("https://example.com/org/rules.git", "/tmp/rules")
+    argv = run.call_args.args[0]
+    assert argv[argv.index("--") + 1 :] == [
+        "https://example.com/org/rules.git",
+        "/tmp/rules",
+    ]
+    assert run.call_args.kwargs["env"]["GIT_ALLOW_PROTOCOL"] == "http:https:ssh:git"
+    with pytest.raises(ValueError):
+        service._git_clone("ext::sh -c id/x", "/tmp/rules")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/SigmaHQ/sigma.git",
+        "ssh://git@example.com:2222/org/rules.git",
+        "git@github.com:org/rules.git",
+    ],
+)
+def test_remote_git_urls_are_accepted(service, url):
+    with patch.object(service, "_git_clone") as clone:
+        source = service.add_source("Ok", "git", "sigma", url=url)
+    clone.assert_called_once()
+    assert source["git_url"] == url

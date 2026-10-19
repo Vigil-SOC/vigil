@@ -7,8 +7,9 @@ router owns the status code.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.storage.models import (
@@ -31,6 +32,7 @@ from core.storage.models import (
     Investigation,
     SketchMapping,
     WorkflowRun,
+    WorkflowRunPhase,
     case_findings,
 )
 
@@ -89,6 +91,19 @@ def list_case_runs(session: Session, case_id: str) -> List[WorkflowRun]:
         .order_by(WorkflowRun.started_at.desc(), WorkflowRun.run_id.desc())
         .all()
     )
+
+
+def run_step_counts(session: Session, run_ids: Sequence[str]) -> Dict[str, int]:
+    """Phases recorded per run, in one query. A run with none is absent."""
+    if not run_ids:
+        return {}
+    rows = (
+        session.query(WorkflowRunPhase.run_id, func.count())
+        .filter(WorkflowRunPhase.run_id.in_(run_ids))
+        .group_by(WorkflowRunPhase.run_id)
+        .all()
+    )
+    return {run_id: int(count) for run_id, count in rows}
 
 
 def list_case_audit(session: Session, case_id: str) -> List[CaseAuditLog]:

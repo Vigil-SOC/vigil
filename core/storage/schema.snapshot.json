@@ -2734,6 +2734,14 @@
       "data_type": "timestamp without time zone",
       "nullable": true
     },
+    "iteration_count": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "max_cost_usd": {
+      "data_type": "numeric(10,4)",
+      "nullable": true
+    },
     "outcome": {
       "data_type": "text",
       "nullable": true

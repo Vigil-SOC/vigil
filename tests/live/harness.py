@@ -3,7 +3,8 @@
 Every probe goes through the production ``MCPService`` and ``MCPClient``: the
 server is spawned from its ``mcp-config.json`` entry with the env Vigil would
 give it, so a pass means the shipped launcher, pin, and config path work, not
-just the vendor API.
+just the vendor API. With ``MCP_RUNNER_URL`` set, as in connectors-live.yml,
+every server runs in the MCP runner, the way the product runs it.
 """
 
 from __future__ import annotations
@@ -70,6 +71,14 @@ def connector_version(server: str) -> str:
     return entry.get("args", ["unknown"])[-1]
 
 
+def transport(client, server: str) -> Optional[str]:
+    """How the probe reached ``server``: by the session that connected, not the env."""
+    session = client.persistent_sessions.get(server)
+    if session is None:
+        return None
+    return "runner" if session.runner is not None else "stdio"
+
+
 def _payload(result: dict) -> Any:
     texts = [c.get("text", "") for c in result.get("content") or []]
     text = "\n".join(t for t in texts if t)
@@ -88,6 +97,10 @@ async def check(probe: Probe, client, request) -> None:
     gated = client.get_missing_credentials(probe.server)
     if gated:
         pytest.skip(f"not configured: {', '.join(gated)}")
+    request.node._live_transport = used = transport(client, probe.server)
+    # A run meant for the runner must not pass on a stdio child. Fail, never skip.
+    if os.environ.get("MCP_RUNNER_URL") and used == "stdio":
+        pytest.fail(f"{probe.server} ran as a {used} child, not in the MCP runner")
     assert connected, f"could not start {probe.server}: {client.get_last_error(probe.server)}"
 
     listed = {tool["name"] for tool in client.tools_cache.get(probe.server, [])}

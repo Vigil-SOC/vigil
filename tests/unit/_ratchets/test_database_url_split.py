@@ -48,3 +48,14 @@ def test_helm_does_not_assemble_database_url():
     assert "databaseUrlNoPassword" not in helpers
     assert "append ?sslmode=require to the DATABASE_URL" not in values
     assert "DATABASE_URL assembly" not in values
+
+
+def test_env_example_does_not_repeat_the_password_in_a_dsn():
+    # A live DATABASE_URL outranks POSTGRES_* in the agent, so rotating
+    # POSTGRES_PASSWORD alone would leave the agent on the old password.
+    live = [
+        line
+        for line in ENV_EXAMPLE.read_text().splitlines()
+        if line.startswith("DATABASE_URL=")
+    ]
+    assert live == []

@@ -1,6 +1,6 @@
 """IANA top-level domains, for the well-formed check on ``domain`` / ``email``.
 
-The Python half of ``services/agent/workflows/hunt/tlds.ts``: the same list, the
+The Python half of ``services/agent/plugins/hunt/tlds.ts``: the same list, the
 same exclusions, so text extracted here and text extracted by the hunt harness
 agree on what is a domain. Re-vendor both files together.
 """

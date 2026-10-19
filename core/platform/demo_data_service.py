@@ -265,6 +265,20 @@ class DemoDataService:
                 return True
         return False
 
+    def write_ai_enrichment(
+        self, finding_id: str, ai_enrichment: Dict[str, Any], *, daemon: bool, **updates
+    ) -> bool:
+        from core.storage.service import merge_ai_enrichment
+
+        for f in DemoDataService._findings:
+            if f.get("finding_id") == finding_id:
+                f.update(updates)
+                f["ai_enrichment"] = merge_ai_enrichment(
+                    f.get("ai_enrichment"), ai_enrichment, daemon=daemon
+                )
+                return True
+        return False
+
     def update_case(self, case_id: str, **updates) -> bool:
         for c in DemoDataService._cases:
             if c.get("case_id") == case_id:

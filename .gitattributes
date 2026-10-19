@@ -1,0 +1,22 @@
+# Line endings. Windows Git (core.autocrlf=true by default) would otherwise check
+# these out with CRLF, and bash/Linux containers then fail on the stray "\r"
+# ("$'\r': command not found", "env: 'bash\r': No such file or directory").
+# Scoped to what Linux reads: not `* text=auto`, so nothing else is rewritten.
+
+# Shell and awk scripts (no extensionless scripts with a shebang exist in the repo)
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.awk           text eol=lf
+
+# Python entry points run directly (shebang line)
+scripts/*.py    text eol=lf
+
+# Read by bash (`source .env`, `cat VERSION`) or copied into Linux images
+env.example     text eol=lf
+VERSION         text eol=lf
+.python-version text eol=lf
+Dockerfile*     text eol=lf
+*.sql           text eol=lf
+# The support bundle's redaction list: a "\r" on each name would match nothing,
+# and secrets would reach the bundle unredacted.
+scripts/vigil-support/*.txt text eol=lf

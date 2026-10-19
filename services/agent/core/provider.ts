@@ -48,6 +48,9 @@ export type ProviderEvent =
 export interface Provider {
   readonly model: string;
   readonly provider_type: string;
+  // The sampling parameters every call is sent with, journaled on each frame so a
+  // replay knows what the model was asked under. Absent is the provider's defaults.
+  readonly sampling?: Readonly<Record<string, unknown>>;
   stream(request: TurnRequest): AsyncIterable<ProviderEvent>;
 }
 

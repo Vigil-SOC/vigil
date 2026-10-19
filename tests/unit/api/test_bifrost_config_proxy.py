@@ -114,23 +114,56 @@ def test_vertex_service_account_is_not_mirrored_to_value(monkeypatch):
 def test_vertex_edit_without_credential_substitutes_the_stored_one(monkeypatch):
     # Editing project/region without re-pasting the JSON pulls the stored copy
     # into auth_credentials -- and only there, for the reason above.
+    sa = '{"type": "service_account"}'
     monkeypatch.setattr(
-        proxy, "get_secret", lambda ref: "stored-sa" if ref == "llm_key_v1" else None
+        proxy, "get_secret", lambda ref: sa if ref == "llm_key_v1" else None
     )
     body = {"vertex_key_config": {"project_id": "p", "region": "eu"}}
     proxy._resolve_key_value(body, "v1")
     assert "value" not in body
-    assert body["vertex_key_config"]["auth_credentials"] == "stored-sa"
+    assert body["vertex_key_config"]["auth_credentials"] == sa
 
 
 @pytest.mark.unit
-def test_vertex_api_key_takes_the_plain_value_path(monkeypatch):
-    # API-key vertex sends no vertex_key_config, so it is handled like any other
-    # bare credential.
-    monkeypatch.setattr(proxy, "get_secret", lambda ref: "stored")
-    body = {"value": "vertex-api-key"}
-    proxy._resolve_key_value(body, "v2")
+def test_vertex_api_key_create_keeps_value_and_scope(monkeypatch):
+    # Bifrost skips a vertex key with no vertex_key_config, API key or not, so
+    # an express-mode key carries its scope beside a plain value.
+    monkeypatch.setattr(proxy, "get_secret", lambda ref: None)
+    body = {
+        "value": "vertex-api-key",
+        "vertex_key_config": {"project_id": "p", "region": "us-central1"},
+    }
+    proxy._resolve_key_value(body, None, "vertex")
     assert body["value"] == "vertex-api-key"
+    assert body["vertex_key_config"] == {"project_id": "p", "region": "us-central1"}
+
+
+@pytest.mark.unit
+def test_vertex_api_key_edit_restores_value_and_scope(monkeypatch):
+    # A weight-only edit retypes neither credential nor scope: both come back
+    # from the stored copies, and a non-JSON credential stays an API key.
+    stored = {
+        "llm_key_v2": "AQ.express-key",
+        "llm_key_v2_vertex_scope": '{"project_id": "p", "region": "eu"}',
+    }
+    monkeypatch.setattr(proxy, "get_secret", stored.get)
+    body = {"weight": 2, "vertex_key_config": {}}
+    proxy._resolve_key_value(body, "v2", "vertex")
+    assert body["value"] == "AQ.express-key"
+    assert body["vertex_key_config"] == {"project_id": "p", "region": "eu"}
+
+
+@pytest.mark.unit
+def test_vertex_api_key_edit_without_stored_scope_asks_for_it(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(
+        proxy, "get_secret", lambda ref: "AQ.express-key" if ref == "llm_key_v3" else None
+    )
+    with pytest.raises(HTTPException) as exc:
+        proxy._resolve_key_value({"vertex_key_config": {}}, "v3", "vertex")
+    assert exc.value.status_code == 400
+    assert "project id and region" in exc.value.detail
 
 
 @pytest.mark.unit

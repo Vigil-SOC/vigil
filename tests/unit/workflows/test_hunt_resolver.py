@@ -111,6 +111,17 @@ class TestCapabilityBinding:
         # splunk-selfhosted is declared first, so it wins over elastic.
         assert bound[0]["id"] == "splunk-selfhosted_splunk_nl_search"
 
+    # The integration behind a bound tool rides it, so a hunt can name the system a row
+    # with no alert behind it came from (#2287). A tool this backend implements names none.
+    def test_names_the_server_behind_a_bound_tool(self):
+        from core.workflows.playbook_resolver import _bound_capabilities
+
+        catalogue = {"splunk-selfhosted_splunk_execute": {}, "search_findings": {}}
+        bound = _bound_capabilities(["telemetry_search", "findings_search"], catalogue)
+
+        assert bound[0]["server"] == "splunk-selfhosted"
+        assert "server" not in bound[1]
+
     # The agent layer defaults to 30s when a spec states nothing, and a real search
     # over a wide window crosses it. The timeout then reads as a gap in visibility --
     # "no evidence" where the truth is "we gave up after thirty seconds".
@@ -138,7 +149,7 @@ class TestCapabilityBinding:
     def test_states_bounds_for_every_capability_a_hunt_binds(self):
         from core.workflows.playbook_resolver import CAPABILITY_BOUNDS
 
-        # case_records is the investigate lead's; get_finding keeps the default.
+        # case_records is the investigate lead's.
         assert set(CAPABILITY_BOUNDS) == set(HUNT_CAPABILITIES) | {"case_records"}
 
     # Dropped rather than fatal: the hunt journals the drop as a visibility gap,

@@ -290,6 +290,25 @@ describe('board grid', () => {
     expect(row.queryByRole('button')).not.toBeInTheDocument()
   })
 
+  it('lists a hunt that has only a run as its step, state and spend against the cap', async () => {
+    testState.cases = [{
+      ...CASE,
+      combined_state: 'paused',
+      workflow_id: 'hunt-a',
+      findings_count: 7,
+      iteration_count: 8,
+      cost_usd: 0.4452,
+      max_cost_usd: 15,
+      budget_health: 'healthy',
+    }]
+    renderCases()
+
+    const row = within(await rowOf(CASE.title))
+    expect(row.getByText(/^7 alerts · step 8/)).toBeInTheDocument()
+    expect(row.getByText('Paused')).toBeInTheDocument()
+    expect(row.getByRole('meter')).toHaveAttribute('aria-valuenow', '3')
+  })
+
   it('falls back to the workflow id when it is not in the catalog, and a dash with none', async () => {
     testState.cases = [
       { ...CASE, case_id: 'a', title: 'Known elsewhere', workflow_id: 'unlisted' },

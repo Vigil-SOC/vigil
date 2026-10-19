@@ -92,6 +92,7 @@ describe('UserMenu', () => {
       expect.stringMatching(/^Share feedbackAbout Vigil · 9\.9\.9$/),
       'Switch to light mode',
       'Settings',
+      'Change password',
       'Sign out',
     ])
     expect(menu).toHaveTextContent('admin')
