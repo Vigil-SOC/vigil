@@ -22,7 +22,8 @@ import Chat from '../../shell/Chat'
 import { EvidenceTrail } from './EvidenceTrail'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
-import { caseCitations } from './caseCitations'
+import { caseCitations, evidenceInNote } from './caseCitations'
+import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
 import { timeLeft, when } from './caseFormat'
 import {
@@ -139,22 +140,54 @@ function waiting(since: string): string {
   return min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
 }
 
+/** The rows a note cites, in words while the row is shut and as chips that open them once it is opened (#2459). */
+function NoteCites({ ids, open, cites, onCite }: { ids: string[]; open: boolean; cites: ReadonlyMap<string, Citation>; onCite: (cite: Citation) => void }) {
+  const known = ids.flatMap((id) => cites.get(id) ?? [])
+  const rest = ids.length - known.length
+  if (!open || known.length === 0) return <> · {plural(ids.length, 'evidence row')}</>
+  return (
+    <span className="case-expl-cites">
+      {known.map((cite) => (
+        <button
+          key={cite.id}
+          type="button"
+          className="cite-chip evidence"
+          title={cite.text}
+          onClick={(e) => {
+            e.stopPropagation()
+            onCite(cite)
+          }}
+        >
+          {cite.label}
+        </button>
+      ))}
+      {rest > 0 && <span>and {plural(rest, 'older row')}</span>}
+    </span>
+  )
+}
+
 /** One explanation: the title stops at a line and the justification at two; the full text is on hover and when the row is opened. */
-function ExplanationRow({ row, rootCauseRunId }: { row: HypothesisRow; rootCauseRunId: string | null }) {
+function ExplanationRow({ row, rootCauseRunId, cites, onCite }: { row: HypothesisRow; rootCauseRunId: string | null; cites: ReadonlyMap<string, Citation>; onCite: (cite: Citation) => void }) {
   const [open, setOpen] = useState(false)
   const word = explanationWord(row.status, row.supports, row.weakens)
   const by = addedBy(row.provenance)
   const title = row.statement || row.hypothesis_id
+  const note = row.resolution_reason ? evidenceInNote(row.resolution_reason) : null
   return (
     <li>
       <div className={`case-expl-main${open ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v) } }}>
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v) } }}>
         <div className="case-expl-line">
           <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
           <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`} title={title}>{title}</span>
         </div>
-        {row.resolution_reason && <div className="case-expl-note" title={row.resolution_reason}>{row.resolution_reason}</div>}
+        {note && (
+          <div className="case-expl-note" title={note.text}>
+            {note.text}
+            {note.ids.length > 0 && <NoteCites ids={note.ids} open={open} cites={cites} onCite={onCite} />}
+          </div>
+        )}
       </div>
       <div className="case-expl-side">
         <div>
@@ -1161,6 +1194,12 @@ export function CasePage({
   const shownNeeds = awaitingQueue && runCheckpoint ? [fromRun(runCheckpoint, id, runId), ...served] : served
   const needsShown = Math.max(0, needsCount - (needsItems.length - served.length)) + (shownNeeds.length - served.length)
   const hypotheses = foldRecord(fold)?.hypotheses ?? []
+  const citations = caseCitations(fold, linkedFindings)
+  const citeById = new Map(citations.map((cite) => [cite.id, cite]))
+  const openCite = (cite: Citation) => {
+    setTab(cite.kind === 'explanation' ? 'Explanations' : 'Evidence')
+    if (cite.kind === 'evidence') setFocusEvidence(cite.id)
+  }
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
   const stopped = closed || needsShown > 0 || answeredHere ? null : stoppedRun(fold)
@@ -1333,7 +1372,7 @@ export function CasePage({
                 ) : (
                   <ul className="case-expl-rows">
                     {hypotheses.map((row) => (
-                      <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} />
+                      <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} cites={citeById} onCite={openCite} />
                     ))}
                   </ul>
                 )}
@@ -1508,11 +1547,8 @@ export function CasePage({
         seed={askSeed?.id === id ? askSeed.text : null}
         onSeedConsumed={() => setAskSeed(null)}
         onTurnDone={refreshFold}
-        citations={caseCitations(fold, linkedFindings)}
-        onCite={(cite) => {
-          setTab(cite.kind === 'explanation' ? 'Explanations' : 'Evidence')
-          if (cite.kind === 'evidence') setFocusEvidence(cite.id)
-        }}
+        citations={citations}
+        onCite={openCite}
       />
     </div>
   )

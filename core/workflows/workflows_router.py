@@ -1,6 +1,7 @@
 """Workflows API endpoints for SOC workflow management and execution."""
 
 import logging
+import re
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -511,25 +512,64 @@ def _finding_sources(finding_ids: List[str]) -> Dict[str, str]:
     return {finding_id: source for finding_id, source in rows if source}
 
 
+# Vigil's own tools a hunt queries, by the part of Vigil that answers them. A row that
+# cites no alert and names no integration was read off Vigil itself when these are all
+# its turn asked; any other tool in the turn leaves the row's system unsaid.
+_VIGIL_TOOL_SYSTEMS = {
+    "search_findings": "vigil_alerts",
+    "get_finding": "vigil_alerts",
+    "recall_entity": "vigil_memory",
+    "case_records": "vigil_memory",
+    "lookup_indicators": "vigil_threat_intel",
+}
+_VIGIL = "vigil"
+
+# A model sometimes writes several alert ids into one: "dl-007;dl-001".
+_ID_SEPARATORS = re.compile(r"[\s,;|]+")
+
+
+def _cited_ids(item: Dict[str, Any]) -> List[str]:
+    ids = [one for one in item.get("finding_ids") or [] if isinstance(one, str)]
+    return [part for one in ids for part in _ID_SEPARATORS.split(one) if part]
+
+
+def _vigil_systems_by_turn(calls: Any) -> Dict[int, str]:
+    """The part of Vigil that answered each turn whose queries were all Vigil's own.
+
+    Several parts in one turn read as Vigil; a turn that asked anything else is left out.
+    """
+    asked: Dict[int, set] = {}
+    for call in calls if isinstance(calls, list) else []:
+        if not isinstance(call, dict) or not isinstance(call.get("iteration"), int):
+            continue
+        asked.setdefault(call["iteration"], set()).add(
+            _VIGIL_TOOL_SYSTEMS.get(str(call.get("tool") or ""))
+        )
+    return {
+        turn: (next(iter(systems)) if len(systems) == 1 else _VIGIL)
+        for turn, systems in asked.items()
+        if None not in systems
+    }
+
+
 def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
     """Label each hunt evidence row with where it came from and its Source Tier.
 
     ``origins`` is the system its rows came from (#2287): the ``data_source`` of
-    the alerts it cites, or the integration that answered when it cites none.
-    The tier is that system's; a row naming no system is graded by its domain.
-    Display labels, as configured now and not stored: a gap row names no
-    source, so it gets neither.
+    the alerts it cites, or the integration that answered when it cites none, or
+    the part of Vigil its turn read when Vigil's own tools were all it asked
+    (#2458). The tier is that integration's; a row naming no integration is
+    graded by its domain. Display labels, as configured now and not stored: a
+    gap row names no source, so it gets neither.
     """
     rows = [
         item
         for item in (folded or {}).get("evidence") or []
         if isinstance(item, dict) and not item.get("is_gap")
     ]
-    cited = [
-        [one for one in item.get("finding_ids") or [] if isinstance(one, str)]
-        for item in rows
-    ]
+    cited = [_cited_ids(item) for item in rows]
     sources = _finding_sources(sorted({one for ids in cited for one in ids}))
+    vigil = _vigil_systems_by_turn((folded or {}).get("calls"))
     for item, ids in zip(rows, cited):
         origins = list(dict.fromkeys(sources[one] for one in ids if one in sources))
         served = item.get("served_by")
@@ -539,6 +579,9 @@ def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
             item["source_tier"] = resolve_source_tier(
                 str(item.get("source_system") or ""), InvestigationKind.HUNT
             ).value
+            turn = item.get("iteration")
+            if item.get("provenance") == "worker" and turn in vigil:
+                item["origins"] = [vigil[turn]]
             continue
         item["origins"] = origins
         tiers = [resolve_source_tier(one, InvestigationKind.CASE) for one in origins]

@@ -544,9 +544,10 @@ export interface AgentSummary {
   decision_id?: string
 }
 
-/** Reads the shell folds itself. Health is public; routability is admin-only. */
+/** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
+  getProcesses: () => api.get<{ agent_layer?: string; daemon?: string }>('/processes'),
   getRoutability: () =>
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }

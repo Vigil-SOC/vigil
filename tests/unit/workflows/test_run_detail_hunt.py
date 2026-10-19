@@ -202,3 +202,93 @@ async def test_a_row_resting_on_several_systems_takes_the_weakest_tier(monkeypat
     )
 
     assert detail["hunt"]["evidence"][0]["source_tier"] == "feed"
+
+
+# #2458: a row the hunt read off Vigil itself names the part of Vigil that answered,
+# and alert ids a model wrote into one string are each looked up.
+@pytest.mark.asyncio
+async def test_a_hunt_row_read_off_vigil_names_the_part_that_answered(monkeypatch):
+    fold = {
+        "calls": [
+            {"tool": "search_findings", "iteration": 15},
+            {"tool": "get_finding", "iteration": 15},
+            {"tool": "search_findings", "iteration": 10},
+            {"tool": "recall_entity", "iteration": 10},
+            {"tool": "recall_entity", "iteration": 12},
+            {"tool": "search_findings", "iteration": 14},
+            {"tool": "splunk_execute", "iteration": 14},
+        ],
+        "evidence": [
+            {
+                "evidence_id": "e1",
+                "iteration": 15,
+                "source_system": "dns",
+                "provenance": "worker",
+                "is_gap": False,
+            },
+            {
+                "evidence_id": "e2",
+                "iteration": 10,
+                "source_system": "endpoint",
+                "provenance": "worker",
+                "is_gap": False,
+            },
+            {
+                "evidence_id": "e3",
+                "iteration": 12,
+                "source_system": "undeclared",
+                "provenance": "worker",
+                "is_gap": False,
+            },
+            # Another tool in its turn: which one answered is not known, so it is not said.
+            {
+                "evidence_id": "e4",
+                "iteration": 14,
+                "source_system": "proxy",
+                "provenance": "worker",
+                "is_gap": False,
+            },
+            # The critic's rebuttal is no read of anything.
+            {
+                "evidence_id": "e5",
+                "iteration": 15,
+                "source_system": "critic",
+                "provenance": "null_check",
+                "is_gap": False,
+            },
+            {
+                "evidence_id": "e6",
+                "iteration": 20,
+                "source_system": "undeclared",
+                "provenance": "worker",
+                "finding_ids": ["dl-007;dl-001"],
+                "is_gap": False,
+            },
+        ],
+    }
+
+    async def _reads(_run_id, _evidence_limit=None):
+        return fold
+
+    monkeypatch.setattr(router, "read_projection", _reads)
+    monkeypatch.setattr(
+        router,
+        "_finding_sources",
+        lambda ids: {
+            one: {"dl-001": "proofpoint", "dl-007": "infoblox"}[one] for one in ids
+        },
+    )
+
+    detail = await router.get_workflow_run(
+        "run-7", _runs_for("threat-hunt"), WorkflowsService()
+    )
+
+    alerts, mixed, memory, other, critic, joined = detail["hunt"]["evidence"]
+    assert alerts["origins"] == ["vigil_alerts"]
+    assert mixed["origins"] == ["vigil"]
+    assert memory["origins"] == ["vigil_memory"]
+    assert "origins" not in other
+    assert "origins" not in critic
+    assert joined["origins"] == ["infoblox", "proofpoint"]
+    # Graded as before: by the domain it was recorded under.
+    assert alerts["source_tier"] == "telemetry"

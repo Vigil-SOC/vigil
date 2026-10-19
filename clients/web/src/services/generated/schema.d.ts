@@ -4665,6 +4665,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/processes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Processes
+         * @description State of the agent layer and the SOC daemon.
+         *
+         *     ``agent_layer`` and ``daemon`` are each ``running``, ``unhealthy``,
+         *     ``not_running`` or ``unknown``; ``agent_layer`` is ``no_token`` when this
+         *     server has no AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         */
+        get: operations["get_api_processes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reasoning/investigation/{investigation_id}/interactions": {
         parameters: {
             query?: never;
@@ -19770,6 +19794,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_processes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */
