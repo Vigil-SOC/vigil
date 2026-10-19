@@ -629,7 +629,7 @@ describe('case page', () => {
     renderCase('case-inv')
 
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Now · step 2')).toBeInTheDocument()
+    expect(await within(now).findByText('Now · step 2')).toBeInTheDocument()
     expect(within(now).getByText('Examine')).toBeInTheDocument()
     expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
@@ -761,7 +761,7 @@ describe('case page', () => {
     renderCase('case-run-only')
 
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('The run has started and has not reported yet.')).toBeInTheDocument()
+    expect(await within(now).findByText('The run has started and has not reported yet.')).toBeInTheDocument()
     expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
     expect(workflowApi.getRun).toHaveBeenCalledWith('run-only')
     expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
@@ -2491,7 +2491,7 @@ describe('watching a run, its cost and its agents', () => {
       ] }),
     })
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Rule out an explanation')).toBeInTheDocument()
+    expect(await within(now).findByText('Rule out an explanation')).toBeInTheDocument()
     expect(document.querySelector('.case-reason')).toHaveTextContent(/^Step \d+ · /)
     const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')
     expect(rows[1]).toHaveTextContent('who logged in')
@@ -2655,7 +2655,7 @@ describe('a kernel hunt on its case', () => {
       moves: [{ decision_id: 'r9', query_intent: 'Searched alerts for HTTPS beaconing', action: 'QUERY', worker_agent_id: 'Hunt lead', iteration: 3, created_at: '2026-06-15T09:14:00Z' }],
     }))
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing')
+    await waitFor(() => expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing'))
     expect(now).not.toHaveTextContent('{')
     const agents = screen.getByRole('table', { name: 'Agents' })
     expect(agents).toHaveTextContent('Hunt lead')
