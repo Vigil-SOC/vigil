@@ -17,6 +17,8 @@ ROUTER_META = RouterMeta(
 )
 
 
+# Plain def: the read is synchronous, so FastAPI runs it in its threadpool
+# instead of on the event loop.
 @router.get("/triage")
 def get_triage(
     kind: Optional[str] = Query(None),
@@ -25,9 +27,8 @@ def get_triage(
 ):
     """Intake rows, ranking inputs, and the strip. Polled.
 
-    Plain ``def``: the read is synchronous, so FastAPI runs it in its
-    threadpool instead of on the event loop. Reads the tables directly.
-    ``_get_orchestrator()`` is a second process whose queue is never this one.
+    Reads the tables directly. ``_get_orchestrator()`` is a second process
+    whose queue is never this one.
     """
     # Encoded here, in the threadpool: a returned dict goes through
     # jsonable_encoder on the event loop, which is slow at 200 rows.
