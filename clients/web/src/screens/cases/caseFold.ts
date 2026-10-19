@@ -199,6 +199,10 @@ export function honestLine(): string {
   return HONEST
 }
 
+// The hypothesis statuses explanationWord maps: HYPOTHESIS_STATUSES in services/agent
+// contracts/events.ts, held to it by tests/unit/_ratchets/test_recall_contract_agrees.py.
+export const EXPLAINED_STATUSES = ['active', 'proven', 'disproven', 'inconclusive', 'parked', 'handed_off'] as const
+
 export function explanationWord(status: string, supports: number, weakens: number): string {
   if (status === 'proven') return 'proven'
   if (status === 'disproven') return 'ruled out'
@@ -492,6 +496,13 @@ function heldOf(raw: unknown): HeldRow | null {
   return str(o.asked) && str(o.final) ? { field: str(o.field), asked: str(o.asked), final: str(o.final), reason: str(o.reason) } : null
 }
 
+// Every projection carries the ceiling in its head; a ledger read before it did keeps it under budgets.
+function ceilingOf(raw: Record<string, unknown>): number | null {
+  const head = num(raw.max_cost_usd)
+  if (head !== null) return head
+  return raw.budgets && typeof raw.budgets === 'object' ? num((raw.budgets as Record<string, unknown>).max_cost_usd) : null
+}
+
 function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
   // The server sends moves newest first.
@@ -505,7 +516,6 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
       iteration: num(o.iteration),
     }]
   })
-  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
@@ -520,7 +530,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
-    maxCostUsd: budgets ? num(budgets.max_cost_usd) : null,
+    maxCostUsd: ceilingOf(raw),
   }
 }
 
@@ -551,6 +561,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
         }]
       })
     : []
+  const ceiling = ceilingOf(raw)
   return {
     kind: 'lead',
     // A legacy lead ledger keeps no record, so carries none of its fields.
@@ -568,7 +579,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
-    maxCostUsd: (num(raw.max_cost_usd) ?? 0) > 0 ? num(raw.max_cost_usd) : null,
+    maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
   }
 }
 
