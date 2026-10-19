@@ -29,7 +29,7 @@ import {
 } from './providerResidency'
 
 type CardId = 'anthropic' | 'openai' | 'cloud' | 'ollama'
-// 'other' is the Another provider field: picking it deselects every card.
+// 'other' is the Another provider field: naming a provider there deselects every card.
 type Pick = CardId | 'other'
 
 // copy is the board's, verbatim
@@ -260,8 +260,12 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
                   className="field-input grow"
                   list="setup-bf-providers"
                   value={newProvider}
-                  onChange={(e) => setNewProvider(e.target.value)}
-                  onFocus={() => setPicked('other')}
+                  // Typing a name is the choice; focus alone is not, since Tab passes
+                  // through here on the way from the cards to the key form.
+                  onChange={(e) => {
+                    setNewProvider(e.target.value)
+                    setPicked(e.target.value.trim() || another ? 'other' : null)
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
