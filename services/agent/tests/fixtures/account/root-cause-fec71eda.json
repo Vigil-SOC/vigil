@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "runs": [{ "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a", "run_kind": "root_cause" }],
+  "chain": {
+    "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+    "events": [
+      {
+        "id": "step-9",
+        "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+        "text": "PowerShell C2 beacon: FYODOR-L powershell.exe (PIDs 5588/5448/10432) made 3884 TCP/443 connections to 45.77.53.176. CONFIRMED finding — the artifact to trace backward.",
+        "at": "2018-08-20T10:30:00Z",
+        "status": "unproven",
+        "entities": ["host:fyodor-l", "ip:45.77.53.176"]
+      },
+      {
+        "id": "step-10",
+        "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+        "text": "powershell.exe PID 5588 (a confirmed beacon PID) spawned from parent powershell.exe PID 7756 at 10:01:44 with the same base64 Empire -enc stager.",
+        "at": "2018-08-20T10:01:44Z",
+        "status": "unproven",
+        "causes": "step-9",
+        "tie": { "text": "ProcessId 5588 child of ProcessId 7756", "status": "unproven" }
+      },
+      {
+        "id": "step-11",
+        "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+        "text": "powershell.exe PID 7756 launched at 10:01:41 with the base64 Empire -enc stager. This is the stager executed when the .lnk was opened.",
+        "at": "2018-08-20T10:01:41Z",
+        "status": "unproven",
+        "causes": "step-10",
+        "tie": { "text": "ProcessId 7756 stager launch", "status": "unproven" }
+      },
+      {
+        "id": "step-12",
+        "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+        "text": "browser_broker.exe IOAV scan event at 10:01:39 carries the opened file path BRUCE BIRTHDAY HAPPY HOUR PICS (1).lnk and its SharePoint source URL.",
+        "at": "2018-08-20T10:01:39Z",
+        "status": "unproven",
+        "causes": "step-11",
+        "tie": { "text": "BRUCE BIRTHDAY HAPPY HOUR PICS .lnk from SharePoint URL", "status": "unproven" }
+      },
+      {
+        "id": "step-13",
+        "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+        "text": "Origin within dataset: the malicious BRUCE BIRTHDAY HAPPY HOUR PICS.lnk was hosted on Frothly's own SharePoint and downloaded to FYODOR-L's Edge Downloads folder.",
+        "at": "2018-08-20T10:01:39Z",
+        "status": "unproven",
+        "causes": "step-12",
+        "tie": { "text": "SharePoint-hosted .lnk download", "status": "unproven" },
+        "origin": "unproven"
+      },
+      {
+        "id": "step-20",
+        "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a",
+        "text": "ORIGIN: Malicious lure BRUCE BIRTHDAY HAPPY HOUR PICS.lnk first appears at 2018-08-20T09:57:33 as an O365 FileUploaded to bgist's OneDrive/SharePoint (Documents/Birthday Pictures/).",
+        "at": "2018-08-20T09:57:33",
+        "status": "unproven",
+        "origin": "unproven",
+        "why_origin": "Dataset-wide before-count = 0 for the artifact name across all sourcetypes."
+      }
+    ]
+  },
+  "steps": [
+    { "run_id": "fec71eda-03a8-4af7-8319-52b8cb9bbc5a", "n": 93, "kind": "search", "text": "index=botsv3 sourcetype=o365:management:activity Operation=FileUploaded \"BRUCE BIRTHDAY HAPPY HOUR PICS.lnk\"" }
+  ]
+}

@@ -31,15 +31,9 @@ from sqlalchemy import text
 # service unit job, which runs `-m "not external_service"` with no Postgres.
 _DB_MARKERS = ("external_service",)
 
-# Mirrors what CI's "Enable Postgres extensions" step installs. Both ship with
-# stock Postgres; pg_trgm is what the findings GIN index (gin_trgm_ops) needs.
-# Individually tolerant, matching DatabaseManager.create_tables(): a missing
-# extension should fail on the CREATE that needs it, naming the real problem,
-# rather than here.
-_EXTENSIONS = (
-    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
-    'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
-)
+# pg_trgm is deliberately absent: DatabaseManager.create_tables() enables it
+# itself, so this fixture exercises that path. Individually tolerant.
+_EXTENSIONS = ('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',)
 
 
 def _quote_ident(name: str) -> str:

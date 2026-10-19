@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { callsPerIteration, DEFAULT_BUDGETS, type Budgets } from "../../plugins/hunt/types.js";
+import { buildSpec, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
+import { kernelSpec } from "../../plugins/hunt/hooks.js";
+import { archFor } from "../../plugins/kinds.js";
+import { DEFAULT_BUDGETS, HUNT_ALLOWANCE, type Budgets } from "../../plugins/hunt/types.js";
 import { scoredFrontier } from "../../plugins/hunt/frontier.js";
 import {
   DEFAULT_TERMINATION,
@@ -29,6 +34,8 @@ import {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 
 const CAPPED: Budgets = { max_iterations: 1, max_calls: 12, max_cost_usd: 10, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 };
 
@@ -616,14 +623,9 @@ describe("turns and model calls are different budgets", () => {
     expect(ledger.projection.hunt.status).toBe("parked");
   });
 
-  // Off this spec's own fan-out, not the shipped arch's: the fixture dispatches
-  // one worker where plugins/hunt/plugin.yaml dispatches four, and a ceiling read off the
-  // shipped shape would be wrong for both.
   it("raises the call ceiling with the turns asked for, so calls stay a backstop", () => {
     const spec = specWith({ max_iterations: 20 });
-    const perTurn = callsPerIteration(spec.dispatch.max_workers, spec.runtime.max_turns);
-    expect(spec.budgets.max_calls).toBe(20 * perTurn);
-    expect(perTurn).toBeGreaterThan(1);
+    expect(spec.budgets.max_calls).toBe(20 * 60);
   });
 
   it("leaves a call ceiling already above the derived one alone", () => {
@@ -705,4 +707,44 @@ describe("which arm of the budget stopped the run", () => {
   it("names nothing while both have room", () => {
     expect(boundBy(at(1, 0.5))).toBeNull();
   });
+});
+
+// The ceilings the retired fan-out arithmetic gave a hunt -- (4 workers + 2) turns an
+// iteration, each 8 + 2 calls -- now stated as the plugin's allowance. Per iteration,
+// so a hunt asking for any count runs to exactly what it did.
+describe("a hunt's turn and call ceilings", () => {
+  // At the runtime every resolved hunt is handed, where the old arithmetic gave
+  // (4 + 2) turns and (4 + 2) x (max_turns + 2) calls an iteration.
+  const shipped = {
+    ...buildSpec(
+      { arch: archFor("hunt").arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") },
+      archFor("hunt").actions,
+      archFor("hunt").owned,
+    ),
+    runtime: DEFAULT_RUNTIME,
+  };
+  const before = { turns: 4 + 2, calls: (4 + 2) * (DEFAULT_RUNTIME.max_turns + 2) };
+  // A spec journaled before the allowance was stated, carrying the fields that preceded
+  // it: a resume reads the ledger's spec as written, so it must still run to the same ceilings.
+  const journaled = JSON.parse(readFileSync(join(FIXTURES, "ledgers", "pre-allowance-hunt-run.jsonl"), "utf8")).payload.spec;
+  const { allowance: _, finding: __, ...unstated } = shipped;
+  const recorded = { ...unstated, ...journaled, roles: { ...shipped.roles, ...journaled.roles } } as RunSpec;
+
+  it("states the allowance the shipped hunt has always run to", () => {
+    expect(shipped.allowance).toEqual({ turns_per_iteration: before.turns, calls_per_iteration: before.calls });
+    expect(HUNT_ALLOWANCE).toEqual(shipped.allowance);
+  });
+
+  for (const [name, spec] of [["shipped", shipped], ["recorded before the allowance", recorded]] as const) {
+    it.each([1, 3, 8, 20])(`gives a %i-iteration hunt the turns and calls an iteration always had (${name})`, (iterations) => {
+      const asked = { ...spec, thresholds: { ...spec.thresholds, max_iterations: iterations } };
+      expect(kernelSpec(asked).thresholds["max_iterations"]).toBe(iterations * before.turns);
+      expect(huntSpec(asked).budgets.max_calls).toBe(Math.max(spec.budgets.max_calls, iterations * before.calls));
+    });
+
+    it(`scales a pinned hard ceiling the same way (${name})`, () => {
+      const pinned = { ...spec, thresholds: { ...spec.thresholds, max_iterations: 3, hard_max_iterations: 5 } };
+      expect(kernelSpec(pinned).thresholds["hard_max_iterations"]).toBe(5 * before.turns);
+    });
+  }
 });

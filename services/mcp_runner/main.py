@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from core.integrations.mcp.runner import runner_token
 from services.mcp_runner.catalog import Catalog, load_uids
 from services.mcp_runner.supervisor import ShuttingDown, Supervisor
 
@@ -192,7 +193,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     # The runner's own bearer; it never reaches a child.
-    token = os.environ.get("MCP_RUNNER_TOKEN", "")  # noqa: ENV001 - own bearer
+    token = runner_token()
     if not token:
         logger.error("MCP_RUNNER_TOKEN is empty: every route answers 503")
     app = create_app(token, Catalog(APP_ROOT))

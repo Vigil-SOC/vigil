@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO))
 
 from core.ingestion.ingestion_service import (  # noqa: E402
     ID_HASH_WIDTH,
+    MITRE_TACTIC_MAP,
     IngestionService,
 )
 
@@ -60,7 +61,42 @@ def test_parquet_null_score_severity_and_time_stay_null(service):
     assert finding["anomaly_score"] is None
     assert finding["severity"] is None
     assert finding["timestamp"] is None
-    assert finding["mitre_predictions"]["Command and Control"] == 1.0
+    assert finding["mitre_predictions"]["Discovery"] == 1.0
+
+
+def test_mitre_tactic_map_matches_loglm_class_order():
+    assert list(MITRE_TACTIC_MAP.items()) == list(
+        enumerate(
+            [
+                "Impact",
+                "Credential Access",
+                "Execution",
+                "Reconnaissance",
+                "Initial Access",
+                "Persistence",
+                "Command and Control",
+                "Discovery",
+                "Exfiltration",
+                "Lateral Movement",
+            ]
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "pred,key",
+    [(1, "Credential Access"), (9, "Lateral Movement"), (10, "mitre_class_10")],
+)
+def test_parquet_mitre_pred_maps_class_index(service, pred, key):
+    finding = service._parquet_row_to_finding(_parquet_classified(mitre_pred=pred))
+    assert finding["mitre_predictions"] == {key: 1.0}
+
+
+def test_parquet_mitre_logits_index_names_tactic(service):
+    logits = [0.0] * 10
+    logits[7] = 10.0
+    finding = service._parquet_row_to_finding(_parquet_classified(mitre_logits=logits))
+    assert list(finding["mitre_predictions"]) == ["Discovery"]
 
 
 def test_parquet_does_not_derive_score_or_severity_from_incident_pred(service):

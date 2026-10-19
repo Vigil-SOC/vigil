@@ -20,6 +20,8 @@ import re
 from enum import Enum
 from typing import Any, Dict, Mapping, Tuple
 
+from core.storage.schemas.case_account import ENTITY_TYPES
+
 
 class Trust(str, Enum):
     """Who concluded, as opposed to what the source is (**Source Tier**)."""
@@ -256,21 +258,11 @@ KEY_CASE_SENSITIVE_TYPES: Tuple[str, ...] = ("arn", "aws_key")
 
 # The entity types a key may name. Owned by ENTITY_TYPES in
 # services/agent/plugins/hunt/types.ts, which is what the harness extracts and
-# therefore what a Sighting can ever hold. A writer that mints outside this list
+# therefore what a Sighting can ever hold, and mirrored once on this side by the
+# case account's schema, below memory. A writer that mints outside this list
 # -- a Case IOC typed `mutex`, say -- writes a key no reader will ever query,
 # which reads as an entity nobody has looked at rather than as a bad write.
-ENTITY_KEY_TYPES: Tuple[str, ...] = (
-    "ip",
-    "domain",
-    "host",
-    "url",
-    "email",
-    "hash",
-    "arn",
-    "aws_key",
-    "user",
-    "process",
-)
+ENTITY_KEY_TYPES: Tuple[str, ...] = ENTITY_TYPES
 
 # How many subjects one Verdict may name. ADR 0016 puts a Hypothesis at
 # "typically one to three" and argues at length against a Verdict naming the

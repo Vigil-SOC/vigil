@@ -5,12 +5,11 @@ rather than fixed here, so any regression stays bisectable:
 
 * Dispatch is asymmetric — Anthropic runs on a threadpool with no retry; other
   providers get ``LLMRouter`` + retry + local-Bifrost recovery.
-* The ``ai_enrichment`` write is a full replace, and ``daemon/processor`` writes
-  a disjoint set of triage keys to the same column. So a daemon payload can
-  satisfy the API's cache check yet render as ``undefined``, writing here wipes
-  daemon triage, and the finding then leaves the daemon's
-  ``ai_enrichment IS NULL`` backfill for good. ``persist=False`` is the seam for
-  fixing that separately.
+* ``daemon/processor`` writes a disjoint set of triage keys to the same
+  ``ai_enrichment`` column. Each writer replaces only its own keys
+  (``write_ai_enrichment``), so neither wipes the other, but a daemon-only
+  payload can still satisfy the API's cache check yet render as ``undefined``
+  (#2317).
 """
 
 import asyncio
@@ -195,19 +194,29 @@ async def _dispatch(
     return result.get("content", "")
 
 
+def is_generated_analysis(enrichment: Any) -> bool:
+    """True when ``ai_enrichment`` holds an analysis from ``enrich()``.
+
+    The daemon writes triage keys into the same column, so presence alone
+    isn't enough; only ``enrich()`` stamps ``generated_at``.
+    """
+    return isinstance(enrichment, dict) and bool(enrichment.get("generated_at"))
+
+
 async def _persist(
     finding_id: str, enrichment: Dict[str, Any], data_service: Any
 ) -> bool:
     """Write ``enrichment`` to the finding's ``ai_enrichment`` column.
 
-    A full replace, not a merge — see the module docstring. A failed write is
+    Replaces the analysis keys and keeps the stored daemon triage keys, merged
+    against the locked row rather than the caller's copy. A failed write is
     logged and swallowed: the caller still gets the payload it paid a provider
     call for. Offloaded with ``to_thread`` because the data layer is sync
     SQLAlchemy and this runs on the event loop.
     """
     service = data_service if data_service is not None else _default_data_service()
     success = await asyncio.to_thread(
-        service.update_finding, finding_id, ai_enrichment=enrichment
+        service.write_ai_enrichment, finding_id, enrichment, daemon=False
     )
     if not success:
         logger.error("Failed to save enrichment for %s", finding_id)

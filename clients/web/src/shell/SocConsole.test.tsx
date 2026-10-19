@@ -6,6 +6,7 @@ import SocConsole from './SocConsole'
 import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 import { NAV } from '../data/data'
+import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
 
@@ -1094,6 +1095,17 @@ describe('SocConsole', () => {
       data: { auto_response_enabled: false, force_manual_approval: false },
     } as never)
     renderConsole()
+    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+  })
+
+  it('re-reads the autonomy badge when Settings saves Ask first / Act', async () => {
+    renderConsole()
+    expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
+
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: true, force_manual_approval: true },
+    } as never)
+    act(() => notifyAutonomyChanged())
     expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
 

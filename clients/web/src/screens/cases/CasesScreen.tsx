@@ -55,7 +55,6 @@ const STATE_OPTIONS = [
   { value: 'assigned', label: 'Assigned' },
   { value: 'executing', label: 'Executing' },
   { value: 'waiting_approval', label: 'Waiting approval' },
-  { value: 'review_submitted', label: 'In review' },
   { value: 'closed', label: 'Closed' },
 ]
 

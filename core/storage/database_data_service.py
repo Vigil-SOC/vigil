@@ -205,7 +205,8 @@ class DatabaseDataService:
     def get_findings_missing_enrichment(
         self, limit: int = 100, max_age_hours: Optional[int] = None
     ) -> List[Dict]:
-        """Findings stored but never enriched (ai_enrichment IS NULL)."""
+        """Findings the daemon never triaged (or whose triage failed); see
+        ``DatabaseService.get_findings_missing_enrichment``."""
         if not self._db_available or not self._db_service:
             return []
         try:
@@ -374,6 +375,23 @@ class DatabaseDataService:
                 return self._db_service.update_finding(finding_id, **updates)
             except Exception as e:
                 logger.error(f"Error updating finding in DB: {e}")
+                return False
+        return False
+
+    def write_ai_enrichment(
+        self, finding_id: str, ai_enrichment: Dict, *, daemon: bool, **updates
+    ) -> bool:
+        if self._demo_mode and self._demo_service:
+            return self._demo_service.write_ai_enrichment(
+                finding_id, ai_enrichment, daemon=daemon, **updates
+            )
+        if self._db_available:
+            try:
+                return self._db_service.write_ai_enrichment(
+                    finding_id, ai_enrichment, daemon=daemon, **updates
+                )
+            except Exception as e:
+                logger.error("Error writing ai_enrichment in DB: %s", e)
                 return False
         return False
 

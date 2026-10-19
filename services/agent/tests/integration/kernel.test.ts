@@ -44,7 +44,7 @@ function resumeJob(id: string): RunJob {
 }
 
 const CONCLUDE: ScriptedTurn = {
-  emit: { summary: "a scheduled task holds a stale password", disposition: "malicious", confidence: "low", citations: ["r1"], gaps: [], next_steps: [] },
+  emit: { summary: "a scheduled task holds a stale password", disposition: "malicious", confidence: "low", citations: ["r1"], gaps: [], next_steps: [], proposed_actions: [] },
 };
 
 describe("investigate runs on the kernel", () => {
@@ -75,7 +75,7 @@ describe("investigate runs on the kernel", () => {
       { calls: [{ tool: "link_evidence", args: '{"links":[{"evidence_id":"r1","hypothesis_id":"h1","stance":"supports"}]}' }] },
       { calls: [] },
       { calls: [] },
-      { emit: { summary: "a scheduled task holds a stale password", disposition: "benign", confidence: "medium", citations: ["r1"], gaps: [], next_steps: [] } },
+      { emit: { summary: "a scheduled task holds a stale password", disposition: "benign", confidence: "medium", citations: ["r1"], gaps: [], next_steps: [], proposed_actions: [] } },
       { emit: { stance: "uphold", reasons: "the task is named", missing: [] } },
     ]));
 
