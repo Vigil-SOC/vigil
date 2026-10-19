@@ -1,5 +1,16 @@
+import type { StopSource } from "../../core/agent.js";
 import type { DirectiveQueue } from "./ports.js";
 import type { Directive } from "./types.js";
+
+// An operator's stop, read off the same queue every workflow reads its directives from.
+export function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
+  return async () => {
+    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
+    if (found === undefined) return null;
+    const { directive_id, actor, kind, text, created_at } = found;
+    return { directive_id, actor, kind, text, created_at };
+  };
+}
 
 // The queue without Postgres. It reproduces rather than approximates the table's
 // guarantees: insertion order, idempotence on directive_id, and no delete on read.

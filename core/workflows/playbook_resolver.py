@@ -601,8 +601,7 @@ def resolve_root_cause(
             "max_wall_ms": HUNT_BUDGETS["max_wall_ms"],
         },
         "runtime": {**DEFAULT_RUNTIME, "max_turns": ROOT_CAUSE_MAX_TURNS},
-        "tools": _bound_capabilities(["telemetry_search"], _tool_catalogue(registry))
-        + [_record_tool(), _finish_tool()],
+        "tools": _bound_capabilities(["telemetry_search"], _tool_catalogue(registry)),
         "approvals": [],
         "thresholds": {},
     }
@@ -667,48 +666,6 @@ def _checkpoints(definition: "WorkflowDefinition") -> Dict[str, Any]:
 
 # Local, because the answer is the run's own ledger. Declared here so the lead's
 # granted expand resolves to something rather than posting to a backend.
-def _record_tool() -> Dict[str, Any]:
-    return {
-        "id": "record",
-        "kind": "local",
-        "description": (
-            "Record one causal step of this trace. A link is proved only against "
-            "telemetry results already journaled on this run."
-        ),
-        "parameters": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["event", "at"],
-            "properties": {
-                "step_id": {"type": "string"},
-                "event": {"type": "string"},
-                "who": {"type": "string"},
-                "at": {"type": "string"},
-                "link": {"type": "string"},
-                "cause_id": {"type": "string"},
-                "origin": {"type": "boolean"},
-                "artifact": {"type": "string"},
-            },
-        },
-    }
-
-
-def _finish_tool() -> Dict[str, Any]:
-    return {
-        "id": "finish",
-        "kind": "local",
-        "description": (
-            "Finish the trace. Refused while a step has no proven cause and the "
-            "cost and wall ceilings have not been hit."
-        ),
-        "parameters": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {},
-        },
-    }
-
-
 def _expand_tool() -> Dict[str, Any]:
     return {
         "id": "expand",

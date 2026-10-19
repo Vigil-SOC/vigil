@@ -79,8 +79,8 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     workflow: "rootcause",
     actions: [],
     halts: [],
-    // root_cause_engine picks the loop ("v3", else the kernel's); root_cause_index pins v3's index.
-    owned: { config: ["checkpoints", "root_cause_engine", "root_cause_index"] },
+    // root_cause_index pins the index the trace searches; without it the run picks one from the brief.
+    owned: { config: ["checkpoints", "root_cause_index"] },
     // Either engine answers in the trace's shape; v3 adds its report and moves.
     projection: (runId, events) =>
       engineOf(events) === ROOT_CAUSE_V3 ? rootCauseV3Projection(runId, events) : rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),

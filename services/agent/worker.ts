@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { archFor } from "./plugins/kinds.js";
-import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
+import { runAgent, type AgentKinds } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
@@ -34,14 +34,12 @@ import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugin
 import { runCompose } from "./plugins/compose/workflow.js";
 import type { ComposeKinds } from "./plugins/compose/vocabulary.js";
 import { runHunt } from "./plugins/hunt/workflow.js";
-import { runRootCause } from "./plugins/rootcause/workflow.js";
-import type { RootCauseKinds } from "./plugins/rootcause/proof.js";
 import { runRootCauseV3 } from "./plugins/rootcause/v3/engine.js";
 import type { V3Kinds } from "./plugins/rootcause/v3/ledger.js";
 import { bifrostMessages } from "./plugins/rootcause/v3/model/bifrost.js";
 import type { HuntKinds } from "./plugins/hunt/ledger.js";
 import type { DirectiveQueue } from "./plugins/hunt/ports.js";
-import { InProcessDirectiveQueue } from "./plugins/hunt/directives.js";
+import { InProcessDirectiveQueue, stopFrom } from "./plugins/hunt/directives.js";
 import { DirectiveRepository } from "./ledger/directives.js";
 
 const log = logger("agent.worker");
@@ -230,7 +228,7 @@ async function drive(
     const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, onProgress: progressFor(), signal });
     return done.status === "waiting_approval" ? done.reason : null;
   }
-  if (entry.workflow === "rootcause" && spec.sections["root_cause_engine"] === "v3") {
+  if (entry.workflow === "rootcause") {
     const harness = build(kind, spec, as<V3Kinds>(state), undefined, seed);
     const provider = spec.provider;
     await runRootCauseV3(harness, {
@@ -240,22 +238,7 @@ async function drive(
     });
     return null;
   }
-  if (entry.workflow === "rootcause") {
-    const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
-    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
-    return null;
-  }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
-}
-
-// An operator's stop, read off the same queue every workflow reads its directives from.
-function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
-  return async () => {
-    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
-    if (found === undefined) return null;
-    const { directive_id, actor, kind, text, created_at } = found;
-    return { directive_id, actor, kind, text, created_at };
-  };
 }
 
 // Resolves the spec on a start and reads it back off the ledger on a resume, so an
