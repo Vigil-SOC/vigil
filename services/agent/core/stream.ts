@@ -3,6 +3,7 @@
 // exists in both, so this one line satisfies `bundler` and NodeNext alike.
 import { Ajv, type ValidateFunction } from "ajv";
 import { GatewayExhausted } from "./limiter.js";
+import { ModelSilent } from "./wire.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
 import { hasRecall, isRecalled, recalledNotesOf, recalledNotes, type RecallPayload } from "../contracts/memory.js";
@@ -397,8 +398,10 @@ class Run<T, Kinds extends Record<string, unknown>> {
       try {
         turn = yield* this.burn({ messages: this.assembled(tail), tools: [], emit: schema }, tail);
       } catch (error) {
+        // A silent model is a gateway fault, not a transcript too big to answer: asking
+        // again over less would only spend the empty replies again.
         const tighter = FOLD_LADDER[this.folds];
-        if (tighter === undefined || this.cfg.signal?.aborted === true) throw error;
+        if (error instanceof ModelSilent || tighter === undefined || this.cfg.signal?.aborted === true) throw error;
         this.tightened = tighter;
         this.folds += 1;
         this.rejected.push(`the emission call failed (${(error as Error).message}); asked again over a folded transcript`);

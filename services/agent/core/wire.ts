@@ -1,7 +1,7 @@
 import { SpanKind } from "@opentelemetry/api";
 import OpenAI from "openai";
 import type { TokenCounts } from "../contracts/budget.js";
-import { estimateTokens, Limiter, sleep, statusOf } from "./limiter.js";
+import { estimateTokens, Limiter, statusOf } from "./limiter.js";
 import {
   ProviderError,
   type Message,
@@ -67,6 +67,22 @@ export function setSilentPauses(pauses: readonly number[]): void {
 }
 
 export class ModelSilent extends ProviderError {}
+
+// Ends the pause early when the run is aborted, rather than waiting out the 8 s.
+function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    function stop(): void {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    if (signal?.aborted) return stop();
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
 
 // A call with no arguments counts as nothing: a forced emit that comes back as "{}"
 // at zero output tokens is the gateway closing the call, not the model answering.
@@ -305,8 +321,7 @@ class OpenAiSurface implements Provider {
         throw new ModelSilent(`the model stopped answering: ${attempt + 1} empty replies in a row from ${this.wire_model}`, wasted);
       }
       log.warn("model returned an empty reply, asking again", { model: this.wire_model, attempt: attempt + 1, pause_ms: pause });
-      signal?.throwIfAborted();
-      await sleep(pause);
+      await pauseFor(pause, signal);
     }
   }
 

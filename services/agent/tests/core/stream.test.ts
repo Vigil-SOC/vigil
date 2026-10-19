@@ -540,11 +540,13 @@ describe("what the stream reports", () => {
 
   // The wire already asked again; every reply was empty. The role fails saying the
   // model stopped answering, not that it "never emitted a valid answer".
-  it("fails a role whose model stopped answering with that reason", async () => {
+  it("fails a role whose model stopped answering with that reason, without asking over a folded transcript", async () => {
     const harness = harnessOf([{ fail: "silent" }]);
+    let asked = 0;
     harness.provider = {
       ...harness.provider,
       stream: () => {
+        asked += 1;
         throw new ModelSilent("the model stopped answering: 3 empty replies in a row from m");
       },
     };
@@ -553,6 +555,7 @@ describe("what the stream reports", () => {
     expect(outcome.status).toBe("failed");
     expect(outcome.reason).toContain("the model stopped answering");
     expect(outcome.reason).not.toContain("never emitted a valid answer");
+    expect(asked).toBe(1);
   });
 
   // DEFAULT_FOLD keeps 40 messages and a role that made twenty-nine tool calls lands
