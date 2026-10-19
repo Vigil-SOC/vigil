@@ -185,8 +185,9 @@ describe('ChangePasswordDialog', () => {
   })
 
   it("shows the server's message and keeps the user signed in when the change is refused", async () => {
+    // 400, not 401: the session is valid, only a body field is wrong (#2224)
     api.changePassword.mockRejectedValue({
-      response: { status: 401, data: { detail: 'Current password is incorrect' } },
+      response: { status: 400, data: { detail: 'Current password is incorrect' } },
     })
     await openDialog()
     fillValid()
