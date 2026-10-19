@@ -977,9 +977,11 @@ export interface paths {
         post?: never;
         /**
          * Disable Mfa
-         * @description Disable MFA for current user.
+         * @description Disable MFA for current user. Requires a current TOTP or recovery code.
          *
          *     Args:
+         *         request: FastAPI request (used by the rate limiter).
+         *         body: A current authenticator code or an unused recovery code
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -1027,7 +1029,7 @@ export interface paths {
         put?: never;
         /**
          * Setup Mfa
-         * @description Setup MFA for current user.
+         * @description Setup MFA for current user. Returns 409 if MFA is already enabled.
          *
          *     Args:
          *         current_user: Current authenticated user
@@ -12963,7 +12965,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MFAVerifyRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
