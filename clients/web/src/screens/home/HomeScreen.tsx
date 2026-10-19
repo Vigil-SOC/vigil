@@ -5,6 +5,7 @@ import { approvalsApi, configApi, triageApi, type NeedsYouItem, type TriageRow }
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { briefText } from '../../shared/brief'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
@@ -117,6 +118,21 @@ function errorText(error: unknown, fallback: string): string {
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
 
+/**
+ * The ask as verb and object (PRD HM-P4). A hypothesis approval names the explanation it starts
+ * testing, shortened, with every one it tests in full on hover; the benign one is what they are
+ * tested against, not what is approved. Anything else reads as served.
+ */
+function cardAsk(item: NeedsYouItem): { text: string; full: string } {
+  const tested = (item.hypotheses ?? []).filter((h) => h.provenance !== 'base_rate' && h.statement.trim())
+  if (tested.length === 0) return { text: item.title, full: item.title }
+  const more = tested.length > 1 ? ` and ${tested.length - 1} more` : ''
+  return {
+    text: `Start testing “${briefText(tested[0].statement)}”${more}`,
+    full: tested.map((h) => h.statement).join('\n'),
+  }
+}
+
 function DecisionCard({
   item,
   busy,
@@ -134,6 +150,7 @@ function DecisionCard({
   const [reason, setReason] = useState('')
   const caseId = item.case_id
   const meta = [caseId && `Case ${caseId}`, item.reason].filter(Boolean).join(' · ')
+  const ask = cardAsk(item)
 
   return (
     <article className="home-card">
@@ -141,7 +158,7 @@ function DecisionCard({
         <span className="home-waited">{waited(item.created_at)}</span>
         <span className="home-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
       </div>
-      <h3>{item.title}</h3>
+      <h3 title={ask.full}>{ask.text}</h3>
       {meta && (
         <p className="home-card-meta" title={meta}>
           {meta}

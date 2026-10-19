@@ -313,33 +313,132 @@ async def get_connections_status(mcp_client=Depends(provide_mcp_client)):
     }
 
 
+def _spawn_changed(old, new) -> bool:
+    """Whether ``new`` would start differently from ``old``.
+
+    Env counts only as mcp-config.json declares it (substituted), plus the
+    credentials it names: the rest is this process's own environment. A runner
+    launches from its own catalog with only that env (``runner_env``), so there
+    command, args and cwd do not count.
+    """
+    from core.integrations.mcp.runner import runner_url
+
+    def spawn(server):
+        env = server.env or {}
+        declared = {k: env.get(k) for k in server.declared_env}
+        if runner_url(server.name) is not None:
+            return declared, server.required_env_vars
+        return (
+            declared,
+            server.required_env_vars,
+            server.command,
+            server.args,
+            server.cwd,
+        )
+
+    return spawn(old) != spawn(new)
+
+
 @router.post("/servers/reload")
 async def reload_servers(
     current_user: User = Depends(get_current_active_user),
+    mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
-    """Reload MCP server configurations from ``mcp-config.json`` and
-    the integration bridge, picking up newly enabled/disabled
-    integrations without restarting the backend.
+    """Reload the catalog from ``mcp-config.json`` and apply it to running servers.
 
-    Reinitialises the process-wide ``MCPService`` in place so both the
-    API and the ``MCPClient`` see the new catalog. Previously-enabled
-    servers are reconnected automatically.
+    The new catalog is built first; if the file does not parse, the old
+    catalog and every session stay as they were and the route answers 422
+    naming the error. Otherwise, for each server with a live session:
+
+    * removed from the file, or now disabled: disconnected (stopped in the
+      runner too) and its tools withdrawn from agents;
+    * changed spawn config: reconnected on the new config. A stdio child
+      compares command, args, cwd and declared env; a server in the MCP runner
+      compares only its declared env and credentials, because the runner
+      launches from its own catalog and ignores command, args and cwd;
+    * unchanged: left alone.
+
+    ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
+    what happened; ``success`` is false if any reconnect or disconnect failed.
     """
     require_integrations_admin(current_user)
     logger.info("User %s requested MCP server reload", current_user.user_id)
     svc = _service()
-    # Reinitialise servers dict in place so the MCPClient's reference
-    # to this same instance keeps seeing the new catalog.
+    try:
+        new_catalog = svc.load_catalog()
+    except ValueError as exc:  # JSONDecodeError; nothing has been touched yet
+        logger.error("MCP reload: mcp-config.json did not load: %s", exc)
+        raise HTTPException(
+            status_code=422,
+            detail=f"mcp-config.json did not load: {type(exc).__name__}: {exc}",
+        )
+
+    old_catalog = dict(svc.servers)
+    live = list(mcp_client.persistent_sessions) if mcp_client is not None else []
+    reconnected: List[str] = []
+    disconnected: List[str] = []
+    failed: Dict[str, Optional[str]] = {}
+
+    async def drop(name: str) -> bool:
+        ok = await mcp_client.disconnect_from_server(name)
+        # Else connect_to_server short-circuits on the cached tools.
+        mcp_client.tools_cache.pop(name, None)
+        return ok
+
+    # Before the swap: disconnect_from_server only stops a server in the runner
+    # while its name is still in the catalog.
+    for name in live:
+        if name in new_catalog and svc.is_server_enabled(name):
+            continue
+        try:
+            if await drop(name):
+                disconnected.append(name)
+            else:
+                failed[name] = "disconnect failed"
+        except Exception as exc:  # noqa: BLE001 - one server must not stop the rest
+            failed[name] = f"{type(exc).__name__}: {exc}"
+        deactivate(registry, name)
+
+    # In place: MCPClient and the runner closures hold this same dict.
     svc.servers.clear()
-    svc._initialize_servers()
+    svc.servers.update(new_catalog)
 
-    new_servers = list(svc.servers.keys())
+    for name in live:
+        if name in disconnected or name in failed or name not in old_catalog:
+            continue
+        try:
+            # Puts the saved rule paths into security-detections' new entry, as
+            # the live one has, so they don't read as a change.
+            svc.setup_required(name)
+            if not _spawn_changed(old_catalog[name], new_catalog[name]):
+                continue
+            if not await drop(name):
+                # The old session is still there and would be reused.
+                failed[name] = "disconnect failed"
+                continue
+            if await mcp_client.connect_to_server(name, persistent=True):
+                register_connected(registry, mcp_client, name)
+                reconnected.append(name)
+                continue
+            failed[name] = mcp_client.get_last_error(name) or "connect failed"
+        except Exception as exc:  # noqa: BLE001 - one server must not stop the rest
+            failed[name] = f"{type(exc).__name__}: {exc}"
+        deactivate(registry, name)
 
+    servers = list(svc.servers)
     return {
-        "success": True,
-        "message": "MCP servers reloaded successfully",
-        "total_servers": len(new_servers),
-        "servers": new_servers,
+        "success": not failed,
+        "message": (
+            f"MCP servers reloaded; {len(failed)} server(s) failed"
+            if failed
+            else "MCP servers reloaded successfully"
+        ),
+        "total_servers": len(servers),
+        "servers": servers,
+        "reconnected": reconnected,
+        "disconnected": disconnected,
+        "failed": failed,
     }
 
 

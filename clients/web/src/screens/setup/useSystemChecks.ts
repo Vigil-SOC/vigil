@@ -6,10 +6,11 @@ import {
   stoppedMcpServer,
   type FederationRead,
   type McpRead,
+  type ProcessesRead,
 } from '../../shell/statusLine'
 import type { CheckRow } from './CheckTable'
 
-type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'federation' | 'mcp'
+type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'agent' | 'daemon' | 'federation' | 'mcp'
 
 type SystemCheck = CheckRow & { id: CheckId }
 
@@ -27,10 +28,11 @@ interface HealthBody {
   storage?: { database_available?: boolean; demo_mode?: boolean }
 }
 
-/** One read each per run: Database and API health share the health call, Database and Storage the storage call */
+/** One read each per run: Database and API health share the health call, Database and Storage the storage call, Agent layer and SOC daemon the processes call */
 interface Reads {
   storage: () => Promise<StorageRead>
   health: () => Promise<HealthBody>
+  processes: () => Promise<ProcessesRead>
 }
 type Read = (reads: Reads) => Promise<Result>
 
@@ -49,6 +51,36 @@ const readDatabase: Read = async ({ health }) => {
   return read?.database_available
     ? { phase: 'passed', detail: 'Connected' }
     : { phase: 'needs', detail: 'Not connected' }
+}
+
+// The console is served without either process, so these are the rows that say
+// whether chat, workflow runs and alert triage can happen at all.
+const readAgentLayer: Read = async ({ processes }) => {
+  switch ((await processes()).agent_layer) {
+    case 'running':
+      return { phase: 'passed', detail: 'Running' }
+    case 'no_token':
+      return { phase: 'needs', detail: 'AGENT_INTERNAL_TOKEN is not set · chat and workflow runs fail' }
+    case 'unhealthy':
+      return { phase: 'needs', detail: 'Not ready · chat and workflow runs fail' }
+    case 'not_running':
+      return { phase: 'needs', detail: 'Not running · chat and workflow runs fail' }
+    default:
+      return COULD_NOT_READ
+  }
+}
+
+const readDaemon: Read = async ({ processes }) => {
+  switch ((await processes()).daemon) {
+    case 'running':
+      return { phase: 'passed', detail: 'Running' }
+    case 'unhealthy':
+      return { phase: 'needs', detail: 'Running, but a component stopped' }
+    case 'not_running':
+      return { phase: 'needs', detail: 'Not running · alerts are not polled or triaged' }
+    default:
+      return COULD_NOT_READ
+  }
 }
 
 const DATABASE_UNAVAILABLE: Result = { phase: 'needs', detail: 'Database unavailable' }
@@ -138,6 +170,8 @@ const CHECKS: { id: CheckId; label: string; read: Read }[] = [
   { id: 'provider', label: 'Model gateway', read: readProvider },
   { id: 'storage', label: 'Storage', read: readStorage },
   { id: 'health', label: 'API health', read: readHealth },
+  { id: 'agent', label: 'Agent layer', read: readAgentLayer },
+  { id: 'daemon', label: 'SOC daemon', read: readDaemon },
   { id: 'federation', label: 'Alert collection', read: readFederation },
   { id: 'mcp', label: 'Tool servers', read: readMcp },
 ]
@@ -163,6 +197,7 @@ export function useSystemChecks() {
     setFinished(false)
     let storageRead: Promise<StorageRead> | undefined
     let healthRead: Promise<HealthBody> | undefined
+    let processesRead: Promise<ProcessesRead> | undefined
     const health = () =>
       (healthRead ??= consoleApi.getHealth().then((res) => {
         if (!res.data) throw new Error('health has no body')
@@ -173,12 +208,17 @@ export function useSystemChecks() {
         if (!res.data) throw new Error('storage status has no body')
         return res.data as StorageRead
       }))
+    const processes = () =>
+      (processesRead ??= consoleApi.getProcesses().then((res) => {
+        if (!res.data) throw new Error('processes has no body')
+        return res.data as ProcessesRead
+      }))
     // one after another: only the current row shows Checking, the rest wait
     ;(async () => {
       for (const { id, read } of CHECKS) {
         if (!live) return
         patch(id, { phase: 'checking', detail: '' })
-        const result = await read({ storage, health }).catch(() => COULD_NOT_READ)
+        const result = await read({ storage, health, processes }).catch(() => COULD_NOT_READ)
         if (!live) return
         patch(id, result)
       }

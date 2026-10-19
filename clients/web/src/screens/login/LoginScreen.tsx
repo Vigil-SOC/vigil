@@ -350,16 +350,16 @@ export default function LoginScreen() {
                 id="auth-mfa"
                 name="mfa"
                 type="text"
-                inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={6}
+                maxLength={8}
                 placeholder="000000"
                 ref={mfaInputRef}
                 disabled={loading}
                 value={mfaCode}
                 onChange={(e) => {
-                  const v = e.target.value.replace(/\D/g, '')
-                  if (v.length <= 6) setMfaCode(v)
+                  // 6-digit authenticator code or 8-character recovery code
+                  const v = e.target.value.replace(/[^a-z0-9]/gi, '')
+                  if (v.length <= 8) setMfaCode(v)
                 }}
               />
             </div>
@@ -374,7 +374,7 @@ export default function LoginScreen() {
         <button
           className="btn-signin"
           type="submit"
-          disabled={loading || (showMfa && mfaCode.length !== 6)}
+          disabled={loading || (showMfa && mfaCode.length !== 6 && mfaCode.length !== 8)}
         >
           {loading ? (
             <span className="spin" aria-hidden="true" />

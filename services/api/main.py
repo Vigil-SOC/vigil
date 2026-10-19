@@ -300,8 +300,13 @@ async def _connect_external_services(mcp_client, registry):
     import asyncio
 
     try:
-        from core.llm.bifrost.admin import sync_all_provider_keys
+        from core.llm.bifrost.admin import (
+            sync_all_provider_keys,
+            sync_env_provider_keys,
+        )
 
+        # retries while Bifrost's store is busy after its own start
+        await asyncio.to_thread(sync_env_provider_keys)
         sync_all_provider_keys()
     except Exception as e:
         logger.warning(f"Bifrost provider sync skipped: {e}")
@@ -428,6 +433,7 @@ def _build_services(app: FastAPI):
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
+    from core.platform.process_health import ProcessHealth
     from core.response.approval_service import ApprovalService, register_pending_gauge
     from core.storage.database_data_service import DatabaseDataService
     from core.workflows.custom_workflow_service import CustomWorkflowService
@@ -441,6 +447,8 @@ def _build_services(app: FastAPI):
     # Long-lived, so its reconnect throttle applies across health probes; a fresh
     # service per probe would re-run init_database(create_tables=True) each time.
     app.state.health_storage = DatabaseDataService()
+    # One HTTP client and one cached answer for every caller of GET /api/processes.
+    app.state.process_health = ProcessHealth()
 
     app.state.approvals = ApprovalService()
     register_pending_gauge(app.state.approvals)
@@ -526,7 +534,8 @@ async def _startup(app: FastAPI):
             logger.error(
                 "SecretsManager init: write_backend=%s but expected=%s "
                 "(cryptography_available=%s, master_key_present=%s). "
-                "POST /api/config/secrets/reinit to retry without restart.",
+                "Install `cryptography` or fix SECRETS_BACKEND / the master key, "
+                "then restart the API, daemon and worker.",
                 _status["write_backend"],
                 _status["expected_write_backend"],
                 _status["cryptography_available"],
@@ -694,6 +703,13 @@ async def _shutdown(app: FastAPI):
         set_process_mcp_client(None)
     except Exception as e:
         logger.error(f"Error during shutdown cleanup: {e}")
+
+    try:
+        process_health = getattr(app.state, "process_health", None)
+        if process_health is not None:
+            await process_health.aclose()
+    except Exception as e:
+        logger.warning("Error closing the process health client: %s", e)
 
     # Flush and shut down OTEL providers
     try:

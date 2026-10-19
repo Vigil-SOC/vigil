@@ -439,16 +439,14 @@ HUNT_CAPABILITIES = (
     "entity_recall",
 )
 
-# A hunt is bounded by iterations rather than phases, and each one costs a lead
-# turn, its workers and the critic. Separate ceilings: max_calls only backstops a
-# runaway turn, and the agent layer raises it to match the turn count a run asks for.
+# A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls
+# only backstops a runaway turn, and the agent layer raises it to match the turn
+# count a run asks for.
 HUNT_ITERATIONS = 8
 
-# A turn dispatches up to this many workers, each running its own tool loop, plus the
-# lead and the critic; the two spare turns per agent are the emission retries.
-# Mirrored from services/agent/plugins/hunt/types.ts and held to it by a ratchet.
-HUNT_MAX_WORKERS = 4
-CALLS_PER_ITERATION = (HUNT_MAX_WORKERS + 2) * (int(DEFAULT_RUNTIME["max_turns"]) + 2)
+# The model calls one iteration may spend: the hunt plugin's stated allowance
+# (services/agent/plugins/hunt/plugin.yaml), held to it by a ratchet.
+CALLS_PER_ITERATION = 60
 # 90 minutes of wall: at several minutes an iteration, a half-hour ceiling ends the
 # hunt on the clock with most of its cost budget unspent.
 HUNT_BUDGETS = {
@@ -456,6 +454,11 @@ HUNT_BUDGETS = {
     "max_cost_usd": 15.0,
     "max_wall_ms": 5_400_000,
 }
+
+# What a root-cause trace needs from the deployment. record and finish are the
+# trace's own tools; telemetry_search is the one an integration (a SIEM) answers, and
+# a handoff starts no trace the deployment cannot serve (run_bridge_router).
+ROOT_CAUSE_CAPABILITIES = ("telemetry_search",)
 
 # Above the harness defaults (8 turns, 12 calls) so the $15 and 90-minute ceilings
 # are what stop a trace, not the tool-turn cap.
@@ -603,7 +606,9 @@ def resolve_root_cause(
             "max_wall_ms": HUNT_BUDGETS["max_wall_ms"],
         },
         "runtime": {**DEFAULT_RUNTIME, "max_turns": ROOT_CAUSE_MAX_TURNS},
-        "tools": _bound_capabilities(["telemetry_search"], _tool_catalogue(registry))
+        "tools": _bound_capabilities(
+            list(ROOT_CAUSE_CAPABILITIES), _tool_catalogue(registry)
+        )
         + [_record_tool(), _finish_tool()],
         "approvals": [],
         "thresholds": {},

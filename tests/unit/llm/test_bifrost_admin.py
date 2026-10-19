@@ -317,6 +317,188 @@ def test_push_provider_key_reports_false_on_write_error():
 
 
 # ---------------------------------------------------------------------------
+# sync_env_provider_keys — placeholder cleanup and env keys
+# ---------------------------------------------------------------------------
+
+_UNSET = {"value": "", "ref": "env.ANTHROPIC_API_KEY", "type": "env"}
+
+
+class _GatewayClient:
+    """A Bifrost key store that deletes and creates, unlike _RecordingClient."""
+
+    def __init__(self, keys: Dict[str, List[Dict[str, Any]]], delete_status=200):
+        self.keys = keys
+        self._delete_status = delete_status
+        self.calls: List[Dict[str, Any]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    @staticmethod
+    def _parts(url):
+        tail = url.split("/api/providers/", 1)[1].split("/")
+        return tail[0], (tail[2] if len(tail) > 2 else None)
+
+    def get(self, url, **kwargs):
+        provider, _ = self._parts(url)
+        if provider not in self.keys:
+            return _FakeResp(404)
+        return _FakeResp(200, {"keys": list(self.keys[provider])})
+
+    def delete(self, url, **kwargs):
+        provider, key_id = self._parts(url)
+        self.calls.append({"method": "DELETE", "url": url})
+        if self._delete_status < 400:
+            self.keys[provider] = [k for k in self.keys[provider] if k["id"] != key_id]
+        return _FakeResp(self._delete_status, {})
+
+    def post(self, url, **kwargs):
+        provider, _ = self._parts(url)
+        body = kwargs["json"]
+        self.calls.append({"method": "POST", "url": url, "json": body})
+        self.keys[provider].append({"id": "new", **body})
+        return _FakeResp(200, {})
+
+    def put(self, url, **kwargs):
+        self.calls.append({"method": "PUT", "url": url})
+        return _FakeResp(200, {})
+
+
+def _env(values: Dict[str, str]):
+    return patch("core.secrets_manager.get_secret", lambda name: values.get(name))
+
+
+def _seed(provider, ref_name, key_id="seed"):
+    ref = {"value": "", "ref": f"env.{ref_name}", "type": "env"}
+    return {"id": key_id, "name": f"default-{provider}-key", "value": ref}
+
+
+def test_env_sync_removes_placeholders_and_keeps_real_keys():
+    gw = _GatewayClient(
+        {
+            "anthropic": [_seed("anthropic", "ANTHROPIC_API_KEY")],
+            "vertex": [
+                {"id": "real", "value": {"value": ""}, "vertex_key_config": {}},
+                {
+                    "id": "seed",
+                    "value": dict(_UNSET, ref="env.GOOGLE_APPLICATION_CREDENTIALS"),
+                    "vertex_key_config": {
+                        "auth_credentials": dict(
+                            _UNSET, ref="env.GOOGLE_APPLICATION_CREDENTIALS"
+                        )
+                    },
+                },
+            ],
+            # the URL lives in ollama_key_config, so an empty value is normal
+            "ollama": [{"id": "url", "value": {"value": ""}}],
+        }
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env({}):
+        result = bifrost_admin.sync_env_provider_keys()
+
+    assert result == {"anthropic": "removed", "vertex": "removed"}
+    assert gw.keys["anthropic"] == []
+    assert [k["id"] for k in gw.keys["vertex"]] == ["real"]
+    assert [k["id"] for k in gw.keys["ollama"]] == ["url"]
+    assert not any(c["method"] in ("POST", "PUT") for c in gw.calls)
+
+
+def test_env_sync_pushes_an_env_key_in_the_placeholder_s_place():
+    gw = _GatewayClient({"gemini": [_seed("gemini", "GEMINI_API_KEY")]})
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+        {"GEMINI_API_KEY": "gm-real"}
+    ):
+        result = bifrost_admin.sync_env_provider_keys()
+
+    assert result == {"gemini": "removed, pushed"}
+    [key] = gw.keys["gemini"]
+    assert key["value"] == "gm-real"
+    assert key["models"] == ["*"]
+
+
+def test_env_sync_leaves_a_provider_that_already_has_a_key():
+    real = {"id": "ui", "value": {"value": "sk-a****1234", "type": "plain_text"}}
+    gw = _GatewayClient({"anthropic": [real]})
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+        {"ANTHROPIC_API_KEY": "sk-ant-env"}
+    ):
+        assert bifrost_admin.sync_env_provider_keys() == {}
+
+    assert gw.keys["anthropic"] == [real]
+    assert gw.calls == []
+
+
+def test_env_sync_reads_claude_api_key_for_anthropic():
+    gw = _GatewayClient({"anthropic": []})
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+        {"CLAUDE_API_KEY": "sk-ant-claude"}
+    ):
+        assert bifrost_admin.sync_env_provider_keys() == {"anthropic": "pushed"}
+
+    assert gw.keys["anthropic"][0]["value"] == "sk-ant-claude"
+
+
+def test_env_sync_does_not_push_beside_a_placeholder_it_could_not_delete():
+    gw = _GatewayClient(
+        {"openai": [_seed("openai", "OPENAI_API_KEY")]}, delete_status=500
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+        {"OPENAI_API_KEY": "sk-openai"}
+    ):
+        result = bifrost_admin.sync_env_provider_keys(attempts=3, wait_s=0)
+
+    assert result == {"openai": "failed"}
+    assert len([c for c in gw.calls if c["method"] == "DELETE"]) == 3
+    assert not any(c["method"] == "POST" for c in gw.calls)
+
+
+def test_env_sync_retries_while_bifrost_is_busy():
+    # Bifrost answers "database is locked" for a few seconds after it starts.
+    gw = _GatewayClient(
+        {"openai": [_seed("openai", "OPENAI_API_KEY")]}, delete_status=500
+    )
+    real_delete = gw.delete
+
+    def delete_then_recover(url, **kwargs):
+        resp = real_delete(url, **kwargs)
+        gw._delete_status = 200
+        return resp
+
+    gw.delete = delete_then_recover
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+        {"OPENAI_API_KEY": "sk-openai"}
+    ):
+        result = bifrost_admin.sync_env_provider_keys(attempts=3, wait_s=0)
+
+    assert result == {"openai": "removed, pushed"}
+    assert [k["value"] for k in gw.keys["openai"]] == ["sk-openai"]
+
+
+def test_env_sync_skips_providers_bifrost_does_not_have():
+    gw = _GatewayClient({})
+    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+        {"OPENAI_API_KEY": "sk-openai"}
+    ):
+        assert bifrost_admin.sync_env_provider_keys() == {}
+    assert gw.calls == []
+
+
+def test_bifrost_config_seeds_no_env_placeholder_keys():
+    import json
+
+    config = json.loads(
+        (REPO / "infra" / "docker" / "bifrost" / "config.json").read_text()
+    )
+    for name, provider in config["providers"].items():
+        for key in provider.get("keys", []):
+            # Ollama's URL comes from OLLAMA_URL, which compose always sets.
+            assert name == "ollama", f"{name} seeds a key: {key.get('name')}"
+
+
+# ---------------------------------------------------------------------------
 # sync_all_provider_models — canonical single-writer path
 # ---------------------------------------------------------------------------
 

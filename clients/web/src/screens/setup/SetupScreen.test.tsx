@@ -24,6 +24,9 @@ vi.mock('../../services/api', () => ({
     getHealth: vi.fn(() =>
       Promise.resolve({ data: { status: 'healthy', storage: { database_available: true } } }),
     ),
+    getProcesses: vi.fn(() =>
+      Promise.resolve({ data: { agent_layer: 'running', daemon: 'running' } }),
+    ),
   },
   storageApi: { getStatus: vi.fn(() => Promise.resolve({ data: { backend: 'none' } })) },
   llmProviderApi: { list: vi.fn(() => Promise.resolve({ data: [] })) },

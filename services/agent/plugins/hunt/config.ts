@@ -1,6 +1,6 @@
-import { callsPerIteration, DEFAULT_BUDGETS, type Budgets, type Entity } from "./types.js";
+import { DEFAULT_BUDGETS, HUNT_ALLOWANCE, type Budgets, type Entity } from "./types.js";
 import { fromText, key, parseKey } from "./entities.js";
-import { SpecError, type Counts, type RunSpec } from "../../core/spec.js";
+import { SpecError, type Allowance, type Counts, type RunSpec } from "../../core/spec.js";
 import { checkpointsFrom, DEFAULT_CHECKPOINTS, type Checkpoints } from "./checkpoints.js";
 
 // The core spec carries domain config as untyped numeric bags, so what a
@@ -97,13 +97,16 @@ export function budgetsOf(spec: RunSpec): Budgets {
   // A resumed run's journaled count wins over the shipped default.
   const held = (spec.budgets as Partial<Budgets>).max_iterations;
   const asked = spec.thresholds["max_iterations"] ?? held ?? DEFAULT_BUDGETS.max_iterations;
-  // This run's fan-out, not the shipped one, which would cut a wider arch short.
-  const perTurn = callsPerIteration(spec.dispatch.max_workers, spec.runtime.max_turns);
   return {
     ...spec.budgets,
     max_iterations: asked,
-    max_calls: Math.max(spec.budgets.max_calls, asked * perTurn),
+    max_calls: Math.max(spec.budgets.max_calls, asked * allowanceOf(spec).calls_per_iteration),
   };
+}
+
+// The plugin's stated allowance, or the shipped one for a ledger journaled before it stated one.
+export function allowanceOf(spec: RunSpec): Allowance {
+  return spec.allowance ?? HUNT_ALLOWANCE;
 }
 
 export interface EnrichmentChain {

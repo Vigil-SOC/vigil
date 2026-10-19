@@ -8,7 +8,7 @@ import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
-import { detectionRulesApi } from '../../services/api'
+import { detectionRulesApi, mcpApi } from '../../services/api'
 import {
   EXPERIMENTAL_NOTE,
   EXPERIMENTAL_SERVERS,
@@ -48,6 +48,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
   const [busy, setBusy] = useState<string | null>(null)
+  const [reloadingServers, setReloadingServers] = useState(false)
   // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
   const [customCount, setCustomCount] = useState<number | null>(null)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
@@ -58,6 +59,34 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const reload = () => {
     reloadMcp()
     reloadInt()
+  }
+
+  // Refresh only re-reads; this asks the backend to re-read mcp-config.json and
+  // apply it: changed servers reconnect, removed or disabled ones stop
+  const onReloadServers = async () => {
+    setReloadingServers(true)
+    try {
+      const { data } = await mcpApi.reloadServers()
+      const n = data?.total_servers
+      const failed = Object.entries(data?.failed ?? {})
+      const parts = [typeof n === 'number' ? `${n} server${n === 1 ? '' : 's'} configured.` : '']
+      if (data?.reconnected?.length) parts.push(`Reconnected ${data.reconnected.map(prettyServerName).join(', ')}.`)
+      if (data?.disconnected?.length) parts.push(`Stopped ${data.disconnected.map(prettyServerName).join(', ')}.`)
+      if (failed.length) {
+        const why = failed.map(([name, err]) => `${prettyServerName(name)}${err ? ` (${err})` : ''}`).join(', ')
+        notify('err', ['Tool servers reloaded, but not every server came back.', ...parts, `Failed: ${why}.`].filter(Boolean).join(' '))
+      } else {
+        notify('ok', ['Tool servers reloaded.', ...parts].filter(Boolean).join(' '))
+      }
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
+      const detail = err.response?.data?.detail
+      notify('err', `Could not reload tool servers: ${typeof detail === 'string' ? detail : err.message || 'unknown error'}.`)
+    } finally {
+      setReloadingServers(false)
+      // sessions may have changed even when some failed; a 4xx changed nothing, and the re-read is cheap
+      reload()
+    }
   }
 
   const reloadCustom = useCallback(async () => {
@@ -220,8 +249,19 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         />
       )}
       {tab === 'connected' && ready && connected.length > 0 && (
-        <div className="flex justify-end">
-          <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
+        <div className="flex justify-end gap-2">
+          <button className="btn ghost" onClick={reload} title="Re-reads the status shown here. Changes nothing on the server.">
+            <Icon name="refresh" /> Refresh
+          </button>
+          <button
+            className="btn ghost"
+            onClick={onReloadServers}
+            disabled={reloadingServers}
+            aria-busy={reloadingServers}
+            title="Re-reads tool server settings and applies them without restarting Vigil: new servers appear, changed ones reconnect, and removed or disabled ones stop. Unchanged servers keep their session."
+          >
+            <Icon name="gear" /> {reloadingServers ? 'Reloading…' : 'Reload servers'}
+          </button>
         </div>
       )}
       {tab === 'connected' && ready && connected.length > 0 && (

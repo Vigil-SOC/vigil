@@ -1,7 +1,3 @@
-// The dispatch shapes an arch may declare. Validated at load so an arch naming a
-// shape nothing reads fails there; the plugin kernel runs one agent whatever it says.
-export const TOPOLOGIES = ["single", "fan_out", "swarm"] as const;
-export type TopologyId = (typeof TOPOLOGIES)[number];
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { DEFAULT_PARK_MS, type BudgetLimits } from "../contracts/budget.js";
@@ -11,12 +7,11 @@ export class SpecError extends Error {}
 export const EFFORTS = ["low", "medium", "high"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-// Serial is parallel with one worker, so there is no second loop to maintain.
-export interface DispatchPolicy {
-  topology: TopologyId;
-  mode: "serial" | "parallel";
-  fan_out_over: string;
-  max_workers: number;
+// What a run that counts iterations may spend on each: agent turns, and model calls
+// as a backstop on a turn running away. Scaled by however many iterations a run asks for.
+export interface Allowance {
+  turns_per_iteration: number;
+  calls_per_iteration: number;
 }
 
 // Opaque counts: what a window means belongs to whoever folds the ledger, and the
@@ -24,7 +19,6 @@ export interface DispatchPolicy {
 export type Counts = Readonly<Record<string, number>>;
 
 // One role: what it is told, what shape it must answer in, what it may call.
-// description is the one line the lead reads when choosing a worker.
 export interface RoleSpec {
   prompt: string;
   description: string;
@@ -39,11 +33,10 @@ export interface RoleSpec {
 
 export const PROSE = "prose";
 
-// Worker keys are the ids the lead may name. The lead is optional too: an arch
-// whose order is authored elsewhere has nothing for one to decide.
+// Both optional: an arch whose order is authored elsewhere has nothing for a lead
+// to decide, and one that proves nothing has no null for a critic to argue.
 export interface Roles {
   lead?: RoleSpec;
-  workers: Record<string, RoleSpec>;
   critic?: RoleSpec;
 }
 
@@ -51,8 +44,10 @@ export interface Roles {
 export interface ArchSpec {
   name: string;
   roles: Roles;
-  dispatch: DispatchPolicy;
   digest: Counts;
+  allowance?: Allowance;
+  // The shape one recorded finding takes. Narrowed to the playbook's vocabulary at assembly.
+  finding?: Record<string, unknown>;
 }
 
 // One authored step: which agent runs it, what it is told, and whether it stops
@@ -130,8 +125,11 @@ export interface RunSpec extends Config, Omit<Playbook, "directives"> {
   sections: Record<string, unknown>;
   arch: string;
   roles: Roles;
-  dispatch: DispatchPolicy;
   digest: Counts;
+  // Absent on a plugin that counts no iterations, and on a ledger journaled before
+  // either was stated; whoever reads them supplies its own.
+  allowance?: Allowance;
+  finding?: Record<string, unknown>;
   // The job's, not a file's: the playbook says what this kind of run does and
   // this says which one. Journalled with the spec, so a resume still knows.
   prompt: string;
@@ -140,16 +138,6 @@ export interface RunSpec extends Config, Omit<Playbook, "directives"> {
   directives?: Record<string, string>;
 }
 
-// Reserved directive key: prose every worker needs, such as what the data is.
-export const ALL_WORKERS = "workers";
-
-export const DEFAULT_DISPATCH: DispatchPolicy = { topology: "fan_out", mode: "serial", fan_out_over: "questions", max_workers: 1 };
-
-// The only coherent default: an arch with no workers dispatches to nobody, and
-// one with workers fans out to them. Declaring a topology still overrides it.
-function defaultDispatch(workers: readonly string[]): DispatchPolicy {
-  return { ...DEFAULT_DISPATCH, topology: workers.length === 0 ? "single" : "fan_out" };
-}
 export const DEFAULT_BUDGETS: BudgetLimits = {
   max_calls: 12,
   max_cost_usd: 5,
@@ -161,7 +149,7 @@ export const DEFAULT_RUNTIME: Runtime = { max_turns: 8, result_cap: 20_000, reca
 // Disjoint by design: a key in the wrong file is a load error rather than a silent
 // default, and there is no precedence chain to reason about.
 const LAYERS = {
-  arch: ["name", "roles", "dispatch", "digest"],
+  arch: ["name", "roles", "digest", "allowance", "finding"],
   playbook: [
     "name",
     "description",
@@ -279,32 +267,13 @@ function load<T>(path: string, parse: (text: string) => T, layer: Layer): T {
   }
 }
 
-// mode is checked against max_workers rather than coerced into it: silently
-// rewriting a count the operator wrote makes mode a field nothing reads.
-function parseDispatch(raw: unknown, workers: readonly string[]): DispatchPolicy {
-  const policy = merge(raw, defaultDispatch(workers), "dispatch");
-  // Throws on an unknown name, so an arch naming a shape nothing implements
-  // fails at load rather than running as whatever the default happened to be.
-  if (!(TOPOLOGIES as readonly string[]).includes(policy.topology)) {
-    throw new SpecError(`no topology ${String(policy.topology)} is implemented; expected one of ${TOPOLOGIES.join(", ")}`);
+function parseAllowance(raw: unknown): Allowance | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const allowance = merge(raw, { turns_per_iteration: 0, calls_per_iteration: 0 }, "allowance");
+  for (const [field, value] of Object.entries(allowance)) {
+    if (!Number.isInteger(value) || value < 1) throw new SpecError(`allowance.${field} must be a positive integer, got ${String(value)}`);
   }
-  if (policy.mode !== "serial" && policy.mode !== "parallel") {
-    throw new SpecError(`dispatch.mode must be serial or parallel, got ${String(policy.mode)}`);
-  }
-  if (str(policy.fan_out_over).trim() === "") throw new SpecError("dispatch.fan_out_over must name what an iteration fans out over");
-  if (!Number.isInteger(policy.max_workers) || policy.max_workers < 1) {
-    throw new SpecError(`dispatch.max_workers must be a positive integer, got ${String(policy.max_workers)}`);
-  }
-  if (policy.mode === "serial" && policy.max_workers !== 1) {
-    throw new SpecError(`dispatch.mode serial is max_workers 1, so ${policy.max_workers} contradicts it; say parallel or drop the count`);
-  }
-  if (policy.topology === "single" && workers.length > 0) {
-    throw new SpecError(`dispatch.topology single dispatches to nobody, so ${workers.length} worker(s) contradicts it`);
-  }
-  if (policy.topology !== "single" && workers.length === 0) {
-    throw new SpecError(`dispatch.topology ${policy.topology} needs workers, and the arch declares none`);
-  }
-  return policy;
+  return allowance;
 }
 
 // An arch may drop an action its pipeline has no use for, but one no workflow
@@ -337,18 +306,7 @@ function parseRole(raw: unknown, name: string): RoleSpec {
   };
 }
 
-// preamble is the discipline every specialist shares, so the arch states it once
-// instead of repeating it per worker.
-function parseWorkers(raw: unknown, preamble: string): Record<string, RoleSpec> {
-  return Object.fromEntries(
-    Object.entries(asRecord(raw, "roles.workers")).map(([id, value]) => {
-      const role = parseRole(value, `workers.${id}`);
-      return [id, preamble ? { ...role, prompt: `${preamble}\n\n${role.prompt}` } : role];
-    }),
-  );
-}
-
-const ROLE_GROUPS = ["lead", ALL_WORKERS, "workers_preamble", "critic"];
+const ROLE_GROUPS = ["lead", "critic"];
 
 function parseRoles(raw: unknown, handled: readonly string[]): Roles {
   const record = asRecord(raw, "roles");
@@ -357,7 +315,7 @@ function parseRoles(raw: unknown, handled: readonly string[]): Roles {
     throw new SpecError(`unknown role group(s): ${stray.sort().join(", ")}; expected any of ${[...ROLE_GROUPS].sort().join(", ")}`);
   }
 
-  const roles: Roles = { workers: parseWorkers(record[ALL_WORKERS], str(record["workers_preamble"]).trim()) };
+  const roles: Roles = {};
   // No lead is a declaration that the order is authored elsewhere, so there is no
   // vocabulary to check: a workflow that sequences its own phases decides nothing.
   if (record["lead"] !== undefined) {
@@ -370,20 +328,21 @@ function parseRoles(raw: unknown, handled: readonly string[]): Roles {
   return roles;
 }
 
-// The arch layer is a plugin's plugin.yaml (roles, dispatch, digest), named by its id; the
-// rest is the plugin registry's. A file with no id is a bare arch, held to the arch keys.
+// The arch layer is a plugin's plugin.yaml (roles, digest, allowance, finding), named by its
+// id; the rest is the plugin registry's. A file with no id is a bare arch, held to the arch keys.
 export function parseArch(text: string, handled: readonly string[]): ArchSpec {
   const parsed = asRecord(parseYaml(text), "document");
   const [front] =
     typeof parsed["id"] === "string"
-      ? [{ name: parsed["id"], roles: parsed["roles"], dispatch: parsed["dispatch"], digest: parsed["digest"] }]
+      ? [{ name: parsed["id"], roles: parsed["roles"], digest: parsed["digest"], allowance: parsed["allowance"], finding: parsed["finding"] }]
       : read(text, "arch");
-  const roles = parseRoles(front["roles"], handled);
+  const allowance = parseAllowance(front["allowance"]);
   return {
     name: str(front["name"]) || "unnamed",
-    roles,
-    dispatch: parseDispatch(front["dispatch"], Object.keys(roles.workers)),
+    roles: parseRoles(front["roles"], handled),
     digest: counts(front["digest"], "digest"),
+    ...(allowance === undefined ? {} : { allowance }),
+    ...(front["finding"] === undefined ? {} : { finding: asRecord(front["finding"], "finding") }),
   };
 }
 
@@ -507,59 +466,37 @@ function extend(role: RoleSpec, name: string, additions: (string | undefined)[],
 // Playbook prose layers onto the arch prompt rather than replacing it: the
 // playbook says what this scenario is, the arch says how to reason about any of them.
 function applyDirectives(roles: Roles, directives: Record<string, string>, declared: ReadonlySet<string>): Roles {
-  const known = new Set(["lead", ALL_WORKERS, "critic", ...Object.keys(roles.workers)]);
+  const known = new Set(["lead", "critic"]);
   const stray = Object.keys(directives).filter((key) => !known.has(key));
   if (stray.length > 0) {
     throw new SpecError(`directives name unknown role(s): ${stray.sort().join(", ")}; expected any of ${[...known].sort().join(", ")}`);
   }
 
-  const shared = directives[ALL_WORKERS];
-  const workers = Object.entries(roles.workers).map(([id, role]) => [id, extend(role, id, [shared, directives[id]], declared)]);
-  const applied: Roles = { workers: Object.fromEntries(workers) as Record<string, RoleSpec> };
+  const applied: Roles = {};
   if (roles.lead !== undefined) applied.lead = extend(roles.lead, "lead", [directives["lead"]], declared);
   if (roles.critic !== undefined) applied.critic = extend(roles.critic, "critic", [directives["critic"]], declared);
   return applied;
 }
 
-// A field inside a worker's result rows, narrowed to a vocabulary the playbook declared:
-// a reader counting distinct values of a free string counts a typo as a second source.
-function constrainResultField(
-  schema: Record<string, unknown> | null,
-  field: string,
-  values: readonly string[],
-): Record<string, unknown> | null {
-  if (schema === null || values.length === 0) return schema;
-  const properties = asRecord(schema["properties"], "roles.workers.output_schema.properties");
-  const results = properties["results"];
-  if (typeof results !== "object" || results === null) return schema;
-
-  const items = (results as Record<string, unknown>)["items"];
-  if (typeof items !== "object" || items === null) return schema;
-
-  const itemProperties = (items as Record<string, unknown>)["properties"];
-  if (typeof itemProperties !== "object" || itemProperties === null) return schema;
-
-  const target = (itemProperties as Record<string, unknown>)[field];
+// A field of a finding, narrowed to a vocabulary the playbook declared: a reader
+// counting distinct values of a free string counts a typo as a second source.
+function constrainField(schema: Record<string, unknown>, field: string, values: readonly string[]): Record<string, unknown> {
+  const properties = schema["properties"];
+  if (values.length === 0 || typeof properties !== "object" || properties === null) return schema;
+  const target = (properties as Record<string, unknown>)[field];
   if (typeof target !== "object" || target === null) return schema;
+  return { ...schema, properties: { ...properties, [field]: { ...target, enum: [...values] } } };
+}
 
-  return {
-    ...schema,
-    properties: {
-      ...properties,
-      results: {
-        ...(results as Record<string, unknown>),
-        items: {
-          ...(items as Record<string, unknown>),
-          properties: { ...(itemProperties as Record<string, unknown>), [field]: { ...target, enum: [...values] } },
-        },
-      },
-    },
-  };
+// A finding narrowed to the run's declared data_domains and attack_techniques, so a
+// citation outside the playbook's lists is refused rather than counted.
+export function narrowFinding(schema: Record<string, unknown>, sections: Record<string, unknown>): Record<string, unknown> {
+  return constrainField(constrainField(schema, "source_system", declaredStrings(sections, "data_domains")), "attack_technique", declaredStrings(sections, "attack_techniques"));
 }
 
 // The vocabulary a playbook declared for a section. Absent constrains nothing.
-function declaredStrings(playbook: Playbook, section: string): readonly string[] {
-  const declared = playbook.sections[section];
+function declaredStrings(sections: Record<string, unknown>, section: string): readonly string[] {
+  const declared = sections[section];
   return Array.isArray(declared) ? declared.filter((one): one is string => typeof one === "string") : [];
 }
 
@@ -588,12 +525,11 @@ function providersOf(tools: readonly ToolSpec[]): Map<string, string[]> {
   return byCapability;
 }
 
-// The inverse of bindCapabilities: what the roles asked for that this deployment answers
-// with nothing. Declaration order, so a ledger replays the same.
-export function unboundCapabilities(roles: Roles, tools: readonly ToolSpec[]): string[] {
+// What an agent needs that this deployment answers with nothing. Declaration order,
+// so a ledger replays the same; "*" asks for whatever there is, so it is never unbound.
+export function unboundCapabilities(needs: readonly string[], tools: readonly ToolSpec[]): string[] {
   const providers = providersOf(tools);
-  const asking = [roles.lead, roles.critic, ...Object.values(roles.workers)];
-  return [...new Set(asking.flatMap((role) => role?.needs ?? []))].filter((need) => !providers.has(need));
+  return [...new Set(needs)].filter((need) => need !== "*" && !providers.has(need));
 }
 
 function bindCapabilities(roles: Roles, tools: readonly ToolSpec[]): Roles {
@@ -607,7 +543,6 @@ function bindCapabilities(roles: Roles, tools: readonly ToolSpec[]): Roles {
   return {
     ...(roles.lead === undefined ? {} : { lead: bind(roles.lead) }),
     ...(roles.critic === undefined ? {} : { critic: bind(roles.critic) }),
-    workers: Object.fromEntries(Object.entries(roles.workers).map(([id, role]) => [id, bind(role)])),
   };
 }
 
@@ -617,32 +552,15 @@ export function assembleSpec(sources: SpecSources): RunSpec {
   const { arch, playbook, config } = sources;
   const bound = bindCapabilities(arch.roles, config.tools);
   const declared = new Set(config.tools.map((tool) => tool.id));
-  const applied = applyDirectives(bound, playbook.directives, declared);
-  const domains = declaredStrings(playbook, "data_domains");
-  const techniques = declaredStrings(playbook, "attack_techniques");
-  const roles: Roles = {
-    ...applied,
-    workers: Object.fromEntries(
-      Object.entries(applied.workers).map(([id, role]) => [
-        id,
-        {
-          ...role,
-          output_schema: constrainResultField(
-            constrainResultField(role.output_schema, "source_system", domains),
-            "attack_technique",
-            techniques,
-          ),
-        },
-      ]),
-    ),
-  };
+  const roles = applyDirectives(bound, playbook.directives, declared);
   return {
     ...config,
     sections: { ...config.sections, ...playbook.sections },
     arch: arch.name,
     roles,
-    dispatch: arch.dispatch,
     digest: arch.digest,
+    ...(arch.allowance === undefined ? {} : { allowance: arch.allowance }),
+    ...(arch.finding === undefined ? {} : { finding: narrowFinding(arch.finding, playbook.sections) }),
     name: playbook.name || arch.name,
     description: playbook.description,
     use_case: playbook.use_case,

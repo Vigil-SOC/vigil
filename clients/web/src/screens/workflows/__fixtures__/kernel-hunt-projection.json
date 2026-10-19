@@ -61,6 +61,8 @@
    "is_gap": false,
    "gap_detail": null,
    "captured_at": "2026-10-10T06:19:58.399Z",
+   "finding_ids": [],
+   "served_by": null,
    "bears_on": []
   },
   {
@@ -84,6 +86,8 @@
    "is_gap": false,
    "gap_detail": null,
    "captured_at": "2026-10-10T06:19:58.373Z",
+   "finding_ids": [],
+   "served_by": null,
    "bears_on": [
     {
      "hypothesis_id": "h-3dcfffab",
@@ -112,6 +116,8 @@
    "is_gap": false,
    "gap_detail": null,
    "captured_at": "2026-10-10T06:19:58.372Z",
+   "finding_ids": [],
+   "served_by": null,
    "bears_on": [
     {
      "hypothesis_id": "h-3dcfffab",
@@ -135,13 +141,15 @@
    "is_gap": true,
    "gap_detail": null,
    "captured_at": "2026-10-10T06:19:58.369Z",
+   "finding_ids": [],
+   "served_by": null,
    "bears_on": []
   },
   {
    "evidence_id": "ev-922e510a735b",
    "iteration": 0,
    "source_system": "deployment",
-   "summary": "no tool in this deployment answers entity_recall",
+   "summary": "Episodic memory is not available, so the hunt could not recall what earlier investigations saw",
    "why_notable": "the roles that need it run without it, so no query can close this",
    "salience": "notable",
    "attack_technique": null,
@@ -153,6 +161,8 @@
    "is_gap": true,
    "gap_detail": null,
    "captured_at": "2026-10-10T06:19:58.358Z",
+   "finding_ids": [],
+   "served_by": null,
    "bears_on": []
   }
  ],

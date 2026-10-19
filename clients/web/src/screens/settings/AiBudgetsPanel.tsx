@@ -69,12 +69,7 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
   const persistVigilSide = async (default_vk: string) => {
     setBusy(true)
     try {
-      // Round-trip the unused fields so a key change does not wipe the blob.
-      await save({
-        default_vk: default_vk.trim(),
-        budget_limit_usd: settings.budget_limit_usd,
-        enforcement_mode: settings.enforcement_mode,
-      })
+      await save({ default_vk: default_vk.trim() })
       notify('ok', 'Gateway key settings saved.')
       return true
     } catch (e) {
