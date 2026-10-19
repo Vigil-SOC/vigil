@@ -367,6 +367,49 @@ describe('Home', () => {
     expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
   })
 
+  it('names the explanation a hypothesis approval starts testing, shortened, with the full text on hover (#2456)', async () => {
+    const pdf =
+      'A finance workstation that opened an invoice-themed ISO attachment has executed rundll32.exe from a shortcut and is beaconing over HTTPS to DUSKY LANTERN infrastructure.'
+    mockQueue([
+      item({
+        source_id: 'gate',
+        kind: 'checkpoint',
+        title: 'Approve and start this hunt on 2 explanations',
+        checkpoint_class: 'hypothesis_approval',
+        case_id: 'case-7',
+        hypotheses: [
+          { hypothesis_id: 'h1', statement: pdf, provenance: 'operator' },
+          { hypothesis_id: 'h0', statement: 'The activity behind "A finance workstation…" has a legitimate explanation.', provenance: 'base_rate' },
+        ],
+      }),
+    ])
+    renderHome()
+    const head = await screen.findByRole('heading', { name: 'Start testing “A finance workstation that opened an invoice-themed ISO…”' })
+    expect(head).toHaveAttribute('title', pdf)
+    expect(screen.queryByText(/on 2 explanations/)).not.toBeInTheDocument()
+    expect(within(head.closest('article') as HTMLElement).getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-7')
+  })
+
+  it('counts the other explanations a hypothesis approval tests, and keeps the served title for anything else', async () => {
+    mockQueue([
+      item({
+        source_id: 'gate',
+        kind: 'checkpoint',
+        title: 'Approve and start this hunt on 3 explanations',
+        hypotheses: [
+          { hypothesis_id: 'h1', statement: 'Lateral movement over SMB', provenance: 'operator' },
+          { hypothesis_id: 'h2', statement: 'Credential theft from LSASS', provenance: 'hunt_spec' },
+          { hypothesis_id: 'h0', statement: 'The activity has a benign explanation and no attack occurred.', provenance: 'base_rate' },
+        ],
+      }),
+      item({ source_id: 'b', title: 'Block IP' }),
+    ])
+    renderHome()
+    const head = await screen.findByRole('heading', { name: 'Start testing “Lateral movement over SMB” and 1 more' })
+    expect(head).toHaveAttribute('title', 'Lateral movement over SMB\nCredential theft from LSASS')
+    expect(screen.getByRole('heading', { name: 'Block IP' })).toBeInTheDocument()
+  })
+
   it('prints the served reason as the card meta line, with no ledger rule', async () => {
     mockQueue([
       item({ source_id: 'h', title: 'Isolate host', reason: 'Credential dumping is live on the host.', case_id: 'case-3' }),

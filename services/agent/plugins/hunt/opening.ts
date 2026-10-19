@@ -17,18 +17,35 @@ import type { HuntState } from "./types.js";
 // so the benign account starts as the hypothesis to beat rather than an objection.
 export const BASE_RATE_PROVENANCE = "base_rate";
 // The generic fallback, used only when there is no hypothesis to specialise from.
-export const NULL_HYPOTHESIS = "the activity has a benign explanation and no attack occurred";
+export const NULL_HYPOTHESIS = "The activity has a benign explanation and no attack occurred.";
+
+// How long the benign account's name for the hypothesis runs, in characters. It is read
+// beside the hypothesis in full, so it only has to say which one it answers.
+const BRIEF_CHARS = 60;
+
+// The hypothesis by its first sentence, cut on a whole word: "A finance workstation that
+// opened an invoice-themed ISO…". Quoted whole, a long hypothesis made the benign
+// account a paragraph that repeated it.
+export function briefHypothesis(hypothesis: string): string {
+  const flat = hypothesis.replace(/\s+/g, " ").trim().replace(/^["'“]+|["'”]+$/g, "");
+  const sentence = (flat.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? flat).replace(/[.!?;:,]+$/, "");
+  if (sentence.length <= BRIEF_CHARS) return sentence;
+  const head = sentence.slice(0, BRIEF_CHARS + 1);
+  const cut = head.includes(" ") ? head.slice(0, head.lastIndexOf(" ")) : sentence.slice(0, BRIEF_CHARS);
+  return `${cut.replace(/[\s.,;:—-]+$/, "")}…`;
+}
 
 // The null, phrased against the activity actually under test. A generic "no attack
 // occurred" is a strawman the evidence never has to engage; a base rate that names
 // this activity's legitimate explanation is a harder claim to beat, and it keeps the
 // benign account a genuine competitor from turn 0 rather than a placeholder. The
 // argue-the-null critic still sharpens it further with the specific counter-story it
-// constructs against the linked evidence at VALIDATE.
+// constructs against the linked evidence at VALIDATE. A sentence of its own, naming the
+// hypothesis briefly: it is shown on Home, in the decision block and in Explanations.
 export function nullHypothesisFor(hypotheses: readonly string[]): string {
   const primary = hypotheses.find((h) => h.trim().length > 0);
   if (primary === undefined) return NULL_HYPOTHESIS;
-  return `the activity described in "${primary}" has a legitimate explanation — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action`;
+  return `The activity behind "${briefHypothesis(primary)}" has a legitimate explanation — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action.`;
 }
 
 // What the deployment reports about its own reach, never a worker's telemetry. Kept
@@ -80,6 +97,9 @@ export async function startHunt(
   // Defaults to "hunt" so every existing caller and test is unchanged. Adjudicate
   // passes its own kind so the ledger is not filed as a hunt.
   runKind: RunKind = "hunt",
+  // What the agent needs, as its plugin declares it: one nothing here answers is
+  // journalled as a blind spot.
+  needs: readonly string[] = [],
 ): Promise<Journal> {
   const now = new Date().toISOString();
   const huntId = newId("hunt");
@@ -170,7 +190,7 @@ export async function startHunt(
 
   // Journalled once at start, so a missing capability reaches the report as a blind
   // spot the verdicts count. resumeHunt seeds nothing, so a handover cannot re-declare.
-  const unbound = unboundCapabilities(spec.roles, spec.tools);
+  const unbound = unboundCapabilities(needs, spec.tools);
   for (const capability of unbound) {
     ledger.append({
       kind: "evidence",

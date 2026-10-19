@@ -536,6 +536,28 @@ describe('citation chips on the case composer (#2285)', () => {
     expect(screen.getByText(/ghost-9 is not on this case/)).toBeInTheDocument()
   })
 
+  // #2459: the same alert chipped three times in a paragraph, with its raw source id printed after it.
+  it('chips an alert once per paragraph, names it again in words, and drops the raw source id beside it', async () => {
+    renderAnswer(
+      '**dl-005** (crowdstrike-dl-005, critical): the dump. dl-005 came before the SMB session, and `dl-005` is the strongest row.\n\n' +
+        'dl-005 (crowdstrike-dl-005) again.',
+    )
+    const body = await waitFor(() => {
+      const el = document.querySelector('.msg.vigil .body .cite-chip')
+      expect(el).not.toBeNull()
+      return el?.closest('.body') as HTMLElement
+    })
+    const [first, second] = Array.from(body.querySelectorAll('p'))
+    expect(within(first).getAllByRole('link', { name: 'alert · LSASS MiniDump' })).toHaveLength(1)
+    expect(first.querySelectorAll('.cite-again')).toHaveLength(2)
+    expect(first.querySelector('.cite-again')).toHaveTextContent('LSASS MiniDump')
+    expect(first.textContent).toContain('(critical): the dump.')
+    // a new paragraph chips it again, and a trailer of nothing but the id goes whole
+    expect(within(second).getAllByRole('link', { name: 'alert · LSASS MiniDump' })).toHaveLength(1)
+    expect(second.textContent).toBe('alert · LSASS MiniDump again.')
+    expect(body.textContent).not.toMatch(/crowdstrike-dl-005|dl-005/)
+  })
+
   it('opens the row an evidence chip cites', async () => {
     const onCite = renderAnswer('See ev-ceab2569df3a.')
     fireEvent.click((await screen.findAllByRole('button', { name: 'step 5 · Zscaler' }))[0])

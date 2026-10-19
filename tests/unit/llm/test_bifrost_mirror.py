@@ -16,7 +16,11 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from core.llm.bifrost.mirror import _cred_from_env, key_is_routable  # noqa: E402
+from core.llm.bifrost.mirror import (  # noqa: E402
+    _cred_from_env,
+    key_health,
+    key_is_routable,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -104,3 +108,28 @@ def test_disabled_key_is_never_routable():
         key_is_routable({"value": LITERAL, "status": "success", "enabled": False})
         is False
     )
+
+
+def test_unresolved_seed_is_a_placeholder_whatever_bifrost_tried():
+    """The console hides a placeholder; every other label it shows and badges,
+    so an operator's real key -- env-backed or typed, checked or refused --
+    must never read as one."""
+    assert key_health({"value": UNRESOLVED_ENV}, "anthropic") == "placeholder"
+    assert key_health({"value": UNRESOLVED_ENV, "status": "unknown"}) == "placeholder"
+    # vertex's seed: Bifrost tried the listing and could not
+    assert (
+        key_health({"value": UNRESOLVED_ENV, "status": "list_models_failed"}, "vertex")
+        == "placeholder"
+    )
+    assert key_health({"value": RESOLVED_ENV}, "anthropic") == "unverified"
+    assert key_health({"value": LITERAL, "status": "unknown"}) == "unverified"
+    assert (
+        key_health({"value": RESOLVED_ENV, "status": "list_models_failed"})
+        == "rejected"
+    )
+    # a resolved URL nothing answers at is a key that was refused, not a placeholder
+    ollama = {"value": {"value": ""}, "ollama_key_config": {"url": RESOLVED_ENV}}
+    assert (
+        key_health({**ollama, "status": "list_models_failed"}, "ollama") == "rejected"
+    )
+    assert key_health({"value": UNRESOLVED_ENV, "enabled": False}) == "disabled"

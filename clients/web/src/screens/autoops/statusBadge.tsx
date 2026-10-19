@@ -12,11 +12,9 @@ const STATUS_META: Record<string, Meta> = {
   executing: { fg: 'var(--high)', bg: 'var(--high-dim)' },
   // Parked on a person; the case pill reads it idle too.
   paused: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
-  review_submitted: { fg: 'var(--high)', bg: 'var(--high-dim)', label: 'review' },
   completed: { fg: 'var(--ok)', bg: 'var(--ok-dim)' },
   failed: { fg: 'var(--crit)', bg: 'var(--crit-dim)' },
   sleeping: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
-  needs_rework: { fg: 'var(--high)', bg: 'var(--high-dim)', label: 'rework' },
 }
 
 const PRIO_META: Record<string, Meta> = {

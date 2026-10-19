@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../plugins/kinds.js";
@@ -54,7 +55,7 @@ function optionsOf(spec: RunSpec, plugin: PluginManifest, extra: Partial<AgentOp
 
 const STOP: ScriptedTurn = { calls: [] };
 
-function concluded(disposition: string, citations: string[]): ScriptedTurn {
+function concluded(disposition: string, citations: string[], extra: Record<string, unknown> = {}): ScriptedTurn {
   return {
     emit: {
       summary: `the lockouts are ${disposition}`,
@@ -64,6 +65,8 @@ function concluded(disposition: string, citations: string[]): ScriptedTurn {
       gaps: [],
       next_steps: ["reach the owning team"],
       timeline: [{ at: "2026-06-15T09:14:00Z", stage: "CREDENTIAL ACCESS", what: "fourteen lockouts on svc-backup from one host", citations }],
+      proposed_actions: [],
+      ...extra,
     },
   };
 }
@@ -105,8 +108,39 @@ describe("the kernel runs a plugin to a conclusion", () => {
     // The order of events is its own field, not numbered prose in the summary.
     const value = (events.find((one) => one.kind === "conclusion")?.payload as ConclusionPayload).value;
     expect(value.timeline).toEqual([{ at: "2026-06-15T09:14:00Z", stage: "CREDENTIAL ACCESS", what: "fourteen lockouts on svc-backup from one host", citations: ["r2"] }]);
+    // An answer that rates nothing leaves the case's priority alone.
+    expect(await state.terminal(RUN)).not.toHaveProperty("severity");
     // The engine is stamped on the journaled spec, so a resume and every reader know it.
     expect(isAgentRun(events)).toBe(true);
+  });
+
+  // The case's priority is raised from this on the far side, so it rides the terminal.
+  it("carries the severity the answer rated onto the terminal", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [{ tool: "get_finding", args: '{"finding_id":"f-1"}' }] },
+      STOP,
+      concluded("malicious", ["r1"], { severity: "critical" }),
+    ]);
+
+    await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+
+    expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", severity: "critical" });
+  });
+
+  it("carries the actions the answer proposes onto the terminal, and none when it proposes none", async () => {
+    const proposal = { action_type: "block_ip", target: "45.77.53.176", reason: "the beacon's destination", confidence: 0.9 };
+    const run = async (extra: Record<string, unknown>) => {
+      const spec = specOf();
+      const state = new InProcessState<AgentKinds>();
+      const provider = scriptedProvider([{ calls: [{ tool: "get_finding", args: '{"finding_id":"f-1"}' }] }, STOP, concluded("malicious", ["r1"], extra)]);
+      await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+      return state.terminal(RUN);
+    };
+
+    expect(await run({ proposed_actions: [proposal] })).toMatchObject({ outcome: "completed", proposed_actions: [proposal] });
+    expect(await run({})).not.toHaveProperty("proposed_actions");
   });
 
   it("tells the model its skills and how to cite, in a prefix that does not move", async () => {
@@ -290,6 +324,27 @@ describe("the console reads a kernel run in the investigate shape", () => {
     expect(replay.decisions.map((one) => one.action)).toEqual(["EXAMINE", "CONCLUDE"]);
     expect(replay.kernel.turns[0]?.calls[0]?.ref).toBe("r1");
   });
+
+  const ledger = (name: string) =>
+    readFileSync(join(FIXTURES, "ledgers", name), "utf8").split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line));
+
+  it("carries the record in the hunt's row shapes: explanations, the rows linked to each, open questions", () => {
+    const view = investigateView(RUN, ledger("kernel-investigate.jsonl"));
+    expect(view.hypotheses.map((one) => [one.hypothesis_id, one.supports, one.weakens, one.neither])).toEqual([["h1", 1, 2, 0], ["h2", 0, 0, 3], ["h3", 2, 0, 1]]);
+    // Only refs a link names are evidence, newest first.
+    expect(view.evidence.map((one) => one.evidence_id)).toEqual(["r9", "r3", "r2"]);
+    expect(view.evidence_count).toBe(3);
+    expect(view.evidence[0]).toMatchObject({ source_system: "splunk_search", bears_on: [{ hypothesis_id: "h3", relation: "supports" }, { hypothesis_id: "h1", relation: "weakens" }] });
+    expect(view.evidence[0]?.summary).not.toContain("vigil:tool_result");
+    expect(view.held).toBeNull();
+  });
+
+  it("shows a held dismissal as what it was held as, with what was asked and why", () => {
+    const view = investigateView(RUN, ledger("kernel-investigate-held.jsonl"));
+    expect(view.findings[0]?.answer).toMatchObject({ disposition: "needs_review" });
+    expect(view.held).toEqual({ field: "disposition", asked: "benign", final: "needs_review", reason: expect.stringMatching(/^the review was insufficient: Only the case note/) });
+    expect(view.open_questions).toEqual([{ question_id: "q1", question: expect.stringContaining("registered red-team operator"), hypothesis_id: "h3" }]);
+  });
 });
 
 describe("historyOf", () => {
@@ -312,6 +367,7 @@ describe("plugins load from their directory", () => {
     const schema = (plugin.conclusion as unknown as { schema: { required: string[]; properties: Record<string, { items?: { required?: string[] } }> } }).schema;
     expect(schema.required).toContain("timeline");
     expect(schema.properties["timeline"]?.items?.required).toEqual(["what"]);
+    expect(plugin.conclusion).toMatchObject({ severity_field: "severity", proposals_field: "proposed_actions" });
     expect(pluginGrants(plugin, specOf().tools)["agent"]).toEqual(
       expect.arrayContaining(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators", "load_skill"]),
     );
@@ -336,6 +392,40 @@ guard:
   guarded: [c]
   fallback: b
   reviewer_prompt: r
+`;
+    expect(() => parsePlugin(manifest, [])).toThrow(SpecError);
+  });
+
+  it("refuses a severity_field rated in anything but case priorities", () => {
+    const manifest = (levels: string) => `
+id: x
+description: d
+system: s
+conclusion:
+  summary_field: summary
+  severity_field: severity
+  schema:
+    type: object
+    properties:
+      summary: { type: string }
+      severity: { type: string, enum: [${levels}] }
+`;
+    expect(() => parsePlugin(manifest("low, high"), [])).not.toThrow();
+    expect(() => parsePlugin(manifest("low, severe"), [])).toThrow(SpecError);
+  });
+
+  it("refuses a proposals_field the schema does not declare", () => {
+    const manifest = `
+id: x
+description: d
+system: s
+conclusion:
+  summary_field: summary
+  proposals_field: actions
+  schema:
+    type: object
+    properties:
+      summary: { type: string }
 `;
     expect(() => parsePlugin(manifest, [])).toThrow(SpecError);
   });

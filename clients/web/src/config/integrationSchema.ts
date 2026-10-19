@@ -21,8 +21,8 @@ export const SECTION_LABELS: Record<string, string> = {
 }
 
 // Shared "Network / Proxy" field block. Appended to any integration
-// whose metadata has ``proxy_supported: true``. Backend-side handling
-// lives in services/db_proxy.py + services/integration_bridge_service.py.
+// whose metadata has ``proxy_supported: true``. Applied by the integration's
+// httpx clients via core/integrations/_base/proxy.py.
 export const PROXY_FIELDS: IntegrationField[] = [
   {
     name: 'proxy_type',
@@ -32,28 +32,26 @@ export const PROXY_FIELDS: IntegrationField[] = [
     default: 'none',
     options: [
       { value: 'none', label: 'None (direct connection)' },
-      { value: 'pgbouncer', label: 'PgBouncer (Postgres-only)' },
       { value: 'http', label: 'HTTP proxy' },
       { value: 'socks5', label: 'SOCKS5 proxy' },
-      { value: 'ssh_tunnel', label: 'SSH tunnel' },
     ],
     helpText:
-      'Route this integration through an intermediate hop. Leave as "None" for a direct connection.',
+      'Route this integration\'s HTTP requests through a proxy. Leave as "None" for a direct connection.',
   },
   {
     name: 'proxy_host',
     label: 'Proxy Host',
     type: 'text',
     section: 'proxy',
-    placeholder: 'e.g. bastion.internal',
-    helpText: 'Hostname or IP of the proxy / pooler / bastion.',
+    placeholder: 'e.g. proxy.internal',
+    helpText: 'Hostname or IP of the proxy.',
   },
   {
     name: 'proxy_port',
     label: 'Proxy Port',
     type: 'number',
     section: 'proxy',
-    placeholder: 'e.g. 6432, 1080, 22',
+    placeholder: 'e.g. 3128, 1080',
   },
   {
     name: 'proxy_username',
@@ -61,7 +59,7 @@ export const PROXY_FIELDS: IntegrationField[] = [
     type: 'text',
     section: 'proxy',
     helpText:
-      'Auth user for the proxy or SSH bastion. Leave blank if none.',
+      'Auth user for the proxy. Leave blank if none.',
   },
   {
     name: 'proxy_password',
@@ -70,30 +68,6 @@ export const PROXY_FIELDS: IntegrationField[] = [
     section: 'proxy',
     helpText:
       'Stored in the encrypted secrets store. Leave blank to keep the existing value.',
-  },
-  {
-    name: 'ssh_private_key_path',
-    label: 'SSH Private Key Path',
-    type: 'text',
-    section: 'proxy',
-    placeholder: 'e.g. /home/vigil/.ssh/id_ed25519',
-    helpText: 'Used only when Proxy Type is "SSH tunnel".',
-  },
-  {
-    name: 'ssh_key_passphrase',
-    label: 'SSH Key Passphrase',
-    type: 'password',
-    section: 'proxy',
-    helpText:
-      'Stored in the encrypted secrets store. Used only with an encrypted private key.',
-  },
-  {
-    name: 'verify_proxy_tls',
-    label: 'Verify Proxy TLS',
-    type: 'boolean',
-    section: 'proxy',
-    default: true,
-    helpText: 'Disable only when explicitly testing against a self-signed proxy.',
   },
 ]
 
@@ -110,4 +84,19 @@ export interface IntegrationMetadata {
   // When true, the wizard appends the shared PROXY_FIELDS block to
   // ``fields`` and renders it under the "Network / Proxy" section.
   proxy_supported?: boolean
+  // Appended to the proxy type help text when the proxy covers only part of
+  // the integration (e.g. one of its servers).
+  proxy_note?: string
 }
+
+export const fieldsWithProxy = (i: IntegrationMetadata): IntegrationField[] =>
+  !i.proxy_supported
+    ? i.fields
+    : [
+        ...i.fields,
+        ...PROXY_FIELDS.map((f) =>
+          f.name === 'proxy_type' && i.proxy_note
+            ? { ...f, helpText: `${f.helpText} ${i.proxy_note}` }
+            : f,
+        ),
+      ]

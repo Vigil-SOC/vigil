@@ -19,7 +19,6 @@ interface KpiDef {
 const KPIS: KpiDef[] = [
   { key: 'active', label: 'Active Agents', statuses: ['assigned', 'executing'], value: (s) => s.active_agents, color: 'var(--med)', note: 'running now' },
   { key: 'queued', label: 'Queued', statuses: [], value: (s) => s.queued, note: 'waiting for a slot' },
-  { key: 'review', label: 'Pending Review', statuses: ['review_submitted'], value: (s) => s.pending_review, color: 'var(--high)', note: 'awaiting a human' },
   { key: 'done', label: 'Completed', statuses: ['completed'], value: (s) => s.completed, color: 'var(--ok)', note: 'this session' },
   { key: 'failed', label: 'Failed', statuses: ['failed'], value: (s) => s.failed, color: 'var(--crit)', note: 'errored out' },
 ]
@@ -28,7 +27,7 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
   const {
     status, investigations, phase, error, notice, busy,
     reload, clearError, clearNotice,
-    toggleEnabled, killAll, setMaxAgents, scanFindings, wake, killInvestigation, review,
+    toggleEnabled, killAll, setMaxAgents, scanFindings, wake, killInvestigation,
   } = useAutoOps()
   const [statusFilter, setStatusFilter] = useState<string[] | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -49,7 +48,6 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
         busy={busy}
         wake={wake}
         killInvestigation={killInvestigation}
-        review={review}
       />
     )
   }
@@ -232,7 +230,7 @@ function InvestigationRow({
   onWake: (id: string) => void
   onKill: (id: string) => void
 }) {
-  const canWake = ['sleeping', 'needs_rework', 'failed', 'completed'].includes(inv.status)
+  const canWake = ['sleeping', 'failed', 'completed'].includes(inv.status)
   const canKill = ['executing', 'assigned'].includes(inv.status)
   return (
     <tr className="clickable" onClick={() => onSelect(inv.investigation_id)}>

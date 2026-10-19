@@ -780,6 +780,28 @@ describe('SocConsole', () => {
       await sentOnCase()
     })
 
+    // #2457: the expanded case pins its composer only while the view is full-height; a tour
+    // started from the account menu cleared that, and the composer fell under the fold.
+    it('keeps the expanded case page full-height, its composer pinned, after a tour clears the view', async () => {
+      localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      const view = document.querySelector('main.view') as HTMLElement
+      const pinned = () => {
+        expect(view.style.overflowY).toBe('hidden')
+        expect((view.querySelector('.screen') as HTMLElement).style.height).toBe('100%')
+        expect(view.querySelector('.case-page > .case-composer')).not.toBeNull()
+      }
+      pinned()
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Take the tour' }))
+      await waitFor(pinned)
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
+      pinned()
+    })
+
     it('opens the dock from the command bar on a case page opened by its URL', async () => {
       renderConsole('/cases?case=case-2026-0142')
       await screen.findByRole('tab', { name: /Summary/ })
