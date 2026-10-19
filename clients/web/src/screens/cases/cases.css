@@ -1732,3 +1732,54 @@
   cursor: pointer;
 }
 .case-page .case-expl-cites .cite-chip:hover { background: var(--ac); color: var(--ac-tx); }
+
+/* A run's rows on a grouped tab, under its heading: the one addition to the boards (#2400). */
+.case-page .case-run { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.case-page .case-run + .case-run { margin-top: 8px; }
+.case-page .case-run > p { margin: 0; font-size: 13px; }
+.case-page .case-run-head {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.case-page .case-run-head span { font-size: 12px; font-weight: 400; color: var(--tx2); }
+
+/* Summary: the other runs' head lines under the primary run's cards, laid out like the agent rows. */
+.case-page .case-other-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+.case-page .case-other-runs h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.case-page .case-other-runs ul {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ln0);
+}
+.case-page .case-other-runs li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  background: var(--bg2);
+  font-size: 13px;
+}
+.case-page .case-other-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx0); text-decoration: none; }
+.case-page .case-other-name:hover { text-decoration: underline; }
+.case-page .case-other-state { color: var(--tx2); font-size: 12px; }
+.case-page .case-other-runs .num { font-family: var(--mono); font-size: 12px; color: var(--tx1); }

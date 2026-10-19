@@ -7,12 +7,7 @@ from typing import Annotated, Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from core.agents.projections import (
-    read_account,
-    read_projection,
-    read_replay,
-    read_verify,
-)
+from core.agents.projections import read_projection, read_replay, read_verify
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import (
@@ -33,7 +28,6 @@ from core.memory.source_tier import (
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from core.storage.schemas.case_account import CaseAccount
 from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
@@ -616,35 +610,6 @@ async def get_workflow_run(
     else:
         row["projection"] = folded
     return row
-
-
-@router.get(
-    "/workflows/runs/{run_id}/account",
-    response_model=CaseAccount,
-    response_model_exclude_unset=True,
-)
-async def get_workflow_run_account(
-    run_id: str,
-    run_service: WorkflowRunService = Depends(provide_workflow_runs),
-) -> CaseAccount:
-    """What a run concluded, in the one shape every loop fills.
-
-    Folded from the ledger on each read, so it is never stale. A section the
-    run's loop does not produce is absent, never null; a run whose loop keeps
-    no account is a 404.
-    """
-    if not run_service.get_run(run_id):
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    try:
-        account = await read_account(run_id)
-    except Exception as exc:  # noqa: BLE001 — logged; the reader gets a fixed reason
-        logger.error("could not read the account of run %s: %s", run_id, exc)
-        raise HTTPException(
-            status_code=502, detail="The agent layer could not give this run's account"
-        ) from None
-    if account is None:
-        raise HTTPException(status_code=404, detail=f"No account for run: {run_id}")
-    return account
 
 
 @router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)

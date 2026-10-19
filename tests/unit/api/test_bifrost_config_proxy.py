@@ -8,6 +8,8 @@ as the credential, after which every LLM call 401s with nothing to say why).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from services.api.routers import bifrost_config as proxy
@@ -174,3 +176,157 @@ def test_ollama_url_key_needs_no_credential_substitution(monkeypatch):
     body = {"ollama_key_config": {"url": "http://localhost:11434"}, "models": ["*"]}
     proxy._resolve_key_value(body, "o1")
     assert "value" not in body
+
+
+# --- provider base URL -------------------------------------------------------
+
+_DOC = {
+    "name": "openai",
+    "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "max_retries": 3,
+        "insecure_skip_verify": False,
+    },
+    "concurrency_and_buffer_size": {"concurrency": 10, "buffer_size": 50},
+    "proxy_config": None,
+    "status": "active",
+    "config_hash": "abc",
+    "keys": [{"id": "k1", "models": ["*"]}],
+}
+
+
+@pytest.mark.unit
+def test_base_url_is_trimmed_and_other_network_config_is_kept():
+    out = proxy._merge_base_url(
+        _DOC, {"network_config": {"base_url": " http://10.0.0.5:8000/v1/ "}}
+    )
+    net = out["network_config"]
+    assert net["base_url"] == "http://10.0.0.5:8000"
+    assert net["default_request_timeout_in_seconds"] == 1800
+    assert net["max_retries"] == 3
+    assert net["insecure_skip_verify"] is False
+    # Only writable provider fields travel; read-back and keys never do.
+    assert out["concurrency_and_buffer_size"] == {"concurrency": 10, "buffer_size": 50}
+    assert not {"keys", "status", "config_hash"} & out.keys()
+
+
+@pytest.mark.unit
+def test_path_prefix_survives_and_edit_round_trips():
+    first = proxy._merge_base_url(
+        _DOC, {"network_config": {"base_url": "https://gw.example/openai/v1"}}
+    )
+    assert first["network_config"]["base_url"] == "https://gw.example/openai"
+    # The panel shows the stored root; saving it back changes nothing.
+    again = proxy._merge_base_url(
+        {**_DOC, "network_config": first["network_config"]},
+        {"network_config": {"base_url": first["network_config"]["base_url"]}},
+    )
+    assert again["network_config"] == first["network_config"]
+
+
+@pytest.mark.unit
+def test_saving_a_host_allows_private_network_and_clearing_drops_both():
+    saved = proxy._merge_base_url(
+        _DOC, {"network_config": {"base_url": "http://192.168.1.20:8000"}}
+    )
+    assert saved["network_config"]["allow_private_network"] is True
+
+    cleared = proxy._merge_base_url(
+        {**_DOC, "network_config": saved["network_config"]},
+        {"network_config": {"base_url": ""}},
+    )
+    assert "base_url" not in cleared["network_config"]
+    assert "allow_private_network" not in cleared["network_config"]
+    assert cleared["network_config"]["max_retries"] == 3
+
+
+@pytest.mark.unit
+def test_clearing_nothing_leaves_a_seeded_private_flag_alone():
+    seeded = {**_DOC, "network_config": {**_DOC["network_config"], "allow_private_network": True}}
+    out = proxy._merge_base_url(seeded, {"network_config": {"base_url": ""}})
+    assert out["network_config"]["allow_private_network"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "bad",
+    ["ftp://host/v1", "http://user:pw@host/v1", "http://host/v1#frag", "no-scheme", 7],
+)
+def test_bad_base_url_is_a_400(bad):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        proxy._merge_base_url(_DOC, {"network_config": {"base_url": bad}})
+    assert exc.value.status_code == 400
+
+
+class _FakeGateway:
+    """Bifrost's provider document, served through ``httpx.AsyncClient``."""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.writes = []
+
+    def transport(self):
+        import httpx
+
+        def handle(request):
+            if request.method == "GET":
+                return httpx.Response(200, json=self.doc)
+            self.writes.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True})
+
+        return httpx.MockTransport(handle)
+
+
+def _client(monkeypatch, gateway):
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        proxy.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=gateway.transport(), **kw),
+    )
+    monkeypatch.setattr(proxy, "_require_settings_admin", lambda user: None)
+    app = FastAPI()
+    app.include_router(proxy.router, prefix="/api/bifrost")
+    app.dependency_overrides[proxy.get_current_active_user] = lambda: object()
+    return TestClient(app)
+
+
+@pytest.mark.unit
+def test_put_with_a_bad_url_is_refused_before_bifrost_sees_it(monkeypatch):
+    gw = _FakeGateway(_DOC)
+    res = _client(monkeypatch, gw).put(
+        "/api/bifrost/providers/openai",
+        json={"network_config": {"base_url": "file:///etc/passwd"}},
+    )
+    assert res.status_code == 400
+    assert gw.writes == []
+
+
+@pytest.mark.unit
+def test_put_forwards_the_merged_document(monkeypatch):
+    gw = _FakeGateway(_DOC)
+    res = _client(monkeypatch, gw).put(
+        "/api/bifrost/providers/openai",
+        json={"network_config": {"base_url": "http://10.0.0.5:8000/v1"}},
+    )
+    assert res.status_code == 200
+    sent = gw.writes[0]
+    assert sent["network_config"]["base_url"] == "http://10.0.0.5:8000"
+    assert sent["network_config"]["allow_private_network"] is True
+    assert sent["network_config"]["max_retries"] == 3
+    assert "keys" not in sent
+
+
+@pytest.mark.unit
+def test_put_without_a_base_url_passes_through_untouched(monkeypatch):
+    gw = _FakeGateway(_DOC)
+    body = {"network_config": {"max_retries": 1}}
+    res = _client(monkeypatch, gw).put("/api/bifrost/providers/openai", json=body)
+    assert res.status_code == 200
+    assert gw.writes == [body]

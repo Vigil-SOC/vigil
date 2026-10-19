@@ -33,6 +33,23 @@ def _actionable_ip(value: Any) -> Optional[str]:
     return str(ip)
 
 
+# The source-address keys ingesters write, as in IP_FACET_KEYS["by_source_ip"].
+_SOURCE_IP_KEYS = ("src_ips", "src_ip", "source_ips")
+_HOSTNAME_KEYS = ("hostnames", "hostname")
+
+
+def _entity_values(entity_context: Dict[str, Any], keys: Tuple[str, ...]) -> list:
+    """Every value under ``keys``, in key order, without repeats. A key may hold
+    one value or a list of them."""
+    values: list = []
+    for key in keys:
+        value = entity_context.get(key)
+        for item in value if isinstance(value, (list, tuple)) else [value]:
+            if item and item not in values:
+                values.append(item)
+    return values
+
+
 class AutonomousResponder:
     """Handles autonomous response actions with escalation."""
 
@@ -212,10 +229,12 @@ class AutonomousResponder:
             "**Affected Entities:**",
         ]
 
-        if entity_context.get("src_ips"):
-            parts.append(f"- IPs: {', '.join(entity_context['src_ips'][:5])}")
-        if entity_context.get("hostnames"):
-            parts.append(f"- Hosts: {', '.join(entity_context['hostnames'][:5])}")
+        ips = _entity_values(entity_context, _SOURCE_IP_KEYS)
+        if ips:
+            parts.append(f"- IPs: {', '.join(map(str, ips[:5]))}")
+        hosts = _entity_values(entity_context, _HOSTNAME_KEYS)
+        if hosts:
+            parts.append(f"- Hosts: {', '.join(map(str, hosts[:5]))}")
         if entity_context.get("usernames"):
             parts.append(f"- Users: {', '.join(entity_context['usernames'][:5])}")
 
@@ -344,12 +363,13 @@ class AutonomousResponder:
 
         # The address comes from alert text. Only a routable-looking host address
         # is acted on; a malformed or loopback/unspecified one is dropped.
-        for candidate in entity_context.get("src_ips") or []:
+        for candidate in _entity_values(entity_context, _SOURCE_IP_KEYS):
             target_ip = _actionable_ip(candidate)
             if target_ip:
                 break
-        if entity_context.get("hostnames"):
-            hostname = entity_context["hostnames"][0]
+        hostnames = _entity_values(entity_context, _HOSTNAME_KEYS)
+        if hostnames:
+            hostname = hostnames[0]
 
         if not target_ip and not hostname:
             logger.warning(f"No target available for response action on {finding_id}")

@@ -529,15 +529,31 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   }
 }
 
+/** The grouped tabs count every run's rows, so a door's number is what its tab lists; Summary stays the primary run's. */
+function caseCounts(primary: RunFold | null, folds: (RunFold | null)[], record: number): Record<Tab, number> {
+  const each = folds.map((fold) => counts(fold, record))
+  const sum = (tab: Tab) => each.reduce((n, one) => n + one[tab], 0)
+  return {
+    ...counts(primary, record),
+    Explanations: sum('Explanations'),
+    Evidence: sum('Evidence'),
+    Checked: sum('Checked'),
+    'Memory and blind spots': sum('Memory and blind spots'),
+  }
+}
+
 const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 
-/** The line under each door's count, from the fold already loaded. */
-function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
+/** The line under each door's count, from the folds already loaded: the primary run's alone on a one-run case, every run's otherwise. */
+function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
   const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : hasRun ? 'Run started' : 'No run yet'
+  const read = folds.filter((one): one is RunFold => one !== null)
+  const fold = folds.length === 1 ? folds[0] : null
   const tally = new Map<string, number>()
-  const record = foldRecord(fold)
-  if (record) {
-    for (const row of record.hypotheses) {
+  const records = read.flatMap((one) => foldRecord(one) ?? [])
+  const record = records.length ? records[0] : null
+  for (const kept of records) {
+    for (const row of kept.hypotheses) {
       const word = explanationWord(row.status, row.supports, row.weakens)
       tally.set(word, (tally.get(word) ?? 0) + 1)
     }
@@ -547,7 +563,10 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
     return (i < 0 ? DOOR_ORDER.length : i) - (j < 0 ? DOOR_ORDER.length : j)
   })
   let evidence = none
-  if (fold?.kind === 'hunt') {
+  if (folds.length > 1 && read.length) {
+    const total = read.reduce((n, one) => n + counts(one, 0).Evidence, 0)
+    evidence = `${plural(total, 'row')} across ${plural(folds.length, 'run')}`
+  } else if (fold?.kind === 'hunt') {
     const n = stanceTotals(fold)
     evidence = !fold.evidence.length ? 'None shown' : !n ? plural(fold.evidenceCount, 'row') : `${n.supports} support · ${n.weakens} go against · ${n.neither} neither`
   } else if (record) {
@@ -555,19 +574,129 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   } else if (fold) {
     evidence = 'Findings, no for or against'
   }
-  const recall = fold?.recall
-  const recallRows = (recall ? recall.sightings.length + recall.verdicts.length + recall.gaps.length : 0) + recallEntityCalls(fold).length
-  const blind = visibilityGaps(fold).length
-  const open = leftOpen(fold).length
+  const recalls = read.flatMap((one) => one.recall ?? [])
+  const recallRows = recalls.reduce((n, r) => n + r.sightings.length + r.verdicts.length + r.gaps.length, 0) + read.reduce((n, one) => n + recallEntityCalls(one).length, 0)
+  const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
+  const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
+  const priced = read.flatMap((one) => (one.costUsd == null ? [] : [one.costUsd]))
+  const cost = priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'
   const chained = rows.filter((row) => row.chained).length
   return {
-    Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
+    Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
     Evidence: evidence,
-    Checked: fold ? `${fold.costUsd == null ? '—' : fmtCost(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
-    'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
+    Checked: read.length ? `${cost} · ${plural(blind, 'gap')}` : none,
+    'Memory and blind spots': recalls.length && recalls.every((r) => r.unavailable) ? 'Recall did not happen' : memory || (recalls.length ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
+}
+
+/** One run on the case, as the page has read it. */
+interface CaseRun {
+  ref: CaseInvestigationRef
+  fold: RunFold | null
+  phase: Phase
+}
+
+/** Reads one run on the case on Watch a run's interval while it is in flight, and reports each read up. Renders nothing. */
+function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
+  runId: string
+  evidenceLimit?: number
+  onRead: (runId: string, read: { fold: RunFold | null; phase: Phase } | null) => void
+  onLoader: (runId: string, load: (() => void) | null) => void
+  /** A re-read of a run that was in flight: the case and record follow it. */
+  onReread: () => void
+}) {
+  const run = useRunDetail(runId, true, undefined, evidenceLimit)
+  const { load, setDphase } = run
+  useEffect(() => {
+    setDphase('loading')
+    void load()
+  }, [load, setDphase])
+  useEffect(() => {
+    onLoader(runId, () => void load()) // a failed read keeps what is shown
+    return () => onLoader(runId, null)
+  }, [runId, load, onLoader])
+  const detail = run.detail?.run_id === runId ? run.detail : null
+  const fold = useMemo(() => readFold(detail), [detail])
+  const phase: Phase = detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+  useEffect(() => onRead(runId, { fold, phase }), [runId, fold, phase, onRead])
+  useEffect(() => () => onRead(runId, null), [runId, onRead])
+  const seen = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = detail?.status ?? null
+    if (detail && prev && IN_FLIGHT.includes(prev)) onReread()
+  }, [detail]) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
+}
+
+/** A run's heading on a grouped tab: its workflow and when it started. */
+function runTitle(ref: CaseInvestigationRef, names: Record<string, string>): string {
+  return `${names[ref.workflow_id] || ref.workflow_id} · started ${clock(ref.created_at)}`
+}
+
+function RunHeading({ run, names }: { run: CaseRun; names: Record<string, string> }) {
+  return (
+    <h4 className="case-run-head" title={runTitle(run.ref, names)}>
+      {names[run.ref.workflow_id] || run.ref.workflow_id}
+      <span> · started {clock(run.ref.created_at)}</span>
+    </h4>
+  )
+}
+
+/**
+ * A grouped tab: each run's rows under its own heading, primary run first. A case with one run shows
+ * no heading, so the tab reads exactly as it did before there could be more.
+ */
+function PerRun({ runs, names, single, children }: {
+  runs: CaseRun[]
+  names: Record<string, string>
+  /** The primary run's fold and phase, shown alone on a case with at most one run. */
+  single: { fold: RunFold | null; phase: Phase }
+  children: (fold: RunFold | null, phase: Phase, run: CaseRun | null) => ReactNode
+}) {
+  if (runs.length <= 1) return <>{children(single.fold, single.phase, runs[0] ?? null)}</>
+  return (
+    <>
+      {runs.map((run) => (
+        <section key={run.ref.run_id} className="case-run" aria-label={runTitle(run.ref, names)}>
+          <RunHeading run={run} names={names} />
+          {children(run.fold, run.phase, run)}
+        </section>
+      ))}
+    </>
+  )
+}
+
+/** "$0.12 of $1.00": what a run has spent against what it was granted, read off its fold once read; a cost nothing priced is a dash, never $0. */
+function spentLine(run: CaseRun): string {
+  const cost = run.fold ? run.fold.costUsd : null
+  const cap = run.fold?.maxCostUsd || (run.ref.max_cost_usd > 0 ? run.ref.max_cost_usd : null)
+  const spent = cost == null ? '—' : fmtCost(cost)
+  return cap == null ? spent : `${spent} of ${fmtCost(cap)}`
+}
+
+/** The other runs on the case, one head line each, under the primary run's cards. */
+function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<string, string>; onFollow: () => void }) {
+  if (runs.length === 0) return null
+  return (
+    <section className="case-other-runs" aria-label="Other runs on this case">
+      <h3>Other runs on this case</h3>
+      <ul>
+        {runs.map((run) => {
+          const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—')
+          return (
+            <li key={run.ref.run_id}>
+              <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runTitle(run.ref, names)} onClick={onFollow}>{runTitle(run.ref, names)}</Link>
+              <span className="case-other-state">{state}</span>
+              <span className="num">{spentLine(run)}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
 }
 
 /** Five doors into the audit tabs, in every mood. */
@@ -603,7 +732,7 @@ function NowCard({ fold, phase, hasRun, watch }: { fold: RunFold | null; phase: 
     <section className="case-now" aria-label="Now">
       <div className="now-head">
         <span className="now-dot" aria-hidden="true" />
-        <b>{fold ? `Now · step ${Math.max(fold.kind === 'hunt' ? fold.iteration : fold.iterations, move?.iteration ?? 0)}` : 'Now'}</b>
+        <b>{fold ? `Now · step ${Math.max(fold.kind === 'hunt' ? fold.iteration : fold.kind === 'lead' ? fold.iterations : 0, move?.iteration ?? 0)}` : 'Now'}</b>
         {meta && <span className="now-meta">{meta}</span>}
       </div>
       <p className="clamp2" title={phase === 'ready' ? fold?.doing : undefined}>
@@ -895,6 +1024,7 @@ export function CasePage({
     setFocusEvidence(null)
     setNote('')
     setChip('all')
+    setEvidenceLimits({})
   }, [id])
 
   // leaving the Record tab (or the case) drops its status and ignores a call still in flight
@@ -921,31 +1051,44 @@ export function CasePage({
   const closed = combinedState === 'closed' || (phase === 'ready' && !combinedState && c?.status === 'closed')
   const pill = combinedState || (phase === 'loading' ? '…' : c?.status || '—')
 
-  // The newest run, re-read on Watch a run's interval while it is in flight.
-  const [evidenceLimit, setEvidenceLimit] = useState<number | undefined>(undefined)
-  useEffect(() => setEvidenceLimit(undefined), [runId])
-  const run = useRunDetail(runId ?? '', runId !== null, undefined, evidenceLimit)
-  const { load: loadRun, setDphase: setRunPhase } = run
-  useEffect(() => {
-    if (!runId) return
-    setRunPhase('loading')
-    void loadRun()
-  }, [runId, loadRun, setRunPhase])
-  const detail = runId && run.detail?.run_id === runId ? run.detail : null
-  const fold = useMemo(() => readFold(detail), [detail])
-  // The run id is unknown until the case read returns, so the run is still loading, not absent.
-  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
-
-  // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
-  const seen = useRef<{ runId: string; status: string } | null>(null)
-  useEffect(() => {
-    const prev = seen.current
-    seen.current = detail && runId ? { runId, status: detail.status } : null
-    if (!prev || !detail || prev.runId !== runId || !IN_FLIGHT.includes(prev.status)) return
+  // Every run on the case, the primary first, then the rest newest first. Each is read by its own
+  // RunReader, re-read on Watch a run's interval while it is in flight, and pages its evidence alone.
+  const caseRuns = useMemo(() => {
+    const rest = investigations
+      .filter((item, i) => item.run_id && investigations.findIndex((one) => one.run_id === item.run_id) === i && item.run_id !== latest?.run_id)
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    return latest ? [latest, ...rest] : rest
+  }, [investigations, latest])
+  const [evidenceLimits, setEvidenceLimits] = useState<Record<string, number>>({})
+  const [reads, setReads] = useState<Record<string, { fold: RunFold | null; phase: Phase }>>({})
+  const onRead = useCallback((key: string, read: { fold: RunFold | null; phase: Phase } | null) => {
+    setReads((held) => {
+      if (read === null) {
+        if (!(key in held)) return held
+        const { [key]: _gone, ...rest } = held // eslint-disable-line @typescript-eslint/no-unused-vars
+        return rest
+      }
+      return held[key]?.fold === read.fold && held[key]?.phase === read.phase ? held : { ...held, [key]: read }
+    })
+  }, [])
+  const loaders = useRef(new Map<string, () => void>())
+  const onLoader = useCallback((key: string, load: (() => void) | null) => {
+    if (load) loaders.current.set(key, load)
+    else loaders.current.delete(key)
+  }, [])
+  // Each re-read of any run that was in flight re-reads the case and the record too, the last one when it ends.
+  const onRefreshRef = useRef(onRefresh)
+  onRefreshRef.current = onRefresh
+  const onReread = useCallback(() => {
     quietRecord.current = true
     setRecordKey((k) => k + 1)
-    onRefresh?.()
-  }, [detail]) // eslint-disable-line react-hooks/exhaustive-deps
+    onRefreshRef.current?.()
+  }, [])
+  const runs: CaseRun[] = caseRuns.map((ref) => ({ ref, fold: reads[ref.run_id]?.fold ?? null, phase: reads[ref.run_id]?.phase ?? 'loading' }))
+  const fold = runId ? reads[runId]?.fold ?? null : null
+  // The run id is unknown until the case read returns, so the run is still loading, not absent.
+  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId ? 'ready' : reads[runId]?.phase ?? 'loading'
+  const single = { fold, phase: foldPhase }
 
   // A case refresh that moves another run on the case (a hunt's root-cause follow-up) re-reads the record in place.
   const otherRuns = investigations.filter((item) => !item.primary).map((item) => `${item.run_id}:${item.status}`).join(' ')
@@ -973,8 +1116,8 @@ export function CasePage({
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
-    void loadRun() // a failed read keeps what is shown
-  }, [loadRun])
+    if (runId) loaders.current.get(runId)?.()
+  }, [runId])
 
   useEffect(() => {
     let cancelled = false
@@ -1036,9 +1179,7 @@ export function CasePage({
     }
   }, [id, recordKey])
 
-  const tabCounts = counts(fold, rows.length)
-  const gaps = visibilityGaps(fold)
-  const recalled = recallEntityCalls(fold)
+  const tabCounts = runs.length > 1 ? caseCounts(fold, runs.map((one) => one.fold), rows.length) : counts(fold, rows.length)
   const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind, row.source) === chip)
   const chipCounts = useMemo(() => {
     const counts: Record<RecordChip, number> = { agent: 0, human: 0, memory: 0, system: 0 }
@@ -1202,7 +1343,7 @@ export function CasePage({
   // Each read of the run asks the queue again until it serves the run's question.
   useEffect(() => {
     if (awaitingQueue) void loadNeeds()
-  }, [awaitingQueue, detail, loadNeeds])
+  }, [awaitingQueue, fold, loadNeeds])
   // A run that moves on (resumes, parks, ends) changes what waits on a person.
   const runMood = `${fold?.run.status}|${fold?.run.huntStatus}|${runCheckpoint?.checkpoint_id ?? ''}`
   const lastMood = useRef(runMood)
@@ -1250,7 +1391,7 @@ export function CasePage({
   }, [onExpand, onBack])
 
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
-  const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
+  const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsShown > 0).tone
   const running = !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
@@ -1270,6 +1411,9 @@ export function CasePage({
 
   return (
     <div className="detail-pane case-page">
+      {caseRuns.map((ref) => (
+        <RunReader key={ref.run_id} runId={ref.run_id} evidenceLimit={evidenceLimits[ref.run_id]} onRead={onRead} onLoader={onLoader} onReread={onReread} />
+      ))}
       <div className="detail-head">
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
@@ -1357,6 +1501,7 @@ export function CasePage({
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
                 {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, text })} />}
+                <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} onFollow={() => onExpand && onBack()} />
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
@@ -1374,94 +1519,45 @@ export function CasePage({
           )}
 
           {tab === 'Explanations' && (
-            foldPhase === 'loading' ? (
-              <p className="muted">Loading the run…</p>
-            ) : foldPhase === 'error' ? (
-              <p>The run could not be read.</p>
-            ) : foldRecord(fold) ? (
-              <section className="case-expl-card">
-                <div className="case-expl-head">
-                  <div>
-                    <span className="case-expl-title">Every explanation this case has held</span>
-                    <div className="case-expl-sub">Status, the rows for and against, who added it, and why it moved.</div>
-                  </div>
-                  <div className="case-expl-actions">
-                    <button type="button" disabled title={LATER_RELEASE}>+ Add an explanation</button>
-                    <button type="button" disabled title={LATER_RELEASE}>Rule one out</button>
-                  </div>
-                </div>
-                {hypotheses.length === 0 ? (
-                  <EmptyState compact icon="search" title="No explanations yet" />
-                ) : (
-                  <ul className="case-expl-rows">
-                    {hypotheses.map((row) => (
-                      <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} cites={citeById} onCite={openCite} />
-                    ))}
-                  </ul>
-                )}
-              </section>
-            ) : (
-              <p>
-                {honestLine()}
-                <InfoTip label="About explanations" text="Hunt, root cause, and adjudicate test explanations. This run does not." align="start" />
-              </p>
-            )
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase, run) => (
+                <Explanations
+                  fold={one}
+                  phase={onePhase}
+                  rootCauseRunId={rootCauseRunId}
+                  cites={run && run.ref !== latest ? NO_CITES : citeById}
+                  onCite={openCite}
+                />
+              )}
+            </PerRun>
           )}
 
-          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} onShowOlder={(shown) => setEvidenceLimit(shown + EVIDENCE_PAGE)} />}
+          {tab === 'Evidence' && (
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase, run) => {
+                const key = run?.ref.run_id ?? runId
+                return (
+                  <EvidenceTrail
+                    fold={one}
+                    phase={onePhase}
+                    focusId={!run || run.ref === latest ? focusEvidence : null}
+                    onShowOlder={key ? (shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE })) : undefined}
+                  />
+                )
+              }}
+            </PerRun>
+          )}
 
           {tab === 'Checked' && (
-            foldPhase === 'loading' ? (
-              <EmptyState loading compact icon="search" title="Loading the run…" />
-            ) : foldPhase === 'error' ? (
-              <EmptyState error compact icon="search" title="The run could not be read." />
-            ) : !fold || (fold.calls.length === 0 && gaps.length === 0) ? (
-              <EmptyState compact icon="search" title="No questions asked yet" />
-            ) : (
-              <section className="case-card case-checked">
-                <h3>
-                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
-                  <InfoTip
-                    label="About the cost"
-                    source="The run's total spend."
-                    calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
-                  />
-                  {gaps.length > 0 && ` · ${gaps.length} with no source`}
-                </h3>
-                <ul className="case-stack">
-                  {fold.calls.map((call, i) => (
-                    <li key={`${call.tool}-${i}`}>
-                      <span className="clamp2" title={call.question}>{call.question || '—'}</span>
-                      <span className="src">{call.tool || '—'}</span>
-                      <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
-                      <Figure text={callCost(call.cost_usd)} />
-                      <Figure text={latency(call.duration_ms)} />
-                    </li>
-                  ))}
-                  {gaps.map((gap) => (
-                    <li key={gap.id} className="gap">
-                      <span className="clamp2" title={gap.text}>{gap.text}</span>
-                      <span className="src">No source</span>
-                      <span className="num">—</span>
-                      <span className="num">—</span>
-                      <span className="num">—</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase) => <Checked fold={one} phase={onePhase} />}
+            </PerRun>
           )}
 
           {tab === 'Memory and blind spots' && (
-            foldPhase === 'loading' ? (
-              <EmptyState loading compact icon="brain" title="Loading the run…" />
-            ) : foldPhase === 'error' ? (
-              <EmptyState error compact icon="alert" title="The run could not be read" />
-            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0 ? (
-              <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
-            ) : (
-              <MemoryCards fold={fold} recalled={recalled} gaps={gaps} />
-            )
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase) => <Memory fold={one} phase={onePhase} />}
+            </PerRun>
           )}
 
           {tab === 'Record' && (
@@ -1577,6 +1673,109 @@ export function CasePage({
       />
     </div>
   )
+}
+
+const NO_CITES: ReadonlyMap<string, Citation> = new Map()
+
+/** One run's explanations; the honest line for a run that keeps no record. */
+function Explanations({ fold, phase, rootCauseRunId, cites, onCite }: {
+  fold: RunFold | null
+  phase: Phase
+  rootCauseRunId: string | null
+  cites: ReadonlyMap<string, Citation>
+  onCite: (cite: Citation) => void
+}) {
+  if (phase === 'loading') return <p className="muted">Loading the run…</p>
+  if (phase === 'error') return <p>The run could not be read.</p>
+  const record = foldRecord(fold)
+  if (!record) {
+    return (
+      <p>
+        {honestLine()}
+        <InfoTip
+          label="About explanations"
+          text={fold?.kind === 'head' ? 'A root-cause run traces a chain of steps, shown on Watch a run.' : 'Hunt, root cause, and adjudicate test explanations. This run does not.'}
+          align="start"
+        />
+      </p>
+    )
+  }
+  return (
+    <section className="case-expl-card">
+      <div className="case-expl-head">
+        <div>
+          <span className="case-expl-title">Every explanation this case has held</span>
+          <div className="case-expl-sub">Status, the rows for and against, who added it, and why it moved.</div>
+        </div>
+        <div className="case-expl-actions">
+          <button type="button" disabled title={LATER_RELEASE}>+ Add an explanation</button>
+          <button type="button" disabled title={LATER_RELEASE}>Rule one out</button>
+        </div>
+      </div>
+      {record.hypotheses.length === 0 ? (
+        <EmptyState compact icon="search" title="No explanations yet" />
+      ) : (
+        <ul className="case-expl-rows">
+          {record.hypotheses.map((row) => (
+            <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} cites={cites} onCite={onCite} />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+/** What one run asked, at what cost, and where it had no source. */
+function Checked({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+  const gaps = visibilityGaps(fold)
+  if (phase === 'loading') return <EmptyState loading compact icon="search" title="Loading the run…" />
+  if (phase === 'error') return <EmptyState error compact icon="search" title="The run could not be read." />
+  if (!fold || (fold.calls.length === 0 && gaps.length === 0)) return <EmptyState compact icon="search" title="No questions asked yet" />
+  return (
+    <section className="case-card case-checked">
+      <h3>
+        What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
+        <InfoTip
+          label="About the cost"
+          source="The run's total spend."
+          calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
+        />
+        {gaps.length > 0 && ` · ${gaps.length} with no source`}
+      </h3>
+      <ul className="case-stack">
+        {fold.calls.map((call, i) => (
+          <li key={`${call.tool}-${i}`}>
+            <span className="clamp2" title={call.question}>{call.question || '—'}</span>
+            <span className="src">{call.tool || '—'}</span>
+            <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
+            <Figure text={callCost(call.cost_usd)} />
+            <Figure text={latency(call.duration_ms)} />
+          </li>
+        ))}
+        {gaps.map((gap) => (
+          <li key={gap.id} className="gap">
+            <span className="clamp2" title={gap.text}>{gap.text}</span>
+            <span className="src">No source</span>
+            <span className="num">—</span>
+            <span className="num">—</span>
+            <span className="num">—</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** One run's recall and blind spots. */
+function Memory({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+  const gaps = visibilityGaps(fold)
+  const recalled = recallEntityCalls(fold)
+  if (phase === 'loading') return <EmptyState loading compact icon="brain" title="Loading the run…" />
+  if (phase === 'error') return <EmptyState error compact icon="alert" title="The run could not be read" />
+  if (!fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0) {
+    return <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
+  }
+  return <MemoryCards fold={fold} recalled={recalled} gaps={gaps} />
 }
 
 const KIND_LABEL: Record<string, string> = { hunt: 'Hunt', case: 'Case', analyst: 'Analyst' }

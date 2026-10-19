@@ -32,6 +32,8 @@ import {
   secretText,
   secretEnvRef,
   COMMON_PROVIDERS,
+  BASE_URL_PROVIDERS,
+  type BifrostProvider,
   type KeyVerdict,
   type BifrostKey,
   type BifrostKeyWrite,
@@ -79,6 +81,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     saveKey,
     removeKey,
     addProvider,
+    setBaseUrl,
     removeProvider,
   } = useBifrostProviders()
   const [editing, setEditing] = useState<{ provider: string; key: BifrostKey | null } | null>(null)
@@ -94,6 +97,8 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     onAddProviderOpened?.()
   }, [addProviderRequested, onAddProviderOpened])
   const [newProvider, setNewProvider] = useState('')
+  const [newBaseUrl, setNewBaseUrl] = useState('')
+  const [editingProvider, setEditingProvider] = useState<BifrostProvider | null>(null)
   const [confirmDel, setConfirmDel] = useState<
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
@@ -104,27 +109,41 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     else if (providers.length > 1) setPickProvider(providers[0].name)
   }
 
+  const closeAddProvider = () => {
+    setAddingProvider(false)
+    setNewProvider('')
+    setNewBaseUrl('')
+  }
+
   const handleAddProvider = async () => {
     const name = newProvider.trim().toLowerCase()
     if (!name) return
-    // Bifrost may already hold it, seeded but not set up: go straight to its key
-    if (providers.some((p) => p.name === name)) {
-      setAddingProvider(false)
-      setNewProvider('')
-      setEditing({ provider: name, key: null })
-      return
-    }
+    const baseUrl = BASE_URL_PROVIDERS.includes(name) ? newBaseUrl.trim() : ''
+    const held = providers.some((p) => p.name === name)
     setBusy(true)
     try {
-      await addProvider(name)
-      notify('ok', `Provider ${name} added. Add a key to make it routable.`)
-      setAddingProvider(false)
-      setNewProvider('')
+      // Bifrost may already hold it, seeded but not set up: no create, then
+      // straight to its key
+      if (!held) await addProvider(name)
     } catch (e) {
       notify('err', bifrostError(e, 'Bifrost rejected that provider name.'))
-    } finally {
       setBusy(false)
+      return
     }
+    // The URL is a second write, so the provider can exist without it.
+    let urlError: string | null = null
+    if (baseUrl) {
+      try {
+        await setBaseUrl(name, baseUrl)
+      } catch (e) {
+        urlError = bifrostError(e, 'Bifrost rejected that base URL.')
+      }
+    }
+    setBusy(false)
+    closeAddProvider()
+    if (urlError) notify('err', `Provider ${name} added, but its base URL was not saved: ${urlError}`)
+    else if (!held) notify('ok', `Provider ${name} added. Add a key to make it routable.`)
+    if (held) setEditing({ provider: name, key: null })
   }
 
   const handleDelete = async () => {
@@ -207,12 +226,16 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                       <td>
                         <div className="flex flex-col">
                           <span className="font-medium">{p.name}</span>
-                          <span className="text-xs text-tx-3">{p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}</span>
+                          <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
+                            {p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}
+                            <BaseUrlTag provider={p} />
+                          </span>
                         </div>
                       </td>
                       <td colSpan={4} className="text-sm text-tx-3">No key — this provider cannot route</td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="inline-flex gap-1.5">
+                          <EditProviderButton provider={p} onEdit={setEditingProvider} />
                           <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
                             <Icon name="plus" size={14} /> Add key
                           </button>
@@ -233,8 +256,9 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     <td>
                       <div className="flex flex-col">
                         <span className="font-medium">{k.name}</span>
-                        <span className="text-xs text-tx-3">
+                        <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
                           {p.name}{k.enabled === false ? ' · Disabled' : ''}
+                          <BaseUrlTag provider={p} />
                         </span>
                       </div>
                     </td>
@@ -254,6 +278,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="inline-flex gap-1.5">
+                        <EditProviderButton provider={p} onEdit={setEditingProvider} />
                         <button
                           className="btn ghost"
                           title="Edit"
@@ -278,7 +303,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         </div>
       )}
 
-      <Popup open={addingProvider} onClose={() => setAddingProvider(false)} title="Add provider" width={440}>
+      <Popup open={addingProvider} onClose={closeAddProvider} title="Add provider" width={440}>
         <Field
           label="Provider name"
           hint="Bifrost's own identifier for the upstream. It validates the name and reports back if it doesn't know it."
@@ -296,8 +321,13 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
             ))}
           </datalist>
         </Field>
+        {BASE_URL_PROVIDERS.includes(newProvider.trim().toLowerCase()) && (
+          <div className="mt-3.5">
+            <BaseUrlField value={newBaseUrl} onChange={setNewBaseUrl} />
+          </div>
+        )}
         <div className="flex justify-end gap-2.5 mt-5">
-          <button className="btn ghost" onClick={() => setAddingProvider(false)}>Cancel</button>
+          <button className="btn ghost" onClick={closeAddProvider}>Cancel</button>
           <button className="btn primary" disabled={!newProvider.trim() || busy} onClick={handleAddProvider}>
             <Icon name="check2" /> {busy ? 'Adding…' : 'Add'}
           </button>
@@ -322,6 +352,18 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           </button>
         </div>
       </Popup>
+
+      {editingProvider && (
+        <ProviderDialog
+          provider={editingProvider}
+          onClose={() => setEditingProvider(null)}
+          onSave={async (url) => {
+            await setBaseUrl(editingProvider.name, url)
+            setEditingProvider(null)
+            notify('ok', url ? `Base URL for ${editingProvider.name} saved.` : `${editingProvider.name} is back on its default host.`)
+          }}
+        />
+      )}
 
       {editing && (
         <KeyDialog
@@ -360,6 +402,97 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         onClose={() => setConfirmDel(null)}
       />
     </SettingsCard>
+  )
+}
+
+/* ---------------- Provider base URL ---------------- */
+function BaseUrlTag({ provider }: { provider: BifrostProvider }) {
+  const url = provider.network_config?.base_url
+  return url ? <span className="font-mono" title={url}> · {url}</span> : null
+}
+
+function EditProviderButton({
+  provider,
+  onEdit,
+}: {
+  provider: BifrostProvider
+  onEdit: (p: BifrostProvider) => void
+}) {
+  if (!BASE_URL_PROVIDERS.includes(provider.name)) return null
+  return (
+    <button className="btn ghost icon" title="Edit provider" onClick={() => onEdit(provider)}>
+      <Icon name="gear" size={15} />
+    </button>
+  )
+}
+
+function BaseUrlField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // The gateway resolves this, and the shipped compose runs it in a container.
+  const loopback = urlIsLoopback(value)
+  return (
+    <Field
+      label="Base URL (optional)"
+      hint="A self-hosted OpenAI-compatible server, a LAN gateway or a regional endpoint. Leave blank for the provider's own host. Resolved by the gateway, not by your browser."
+    >
+      <TextInput
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="https://llm.internal.example:8000/v1"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {loopback && (
+        <p className="text-xs mt-1.5" style={{ color: 'var(--high)' }}>
+          The gateway runs in a container, so loopback is the container itself, not this
+          machine. A server on the host is <code>http://host.docker.internal:&lt;port&gt;</code>.
+        </p>
+      )}
+    </Field>
+  )
+}
+
+/* ---------------- Provider editor ---------------- */
+function ProviderDialog({
+  provider,
+  onClose,
+  onSave,
+}: {
+  provider: BifrostProvider
+  onClose: () => void
+  onSave: (baseUrl: string) => Promise<void>
+}) {
+  const stored = provider.network_config?.base_url || ''
+  const [url, setUrl] = useState(stored)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const submit = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      await onSave(url.trim())
+    } catch (e) {
+      setErr(bifrostError(e, 'Save failed.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Popup open onClose={onClose} title={`Edit provider · ${provider.name}`} width={440}>
+      {err && <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> {err}</div>}
+      <BaseUrlField value={url} onChange={setUrl} />
+      <p className="text-xs text-tx-3 mt-2">
+        Shown without a trailing <code>/v1</code>: the gateway adds that itself. Saving a host lets the
+        gateway reach private and LAN addresses for this provider.
+      </p>
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button className="btn primary" disabled={saving || url.trim() === stored} onClick={submit}>
+          <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </Popup>
   )
 }
 

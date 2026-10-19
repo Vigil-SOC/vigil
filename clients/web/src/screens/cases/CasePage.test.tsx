@@ -335,7 +335,9 @@ describe('case page', () => {
     renderCase('case-handoff')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim h')).toBeInTheDocument()
-    expect(workflowApi.getRun).not.toHaveBeenCalledWith('run-rca')
+    // the hunt is the case's run and comes first; the root-cause run is read for its own heading
+    const headings = await screen.findAllByRole('heading', { level: 4 })
+    expect(headings.map((h) => h.textContent)).toEqual([expect.stringMatching(/^threat-hunt · started/), expect.stringMatching(/^root-cause-analysis · started/)])
     expect(screen.getByRole('link', { name: 'Open run run-rca' })).toHaveAttribute('href', '/workflows?run=run-rca')
     expect(screen.getAllByText('Handed off').length).toBeGreaterThan(0)
     expect(screen.queryByText(/handed_off/)).not.toBeInTheDocument()
@@ -627,7 +629,7 @@ describe('case page', () => {
     renderCase('case-inv')
 
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Now · step 2')).toBeInTheDocument()
+    expect(await within(now).findByText('Now · step 2')).toBeInTheDocument()
     expect(within(now).getByText('Examine')).toBeInTheDocument()
     expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
@@ -759,7 +761,7 @@ describe('case page', () => {
     renderCase('case-run-only')
 
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('The run has started and has not reported yet.')).toBeInTheDocument()
+    expect(await within(now).findByText('The run has started and has not reported yet.')).toBeInTheDocument()
     expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
     expect(workflowApi.getRun).toHaveBeenCalledWith('run-only')
     expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
@@ -1004,7 +1006,7 @@ describe('case page', () => {
     expect(await screen.findByRole('heading', { name: '—' })).toBeInTheDocument()
     expect(screen.getAllByText(/^Closed by ada/)).toHaveLength(2)
     expect(document.body.textContent).not.toMatch(/Invalid Date/)
-    expect(screen.getByText('No findings yet.')).toBeInTheDocument()
+    expect(await screen.findByText('No findings yet.')).toBeInTheDocument()
   })
 
   it('says so while the run loads', async () => {
@@ -2271,6 +2273,86 @@ describe('Memory and blind spots tab', () => {
   })
 })
 
+describe('a case with several runs', () => {
+  const ref = (workflow_id: string, run_id: string, created_at: string, primary = false) => ({
+    ...investigation('completed', false, run_id), workflow_id, created_at, primary,
+  })
+  const ROOT_CAUSE = { run_id: 'run-rca', run_kind: 'root_cause', status: 'terminal', outcome: 'concluded', reason: '', cost_usd: 0.4, max_cost_usd: 2, steps: [{ step_id: 's1' }], open_checkpoint: null }
+  const threeRuns = (id: string) => {
+    testState.cases = [{
+      ...openCase(id),
+      combined_state: 'executing',
+      investigations: [
+        ref('incident-response', 'run-inv', '2026-06-15T10:00:00Z'),
+        ref('root-cause-analysis', 'run-rca', '2026-06-15T11:00:00Z'),
+        { ...ref('threat-hunt', 'run-hunt', '2026-06-15T09:00:00Z', true), status: 'executing', live: true },
+      ],
+    }]
+    testState.runs['run-hunt'] = { status: 'running', hunt: { ...HUNT, status: 'running' } }
+    testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }], cost_usd: 0.1 } }
+    testState.runs['run-rca'] = { status: 'completed', projection: ROOT_CAUSE }
+  }
+  const titles = () => screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)
+  const ORDER = [/^threat-hunt · started 09:00$/, /^root-cause-analysis · started 11:00$/, /^Incident response · started 10:00$/]
+
+  it('lists each run under its own heading, the primary run first, and the honest line only under runs with no record', async () => {
+    threeRuns('case-three')
+    renderCase('case-three')
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
+    const others = screen.getByRole('region', { name: 'Other runs on this case' })
+    await waitFor(() => expect(others).toHaveTextContent('Concluded'))
+    expect(others).toHaveTextContent('$0.40 of $2.00')
+    expect(within(others).getAllByRole('listitem')).toHaveLength(2)
+
+    // the door counts what the tabs list across every run
+    expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveTextContent('2')
+
+    fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
+    await waitFor(() => expect(titles()).toEqual(ORDER.map((re) => expect.stringMatching(re))))
+    const sections = ORDER.map((_, i) => screen.getAllByRole('heading', { level: 4 })[i].closest('section') as HTMLElement)
+    expect(within(sections[0]).getByText('The host is owned')).toBeInTheDocument()
+    expect(within(sections[0]).queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+    expect(within(sections[1]).getByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+    expect(within(sections[2]).getByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    await waitFor(() => expect(titles()).toEqual(ORDER.map((re) => expect.stringMatching(re))))
+    expect(screen.getByText('no login')).toBeInTheDocument()
+    expect(screen.getByText('benign login')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
+    await waitFor(() => expect(titles()).toHaveLength(3))
+    expect(screen.getByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
+  })
+
+  it('says under its own heading when one run cannot be read, and still shows the others', async () => {
+    threeRuns('case-broken')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
+      runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
+    )
+    renderCase('case-broken')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    await waitFor(() => expect(titles()).toHaveLength(3))
+    const broken = screen.getByRole('region', { name: /^Incident response · started/ })
+    await waitFor(() => expect(broken).toHaveTextContent('The run could not be read.'))
+    expect(screen.getByRole('region', { name: /^threat-hunt · started/ })).toHaveTextContent('The host is owned')
+    expect(screen.getByRole('region', { name: /^root-cause-analysis · started/ })).toHaveTextContent('This workflow does not test explanations yet.')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
+  it('shows no run heading and no other runs on a case with one run', async () => {
+    testState.cases = [{ ...openCase('case-one'), investigations: [investigation('executing', true, 'run-one')] }]
+    testState.runs['run-one'] = { status: 'running', hunt: { ...HUNT, status: 'running' } }
+    renderCase('case-one')
+    expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Other runs on this case' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('The host is owned')).toBeInTheDocument()
+    expect(screen.queryAllByRole('heading', { level: 4 })).toHaveLength(0)
+  })
+})
+
 describe('following a live run', () => {
   const live = (over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'running' }, ...over })
   const open = (id: string, run: unknown, state = 'executing') => {
@@ -2444,7 +2526,7 @@ describe('watching a run, its cost and its agents', () => {
       ] }),
     })
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Rule out an explanation')).toBeInTheDocument()
+    expect(await within(now).findByText('Rule out an explanation')).toBeInTheDocument()
     expect(document.querySelector('.case-reason')).toHaveTextContent(/^Step \d+ · /)
     const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')
     expect(rows[1]).toHaveTextContent('who logged in')
@@ -2608,7 +2690,7 @@ describe('a kernel hunt on its case', () => {
       moves: [{ decision_id: 'r9', query_intent: 'Searched alerts for HTTPS beaconing', action: 'QUERY', worker_agent_id: 'Hunt lead', iteration: 3, created_at: '2026-06-15T09:14:00Z' }],
     }))
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing')
+    await waitFor(() => expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing'))
     expect(now).not.toHaveTextContent('{')
     const agents = screen.getByRole('table', { name: 'Agents' })
     expect(agents).toHaveTextContent('Hunt lead')
