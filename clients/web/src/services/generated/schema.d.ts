@@ -9480,7 +9480,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder";
             /** Provider */
             provider: string;
             /** Routable */

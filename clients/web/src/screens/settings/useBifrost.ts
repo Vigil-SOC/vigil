@@ -4,39 +4,27 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   bifrostApi,
-  secretText,
   type BifrostKey,
   type BifrostKeyWrite,
   type BifrostModel,
   type BifrostModelParameters,
   type BifrostProvider,
   type BifrostRoutability,
-  type BifrostSecret,
   type BifrostVirtualKey,
   type BifrostVirtualKeyWrite,
 } from '../../services/bifrostApi'
 
 type Phase = 'loading' | 'ready' | 'error'
 
-const readsEnv = (v: BifrostSecret | string | undefined): boolean =>
-  typeof v === 'object' &&
-  !!v &&
-  (v.type === 'env' || v.type === 'vault' || !!v.from_env || /^(env|vault)\./.test(v.ref || ''))
-
-/** A key the gateway's seed config made from an environment variable
-    (`default-anthropic-key` reads `env.ANTHROPIC_API_KEY`) that cannot route:
-    the variable is unset, or what it points at does not answer. The console
-    treats such a key as not set up. An env-backed key that does route (an
-    operator who set the variable) is a real key.
-
-    With no routability verdict to go on, only an unresolved reference counts. */
+/** A key the gateway's seed config made from an environment variable that is
+    still unset (`default-anthropic-key` reads `env.ANTHROPIC_API_KEY`). The
+    console treats such a key as not set up. The verdict is the backend's
+    (`key_health` in core/llm/bifrost/mirror.py, the one implementation of the
+    rule); an env-backed key whose variable is set, routing or not, is a real key.
+    With no verdict to go on, nothing is a seed. */
 export function isUnsetSeed(key: BifrostKey, verdicts: BifrostRoutability | null): boolean {
-  const creds = [key.value, key.vertex_key_config?.auth_credentials, key.ollama_key_config?.url]
-  if (!creds.some(readsEnv)) return false
-  if (verdicts) return !verdicts.keys?.[key.id]?.routable
-  return creds.some((c) => readsEnv(c) && !secretText(c))
+  return verdicts?.keys?.[key.id]?.health === 'placeholder'
 }
-
 
 const errText = (e: unknown, fallback: string): string => {
   const r = e as { response?: { data?: { detail?: string; error?: { message?: string } } } }

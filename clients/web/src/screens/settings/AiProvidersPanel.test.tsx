@@ -217,12 +217,12 @@ describe('the keys table', () => {
     expect(await screen.findByText('No providers configured')).toBeInTheDocument()
   })
 
-  it('leaves out a provider that only holds a seeded key with an empty env var', async () => {
+  it('leaves out a provider whose only key the backend calls a placeholder', async () => {
     listProviders.mockResolvedValue({ data: { providers: [{ name: 'openai' }] } })
     listKeys.mockResolvedValue({
       data: { keys: [{ id: 's1', name: 'default-openai-key', models: ['*'], weight: 1, value: { value: '', ref: 'env.OPENAI_API_KEY', type: 'env' } }], total: 1 },
     })
-    routability.mockResolvedValue({ data: { providers: { openai: false }, keys: { s1: { provider: 'openai', routable: false, health: 'unverified' } } } })
+    routability.mockResolvedValue({ data: { providers: { openai: false }, keys: { s1: { provider: 'openai', routable: false, health: 'placeholder' } } } })
     render(<AiProvidersPanel notify={() => {}} />)
     expect(await screen.findByText('No providers configured')).toBeInTheDocument()
     expect(screen.queryByText('default-openai-key')).not.toBeInTheDocument()

@@ -14,7 +14,7 @@
 import api from './api'
 import type { Schema } from './apiTypes'
 
-export interface BifrostSecret {
+interface BifrostSecret {
   value: string
   /** Bifrost < 1.6 */
   env_var?: string
