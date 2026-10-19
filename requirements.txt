@@ -102,7 +102,7 @@ stix2>=3.0.2
 reportlab>=5.0.1
 
 # Monitoring & Observability
-sentry-sdk>=2.69.2
+sentry-sdk>=2.71.0
 prometheus-client>=0.19.0
 
 # OpenTelemetry
