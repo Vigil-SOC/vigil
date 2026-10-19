@@ -2,14 +2,18 @@ import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { archFor } from "./arch/registry.js";
+import { archFor } from "./plugins/kinds.js";
+import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
+import { loadPlugin } from "./plugins/index.js";
+import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
-import { healthPort, healthServer } from "./core/health.js";
+import { bindHost, healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
+import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
@@ -26,16 +30,15 @@ import type { State } from "./core/seams.js";
 import { httpPlaybooks, isReference, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
 import { LedgerRepository } from "./ledger/repository.js";
-import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./workflows/compose/mirror.js";
-import { runCompose } from "./workflows/compose/workflow.js";
-import type { ComposeKinds } from "./workflows/compose/vocabulary.js";
-import { runLead, type LeadKinds } from "./workflows/lead/workflow.js";
-import { runHunt } from "./workflows/hunt/workflow.js";
-import { runRootCause } from "./workflows/rootcause/workflow.js";
-import type { RootCauseKinds } from "./workflows/rootcause/proof.js";
-import type { HuntKinds } from "./workflows/hunt/ledger.js";
-import type { DirectiveQueue } from "./workflows/hunt/ports.js";
-import { InProcessDirectiveQueue } from "./workflows/hunt/directives.js";
+import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
+import { runCompose } from "./plugins/compose/workflow.js";
+import type { ComposeKinds } from "./plugins/compose/vocabulary.js";
+import { runHunt } from "./plugins/hunt/workflow.js";
+import { runRootCause } from "./plugins/rootcause/workflow.js";
+import type { RootCauseKinds } from "./plugins/rootcause/proof.js";
+import type { HuntKinds } from "./plugins/hunt/ledger.js";
+import type { DirectiveQueue } from "./plugins/hunt/ports.js";
+import { InProcessDirectiveQueue } from "./plugins/hunt/directives.js";
 import { DirectiveRepository } from "./ledger/directives.js";
 
 const log = logger("agent.worker");
@@ -200,6 +203,19 @@ async function drive(
     return null;
   }
   const entry = archFor(kind);
+  // A kind whose plugin the worker drives directly: investigate. The others run their
+  // plugin through the wrappers below, which carry what each one reports out.
+  if (entry.plugin !== undefined) {
+    const { manifest, hooks } = loadPlugin(entry.plugin);
+    const harness = build(kind, spec, as<AgentKinds>(state), undefined, seed);
+    // The plugin's grants, not the arch's: the kernel registers the deployment's
+    // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
+    const done = await runAgent(harness, {
+      run_id, run_kind: kind, spec, plugin: manifest, ...(hooks === undefined ? {} : { hooks }),
+      tools: toolsFrom(spec.tools), started_by, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
+    });
+    return done.status === "waiting_approval" ? done.reason : null;
+  }
   if (entry.workflow === "hunt") {
     const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
     // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
@@ -216,12 +232,17 @@ async function drive(
     await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
     return null;
   }
-  if (kind === "hunt" || kind === "investigate") {
-    const harness = build(kind, spec, as<LeadKinds>(state), undefined, seed);
-    await runLead(harness, { run_id, run_kind: kind, spec, actions: entry.actions, halts: entry.halts, started_by, answers: answersFor(), announce: announceFor(), signal });
-    return null;
-  }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
+}
+
+// An operator's stop, read off the same queue every workflow reads its directives from.
+function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
+  return async () => {
+    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
+    if (found === undefined) return null;
+    const { directive_id, actor, kind, text, created_at } = found;
+    return { directive_id, actor, kind, text, created_at };
+  };
 }
 
 // Resolves the spec on a start and reads it back off the ledger on a resume, so an
@@ -238,6 +259,8 @@ export async function advance(
   job: RunJob,
   build: HarnessFactory = harnessFor,
   directives: DirectiveQueue = new InProcessDirectiveQueue(),
+  // Whether the queue will try this job again if it throws. True without a queue.
+  final = true,
 ): Promise<void> {
   if ((await state.terminal(job.run_id)) !== null) {
     await leases.finish(job.run_id);
@@ -283,8 +306,7 @@ export async function advance(
     const parked = await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
-    await abandon(job, error);
-    await forget(state, leases, job, owner, error);
+    await forget(state, leases, job, owner, error, final || unrecoverable(error));
     throw error;
   } finally {
     clearInterval(renewing);
@@ -301,11 +323,20 @@ export async function advance(
 // retry that lands seconds later, and a refused claim returns quietly, so BullMQ
 // would retire the job as a success with the run stalled. release() is scoped to
 // this owner, so a worker already reclaimed displaces nobody.
-async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown): Promise<void> {
+//
+// A start that will not be tried again is still the console's run, though: its
+// workflow_runs row was created running, so it is told failed here, for every kind,
+// once. Not on an attempt that will be retried -- the row would flip to failed and
+// back. A resume that found no ledger was never started by this layer and says nothing.
+async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown, last: boolean): Promise<void> {
   if ((await state.latestSeq(job.run_id)) === null) {
+    if (job.reason === "start" && last) {
+      await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), summary: "" });
+    }
     await leases.finish(job.run_id);
     return;
   }
+  await abandon(job, error);
   if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
   await leases.release(job.run_id, owner, 0);
 }
@@ -390,6 +421,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         summary: terminal.summary ?? "",
         cost_usd: await spentOn(state, job.run_id),
         handoffs: terminal.handoffs ?? [],
+        ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
       });
     }
     told.delete(job.run_id);
@@ -413,11 +445,20 @@ export async function spentOn(state: State, runId: string): Promise<number> {
     .reduce((total, event) => total + ((event.payload as SpendPayload).cost_usd ?? 0), 0);
 }
 
-// A run that dies before it journals a terminal leaves its record open, and a
-// resolution failure dies before there is a ledger to journal one onto.
+// A compose run that dies after its ledger opened, before it journals a terminal,
+// leaves its record open. One that died before the ledger opened is forget()'s.
 async function abandon(job: RunJob, error: unknown): Promise<void> {
   if (job.run_kind !== "compose" || error instanceof GatewayExhausted) return;
-  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: error instanceof Error ? error.message : String(error), summary: "" });
+  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), summary: "" });
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// What no retry can change; see handle().
+function unrecoverable(error: unknown): error is SpecError | GatewayExhausted {
+  return error instanceof SpecError || error instanceof GatewayExhausted;
 }
 
 // A checkpoint nobody answered for max_park_ms. Saying so beats leaving the run
@@ -574,15 +615,32 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
 // Only here, not inside advance(): what a failure means to the queue is the queue's
 // business, and advance() is driven without one by the tests and by run-once.ts.
 // advance() still throws the original error; this is the only place that wraps it.
-export async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
-  try {
-    await advance(state, leases, job, build, directives);
-  } catch (error) {
-    if (error instanceof SpecError || error instanceof GatewayExhausted) {
-      throw Object.assign(new UnrecoverableError(error.message), { cause: error });
+export async function handle(
+  state: State,
+  leases: Leases,
+  job: RunJob,
+  directives: DirectiveQueue,
+  build: HarnessFactory = harnessFor,
+  final = true,
+): Promise<void> {
+  // One span per job rather than per run: a run parked on an approval resumes as a
+  // second job, hours later, and the run id is what ties the two together.
+  const attributes = {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": job.run_kind,
+    "vigil.run_id": job.run_id,
+    "vigil.job.reason": job.reason,
+  };
+  await traced(`invoke_agent ${job.run_kind}`, attributes, async () => {
+    try {
+      await advance(state, leases, job, build, directives, final);
+    } catch (error) {
+      if (unrecoverable(error)) {
+        throw Object.assign(new UnrecoverableError(error.message), { cause: error });
+      }
+      throw error;
     }
-    throw error;
-  }
+  }, { parent: { traceparent: job.traceparent } });
 }
 
 // One line per failed attempt: warn while BullMQ will retry, error once it will not.
@@ -639,7 +697,9 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // every other run waited it out. A run is almost entirely waiting on a model, so
   // the ceiling is the provider's rate limit rather than this process's CPU -- the
   // limiter already holds that line, and the lease keeps two workers off one run.
-  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(ledger, leases, job.data, directives, build), {
+  // attemptsMade counts the attempts already failed, so this one is the last when
+  // it is the only one left.
+  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(ledger, leases, job.data, directives, build, job.attemptsMade + 1 >= (job.opts.attempts ?? 1)), {
     connection,
     concurrency: runConcurrency(),
     lockDuration: LEASE_TTL_MS * 10,
@@ -698,15 +758,16 @@ function warnIfUnmirrored(): void {
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
+  initTracing("vigil-agent-worker");
   warnIfUnmirrored();
   const running = startWorker();
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count
   // have nothing to say to each other.
-  const probes = healthServer(workerReady(running.worker)).listen(healthPort());
+  const probes = healthServer(workerReady(running.worker)).listen(healthPort(), bindHost());
   const stop = () => {
     probes.close();
-    void running.close();
+    void running.close().finally(shutdownTracing);
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

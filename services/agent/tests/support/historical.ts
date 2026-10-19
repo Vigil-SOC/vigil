@@ -1,7 +1,7 @@
 import { gunzipSync } from "node:zlib";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HuntEvent } from "../../workflows/hunt/ledger.js";
+import type { HuntEvent } from "../../plugins/hunt/ledger.js";
 
 export const RUNS = join(import.meta.dirname, "..", "fixtures", "runs");
 

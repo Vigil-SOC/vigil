@@ -42,6 +42,13 @@ on_bridge() {
     && ! curl -sf --max-time 2 "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1
 }
 
+# Is BRIDGE an address of this machine? True on Linux, where it is docker0. If
+# `ip` is missing the check cannot be made, so it does not block.
+bridge_is_local() {
+  command -v ip >/dev/null 2>&1 || return 0
+  ip -o addr 2>/dev/null | grep -qF "inet ${BRIDGE}/"
+}
+
 install_ollama() {
   if command -v ollama >/dev/null 2>&1; then
     return 0
@@ -91,6 +98,16 @@ ensure_serving() {
   if on_bridge; then
     echo "Ollama already listening on ${BRIDGE}:11434" >&2
     return 0
+  fi
+  # Under WSL2 with Docker Desktop, host.docker.internal is Windows, not this
+  # distro, so no Ollama started here can listen on it. Stop before installing
+  # and pulling a model that Bifrost could never reach.
+  if is_wsl && ! bridge_is_local; then
+    echo "WSL2: Docker's host address ${BRIDGE} belongs to Windows, not this distro," >&2
+    echo "so an Ollama installed here cannot listen on it. Run Ollama for Windows" >&2
+    echo "(it must listen on an address Docker Desktop can reach), or use a hosted" >&2
+    echo "provider under Settings > AI models." >&2
+    exit 1
   fi
   install_ollama
   if systemd_up; then

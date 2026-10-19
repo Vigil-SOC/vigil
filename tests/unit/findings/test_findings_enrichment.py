@@ -54,8 +54,8 @@ class _RecordingDataService:
         self.success = success
         self.writes = []
 
-    def update_finding(self, finding_id, **updates):
-        self.writes.append((finding_id, updates))
+    def write_ai_enrichment(self, finding_id, ai_enrichment, *, daemon):
+        self.writes.append((finding_id, ai_enrichment, daemon))
         return self.success
 
 
@@ -346,7 +346,7 @@ async def test_enrich_persists_by_default(stub_provider):
 
     enrichment = await enrich(_finding(), data_service=data_service)
 
-    assert data_service.writes == [("f-20260803-001", {"ai_enrichment": enrichment})]
+    assert data_service.writes == [("f-20260803-001", enrichment, False)]
 
 
 async def test_enrich_skips_write_when_persist_is_false(stub_provider):
@@ -407,7 +407,7 @@ async def test_explicit_finding_id_is_the_write_target(stub_provider):
         data_service=data_service,
     )
 
-    written_id, _ = data_service.writes[0]
+    written_id, *_ = data_service.writes[0]
     assert written_id == "authoritative-id"
 
 
@@ -427,7 +427,7 @@ async def test_finding_id_falls_back_to_the_dict_when_not_passed(stub_provider):
 
     await enrich(_finding(finding_id="from-dict"), data_service=data_service)
 
-    written_id, _ = data_service.writes[0]
+    written_id, *_ = data_service.writes[0]
     assert written_id == "from-dict"
 
 
@@ -624,6 +624,26 @@ async def test_local_dispatch_prefixes_no_think_and_uses_the_tighter_cap(monkeyp
     assert calls[0]["max_tokens"] == enrichment_service.LOCAL_MAX_TOKENS
     assert calls[0]["system_prompt"] == enrichment_service.LOCAL_SYSTEM_PROMPT
     assert calls[0]["model"] == "qwen3:8b"
+
+
+@pytest.mark.parametrize("provider_type", ["gemini", "vertex", "openai"])
+async def test_cloud_dispatch_gets_the_cloud_cap(monkeypatch, provider_type):
+    """Thinking models count reasoning against max_tokens; 1400 truncates them."""
+    calls = _patch_local_dispatch(monkeypatch, results=[{"content": "OK"}])
+
+    assert await _dispatch_local(provider_type=provider_type) == "OK"
+    assert calls[0]["max_tokens"] == enrichment_service.CLOUD_MAX_TOKENS
+
+
+async def test_truncated_dispatch_logs_a_warning(monkeypatch, caplog):
+    calls = _patch_local_dispatch(
+        monkeypatch, results=[{"content": '{"threat', "finish_reason": "length"}]
+    )
+
+    with caplog.at_level("WARNING"):
+        assert await _dispatch_local(provider_type="gemini") == '{"threat'
+    assert len(calls) == 1
+    assert "f-1" in caplog.text and "qwen3:8b" in caplog.text
 
 
 async def test_local_dispatch_retries_after_a_successful_recovery(monkeypatch):

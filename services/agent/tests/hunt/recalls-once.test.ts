@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { InProcessState } from "../../core/state.js";
 import { recalledNotes, type RecallResult } from "../../contracts/memory.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import type { HuntKinds } from "../../workflows/hunt/journal.js";
-import { fold } from "../../workflows/hunt/ledger.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import type { HuntKinds } from "../../plugins/hunt/journal.js";
+import { fold } from "../../plugins/hunt/ledger.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";
 import { countingMemory, recalledFixture } from "../support/recalled.js";
 import { recallHarness, recallHuntSpec, SUBJECT, type Asked } from "../support/recall-hunt.js";

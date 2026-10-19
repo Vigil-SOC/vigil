@@ -7,6 +7,7 @@ echo "Vigil SOC - Development Setup"
 echo ""
 
 # Prerequisites
+wsl_preflight
 WARNINGS=0
 command -v docker &>/dev/null || { echo "Warning: Docker not installed."; WARNINGS=$((WARNINGS+1)); }
 if ! command -v node &>/dev/null; then

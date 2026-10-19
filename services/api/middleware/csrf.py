@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+COOKIE_MISSING_DETAIL = (
+    "Your browser did not keep Vigil's security cookie. Vigil's cookies are "
+    "Secure (VIGIL_COOKIE_SECURE=true), so open the console over HTTPS. "
+    "Set VIGIL_COOKIE_SECURE=false only for loopback or SSH-tunnel access."
+)
 
 # CSRF defends a browser session driven by a cookie. These are reached with a
 # credential in a header instead, by something that is not a browser -- webhooks,
@@ -157,10 +162,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     self.report_only,
                 )
                 if not self.report_only:
-                    return JSONResponse(
-                        {"detail": "CSRF token missing or invalid"},
-                        status_code=403,
+                    # A missing cookie usually means the browser dropped the
+                    # Secure cookie over plain HTTP; say so instead of "CSRF".
+                    detail = (
+                        "CSRF token missing or invalid"
+                        if cookie_token
+                        else COOKIE_MISSING_DETAIL
                     )
+                    return JSONResponse({"detail": detail}, status_code=403)
 
         response = await call_next(request)
 

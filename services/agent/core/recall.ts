@@ -2,6 +2,7 @@ import { emptyRecall, recallOf, RECALL_TOOL, type RecallResult } from "../contra
 import type { ToolResult } from "../contracts/tool.js";
 import { deadline } from "./remote.js";
 import type { Memory } from "./seams.js";
+import { traceHeaders } from "./tracing.js";
 
 // The keyed read, over the one endpoint that already answers it. The query stays
 // on the far side: a second implementation here would be the one that drifts while
@@ -65,7 +66,7 @@ export function httpRecall(base: Memory, options: RecallOptions): Memory {
         try {
           response = await call(options.url, {
             method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+            headers: { "content-type": "application/json", authorization: `Bearer ${options.token}`, ...traceHeaders() },
             body: JSON.stringify({
               tool: RECALL_TOOL,
               args: {

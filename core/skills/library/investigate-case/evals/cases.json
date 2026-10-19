@@ -1,0 +1,25 @@
+[
+  {
+    "name": "lockout storm from one host on a fixed interval reads as a stale credential",
+    "input": "Case: 212 lockouts for svc_backup over 6h. Every attempt comes from host FS-02 at a fixed 15 minute interval; no other account or source is involved. FS-02 runs a scheduled task created last week as svc_backup, and the account's password was rotated yesterday. Decide what this supports and say what you rest on.",
+    "expect": [
+      "benign",
+      "stale credential"
+    ]
+  },
+  {
+    "name": "many accounts from many sources in a burst reads as spraying",
+    "input": "Case: in 9 minutes, 140 accounts each failed sign-in once or twice, from 37 external addresses, all against the VPN portal. One account, j.ortiz, then signed in successfully from 203.0.113.80. Decide what this supports.",
+    "expect": [
+      "malicious",
+      "spray"
+    ]
+  },
+  {
+    "name": "an empty search alone supports neither benign nor false positive",
+    "input": "Case: EDR flagged rundll32 loading a DLL from a temp folder on WS-114. A process search over the 10 minutes around the alert returned no rows. Nothing else has been queried. What can you conclude?",
+    "expect": [
+      "inconclusive"
+    ]
+  }
+]

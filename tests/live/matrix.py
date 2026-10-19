@@ -65,15 +65,17 @@ def markdown(matrix: dict) -> str:
     lines = [
         f"### Live connector checks ({matrix['ran_at']}, {matrix['commit']})",
         "",
-        "| Connector | Version | Result | Evidence |",
-        "|---|---|---|---|",
+        "| Connector | Version | Result | Transport | Evidence |",
+        "|---|---|---|---|---|",
     ]
     for row in sorted(matrix["connectors"], key=lambda r: (r["status"] == "no live check", r["server"])):
         evidence = "<br>".join(
             f"`{p['tool']}`: {p['detail']}".replace("|", "\\|") for p in row["probes"]
         )
+        # runner or stdio, from the session each probe connected through.
+        transport = ", ".join(sorted({p["transport"] for p in row["probes"] if p.get("transport")}))
         lines.append(
-            f"| {row['server']} | {row['version'] or ''} | {_LABEL[row['status']]} | {evidence} |"
+            f"| {row['server']} | {row['version'] or ''} | {_LABEL[row['status']]} | {transport} | {evidence} |"
         )
     return "\n".join(lines) + "\n"
 

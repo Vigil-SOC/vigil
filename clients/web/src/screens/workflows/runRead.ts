@@ -82,6 +82,8 @@ export interface HuntEvidence {
    *  as telemetry, which makes this the only place an operator sees it. */
   gap_detail?: string | null
   bears_on?: { hypothesis_id: string; relation: string }[]
+  /** When the run recorded it: what places it before or after a step in a replay. */
+  captured_at?: string
 }
 
 /** What the hunt could not answer. A blind spot, not a finding. */
@@ -477,3 +479,16 @@ export function runStatusColor(s: string): string {
   if (s === 'paused') return 'var(--high)'
   return 'var(--med)' // running
 }
+
+/** What one press of extend buys. Sent as a typed grant rather than as prose the run
+ *  has to parse: `extend` with an empty note parsed to nothing, journaled a note saying
+ *  so, and left the hunt parked at the ceiling it was asking to be let past. */
+export type Grant = { iterations: number; cost_usd: number; wall_ms: number }
+export const GRANTS: [string, Grant][] = [
+  ['+3 turns', { iterations: 3, cost_usd: 0, wall_ms: 0 }],
+  ['+$5', { iterations: 0, cost_usd: 5, wall_ms: 0 }],
+  ['+30 min', { iterations: 0, cost_usd: 0, wall_ms: 30 * 60_000 }],
+]
+
+/** The one extend directive a parked hunt takes, from the run page or its case. */
+export const extendRun = (runId: string, note: string, grant: Grant) => workflowApi.steer(runId, 'extend', note, { grant })

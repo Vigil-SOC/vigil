@@ -69,7 +69,7 @@ class TestTeeingUpTheRootCause:
         params, triggered_by = enqueue.await_args.args
         assert triggered_by == "handoff:run-1:case-abc"
         # Only what the run reads. agent_id and source_run_id used to ride along
-        # here unconsumed — the roster is rootcause.yaml's, and triggered_by above
+        # here unconsumed — the roster is plugins/rootcause/plugin.yaml's, and triggered_by above
         # already carries which run this traces back from.
         assert set(params) == {"context", "case_id"}
         assert "hypothesis" not in params

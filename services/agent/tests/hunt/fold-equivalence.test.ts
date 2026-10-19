@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { InProcessState } from "../../core/state.js";
 import { asHarnessEvents, gunzipped, historicalRuns, renamedGolden } from "../support/historical.js";
-import { fold, LedgerError, type HuntKinds } from "../../workflows/hunt/ledger.js";
-import { digestOf } from "../../workflows/hunt/config.js";
-import { buildDigest } from "../../workflows/hunt/digest.js";
-import { evidenceStrength } from "../../workflows/hunt/strength.js";
-import { buildReport } from "../../workflows/hunt/report.js";
+import { fold, LedgerError, type HuntKinds } from "../../plugins/hunt/ledger.js";
+import { evidenceStrength } from "../../plugins/hunt/strength.js";
+import { buildReport } from "../../plugins/hunt/report.js";
 
 const RUNS = historicalRuns();
 
@@ -92,11 +90,13 @@ describe("a ledger that is not one", () => {
 
 // Every fold, not only the projection: what a hunt produces is derived, so a
 // port that folds to the same projection can still report something different.
+
+// The goldens' digest went with the controller (kernel replay rebuilds inputs instead),
+// so it is set aside; strength and the report are compared in full.
 function folds(name: string): unknown {
   const view = fold(asHarnessEvents(gunzipped(`${name}.jsonl.gz`), name));
   return JSON.parse(
     JSON.stringify({
-      digest: buildDigest(view, view.hunt.iteration, digestOf(view.hunt.spec)),
       strength: Object.fromEntries([...view.hypotheses.keys()].map((id) => [id, evidenceStrength(view, id)])),
       report: buildReport(view),
     }),
@@ -125,9 +125,9 @@ function backlogIds(folded: Record<string, unknown>): string[] {
 }
 
 describe("the derived folds survive the move too", () => {
-  it.each(RUNS)("%s derives the digest, strength and report the file ledger did", (name) => {
+  it.each(RUNS)("%s derives the strength and report the file ledger did", (name) => {
     const mine = folds(name) as Record<string, unknown>;
-    const golden = renamedGolden(JSON.parse(gunzipped(`${name}.folds.json.gz`))) as Record<string, unknown>;
+    const { digest: _retired, ...golden } = renamedGolden(JSON.parse(gunzipped(`${name}.folds.json.gz`))) as Record<string, unknown>;
     expect(withoutBacklog(mine)).toEqual(withoutBacklog(golden));
 
     // Every lead the golden listed, and every lead still open, and nothing else: the
