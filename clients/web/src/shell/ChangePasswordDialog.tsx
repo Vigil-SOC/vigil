@@ -2,7 +2,29 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { authApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { Field, PasswordInput, Popup } from '../shared/ui'
-import { MIN_PASSWORD_LENGTH, passwordProblems, type PasswordForm, type PasswordProblems } from './passwordRules'
+
+interface PasswordForm {
+  current: string
+  next: string
+  confirm: string
+}
+
+type PasswordProblems = Partial<Record<keyof PasswordForm, string>>
+
+/**
+ * Only what the browser can know on its own. Length, strength and history
+ * reuse are the server's policy (AUTH_MIN_PASSWORD_LENGTH and friends), and
+ * its refusal comes back with the exact rule, so the client does not keep a
+ * copy of those numbers that could drift from a deployment's settings.
+ */
+function passwordProblems({ current, next, confirm }: PasswordForm): PasswordProblems {
+  const problems: PasswordProblems = {}
+  if (!current) problems.current = 'Enter your current password.'
+  if (!next) problems.next = 'Enter a new password.'
+  else if (next === current) problems.next = 'Choose a password different from your current one.'
+  if (confirm !== next) problems.confirm = 'This does not match the new password.'
+  return problems
+}
 
 function serverMessage(e: unknown): string {
   const err = e as { response?: { status?: number; data?: { detail?: unknown } } }
@@ -143,7 +165,7 @@ export default function ChangePasswordDialog({
         </Field>
         <Field
           label="New password"
-          hint={`At least ${MIN_PASSWORD_LENGTH} characters. A few unrelated words make a strong one.`}
+          hint="At least 12 characters. A few unrelated words make a strong one."
           error={shown.next}
         >
           <PasswordInput

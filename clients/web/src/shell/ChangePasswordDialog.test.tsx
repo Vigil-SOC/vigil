@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import UserMenu from './UserMenu'
-import { passwordProblems } from './passwordRules'
 
 const api = vi.hoisted(() => ({
   changePassword: vi.fn(),
@@ -69,29 +68,6 @@ function fillValid() {
   type(/^Confirm new password/, NEXT)
 }
 
-describe('passwordProblems', () => {
-  it('passes a complete, matching form', () => {
-    expect(passwordProblems({ current: CURRENT, next: NEXT, confirm: NEXT })).toEqual({})
-  })
-
-  it('asks for the current password, a long enough new one and a match', () => {
-    const problems = passwordProblems({ current: '', next: 'short', confirm: 'shorter' })
-    expect(problems.current).toBe('Enter your current password.')
-    expect(problems.next).toBe('Use at least 12 characters (7 more).')
-    expect(problems.confirm).toBe('This does not match the new password.')
-  })
-
-  it('refuses more than 72 bytes, counting multi-byte characters', () => {
-    const long = 'é'.repeat(37) // 37 characters, 74 bytes
-    expect(passwordProblems({ current: CURRENT, next: long, confirm: long }).next).toMatch(/too long/)
-  })
-
-  it('refuses the current password as the new one', () => {
-    const same = passwordProblems({ current: NEXT, next: NEXT, confirm: NEXT })
-    expect(same.next).toBe('Choose a password different from your current one.')
-  })
-})
-
 describe('ChangePasswordDialog', () => {
   beforeEach(() => {
     api.health = { version: '9.9.9', status: 'healthy' }
@@ -126,14 +102,14 @@ describe('ChangePasswordDialog', () => {
     expect(submit()).toBeDisabled()
 
     type(/^Current password/, CURRENT)
-    type(/^New password/, 'too-short')
+    type(/^New password/, CURRENT)
     fireEvent.blur(field(/^New password/))
-    expect(screen.getByText('Use at least 12 characters (3 more).')).toBeInTheDocument()
+    expect(screen.getByText('Choose a password different from your current one.')).toBeInTheDocument()
     expect(field(/^New password/)).toHaveAttribute('aria-invalid', 'true')
     expect(submit()).toBeDisabled()
 
     type(/^New password/, NEXT)
-    expect(screen.queryByText(/Use at least 12 characters/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/different from your current one/)).not.toBeInTheDocument()
     type(/^Confirm new password/, NEXT.replace('staple', 'stapler'))
     expect(screen.getByText('This does not match the new password.')).toBeInTheDocument()
     expect(submit()).toBeDisabled()
@@ -201,6 +177,20 @@ describe('ChangePasswordDialog', () => {
     // editing the form clears the stale message
     type(/^Current password/, 'another-try-1')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it("leaves length to the server and shows its message, so a deployment's own floor applies", async () => {
+    api.changePassword.mockRejectedValue({
+      response: { status: 400, data: { detail: 'Password must be at least 12 characters long (Add 3 more characters.)' } },
+    })
+    await openDialog()
+    type(/^Current password/, CURRENT)
+    type(/^New password/, 'too-short')
+    type(/^Confirm new password/, 'too-short')
+    expect(submit()).toBeEnabled()
+    fireEvent.click(submit())
+    expect(await screen.findByRole('alert')).toHaveTextContent('Password must be at least 12 characters long')
+    expect(api.changePassword).toHaveBeenCalledWith({ current_password: CURRENT, new_password: 'too-short' })
   })
 
   it('shows the strength policy message the server sends', async () => {
