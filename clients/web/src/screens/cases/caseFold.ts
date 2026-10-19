@@ -32,9 +32,25 @@ export interface HypothesisRow {
   provenance: string
 }
 
+/**
+ * What a row that read no system is, named for what it is rather than by the hunt's role words
+ * (#2458): the critic's rebuttal, the deployment's own gap, an operator's declared gap, a query
+ * that could not run.
+ */
+const NOT_A_SYSTEM: Record<string, string> = {
+  critic: 'Reviewer',
+  deployment: 'Not connected',
+  operator: 'You',
+  dispatcher: 'Not answered',
+}
+
 /** The system an evidence row's rows came from, as the board names it; the hunt's domain word only when none is known. One reading for the trail and the citation chips. */
-export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'>): string {
-  return row.origins.length > 0 ? row.origins.map((one) => sourceBadge(one).label).join(', ') : row.source_system
+export function evidenceSource(row: Pick<EvidenceRow, 'origins' | 'source_system'> & { is_gap?: boolean }): string {
+  if (row.origins.length > 0) return row.origins.map((one) => sourceBadge(one).label).join(', ')
+  const named = NOT_A_SYSTEM[row.source_system]
+  if (named) return named
+  // a query the hunt recorded as failed read nothing, whatever domain it was meant for
+  return row.is_gap ? NOT_A_SYSTEM.dispatcher : row.source_system
 }
 
 interface EvidenceRow {
@@ -183,6 +199,10 @@ export function honestLine(): string {
   return HONEST
 }
 
+// The hypothesis statuses explanationWord maps: HYPOTHESIS_STATUSES in services/agent
+// contracts/events.ts, held to it by tests/unit/_ratchets/test_recall_contract_agrees.py.
+export const EXPLAINED_STATUSES = ['active', 'proven', 'disproven', 'inconclusive', 'parked', 'handed_off'] as const
+
 export function explanationWord(status: string, supports: number, weakens: number): string {
   if (status === 'proven') return 'proven'
   if (status === 'disproven') return 'ruled out'
@@ -326,6 +346,7 @@ export function recordChip(kind: string, source = 'run'): RecordChip {
     case 'run':
     case 'spend':
     case 'resumed':
+    case 'unread':
       return 'system'
     default:
       return 'agent'
@@ -476,6 +497,13 @@ function heldOf(raw: unknown): HeldRow | null {
   return str(o.asked) && str(o.final) ? { field: str(o.field), asked: str(o.asked), final: str(o.final), reason: str(o.reason) } : null
 }
 
+// Every projection carries the ceiling in its head; a ledger read before it did keeps it under budgets.
+function ceilingOf(raw: Record<string, unknown>): number | null {
+  const head = num(raw.max_cost_usd)
+  if (head !== null) return head
+  return raw.budgets && typeof raw.budgets === 'object' ? num((raw.budgets as Record<string, unknown>).max_cost_usd) : null
+}
+
 function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
   // The server sends moves newest first.
@@ -489,7 +517,6 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
       iteration: num(o.iteration),
     }]
   })
-  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
@@ -504,7 +531,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
-    maxCostUsd: budgets ? num(budgets.max_cost_usd) : null,
+    maxCostUsd: ceilingOf(raw),
   }
 }
 
@@ -535,6 +562,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
         }]
       })
     : []
+  const ceiling = ceilingOf(raw)
   return {
     kind: 'lead',
     // A legacy lead ledger keeps no record, so carries none of its fields.
@@ -552,7 +580,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
-    maxCostUsd: (num(raw.max_cost_usd) ?? 0) > 0 ? num(raw.max_cost_usd) : null,
+    maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
   }
 }
 

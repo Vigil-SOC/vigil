@@ -132,6 +132,7 @@ vi.mock('../services/api', () => ({
       data: { status: 'healthy', version: '1.2.3', storage: { database_available: true }, schema: { state: 'current' } },
     })),
     getRoutability: vi.fn(() => Promise.resolve({ data: { providers: { gemini: true } } })),
+    getProcesses: vi.fn(() => Promise.resolve({ data: { agent_layer: 'running', daemon: 'running' } })),
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
@@ -326,6 +327,9 @@ afterEach(() => {
     data: { status: 'healthy', version: '1.2.3', storage: { database_available: true }, schema: { state: 'current' } },
   } as never)
   vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { gemini: true } } } as never)
+  vi.mocked(consoleApi.getProcesses).mockResolvedValue({
+    data: { agent_layer: 'running', daemon: 'running' },
+  } as never)
   vi.mocked(configApi.getAutonomy).mockResolvedValue({
     data: { auto_response_enabled: true, force_manual_approval: false },
   } as never)
@@ -847,6 +851,28 @@ describe('SocConsole', () => {
       await sentOnCase()
     })
 
+    // #2457: the expanded case pins its composer only while the view is full-height; a tour
+    // started from the account menu cleared that, and the composer fell under the fold.
+    it('keeps the expanded case page full-height, its composer pinned, after a tour clears the view', async () => {
+      localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      const view = document.querySelector('main.view') as HTMLElement
+      const pinned = () => {
+        expect(view.style.overflowY).toBe('hidden')
+        expect((view.querySelector('.screen') as HTMLElement).style.height).toBe('100%')
+        expect(view.querySelector('.case-page > .case-composer')).not.toBeNull()
+      }
+      pinned()
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Take the tour' }))
+      await waitFor(pinned)
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
+      pinned()
+    })
+
     it('opens the dock from the command bar on a case page opened by its URL', async () => {
       renderConsole('/cases?case=case-2026-0142')
       await screen.findByRole('tab', { name: /Summary/ })
@@ -1057,14 +1083,14 @@ describe('SocConsole', () => {
     renderConsole()
     clickScreen('AI Decisions')
     fireEvent.click(await screen.findByText('Cluster merge'))
-    fireEvent.change(screen.getByPlaceholderText('Your name / analyst ID'), {
-      target: { value: 'QA Analyst' },
-    })
+    // no name to type: the server records the signed-in user
+    expect(screen.queryByPlaceholderText('Your name / analyst ID')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
     expect(vi.mocked(aiDecisionsApi.submitFeedback)).toHaveBeenCalledWith(
       'd-4471',
-      expect.objectContaining({ human_reviewer: 'QA Analyst', human_decision: 'agree' }),
+      expect.objectContaining({ human_decision: 'agree' }),
     )
+    expect(vi.mocked(aiDecisionsApi.submitFeedback).mock.lastCall?.[1]).not.toHaveProperty('human_reviewer')
   })
 
   it('exports the visible timeline events as CSV', async () => {
@@ -1244,6 +1270,21 @@ describe('SocConsole', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('goes Fair when the agent layer is down, and omits a failed processes read', async () => {
+    vi.mocked(consoleApi.getProcesses).mockResolvedValue({
+      data: { agent_layer: 'not_running', daemon: 'not_running' },
+    } as never)
+    const { unmount } = renderConsole()
+    const fair = await screen.findByRole('status', { name: 'System status' })
+    expect(fair).toHaveAttribute('data-level', 'fair')
+    expect(fair).toHaveTextContent('Agent layer is not running.')
+    unmount()
+
+    vi.mocked(consoleApi.getProcesses).mockRejectedValue(new Error('401'))
+    renderConsole()
+    expect(await screen.findByRole('status', { name: 'System status' })).toHaveAttribute('data-level', 'good')
   })
 
   it('omits a failed routability read instead of calling the line Fair', async () => {

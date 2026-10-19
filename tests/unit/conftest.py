@@ -139,6 +139,18 @@ def _isolate_database(request):
         request.getfixturevalue("throwaway_database")
 
 
+@pytest.fixture(autouse=True)
+def _operator_skills_off(monkeypatch):
+    """No unit test loads the developer's own ~/.vigil/skills.
+
+    Unset, VIGIL_SKILLS_PATH is the State Directory's skills/ folder, which is
+    the real home here. Pinned empty (skills off) rather than moving VIGIL_DIR,
+    which platform/test_vigil_path.py needs unset. A test of the default
+    clears it; tests/unit/skills/conftest.py moves the State Directory too.
+    """
+    monkeypatch.setenv("VIGIL_SKILLS_PATH", "")
+
+
 # Episodic rows, shared because two suites seed them: #732's read tests and
 # #735's grant test. Every one of them reads the whole table, so ordering
 # between tests would otherwise decide what they see.

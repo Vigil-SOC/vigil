@@ -9,6 +9,8 @@ from core.cases.case_state import (
     combined_state,
     detail_fields,
     investigation_ref,
+    primary_ref,
+    spawned_by,
 )
 from datetime import datetime, timezone
 
@@ -157,3 +159,28 @@ def test_closure_view_carries_closed_at_as_iso():
         closed_at=closed_at,
     )
     assert closure_view(closure)["closed_at"] == closed_at.isoformat()
+
+
+def test_a_handoff_run_names_the_run_that_started_it():
+    assert spawned_by("handoff:run-hunt:case-1") == "run-hunt"
+    assert spawned_by("operator") is None
+    assert spawned_by(None) is None
+    assert spawned_by("handoff::case-1") is None
+
+
+def test_the_page_reads_the_case_run_not_the_follow_up_it_started():
+    hunt = _run("run-hunt", "completed", datetime(2026, 10, 7))
+    rca = _run("run-rca", "running", datetime(2026, 10, 8))
+    rca.triggered_by = "handoff:run-hunt:case-1"
+    refs = detail_fields("open", [], None, [rca, hunt])["investigations"]
+    assert [ref["run_id"] for ref in refs] == ["run-rca", "run-hunt"]
+    assert refs[0]["spawned_by"] == "run-hunt"
+    assert [ref["primary"] for ref in refs] == [False, True]
+
+
+def test_a_follow_up_whose_starter_is_not_on_the_case_is_the_case_run():
+    rca = _run("run-rca", "running", datetime(2026, 10, 8))
+    rca.triggered_by = "handoff:run-elsewhere:case-1"
+    refs = detail_fields("open", [], None, [rca])["investigations"]
+    assert [ref["primary"] for ref in refs] == [True]
+    assert primary_ref([]) is None

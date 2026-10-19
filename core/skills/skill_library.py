@@ -3,7 +3,8 @@
 A skill is ``<root>/<name>/SKILL.md`` conforming to the public Agent Skills
 spec (agentskills.io/specification): YAML frontmatter naming the skill and a
 Markdown body telling the agent how to do the thing. Roots are the bundled
-``core/skills/library/`` plus one optional directory from ``Settings``.
+``core/skills/library/`` plus the operator root: ``VIGIL_SKILLS_PATH``, else
+the State Directory's ``skills/`` folder.
 
 No database, no module state: ``load_skills`` takes its roots so tests can
 point it at ``tmp_path``. An invalid skill is logged and skipped so one bad
@@ -29,7 +30,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
 
-from core.config import Settings, get_settings
+from core.config import Settings, get_settings, vigil_path
 from core.frontmatter import FrontmatterError, split_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,9 @@ _COMPATIBILITY_MAX = 500
 _FILES_MAX = 200
 UPLOAD_MAX = 5 * 1024 * 1024  # bytes read from an upload
 _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
+# Skill folders under the operator root. Each description is in every agent's
+# system prompt, so the count bounds what operators can add to it.
+OPERATOR_SKILLS_MAX = 100
 
 
 @dataclass(frozen=True)
@@ -65,7 +69,7 @@ class SkillNotFound(SkillError):
 
 
 class SkillConflict(SkillError):
-    """The write clashes with what is on disk: a stale version or a taken folder."""
+    """The write clashes with what is on disk: a stale version, a taken folder or a full root."""
 
 
 def _require_str(frontmatter: Dict[str, Any], key: str, limit: int) -> str:
@@ -165,7 +169,7 @@ def load_skills(roots: Iterable[Path]) -> List[Skill]:
 
 
 def skill_roots(settings: Optional[Settings] = None) -> List[Path]:
-    """The bundled library, then the optional ``VIGIL_SKILLS_PATH`` root."""
+    """The bundled library, then the operator root unless operator skills are off."""
     settings = settings or get_settings()
     roots = [LIBRARY_ROOT]
     operator = operator_skills_root(settings)
@@ -175,12 +179,18 @@ def skill_roots(settings: Optional[Settings] = None) -> List[Path]:
 
 
 def operator_skills_root(settings: Optional[Settings] = None) -> Optional[Path]:
-    """The operator skills directory, or None when ``VIGIL_SKILLS_PATH`` is unset.
+    """The operator skills directory, or None when operator skills are off.
 
-    An unset path is not created.
+    ``VIGIL_SKILLS_PATH`` when set. Unset, the State Directory's ``skills/``
+    folder (``~/.vigil/skills``); set empty, operator skills are off. Nothing is
+    created here: the first write makes the default folder.
     """
     settings = settings or get_settings()
-    raw = (settings.vigil_skills_path or "").strip()
+    if settings.vigil_skills_path is None:
+        # The directory itself, not vigil_path("skills"): that would read a
+        # legacy ~/.deeptempo copy while writes went to ~/.vigil.
+        return vigil_path() / "skills"
+    raw = settings.vigil_skills_path.strip()
     if not raw:
         return None
     return Path(raw).expanduser()
@@ -339,12 +349,35 @@ def _write_new_file(path: Path, data: bytes) -> None:
 
 
 def _require_operator_root(settings: Optional[Settings]) -> Path:
+    settings = settings or get_settings()
     root = operator_skills_root(settings)
     if root is None:
-        raise SkillError("The skills path is unset")
+        raise SkillError("Operator skills are off (VIGIL_SKILLS_PATH is empty)")
+    # Only the default is created, private like the State Directory it sits in.
+    # A path the operator named that is missing is more likely a volume that
+    # did not mount than a folder to make.
+    if settings.vigil_skills_path is None:
+        try:
+            root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SkillError(f"could not create {root}: {exc}") from exc
     if not root.is_dir():
         raise SkillError(f"{root} is not a directory")
     return root.resolve()
+
+
+def _require_room(root: Path) -> None:
+    """Refuse a new skill once ``root`` holds ``OPERATOR_SKILLS_MAX`` folders.
+
+    Dot folders are skipped: they are the scratch copies a write leaves only
+    while it runs.
+    """
+    held = sum(1 for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    if held >= OPERATOR_SKILLS_MAX:
+        raise SkillConflict(
+            f"There are already {OPERATOR_SKILLS_MAX} custom skills, the most "
+            "allowed. Delete one before adding another."
+        )
 
 
 def _accepts_skill(name: str, content: str) -> None:
@@ -402,6 +435,8 @@ def write_operator_skill(
         raise SkillError(
             f"name {name!r} belongs to the bundled library; save it under a new name"
         )
+    if not skill_dir.exists():
+        _require_room(root)
     origin: Optional[Skill] = None
     if source is not None:
         if skill_dir.exists():
@@ -552,6 +587,7 @@ def install_uploaded_skill(
     moved into place whole, so a refused upload leaves nothing behind.
     """
     root = _require_operator_root(settings)
+    _require_room(root)  # an upload never overwrites, so it is always a new skill
     if len(data) > UPLOAD_MAX:
         raise SkillError(f"the file is larger than {UPLOAD_MAX // 1024} KB")
     if filename.lower().endswith(".zip") or data.startswith(b"PK\x03\x04"):

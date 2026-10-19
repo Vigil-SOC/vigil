@@ -80,3 +80,14 @@ describe('an investigation\'s record', () => {
     expect(endedRun(legacy)?.line).toBe('1 finding')
   })
 })
+
+describe('the budget ceiling', () => {
+  it('is read off the head, and off budgets on a ledger written before the head carried it', () => {
+    const ceiling = (fold: RunFold | null) => fold?.maxCostUsd
+    expect(ceiling(readFold({ hunt: { max_cost_usd: 5, budgets: { max_cost_usd: 2 } } }))).toBe(5)
+    expect(ceiling(readFold({ hunt: { budgets: { max_cost_usd: 2 } } }))).toBe(2)
+    expect(ceiling(readFold({ projection: heldProjection }))).toBe(3)
+    expect(ceiling(readFold({ projection: { budgets: { max_cost_usd: 4 } } }))).toBe(4)
+    expect(ceiling(readFold({ projection: { max_cost_usd: 0 } }))).toBeNull()
+  })
+})

@@ -46,6 +46,7 @@ import {
   type FederationRead,
   type HealthRead,
   type McpRead,
+  type ProcessesRead,
   type RoutabilityRead,
   type StatusFold,
 } from './statusLine'
@@ -387,9 +388,10 @@ function SocConsoleInner() {
         canReadRoutability
           ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
           : Promise.resolve(null),
-      ]).then(([health, federation, mcp, routability]) => {
+        settled(consoleApi.getProcesses().then((res) => res.data as ProcessesRead)),
+      ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
-        if (live) setStatus(foldStatus({ health, federation, mcp, routability }))
+        if (live) setStatus(foldStatus({ health, federation, mcp, routability, processes }))
       })
     }
     pollStatus()
@@ -621,7 +623,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} chatOpen={chatOpen} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} viewFull={viewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} chatOpen={chatOpen} />
                 )}
               </ErrorBoundary>
             </div>

@@ -21,6 +21,7 @@ vi.mock('../../services/api', () => ({
   approvalsApi: {},
 }))
 vi.mock('../../services/skillsApi', () => ({ skillsApi: { list: h.listSkills } }))
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ hasPermission: () => true }) }))
 
 const wf = (id: string) => ({ id, name: id, description: '', agents: [], source: 'file', runs_7d: 0, mean_cost_usd: null })
 

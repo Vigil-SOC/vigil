@@ -86,7 +86,11 @@ class TestProcessHandoff:
         svc = _run_service()
         with patch.object(
             rbr, "_open_case", return_value="case-opened"
-        ) as open_case, patch.object(rbr, "_start_root_cause") as start_rca:
+        ) as open_case, patch.object(
+            rbr, "_start_root_cause"
+        ) as start_rca, patch.object(
+            rbr, "_root_cause_unserved", return_value=[]
+        ):
             rbr._process_handoff("run-1", HANDOFF, "", True, svc)
         open_case.assert_called_once()
         start_rca.assert_called_once()
@@ -114,6 +118,39 @@ class TestProcessHandoff:
             rbr._process_handoff("run-2", HANDOFF, "", False, svc)
         open_case.assert_called_once()
         start_rca.assert_not_called()
+
+
+class TestTheDeploymentGate:
+    """A root-cause trace searches telemetry. Without a SIEM it fails on its first
+    turn, so a handoff starts none and the case says why instead."""
+
+    def test_no_siem_starts_no_run_and_records_the_reason(self):
+        svc = _run_service()
+        with patch.object(rbr, "_start_root_cause") as start_rca, patch.object(
+            rbr, "_record_root_cause_not_started"
+        ) as said:
+            rbr._process_handoff("run-1", HANDOFF, "case-1", True, svc, None)
+        start_rca.assert_not_called()
+        said.assert_called_once_with("case-1", "run-1", HANDOFF, ["telemetry_search"])
+
+    def test_a_connected_siem_starts_the_run(self):
+        class _Registry:
+            def get_all_tools(self):
+                return [
+                    {
+                        "name": "splunk-selfhosted_splunk_execute",
+                        "description": "Execute SPL",
+                        "input_schema": {},
+                    }
+                ]
+
+        svc = _run_service()
+        with patch.object(rbr, "_start_root_cause") as start_rca, patch.object(
+            rbr, "_record_root_cause_not_started"
+        ) as said:
+            rbr._process_handoff("run-1", HANDOFF, "case-1", True, svc, _Registry())
+        start_rca.assert_called_once_with("run-1", HANDOFF, "case-1")
+        said.assert_not_called()
 
 
 def test_the_finding_rides_in_context_and_there_is_no_hypothesis():

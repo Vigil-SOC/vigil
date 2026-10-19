@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { WatchRun, STEP_MS, UNSUPPORTED, PLAYBOOK } from './WatchRun'
-import { callFailure, type WfRunDetail } from './runRead'
+import { callFailure, moveWord, type WfRunDetail } from './runRead'
 import { workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
@@ -267,6 +267,15 @@ describe('a hunt', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Replay from the start' }))
     unmount()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+// #2459: every step reads as a word, the hand-off included.
+describe('a step\'s label', () => {
+  it('reads the hand-off as a word and every other move as written', () => {
+    expect(moveWord('HANDOFF_IR')).toBe('Hand off')
+    expect(moveWord('VALIDATE')).toBe('Validate')
+    expect(moveWord('CHECKPOINT')).toBe('Checkpoint')
   })
 })
 

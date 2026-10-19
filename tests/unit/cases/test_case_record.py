@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from core.cases.case_record import merge_record
+from core.cases.case_record import merge_record, unread_row
 from core.storage.models import CaseAuditLog
 
 
@@ -36,8 +36,10 @@ def test_merge_is_newest_first_and_only_run_rows_are_chained():
     audits = [
         _audit(7, datetime(2026, 6, 2, tzinfo=timezone.utc), "status changed"),
     ]
-    rows = merge_record(events, audits)
-    assert [row["id"] for row in rows] == ["run:2", "audit:7", "run:1"]
+    rows = merge_record([("r1", events)], audits)
+    assert [row["id"] for row in rows] == ["run:r1:2", "audit:7", "run:r1:1"]
+    assert rows[0]["run_id"] == "r1"
+    assert "run_id" not in rows[1]
     assert rows[0]["chained"] is True
     assert rows[0]["text"] == "EXAMINE — look"
     assert rows[1]["chained"] is False
@@ -60,7 +62,7 @@ def test_rows_that_share_a_timestamp_stay_newest_seq_first():
             "payload": {"agent_id": "lead", "answer": "benign"},
         },
     ]
-    rows = merge_record(events, [])
+    rows = merge_record([("r1", events)], [])
     assert [row["kind"] for row in rows] == ["finding", "decision"]
     assert "_seq" not in rows[0]
 
@@ -84,13 +86,13 @@ def test_activities_are_unchained_rows_sorted_despite_mixed_timestamps():
         {"timestamp": "not a time", "activity_type": "garbled"},
         {"timestamp": "2026-06-04T00:00:00Z", "activity_type": "resolution"},
     ]
-    rows = merge_record(events, audits, activities)
+    rows = merge_record([("r1", events)], audits, activities)
     assert [row["id"] for row in rows] == [
         "activity:4",
-        "run:2",
+        "run:r1:2",
         "audit:7",
         "activity:0",
-        "run:1",
+        "run:r1:1",
     ]
     assert rows[3] == {
         "id": "activity:0",
@@ -224,7 +226,9 @@ def _kernel_hunt() -> list[dict]:
 
 
 def test_kernel_hunt_rows_read_as_what_happened():
-    texts = [row["text"] for row in reversed(merge_record(_kernel_hunt(), []))]
+    texts = [
+        row["text"] for row in reversed(merge_record([("r1", _kernel_hunt())], []))
+    ]
     assert texts == [
         "Run started",
         "Explanation put up — FIN-WS-114 beacons",
@@ -242,7 +246,7 @@ def test_kernel_hunt_rows_read_as_what_happened():
 
 
 def test_kernel_bookkeeping_is_left_out_and_no_row_reads_as_its_kind():
-    rows = merge_record(_kernel_hunt(), [])
+    rows = merge_record([("r1", _kernel_hunt())], [])
     kinds = {row["kind"] for row in rows}
     # Frames, prices, counters and a "neither" ruling change nothing a person reads.
     assert not kinds & {"frame", "content", "spend"}
@@ -269,3 +273,60 @@ def test_a_report_activity_reads_as_plain_words_not_markdown():
         row["text"]
         == "Hunt report — threat-hunt Outcome: completed Iterations: 40 of 48"
     )
+
+
+def _link_run(hypothesis_id: str, statement: str, at: str) -> list[dict]:
+    return [
+        {
+            "seq": 1,
+            "ts": f"{at}:00Z",
+            "kind": "hypothesis",
+            "payload": {"hypothesis_id": hypothesis_id, "statement": statement},
+        },
+        {
+            "seq": 2,
+            "ts": f"{at}:02Z",
+            "kind": "link",
+            "payload": {
+                "hypothesis_id": hypothesis_id,
+                "evidence_id": "e-1",
+                "relation": "supports",
+            },
+        },
+    ]
+
+
+def test_two_runs_sort_together_with_distinct_ids_and_their_own_ids_named():
+    # Both runs call their explanation h-1 and both ledgers start at seq 1.
+    hunt = _link_run("h-1", "beacons", "2026-10-14T16:00")
+    root = _link_run("h-1", "phished login", "2026-10-14T16:01")
+    rows = merge_record([("hunt", hunt), ("root", root)], [])
+    assert [row["id"] for row in rows] == [
+        "run:root:2",
+        "run:root:1",
+        "run:hunt:2",
+        "run:hunt:1",
+    ]
+    assert rows[0]["text"] == "Supports “phished login” — e-1"
+    assert rows[2]["text"] == "Supports “beacons” — e-1"
+
+
+def test_an_unread_run_is_one_unchained_row_in_time_order():
+    row = unread_row("gone", "2026-10-14T16:00:01", "the agent layer answered 500")
+    rows = merge_record(
+        [("hunt", _link_run("h-1", "beacons", "2026-10-14T16:00"))], [], (), [row]
+    )
+    assert [one["id"] for one in rows] == [
+        "run:hunt:2",
+        "run:gone:unread",
+        "run:hunt:1",
+    ]
+    assert rows[1] == {
+        "id": "run:gone:unread",
+        "at": "2026-10-14T16:00:01+00:00",
+        "kind": "unread",
+        "source": "run",
+        "chained": False,
+        "text": "Could not read the record of run gone — the agent layer answered 500",
+        "run_id": "gone",
+    }
