@@ -63,7 +63,8 @@ export function rowsIn(result: string): number | undefined {
     const only = Array.isArray(parsed) && parsed.length === 1 ? (parsed[0] as Record<string, unknown> | null) : null;
     return only !== null && typeof only === "object" && Array.isArray(only["results"]) ? only["results"].length : count;
   } catch {
-    return count;
+    // A wrapper cut short by the result cap does not parse; its "1" is the wrapper, not the rows.
+    return undefined;
   }
 }
 

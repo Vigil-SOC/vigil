@@ -1762,7 +1762,7 @@
 .case-page .checked-turn-head { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--tx2); padding: 0 2px; }
 .case-page .checked-turn-head p { margin: 0; color: var(--tx1); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; flex: 1; min-width: 0; }
 .case-page .checked-calls { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--stack-gap); background: var(--stack-bg); border-radius: var(--stack-radius); overflow: hidden; }
-.case-page .checked-calls li { display: flex; flex-direction: column; background: var(--stack-row-bg); }
+.case-page .checked-calls li { display: flex; flex-direction: column; align-items: stretch; background: var(--stack-row-bg); }
 .case-page .checked-calls li.open { padding-bottom: 10px; }
 .case-page .checked-calls li.open .call-detail { margin: 0 12px; width: auto; }
 .case-page .checked-call {
@@ -1789,7 +1789,7 @@
 .case-page .checked-call .chev { color: var(--tx3); }
 @media (max-width: 720px) {
   .case-page .checked-call { grid-template-columns: 34px minmax(0, 1fr) 80px 14px; }
-  .case-page .checked-call .tool, .case-page .checked-call .num:nth-of-type(2) { display: none; }
+  .case-page .checked-call .tool { display: none; }
 }
 
 /* Blind spots: one line per source and kind of failure, its lost queries on demand. */

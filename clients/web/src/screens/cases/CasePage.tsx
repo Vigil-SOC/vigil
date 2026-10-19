@@ -1594,14 +1594,14 @@ function MemoryCards({ fold, recalled, gaps, runId }: { fold: RunFold | null; re
             {open.map((q) => <MemoryRow key={q.question_id} tone="poor" tag="Open question" text={q.question} />)}
           </div>
         )}
-        {gaps.length > 0 && (blindSpotsOf(fold).groups.length > 0 ? (
+        {blindSpotsOf(fold).groups.length > 0 ? (
           <BlindSpots fold={fold} runId={runId} />
-        ) : (
+        ) : gaps.length > 0 && (
           // A run whose calls do not say which failed: its gaps as it wrote them.
           <div className="case-mem-rows">
             {gaps.map((gap) => <MemoryRow key={gap.id} tone="poor" tag="Visibility" text={gap.text} />)}
           </div>
-        ))}
+        )}
       </section>
     </>
   )

@@ -151,6 +151,7 @@ function outcome(call: CallRow): string {
   if (call.class === 'visibility_gap') return 'could not look'
   if (call.class === 'defect') return 'refused'
   if (typeof call.rows === 'number') return `${call.rows.toLocaleString()} ${call.rows === 1 ? 'row' : 'rows'}`
+  if (call.failed) return 'failed'
   return `${call.result_length.toLocaleString()} chars`
 }
 
@@ -213,7 +214,7 @@ export function CheckedList({ runId, calls, focusRef }: { runId: string | null; 
                     <span className="mono ref">{call.ref ?? DASH}</span>
                     <span className="tool">{toolLabel(call.tool)}</span>
                     <span className="mono query" title={call.query}>{call.query || DASH}</span>
-                    <span className={`num ${call.class === 'served' || !call.class ? '' : 'poor'}`}>{outcome(call)}</span>
+                    <span className={`num ${call.class === 'served' || (!call.class && !call.failed) ? '' : 'poor'}`}>{outcome(call)}</span>
                     <span className="num">{latency(call.duration_ms)}</span>
                     <span className="chev" aria-hidden="true">{expandable ? (isOpen ? '▾' : '▸') : ''}</span>
                   </button>
@@ -275,8 +276,9 @@ export function blindSpotsOf(fold: RunFold | null): { groups: GapGroup[]; unconn
   }
   const list = [...groups.values()].sort((a, b) => b.calls.length - a.calls.length)
   // The run's own account of what it could not reach, kept once, on the source it lost most to.
-  if (list[0] && notes.length > 0) list[0].note = notes[0]!
-  if (list.length === 0 && notes.length > 0) list.push({ key: 'note', source: 'Telemetry', why: 'could not answer', calls: [], note: notes[0]! })
+  const note = [...new Set(notes)].join(' ')
+  if (list[0] && note) list[0].note = note
+  if (list.length === 0 && note) list.push({ key: 'note', source: 'Telemetry', why: 'could not answer', calls: [], note })
   return { groups: list, unconnected }
 }
 
