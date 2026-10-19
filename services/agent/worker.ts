@@ -421,6 +421,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         summary: terminal.summary ?? "",
         cost_usd: await spentOn(state, job.run_id),
         handoffs: terminal.handoffs ?? [],
+        proposed_actions: terminal.proposed_actions ?? [],
         ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
       });
     }

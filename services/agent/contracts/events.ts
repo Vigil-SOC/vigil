@@ -178,6 +178,7 @@ export interface TerminalPayload {
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;
   handoffs?: TerminalHandoff[];
+  proposed_actions?: ProposedAction[];
   // How bad the run rated what it found, in case priorities, for the case it was
   // started from. Only a completed run whose plugin names a severity_field sets it.
   severity?: Severity;
@@ -193,6 +194,15 @@ export interface TerminalHandoff {
   case_id: string;
   title: string;
   markdown: string;
+}
+
+// An action a run's conclusion asks a person to approve. The run takes none of
+// them; the backend files each as a pending approval on the run's case.
+export interface ProposedAction {
+  action_type: string;
+  target: string;
+  reason: string;
+  confidence?: number;
 }
 
 // What a tool result was: served (an answer, empty or not), visibility_gap (the estate did
@@ -320,6 +330,9 @@ export interface HypothesisPayload {
   status: string;
   provenance: string;
   resolution_reason: string | null;
+  // True for the innocent explanation, false for any other, when the agent said.
+  // Absent on older ledgers.
+  benign?: boolean;
 }
 
 // Evidence bearing on a hypothesis. evidence_id is a call ref in a plain run and
@@ -328,6 +341,8 @@ export interface LinkPayload {
   evidence_id: string;
   hypothesis_id: string;
   relation: "supports" | "weakens" | "neither";
+  // What the result shows, in the agent's words. Absent on older ledgers.
+  note?: string;
 }
 
 export interface QuestionPayload {

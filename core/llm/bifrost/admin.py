@@ -9,8 +9,9 @@ the new value to Bifrost → Bifrost uses it for subsequent requests.
 The alternative would be letting Bifrost read ``env.ANTHROPIC_API_KEY`` from
 its container env, which diverges from whatever the UI wrote to the secrets
 manager under ``llm_provider_<id>_api_key``. Pushing via the API keeps a
-single source of truth in the secrets manager, and is why the seeded
-``config.json`` key is an empty placeholder rather than a real credential.
+single source of truth in the secrets manager, and is why ``config.json``
+declares the hosted providers with no keys: a key set only in the env is pushed
+from here too (``sync_env_provider_keys``).
 
 Four properties of that API shape the code below, all learned the hard way:
 
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
@@ -68,8 +70,21 @@ def _bifrost_base_url() -> str:
 #
 # Vertex for the same reason: its credential is a service-account file, and
 # ``discovery.py`` has no fetcher for its catalog, so a managed sync would push an
-# allow-list refusing every model. The seeded wildcard in the Bifrost config is it.
+# allow-list refusing every model. The wildcard the key is added with is it.
 _UNMANAGED_PROVIDER_TYPES = frozenset({"ollama", "vertex"})
+
+# Env vars that give a provider its key with no UI step. The Bifrost config
+# declares these providers with no keys and Vigil pushes the value at startup, so
+# an unset variable leaves the provider empty rather than holding a key that
+# cannot route.
+_ENV_PROVIDER_KEYS: Dict[str, tuple] = {
+    "anthropic": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    "openai": ("OPENAI_API_KEY",),
+    "gemini": ("GEMINI_API_KEY",),
+}
+
+# Providers an older Bifrost config seeded with an ``env.<NAME>`` placeholder key.
+_SEEDED_PROVIDERS = ("anthropic", "openai", "gemini", "ollama", "vertex")
 
 # Public OpenAI cloud — Bifrost already points there. Custom OpenAI-compatible
 # hosts (OpenRouter, LiteLLM, vLLM, ...) are the ones we must push. Derived
@@ -235,6 +250,26 @@ def _upsert_provider_key(
         return False
 
 
+def _delete_key(provider_name: str, key_id: str, client: httpx.Client) -> bool:
+    try:
+        r = client.delete(_keys_url(provider_name, key_id), timeout=_DEFAULT_TIMEOUT)
+        if r.status_code >= 400:
+            logger.warning(
+                "Bifrost: DELETE key %s on %s returned %s: %s",
+                key_id,
+                provider_name,
+                r.status_code,
+                r.text[:200],
+            )
+            return False
+        return True
+    except Exception as e:
+        logger.warning(
+            "Bifrost: DELETE key %s on %s failed: %s", key_id, provider_name, e
+        )
+        return False
+
+
 def _delete_provider_keys(provider_name: str, client: httpx.Client) -> bool:
     """Remove ``provider_name``'s keys — the only way to clear a credential.
 
@@ -244,31 +279,9 @@ def _delete_provider_keys(provider_name: str, client: httpx.Client) -> bool:
     keys = _get_provider_keys(provider_name, client)
     if keys is None:
         return False
-    if not keys:
-        return True
     ok = True
     for key in keys:
-        try:
-            r = client.delete(
-                _keys_url(provider_name, key["id"]), timeout=_DEFAULT_TIMEOUT
-            )
-            if r.status_code >= 400:
-                logger.warning(
-                    "Bifrost: DELETE key %s on %s returned %s: %s",
-                    key.get("id"),
-                    provider_name,
-                    r.status_code,
-                    r.text[:200],
-                )
-                ok = False
-        except Exception as e:
-            logger.warning(
-                "Bifrost: DELETE key %s on %s failed: %s",
-                key.get("id"),
-                provider_name,
-                e,
-            )
-            ok = False
+        ok = _delete_key(provider_name, key["id"], client) and ok
     return ok
 
 
@@ -333,6 +346,69 @@ def push_provider_key(provider_name: str, key_value: str) -> bool:
         if ok:
             logger.info("Bifrost: pushed updated key for provider %s", provider_name)
         return ok
+
+
+def sync_env_provider_keys(attempts: int = 5, wait_s: float = 2.0) -> Dict[str, str]:
+    """Remove keys whose env var is unset, then push keys set in the env.
+
+    An older Bifrost config seeded each provider with a key reading
+    ``env.<NAME>``. Bifrost keeps that key even when the variable is empty and
+    load-balances onto it, so a real key added beside it fails a share of
+    requests. The config no longer seeds them, but Bifrost never drops a key the
+    file stops listing, so the ones already in its store are deleted here. Run
+    on backend startup, before ``sync_all_provider_keys``.
+
+    Returns ``{provider: "removed" | "pushed" | "removed, pushed" | "failed"}``
+    for each provider that changed or failed to. Bifrost answers "database is
+    locked" for a few seconds after its own start, so a pass with a failure is
+    retried; every pass is safe to repeat.
+    """
+    results: Dict[str, str] = {}
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(wait_s)
+        done = _sync_env_provider_keys_once()
+        results.update(done)
+        if "failed" not in ", ".join(done.values()):
+            break
+    if results:
+        logger.info("Bifrost env keys: %s", results)
+    return results
+
+
+def _sync_env_provider_keys_once() -> Dict[str, str]:
+    from core.llm.bifrost.mirror import _cred_from_env
+    from core.secrets_manager import get_secret
+
+    results: Dict[str, str] = {}
+    with httpx.Client() as client:
+        for provider in dict.fromkeys((*_SEEDED_PROVIDERS, *_ENV_PROVIDER_KEYS)):
+            keys = _get_provider_keys(provider, client)
+            if keys is None:
+                continue
+            done: List[str] = []
+            live = [k for k in keys if not _cred_from_env(k)]
+            stale = [k for k in keys if _cred_from_env(k)]
+            for key in stale:
+                if _delete_key(provider, key["id"], client):
+                    if "removed" not in done:
+                        done.append("removed")
+                else:
+                    # still there, so a pushed key would sit beside it
+                    live.append(key)
+                    done.append("failed")
+            value = next(
+                (v for v in map(get_secret, _ENV_PROVIDER_KEYS.get(provider, ())) if v),
+                None,
+            )
+            if value and not live:
+                pushed = _upsert_provider_key(
+                    provider, client, key_value=value, models=["*"]
+                )
+                done.append("pushed" if pushed else "failed")
+            if done:
+                results[provider] = ", ".join(dict.fromkeys(done))
+    return results
 
 
 def sync_all_provider_keys() -> Dict[str, bool]:

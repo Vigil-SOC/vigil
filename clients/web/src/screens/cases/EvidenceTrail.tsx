@@ -19,10 +19,17 @@ interface TrailRow {
 
 const DASH = '—'
 
-/** "Supports X · Goes against Y" for a row that bears on several explanations; the statement alone for one. */
+/**
+ * What a row bears on: "Supports X · Goes against Y" over several explanations, the statement alone
+ * for one. The explanations it bears on neither way are left out, and a row that bears on none of
+ * them says so once (#2458).
+ */
 function bearsOnLine(row: RunRecord['evidence'][number], record: RunRecord): string {
+  if (row.bears_on.length === 0) return ''
   const statements = new Map(record.hypotheses.map((h) => [h.hypothesis_id, h.statement]))
-  return row.bears_on
+  const bearing = row.bears_on.filter((link) => link.relation !== 'neither')
+  if (bearing.length === 0) return record.hypotheses.length === 2 ? 'Bears on neither explanation' : 'Bears on no explanation'
+  return bearing
     .map((link) => {
       const statement = statements.get(link.hypothesis_id) || link.hypothesis_id
       return row.bears_on.length > 1 ? `${relationWord(link.relation)} ${statement}` : statement

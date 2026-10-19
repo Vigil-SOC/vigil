@@ -64,6 +64,7 @@ function concluded(disposition: string, citations: string[], extra: Record<strin
       citations,
       gaps: [],
       next_steps: ["reach the owning team"],
+      proposed_actions: [],
       ...extra,
     },
   };
@@ -122,6 +123,20 @@ describe("the kernel runs a plugin to a conclusion", () => {
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
 
     expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", severity: "critical" });
+  });
+
+  it("carries the actions the answer proposes onto the terminal, and none when it proposes none", async () => {
+    const proposal = { action_type: "block_ip", target: "45.77.53.176", reason: "the beacon's destination", confidence: 0.9 };
+    const run = async (extra: Record<string, unknown>) => {
+      const spec = specOf();
+      const state = new InProcessState<AgentKinds>();
+      const provider = scriptedProvider([{ calls: [{ tool: "get_finding", args: '{"finding_id":"f-1"}' }] }, STOP, concluded("malicious", ["r1"], extra)]);
+      await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+      return state.terminal(RUN);
+    };
+
+    expect(await run({ proposed_actions: [proposal] })).toMatchObject({ outcome: "completed", proposed_actions: [proposal] });
+    expect(await run({})).not.toHaveProperty("proposed_actions");
   });
 
   it("tells the model its skills and how to cite, in a prefix that does not move", async () => {
@@ -344,7 +359,7 @@ describe("plugins load from their directory", () => {
     const plugin = quiet(pluginFor("investigate"));
     expect(plugin.skills.map((one) => one.name)).toEqual(["investigate-case"]);
     expect(plugin.guard).toMatchObject({ field: "disposition", fallback: "needs_review" });
-    expect(plugin.conclusion).toMatchObject({ severity_field: "severity" });
+    expect(plugin.conclusion).toMatchObject({ severity_field: "severity", proposals_field: "proposed_actions" });
     expect(pluginGrants(plugin, specOf().tools)["agent"]).toEqual(
       expect.arrayContaining(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators", "load_skill"]),
     );
@@ -389,6 +404,22 @@ conclusion:
 `;
     expect(() => parsePlugin(manifest("low, high"), [])).not.toThrow();
     expect(() => parsePlugin(manifest("low, severe"), [])).toThrow(SpecError);
+  });
+
+  it("refuses a proposals_field the schema does not declare", () => {
+    const manifest = `
+id: x
+description: d
+system: s
+conclusion:
+  summary_field: summary
+  proposals_field: actions
+  schema:
+    type: object
+    properties:
+      summary: { type: string }
+`;
+    expect(() => parsePlugin(manifest, [])).toThrow(SpecError);
   });
 
   it("refuses a skill without front matter", () => {

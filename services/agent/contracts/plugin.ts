@@ -27,6 +27,10 @@ export interface StructuredConclusion {
   // Which field rates what the run found, in SEVERITIES. Carried onto the
   // terminal, where it raises the priority of the case the run was started from.
   severity_field?: string;
+  // Which field lists the actions the run asks a person to approve, each a
+  // ProposedAction. Carried onto the terminal, where the backend files them as
+  // pending approvals on the case the run was started from.
+  proposals_field?: string;
 }
 
 // The run ends on prose: whatever the agent said last, once it stopped calling tools.
