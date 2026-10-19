@@ -1,7 +1,7 @@
 import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
 import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";
-import { DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
+import { DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
 import { DEFAULT_CHECKPOINTS, type Checkpoints } from "../../plugins/hunt/checkpoints.js";
 import {
   DEFAULT_ENRICHMENT,
@@ -39,9 +39,9 @@ export interface SpecOverrides {
   termination?: Partial<Termination>;
   checkpoints?: Partial<Checkpoints>;
   scope?: Record<string, unknown>;
-  dispatch?: RunSpec["dispatch"];
+  allowance?: RunSpec["allowance"];
   hypothesisLoop?: boolean;
-  // What the roles ask for and what the deployment answers with, so a test can
+  // What the plugin asks for and what the deployment answers with, so a test can
   // put a capability out of reach without standing up a registry.
   needs?: string[];
   tools?: RunSpec["tools"];
@@ -73,8 +73,8 @@ export function huntSpecFor(overrides: SpecOverrides = {}): HuntSpec {
     objectives: [],
     scope: overrides.scope ?? {},
     narrative: overrides.narrative ?? "",
-    roles: { lead: { ...LEAD, needs: overrides.needs ?? [] }, workers: {} },
-    dispatch: overrides.dispatch ?? DEFAULT_DISPATCH,
+    roles: { lead: LEAD },
+    ...(overrides.allowance === undefined ? {} : { allowance: overrides.allowance }),
     digest: {},
     hypotheses,
     operator_hypotheses: overrides.operatorHypotheses ?? [],
@@ -100,7 +100,7 @@ export async function newLedger(overrides: SpecOverrides = {}): Promise<Started>
   const state = new InProcessState<HuntKinds>();
   const queue = new InProcessDirectiveQueue();
   const runId = newId("run");
-  const ledger = await startHunt(state, queue, runId, huntSpecFor(overrides));
+  const ledger = await startHunt(state, queue, runId, huntSpecFor(overrides), "worker", "hunt", overrides.needs);
   return { ledger, state, queue, runId, hypothesisIds: [...ledger.projection.hypotheses.keys()], spend: spender(state, runId) };
 }
 

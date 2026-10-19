@@ -19,7 +19,6 @@ def test_closed_case_stays_closed_even_with_a_live_investigation():
 def test_live_investigation_contributes_its_status():
     assert combined_state("investigating", "executing") == "executing"
     assert combined_state("open", "waiting_approval") == "waiting_approval"
-    assert combined_state("open", "review_submitted") == "review_submitted"
 
 
 def test_a_finished_investigation_leaves_the_case_status():

@@ -1,6 +1,4 @@
-/* The spending-limit card edits the one key Vigil sends. enforcement_mode and
-   budget_limit_usd are stored and never read at dispatch, so there is no control
-   for them and they only round-trip. */
+/* The spending-limit card edits the one key Vigil sends. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import AiBudgetsPanel from './AiBudgetsPanel'
@@ -38,7 +36,7 @@ const QUOTA = {
 
 const setup = (o: { settings?: object; quota?: object | null; vks?: unknown[]; keyPhase?: string; vigilPhase?: string } = {}) => {
   m.budgets = {
-    settings: { default_vk: 'sk-bf-x', budget_limit_usd: 500, enforcement_mode: 'hard_stop', ...o.settings },
+    settings: { default_vk: 'sk-bf-x', ...o.settings },
     quota: o.quota === undefined ? QUOTA : o.quota,
     phase: o.vigilPhase ?? 'ready',
   }
@@ -99,7 +97,7 @@ describe('AiBudgetsPanel', () => {
       }),
     )
     await waitFor(() =>
-      expect(m.save).toHaveBeenCalledWith({ default_vk: 'sk-bf-new', budget_limit_usd: 500, enforcement_mode: 'hard_stop' }),
+      expect(m.save).toHaveBeenCalledWith({ default_vk: 'sk-bf-new' }),
     )
   })
 
@@ -181,7 +179,7 @@ describe('AiBudgetsPanel', () => {
     fireEvent.change(screen.getByPlaceholderText('sk-bf-…'), { target: { value: 'sk-bf-pasted' } })
     fireEvent.click(screen.getByRole('button', { name: /Use this key/ }))
     await waitFor(() =>
-      expect(m.save).toHaveBeenCalledWith({ default_vk: 'sk-bf-pasted', budget_limit_usd: 500, enforcement_mode: 'hard_stop' }),
+      expect(m.save).toHaveBeenCalledWith({ default_vk: 'sk-bf-pasted' }),
     )
   })
 

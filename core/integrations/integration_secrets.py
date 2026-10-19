@@ -99,23 +99,23 @@ _ENV_VAR_OVERRIDES: Mapping[str, Mapping[str, str]] = {
 
 
 # Form-field names contributed by the shared proxy block (see
-# ``clients/web/src/config/integrations.ts:PROXY_FIELDS``). Integrations
+# ``clients/web/src/config/integrationSchema.ts:PROXY_FIELDS``). Integrations
 # that opt in via ``PROXY_SUPPORTED`` get these added to their
 # secret-field registry so credentials are routed to the encrypted
 # store rather than persisted plaintext on the integration row.
-_PROXY_SECRET_FIELDS: tuple[str, ...] = ("proxy_password", "ssh_key_passphrase")
+_PROXY_SECRET_FIELDS: tuple[str, ...] = ("proxy_password",)
 
 
 # Integrations whose UI form includes the shared proxy field block.
 # Kept as a frozen set so the registry stays greppable: adding an
-# integration here means proxy_password / ssh_key_passphrase get the
-# same encrypted-store treatment as the integration's own credentials.
+# integration here means proxy_password gets the same encrypted-store
+# treatment as the integration's own credentials. Each must also pass
+# ``integration_proxy`` to its httpx clients (``_base/proxy.py``).
 PROXY_SUPPORTED: frozenset[str] = frozenset(
     {
         "splunk",
         "elastic-siem",
         "opensearch",
-        "cribl-stream",
         "misp",
     }
 )

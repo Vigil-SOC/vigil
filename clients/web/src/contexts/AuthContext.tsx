@@ -62,6 +62,8 @@ interface AuthContextType {
   backendUnreachable: boolean;
   /** Re-runs the /auth/me load. */
   retryLoadUser: () => Promise<void>;
+  /** Re-reads /auth/me in place, without the loading screen that unmounts the console. */
+  refreshUser: () => Promise<void>;
   login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<void>;
@@ -112,6 +114,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setIsLoading(true);
     await loadUser();
   }, [loadUser]);
+
+  const refreshUser = useCallback(async () => {
+    if (DEV_MODE) return;
+    try {
+      const response = await api.get('/auth/me');
+      setUser(response.data);
+    } catch {
+      // keep the current user; a real sign-out is handled by the next request's 401
+    }
+  }, []);
 
   useEffect(() => {
     loadUser();
@@ -210,6 +222,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isLoading,
     backendUnreachable,
     retryLoadUser,
+    refreshUser,
     login,
     logout,
     refreshToken,

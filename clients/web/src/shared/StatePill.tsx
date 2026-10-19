@@ -3,7 +3,7 @@ import './kit.css'
 export type PillTone = 'idle' | 'live' | 'needs' | 'closed'
 
 const IDLE_CASE = new Set(['new', 'open', 'investigating'])
-const LIVE = new Set(['assigned', 'executing', 'review_submitted'])
+const LIVE = new Set(['assigned', 'executing'])
 
 /** Colour pair and word for a case's combined state; any state shows Needs you while a decision is pending. */
 export function statePill(state: string, needs = false): { tone: PillTone; label: string } {

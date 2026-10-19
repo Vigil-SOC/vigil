@@ -492,3 +492,13 @@ export const GRANTS: [string, Grant][] = [
 
 /** The one extend directive a parked hunt takes, from the run page or its case. */
 export const extendRun = (runId: string, note: string, grant: Grant) => workflowApi.steer(runId, 'extend', note, { grant })
+
+/** Moves whose name is not a word as written (services/agent/plugins/hunt/words.ts). */
+const MOVE_WORD: Record<string, string> = { HANDOFF_IR: 'Hand off' }
+
+/** A step's move as a word: `VALIDATE` → "Validate", `HANDOFF_IR` → "Hand off" (#2459). */
+export function moveWord(action: string): string {
+  if (MOVE_WORD[action]) return MOVE_WORD[action]
+  const words = action.replace(/[_-]+/g, ' ').trim().toLowerCase()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}

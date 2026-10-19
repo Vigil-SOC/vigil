@@ -9,7 +9,7 @@ Usage:
     # Move every key, removing each from the dotenv file as it's migrated:
     python scripts/migrate_dotenv_secrets.py
 
-    # Dry-run (don't touch the dotenv source):
+    # Copy into secrets.enc but keep the dotenv copy (writes; not a preview):
     python scripts/migrate_dotenv_secrets.py --dry-run
 
     # Restrict to specific keys:
@@ -50,8 +50,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--dry-run",
         action="store_true",
         help=(
-            "Copy to encrypted but don't delete from the dotenv source. "
-            "Useful for previewing what the migration would do."
+            "Not a preview: still writes every value to secrets.enc, and "
+            "only leaves the dotenv copy in place."
         ),
     )
     args = parser.parse_args(argv)

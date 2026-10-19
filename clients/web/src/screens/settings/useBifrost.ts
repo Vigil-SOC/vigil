@@ -16,6 +16,16 @@ import {
 
 type Phase = 'loading' | 'ready' | 'error'
 
+/** A key the gateway's seed config made from an environment variable that is
+    still unset (`default-anthropic-key` reads `env.ANTHROPIC_API_KEY`). The
+    console treats such a key as not set up. The verdict is the backend's
+    (`key_health` in core/llm/bifrost/mirror.py, the one implementation of the
+    rule); an env-backed key whose variable is set, routing or not, is a real key.
+    With no verdict to go on, nothing is a seed. */
+export function isUnsetSeed(key: BifrostKey, verdicts: BifrostRoutability | null): boolean {
+  return verdicts?.keys?.[key.id]?.health === 'placeholder'
+}
+
 const errText = (e: unknown, fallback: string): string => {
   const r = e as { response?: { data?: { detail?: string; error?: { message?: string } } } }
   // Bifrost's own errors pass through the proxy verbatim, so its shape
@@ -26,7 +36,10 @@ const errText = (e: unknown, fallback: string): string => {
 /** Providers with their keys, loaded together — a provider with no keys can't route. */
 export function useBifrostProviders() {
   const [providers, setProviders] = useState<BifrostProvider[]>([])
+  // `keys` leaves out unset seed keys (isUnsetSeed); they are kept apart so a
+  // first real key can replace one rather than sit beside it.
   const [keys, setKeys] = useState<Record<string, BifrostKey[]>>({})
+  const [seeds, setSeeds] = useState<Record<string, BifrostKey[]>>({})
   // `null` is "could not ask", not a verdict of "not routable".
   const [verdicts, setVerdicts] = useState<BifrostRoutability | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -60,7 +73,8 @@ export function useBifrostProviders() {
         ])
         if (cancelled) return
         setProviders(list)
-        setKeys(Object.fromEntries(entries))
+        setKeys(Object.fromEntries(entries.map(([n, ks]) => [n, ks.filter((k) => !isUnsetSeed(k, routability))])))
+        setSeeds(Object.fromEntries(entries.map(([n, ks]) => [n, ks.filter((k) => isUnsetSeed(k, routability))])))
         setVerdicts(routability)
         setPhase('ready')
       })
@@ -110,9 +124,14 @@ export function useBifrostProviders() {
     [reload],
   )
 
+  // a provider that only holds unset seeds is not shown; one added with no key yet is
+  const shown = providers.filter((p) => (keys[p.name] || []).length > 0 || !(seeds[p.name] || []).length)
+
   return {
     providers,
+    shown,
     keys,
+    seeds,
     verdicts,
     phase,
     error,

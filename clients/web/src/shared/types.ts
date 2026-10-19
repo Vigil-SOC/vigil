@@ -29,6 +29,8 @@ export interface ConsoleScreenProps {
   openCase: (id: string) => void
   /** full-height, non-scrolling view — the master-detail splits want this */
   setViewFull: (full: boolean) => void
+  /** Whether the view is full-height now: the shell clears it (a tour starting, say), so a screen that needs it can ask again. */
+  viewFull?: boolean
   /** Overview's wall mode. Hides the nav row and the top bar. */
   setWallMode?: (wall: boolean) => void
   /** Text for the open case's composer, typed in the command bar. */
