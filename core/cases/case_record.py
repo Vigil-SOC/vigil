@@ -110,7 +110,7 @@ _ASKED = {
     "validate_hypothesis": "Put up for a verdict",
     "conclude_hunt": "Asked to conclude the hunt",
     "expand": "Opened evidence in full",
-    "record": "Recorded a causal step",
+    "record": "Asked to record a causal step",
     "finish": "Asked to finish the trace",
 }
 
@@ -123,6 +123,8 @@ _SUBJECT_KEYS = (
     "indicator",
     "value",
     "entity",
+    "hostname",
+    "ip_address",
     "sql",
     "q",
     "name",
@@ -406,8 +408,9 @@ def event_text(
         origin = (
             "origin, " + str(body.get("origin_status")) if body.get("origin") else None
         )
+        via = f" via {body.get('link')}" if body.get("link") else ""
         tie = (
-            f"caused by {body.get('cause_id')} via {body.get('link')} ({status})"
+            f"caused by {body.get('cause_id')}{via} ({status})"
             if body.get("cause_id")
             else None
         )

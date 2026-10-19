@@ -313,7 +313,14 @@ def test_a_search_reads_as_its_query_and_how_many_rows_came_back():
                 "arguments": '{"spl_query": "index=botsv3 | stats count by host"}',
                 "ok": True,
                 "result": '<vigil:tool_result tool="splunk_execute" ref="r7">\n1 row(s) from splunk\n'
-                + json.dumps([{"success": True, "results": [{"host": "a"}, {"host": "b"}, {"host": "c"}]}])
+                + json.dumps(
+                    [
+                        {
+                            "success": True,
+                            "results": [{"host": "a"}, {"host": "b"}, {"host": "c"}],
+                        }
+                    ]
+                )
                 + "\n</vigil:tool_result>",
                 "turn": 2,
             },
@@ -343,8 +350,18 @@ def test_root_cause_and_phase_rows_read_as_words_not_their_kind():
             },
         ),
         ("notice", {"text": "No process telemetry before 10:00"}),
-        ("phase", {"name": "triage", "agent": "triage-agent", "answer": {"summary": "Two hosts beacon"}}),
-        ("conclusion", {"value": {"text": "The chain starts at a phishing attachment"}}),
+        (
+            "phase",
+            {
+                "name": "triage",
+                "agent": "triage-agent",
+                "answer": {"summary": "Two hosts beacon"},
+            },
+        ),
+        (
+            "conclusion",
+            {"value": {"text": "The chain starts at a phishing attachment"}},
+        ),
     )
     texts = [row["text"] for row in reversed(merge_record(rows, []))]
     assert texts == [
@@ -352,4 +369,34 @@ def test_root_cause_and_phase_rows_read_as_words_not_their_kind():
         "Notice — No process telemetry before 10:00",
         "Phase triage by triage-agent — Two hosts beacon",
         "Concluded — The chain starts at a phishing attachment",
+    ]
+
+
+def test_a_tie_with_no_link_name_drops_the_via_and_a_host_search_names_its_host():
+    rows = _rows(
+        (
+            "step",
+            {
+                "step_id": "s2",
+                "event": "x",
+                "cause_id": "s1",
+                "link": "",
+                "link_status": "proven",
+            },
+        ),
+        (
+            "call",
+            {
+                "tool": "splunk_search_host",
+                "arguments": '{"hostname": "FYODOR-L"}',
+                "ok": True,
+                "result": '<vigil:tool_result tool="splunk_search_host" ref="r8">\n2 row(s) from splunk\n[]\n</vigil:tool_result>',
+                "turn": 3,
+            },
+        ),
+    )
+    texts = [row["text"] for row in reversed(merge_record(rows, []))]
+    assert texts == [
+        "Step s2 — x — caused by s1 (proven)",
+        "Searched Splunk: FYODOR-L → 2 rows",
     ]
