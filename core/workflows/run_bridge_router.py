@@ -16,6 +16,7 @@ from core.deps import provide_approvals, provide_workflow_runs
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
+from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
 from core.workflows.workflow_run_service import WorkflowRunService
 
@@ -75,6 +76,9 @@ class TerminalUpdate(BaseModel):
     summary: str = ""
     cost_usd: Optional[float] = None
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
+    # How bad the run rated what it found, for the case it was started from. A free
+    # string: an unrecognised rating is ignored, not grounds to refuse the terminal.
+    severity: Optional[str] = None
 
 
 class CitedFindings(BaseModel):
@@ -85,6 +89,11 @@ class StatusUpdate(BaseModel):
     status: Literal["running", "paused"]
     reason: Optional[str] = None
     cost_usd: Optional[float] = None
+
+
+class ProgressUpdate(BaseModel):
+    iteration: int = Field(..., ge=0)
+    max_cost_usd: float = Field(..., ge=0)
 
 
 class CheckpointRaised(BaseModel):
@@ -156,6 +165,21 @@ def record_status(
     )
 
 
+# How far a hunt has got, after each iteration whatever it left the run as. Its own
+# route because /status carries a state and a paused or ending iteration has no new one.
+@router.post("/{run_id}/progress", status_code=204)
+def record_progress(
+    run_id: str,
+    update: ProgressUpdate,
+    authorization: Optional[str] = Header(default=None),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> None:
+    authorise(authorization, "run progress")
+    run_service.set_progress(
+        run_id, iteration=update.iteration, max_cost_usd=update.max_cost_usd
+    )
+
+
 @router.post("/{run_id}/terminal", status_code=204)
 def record_terminal(
     run_id: str,
@@ -191,6 +215,9 @@ def record_terminal(
     origin = _origin_case(run_id, run_service)
     if origin:
         _record_report(origin, run_id, update)
+        # Only a run that reached its conclusion has rated anything.
+        if update.outcome == "completed":
+            _raise_priority(origin, run_id, update.severity)
 
     # A threat hunt that proved a compromise tees up the backward root-cause run.
     # Computed once: an RCA's own handoff
@@ -330,6 +357,44 @@ def _record_report(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception(
             "could not record the report of %s on case %s", run_id, case_id
+        )
+
+
+# The ratings a concluding run may give, which are the case priorities a human sets.
+# unknown is the absence of one, so it is never a conclusion.
+CONCLUDED_SEVERITIES = ("critical", "high", "medium", "low")
+
+
+# The run's rating of what it found, as its case's priority. Only ever raised:
+# lowering a case is a dismissal, which the investigate guard and agent closure
+# own, so a conclusion rated below the case's priority leaves it alone.
+def _raise_priority(case_id: str, run_id: str, severity: Optional[str]) -> None:
+    from core.cases.case_workflow_service import preferred_merge_priority
+    from core.storage.database_data_service import DatabaseDataService
+
+    rated = (severity or "").strip().lower()
+    if rated not in CONCLUDED_SEVERITIES:
+        return
+    try:
+        data = DatabaseDataService()
+        case = data.get_case(case_id)
+        if not case:
+            return
+        current = str(case.get("priority") or "").strip().lower() or "unknown"
+        if preferred_merge_priority(current, rated) == current:
+            return
+        if not data.update_case(case_id, priority=rated):
+            logger.error("could not raise the priority of case %s", case_id)
+            return
+        _add_activity(
+            case_id,
+            "agent_run_priority",
+            f"Priority raised from {current} to {rated} by the investigation",
+            {"run_id": run_id, "from": current, "to": rated},
+        )
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception(
+            "could not apply the severity of %s to case %s", run_id, case_id
         )
 
 
@@ -584,7 +649,7 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
 # What the analyst reads under a checkpoint's question. Never the class name or a
 # threshold: those are config, not an explanation.
 _CHECKPOINT_REASONS = {
-    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "hypothesis_approval": "Vigil wants your go-ahead on the explanations it will test.",
     "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
     "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
     "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",
@@ -648,7 +713,7 @@ def list_decisions(
                     actor=action.approved_by or "analyst",
                     answer=answer,
                     text=action.rejection_reason or "",
-                    resolved_at=action.approved_at or utcnow().isoformat(),
+                    resolved_at=action.approved_at or _iso_utc(utcnow()),
                 )
             )
     return Decisions(decisions=decided)

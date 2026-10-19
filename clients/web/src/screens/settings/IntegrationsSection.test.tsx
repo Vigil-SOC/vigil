@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import IntegrationsSection from './IntegrationsSection'
 import { tabFromQuery } from './integrationsData'
 import { IntegrationsStateProvider } from './IntegrationsState'
-import { configApi, mcpApi } from '../../services/api'
+import { configApi, detectionRulesApi, mcpApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   default: {},
@@ -17,6 +17,7 @@ vi.mock('../../services/api', () => ({
   detectionRulesApi: {
     listSources: vi.fn(() => Promise.resolve({ data: { sources: [] } })),
     getStats: vi.fn(() => Promise.resolve({ data: {} })),
+    updateAll: vi.fn(),
   },
   federationApi: {},
   ingestionApi: {},
@@ -26,16 +27,17 @@ vi.mock('../../services/api', () => ({
     listServers: vi.fn(),
     getStatuses: vi.fn(),
     setServerEnabled: vi.fn(),
+    reloadServers: vi.fn(),
   },
   orchestratorApi: {},
   storageApi: {},
 }))
 
-function renderSection(path = '/settings?section=integrations') {
+function renderSection(path = '/settings?section=integrations', notify = vi.fn()) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <IntegrationsStateProvider>
-        <IntegrationsSection notify={vi.fn()} />
+        <IntegrationsSection notify={notify} />
       </IntegrationsStateProvider>
     </MemoryRouter>,
   )
@@ -155,6 +157,50 @@ describe('Integrations: Connected table', () => {
     await waitFor(() => expect(row('Security Detections').getByText('Good')).toBeInTheDocument())
   })
 
+  it('shows security-detections as not set up, with the fetch as its one action, until its rules exist', async () => {
+    let fetched = false
+    vi.mocked(mcpApi.listServers).mockResolvedValue({
+      data: { servers: ['github', 'security-detections', 'splunk-selfhosted'] },
+    } as never)
+    vi.mocked(mcpApi.getStatuses).mockImplementation((() =>
+      Promise.resolve({
+        data: {
+          statuses: [
+            { name: 'github', status: 'running', enabled: true },
+            fetched
+              ? { name: 'security-detections', status: 'running', enabled: true }
+              : {
+                  name: 'security-detections',
+                  status: 'not_set_up',
+                  enabled: true,
+                  setup: 'No detection rules have been fetched on this install yet.',
+                  setup_action: 'fetch_detection_rules',
+                },
+            { name: 'splunk-selfhosted', status: 'on_demand', enabled: true },
+          ],
+        },
+      })) as never)
+    vi.mocked(detectionRulesApi.updateAll).mockImplementation((() => {
+      fetched = true
+      return Promise.resolve({ data: { results: [{ success: true }, { success: true }] } })
+    }) as never)
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 3' })
+
+    const detections = row('Security Detections')
+    expect(detections.getByText('Not set up')).toBeInTheDocument()
+    expect(detections.getByText('No detection rules have been fetched on this install yet.')).toBeInTheDocument()
+    expect(row('Splunk (Self-Hosted)').getByText('Starts on first use')).toBeInTheDocument()
+    // waiting is not a fault: no Poor, no banner
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    fireEvent.click(detections.getByRole('button', { name: 'Fetch rules' }))
+    await waitFor(() => expect(detectionRulesApi.updateAll).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(row('Security Detections').getByText('Good')).toBeInTheDocument())
+    expect(row('Security Detections').queryByRole('button', { name: 'Fetch rules' })).not.toBeInTheDocument()
+  })
+
   it('shows a dash, not a level, where nothing was ever tested', async () => {
     vi.mocked(configApi.getIntegrations).mockResolvedValue({
       data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
@@ -187,6 +233,80 @@ describe('Integrations: Connected table', () => {
     expect(screen.getByRole('tab', { name: /^Add integration/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.click(head.getByRole('button', { name: 'Build custom' }))
     expect(screen.getByRole('tab', { name: /^Custom/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('Reload servers says it is working, toasts the result and re-reads the list', async () => {
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(mcpApi.reloadServers).mockImplementation((() => new Promise((r) => { finish = r })) as never)
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const reads = vi.mocked(mcpApi.listServers).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    const working = screen.getByRole('button', { name: 'Reloading…' })
+    expect(working).toBeDisabled()
+    expect(working).toHaveAttribute('aria-busy', 'true')
+    expect(mcpApi.reloadServers).toHaveBeenCalledTimes(1)
+    expect(notify).not.toHaveBeenCalled()
+
+    finish({
+      data: {
+        success: true, message: 'MCP servers reloaded successfully', total_servers: 4, servers: [],
+        reconnected: ['ip-geolocation'], disconnected: ['virustotal'], failed: {},
+      },
+    })
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith('ok', 'Tool servers reloaded. 4 servers configured. Reconnected Ip Geolocation. Stopped Virustotal.'),
+    )
+    await waitFor(() => expect(vi.mocked(mcpApi.listServers).mock.calls.length).toBeGreaterThan(reads))
+    expect(await screen.findByRole('button', { name: 'Reload servers' })).toBeEnabled()
+  })
+
+  it('Reload servers names the servers that did not come back', async () => {
+    vi.mocked(mcpApi.reloadServers).mockResolvedValue({
+      data: {
+        success: false, message: 'MCP servers reloaded; 1 server(s) failed', total_servers: 4, servers: [],
+        reconnected: [], disconnected: [], failed: { 'ip-geolocation': 'connect failed' },
+      },
+    } as never)
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        'err',
+        'Tool servers reloaded, but not every server came back. 4 servers configured. Failed: Ip Geolocation (connect failed).',
+      ),
+    )
+  })
+
+  it('Reload servers toasts the server’s reason when it fails, and still re-reads the list', async () => {
+    vi.mocked(mcpApi.reloadServers).mockRejectedValue({
+      message: 'Request failed with status code 403',
+      response: { status: 403, data: { detail: 'Permission denied: integrations.write required' } },
+    })
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const reads = vi.mocked(mcpApi.listServers).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith('err', 'Could not reload tool servers: Permission denied: integrations.write required.'),
+    )
+    await waitFor(() => expect(vi.mocked(mcpApi.listServers).mock.calls.length).toBeGreaterThan(reads))
+    expect(await screen.findByRole('button', { name: 'Reload servers' })).toBeEnabled()
+  })
+
+  it('Reload servers falls back to the request error when the server gives no reason', async () => {
+    vi.mocked(mcpApi.reloadServers).mockRejectedValue(new Error('Network Error'))
+    const notify = vi.fn()
+    renderSection(undefined, notify)
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    fireEvent.click(screen.getByRole('button', { name: 'Reload servers' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('err', 'Could not reload tool servers: Network Error.'))
   })
 
   it('shows loading, then an error with Retry', async () => {
@@ -375,7 +495,7 @@ describe('Integrations: Add integration tab', () => {
       data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
     } as never)
     vi.mocked(mcpApi.listServers).mockResolvedValue({
-      data: { servers: ['github', 'okta', 'virustotal', 'security-detections', 'slack'] },
+      data: { servers: ['github', 'okta', 'virustotal', 'security-detections', 'slack', 'crowdstrike'] },
     } as never)
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({
       data: {
@@ -385,9 +505,16 @@ describe('Integrations: Add integration tab', () => {
           { name: 'virustotal', status: 'disconnected', enabled: false },
           { name: 'security-detections', status: 'disconnected', enabled: false },
           { name: 'slack', status: 'disconnected', enabled: false },
+          { name: 'crowdstrike', status: 'disconnected', enabled: false },
         ],
       },
     } as never)
+  })
+
+  it('marks a connector never run against a live instance as experimental', async () => {
+    await open()
+    expect(within(card('CrowdStrike Falcon')).getByText('Experimental')).toBeInTheDocument()
+    expect(within(card('Okta')).queryByText('Experimental')).not.toBeInTheDocument()
   })
 
   it('lists a chip per category without counts, marks connected cards and leaves WIP servers out', async () => {

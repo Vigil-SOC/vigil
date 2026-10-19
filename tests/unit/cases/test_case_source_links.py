@@ -25,6 +25,7 @@ class _Row:
         self.evidence_links = kw.get("evidence_links")
         self.data_source = kw.get("data_source")
         self.external_id = kw.get("external_id")
+        self.entity_context = kw.get("entity_context")
 
 
 def _descriptor(source: str):
@@ -42,6 +43,7 @@ def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
             evidence_links=[{"ref": "note"}, {"ref": "https://console.example/a"}],
             data_source="tr-link-src",
             external_id="http-1",
+            entity_context={"hostnames": ["web-1"], "usernames": ["alice"]},
         ),
         _Row(
             "f-tpl",
@@ -107,6 +109,7 @@ def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
 
     assert parsed["finding_ids"] == ["f-http", "missing", "f-tpl", "f-tpl-2", "f-empty"]
     assert "findings" not in parsed
+    assert parsed["linked_findings"][0]["entities"] == ["web-1", "alice"]
     assert seen["calls"] == 1
     assert seen["ids"] == parsed["finding_ids"]
     assert config_calls["n"] == 1

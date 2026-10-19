@@ -306,3 +306,6 @@ index.scip.stamp
 
 # Timestamped .env copies left by setup and migration scripts.
 .env.*
+
+# Throwaway env written by the live connector scripts (tests/live/ci/).
+tests/live/ci/.env.*

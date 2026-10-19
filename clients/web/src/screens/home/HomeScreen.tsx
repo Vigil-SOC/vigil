@@ -7,6 +7,7 @@ import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { useToast } from '../../shell/toast'
+import { useFusedDecision } from '../../shell/useFusedDecision'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -35,7 +36,7 @@ const STEP_ACTION: Record<string, string> = {
   custom_skill: 'Add',
 }
 
-const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint' }
+const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint', parked: 'Stopped at a limit' }
 
 type Pickup = { share: number; launched: number; today: number }
 
@@ -114,6 +115,8 @@ function errorText(error: unknown, fallback: string): string {
   return message && message.trim() ? message : fallback
 }
 
+const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
+
 function DecisionCard({
   item,
   busy,
@@ -145,14 +148,15 @@ function DecisionCard({
         </p>
       )}
       <div className="home-actions">
-        {item.reversibility === 'reversible' ? (
+        {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
+        {item.kind === 'parked' ? null : item.reversibility === 'reversible' ? (
           <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
             Approve
           </button>
         ) : (
           <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
         )}
-        {rejecting ? (
+        {item.kind === 'parked' ? null : rejecting ? (
           <form
             className="home-reject"
             onSubmit={(event) => {
@@ -181,7 +185,7 @@ function DecisionCard({
         )}
         {caseId && (
           <Link
-            className="home-btn ghost"
+            className={item.kind === 'parked' ? 'home-btn primary' : 'home-btn ghost'}
             to={`/cases?case=${encodeURIComponent(caseId)}`}
             onClick={(event) => {
               if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
@@ -212,7 +216,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const [demoBusy, setDemoBusy] = useState(false)
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
-  const { notify, notifyUndoable, pending, settled } = useToast()
+  const { notify, pending, settled } = useToast()
   const sourceBadge = useSourceBadge()
 
   const load = useCallback(async () => {
@@ -295,25 +299,16 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
     }
   }
 
-  // Reversible approve and every reject commit through the toast's undo fuse, which owns the
-  // call, so it survives leaving Home. A held (irreversible) approve commits at once.
-  const fuse = (id: string, verb: string, past: string, title: string, commit: () => Promise<unknown>) =>
-    notifyUndoable({
-      key: id,
-      text: `${verb}: ${title}`,
-      commit,
-      doneText: `${past}: ${title}`,
-      failText: (err) => errorText(err, 'Could not update that decision'),
-    })
+  // Reversible approve and every reject commit through the toast's undo fuse, shared with the case
+  // page's decision block. A held (irreversible) approve commits at once.
+  const fused = useFusedDecision(decisionFailText)
 
-  const approve = (item: NeedsYouItem, fused: boolean) => {
-    const commit = () => approvalsApi.approve(item.source_id)
-    if (fused) return fuse(item.source_id, 'Approving', 'Approved', item.title, commit)
-    void run(item.source_id, commit, `Approved: ${item.title}`)
+  const approve = (item: NeedsYouItem, fuse: boolean) => {
+    if (fuse) return fused.approve(item)
+    void run(item.source_id, () => approvalsApi.approve(item.source_id), `Approved: ${item.title}`)
   }
 
-  const reject = (item: NeedsYouItem, reason: string) =>
-    fuse(item.source_id, 'Rejecting', 'Rejected', item.title, () => approvalsApi.reject(item.source_id, reason))
+  const reject = fused.reject
 
   const run = async (id: string, act: () => Promise<unknown>, doneText: string) => {
     if (busyRef.current) return
@@ -525,9 +520,9 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
           </div>
             </>
           )}
+          {/* The headline already says "Board clear." (HM-P1); this says what that means. */}
           {boardClear && (
             <div className="home-clear">
-              <h3>Board clear</h3>
               <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>
             </div>
           )}

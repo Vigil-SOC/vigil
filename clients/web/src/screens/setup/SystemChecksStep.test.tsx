@@ -237,6 +237,22 @@ describe('SystemChecksStep', () => {
     expect(mark('Tool servers')).toBe('Needs you')
   })
 
+  it('passes a fresh install whose rules are not fetched and whose servers wait for a first call', async () => {
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: {
+        statuses: [
+          { name: 'security-detections', status: 'not_set_up', enabled: true },
+          { name: 'splunk-selfhosted', status: 'on_demand', enabled: true },
+        ],
+      },
+    } as never)
+    render(<Harness />)
+    expect(
+      await screen.findByText('1 starts on first use · security-detections not set up'),
+    ).toBeInTheDocument()
+    expect(mark('Tool servers')).toBe('Passed')
+  })
+
   it('shows Could not read for a read that fails, counts it, and carries on', async () => {
     vi.mocked(storageApi.getStatus).mockRejectedValue(new Error('down'))
     render(<Harness />)

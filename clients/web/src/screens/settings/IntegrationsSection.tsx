@@ -8,7 +8,10 @@ import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
+import { detectionRulesApi, mcpApi } from '../../services/api'
 import {
+  EXPERIMENTAL_NOTE,
+  EXPERIMENTAL_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
@@ -35,6 +38,8 @@ const categoryRank = (name: string) => {
   return i < 0 ? MCP_CATEGORIES.length : i
 }
 const canConfigure = (r: ServerRow) => !!r.integration?.fields?.length
+/** security-detections' one setup action: fetch its rule repositories */
+const FETCH_RULES = 'fetch_detection_rules'
 
 export default function IntegrationsSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
@@ -43,6 +48,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
   const [busy, setBusy] = useState<string | null>(null)
+  const [reloadingServers, setReloadingServers] = useState(false)
   // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
   const [customCount, setCustomCount] = useState<number | null>(null)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
@@ -53,6 +59,34 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const reload = () => {
     reloadMcp()
     reloadInt()
+  }
+
+  // Refresh only re-reads; this asks the backend to re-read mcp-config.json and
+  // apply it: changed servers reconnect, removed or disabled ones stop
+  const onReloadServers = async () => {
+    setReloadingServers(true)
+    try {
+      const { data } = await mcpApi.reloadServers()
+      const n = data?.total_servers
+      const failed = Object.entries(data?.failed ?? {})
+      const parts = [typeof n === 'number' ? `${n} server${n === 1 ? '' : 's'} configured.` : '']
+      if (data?.reconnected?.length) parts.push(`Reconnected ${data.reconnected.map(prettyServerName).join(', ')}.`)
+      if (data?.disconnected?.length) parts.push(`Stopped ${data.disconnected.map(prettyServerName).join(', ')}.`)
+      if (failed.length) {
+        const why = failed.map(([name, err]) => `${prettyServerName(name)}${err ? ` (${err})` : ''}`).join(', ')
+        notify('err', ['Tool servers reloaded, but not every server came back.', ...parts, `Failed: ${why}.`].filter(Boolean).join(' '))
+      } else {
+        notify('ok', ['Tool servers reloaded.', ...parts].filter(Boolean).join(' '))
+      }
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
+      const detail = err.response?.data?.detail
+      notify('err', `Could not reload tool servers: ${typeof detail === 'string' ? detail : err.message || 'unknown error'}.`)
+    } finally {
+      setReloadingServers(false)
+      // sessions may have changed even when some failed; a 4xx changed nothing, and the re-read is cheap
+      reload()
+    }
   }
 
   const reloadCustom = useCallback(async () => {
@@ -93,6 +127,22 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     setBusy(null)
     if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
     else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
+  }
+
+  // a server waiting on setup: the fetch restarts it once its rules are on disk
+  const onFetchRules = async (name: string) => {
+    setBusy(name)
+    try {
+      const res = await detectionRulesApi.updateAll()
+      const results = ((res.data as { results?: { success?: boolean }[] })?.results ?? [])
+      const ok = results.filter((r) => r.success).length
+      notify(ok && ok === results.length ? 'ok' : 'err', `Fetched ${ok} of ${results.length} detection rule sources.`)
+    } catch (e) {
+      notify('err', `Could not fetch detection rules: ${(e as { message?: string })?.message || 'request failed'}.`)
+    } finally {
+      setBusy(null)
+      reloadMcp()
+    }
   }
 
   // master: one switch over both gates
@@ -199,8 +249,19 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         />
       )}
       {tab === 'connected' && ready && connected.length > 0 && (
-        <div className="flex justify-end">
-          <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
+        <div className="flex justify-end gap-2">
+          <button className="btn ghost" onClick={reload} title="Re-reads the status shown here. Changes nothing on the server.">
+            <Icon name="refresh" /> Refresh
+          </button>
+          <button
+            className="btn ghost"
+            onClick={onReloadServers}
+            disabled={reloadingServers}
+            aria-busy={reloadingServers}
+            title="Re-reads tool server settings and applies them without restarting Vigil: new servers appear, changed ones reconnect, and removed or disabled ones stop. Unchanged servers keep their session."
+          >
+            <Icon name="gear" /> {reloadingServers ? 'Reloading…' : 'Reload servers'}
+          </button>
         </div>
       )}
       {tab === 'connected' && ready && connected.length > 0 && (
@@ -240,6 +301,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                   <span className="int-name">
                     {displayName(r.name)}
                     {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
+                    {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
                   </span>
                   <span className="int-sub">{categoryOf(r.name)}</span>
                 </td>
@@ -253,7 +315,11 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                 <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
                 <td><RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} /></td>
                 <td>
-                  {canConfigure(r) && (
+                  {r.setupAction === FETCH_RULES ? (
+                    <button className="btn primary int-act" disabled={busy === r.name} onClick={() => void onFetchRules(r.name)}>
+                      {busy === r.name ? 'Fetching…' : 'Fetch rules'}
+                    </button>
+                  ) : canConfigure(r) && (
                     <button className={`btn int-act${r.level === 'poor' ? ' primary' : ''}`} onClick={() => setWizardFor(r.integration!)}>
                       {r.level === 'poor' ? 'Fix' : 'Configure'}
                     </button>

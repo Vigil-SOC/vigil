@@ -7,7 +7,7 @@ this function, not a copy of it in the client.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from core.agents.projections import run_id_for
 from core.cases.combined_state import budget_health as _budget_health
@@ -89,30 +89,58 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
     }
 
 
-def run_ref(run: WorkflowRun) -> dict:
-    """The case page's view of a run that has no ``Investigation`` row."""
+def run_cap(run: WorkflowRun) -> float:
+    """The run's cost ceiling: what the agent layer reported, else what it was asked.
+
+    The SQL of ``case_repository._case_runs`` reads the same two, in the same order.
+    A run that reported nothing and was asked nothing has no cap, which reads 0.
+    """
+    if run.max_cost_usd is not None:
+        return float(run.max_cost_usd)
+    asked = (run.trigger_context or {}).get("max_cost_usd")
+    if isinstance(asked, bool) or not isinstance(asked, (int, float, str)):
+        return 0.0
+    try:
+        return max(float(asked), 0.0)
+    except ValueError:
+        return 0.0
+
+
+def run_ref(run: WorkflowRun, steps: int = 0) -> dict:
+    """The case page's view of a run that has no ``Investigation`` row.
+
+    A hunt's iteration is what it last reported; a run that reports none, compose,
+    reads its ``steps``, the phases it has recorded.
+    """
     state = RUN_LIVE_STATE.get(run.status)
+    cost = float(run.total_cost_usd or 0)
+    cap = run_cap(run)
     return {
         "investigation_id": None,
         "status": run.status,
         "workflow_id": run.workflow_id,
         "run_id": run.run_id,
         "live": state is not None,
-        "cost_usd": float(run.total_cost_usd or 0),
-        "max_cost_usd": 0.0,
-        "budget_health": "healthy",
-        "iteration_count": 0,
+        "cost_usd": cost,
+        "max_cost_usd": cap,
+        "budget_health": budget_health(cost, cap),
+        "iteration_count": int(
+            run.iteration_count if run.iteration_count is not None else steps
+        ),
         "created_at": run.started_at.isoformat() if run.started_at else None,
     }
 
 
 def case_run_refs(
-    investigations: Sequence[Investigation], runs: Sequence[WorkflowRun]
+    investigations: Sequence[Investigation],
+    runs: Sequence[WorkflowRun],
+    steps: Mapping[str, int] = {},
 ) -> list[tuple[dict, str]]:
     """Investigation and run refs together, newest first, each with its state word.
 
     An investigation's run is ``run_id_for`` of it, which may also be a
-    ``workflow_runs`` row; that run is listed once, as the investigation.
+    ``workflow_runs`` row; that run is listed once, as the investigation. ``steps``
+    is phases recorded per run id, for a run that reports no iteration.
     """
     items: list[tuple[datetime, dict, str]] = [
         (item.created_at or datetime.min, investigation_ref(item), item.status)
@@ -122,7 +150,7 @@ def case_run_refs(
     items += [
         (
             run.started_at or datetime.min,
-            run_ref(run),
+            run_ref(run, steps.get(run.run_id, 0)),
             RUN_LIVE_STATE.get(run.status, run.status),
         )
         for run in runs
@@ -137,9 +165,10 @@ def detail_fields(
     investigations: Sequence[Investigation],
     closure: Optional[CaseClosureInfo],
     runs: Sequence[WorkflowRun] = (),
+    steps: Mapping[str, int] = {},
 ) -> dict:
     """Extras on ``GET /cases/{id}``. Inputs are newest first; so is the output."""
-    refs = case_run_refs(investigations, runs)
+    refs = case_run_refs(investigations, runs, steps)
     return {
         "combined_state": combined_state(case_status, [state for _, state in refs]),
         "investigations": [ref for ref, _ in refs],

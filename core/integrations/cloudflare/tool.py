@@ -3,7 +3,9 @@
 Exposes WAF, Zero Trust Gateway, and Access response actions plus read-only
 IP/domain threat-context lookups. Configured via Settings → Integrations
 (`cloudflare`); every tool is a no-op returning a clear "not configured"
-result when the integration is disabled.
+result when no API token resolves. It does not check the integration's enabled
+flag: an MCP runner child has no config store to read it from (#2308), so
+whether this server runs at all is the MCP server toggle's call.
 """
 
 import sys
@@ -27,7 +29,6 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
-from core.config import is_integration_enabled
 from core.integrations._base.config import resolve
 from core.integrations._base.tool_result import run_tool
 from core.integrations.cloudflare.descriptor import CLOUDFLARE
@@ -42,8 +43,6 @@ def _result(data: Dict[str, Any]):
 
 
 def _config() -> Optional[Dict[str, Any]]:
-    if not is_integration_enabled("cloudflare"):
-        return None
     cfg = resolve(CLOUDFLARE)
     if not cfg.get("api_token"):
         return None

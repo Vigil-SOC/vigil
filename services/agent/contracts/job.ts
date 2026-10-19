@@ -16,6 +16,9 @@ interface JobBase {
   tenant_id: string | null;
   enqueued_at: string;
   enqueued_by: string;
+  // The W3C traceparent of whoever enqueued it, so the run's spans continue that
+  // request's trace. Optional: absent when tracing is off, and on any older job.
+  traceparent?: string;
 }
 
 // References rather than resolved content: the worker resolves them and journals

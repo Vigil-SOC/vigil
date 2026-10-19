@@ -1,8 +1,8 @@
 """Mint short-lived, user-scoped session tokens for page-extension connectors.
 
-Exchanges Vigil's copy of the connector's HMAC mint secret for a token by calling
-the connector BFF's ``POST /session`` server-to-server, so the secret never
-reaches the browser.
+Exchanges Vigil's copy of the connector's session secret for a token by sending
+it as a bearer token on the connector BFF's ``POST /session`` server-to-server,
+so the secret never reaches the browser.
 """
 
 from __future__ import annotations
@@ -60,8 +60,9 @@ def _connector_url(integration_id: str, *, require_enabled: bool = True) -> str:
 
 
 def _mint_secret(integration_id: str) -> str | None:
-    """Session signing secret from the store, or ``None`` — the caller then
-    degrades to a session-less context rather than failing the panel."""
+    """Session secret (sent as a bearer token) from the store, or ``None`` —
+    the caller then degrades to a session-less context rather than failing the
+    panel."""
     env_key = secret_fields_for(integration_id).get("mint_secret")
     return get_secret(env_key) if env_key else None
 

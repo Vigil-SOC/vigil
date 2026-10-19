@@ -24,7 +24,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { fromText } from "../workflows/hunt/entities.js";
+import { fromText } from "../plugins/hunt/entities.js";
 
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 

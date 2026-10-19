@@ -227,6 +227,64 @@ def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None
         body.pop("value", None)
 
 
+def _vertex_is_service_account(
+    body: Dict[str, Any], vertex: Dict[str, Any], key_id: Optional[str]
+) -> bool:
+    """Which credential a vertex write carries: the JSON, or an API key.
+
+    A retyped ``auth_credentials`` is a service account and a retyped ``value``
+    is an API key. An edit that retypes neither (a weight or scope change) falls back
+    to the stored copy: a service account is a JSON object, an express-mode key
+    never is.
+    """
+    sa = vertex.get("auth_credentials")
+    if sa and not _is_masked(sa):
+        return True
+    value = body.get("value")
+    if value and not _is_masked(value):
+        return False
+    stored = get_secret(_secret_ref(key_id)) if key_id else None
+    if not stored:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No stored credential for this Vertex key — provide the API key "
+                "or paste the service-account JSON. Bifrost has no "
+                "credential-only update, so every key write needs one."
+            ),
+        )
+    try:
+        return isinstance(json.loads(stored), dict)
+    except ValueError:
+        return False
+
+
+def _resolve_vertex_service_account(
+    body: Dict[str, Any], vertex: Dict[str, Any], key_id: Optional[str]
+) -> None:
+    sa = vertex.get("auth_credentials")
+    if _is_masked(sa) or not sa:
+        stored = get_secret(_secret_ref(key_id)) if key_id else None
+        if not stored:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No stored service-account credential for this Vertex key — "
+                    "paste the service-account JSON. Bifrost has no "
+                    "credential-only update, so every key write needs one."
+                ),
+            )
+        vertex["auth_credentials"] = stored
+    # `value` is deliberately NOT set from the service account. Bifrost
+    # picks a vertex key's auth mode by whether `value` is populated, so
+    # mirroring the JSON there made it authenticate as an API key and the
+    # request came back "API keys are not supported by this API. Expected
+    # OAuth2 access token" — a 401 that says nothing about the real cause.
+    # A service-account key carries its credential in `auth_credentials`
+    # alone; the secrets-store copy is keyed off that field instead.
+    body.pop("value", None)
+
+
 def _resolve_key_value(
     body: Dict[str, Any], key_id: Optional[str], provider: Optional[str] = None
 ) -> None:
@@ -238,14 +296,12 @@ def _resolve_key_value(
 
     Two providers break the plain ``value`` shape:
 
-    * **Vertex** authenticates one of two ways. A *service account* is scoped
-      by ``project_id``/``region`` under ``vertex_key_config`` and carries its
-      JSON in ``vertex_key_config.auth_credentials``; an *API key* carries a
-      bare ``value`` like any other provider and sends no ``vertex_key_config``
-      at all. The presence of that block is therefore what marks the mode.
-      Either credential is mirrored to ``value`` so a single ``llm_key_<id>``
-      ref backs the key, and an edit that leaves the credential blank
-      substitutes the stored copy back in.
+    * **Vertex** authenticates one of two ways, and both are scoped by
+      ``project_id``/``region`` under ``vertex_key_config`` — Bifrost skips a
+      vertex key without them. A *service account* carries its JSON in
+      ``vertex_key_config.auth_credentials``; an *API key* (express mode)
+      carries a bare ``value``. The credential, not the block, marks the mode;
+      an edit that retypes neither falls back to what the stored copy is.
     * **Ollama** carries its endpoint under ``ollama_key_config`` and a bearer
       token, when the endpoint wants one, under ``value``. Both read back
       masked, so both are substituted from our own copies.
@@ -253,9 +309,7 @@ def _resolve_key_value(
     ``provider`` comes from the request path. Keying Ollama on its block
     instead sent an edit that did not retype the URL -- which omits the block
     -- down the API-key path, where it was refused for want of a credential
-    Ollama does not have. Vertex still keys on its block, because there the
-    block *is* the statement: a service account sends one and an express-mode
-    API key does not.
+    Ollama does not have.
     """
     ollama = body.get("ollama_key_config")
     if provider == "ollama" or (provider is None and isinstance(ollama, dict)):
@@ -270,34 +324,11 @@ def _resolve_key_value(
     vertex = body.get("vertex_key_config")
     if isinstance(vertex, dict):
         _resolve_vertex_scope(vertex, key_id)
-        # Service-account mode: the JSON is the credential, mirrored to value.
-        # Keyed on the block, not on ``auth_credentials`` within it: editing
-        # project/region without retyping the JSON omits that field entirely
-        # (AiProvidersPanel), and keying on it sent exactly that edit down the
-        # API-key path — ``value`` was restored but ``auth_credentials`` was
-        # left unset, handing Bifrost a scoped key with no credential.
-        sa = vertex.get("auth_credentials")
-        if _is_masked(sa) or not sa:
-            stored = get_secret(_secret_ref(key_id)) if key_id else None
-            if not stored:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "No stored service-account credential for this Vertex key — "
-                        "paste the service-account JSON. Bifrost has no "
-                        "credential-only update, so every key write needs one."
-                    ),
-                )
-            vertex["auth_credentials"] = stored
-        # `value` is deliberately NOT set from the service account. Bifrost
-        # picks a vertex key's auth mode by whether `value` is populated, so
-        # mirroring the JSON there made it authenticate as an API key and the
-        # request came back "API keys are not supported by this API. Expected
-        # OAuth2 access token" — a 401 that says nothing about the real cause.
-        # A service-account key carries its credential in `auth_credentials`
-        # alone; the secrets-store copy is keyed off that field instead.
-        body.pop("value", None)
-        return
+        if _vertex_is_service_account(body, vertex, key_id):
+            _resolve_vertex_service_account(body, vertex, key_id)
+            return
+        # API-key (express) mode falls through to the plain-value path below,
+        # keeping its scope.
 
     if not _is_masked(body.get("value")) and body.get("value"):
         return
@@ -457,12 +488,12 @@ def _persist_key_secret(
                 delete_secret(_secret_ref(ref_id))
             return
         # A vertex service-account key sends no `value` at all (see
-        # _resolve_key_value), so its credential is read off the vertex block.
+        # _resolve_key_value), so its credential is read off the vertex block;
+        # an express-mode vertex key carries a plain `value`.
         vertex = (body or {}).get("vertex_key_config")
-        if isinstance(vertex, dict):
+        value = (body or {}).get("value")
+        if not value and isinstance(vertex, dict):
             value = vertex.get("auth_credentials")
-        else:
-            value = (body or {}).get("value")
         if not value or _is_masked(value):
             return
         ref_id = _written_key_id(key_id, upstream)
