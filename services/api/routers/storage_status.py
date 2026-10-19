@@ -7,7 +7,7 @@ Provides information about the current PostgreSQL storage backend.
 import logging
 import threading
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from core.backup.status import read_last_success_at
 from core.routing import Auth, RouterMeta
@@ -252,7 +252,11 @@ def reconnect_database(current_user: User = Depends(get_current_active_user)):
 def _schema_message(schema: dict) -> str:
     state = schema["state"]
     if state == "empty":
-        return "Connected. The database has no Vigil tables yet - initialize the schema to use it."
+        return (
+            "Connected. The database has no Vigil tables yet - run "
+            "scripts/init_schema.py (then scripts/seed_reference_data.py for roles) "
+            "against it, then reconnect."
+        )
     if state == "drifted":
         return (
             "Connected, but the database schema is out of date and the app will "
@@ -284,45 +288,3 @@ def _audit_retarget(previous, current, user: User) -> None:
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Could not write retarget audit log: %s", e)
-
-
-@router.post("/init-schema")
-def init_schema(current_user: User = Depends(get_current_active_user)):
-    """
-    Provision Vigil's tables into an **empty** target database.
-
-    Split out of /reconnect, and deliberately narrow. ``create_all`` is
-    ``checkfirst=True``: it creates what's missing and silently skips tables
-    that already exist, whatever shape they're in. That makes it correct for an
-    empty database and useless — actively misleading — for a drifted one.
-
-    So this refuses anything but ``state == "empty"``:
-      - ``drifted`` -> scripts/migrate_schema.py owns that (it has the real
-        ALTER TABLE migrations); create_all here would report success and
-        change nothing.
-      - ``ok`` -> nothing to do.
-
-    Refusing on non-empty also means a mistyped host can't scatter ~50 tables
-    through an unrelated production database.
-    """
-    require_settings_admin(current_user)
-
-    db_manager = get_db_manager()
-    before = db_manager.schema_report()
-    if before["state"] == "drifted":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Database has an out-of-date Vigil schema. create_all cannot alter "
-                "existing tables - run scripts/migrate_schema.py against it instead. "
-                f"Missing columns: {before['missing_columns']}"
-            ),
-        )
-    if before["state"] == "ok":
-        return {"success": True, "message": "Schema already up to date", **before}
-    if before["state"] == "unknown":
-        raise HTTPException(status_code=409, detail="Cannot inspect the target schema.")
-
-    db_manager.create_tables()
-    logger.info("Provisioned Vigil schema into empty database")
-    return {"success": True, "message": "Schema created", **db_manager.schema_report()}

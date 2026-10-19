@@ -632,8 +632,10 @@ async def change_password(
     if not await asyncio.to_thread(
         AuthService.verify_password, body.current_password, current_user.password_hash
     ):
+        # 400, not 401: the session is valid, a body field is wrong. A 401 would
+        # make the web client refresh and retry, spending two rate-limit slots.
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
         )
 

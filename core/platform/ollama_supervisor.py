@@ -23,6 +23,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -101,6 +102,16 @@ def _no_post_start_sync() -> dict:
     return {}
 
 
+def _install_hint(*, sentence: bool) -> str:
+    """How to install Ollama here. Homebrew exists only on macOS; Linux and WSL2
+    get the vendor download page. The macOS text is what shipped before."""
+    if sys.platform == "darwin":
+        if sentence:
+            return "Install it with `brew install ollama`"
+        return "Install with: brew install ollama"
+    return "Install it from https://ollama.com/download"
+
+
 def binary_path() -> Optional[str]:
     found = shutil.which("ollama")
     if found:
@@ -158,7 +169,7 @@ def status(spec: ServiceSpec) -> ServiceStatus:
         startable=spec.startable,
         stoppable=spec.stoppable,
         description=spec.description,
-        detail=None if installed else "Install with: brew install ollama",
+        detail=None if installed else _install_hint(sentence=False),
     )
 
 
@@ -181,7 +192,7 @@ def start(
     if exe is None:
         return ActionResult(
             False,
-            "Ollama binary not found. Install it with `brew install ollama` — "
+            f"Ollama binary not found. {_install_hint(sentence=True)} — "
             "Vigil runs Ollama natively (a container would be CPU-only on macOS) "
             "and will not fall back to Docker.",
             code="not_installed",

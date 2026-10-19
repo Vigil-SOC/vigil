@@ -24,6 +24,9 @@ export interface StructuredConclusion {
   // Which field holds what the run could not settle, in its own words: its
   // declared gaps. Required of a plugin whose record is required.
   open_questions_field?: string;
+  // Which field rates what the run found, in SEVERITIES. Carried onto the
+  // terminal, where it raises the priority of the case the run was started from.
+  severity_field?: string;
 }
 
 // The run ends on prose: whatever the agent said last, once it stopped calling tools.

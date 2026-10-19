@@ -2,8 +2,8 @@
 
 The orchestrator runs three loops:
   1. Intake loop: picks up new findings/tasks and creates investigations
-  2. Supervision loop: monitors running agents, detects stuck/runaway ones
-  3. Review loop: approves investigations the agent concluded as completed
+  2. Supervision loop: monitors running agents, reconciles finished ones
+  3. Distil loop: turns finished hunts and closed cases into memory
 
 It does NOT maintain a persistent Claude conversation.
 All routine operations are pure Python logic.
@@ -119,6 +119,14 @@ def _count_queued_intake_rows() -> int:
 # Proactive hunts (nightly, intel) never hold more than this many slots, so a
 # detection arriving on a quiet fleet still finds one free.
 SCHEDULE_RUN_CEILING = 1
+
+
+# A hunt parked out of turns or budget, waiting on Keep going. A park on an
+# approval checkpoint ("awaiting ...") is not: it is waiting_approval while the
+# checkpoint is open and resumes on its own once answered.
+def _parked_on_a_person(projection: Dict[str, Any]) -> bool:
+    reason = projection.get("reason") or ""
+    return projection.get("status") == "parked" and not reason.startswith("awaiting ")
 
 
 def _count_investigations_in_flight() -> int:
@@ -544,7 +552,6 @@ class Orchestrator:
             "investigations_created": 0,
             "investigations_completed": 0,
             "investigations_failed": 0,
-            "reviews_completed": 0,
             "stuck_agents_killed": 0,
             "dedup_prevented": 0,
             "total_cost_usd": 0.0,
@@ -592,10 +599,11 @@ class Orchestrator:
             )
             logger.info(f"  Dry run: {self.config.dry_run}")
 
+            await self._complete_legacy_review_rows()
+
             tasks = [
                 asyncio.create_task(self._intake_loop(shutdown_event)),
                 asyncio.create_task(self._supervision_loop(shutdown_event)),
-                asyncio.create_task(self._review_loop(shutdown_event)),
                 asyncio.create_task(self._distil_loop(shutdown_event)),
             ]
 
@@ -1150,7 +1158,9 @@ class Orchestrator:
 
                 # Before anything reads a row: the row is a copy of the ledger,
                 # and a supervisor deciding on a stale copy decides on nothing.
-                for status in ("executing", "waiting_approval"):
+                # Paused rows too: a resume or the park TTL's terminal reaches
+                # them only here. They are never stale- or cost-checked below.
+                for status in ("executing", "waiting_approval", "paused"):
                     for inv in self._get_investigations_by_status(status):
                         reconciling = _inv_as_dict(inv).get("investigation_id")
                         if reconciling:
@@ -1532,6 +1542,15 @@ class Orchestrator:
             self._update_investigation_status(inv_id, "waiting_approval")
             return
 
+        # A hunt parked without a checkpoint (out of turns or budget) waits on a
+        # person: paused, holding no slot, and announced once per park.
+        if _parked_on_a_person(projection):
+            reason = projection.get("reason") or "Parked"
+            was = self._update_investigation_status(inv_id, "paused", activity=reason)
+            if was is not None and was != "paused":
+                await self._notify_parked(inv_id, reason)
+            return
+
         if projection.get("status") != "terminal":
             self._update_investigation_status(inv_id, "executing")
             return
@@ -1539,13 +1558,20 @@ class Orchestrator:
         outcome = projection.get("outcome")
         reason = projection.get("reason") or ""
         if outcome == "completed":
-            self._update_investigation_status(inv_id, "review_submitted", reason)
+            await self._complete_investigation(inv_id, reason)
         else:
             self._update_investigation_status(inv_id, "failed", reason or str(outcome))
 
+    async def _notify_parked(self, inv_id: str, reason: str) -> None:
+        title = f"Run paused: {inv_id}"
+        body = f"Investigation {inv_id} is paused and waiting on a person: {reason}"
+        self._send_notification(inv_id, "run_paused", title, body, priority="high")
+        await self._send_slack_for_notification(title, body)
+
     # The heartbeat. A failure here is logged loudly on purpose (#147): swallowed
     # quietly, last_activity_at stops moving and the supervisor stale-kills a run
-    # that is perfectly healthy.
+    # that is perfectly healthy. A run parked on a person is not stamped;
+    # the first reconcile after a resume stamps it again.
     def _record_progress(self, inv_id: str, projection: Dict[str, Any]) -> None:
         try:
             from core.storage.connection import get_db_manager
@@ -1565,7 +1591,8 @@ class Orchestrator:
                 inv.iteration_count = (
                     projection.get("iteration", 0) if counted is None else counted
                 )
-                inv.last_activity_at = utcnow()
+                if not _parked_on_a_person(projection):
+                    inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")
                 if cost is not None:
@@ -1657,34 +1684,6 @@ class Orchestrator:
         # Unknown spend reads as over the cap, including on a cold start.
         return spent is None or spent >= limit
 
-    # -------------------------------------------------------------------------
-    # Review Loop
-    # -------------------------------------------------------------------------
-
-    async def _review_loop(self, shutdown_event: asyncio.Event):
-        """Review completed investigations."""
-        while not shutdown_event.is_set():
-            try:
-                if not self._enabled:
-                    await self._sleep(shutdown_event, 10)
-                    continue
-
-                submitted = self._get_investigations_by_status("review_submitted")
-                for inv in submitted:
-                    inv_dict = _inv_as_dict(inv)
-                    inv_id = inv_dict.get("investigation_id")
-                    if not inv_id:
-                        continue
-
-                    await self._review_investigation(inv_id)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Review loop error: {e}", exc_info=True)
-
-            await self._sleep(shutdown_event, self.config.loop_interval)
-
     # Its own loop rather than a step of the supervision one: the Distils are not
     # supervising anything, they read terminals and closures the rest of the
     # system has already left behind. Slower than the others because nothing
@@ -1773,43 +1772,57 @@ class Orchestrator:
                 written["failed"],
             )
 
-    async def _review_investigation(self, inv_id: str):
-        """Approve an investigation that reached review.
+    async def _complete_legacy_review_rows(self) -> None:
+        """Finish rows a pre-#2324 daemon left in ``review_submitted``."""
+        for inv in self._get_investigations_by_status("review_submitted"):
+            inv_id = _inv_as_dict(inv).get("investigation_id")
+            if not inv_id:
+                continue
+            # One bad row must not keep the loops from starting.
+            try:
+                await self._complete_investigation(inv_id)
+            except Exception:
+                logger.error("Completing %s failed", inv_id, exc_info=True)
 
-        ``_reconcile`` only moves a run here when the terminal outcome is
-        ``completed``. That conclusion is the review; the workdir is not
-        scored again.
+    async def _complete_investigation(
+        self, inv_id: str, notes: Optional[str] = None
+    ) -> None:
+        """Finish a run whose terminal outcome is ``completed``.
+
+        That outcome is the review (#1085); there is no second one. The status
+        is claimed first so a later reconcile of the same run does nothing.
         """
+        if not self._claim_completion(inv_id, notes):
+            return
+
         state = self.workdir.read_state(inv_id)
         proposed_actions = state.get("proposed_actions", [])
         rule = decision_rule("review.terminal_outcome", "completed")
 
-        self._update_investigation_status(inv_id, "completed")
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
             _inv_completed.add(1)
-        self.stats["reviews_completed"] += 1
         self.shared_intel.close_investigation(inv_id, state.get("case_id"))
 
         self.workdir.append_log(
             inv_id,
             {
-                "event": "review_passed",
+                "event": "investigation_completed",
                 "proposed_actions_count": len(proposed_actions),
             },
         )
 
         logger.info(
-            f"Investigation {inv_id} APPROVED ({len(proposed_actions)} actions)"
+            f"Investigation {inv_id} COMPLETED ({len(proposed_actions)} actions)"
         )
 
         self._log_ai_decision(
-            decision_type="review_approve",
+            decision_type="investigation_complete",
             inv_id=inv_id,
             reasoning=(
                 f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
             ),
-            action="approve",
+            action="complete",
             confidence=1.0,
             rule=rule,
         )
@@ -2265,9 +2278,15 @@ class Orchestrator:
         except Exception:
             return None
 
+    # Returns the status the row had, or None when it was not read. Activity is
+    # the park reason a paused row shows; any other status clears it.
     def _update_investigation_status(
-        self, inv_id: str, status: str, notes: Optional[str] = None
-    ):
+        self,
+        inv_id: str,
+        status: str,
+        notes: Optional[str] = None,
+        activity: Optional[str] = None,
+    ) -> Optional[str]:
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import Investigation
@@ -2279,13 +2298,42 @@ class Orchestrator:
                     .first()
                 )
                 if inv:
+                    was = inv.status
                     inv.status = status
+                    inv.current_activity = activity
                     if notes:
                         inv.master_review_notes = notes
                     if status == "completed":
                         inv.completed_at = utcnow()
+                    return was
         except Exception as e:
             logger.error(f"Failed to update investigation status: {e}")
+        return None
+
+    def _claim_completion(self, inv_id: str, notes: Optional[str]) -> bool:
+        """Move a row to ``completed`` in one locked step; False if already there."""
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import Investigation
+
+            with get_db_manager().session_scope() as session:
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .with_for_update()
+                    .first()
+                )
+                if inv is None or inv.status == "completed":
+                    return False
+                inv.status = "completed"
+                inv.current_activity = None
+                inv.completed_at = utcnow()
+                if notes:
+                    inv.master_review_notes = notes
+                return True
+        except Exception as e:
+            logger.error(f"Failed to complete investigation {inv_id}: {e}")
+            return False
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost breakdown across all investigations."""

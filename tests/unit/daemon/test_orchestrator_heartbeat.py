@@ -105,6 +105,24 @@ def test_progress_stamps_the_heartbeat():
     assert isinstance(row.last_activity_at, datetime)
 
 
+def test_progress_does_not_stamp_a_parked_run():
+    orch = _make_orchestrator()
+    row = MagicMock()
+    row.last_activity_at = None
+
+    db_manager = _patch_session_scope(row)
+    with patch("core.storage.connection.get_db_manager", return_value=db_manager):
+        with patch("core.storage.models.Investigation"):
+            orch._record_progress(
+                "inv-parked", {"status": "parked", "iteration": 6, "cost_usd": 0.3}
+            )
+
+    # Parked is waiting, not working (#2354); counts still land.
+    assert row.last_activity_at is None
+    assert row.iteration_count == 6
+    assert row.cost_usd == 0.3
+
+
 def test_progress_leaves_cost_alone_when_the_gateway_priced_nothing():
     orch = _make_orchestrator()
     row = MagicMock()

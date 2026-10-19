@@ -144,8 +144,9 @@ _ROW_CAP_ARGS = ("limit", "max_results", "max_count")
 # finding_id alone, and injecting limit made every point-read invalid_args.
 def _schema_row_caps(
     tool: str, registry: Optional["MCPRegistry"] = None
-) -> Optional[Tuple[str, ...]]:
-    """The row-cap arguments ``tool`` declares, or None if nothing describes it.
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    """The row-cap arguments ``tool`` declares, each with its schema, or None if
+    nothing describes it.
 
     MANIFEST covers the backend tools. An MCP tool is described by the registry
     instead, and looking only in MANIFEST reported every one of them as
@@ -165,7 +166,17 @@ def _schema_row_caps(
     properties = (spec.get("input_schema") or spec.get("inputSchema") or {}).get(
         "properties"
     ) or {}
-    return tuple(name for name in _ROW_CAP_ARGS if name in properties)
+    return {name: properties[name] for name in _ROW_CAP_ARGS if name in properties}
+
+
+# A server that bounds its own row cap refuses a call past it rather than answering
+# fewer rows: mcp-shodan 1.0.34 takes max_results up to 100, and the 200 a chat turn
+# carries made every shodan_search invalid.
+def _ceiling(max_rows: int, schema: Optional[Dict[str, Any]]) -> int:
+    maximum = (schema or {}).get("maximum")
+    if isinstance(maximum, (int, float)) and not isinstance(maximum, bool):
+        return min(max_rows, int(maximum))
+    return max_rows
 
 
 def _bounded(
@@ -174,21 +185,23 @@ def _bounded(
     tool: str,
     registry: Optional["MCPRegistry"] = None,
 ) -> Dict[str, Any]:
+    declared = _schema_row_caps(tool, registry) or {}
     named = [name for name in _ROW_CAP_ARGS if name in args]
     if named:
-        lowered = {
-            name: min(args[name], max_rows) if isinstance(args[name], int) else max_rows
-            for name in named
-        }
+        lowered = {}
+        for name in named:
+            ceiling = _ceiling(max_rows, declared.get(name))
+            value = args[name]
+            lowered[name] = min(value, ceiling) if isinstance(value, int) else ceiling
         return {**args, **lowered}
 
-    declared = _schema_row_caps(tool, registry)
     if not declared:
         # Nothing describes a row cap on this tool, or it has none. Sending one
         # anyway is a keyword its signature does not take; what it answers is
         # still truncated below, so the cap is not lost by not being sent.
         return {**args}
-    return {**args, declared[0]: max_rows}
+    name = next(iter(declared))
+    return {**args, name: _ceiling(max_rows, declared[name])}
 
 
 # The telemetry plane the rows came out of, which is what a hunt counts corroboration

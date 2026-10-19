@@ -6,9 +6,6 @@ Specifically covers the regressions that motivated PR #158:
   ``EncryptedFileBackend`` instance and not at each ``is_available()``
   call. So the chosen write backend is stable across the process
   lifetime regardless of singleton init order.
-- ``get_secrets_manager(force_reload=True)`` rebuilds the singleton, so
-  a process that picked the wrong write backend on first init can
-  recover without bouncing.
 - ``SecretsManager.migrate_dotenv_secrets_to_encrypted`` moves keys
   out of the dotenv backend into the encrypted backend, refusing to
   clobber on conflict and only deleting the dotenv copy on success.
@@ -69,7 +66,7 @@ def test_encrypted_backend_init_does_not_reimport_cryptography(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# force_reload on the singleton
+# Singleton
 # ---------------------------------------------------------------------------
 
 
@@ -79,28 +76,14 @@ def test_get_secrets_manager_returns_singleton_by_default():
     assert a is b
 
 
-def test_force_reload_returns_a_fresh_singleton():
-    a = get_secrets_manager()
-    b = get_secrets_manager(force_reload=True)
-    assert b is not a
-
-
-def test_force_reload_picks_up_changed_env_var(monkeypatch):
-    """SECRETS_BACKEND env var should win over the cached singleton."""
-    a = get_secrets_manager()
-    monkeypatch.setenv("SECRETS_BACKEND", "dotenv")
-    b = get_secrets_manager(force_reload=True)
-    assert b.write_backend_name == "dotenv"
-    assert b is not a
-
-
 # ---------------------------------------------------------------------------
 # Backend status reporting
 # ---------------------------------------------------------------------------
 
 
 def test_backend_status_reports_canonical_keys():
-    mgr = get_secrets_manager(force_reload=True)
+    secrets_manager._secrets_manager = None
+    mgr = get_secrets_manager()
     status = mgr.get_backend_status()
     for key in (
         "encrypted",
