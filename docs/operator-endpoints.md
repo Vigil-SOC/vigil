@@ -1,17 +1,16 @@
 # Operator endpoints
 
-A few API routes exist for operators and have no screen in the console. Log lines and error messages point you at some of them. This page says what each one does, who may call it, and what it changes.
+A few API routes exist for operators and have no screen in the console. Log lines and API responses point you at some of them. This page says what each one does, who may call it, and what it changes.
 
 | Route | Permission | Changes |
 |---|---|---|
 | `GET /api/config/secrets/status` | any signed-in user | nothing |
-| `POST /api/config/secrets/reinit` | `settings.write` | the secrets manager in one API process |
 | `POST /api/config/secrets/migrate-to-encrypted` | `settings.write` | `secrets.enc` and the State Directory `.env` |
 | `POST /api/storage/init-schema` | `settings.write` | creates tables in the connected database |
 
 The seeded **Manager** and **Admin** roles hold `settings.write`. Under `DEV_MODE=true` every request runs as an admin with every permission.
 
-None of these routes writes an audit record.
+Only `migrate-to-encrypted` writes an audit record (config type `secrets`, key `SECRETS_MIGRATE_TO_ENCRYPTED`, naming the keys it touched and never their values). The other two write none.
 
 ## Calling them with curl
 
@@ -34,26 +33,22 @@ TOKEN=$(curl -s -A "$UA" "$API/api/auth/login" \
   | jq -r .access_token)
 # With MFA on, add "mfa_code": "123456" to the login body.
 
-curl -s -A "$UA" -X POST "$API/api/config/secrets/reinit" \
+curl -s -A "$UA" -X POST "$API/api/config/secrets/migrate-to-encrypted" \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-CSRF-Token: $CSRF" -b "csrf_token=$CSRF" \
   -H "Content-Type: application/json" \
-  -d '{"write_backend": "encrypted"}'
+  -d '{"keys": ["SOME_API_KEY"]}'
 ```
 
 The `GET` route needs only the `Authorization` header and the same `-A "$UA"`.
-
-## One process at a time
-
-The secrets manager is held in memory by each API process. The Docker backend image (`infra/docker/Dockerfile.backend`) starts uvicorn with `--workers 2`, so there are two. `secrets/status` and `secrets/reinit` reach whichever worker answers the request. The daemon and the ARQ worker are separate processes and keep their own secrets manager.
-
-Nothing these routes do to the secrets manager is saved. On restart every process picks its write backend from `SECRETS_BACKEND` again (default `encrypted`). If you need the change everywhere, set `SECRETS_BACKEND` and restart.
 
 ## `GET /api/config/secrets/status`
 
 Reports which secrets backend this process writes to, which ones it reads from, and where they live on disk. It reads the state and changes nothing.
 
 Use it when a saved credential does not seem to land in `secrets.enc`, or after the startup log says `write_backend=... but expected=...`.
+
+The answer describes the API process that took the request. The Docker backend image (`infra/docker/Dockerfile.backend`) starts uvicorn with `--workers 2`, and the daemon and the ARQ worker are processes of their own; each picks its write backend once, at startup, from `SECRETS_BACKEND` (default `encrypted`), the `cryptography` package and the master key. Nothing changes that choice while a process runs. If the status shows the wrong backend, fix the cause and restart the API, daemon and worker.
 
 No request body. The response:
 
@@ -77,36 +72,7 @@ No request body. The response:
 }
 ```
 
-`expected_write_backend` is `SECRETS_BACKEND` as this process sees it now. When it differs from `write_backend`, the process is not writing where you configured it to. The response holds file paths, not secret values.
-
-## `POST /api/config/secrets/reinit`
-
-Throws away this process's secrets manager and builds a new one. The new one re-reads `SECRETS_BACKEND`, `ENABLE_KEYRING` and `general_config.json`, and reloads `secrets.enc` and the State Directory `.env` from disk.
-
-Use it when `secrets/status` shows the wrong write backend, for example after you changed `SECRETS_BACKEND` in `.env` without a restart. The running process still has the old value, so pass the backend you want in the body.
-
-Request body, optional:
-
-```json
-{ "write_backend": "encrypted" }
-```
-
-`write_backend` is one of `encrypted`, `env`, `dotenv` or `keyring`. Leave it out to use `SECRETS_BACKEND` from the process environment, which is the value the process started with unless something changed it.
-
-The response is `{"reloaded": true, "status": {...}}`, where `status` has the same shape as `secrets/status`.
-
-What it does not do:
-
-- It does not delete, re-encrypt or move any stored secret. Files on disk are left as they are.
-- It cannot fix a missing `cryptography` package. The process checks for it once, at import. If it was missing then, `encrypted` still falls back to `dotenv` after a reinit. Install it and restart.
-- It reaches one API worker. See [One process at a time](#one-process-at-a-time).
-
-Things to watch:
-
-- `env` writes to the process environment only. Secrets saved that way are gone on restart.
-- `keyring` also turns on keyring reads. On macOS that can raise keychain prompts.
-- A value outside the four names is not rejected. Writes go to the encrypted store, but `write_backend` in the response shows the name you sent.
-- If you force a backend different from `SECRETS_BACKEND`, `secrets/status` will keep showing the two as different.
+`expected_write_backend` is `SECRETS_BACKEND` as this process sees it now. When it differs from `write_backend`, the process is not writing where you configured it to: `encrypted` falls back to `dotenv` when `cryptography` is not installed. When a repo-root `.env` exists, `read_backends` lists `DotEnvBackend` twice: that file, read-only, and then the State Directory one. The response holds file paths, not secret values.
 
 ## `POST /api/config/secrets/migrate-to-encrypted`
 
@@ -144,15 +110,19 @@ The response:
 }
 ```
 
-It returns 200 even when nothing moved. Read `errors` and `conflicts`.
+The status code follows the report, and the report is the body in every case:
+
+- `200` when every key was migrated, already present or in conflict, and also when the `.env` held nothing to move. Read `conflicts`.
+- `503` when the encrypted backend is unavailable: `encrypted_available` is `false`, nothing is moved, and `errors` holds one entry for `<all>`. That means the `cryptography` package is missing; install it and restart.
+- `500` when any key errored. An error on one key does not stop the others, so `migrated` still names the keys that did move.
 
 Side effects and limits:
 
 - Removing a key rewrites the `.env` from the keys it parsed. Comments and blank lines in that file are lost.
 - If `master.key` does not exist and neither does `secrets.enc`, the first write creates a new `master.key`. Back it up. Without it `secrets.enc` cannot be read.
-- If `secrets.enc` exists but cannot be decrypted (wrong or missing `master.key`), Vigil refuses to write to it. Each key is reported under `errors` and the `.env` is not changed.
-- If the `cryptography` package is missing, nothing is moved and `errors` holds one entry for `<all>`.
+- If `secrets.enc` exists but cannot be decrypted (wrong or missing `master.key`), Vigil refuses to write to it. Each key is reported under `errors`, the response is `500`, and the `.env` is not changed.
 - With `VIGIL_DISABLE_DOTENV` set, the State Directory `.env` is not read, so there is nothing to move.
+- Every call writes one audit record naming the keys in `migrated`, `already_present`, `conflicts` and `errors`, and the `remove_from_dotenv` value. Secret values are never recorded.
 
 ## `POST /api/storage/init-schema`
 
