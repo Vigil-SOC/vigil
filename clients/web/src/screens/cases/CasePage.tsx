@@ -1397,7 +1397,7 @@ export function CasePage({
               <EmptyState loading compact icon="brain" title="Loading the run…" />
             ) : foldPhase === 'error' ? (
               <EmptyState error compact icon="alert" title="The run could not be read" />
-            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0 ? (
+            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0 && blindSpotsOf(fold).groups.length === 0 ? (
               <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
             ) : (
               <MemoryCards fold={fold} recalled={recalled} gaps={gaps} runId={runId} />
