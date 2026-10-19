@@ -34,7 +34,7 @@ except ImportError:
 
 from core.integrations._base.config import missing, resolve
 from core.integrations._base.tool_result import run_tool
-from core.integrations.splunk.descriptor import SPLUNK
+from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 
 logger = logging.getLogger(__name__)
 SPL_TEMPLATES = {
@@ -66,7 +66,7 @@ def get_splunk_service():
         # reads as "search failed" rather than "not configured". The old
         # ${SPLUNK_*} placeholders held the server dormant until all three were
         # set; this keeps that line now that Settings can supply them.
-        absent = missing(config, "server_url", "username", "password")
+        absent = missing(config, *SPLUNK_SELFHOSTED_REQUIRED)
         if absent:
             # DEBUG, not INFO: an unconfigured install reaches here on every
             # call. Field names only, never what was found.
