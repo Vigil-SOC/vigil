@@ -358,6 +358,7 @@ export function recordChip(kind: string, source = 'run'): RecordChip {
     case 'run':
     case 'spend':
     case 'resumed':
+    case 'unread':
       return 'system'
     default:
       return 'agent'

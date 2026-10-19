@@ -1090,6 +1090,30 @@ export function CasePage({
   const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId ? 'ready' : reads[runId]?.phase ?? 'loading'
   const single = { fold, phase: foldPhase }
 
+  // A case refresh that moves another run on the case (a hunt's root-cause follow-up) re-reads the record in place.
+  const otherRuns = investigations.filter((item) => !item.primary).map((item) => `${item.run_id}:${item.status}`).join(' ')
+  const seenOthers = useRef<{ id: string; runs: string } | null>(null)
+  useEffect(() => {
+    if (phase !== 'ready') return // the first read of the case is not a change
+    const prev = seenOthers.current
+    seenOthers.current = { id, runs: otherRuns }
+    if (!prev || prev.id !== id || prev.runs === otherRuns) return
+    quietRecord.current = true
+    setRecordKey((k) => k + 1)
+  }, [id, otherRuns, phase])
+
+  // Each run row is labelled with its run: the workflow and when it started, else a short id.
+  const runLabels = useMemo(() => {
+    const labels: Record<string, string> = {}
+    for (const item of investigations) {
+      const name = workflowNames[item.workflow_id] || item.workflow_id
+      // refs carry naive UTC stamps; without an offset a browser would read them as local time
+      const at = item.created_at && (/(Z|[+-]\d\d:?\d\d)$/.test(item.created_at) ? item.created_at : `${item.created_at}Z`)
+      labels[item.run_id] = name ? (at ? `${name} · ${clock(at)}` : name) : item.run_id.slice(0, 8)
+    }
+    return labels
+  }, [investigations, workflowNames])
+
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
     if (runId) loaders.current.get(runId)?.()
@@ -1547,9 +1571,9 @@ export function CasePage({
                   <InfoTip
                     label="About the record"
                     align="start"
-                    source="The run’s journal, the case audit log and the case’s activity history, newest first."
+                    source="Each run’s journal, the case audit log and the case’s activity history, newest first."
                     calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
-                    limit="Only the run’s rows are hash-chained. Case audit and activity rows are not."
+                    limit="Only run rows are hash-chained. Case audit and activity rows are not."
                   />
                 </div>
                 <div className="rec-actions">
@@ -1600,11 +1624,13 @@ export function CasePage({
                 <div className="rec-rows">
                   {shown.map((row) => {
                     const type = recordChip(row.kind, row.source)
+                    const runLabel = row.run_id ? runLabels[row.run_id] || row.run_id.slice(0, 8) : null
                     return (
                       <div key={row.id} className="rec-row">
                         <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
                         <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
                         <span className="rec-text" title={row.text}>
+                          {runLabel && <span className="rec-run">{runLabel}</span>}
                           {row.text || row.kind}
                           {row.chained && <span className="rec-chained">chained</span>}
                         </span>

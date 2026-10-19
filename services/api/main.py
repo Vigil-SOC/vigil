@@ -853,6 +853,18 @@ _SERVED_BY_THE_BACKEND = (
 )
 
 
+def inject_index_head(raw: str, context_path: str, tags: list[str]) -> str:
+    """Inject a ``<base>`` plus ``tags`` at the very top of ``<head>``.
+
+    The build references assets relatively (``./assets/...``), so at a deep URL
+    like ``/cases/abc`` they would resolve to ``/cases/assets/...`` and get the
+    app shell back. ``<base>`` pins them to the context root. It goes first
+    because a browser applies it only to URLs that follow it.
+    """
+    injected = "\n    ".join([f'<base href="{context_path}/">', *tags])
+    return raw.replace("<head>", f"<head>\n    {injected}", 1)
+
+
 def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool:
     """Whether a 404 at ``path`` is a client-side route rather than a miss.
 
@@ -954,8 +966,7 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
                     )
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug("extension allowlist meta injection skipped: %s", e)
-            injected = "\n    ".join(tags)
-            _index_html_cache = raw.replace("<head>", f"<head>\n    {injected}", 1)
+            _index_html_cache = inject_index_head(raw, _CONTEXT_PATH, tags)
         return _index_html_cache
 
     # When served under a context path, redirect the bare path (no trailing

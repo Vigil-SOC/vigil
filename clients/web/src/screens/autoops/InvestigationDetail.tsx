@@ -49,7 +49,7 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
     ['custody', 'Chain of custody'],
   ]
 
-  const canWake = detail && ['sleeping', 'failed', 'completed'].includes(detail.status)
+  const canWake = detail && ['failed', 'completed'].includes(detail.status)
   const canKill = detail && ['executing', 'assigned'].includes(detail.status)
 
   return (

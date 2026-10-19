@@ -2150,13 +2150,13 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: the latest run's ledger, audit rows and activities.
+         * @description The case record: every run's ledger, audit rows and activities.
          *
-         *     Newest first. The agent returns the ledger with snapshots off. Audit rows
-         *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
-         *     ``case_id`` column. The run is the case's latest, an investigation's
-         *     ``run_id_for`` or a run started on the case, never the shadow adjudication,
-         *     and never a run another run on the case started (``primary_ref``).
+         *     Newest first. The agent returns each ledger with snapshots off, read
+         *     concurrently; a run that cannot be read is one row saying why, not a failed
+         *     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
+         *     the table has no ``case_id`` column. ``run_id`` is the case's run
+         *     (``primary_ref``), which Replay, Verify chain and Export audit read.
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -4549,7 +4549,11 @@ export interface paths {
         put?: never;
         /**
          * Wake Investigation
-         * @description Wake a sleeping investigation for further work.
+         * @description Restart a finished investigation by queueing a new one on the same case.
+         *
+         *     A run's id is derived from its investigation id and its ledger is terminal
+         *     once finished, so the same investigation cannot run twice. The failure stays
+         *     on record; the restart is a fresh Human Ask over the same workflow and findings.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
@@ -8055,6 +8059,8 @@ export interface components {
             id: string;
             /** Kind */
             kind: string;
+            /** Run Id */
+            run_id?: string | null;
             /** Source */
             source: string;
             /** Text */

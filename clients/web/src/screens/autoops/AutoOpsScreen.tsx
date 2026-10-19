@@ -46,7 +46,10 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
         onBack={() => setSelectedId(null)}
         openChat={openChat}
         busy={busy}
-        wake={wake}
+        wake={async (wid) => {
+          // the notice renders on the queue view, so go back to show it
+          if (await wake(wid)) setSelectedId(null)
+        }}
         killInvestigation={killInvestigation}
       />
     )
@@ -230,7 +233,7 @@ function InvestigationRow({
   onWake: (id: string) => void
   onKill: (id: string) => void
 }) {
-  const canWake = ['sleeping', 'failed', 'completed'].includes(inv.status)
+  const canWake = ['failed', 'completed'].includes(inv.status)
   const canKill = ['executing', 'assigned'].includes(inv.status)
   return (
     <tr className="clickable" onClick={() => onSelect(inv.investigation_id)}>
