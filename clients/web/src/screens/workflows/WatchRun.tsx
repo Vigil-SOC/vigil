@@ -333,11 +333,13 @@ export function foldSteps(n: number, cursor: number, width: number): BarItem[] {
   let lo = Math.max(0, cursor - Math.floor(size / 2))
   const hi = Math.min(n - 1, lo + size - 1)
   lo = Math.max(0, hi - size + 1)
+  // A stretch of one step is drawn as that step: a chip counting one would say nothing.
+  const stretch = (from: number, to: number): BarItem[] => (from === to ? all(from, to) : [{ kind: 'fold', from, to }])
   const items: BarItem[] = []
   if (lo > 0) items.push({ kind: 'step', i: 0 })
-  if (lo > 1) items.push({ kind: 'fold', from: 1, to: lo - 1 })
+  if (lo > 1) items.push(...stretch(1, lo - 1))
   items.push(...all(lo, hi))
-  if (hi < n - 2) items.push({ kind: 'fold', from: hi + 1, to: n - 2 })
+  if (hi < n - 2) items.push(...stretch(hi + 1, n - 2))
   if (hi < n - 1) items.push({ kind: 'step', i: n - 1 })
   return items
 }

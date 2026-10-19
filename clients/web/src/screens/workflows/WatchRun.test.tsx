@@ -485,6 +485,12 @@ describe('foldSteps', () => {
     expect(foldSteps(151, 0, 600).filter((x) => x.kind === 'fold')).toHaveLength(1)
   })
 
+  it('draws a stretch of one step as that step, not as a count of one', () => {
+    for (const [n, cursor, width] of [[20, 13, 300], [11, 0, 100], [20, 6, 300]]) {
+      expect(foldSteps(n, cursor, width).filter((x) => x.kind === 'fold' && x.from === x.to)).toEqual([])
+    }
+  })
+
   it('accounts for every step exactly once', () => {
     for (const cursor of [0, 1, 40, 75, 149, 150]) {
       const covered = foldSteps(151, cursor, 600).flatMap((x) => (x.kind === 'step' ? [x.i] : Array.from({ length: x.to - x.from + 1 }, (_, k) => x.from + k)))
