@@ -66,7 +66,7 @@ function optionsOf(spec: RunSpec, plugin: PluginManifest, extra: Partial<AgentOp
 const STOP: ScriptedTurn = { calls: [] };
 
 function concluded(disposition: string, citations: string[], gaps: string[] = []): ScriptedTurn {
-  return { emit: { summary: `the lockouts are ${disposition}`, disposition, confidence: "medium", citations, gaps, next_steps: [] } };
+  return { emit: { summary: `the lockouts are ${disposition}`, disposition, confidence: "medium", citations, gaps, next_steps: [], proposed_actions: [] } };
 }
 
 const call = (tool: string, args: unknown = {}): { tool: string; args: string } => ({ tool, args: JSON.stringify(args) });
@@ -427,7 +427,7 @@ describe("a run that stops early is asked once to keep going", () => {
 
 describe("an agent can answer by tool, in the turn it decides", () => {
   const plugin = pluginFor("investigate");
-  const answer = (disposition: string, citations: string[]) => ({ summary: `the lockouts are ${disposition}`, disposition, confidence: "medium", citations, gaps: [], next_steps: [] });
+  const answer = (disposition: string, citations: string[]) => ({ summary: `the lockouts are ${disposition}`, disposition, confidence: "medium", citations, gaps: [], next_steps: [], proposed_actions: [] });
   const looked = [call("get_finding"), call("splunk_search", { sql: "a" }), call("search_findings"), call("lookup_indicators", { values: ["x"] })];
 
   it("ends the run on conclude, with no model call asking for the answer", async () => {

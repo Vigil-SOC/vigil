@@ -128,7 +128,7 @@ function useWorkflowCatalog(): { kinds: string[]; names: Record<string, string> 
   return catalog
 }
 
-export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
+export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
@@ -136,9 +136,11 @@ export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSee
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
 
   useEffect(() => {
-    // the list fills the view and scrolls inside its card; the full page is full-bleed too
-    setViewFull(true)
-  }, [setViewFull])
+    // the list fills the view and scrolls inside its card; the full page is full-bleed too, which
+    // is what pins the case composer to the bottom (#2457). Asked again whenever the shell clears
+    // it, as a tour starting does, or the page grows past the viewport and the composer falls under it.
+    if (viewFull !== true) setViewFull(true)
+  }, [setViewFull, viewFull])
 
   return selected ? (
     <CasesDetail id={selected} onBack={backToList} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />

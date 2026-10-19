@@ -18,16 +18,7 @@
         "stream_idle_timeout_in_seconds": 300,
         "max_retries": 0
       },
-      "keys": [
-        {
-          "name": "default-anthropic-key",
-          "weight": 1,
-          "value": "env.ANTHROPIC_API_KEY",
-          "models": [
-            "*"
-          ]
-        }
-      ]
+      "keys": []
     },
     "openai": {
       "network_config": {
@@ -35,16 +26,7 @@
         "stream_idle_timeout_in_seconds": 300,
         "max_retries": 0
       },
-      "keys": [
-        {
-          "name": "default-openai-key",
-          "weight": 1,
-          "value": "env.OPENAI_API_KEY",
-          "models": [
-            "*"
-          ]
-        }
-      ]
+      "keys": []
     },
     "gemini": {
       "network_config": {
@@ -52,16 +34,7 @@
         "stream_idle_timeout_in_seconds": 300,
         "max_retries": 0
       },
-      "keys": [
-        {
-          "name": "default-gemini-key",
-          "weight": 1,
-          "value": "env.GEMINI_API_KEY",
-          "models": [
-            "*"
-          ]
-        }
-      ]
+      "keys": []
     },
     "ollama": {
       "network_config": {
@@ -89,21 +62,7 @@
         "stream_idle_timeout_in_seconds": 300,
         "max_retries": 0
       },
-      "keys": [
-        {
-          "name": "default-vertex-key",
-          "weight": 1,
-          "value": "env.GOOGLE_APPLICATION_CREDENTIALS",
-          "models": [
-            "*"
-          ],
-          "vertex_key_config": {
-            "project_id": "env.VERTEX_PROJECT_ID",
-            "region": "env.VERTEX_REGION",
-            "auth_credentials": "env.GOOGLE_APPLICATION_CREDENTIALS"
-          }
-        }
-      ]
+      "keys": []
     }
   }
 }

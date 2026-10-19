@@ -81,7 +81,7 @@
       "args": ["core/integrations/splunk/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "Self-hosted Splunk via REST API. Configure in Settings (server URL such as https://splunk.example.com:8089, username, password). The tool reads via resolve(), which also accepts SPLUNK_URL, SPLUNK_USERNAME and SPLUNK_PASSWORD from the environment; there is no required env placeholder, so the server is not treated as dormant until those values exist. Port 8089 uses HTTPS by default."
+        "_setup_note": "Self-hosted Splunk via REST API. Configure in Settings (server URL such as https://splunk.example.com:8089, username, password). The tool reads via resolve(), which also accepts SPLUNK_URL, SPLUNK_USERNAME and SPLUNK_PASSWORD from the environment; there is no required env placeholder, so the server stays dormant until server_url, username and password all resolve. Port 8089 uses HTTPS by default."
       }
     },
 
@@ -90,7 +90,7 @@
       "args": ["core/integrations/elastic/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "Elastic Security via Elasticsearch REST API. Configure in Settings (elasticsearch URL, API key or username/password, optional Kibana URL). The tool reads via resolve(); there is no required env placeholder, so the server is not treated as dormant until those values exist."
+        "_setup_note": "Elastic Security via Elasticsearch REST API. Configure in Settings (elasticsearch URL, API key or username/password, optional Kibana URL). The tool reads via resolve(); there is no required env placeholder, so the server stays dormant until the Elasticsearch URL resolves."
       }
     },
 
@@ -99,7 +99,7 @@
       "args": ["core/integrations/opensearch/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "OpenSearch SIEM via the OpenSearch REST API. Configure in Settings (OpenSearch URL, username/password, optional OpenSearch Dashboards URL). The tool reads via resolve(); there is no required env placeholder, so the server is not treated as dormant until those values exist."
+        "_setup_note": "OpenSearch SIEM via the OpenSearch REST API. Configure in Settings (OpenSearch URL, username/password, optional OpenSearch Dashboards URL). The tool reads via resolve(); there is no required env placeholder, so the server stays dormant until the OpenSearch URL resolves."
       }
     },
 

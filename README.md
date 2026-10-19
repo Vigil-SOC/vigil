@@ -115,7 +115,6 @@ Enable and configure integrations under **Settings → Integrations**, or genera
 ```bash
 git clone https://github.com/Vigil-SOC/vigil.git
 cd vigil
-cp env.example .env   # set AGENT_INTERNAL_TOKEN (see below)
 ./start.sh
 ```
 
@@ -125,7 +124,8 @@ Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the con
 
 `start.sh` provisions the pinned Python with [uv](https://docs.astral.sh/uv/), installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional), initializes the schema and reference data, and launches the API, the agent layer, and the frontend. No LogLM or cloud API key is needed to reach a running UI.
 
-- **`AGENT_INTERNAL_TOKEN`** lets the agent layer talk to the API. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Without it the stack still starts, but workflow runs stay queued.
+- **`AGENT_INTERNAL_TOKEN`** lets the agent layer talk to the API. `start.sh` (and `setup_dev.sh`) creates `.env` from `env.example` and fills an empty token with a random one; a value already set is kept. Without it the agent layer does not start: workflow runs stay queued and chat answers 503.
+- **The SOC daemon** (alert polling, auto-triage) runs only with `./start.sh -d`; the foreground start says so. Setup's system checks show whether the daemon and the agent layer are running.
 - **Authentication is on by default.** No account or default password ships; the first visit creates the admin. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
 
 > **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`). Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
@@ -234,7 +234,7 @@ cd clients/web && npm install && npm run dev
 docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
-Pass the repo-root `.env` explicitly, or `AGENT_INTERNAL_TOKEN` reaches the containers empty. The `backend` container refuses to start without `JWT_SECRET_KEY`. Set it in `.env`, for example `export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"` if `start.sh` has run before, or `openssl rand -base64 48`.
+Pass the repo-root `.env` explicitly, or `AGENT_INTERNAL_TOKEN` reaches the containers empty (`./setup_dev.sh` fills an empty one in `.env`). The `backend` container refuses to start without `JWT_SECRET_KEY`. Set it in `.env`, for example `export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"` if `start.sh` has run before, or `openssl rand -base64 48`.
 
 The default set runs the database, cache, gateway, backup, API, and agent layer: everything a chat-driven workflow needs. Opt-in profiles add more: `daemon` (the SOC daemon plus the ARQ worker, for headless 24/7 monitoring), `dev`, `observability`, `splunk`, `kafka`, `elastic`, and `misp`:
 

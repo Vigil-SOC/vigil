@@ -164,8 +164,8 @@ class MCPService:
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
         # add-on. Safe to default-on: it declares no env placeholder (its config
-        # comes from Settings via resolve(), #1113), so with nothing configured
-        # it starts and answers "Splunk not configured", not failing a boot.
+        # comes from Settings via resolve(), #1113), so MCPClient gates it on the
+        # resolved config instead. Dormant until Splunk is saved, then it starts.
         "splunk-selfhosted",
     }
 

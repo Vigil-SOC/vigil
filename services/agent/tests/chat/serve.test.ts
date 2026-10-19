@@ -251,6 +251,28 @@ describe("replaying what the hunt lead was shown", () => {
     expect((await get(`/runs/${compose}/replay`)).status).toBe(404);
   });
 
+  it("serves an investigation's account, and 404s one the lead loop ran and a kind with no account", async () => {
+    await listen([]);
+    const recorded = "c3468a58-80c9-4954-b0ca-d5c025727d7f";
+    const rows = readFileSync(join(import.meta.dirname, "..", "fixtures", "ledgers", "kernel-investigate.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as unknown);
+    await state.append(recorded, rows as never);
+    const legacy = "5a2c2d3e-0000-4000-8000-000000000894";
+    await state.append(legacy, [{ run_id: legacy, run_kind: "investigate", kind: "run", payload: { run_kind: "investigate" } }] as never);
+
+    const res = await get(`/runs/${recorded}/account`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ schema_version: 1, runs: [{ run_id: recorded, run_kind: "investigate" }], verdict: { run_id: recorded } });
+    expect((await get(`/runs/${legacy}/account`)).status).toBe(404);
+    expect((await get(`/runs/${HUNT}/account`)).status).toBe(404);
+
+    const adjudication = "5a2c2d3e-0000-4000-8000-000000000895";
+    await state.append(adjudication, [{ run_id: adjudication, run_kind: "adjudicate", kind: "run", payload: { run_kind: "adjudicate" } }] as never);
+    expect((await get(`/runs/${adjudication}/account`)).status).toBe(404);
+  });
+
   it("returns a root-cause run's steps in ledger order", async () => {
     await listen([]);
     const trace = "5a2c2d3e-0000-4000-8000-000000000893";

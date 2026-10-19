@@ -202,3 +202,139 @@ def test_enabling_before_set_up_keeps_the_switch_on(api):
         "no rules",
     )
     stub.connect_to_server.assert_not_called()
+
+
+# --- servers configured through their descriptor (#2319) ---
+
+SPLUNK_SH = "splunk-selfhosted"
+SPLUNK_SAVED = {
+    "server_url": "https://splunk.example.com:8089",
+    "username": "admin",
+    "password": "pw",
+}
+
+
+def _descriptor_client(*names):
+    service = MCPService.__new__(MCPService)
+    service.servers = {
+        n: MCPServer(name=n, command="python3", args=[], cwd=".", env={}) for n in names
+    }
+    service.is_server_enabled = lambda name: True
+    return MCPClient(service)
+
+
+@pytest.fixture
+def stored():
+    """What resolve() finds for each descriptor id; empty means nothing saved."""
+    config: dict = {}
+
+    def fake_resolve(descriptor):
+        if isinstance(config.get("error"), Exception):
+            raise config["error"]
+        return dict(config.get(descriptor.id, {}))
+
+    with patch("core.integrations.mcp.client.resolve", side_effect=fake_resolve):
+        yield config
+
+
+@pytest.fixture
+def spawn():
+    with patch(
+        "core.integrations.mcp.client.PersistentServerSession.connect",
+        new_callable=AsyncMock,
+        return_value=False,
+    ) as connect:
+        yield connect
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_selfhosted_splunk_is_dormant(stored, spawn):
+    client = _descriptor_client(SPLUNK_SH)
+
+    assert await client.connect_to_server(SPLUNK_SH) is False
+    spawn.assert_not_called()
+    assert client.get_missing_credentials(SPLUNK_SH) == [
+        "server_url",
+        "username",
+        "password",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_partial_splunk_config_stays_dormant(stored, spawn):
+    stored["splunk"] = {"server_url": "https://s:8089", "username": "admin"}
+    client = _descriptor_client(SPLUNK_SH)
+
+    await client.connect_to_server(SPLUNK_SH)
+
+    spawn.assert_not_called()
+    assert client.get_missing_credentials(SPLUNK_SH) == ["password"]
+
+
+@pytest.mark.asyncio
+async def test_saved_splunk_config_lets_the_server_connect(stored, spawn):
+    stored["splunk"] = SPLUNK_SAVED
+    client = _descriptor_client(SPLUNK_SH)
+
+    await client.connect_to_server(SPLUNK_SH)
+
+    spawn.assert_awaited_once()
+    assert not client.get_missing_credentials(SPLUNK_SH)
+
+
+@pytest.mark.asyncio
+async def test_retry_connects_selfhosted_splunk_once_saved(stored, spawn):
+    client = _descriptor_client(SPLUNK_SH)
+    await client.connect_to_server(SPLUNK_SH)
+
+    with patch.object(client, "_RETRY_MIN_INTERVAL_S", 0):
+        assert await client.retry_dormant_if_ready() == {}
+        spawn.assert_not_called()
+        stored["splunk"] = SPLUNK_SAVED
+        assert set(await client.retry_dormant_if_ready()) == {SPLUNK_SH}
+    spawn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_lookup_reads_as_missing(stored, spawn):
+    stored["error"] = RuntimeError("db down")
+    client = _descriptor_client(SPLUNK_SH)
+
+    assert await client.connect_to_server(SPLUNK_SH) is False
+    spawn.assert_not_called()
+    assert client.get_missing_credentials(SPLUNK_SH) == [
+        "server_url",
+        "username",
+        "password",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_official_splunk_server_is_not_gated(stored, spawn):
+    client = _descriptor_client("splunk")
+
+    await client.connect_to_server("splunk")
+
+    spawn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name,integration,field",
+    [
+        ("elastic", "elastic-siem", "elasticsearch_url"),
+        ("opensearch", "opensearch", "opensearch_url"),
+    ],
+)
+async def test_elastic_and_opensearch_wait_for_their_url(
+    stored, spawn, name, integration, field
+):
+    client = _descriptor_client(name)
+
+    await client.connect_to_server(name)
+    spawn.assert_not_called()
+    assert client.get_missing_credentials(name) == [field]
+
+    stored[integration] = {field: "https://siem.example.com:9200"}
+    await client.connect_to_server(name)
+    spawn.assert_awaited_once()

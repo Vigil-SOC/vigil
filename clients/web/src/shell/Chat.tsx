@@ -236,6 +236,11 @@ function safeJson(v: unknown): string {
   }
 }
 
+/** What a chip reads, without its kind: an alert by its title, an explanation by its statement, a row by its step and source. */
+function citeName(cite: Citation): string {
+  return cite.kind === 'evidence' ? cite.label : cite.label.replace(/^(?:alert|explanation) · /, '')
+}
+
 /** One chip: what it cites, by step and source, with the row's text on hover (components/citation-chip.md). */
 function CiteChip({ cite, onCite }: { cite: Citation; onCite?: (cite: Citation) => void }) {
   return cite.href ? (
@@ -276,9 +281,11 @@ function AnswerText({ text, citations, onCite }: { text: string; citations?: rea
     const byId = new Map(citations.map((c) => [c.id, c]))
     return {
       pattern,
-      render: (id: string) => {
+      // once per paragraph as a chip; named again in words after that (#2459)
+      render: (id: string, again: boolean) => {
         const hit = byId.get(id)
-        return hit ? <CiteChip cite={hit} onCite={onCite} /> : id
+        if (!hit) return id
+        return again ? <span className="cite-again" title={hit.text}>{citeName(hit)}</span> : <CiteChip cite={hit} onCite={onCite} />
       },
     }
   }, [citations, onCite])

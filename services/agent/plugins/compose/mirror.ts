@@ -1,4 +1,4 @@
-import type { ResolutionPayload, RunOutcome, Severity, TerminalHandoff } from "../../contracts/events.js";
+import type { ProposedAction, ResolutionPayload, RunOutcome, Severity, TerminalHandoff } from "../../contracts/events.js";
 import { httpAnswers } from "../../core/answers.js";
 import { errorFields, logger } from "../../core/log.js";
 
@@ -22,13 +22,15 @@ export interface PhaseUpdate {
 }
 
 // How a run ended, as the console records it. summary is the deliverable, cost is
-// what it took, and handoffs are the case files it wants someone else to pick up.
+// what it took, handoffs are the case files it wants someone else to pick up, and
+// proposed_actions the actions it wants a person to approve.
 export interface TerminalResult {
   outcome: RunOutcome;
   reason: string;
   summary: string;
   cost_usd?: number;
   handoffs?: TerminalHandoff[];
+  proposed_actions?: ProposedAction[];
   severity?: Severity;
 }
 

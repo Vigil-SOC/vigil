@@ -977,9 +977,11 @@ export interface paths {
         post?: never;
         /**
          * Disable Mfa
-         * @description Disable MFA for current user.
+         * @description Disable MFA for current user. Requires a current TOTP or recovery code.
          *
          *     Args:
+         *         request: FastAPI request (used by the rate limiter).
+         *         body: A current authenticator code or an unused recovery code
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -1027,7 +1029,7 @@ export interface paths {
         put?: never;
         /**
          * Setup Mfa
-         * @description Setup MFA for current user.
+         * @description Setup MFA for current user. Returns 409 if MFA is already enabled.
          *
          *     Args:
          *         current_user: Current authenticated user
@@ -2153,7 +2155,8 @@ export interface paths {
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
          *     ``case_id`` column. The run is the case's latest, an investigation's
-         *     ``run_id_for`` or a run started on the case, never the shadow adjudication.
+         *     ``run_id_for`` or a run started on the case, never the shadow adjudication,
+         *     and never a run another run on the case started (``primary_ref``).
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -4663,6 +4666,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/processes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Processes
+         * @description State of the agent layer and the SOC daemon.
+         *
+         *     ``agent_layer`` and ``daemon`` are each ``running``, ``unhealthy``,
+         *     ``not_running`` or ``unknown``; ``agent_layer`` is ``no_token`` when this
+         *     server has no AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         */
+        get: operations["get_api_processes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reasoning/investigation/{investigation_id}/interactions": {
         parameters: {
             query?: never;
@@ -6551,6 +6578,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/runs/{run_id}/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workflow Run Account
+         * @description What a run concluded, in the one shape every loop fills.
+         *
+         *     Folded from the ledger on each read, so it is never stale. A section the
+         *     run's loop does not produce is absent, never null; a run whose loop keeps
+         *     no account is a 404.
+         */
+        get: operations["get_api_workflows_runs_run_id_account"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/runs/{run_id}/calls/{ref}": {
         parameters: {
             query?: never;
@@ -7197,6 +7248,34 @@ export interface components {
              */
             local_ollama_recovery_retry_limit: number;
         };
+        /** Account */
+        Account: {
+            /** Entities */
+            entities?: string[];
+            /** Name */
+            name: string;
+            /** Note */
+            note?: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "attacker" | "victim" | "legitimate";
+            /** Run Id */
+            run_id: string;
+            /** Seen As */
+            seen_as?: string[];
+        };
+        /** AccountRun */
+        AccountRun: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * Run Kind
+             * @enum {string}
+             */
+            run_kind: "hunt" | "root_cause" | "adjudicate" | "investigate" | "compose" | "chat" | "tally" | "subagent";
+        };
         /**
          * ActivityAdd
          * @description Add activity to case.
@@ -7283,6 +7362,16 @@ export interface components {
         AutostartRequest: {
             /** Services */
             services: string[];
+        };
+        /** Bearing */
+        Bearing: {
+            /** On */
+            on: string;
+            /**
+             * Stance
+             * @enum {string}
+             */
+            stance: "supports" | "weakens" | "neither";
         };
         /** Body_attach_case_document_api_cases__case_id__attachments_post */
         Body_attach_case_document_api_cases__case_id__attachments_post: {
@@ -7402,6 +7491,34 @@ export interface components {
         ByStatusResponse: {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
+        };
+        /** CaseAccount */
+        CaseAccount: {
+            /** Accounts */
+            accounts?: components["schemas"]["Account"][];
+            chain?: components["schemas"]["Chain"];
+            /** Entities */
+            entities?: components["schemas"]["EntityItem"][];
+            /** Escalations */
+            escalations?: components["schemas"]["Escalation"][];
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceItem"][];
+            /** Explanations */
+            explanations?: components["schemas"]["Explanation"][];
+            /** Gaps */
+            gaps?: components["schemas"]["Gap"][];
+            narrative?: components["schemas"]["Narrative"];
+            /** Next Steps */
+            next_steps?: components["schemas"]["NextStep"][];
+            /** Runs */
+            runs: components["schemas"]["AccountRun"][];
+            /** Schema Version */
+            schema_version: number;
+            /** Steps */
+            steps?: components["schemas"]["Step"][];
+            /** Timeline */
+            timeline?: components["schemas"]["TimelineEntry"][];
+            verdict?: components["schemas"]["Verdict"];
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -7769,6 +7886,11 @@ export interface components {
              * @default 0
              */
             max_cost_usd: number;
+            /**
+             * Primary
+             * @default false
+             */
+            primary: boolean;
             /** Run Id */
             run_id: string;
             /** Status */
@@ -8255,6 +8377,56 @@ export interface components {
             /** Watchers */
             watchers: components["schemas"]["CaseWatcherSchema"][];
         };
+        /** Chain */
+        Chain: {
+            /** Alternatives */
+            alternatives?: components["schemas"]["ChainPath"][];
+            /** Events */
+            events: components["schemas"]["ChainEvent"][];
+            /** Run Id */
+            run_id: string;
+            /** Score */
+            score?: number;
+        };
+        /** ChainEvent */
+        ChainEvent: {
+            /** At */
+            at?: string;
+            /** Causes */
+            causes?: string;
+            /** Confidence */
+            confidence?: number;
+            /** Entities */
+            entities?: string[];
+            /** Id */
+            id: string;
+            /** Operated By */
+            operated_by?: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin?: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Ran As */
+            ran_as?: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Text */
+            text: string;
+            /** Tie */
+            tie?: components["schemas"]["ChainTie"];
+            /** Together With */
+            together_with?: string[];
+            /** Why Origin */
+            why_origin?: string;
+        };
         /**
          * ChainOfCustodyAdd
          * @description Add chain of custody entry.
@@ -8266,6 +8438,27 @@ export interface components {
             notes?: string | null;
             /** User */
             user: string;
+        };
+        /** ChainPath */
+        ChainPath: {
+            /** Path */
+            path: string[];
+            /** Score */
+            score?: number;
+        };
+        /** ChainTie */
+        ChainTie: {
+            /** Confidence */
+            confidence?: number;
+            /** Id */
+            id?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Text */
+            text?: string;
         };
         /**
          * ChangePasswordRequest
@@ -8775,6 +8968,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EntityItem */
+        EntityItem: {
+            /**
+             * Indicator
+             * @constant
+             */
+            indicator?: true;
+            /** Key */
+            key: string;
+            /** Run Id */
+            run_id: string;
+        };
+        /** Escalation */
+        Escalation: {
+            /** At */
+            at?: string;
+            /** Case Id */
+            case_id: string;
+            /** Explanation Id */
+            explanation_id?: string;
+            /** Rationale */
+            rationale: string;
+            /** Run Id */
+            run_id: string;
+        };
         /**
          * EscalationAdd
          * @description Escalate case.
@@ -8846,6 +9064,50 @@ export interface components {
             /** Tags */
             tags?: string[] | null;
         };
+        /** EvidenceItem */
+        EvidenceItem: {
+            /**
+             * Absence
+             * @constant
+             */
+            absence?: true;
+            /** Attested */
+            attested?: boolean;
+            /** Bears On */
+            bears_on?: components["schemas"]["Bearing"][];
+            /** Checks */
+            checks?: components["schemas"]["ValueCheck"][];
+            /** Claim */
+            claim: string;
+            /** Entities */
+            entities?: string[];
+            /** Id */
+            id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Salience
+             * @enum {string}
+             */
+            salience?: "routine" | "notable" | "anomalous";
+            /** Source */
+            source?: string;
+            /** Source Ref */
+            source_ref?: string;
+            /** Source Refs */
+            source_refs?: string[];
+            /**
+             * Strength
+             * @enum {string}
+             */
+            strength?: "direct" | "corroborating" | "circumstantial";
+            /** Techniques */
+            techniques?: string[];
+            /** Turn */
+            turn?: number;
+            /** Why */
+            why?: string;
+        };
         /** ExclusionCreate */
         ExclusionCreate: {
             /**
@@ -8913,6 +9175,31 @@ export interface components {
         ExclusionRemove: {
             /** Reason */
             reason?: string | null;
+        };
+        /** Explanation */
+        Explanation: {
+            /** Claim */
+            claim: string;
+            /** Id */
+            id: string;
+            /** Reason */
+            reason?: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "adversary" | "benign";
+            /** Run Id */
+            run_id: string;
+            /**
+             * Standing
+             * @enum {string}
+             */
+            standing: "proven" | "supported" | "open" | "inconclusive" | "weakened" | "ruled_out" | "set_aside";
+            /** Subjects */
+            subjects?: string[];
+            /** Techniques */
+            techniques?: string[];
         };
         /** FederationGlobalSettings */
         FederationGlobalSettings: {
@@ -9103,6 +9390,20 @@ export interface components {
             specialization?: string | null;
             /** System Prompt Override */
             system_prompt_override?: string | null;
+        };
+        /** Gap */
+        Gap: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind?: "visibility" | "open_question" | "disputed";
+            /** On */
+            on?: string;
+            /** Run Id */
+            run_id: string;
+            /** Text */
+            text: string;
         };
         /**
          * GeneralConfig
@@ -9713,6 +10014,24 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** Narrative */
+        Narrative: {
+            /** Missing Because */
+            missing_because?: string;
+            /** Model Id */
+            model_id?: string;
+            /** Run Id */
+            run_id: string;
+            /** Summary */
+            summary: string;
+            /** What Happened */
+            what_happened?: string;
+            /**
+             * Written By
+             * @constant
+             */
+            written_by?: "vigil";
+        };
         /** NeedsYouHypothesis */
         NeedsYouHypothesis: {
             /**
@@ -9759,6 +10078,13 @@ export interface components {
             count: number;
             /** Items */
             items?: components["schemas"]["NeedsYouItem"][];
+        };
+        /** NextStep */
+        NextStep: {
+            /** Run Id */
+            run_id: string;
+            /** Text */
+            text: string;
         };
         /** NoiseMarkResponse */
         NoiseMarkResponse: {
@@ -10643,6 +10969,25 @@ export interface components {
              */
             status: "running" | "paused";
         };
+        /** Step */
+        Step: {
+            /** At */
+            at?: string;
+            /** Cost Usd */
+            cost_usd?: number;
+            /** Duration Ms */
+            duration_ms?: number;
+            /** Kind */
+            kind: string;
+            /** N */
+            n: number;
+            /** Refs */
+            refs?: string[];
+            /** Run Id */
+            run_id: string;
+            /** Text */
+            text: string;
+        };
         /**
          * SubmitFeedbackRequest
          * @description Request model for submitting feedback on an AI decision.
@@ -10825,6 +11170,8 @@ export interface components {
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */
             outcome: string;
+            /** Proposed Actions */
+            proposed_actions?: unknown[];
             /**
              * Reason
              * @default
@@ -10848,6 +11195,41 @@ export interface components {
              * @default dark
              */
             theme: string;
+        };
+        /** TimelineEntry */
+        TimelineEntry: {
+            /** At */
+            at?: string;
+            /** Confidence */
+            confidence?: number;
+            /**
+             * Legitimate
+             * @constant
+             */
+            legitimate?: true;
+            /** On Chain */
+            on_chain?: boolean;
+            /** Operated By */
+            operated_by?: string;
+            /** Ran As */
+            ran_as?: string;
+            /** Ref */
+            ref?: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source?: string;
+            /** Stage */
+            stage?: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status?: "confirmed" | "suspected" | "unproven" | "rejected";
+            /** Techniques */
+            techniques?: string[];
+            /** Text */
+            text: string;
         };
         /**
          * TimelineEvent
@@ -11104,6 +11486,48 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** ValueCheck */
+        ValueCheck: {
+            /** Claimed */
+            claimed: unknown;
+            /** Field */
+            field: string;
+            /** Found */
+            found?: unknown;
+            /** Found Field */
+            found_field?: string;
+            /** Ref */
+            ref?: string;
+            /**
+             * Rounded
+             * @constant
+             */
+            rounded?: true;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "match" | "differs" | "absent";
+        };
+        /** Verdict */
+        Verdict: {
+            /** Basis */
+            basis?: string;
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence?: "low" | "medium" | "high";
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "malicious" | "suspicious" | "benign" | "false_positive" | "inconclusive" | "needs_review";
+            /** Headline */
+            headline: string;
+            /** Run Id */
+            run_id: string;
         };
         /**
          * WatcherAdd
@@ -12986,7 +13410,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MFAVerifyRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -19408,6 +19836,39 @@ export interface operations {
             };
         };
     };
+    get_api_processes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_reasoning_investigation_investigation_id_interactions: {
         parameters: {
             query?: {
@@ -22684,6 +23145,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_workflows_runs_run_id_account: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseAccount"];
                 };
             };
             /** @description Validation Error */

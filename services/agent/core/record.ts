@@ -30,7 +30,16 @@ export interface ProposedLink {
   evidence_id: string;
   hypothesis_id: string;
   relation: Stance;
+  // What the result shows, in the agent's words: the observation a reader sees.
+  note?: string;
 }
+
+// The benign claim is the one a dismissal would rest on, and a reader has to tell it
+// from the others at a glance.
+const BENIGN = {
+  type: "boolean",
+  description: "True for the innocent explanation: the activity is legitimate, expected or authorized.",
+};
 
 // Where the three tools write. Each answers as a tool does, so a refusal reaches
 // the model as one and the call is journaled as a defect.
@@ -39,7 +48,7 @@ export interface RecordBackend {
   stances: readonly Stance[];
   // What link_evidence's evidence_id names, for the tool's description.
   evidence: string;
-  propose(statement: string): Promise<ToolResult>;
+  propose(statement: string, benign?: boolean): Promise<ToolResult>;
   link(links: readonly ProposedLink[]): Promise<ToolResult>;
   ask(question: string, hypothesisId: string | null): Promise<ToolResult>;
 }
@@ -136,11 +145,11 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
     local(
       PROPOSE_TOOL,
       "Put one claim about what is happening on the record. Returns its id.",
-      { type: "object", additionalProperties: false, required: ["statement"], properties: { statement: { type: "string" } } },
+      { type: "object", additionalProperties: false, required: ["statement"], properties: { statement: { type: "string" }, benign: BENIGN } },
       async (args) => {
         const statement = typeof args["statement"] === "string" ? args["statement"].trim() : "";
         if (statement === "") return refusedWith("a hypothesis needs a statement");
-        return backend.propose(statement);
+        return backend.propose(statement, benignOf(args));
       },
     ),
     local(
@@ -161,7 +170,9 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
                 evidence_id: { type: "string" },
                 hypothesis_id: { type: "string" },
                 statement: { type: "string" },
+                benign: BENIGN,
                 stance: { type: "string", enum: [...backend.stances] },
+                note: { type: "string", description: "What this result shows, in one sentence naming the host, account or values it holds." },
               },
             },
           },
@@ -180,7 +191,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
         for (const one of raw) {
           const statement = typeof one["hypothesis_id"] === "string" ? null : String(one["statement"]).trim();
           if (statement === null || statement === "" || proposed.has(statement)) continue;
-          const result = await backend.propose(statement);
+          const result = await backend.propose(statement, benignOf(one));
           const id = result.ok ? (result.rows[0] as { hypothesis_id?: unknown } | undefined)?.hypothesis_id : undefined;
           if (typeof id !== "string") return result.ok ? refusedWith(`could not propose: ${statement}`) : result;
           proposed.set(statement, id);
@@ -189,6 +200,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
           evidence_id: String(one["evidence_id"] ?? ""),
           hypothesis_id: typeof one["hypothesis_id"] === "string" ? one["hypothesis_id"] : (proposed.get(String(one["statement"]).trim()) ?? ""),
           relation: String(one["stance"]) as Stance,
+          ...(typeof one["note"] === "string" && one["note"].trim() !== "" ? { note: one["note"].trim() } : {}),
         }));
         const linked = await backend.link(links);
         return linked.ok && proposed.size > 0 ? okWith([...linked.rows, { proposed: Object.fromEntries(proposed) }]) : linked;
@@ -205,6 +217,10 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
       },
     ),
   ];
+}
+
+function benignOf(args: Record<string, unknown>): boolean | undefined {
+  return typeof args["benign"] === "boolean" ? args["benign"] : undefined;
 }
 
 export function okWith(rows: readonly unknown[]): ToolResult {
@@ -228,10 +244,10 @@ export function kernelRecord(ports: KernelRecordPorts): RecordBackend {
   return {
     stances: ["supports", "weakens"],
     evidence: "the ref a tool result opened with, such as r3",
-    propose: async (statement) => {
+    propose: async (statement, benign) => {
       const record = recordOf(await ports.read());
       const hypothesis_id = `h${record.hypotheses.size + 1}`;
-      await ports.write("hypothesis", { hypothesis_id, statement, status: "active", provenance: "agent", resolution_reason: null });
+      await ports.write("hypothesis", { hypothesis_id, statement, status: "active", provenance: "agent", resolution_reason: null, ...(benign === undefined ? {} : { benign }) });
       return okWith([{ hypothesis_id }]);
     },
     link: async (links) => {
