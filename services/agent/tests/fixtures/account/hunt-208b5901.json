@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "runs": [{ "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "run_kind": "hunt" }],
+  "verdict": {
+    "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+    "disposition": "inconclusive",
+    "headline": "The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
+    "basis": "Hunt ended (failed) with the hypothesis unresolved"
+  },
+  "narrative": {
+    "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+    "summary": "This hunt ended failed: the role never emitted a valid answer. Of 2 explanation(s), 0 proven, 0 ruled out, 2 not settled. It gathered 1 observation(s).",
+    "what_happened": "### How each explanation stands\n- **not settled** — The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.\n\n### What came back\n- ACCT-WS-007 full kill chain under adam.hartley _(ev-64769d746afe, anomalous)_",
+    "written_by": "vigil",
+    "missing_because": "the role never emitted a valid answer: / must have required property 'summary'"
+  },
+  "explanations": [
+    {
+      "id": "h-98e38c67",
+      "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+      "claim": "The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490) is part of a hands-on-keyboard intrusion, not routine administration.",
+      "role": "adversary",
+      "standing": "inconclusive",
+      "reason": "Hunt ended (failed) with the hypothesis unresolved",
+      "subjects": ["host:acct-ws-007"],
+      "techniques": ["T1490"]
+    },
+    {
+      "id": "h-cd39e37d",
+      "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+      "claim": "the activity described in \"The volume shadow copy deletion on ACCT-WS-007 at 2026-09-02T14:02:11Z (T1490)",
+      "role": "benign",
+      "standing": "inconclusive",
+      "reason": "Hunt ended (failed) with the hypothesis unresolved",
+      "techniques": ["T1490"]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-64769d746afe",
+      "run_id": "208b5901-e366-43de-9463-1eaaa7286731",
+      "claim": "ACCT-WS-007 full kill chain under adam.hartley: Invoice_40517.xlsm (Excel, 08:31:05) spawned encoded hidden powershell (08:31:09, PID6188) which spawned rundll32 of C:\\Users\\Public\\svchost-helper.dll,Start (PID6402,",
+      "source": "process_lineage",
+      "turn": 3,
+      "salience": "anomalous",
+      "attested": true,
+      "checks": [],
+      "bears_on": [
+        { "on": "h-98e38c67", "stance": "supports" },
+        { "on": "h-cd39e37d", "stance": "weakens" }
+      ],
+      "why": "The shadow-copy deletion descends from a macro-delivered DLL implant that also dumped",
+      "entities": ["user:adam.hartley"],
+      "techniques": ["T1490"]
+    }
+  ],
+  "entities": [
+    { "key": "host:acct-ws-007", "run_id": "208b5901-e366-43de-9463-1eaaa7286731" },
+    { "key": "user:adam.hartley", "run_id": "208b5901-e366-43de-9463-1eaaa7286731" }
+  ],
+  "next_steps": [
+    { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "text": "Settle h-98e38c67: The volume shadow copy deletion on ACCT-WS-007 is part of a hands-on-keyboard intrusion — the hunt ended before deciding it" }
+  ],
+  "gaps": [],
+  "escalations": [],
+  "steps": [
+    { "run_id": "208b5901-e366-43de-9463-1eaaa7286731", "n": 1, "kind": "READ", "text": "I'll start by loading the hunt method skill and checking the board state.", "at": "2026-10-15T16:24:16.158Z", "cost_usd": 0.04966, "duration_ms": 2948 }
+  ]
+}

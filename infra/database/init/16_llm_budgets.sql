@@ -22,11 +22,7 @@
 INSERT INTO system_config (key, value, description, config_type)
 VALUES (
     'bifrost.virtual_keys',
-    '{
-        "default_vk": "",
-        "budget_limit_usd": 0,
-        "enforcement_mode": "warning"
-    }'::jsonb,
+    '{"default_vk": ""}'::jsonb,
     'Bifrost virtual-key configuration and budget settings (#186)',
     'ai'
 )

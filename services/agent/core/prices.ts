@@ -39,9 +39,12 @@ export type Prices = (modelId: string, providerType: string) => Promise<RateCard
 // and its tokens are still journaled, which is what the ledger is for.
 export const noPrices: Prices = async () => null;
 
+// input is the total, cached share included, so only what the cache did not serve is
+// billed at the input rate. Billing both charged every cache hit twice.
 export function costOf(rates: Rates, tokens: TokenCounts): number {
+  const uncached = Math.max(0, tokens.input - tokens.cache_read - tokens.cache_write);
   return (
-    tokens.input * rates.input +
+    uncached * rates.input +
     tokens.output * rates.output +
     tokens.cache_read * rates.cache_read +
     tokens.cache_write * rates.cache_write

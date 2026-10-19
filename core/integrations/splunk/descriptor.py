@@ -6,6 +6,9 @@ from core.integrations._base.descriptor import (
     register_descriptor,
 )
 
+# What the self-hosted tool needs to log in; the MCP credential gate reads it too.
+SPLUNK_SELFHOSTED_REQUIRED = ("server_url", "username", "password")
+
 SPLUNK = register_descriptor(
     IntegrationDescriptor(
         id="splunk",

@@ -56,7 +56,7 @@ async function parkedAtGate(runId: string): Promise<{ state: InProcessState; che
   await advance(state, leases, job(runId, "start"), scriptedHarness(CONCLUDE));
   const raised = (await eventsOf(state, runId)).find((event) => event.kind === "checkpoint");
   expect((raised?.payload as unknown as CheckpointPayload).checkpoint_class).toBe("hypothesis_approval");
-  expect((await eventsOf(state, runId)).some((event) => event.kind === "decision")).toBe(false);
+  expect((await eventsOf(state, runId)).some((event) => event.kind === "spend")).toBe(false);
   return { state, checkpointId: (raised?.payload as unknown as CheckpointPayload).checkpoint_id };
 }
 
@@ -74,7 +74,7 @@ const answer = (checkpoint_id: string, verdict: "approve" | "reject") => ({
 });
 
 describe("approving a hunt's hypothesis gate through the ledger", () => {
-  it("starts the hunt: it reaches iteration 1 and the run row reads running", async () => {
+  it("starts the hunt: the gate releases it and the run row reads running", async () => {
     const runId = "7d3c2d3e-0000-4000-8000-000000001914";
     const { state, checkpointId } = await parkedAtGate(runId);
 
@@ -82,8 +82,11 @@ describe("approving a hunt's hypothesis gate through the ledger", () => {
     await advance(state, leases, job(runId, "resume"), scriptedHarness(CONCLUDE));
 
     const events = await eventsOf(state, runId);
-    const iterations = events.filter((event) => event.kind === "decision").map((event) => event.payload["iteration"]);
-    expect(iterations).toContain(1);
+    // Released by the answer alone: the hunt leaves pending_approval, and the agent
+    // takes a turn -- which a hunt still held at the gate never does.
+    const released = events.some((event) => event.kind === "patch" && event.payload["target"] === "hunt" && (event.payload["fields"] as { status?: string }).status === "active");
+    expect(released).toBe(true);
+    expect(events.some((event) => event.kind === "spend")).toBe(true);
     expect(posted.find((one) => one.url.endsWith(`${runId}/status`) && (one.body as { status: string }).status === "running")).toBeDefined();
   });
 
@@ -95,7 +98,7 @@ describe("approving a hunt's hypothesis gate through the ledger", () => {
     await advance(state, leases, job(runId, "resume"), scriptedHarness(CONCLUDE));
 
     const events = await eventsOf(state, runId);
-    expect(events.some((event) => event.kind === "decision")).toBe(false);
+    expect(events.some((event) => event.kind === "call")).toBe(false);
     expect((await state.terminal(runId))?.outcome).toBe("aborted");
   });
 });

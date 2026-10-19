@@ -196,7 +196,9 @@ class TestPhaseApprovalAcrossTheBridge:
         [row] = ApprovalService().list_actions(
             status=ActionStatus.PENDING, workflow_run_id=run_id
         )
-        assert row.reason == "Vigil wants your go-ahead on the hypothesis it will test."
+        assert (
+            row.reason == "Vigil wants your go-ahead on the explanations it will test."
+        )
         assert "confidence_threshold" not in row.reason
         assert "hypothesis_approval" not in row.reason
 

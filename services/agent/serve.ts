@@ -1,27 +1,33 @@
+import { SpanKind } from "@opentelemetry/api";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import pg from "pg";
-import { archFor, isHuntLike, registeredKinds } from "./arch/registry.js";
-import { cachedReady, handleHealth, type Ready } from "./core/health.js";
+import { archFor, isHuntLike, registeredKinds } from "./plugins/kinds.js";
+import { bindHost, cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
+import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
 import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
-import { chatEvents, sse } from "./workflows/chat/sse.js";
-import { runChat, type Turn } from "./workflows/chat/workflow.js";
+import { chatEvents, sse } from "./plugins/chat/sse.js";
+import { runChat, type Turn } from "./plugins/chat/workflow.js";
 import { harnessFor, type HarnessFactory } from "./harness.js";
-import type { ProjectionOptions } from "./workflows/hunt/projection.js";
-import { narrateRun } from "./workflows/hunt/workflow.js";
-import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
-import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
-import { investigateReplay } from "./workflows/lead/replay.js";
-import { rootCauseReplay } from "./workflows/rootcause/replay.js";
+import type { ProjectionOptions } from "./plugins/hunt/projection.js";
+import { narrateRun } from "./plugins/hunt/workflow.js";
+import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
+import { replay, type ReplayReport } from "./plugins/hunt/replay.js";
+import { agentReplay } from "./core/agent-view.js";
+import { investigateReplay } from "./plugins/investigate/legacy/replay.js";
+import { isAgentRun } from "./core/agent.js";
+import { investigateKernelReplay } from "./plugins/investigate/view.js";
+import { huntKernelReplay } from "./plugins/hunt/view.js";
+import { rootCauseReplay } from "./plugins/rootcause/replay.js";
 
 const log = logger("agent.serve");
 
@@ -30,6 +36,8 @@ const CHAT = "/chat/stream";
 const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
 const DISTIL = /^\/runs\/([0-9a-fA-F-]{36})\/distil$/;
+// GET /runs/<id>/account -- what the run concluded, in the shape the case page reads.
+const ACCOUNT = /^\/runs\/([0-9a-fA-F-]{36})\/account$/;
 const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
 // GET /runs/<id>/replay[?decision_id=...] -- what each decision was shown, rebuilt
 // from the ledger. Matched on the pathname, since this one takes a query.
@@ -115,6 +123,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
     }
   } catch (error) {
     log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
+    failed(error);
     res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
   }
   res.end();
@@ -159,12 +168,15 @@ function refuse(res: ServerResponse, status: number, detail: string): void {
 // A route that threw: logged with the run, then answered as the refusal it is.
 function fail(res: ServerResponse, status: number, route: string, runId: string, error: unknown): void {
   log.error("request failed", { route, run_id: runId, status, ...errorFields(error) });
+  failed(error);
   refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
+type Fold = "projection" | "distil" | "account";
+
 // A run folded by the workflow that owns it. The events stay ours: a reader gets
 // what the run decided or what it saw, never how either was written down.
-async function foldedBy(state: State, runId: string, view: "projection" | "distil", options?: ProjectionOptions): Promise<unknown | null> {
+async function foldedBy(state: State, runId: string, view: Fold, options?: ProjectionOptions): Promise<unknown | null> {
   const events = await state.read(runId);
   const opened = events[0];
   if (opened === undefined || !registeredKinds().includes(opened.run_kind)) return null;
@@ -173,7 +185,7 @@ async function foldedBy(state: State, runId: string, view: "projection" | "disti
   return project === undefined ? null : project(runId, events, options);
 }
 
-async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse, options?: ProjectionOptions): Promise<void> {
+async function readFold(state: State, runId: string, view: Fold, res: ServerResponse, options?: ProjectionOptions): Promise<void> {
   let folded: unknown | null;
   try {
     folded = await foldedBy(state, runId, view, options);
@@ -221,7 +233,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   const opened = events[0];
   if (opened?.run_kind === "investigate") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(investigateReplay(runId, events)));
+    res.end(JSON.stringify(isAgentRun(events) ? investigateKernelReplay(runId, events) : investigateReplay(runId, events)));
     return;
   }
   if (opened?.run_kind === "root_cause") {
@@ -229,7 +241,21 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     res.end(JSON.stringify(rootCauseReplay(runId, events)));
     return;
   }
+  // A judge or subagent, replayed from its own ledger like any kernel run.
+  if (opened?.run_kind === "subagent") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(agentReplay(runId, events)));
+    return;
+  }
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
+  // A kernel hunt has no digest to rebuild: what each turn was shown is the calls before it.
+  if (isAgentRun(events)) {
+    const report = huntKernelReplay(runId, events, decisionId);
+    if (decisionId !== null && report.decisions.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(report));
+    return;
+  }
 
   let report: ReplayReport;
   try {
@@ -244,7 +270,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     if (one.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
     // Counts follow the filtered list; hunt_id and recalled are report-level and stay.
     report.decisions = one;
-    report.reproduced = one.filter((decision) => decision.mismatch === null).length;
+    report.reproduced = one.filter((decision) => decision.rebuilt !== null && decision.mismatch === null).length;
     report.inexact = one.filter((decision) => !decision.exact).length;
   }
   res.writeHead(200, { "content-type": "application/json" });
@@ -282,7 +308,13 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
   // Headers before the first token, so the reader is streaming rather than
   // buffering a response it will be handed all at once.
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  await streamChat(state, request, res, build);
+  const attributes = {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "chat",
+    "vigil.run_id": request.run_id,
+    ...(request.agent_id === undefined ? {} : { "gen_ai.agent.id": request.agent_id }),
+  };
+  await traced("invoke_agent chat", attributes, () => streamChat(state, request, res, build), { kind: SpanKind.SERVER, parent: req.headers });
 }
 
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
@@ -304,8 +336,15 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
 
+      const accounted = req.method === "GET" ? ACCOUNT.exec(url) : null;
+      if (accounted !== null) return readFold(state, accounted[1] as string, "account", res);
+
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
-      if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
+      if (asked !== null) {
+        const runId = asked[1] as string;
+        const attributes = { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "narrate", "vigil.run_id": runId };
+        return traced("invoke_agent narrate", attributes, () => writeNarrative(state, runId, res, build), { kind: SpanKind.SERVER, parent: req.headers });
+      }
 
       // Parsed rather than matched raw because this route takes a query. Node accepts
       // request-targets URL rejects (absolute-form with a bad host), so a throw here
@@ -360,14 +399,16 @@ export function serveReady(pool: pg.Pool): Ready {
 // loaded this module and exited. Its own pool: serve is a separate Deployment from
 // the worker now, and a pool cannot be shared across processes.
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
+  initTracing("vigil-agent-serve");
   const pool = new pg.Pool(poolConfig());
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
   const serving = chatServer(new LedgerRepository(pool), cachedReady(serveReady(pool)), harnessFor, (runId) =>
     verifyLedger(pool, runId),
-  ).listen(chatPort());
+  ).listen(chatPort(), bindHost());
   const stop = () => {
-    serving.close();
+    // Flushed once the open chats have drained, so their spans are not the ones lost.
+    serving.close(() => void shutdownTracing());
     void pool.end();
   };
   process.on("SIGTERM", stop);

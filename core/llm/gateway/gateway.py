@@ -37,6 +37,12 @@ def redis_settings() -> RedisSettings:
         port=parsed.port or 6379,
         database=int(parsed.path.lstrip("/") or 0),
         password=parsed.password,
+        # ARQ's create_pool retries on connect errors/timeouts; its defaults
+        # (1 s timeout, 5 retries) give up ~10 s into a cold Redis container.
+        # These allow ~45 s for a refused connection, ~90 s if every try times out.
+        conn_timeout=3,
+        conn_retries=15,
+        conn_retry_delay=3,
     )
 
 

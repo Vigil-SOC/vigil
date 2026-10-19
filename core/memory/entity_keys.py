@@ -5,7 +5,7 @@ a type and a value; the key they join on is minted here, so a stored key and a
 queried key cannot be normalised by two rules that drift.
 
 The rule is ``defang`` then case-fold, mirroring
-``services/agent/workflows/hunt/entities.ts``. The exception is the half that
+``services/agent/plugins/hunt/entities.ts``. The exception is the half that
 breaks silently: an ARN's resource part and an AWS key id are case-significant,
 so folding them makes two principals one key — and the join still returns rows,
 just the wrong ones.
@@ -98,7 +98,7 @@ def normalise_keys(keys: object) -> List[str]:
 
 
 # Free-text extraction, ported from `fromText` in
-# services/agent/workflows/hunt/entities.ts. Same patterns, same well-formed
+# services/agent/plugins/hunt/entities.ts. Same patterns, same well-formed
 # checks, so a pasted report and a hunt's evidence agree on what is an entity.
 # re.ASCII because JS `\b`, `\d` and `[a-z]` are ASCII-only; Python's default
 # Unicode classes would match wider and the two would drift. JS `\s` is the

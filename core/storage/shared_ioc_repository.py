@@ -89,9 +89,8 @@ def index_case_iocs_on_close(session: Session, case_id: str) -> int:
 def _live_clause(now: datetime) -> ColumnElement[bool]:
     """An investigation still worth deduplicating a new finding against.
 
-    Status alone is not enough: ``needs_rework`` nobody reworks, or
-    ``executing`` orphaned by a crash, would stay live forever and silence
-    every future finding on its indicators. Anything untouched for longer than
+    Status alone is not enough: ``executing`` orphaned by a crash would stay
+    live forever and silence every future finding on its indicators. Anything untouched for longer than
     its own runtime ceiling is stale, so crashed runs age out on their own.
     """
     last_seen = func.coalesce(

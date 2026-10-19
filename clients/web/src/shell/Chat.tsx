@@ -1,11 +1,15 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
 } from 'react'
 import { format } from 'date-fns'
-import { Markdown } from '../shared/Markdown'
+import { Markdown, type MarkdownCite } from '../shared/Markdown'
+import { citedIn, citePattern, type Citation } from './citations'
+import { ThreadGrip } from './ThreadGrip'
+import { useThreadHeight } from './useThreadHeight'
 import { Icon } from '../shared/icons'
 import { VigilMark } from '../shared/VigilLogo'
 import { TITLES } from '../data/data'
@@ -20,6 +24,7 @@ import api, {
 import { notificationService } from '../services/notifications'
 import { useConversations } from './useConversations'
 import { Popup } from '../shared/ui'
+import { LATER_RELEASE } from '../shared/later'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
@@ -67,7 +72,15 @@ interface TraceDetail {
   tool_results?: Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>
 }
 
-const newSessionId = () => crypto.randomUUID()
+// randomUUID exists only in secure contexts (HTTPS or localhost); plain HTTP at a LAN address lacks it.
+const newSessionId = (): string => {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  const b = crypto.getRandomValues(new Uint8Array(16))
+  b[6] = (b[6] & 0x0f) | 0x40 // version 4
+  b[8] = (b[8] & 0x3f) | 0x80 // RFC 4122 variant
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
 
 /** An `{error}` frame the server sent: the backend was reached, so it is not a transport failure. */
 class ServerRefusal extends Error {}
@@ -223,47 +236,72 @@ function safeJson(v: unknown): string {
   }
 }
 
-function citedIds(text: string, ids: readonly string[]): string[] {
-  return ids.filter((id) => id.length > 0 && hasId(text, id))
+/** What a chip reads, without its kind: an alert by its title, an explanation by its statement, a row by its step and source. */
+function citeName(cite: Citation): string {
+  return cite.kind === 'evidence' ? cite.label : cite.label.replace(/^(?:alert|explanation) · /, '')
 }
 
-function hasId(text: string, id: string): boolean {
-  const needle = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(?:^|[^A-Za-z0-9_-])${needle}(?![A-Za-z0-9_-])`).test(text)
+/** One chip: what it cites, by step and source, with the row's text on hover (components/citation-chip.md). */
+function CiteChip({ cite, onCite }: { cite: Citation; onCite?: (cite: Citation) => void }) {
+  return cite.href ? (
+    <a className={`cite-chip ${cite.kind}`} href={cite.href} target="_blank" rel="noopener noreferrer" title={cite.text}>
+      {cite.label}
+    </a>
+  ) : (
+    <button type="button" className={`cite-chip ${cite.kind}`} title={cite.text} onClick={() => onCite?.(cite)}>
+      {cite.label}
+    </button>
+  )
 }
 
+/** The evidence rows an answer cites, once each, under it; alerts and explanations are chipped where it names them. */
 function CiteRow({
   text,
-  ids,
+  citations,
   onCite,
 }: {
   text: string
-  ids: readonly string[]
-  onCite?: (id: string) => void
+  citations: readonly Citation[]
+  onCite?: (cite: Citation) => void
 }) {
-  const hits = citedIds(text, ids)
+  const hits = citedIn(text, citations).filter((cite) => cite.kind === 'evidence')
   if (hits.length === 0) return null
   return (
     <div className="cite-row">
-      {hits.map((id) => (
-        <button key={id} type="button" className="cite-chip" onClick={() => onCite?.(id)}>
-          {id}
-        </button>
-      ))}
+      {hits.map((cite) => <CiteChip key={cite.id} cite={cite} onCite={onCite} />)}
     </div>
   )
 }
 
+/** An answer's text, with the ids it cites drawn as chips where it wrote them. */
+function AnswerText({ text, citations, onCite }: { text: string; citations?: readonly Citation[]; onCite?: (cite: Citation) => void }) {
+  const cite = useMemo<MarkdownCite | undefined>(() => {
+    const pattern = citations ? citePattern(citations.map((c) => c.id)) : null
+    if (!citations || !pattern) return undefined
+    const byId = new Map(citations.map((c) => [c.id, c]))
+    return {
+      pattern,
+      // once per paragraph as a chip; named again in words after that (#2459)
+      render: (id: string, again: boolean) => {
+        const hit = byId.get(id)
+        if (!hit) return id
+        return again ? <span className="cite-again" title={hit.text}>{citeName(hit)}</span> : <CiteChip cite={hit} onCite={onCite} />
+      },
+    }
+  }, [citations, onCite])
+  return <div className="body"><Markdown cite={cite}>{text}</Markdown></div>
+}
+
 function VigilMessage({
   text,
-  evidenceIds,
+  citations,
   onCite,
   onTrace,
 }: {
   text: string
   ms?: number
-  evidenceIds?: readonly string[]
-  onCite?: (id: string) => void
+  citations?: readonly Citation[]
+  onCite?: (cite: Citation) => void
   /** dock only: opens the reasoning trace; the case composer keeps its "More" */
   onTrace?: () => void
 }) {
@@ -272,8 +310,8 @@ function VigilMessage({
   )
   const content = (
     <>
-      <div className="body"><Markdown>{text}</Markdown></div>
-      {evidenceIds && <CiteRow text={text} ids={evidenceIds} onCite={onCite} />}
+      <AnswerText text={text} citations={citations} onCite={onCite} />
+      {citations && <CiteRow text={text} citations={citations} onCite={onCite} />}
       <div className="msg-actions">
         {copy}
         {onTrace ? (
@@ -303,7 +341,7 @@ export default function Chat({
   onSeedConsumed,
   pinned = false,
   lockedCaseId,
-  evidenceIds = [],
+  citations,
   onCite,
   onTurnDone,
   collapseKey,
@@ -319,9 +357,9 @@ export default function Chat({
   pinned?: boolean
   /** Sent on every turn. Hides @ and the remove-case control. */
   lockedCaseId?: string
-  /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
-  evidenceIds?: readonly string[]
-  onCite?: (id: string) => void
+  /** What an answer on this case can cite: its evidence rows, alerts and explanations. An id an answer writes is drawn as its chip. */
+  citations?: readonly Citation[]
+  onCite?: (cite: Citation) => void
   /** Called when a turn ends, so a page can re-read what the answer may cite. */
   onTurnDone?: () => void
   /** When this changes (the case tab), a pinned thread folds to its last exchange. */
@@ -348,6 +386,8 @@ export default function Chat({
   // null: the field is omitted. "" clears a case already stored on the row.
   const [caseId, setCaseId] = useState<string | null>(lockedCaseId ?? null)
   const [threadOpen, setThreadOpen] = useState(false)
+  // the case composer's thread: a share of the drawer by default, or what the person dragged it to
+  const thread = useThreadHeight()
   const [earlierHidden, setEarlierHidden] = useState(false)
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   // the token mentionHits answers, so "No matching cases" is never shown for a search still in flight
@@ -952,7 +992,7 @@ export default function Chat({
   const retryOf = !loading && lastMsg?.role === 'error' && prevMsg?.role === 'user' ? prevMsg.text : undefined
 
   const transcript = (
-    <div className="chat-body" ref={bodyRef}>
+    <div className="chat-body" ref={bodyRef} style={pinned && thread.height !== null ? { height: thread.height, maxHeight: 'none' } : undefined}>
       {firstShown > 0 && (
         <button type="button" className="composer-earlier" onClick={() => setEarlierHidden(false)}>
           Show {firstShown} earlier message{firstShown === 1 ? '' : 's'}
@@ -982,7 +1022,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} ms={m.ms} evidenceIds={evidenceIds} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} ms={m.ms} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (
@@ -1004,8 +1044,8 @@ export default function Chat({
             </div>
             {streamText && (
               <>
-                <div className="body"><Markdown>{streamText}</Markdown></div>
-                <CiteRow text={streamText} ids={evidenceIds} onCite={onCite} />
+                <AnswerText text={streamText} citations={citations} onCite={onCite} />
+                {citations && <CiteRow text={streamText} citations={citations} onCite={onCite} />}
               </>
             )}
           </div>
@@ -1228,7 +1268,8 @@ export default function Chat({
   return (
     <>
     {pinned ? (
-      <section className="case-composer" aria-label="Ask Vigil">
+      <section className={`case-composer${threadOpen ? ' thread-open' : ''}`} aria-label="Ask Vigil">
+        {threadOpen && <ThreadGrip bodyRef={bodyRef} {...thread} />}
         {messages.length > 0 && (
           <button type="button" className="composer-fold" aria-expanded={threadOpen} onClick={() => setThreadOpen((openThread) => !openThread)}>
             <span className="composer-chev" aria-hidden="true">▾</span>
@@ -1239,8 +1280,8 @@ export default function Chat({
         <div className="composer-box">
           <div className="composer-modes" role="group" aria-label="Composer mode">
             <button type="button" className="on" aria-pressed="true">Ask</button>
-            <button type="button" disabled title="Coming in a later release">Tell</button>
-            <button type="button" disabled title="Coming in a later release">Do</button>
+            <button type="button" disabled title={LATER_RELEASE}>Tell</button>
+            <button type="button" disabled title={LATER_RELEASE}>Do</button>
           </div>
           {foot}
         </div>

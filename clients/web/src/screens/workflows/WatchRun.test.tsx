@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { WatchRun, STEP_MS, UNSUPPORTED, PLAYBOOK } from './WatchRun'
-import { callFailure, type WfRunDetail } from './runRead'
+import { callFailure, moveWord, type WfRunDetail } from './runRead'
 import { workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
@@ -214,11 +214,18 @@ describe('a hunt', () => {
     expect(fill()).toBe('35%')
   })
 
-  it('says when older steps were dropped, and counts only what is shown', () => {
+  it('says when older steps were dropped, and numbers each in the turns its step limit counts', () => {
     const d = hunt('completed', [move(52), move(51)], { iteration: 52 })
     render(<WatchRun d={d} onBack={vi.fn()} />)
     expect(screen.getByText('Showing the last 2 steps')).toBeInTheDocument()
-    expect(caption()).toBe('Step 2 of 2 · Expand')
+    // the same unit Limits reads: "Steps 52 of …", never "Step 2" beside it
+    expect(caption()).toBe('Step 52 of 52 · Expand')
+  })
+
+  it('labels no empty model text on a step whose model said nothing before acting', () => {
+    render(<WatchRun d={hunt('completed', [move(2, { rationale: '' }), move(1)])} onBack={vi.fn()} />)
+    expect(screen.getAllByText('model text')).toHaveLength(1)
+    expect(screen.queryByText('—')).not.toBeInTheDocument()
   })
 
   it('ties calls to the move that asked for them, and does not claim none when it cannot tell', () => {
@@ -260,6 +267,15 @@ describe('a hunt', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Replay from the start' }))
     unmount()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+// #2459: every step reads as a word, the hand-off included.
+describe('a step\'s label', () => {
+  it('reads the hand-off as a word and every other move as written', () => {
+    expect(moveWord('HANDOFF_IR')).toBe('Hand off')
+    expect(moveWord('VALIDATE')).toBe('Validate')
+    expect(moveWord('CHECKPOINT')).toBe('Checkpoint')
   })
 })
 

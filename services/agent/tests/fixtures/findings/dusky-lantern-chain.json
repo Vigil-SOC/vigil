@@ -1,0 +1,340 @@
+{
+  "alerts": [
+    {
+      "id": "dl-001",
+      "title": "Email with ISO attachment delivered to finance user",
+      "description": "Inbound email 'Q3 invoice reconciliation - action needed' with ISO attachment delivered to accounts payable.",
+      "severity": "medium",
+      "source": "proofpoint",
+      "external_id": "proofpoint-dl-001",
+      "timestamp": "2026-10-10T13:02:11Z",
+      "raw_data": {
+        "recipient": "priya.nair@northwind.example",
+        "sender": "billing@vendor-remit-portal.com",
+        "subject": "Q3 invoice reconciliation - action needed",
+        "attachment": "Invoice_Q3_Reconciliation.iso",
+        "attachment_sha256": "4b7d9e2f1a3c5e7091b2d4f6a8c0e1f3a5b7d9e1f2a4c6e8b0d2f4a6c8e0b1d3",
+        "action": "delivered"
+      },
+      "mitre_techniques": [
+        "T1566.001"
+      ],
+      "iocs": {
+        "users": [
+          "priya.nair"
+        ],
+        "domains": [
+          "vendor-remit-portal.com"
+        ],
+        "hashes": [
+          "4b7d9e2f1a3c5e7091b2d4f6a8c0e1f3a5b7d9e1f2a4c6e8b0d2f4a6c8e0b1d3"
+        ]
+      }
+    },
+    {
+      "id": "dl-002",
+      "title": "Shortcut executed from mounted ISO volume",
+      "description": "explorer.exe launched a .lnk file from a newly mounted removable/virtual volume.",
+      "severity": "medium",
+      "source": "crowdstrike",
+      "external_id": "crowdstrike-dl-002",
+      "timestamp": "2026-10-10T13:09:44Z",
+      "raw_data": {
+        "host": "FIN-WS-114",
+        "user": "priya.nair",
+        "process": "explorer.exe",
+        "file": "E:\\Invoice_Q3_Reconciliation.lnk",
+        "volume_type": "virtual_cdrom"
+      },
+      "mitre_techniques": [
+        "T1204.002"
+      ],
+      "iocs": {
+        "hosts": [
+          "FIN-WS-114"
+        ],
+        "users": [
+          "priya.nair"
+        ]
+      }
+    },
+    {
+      "id": "dl-003",
+      "title": "Rundll32 loading DLL from user Temp directory",
+      "description": "rundll32.exe spawned by explorer.exe loaded an unsigned DLL from AppData\\Local\\Temp.",
+      "severity": "high",
+      "source": "crowdstrike",
+      "external_id": "crowdstrike-dl-003",
+      "timestamp": "2026-10-10T13:09:47Z",
+      "raw_data": {
+        "host": "FIN-WS-114",
+        "user": "priya.nair",
+        "parent_process": "explorer.exe",
+        "process": "rundll32.exe",
+        "command_line": "rundll32.exe C:\\Users\\priya.nair\\AppData\\Local\\Temp\\msupdate64.dll,DllRegister",
+        "dll_sha256": "9f2c4e1a7b3d5f60e8a1c2b4d6f8091a3c5e7f9b1d2e4f6a8c0b2d4e6f8a0c1e",
+        "signed": false
+      },
+      "mitre_techniques": [
+        "T1218.011"
+      ],
+      "iocs": {
+        "hosts": [
+          "FIN-WS-114"
+        ],
+        "users": [
+          "priya.nair"
+        ],
+        "processes": [
+          "rundll32.exe"
+        ],
+        "files": [
+          "msupdate64.dll"
+        ],
+        "hashes": [
+          "9f2c4e1a7b3d5f60e8a1c2b4d6f8091a3c5e7f9b1d2e4f6a8c0b2d4e6f8a0c1e"
+        ]
+      }
+    },
+    {
+      "id": "dl-004",
+      "title": "Periodic HTTPS connections to rare domain",
+      "description": "Host made 212 HTTPS connections at ~60s intervals to a domain first seen in the estate on 10 Oct.",
+      "severity": "high",
+      "source": "zscaler",
+      "external_id": "zscaler-dl-004",
+      "timestamp": "2026-10-10T17:30:00Z",
+      "raw_data": {
+        "host": "FIN-WS-114",
+        "src_ip": "10.20.14.114",
+        "dest_domain": "cdn-invoicesync.net",
+        "dest_ip": "203.0.113.47",
+        "dest_port": 443,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LanternClient/2.1",
+        "connections": 212,
+        "interval_s_median": 61
+      },
+      "mitre_techniques": [
+        "T1071.001"
+      ],
+      "iocs": {
+        "hosts": [
+          "FIN-WS-114"
+        ],
+        "ips": [
+          "10.20.14.114",
+          "203.0.113.47"
+        ],
+        "domains": [
+          "cdn-invoicesync.net"
+        ]
+      }
+    },
+    {
+      "id": "dl-005",
+      "title": "LSASS memory access via comsvcs.dll MiniDump",
+      "description": "rundll32.exe invoked comsvcs.dll MiniDump against lsass.exe; dump written to Temp.",
+      "severity": "critical",
+      "source": "crowdstrike",
+      "external_id": "crowdstrike-dl-005",
+      "timestamp": "2026-10-10T19:41:05Z",
+      "raw_data": {
+        "host": "FIN-WS-114",
+        "user": "priya.nair",
+        "process": "rundll32.exe",
+        "command_line": "rundll32.exe C:\\Windows\\System32\\comsvcs.dll, MiniDump 712 C:\\Users\\priya.nair\\AppData\\Local\\Temp\\d.bin full",
+        "target_process": "lsass.exe"
+      },
+      "mitre_techniques": [
+        "T1003.001"
+      ],
+      "iocs": {
+        "hosts": [
+          "FIN-WS-114"
+        ],
+        "users": [
+          "priya.nair"
+        ],
+        "processes": [
+          "rundll32.exe",
+          "lsass.exe"
+        ]
+      }
+    },
+    {
+      "id": "dl-006",
+      "title": "New SMB sessions from workstation to payment file server",
+      "description": "Workstation opened SMB sessions to a file server it has not contacted in the prior 30 days, using svc_backup credentials.",
+      "severity": "high",
+      "source": "darktrace",
+      "external_id": "darktrace-dl-006",
+      "timestamp": "2026-10-11T02:14:22Z",
+      "raw_data": {
+        "src_host": "FIN-WS-114",
+        "src_ip": "10.20.14.114",
+        "dest_host": "FS-PAY-02",
+        "dest_ip": "10.20.2.12",
+        "account": "svc_backup",
+        "share": "\\\\FS-PAY-02\\Payments$"
+      },
+      "mitre_techniques": [
+        "T1021.002"
+      ],
+      "iocs": {
+        "hosts": [
+          "FIN-WS-114",
+          "FS-PAY-02"
+        ],
+        "ips": [
+          "10.20.14.114",
+          "10.20.2.12"
+        ],
+        "users": [
+          "svc_backup"
+        ]
+      }
+    }
+  ],
+  "page": {
+    "query": "",
+    "total": 6,
+    "offset": 0,
+    "limit": 20,
+    "has_more": false,
+    "findings": [
+      {
+        "finding_id": "dl-001",
+        "severity": "medium",
+        "anomaly_score": 0.0,
+        "data_source": "proofpoint",
+        "cluster_id": null,
+        "timestamp": "2026-10-10T13:02:11Z",
+        "status": null,
+        "summary": "Inbound email 'Q3 invoice reconciliation - action needed' with ISO attachment delivered to accounts payable.",
+        "entities": {
+          "users": [
+            "priya.nair"
+          ],
+          "domains": [
+            "vendor-remit-portal.com"
+          ],
+          "hashes": [
+            "4b7d9e2f1a3c5e7091b2d4f6a8c0e1f3a5b7d9e1f2a4c6e8b0d2f4a6c8e0b1d3"
+          ]
+        }
+      },
+      {
+        "finding_id": "dl-002",
+        "severity": "medium",
+        "anomaly_score": 0.0,
+        "data_source": "crowdstrike",
+        "cluster_id": null,
+        "timestamp": "2026-10-10T13:09:44Z",
+        "status": null,
+        "summary": "explorer.exe launched a .lnk file from a newly mounted removable/virtual volume.",
+        "entities": {
+          "hosts": [
+            "FIN-WS-114"
+          ],
+          "users": [
+            "priya.nair"
+          ]
+        }
+      },
+      {
+        "finding_id": "dl-003",
+        "severity": "high",
+        "anomaly_score": 0.0,
+        "data_source": "crowdstrike",
+        "cluster_id": null,
+        "timestamp": "2026-10-10T13:09:47Z",
+        "status": null,
+        "summary": "rundll32.exe spawned by explorer.exe loaded an unsigned DLL from AppData\\Local\\Temp.",
+        "entities": {
+          "hosts": [
+            "FIN-WS-114"
+          ],
+          "users": [
+            "priya.nair"
+          ],
+          "hashes": [
+            "9f2c4e1a7b3d5f60e8a1c2b4d6f8091a3c5e7f9b1d2e4f6a8c0b2d4e6f8a0c1e"
+          ],
+          "processes": [
+            "rundll32.exe"
+          ],
+          "files": [
+            "msupdate64.dll"
+          ]
+        }
+      },
+      {
+        "finding_id": "dl-004",
+        "severity": "high",
+        "anomaly_score": 0.0,
+        "data_source": "zscaler",
+        "cluster_id": null,
+        "timestamp": "2026-10-10T17:30:00Z",
+        "status": null,
+        "summary": "Host made 212 HTTPS connections at ~60s intervals to a domain first seen in the estate on 10 Oct.",
+        "entities": {
+          "hosts": [
+            "FIN-WS-114"
+          ],
+          "ips": [
+            "10.20.14.114",
+            "203.0.113.47"
+          ],
+          "domains": [
+            "cdn-invoicesync.net"
+          ]
+        }
+      },
+      {
+        "finding_id": "dl-005",
+        "severity": "critical",
+        "anomaly_score": 0.0,
+        "data_source": "crowdstrike",
+        "cluster_id": null,
+        "timestamp": "2026-10-10T19:41:05Z",
+        "status": null,
+        "summary": "rundll32.exe invoked comsvcs.dll MiniDump against lsass.exe; dump written to Temp.",
+        "entities": {
+          "hosts": [
+            "FIN-WS-114"
+          ],
+          "users": [
+            "priya.nair"
+          ],
+          "processes": [
+            "rundll32.exe",
+            "lsass.exe"
+          ]
+        }
+      },
+      {
+        "finding_id": "dl-006",
+        "severity": "high",
+        "anomaly_score": 0.0,
+        "data_source": "darktrace",
+        "cluster_id": null,
+        "timestamp": "2026-10-11T02:14:22Z",
+        "status": null,
+        "summary": "Workstation opened SMB sessions to a file server it has not contacted in the prior 30 days, using svc_backup credentials.",
+        "entities": {
+          "hosts": [
+            "FIN-WS-114",
+            "FS-PAY-02"
+          ],
+          "users": [
+            "svc_backup"
+          ],
+          "ips": [
+            "10.20.14.114",
+            "10.20.2.12"
+          ]
+        }
+      }
+    ]
+  }
+}

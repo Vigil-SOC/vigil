@@ -14,9 +14,6 @@ import type { RunSpec } from "./core/spec.js";
 import { httpVirtualKey } from "./core/vk.js";
 import { openAiSurface } from "./core/wire.js";
 import { toolsFrom } from "./tools/remote.js";
-import { grantsOf as chatGrants } from "./workflows/chat/workflow.js";
-import { grantsOf as composeGrants } from "./workflows/compose/workflow.js";
-import { grantsOf as leadGrants } from "./workflows/lead/workflow.js";
 
 // One name for the shared secret on both sides of the boundary — Python reads it
 // as AGENT_INTERNAL_TOKEN. VIGIL_TOOLS_TOKEN is the older spelling, still read.
@@ -55,14 +52,6 @@ const prices = httpPrices(pricing);
 // agent runs too. Read per process, never carried in a RunSpec.
 const vk = httpVirtualKey(pricing);
 
-// Which grants a run kind's roles hold. Compose grants per phase agent and chat
-// per declared tool, because neither reads a roster the arch wrote.
-function grantsFor(kind: RunKind, spec: RunSpec): Record<string, readonly string[]> {
-  if (kind === "compose") return composeGrants(spec);
-  if (kind === "chat") return chatGrants(spec);
-  return leadGrants(spec);
-}
-
 // The six injected parts, assembled per run because the model, the grants and the
 // budget are all the spec's. Nothing here is shared between two runs.
 // The gateway's own namespacing: "<provider>/<model>". Left bare when the spec
@@ -88,7 +77,9 @@ export function harnessFor<K extends Record<string, unknown>>(
     // gateway bills nothing of its own, and a catalog left to guess from the
     // model's name priced a paid "llama" on a commercial host at $0.
     provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec), vk, spec.effort),
-    registry: registryOf(toolsFrom(spec.tools), grantsFor(kind, spec)),
+    // Grants nobody here: every run is a plugin on the kernel, which registers the
+    // deployment's tools itself and grants them by the plugin's needs.
+    registry: registryOf(toolsFrom(spec.tools), {}),
     dispatch: remoteDispatch({ url: tools, token: internalToken(), ...(principal === undefined ? {} : { principal }) }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),
     // Wrapped rather than replaced: whatever the caller passed still answers the

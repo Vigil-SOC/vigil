@@ -144,10 +144,11 @@ describe("a call is priced from the backend's rates", () => {
   }
 
   it("multiplies every token class by its own rate", async () => {
-    const at = await priced().priceOf("m", "anthropic", tokens({ input: 1000, output: 100, cache_read: 10_000, cache_write: 200 }));
+    // input is the total (wire.ts): 1,000 uncached, 10,000 read from cache, 200 written.
+    const at = await priced().priceOf("m", "anthropic", tokens({ input: 11_200, output: 100, cache_read: 10_000, cache_write: 200 }));
 
-    // Cache is not input: read at a tenth, written at a quarter more, which is the
-    // difference between billing a cached prompt right and billing it tenfold.
+    // Cache is not billed as input: read at a tenth, written at a quarter more, which
+    // is the difference between billing a cached prompt right and billing it tenfold.
     expect(at.cost_usd).toBeCloseTo(0.003 + 0.0015 + 0.003 + 0.00075, 10);
     expect(at.source).toBe("exact");
     expect(at.fetched_at).toBe(RATES.fetched_at);

@@ -228,6 +228,8 @@ class Settings(BaseSettings):
     model_catalog_refresh_interval_s: int = 300
     prompt_injection_block: bool = False
     mcp_auto_connect_on_startup: Optional[bool] = None
+    # The MCP runner; empty runs each server as a stdio child (start.sh).
+    mcp_runner_url: str = ""
     llm_budget_unlimited: bool = False
     extension_connector_allowlist: Annotated[List[str], NoDecode] = []
 
@@ -260,6 +262,7 @@ class Settings(BaseSettings):
     daemon_enrich_backfill: bool = True
     daemon_enrich_backfill_interval: int = 300
     daemon_enrich_backfill_batch: int = 50
+    # Measured from when Vigil stored the finding, not its event time
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
     daemon_confidence_threshold: float = 0.90
@@ -293,6 +296,10 @@ class Settings(BaseSettings):
     # Separate from daemon_health_host, which is the client address the backend
     # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.
     daemon_bind_host: str = "0.0.0.0"  # nosec B104
+    # The inbound webhook listener is authenticated and meant to be reached by
+    # external senders, so it keeps its own address and does not follow
+    # daemon_bind_host (which host-native installs narrow to loopback).
+    daemon_webhook_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_health_port: int = 9091
 
     # Orchestrator
@@ -444,14 +451,22 @@ def load_integrations_config(config_service: Any = None) -> dict[str, Any]:
 
 
 def _integration_rows(config_service: Any) -> list:
+    # core.storage.connection imports get_settings from this module, so a
+    # top-level import of core.storage would cycle.
+    from core.storage.connection import MissingPostgresPasswordError, get_db_manager
+
     try:
         if config_service is None:
-            # core.storage.connection imports get_settings from this module, so
-            # a top-level import of core.storage would cycle.
             from core.storage.config_service import get_config_service
 
+            # Raised here, not swallowed and logged inside list_integrations.
+            get_db_manager()
             config_service = get_config_service()
         return config_service.list_integrations() or []
+    except MissingPostgresPasswordError:
+        # No database configured at all, as in an MCP runner child: its settings
+        # arrive in its env, which resolve() reads next. Nothing to warn about.
+        return []
     except Exception:
         logger.warning(
             "Integration config unavailable from the database; using the file",

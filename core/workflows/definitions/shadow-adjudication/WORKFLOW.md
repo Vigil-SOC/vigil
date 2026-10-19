@@ -1,6 +1,6 @@
 ---
 name: shadow-adjudication
-version: 1
+version: 2
 description: "A shadow second opinion on a finding intake has already admitted: test the stated intent against the benign account, name the workflow that should have run, and execute nothing."
 use_case: "Shadow adjudication -- given a finding intake admitted and the workflow it chose, decide independently whether the finding is what intake says it is and which catalogue workflow you would have run, so intake's choices can be scored later."
 trigger_examples:
@@ -87,7 +87,7 @@ objectives:
   - "Name the catalogue workflow this finding warrants -- or none"
   - "State in one sentence whether intake's choice was right, and why; start nothing"
 # The roster, not an order: the lead dispatches whichever of these the question in
-# front of it needs. Their prompts and tool grants live in arch/adjudicate.yaml,
+# front of it needs. Their tool grants live in plugins/adjudicate/plugin.yaml,
 # so what stands here is who can be asked and what each is for.
 phases:
   - id: threat_hunter

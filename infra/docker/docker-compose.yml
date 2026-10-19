@@ -23,6 +23,10 @@ x-agent-env: &agent-env
   # call answers 503, so a run fails before its first model call.
   - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
   - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
+  # Traces for model and tool calls, on the same switch as the Python services.
+  - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+  - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+  - VIGIL_OTEL_CAPTURE_CONTENT=${VIGIL_OTEL_CAPTURE_CONTENT:-false}
   # Pass-through, not `${BIFROST_API_KEY:-}`: the harness falls back to a
   # placeholder only when the variable is absent, and the := form would set it
   # to an empty string the OpenAI client then sends as a real credential.
@@ -55,8 +59,10 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
 
-# One build for the API and the backup service. A second image tag would
-# compile this Dockerfile twice on the first `up`.
+# One build for the API and the backup services. A second image tag would
+# compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
+# backend and backup both wait on, carries it: two services building one tag race
+# to export it, and a fresh `compose build` fails with "already exists" (#2455).
 x-backend-build: &backend-build
   context: ../..
   dockerfile: infra/docker/Dockerfile.backend
@@ -172,8 +178,10 @@ services:
 
   # SOC Backend API
   backend:
+    # Built by backup-pre-upgrade (see x-backend-build). Never pulled: there is
+    # no such image on a registry, and the pull's error would be noise.
     image: vigil-backend:local
-    build: *backend-build
+    pull_policy: never
     container_name: deeptempo-backend
     environment:
       <<: *intent-env
@@ -184,6 +192,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Pushed to Bifrost at startup (core/llm/bifrost/admin.py sync_env_provider_keys).
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       REDIS_URL: redis://redis:6379/0
@@ -198,6 +208,11 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
+      # MCP servers run in mcp-runner, not here (#2303). The token comes from the
+      # file mcp-runner-token writes unless MCP_RUNNER_TOKEN is set.
+      MCP_RUNNER_URL: http://mcp-runner:6991
+      MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
+      MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
       # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
       # on; the OTLP push needs the collector from --profile observability.
       VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
@@ -217,9 +232,18 @@ services:
       # Shared with soc-daemon and llm-worker, which read it via vigil_path().
       # Operator skills land in its skills/ folder (VIGIL_SKILLS_PATH unset).
       - vigil_home:/home/vigil/.vigil
+      # Detection rule repositories, fetched from Settings (security-detections
+      # stays "not set up" until they are). Outside the State Directory so the
+      # backups skip a few hundred MB anyone can fetch again; shared with every
+      # service that reads detection_sources.json, since one that finds the
+      # repos missing saves them as not cloned for all.
+      - detection_rules:/home/vigil/security-detections
       # The orchestrator and cases routers read the daemon's workdirs.
       - vigil_investigations:/app/data/investigations
+      - mcp_runner_token:/run/vigil/mcp-runner:ro
     depends_on:
+      mcp-runner:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -232,8 +256,10 @@ services:
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Postgres and Redis on deeptempo-network; the MCP runner on mcp-network.
     networks:
       - deeptempo-network
+      - mcp-network
 
   # Schedule loop. No profile, so it is part of the default project.
   # A missing backups.json stays in the loop; exiting would restart under
@@ -241,8 +267,10 @@ services:
   # command with a one-shot create, and overrides the state/workdir/repo
   # mounts for the host.
   backup: &backup
+    # Built by backup-pre-upgrade (see x-backend-build). Never pulled: there is
+    # no such image on a registry, and the pull's error would be noise.
     image: vigil-backend:local
-    build: *backend-build
+    pull_policy: never
     environment:
       HOME: /home/vigil
       POSTGRES_HOST: postgres
@@ -286,6 +314,11 @@ services:
   # would make it wait on itself.
   backup-pre-upgrade:
     <<: *backup
+    # The one service that builds vigil-backend:local. start.sh runs it with
+    # `run --build`, and every other user of the image waits on it. The default
+    # pull policy, not the merged-in `never`.
+    build: *backend-build
+    pull_policy: missing
     entrypoint:
       - python
       - -m
@@ -341,6 +374,10 @@ services:
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
       AGENT_URL: http://agent-serve:6989
+      # MCP runner, as for backend.
+      MCP_RUNNER_URL: http://mcp-runner:6991
+      MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
+      MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
       # Polling intervals (seconds)
       DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
@@ -400,10 +437,14 @@ services:
       - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
       - "127.0.0.1:9091:9091"  # Health /health + /status (unauthenticated; host-local only)
     volumes:
-      # Same State Directory and workdirs as backend (see there).
+      # Same State Directory, workdirs and detection rules as backend (see there).
       - vigil_home:/home/vigil/.vigil
       - vigil_investigations:/app/data/investigations
+      - detection_rules:/home/vigil/security-detections
+      - mcp_runner_token:/run/vigil/mcp-runner:ro
     depends_on:
+      mcp-runner:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -418,6 +459,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
+      - mcp-network
 
   # ARQ Worker - Processes LLM requests from the queue
   llm-worker:
@@ -463,8 +505,9 @@ services:
       - REQUESTS_CA_BUNDLE
       - NODE_EXTRA_CA_CERTS
     volumes:
-      # Same State Directory as backend (see there).
+      # Same State Directory and detection rules as backend (see there).
       - vigil_home:/home/vigil/.vigil
+      - detection_rules:/home/vigil/security-detections
     depends_on:
       postgres:
         condition: service_healthy
@@ -609,6 +652,79 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
+
+  # The MCP runner's bearer, generated once into its own volume: root:1000 0440,
+  # so the runner (root) and backend and soc-daemon (uid 1000) read it, and no
+  # server, each under its own uid, does. MCP_RUNNER_TOKEN set wins over it.
+  # The one service that builds vigil-mcp-runner:local; mcp-runner waits on it
+  # and only uses the image (see x-backend-build for why one builder).
+  mcp-runner-token:
+    image: vigil-mcp-runner:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.mcp-runner
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        f=/run/vigil/mcp-runner/token
+        umask 077
+        [ -s "$$f" ] || python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$$f"
+        chown 0:1000 /run/vigil/mcp-runner "$$f"
+        chmod 0750 /run/vigil/mcp-runner
+        chmod 0440 "$$f"
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    network_mode: none
+    volumes:
+      - mcp_runner_token:/run/vigil/mcp-runner
+    restart: "no"
+
+  # MCP runner (#2303): starts catalog MCP servers, each under its own uid, and
+  # serves them over MCP streamable HTTP on :6991. backend and soc-daemon start
+  # and stop servers here; none runs in their containers.
+  # Holds no app secret, no ~/.vigil and no POSTGRES_*, and is on mcp-network
+  # only, so it cannot resolve postgres or redis.
+  mcp-runner:
+    # Built by mcp-runner-token; never pulled (see backend).
+    image: vigil-mcp-runner:local
+    pull_policy: never
+    container_name: deeptempo-mcp-runner
+    environment:
+      # Its own bearer, not AGENT_INTERNAL_TOKEN. Empty means every route 503s.
+      MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
+      MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
+      PYTHONUNBUFFERED: "1"
+      # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
+      SSL_CERT_FILE:
+      REQUESTS_CA_BUNDLE:
+      NODE_EXTRA_CA_CERTS:
+    # Root with only what setpriv and the supervisor need: SETUID/SETGID to drop
+    # each child to its uid, KILL to stop a child running under another uid
+    # (stdio_client kills the process group). No CHOWN: the per-server HOME dirs
+    # are created and chowned at image build (Dockerfile.mcp-runner).
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL]
+    # A stop kills the server's process group; grandchildren (npx -> node) are
+    # re-parented to PID 1, which must reap them.
+    init: true
+    # uvicorn gives open MCP streams 5 s, then each server up to ~6 s to stop
+    # (stdin grace, SIGTERM, SIGKILL); Docker's default 10 s would cut that.
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # The backend's detection rules, read-only (see the backend's mount).
+      - detection_rules:/home/vigil/security-detections:ro
+      - mcp_runner_token:/run/vigil/mcp-runner:ro
+    depends_on:
+      mcp-runner-token:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - mcp-network
 
   # PgAdmin for database management (optional, can be commented out in production)
   pgadmin:
@@ -922,6 +1038,10 @@ volumes:
     driver: local
   vigil_investigations:
     driver: local
+  detection_rules:
+    driver: local
+  mcp_runner_token:
+    driver: local
   grafana_data:
     driver: local
   kafka_data:
@@ -939,5 +1059,9 @@ volumes:
 
 networks:
   deeptempo-network:
+    driver: bridge
+  # The MCP runner, and the backend and soc-daemon that call it; no database or
+  # cache on it.
+  mcp-network:
     driver: bridge
 

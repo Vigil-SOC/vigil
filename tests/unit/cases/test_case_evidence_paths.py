@@ -11,7 +11,9 @@ from core.cases.case_evidence_service import CaseEvidenceService
 
 @pytest.fixture
 def service(tmp_path):
-    return CaseEvidenceService(storage_path=str(tmp_path / "evidence"))
+    service = CaseEvidenceService(storage_path=str(tmp_path / "evidence"))
+    service.storage_path.mkdir()
+    return service
 
 
 def test_hashes_a_file_inside_the_store(service):

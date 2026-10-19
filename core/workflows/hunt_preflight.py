@@ -75,8 +75,8 @@ def pricing() -> Dict[str, Any]:
     return {"model": DEFAULT_MODEL, "source": source}
 
 
-# What the lead of each engine holds besides its needs, as the arch yamls grant
-# it (a ratchet reads them). Root cause's telemetry_search is a need, bound to a
+# What the lead of each engine holds besides its needs, as each plugin.yaml's roles
+# grant it (a ratchet reads them). Root cause's telemetry_search is a need, bound to a
 # deployment tool; record and finish are the trace's own.
 LEAD_TOOLS = {
     HUNT_RUN_KIND: ("expand",),

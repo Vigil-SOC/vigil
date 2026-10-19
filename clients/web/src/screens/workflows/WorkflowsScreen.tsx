@@ -19,7 +19,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
-import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
+import { KeepGoing, OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -513,7 +513,7 @@ function looksUnfinished(line: string): boolean {
 /** The ten kinds a key can carry, held to the hunt's own closed set by the spec
  *  loader, which refuses anything else rather than coercing it. Spelled here so
  *  the operator is told before submitting, and ratcheted against
- *  `workflows/hunt/types.ts` by `test_recall_contract_agrees` — a list that
+ *  `plugins/hunt/types.ts` by `test_recall_contract_agrees` — a list that
  *  drifts tells them a key is fine that no reader will ever query. */
 const ENTITY_TYPES = ['ip', 'domain', 'host', 'url', 'email', 'hash', 'arn', 'aws_key', 'user', 'process']
 
@@ -1789,7 +1789,7 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
     return <div className="text-[12px] py-1" style={{ color: 'var(--high)' }}>Could not read what this move was shown — {opened.failed}</div>
   }
   const decision = opened.report?.decisions[0]
-  if (opened.report === null) return <div className="muted text-[12px] py-1">Rebuilding the digest from the ledger…</div>
+  if (opened.report === null) return <div className="muted text-[12px] py-1">Reading what this move was shown from the ledger…</div>
   if (decision === undefined) return <div className="muted text-[12px] py-1">Replay returned nothing for this decision.</div>
 
   const seen = decision.recorded
@@ -1798,10 +1798,12 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
     <div className="py-1" style={{ whiteSpace: 'normal' }}>
       <div className="flex gap-1.5 items-center flex-wrap mb-2">
         <h4 style={{ margin: 0 }}>What the lead was shown at turn {decision.iteration}</h4>
-        {decision.mismatch === null
-          ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
-          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
-        {!decision.exact && (
+        {decision.rebuilt === null
+          ? <span className="chip" style={{ fontSize: 10 }}>as recorded — not rebuilt</span>
+          : decision.mismatch === null
+            ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
+            : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
+        {decision.rebuilt !== null && !decision.exact && (
           <span className="muted text-[11px]">prefix inferred — the ledger predates digest_seq, so a difference may be the boundary rather than drift</span>
         )}
       </div>
@@ -2231,15 +2233,6 @@ function ReportBody({ md }: { md: string }) {
   )
 }
 
-/** What one press of extend buys. Sent as a typed grant rather than as prose the run
- *  has to parse: `extend` with an empty note parsed to nothing, journaled a note saying
- *  so, and left the hunt parked at the ceiling it was asking to be let past. */
-const GRANTS: [string, { iterations: number; cost_usd: number; wall_ms: number }][] = [
-  ['+3 turns', { iterations: 3, cost_usd: 0, wall_ms: 0 }],
-  ['+$5', { iterations: 0, cost_usd: 5, wall_ms: 0 }],
-  ['+30 min', { iterations: 0, cost_usd: 0, wall_ms: 30 * 60_000 }],
-]
-
 /** queued for the worker holding the ledger, so nothing here is instant — the
  *  panel re-reads rather than claiming the run obeyed */
 function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSteered: () => void }) {
@@ -2284,8 +2277,7 @@ function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSte
   )
 }
 
-/** Keep going, by a stated amount. The amount is the whole of the directive — an extend
- *  that grants nothing is refused now, so there is no press that quietly does nothing. */
+/** Keep going on the run page: the shared control, sending the shared directive with the note typed below. */
 function SteerExtend({
   busy, note, send,
 }: {
@@ -2294,19 +2286,8 @@ function SteerExtend({
   send: (kind: string, text: string, fields?: Record<string, unknown>) => void
 }) {
   return (
-    <div className="flex gap-2 items-center flex-wrap mb-2">
-      <span className="text-[11.5px] text-tx-3">Keep going:</span>
-      {GRANTS.map(([label, grant]) => (
-        <button
-          key={label}
-          className="btn ghost"
-          disabled={busy}
-          title={`extend this run by ${label.replace('+', '')} and let it carry on from where it parked`}
-          onClick={() => send('extend', note.trim(), { grant })}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="mb-2">
+      <KeepGoing busy={busy} onGrant={(grant) => send('extend', note.trim(), { grant })} />
     </div>
   )
 }

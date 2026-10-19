@@ -1,0 +1,23 @@
+[
+  {
+    "name": "evidence gathered for one hypothesis is ruled against the benign one too",
+    "input": "Board: H1 'WS-22 beacons to 198.51.100.7' (active), H2 'WS-22 runs a sanctioned backup agent that polls 198.51.100.7' (active). You just recorded E4: 288 connections from WS-22 to 198.51.100.7, every 300s with 3s jitter, 1.1KB out and 0.4KB in each. What do you do next, and with which tools?",
+    "expect": [
+      "link_evidence"
+    ]
+  },
+  {
+    "name": "a feed label alone cannot clear a branch",
+    "input": "Board: H3 'build-07 exfiltrates over HTTPS to cdn-sync.example' (active). The only new record is a reputation feed saying cdn-sync.example is 'trusted CDN'. Can you abandon H3?",
+    "expect": [
+      "attacker-nameable"
+    ]
+  },
+  {
+    "name": "a pivot goes to an entity a record named",
+    "input": "Record E2 shows 10.128.0.5 beaconing to 198.51.100.7 every 60s. Nothing else is on the board. Name one step deeper and one step across.",
+    "expect": [
+      "follow_up"
+    ]
+  }
+]
