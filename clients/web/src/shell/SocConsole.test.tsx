@@ -51,6 +51,14 @@ function renderConsole(path = '/dashboard') {
 
 // Literals are inlined below because vi.mock is hoisted.
 vi.mock('../services/api', () => ({
+  caseMetricsApi: {
+    getSummary: () => Promise.resolve({ data: {} }),
+    getMTTD: () => Promise.resolve({ data: {} }),
+    getMTTR: () => Promise.resolve({ data: {} }),
+    getByPriority: () => Promise.resolve({ data: {} }),
+    getByStatus: () => Promise.resolve({ data: {} }),
+    getAnalystPerformance: () => Promise.resolve({ data: {} }),
+  },
   casesApi: {
     getAll: () =>
       Promise.resolve({
