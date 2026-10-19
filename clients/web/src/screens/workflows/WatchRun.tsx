@@ -6,7 +6,7 @@ import { Icon } from '../../shared/icons'
 import { Cost } from '../../shared/cost'
 import { utcClock as hhmm } from '../../shared/utc'
 import {
-  IN_FLIGHT, callFailure, callLine, fmtDuration, useInvestigateReplay,
+  IN_FLIGHT, callFailure, callLine, fmtDuration, moveWord, useInvestigateReplay,
   type CallFailure, type HuntView, type InvestigateDecisionView, type RootCauseBudgets, type RootCauseEntry, type WfRunDetail,
 } from './runRead'
 import { Heading, HuntPanels, InvestigatePanels, OtherPanels, Prose, RootCausePanels } from './WatchPanels'
@@ -45,10 +45,6 @@ export const STEP_MS = 1400
 export const UNSUPPORTED = 'Replay isn’t available for this kind of run yet.'
 export const PLAYBOOK = 'A playbook runs its phases in order, with no lead agent to watch. Its phases are listed in History.'
 
-const titled = (action: string) => {
-  const words = action.replace(/[_-]+/g, ' ').trim().toLowerCase()
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
 
 /** `threat-hunt` → "Threat hunt". The definition carries no display name, so the id is read as words. */
 const workflowTitle = (name: string) => {
@@ -295,7 +291,7 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
           className="flex items-baseline gap-2 w-full p-0 bg-transparent text-left cursor-pointer"
           style={{ opacity: mark === 'pending' ? 0.5 : 1 }}
         >
-          <span className="text-[12px] font-bold text-[var(--tx0)] shrink-0">{titled(step.action)}</span>
+          <span className="text-[12px] font-bold text-[var(--tx0)] shrink-0">{moveWord(step.action)}</span>
           {step.worker && <span className="font-mono text-[11px] text-[var(--tx2)] truncate min-w-0">{step.worker}</span>}
           <span className="ml-auto flex items-baseline gap-2 shrink-0 text-[11px] text-[var(--tx3)]">
             {step.cost !== null && <Cost usd={step.cost} digits={3} />}
@@ -405,10 +401,10 @@ function Replay({ steps, total, live, halt, note, panels }: { steps: Step[]; tot
         >
           <Icon name={playing ? 'pause' : 'play'} size={15} style={playing ? undefined : { fill: 'currentColor' }} />
         </button>
-        <Segments n={steps.length} cursor={at} playing={playing} ended={!live} onJump={jump} labels={steps.map((s, i) => `Step ${numberOf(i)}: ${titled(s.action)}`)} />
+        <Segments n={steps.length} cursor={at} playing={playing} ended={!live} onJump={jump} labels={steps.map((s, i) => `Step ${numberOf(i)}: ${moveWord(s.action)}`)} />
         {stopped
           ? <span className="min-w-0 max-w-[45%] truncate text-[12px] font-semibold text-[var(--tx1)]" title={haltCaption(halt)}>{haltCaption(halt)}</span>
-          : <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">{`Step ${numberOf(at)} of ${of} · ${titled(step.action)}`}</span>}
+          : <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">{`Step ${numberOf(at)} of ${of} · ${moveWord(step.action)}`}</span>}
         <span className="text-[12px] text-[var(--tx2)] whitespace-nowrap">{time ? `${time} · ${clock}` : clock}</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.8fr)] gap-3.5 items-start">

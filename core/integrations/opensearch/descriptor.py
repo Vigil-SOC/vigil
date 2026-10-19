@@ -6,6 +6,8 @@ from core.integrations._base.descriptor import (
     register_descriptor,
 )
 
+OPENSEARCH_REQUIRED = ("opensearch_url",)
+
 OPENSEARCH = register_descriptor(
     IntegrationDescriptor(
         id="opensearch",

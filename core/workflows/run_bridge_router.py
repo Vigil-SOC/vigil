@@ -76,6 +76,9 @@ class TerminalUpdate(BaseModel):
     summary: str = ""
     cost_usd: Optional[float] = None
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
+    # Loose on purpose: each item is checked on its own, so one malformed proposal
+    # is dropped rather than refusing the terminal that carries the rest.
+    proposed_actions: List[Any] = Field(default_factory=list)
     # How bad the run rated what it found, for the case it was started from. A free
     # string: an unrecognised rating is ignored, not grounds to refuse the terminal.
     severity: Optional[str] = None
@@ -215,6 +218,10 @@ def record_terminal(
     origin = _origin_case(run_id, run_service)
     if origin:
         _record_report(origin, run_id, update)
+        # After the withdrawal above, and never linked to the run, so nothing that
+        # cleans up after the run takes them back: they are what it leaves to decide.
+        if update.outcome == "completed" and update.proposed_actions:
+            _propose_actions(origin, run_id, update.proposed_actions, approvals)
         # Only a run that reached its conclusion has rated anything.
         if update.outcome == "completed":
             _raise_priority(origin, run_id, update.severity)
@@ -357,6 +364,126 @@ def _record_report(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception(
             "could not record the report of %s on case %s", run_id, case_id
+        )
+
+
+# The actions a conclusion may propose, and how each reads as an approval title.
+# The investigate plugin's schema offers the same set; an approval type outside it (a workflow
+# phase, a WAF rule) is not the lead's to ask for.
+PROPOSAL_TITLES = {
+    "isolate_host": "Isolate host",
+    "block_ip": "Block IP",
+    "block_domain": "Block domain",
+    "quarantine_file": "Quarantine file",
+    "disable_user": "Disable user",
+    "custom": "Act on",
+}
+
+
+def _proposal(raw: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    action_type, target, reason = (
+        raw.get("action_type"),
+        raw.get("target"),
+        raw.get("reason"),
+    )
+    if action_type not in PROPOSAL_TITLES:
+        return None
+    if not isinstance(target, str) or not target.strip():
+        return None
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    confidence = raw.get("confidence", 0.0)
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return None
+    if not 0.0 <= confidence <= 1.0:
+        return None
+    return {
+        "action_type": action_type,
+        "target": target.strip(),
+        "reason": reason.strip(),
+        "confidence": float(confidence),
+    }
+
+
+# Each proposal becomes a pending approval on the case. Not linked to the run by
+# workflow_run_id: the run is over, so approving one has no run to resume, and a
+# re-sent terminal would withdraw it as a question the run left unanswered. The
+# case id in parameters is what puts it on the case's decisions. Keyed per run,
+# action and target, so a terminal that arrives twice files each one once.
+def _propose_actions(
+    case_id: str,
+    run_id: str,
+    proposals: List[Any],
+    approvals: Optional[ApprovalService],
+) -> None:
+    from core.response.approval_service import ActionType
+
+    service = approvals or ApprovalService()
+    filed: List[str] = []
+    for index, raw in enumerate(proposals):
+        proposal = _proposal(raw)
+        if proposal is None:
+            logger.warning(
+                "dropped proposed action %d of %s: not a valid proposal: %r",
+                index,
+                run_id,
+                raw,
+            )
+            continue
+        action_type, target = proposal["action_type"], proposal["target"]
+        try:
+            action = service.create_action(
+                action_type=ActionType(action_type),
+                title=f"{PROPOSAL_TITLES[action_type]} {target}",
+                description=proposal["reason"],
+                target=target,
+                confidence=proposal["confidence"],
+                reason=proposal["reason"],
+                evidence=[run_id],
+                created_by="agent",
+                parameters={"case_id": case_id, "run_id": run_id},
+                idempotency_key=f"run-proposal:{run_id}:{action_type}:{target}",
+                # The confidence is the model's own claim, so it never releases
+                # the action: a person decides each one.
+                human_only=True,
+            )
+        except Exception:  # noqa: BLE001 — the run ended either way
+            logger.exception(
+                "could not file proposed %s on %s from %s", action_type, target, run_id
+            )
+            continue
+        filed.append(action.action_id)
+
+    if filed:
+        _record_proposals(case_id, run_id, filed)
+
+
+# Once per run: a re-sent terminal finds the same approvals, and the case already
+# says they were proposed.
+def _record_proposals(case_id: str, run_id: str, action_ids: List[str]) -> None:
+    from core.storage.database_data_service import DatabaseDataService
+
+    try:
+        case = DatabaseDataService().get_case(case_id) or {}
+        if any(
+            a.get("activity_type") == "actions_proposed"
+            and (a.get("details") or {}).get("run_id") == run_id
+            for a in case.get("activities") or []
+        ):
+            return
+        count = len(action_ids)
+        _add_activity(
+            case_id,
+            "actions_proposed",
+            f"Run {run_id} proposed {count} action{'' if count == 1 else 's'}"
+            " for approval",
+            {"run_id": run_id, "action_ids": action_ids},
+        )
+    except Exception:  # noqa: BLE001 — the approvals are filed either way
+        logger.exception(
+            "could not record the proposals of %s on case %s", run_id, case_id
         )
 
 

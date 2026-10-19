@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
+import TwoStepDialog from './TwoStepDialog'
 import ChangePasswordDialog from './ChangePasswordDialog'
 
 const FEEDBACK_BASE =
@@ -47,6 +48,7 @@ export default function UserMenu({
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
   const [version, setVersion] = useState('')
+  const [twoStepOpen, setTwoStepOpen] = useState(false)
   const [authBypassed, setAuthBypassed] = useState(BUILT_WITH_BYPASS)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const avatarRef = useRef<HTMLButtonElement>(null)
@@ -164,6 +166,11 @@ export default function UserMenu({
           <Icon name={scheme === 'dark' ? 'sun' : 'moon'} size={15} />
           {scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         </button>
+        <button role="menuitem" onClick={() => { setOpen(false); setTwoStepOpen(true) }}>
+          <Icon name="shield" size={15} />
+          Two-step sign-in
+          <span className="user-pop-note">{user.mfa_enabled ? 'On' : 'Off'}</span>
+        </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings
         </button>
@@ -178,6 +185,7 @@ export default function UserMenu({
       </div>
     ) : null
 
+  const twoStep = <TwoStepDialog open={twoStepOpen} onClose={() => setTwoStepOpen(false)} />
   const dialog = (
     <ChangePasswordDialog
       open={passwordOpen}
@@ -199,6 +207,7 @@ export default function UserMenu({
         <span>{initials}</span>
       </button>
       {menu && (root ? createPortal(menu, root) : menu)}
+      {root ? createPortal(twoStep, root) : twoStep}
       {passwordOpen && (root ? createPortal(dialog, root) : dialog)}
     </div>
   )
