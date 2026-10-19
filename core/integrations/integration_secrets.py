@@ -62,7 +62,8 @@ def default_env_var(integration_id: str, field_name: str) -> str:
 # plaintext to the DB / JSON file.
 _CATALOG_ONLY_SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     "github": ("token",),
-    # mint_secret: HMAC for minting session tokens (services/api/routers/extensions.py).
+    # mint_secret: bearer secret for minting session tokens
+    # (core/integrations/extension/session_service.py).
     # mcp_token: static bearer the LogLM MCP tools present to the connector.
     "loglm": ("mint_secret", "mcp_token"),
     "gcp-threat-intel": ("api_key",),
@@ -91,27 +92,30 @@ _ENV_VAR_OVERRIDES: Mapping[str, Mapping[str, str]] = {
     # env fallback for server_url keeps that name so an env-only deployment with
     # nothing saved in Settings still constructs the client.
     "splunk": {"server_url": "SPLUNK_URL"},
+    # env.example, the Helm chart and mcp-config.json spell the VStrike
+    # endpoint VSTRIKE_BASE_URL, not the canonical VSTRIKE_URL.
+    "vstrike": {"url": "VSTRIKE_BASE_URL"},
 }
 
 
 # Form-field names contributed by the shared proxy block (see
-# ``clients/web/src/config/integrations.ts:PROXY_FIELDS``). Integrations
+# ``clients/web/src/config/integrationSchema.ts:PROXY_FIELDS``). Integrations
 # that opt in via ``PROXY_SUPPORTED`` get these added to their
 # secret-field registry so credentials are routed to the encrypted
 # store rather than persisted plaintext on the integration row.
-_PROXY_SECRET_FIELDS: tuple[str, ...] = ("proxy_password", "ssh_key_passphrase")
+_PROXY_SECRET_FIELDS: tuple[str, ...] = ("proxy_password",)
 
 
 # Integrations whose UI form includes the shared proxy field block.
 # Kept as a frozen set so the registry stays greppable: adding an
-# integration here means proxy_password / ssh_key_passphrase get the
-# same encrypted-store treatment as the integration's own credentials.
+# integration here means proxy_password gets the same encrypted-store
+# treatment as the integration's own credentials. Each must also pass
+# ``integration_proxy`` to its httpx clients (``_base/proxy.py``).
 PROXY_SUPPORTED: frozenset[str] = frozenset(
     {
         "splunk",
         "elastic-siem",
         "opensearch",
-        "cribl-stream",
         "misp",
     }
 )
@@ -196,6 +200,7 @@ ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
         "JWT_SECRET_KEY",
         "KAFKA_SASL_PASSWORD",
         "KAFKA_SASL_USERNAME",
+        "MCP_RUNNER_TOKEN",
         "OPENAI_API_KEY",
         "PAGERDUTY_ROUTING_KEY",
         "POSTGRES_PASSWORD",

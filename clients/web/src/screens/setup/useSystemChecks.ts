@@ -119,10 +119,17 @@ const readMcp = async (): Promise<Result> => {
       detail: `${down.name ?? 'A server'} is ${down.status ?? 'not running'}`,
     }
   }
-  const enabled = read?.statuses?.filter((s) => s.enabled).length ?? 0
+  const enabled = read?.statuses?.filter((s) => s.enabled) ?? []
+  const running = enabled.filter((s) => s.status === 'running').length
+  const onDemand = enabled.filter((s) => s.status === 'on_demand').length
+  const parts = [
+    running ? `${running} enabled server${running === 1 ? '' : 's'} running` : '',
+    onDemand ? `${onDemand} start${onDemand === 1 ? 's' : ''} on first use` : '',
+    ...enabled.filter((s) => s.status === 'not_set_up').map((s) => `${s.name ?? 'A server'} not set up`),
+  ]
   return {
     phase: 'passed',
-    detail: enabled ? `${enabled} enabled server${enabled === 1 ? '' : 's'} running` : 'None enabled',
+    detail: parts.filter(Boolean).join(' · ') || 'None enabled',
   }
 }
 

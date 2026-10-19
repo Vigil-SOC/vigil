@@ -36,6 +36,7 @@ import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
+import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
@@ -156,6 +157,19 @@ function SocConsoleInner() {
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [caseSeed, setCaseSeed] = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
+  // The drawer is held on the history entry it is open over, so browser Back from a page it led to
+  // (Watch it run, Replay) comes back to the case rather than to the bare page under it.
+  const heldDrawer = (location.state as { drawerCase?: unknown } | null)?.drawerCase
+  useEffect(() => {
+    if (typeof heldDrawer === 'string') setDrawerCase(heldDrawer)
+  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if ((typeof heldDrawer === 'string' ? heldDrawer : null) === drawerCase) return
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: { ...((location.state as object | null) ?? {}), drawerCase } },
+    )
+  }, [drawerCase]) // eslint-disable-line react-hooks/exhaustive-deps
   const [fill, setFill] = useState<{ text: string; seq: number } | null>(null)
   const fillCommand = useCallback((text: string) => setFill((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 })), [])
   const [viewFull, setViewFull] = useState(false)
@@ -339,17 +353,22 @@ function SocConsoleInner() {
 
   useEffect(() => {
     let live = true
-    configApi
-      .getAutonomy()
-      .then((res) => {
-        if (!live) return
-        const auto = Boolean(res.data?.auto_response_enabled)
-        const force = Boolean(res.data?.force_manual_approval)
-        setAssist(force || !auto)
-      })
-      .catch(() => {})
+    const read = () =>
+      configApi
+        .getAutonomy()
+        .then((res) => {
+          if (!live) return
+          const auto = Boolean(res.data?.auto_response_enabled)
+          const force = Boolean(res.data?.force_manual_approval)
+          setAssist(force || !auto)
+        })
+        .catch(() => {})
+    read()
+    // Settings saves Ask first / Act; re-read so the badge follows without a reload
+    window.addEventListener(AUTONOMY_CHANGED, read)
     return () => {
       live = false
+      window.removeEventListener(AUTONOMY_CHANGED, read)
     }
   }, [])
 

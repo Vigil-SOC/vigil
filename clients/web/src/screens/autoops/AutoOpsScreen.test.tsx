@@ -13,7 +13,7 @@ const inv = (over: Record<string, unknown>) => ({
 vi.mock('./useAutoOps', () => ({
   useAutoOps: () => ({
     status: {
-      enabled: false, active_agents: 0, max_concurrent_agents: 2, queued: 0, completed: 3, failed: 0, pending_review: 0, total_investigations: 3,
+      enabled: false, active_agents: 0, max_concurrent_agents: 2, queued: 0, completed: 3, failed: 0, total_investigations: 3,
       cost: { total_cost_usd: 1.25, active_cost_usd: 0, hourly_cost_usd: 0, hourly_budget_remaining: 5, per_investigation_limit: 1 },
       stats: {},
     },

@@ -381,6 +381,9 @@ class LLMRouter:
             resp = await client.chat.completions.create(**kwargs)
             duration_s = time.monotonic() - started
             choice = resp.choices[0].message
+            # "length" with little or no content is a reasoning model that spent
+            # max_tokens thinking: a caller can tell it from a reply that ended.
+            finish_reason = getattr(resp.choices[0], "finish_reason", None)
             usage = getattr(resp, "usage", None)
             # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
             # OpenAI bills cached tokens at a discounted rate but doesn't bill a
@@ -396,6 +399,7 @@ class LLMRouter:
                     cache_read = getattr(details, "cached_tokens", 0) or 0
             result = {
                 "content": choice.content or "",
+                "finish_reason": finish_reason,
                 # Normalize OpenAI tool-call objects to {id, name, input} dicts
                 # so _adapt_router_result_to_raw can build Anthropic tool_use
                 # blocks without touching SDK-object internals. Arguments arrive

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
 import type { Harness } from "../../core/loop.js";
@@ -7,7 +7,7 @@ import { registryOf } from "../../core/registry.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import type { Memory, State } from "../../core/seams.js";
 import type { Provider } from "../../core/provider.js";
-import type { HuntKinds } from "../../workflows/hunt/journal.js";
+import type { HuntKinds } from "../../plugins/hunt/journal.js";
 
 // The one hunt that reads episodic memory, shared by the test that asserts the
 // read and the script that records the fixture. Two copies of it would agree

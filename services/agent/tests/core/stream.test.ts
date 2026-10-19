@@ -235,7 +235,7 @@ describe("the budget gate", () => {
     const fetched_at = "2026-09-01T00:00:00+00:00";
     const card = { input: 3e-6, output: 15e-6, cache_read: 3e-7, cache_write: 3.75e-6, source: "exact", fetched_at };
     const harness = harnessOf(
-      [{ calls: [], tokens: { input: 1_000, output: 100, cache_read: 10_000, cache_write: 200 } }, HALT],
+      [{ calls: [], tokens: { input: 11_200, output: 100, cache_read: 10_000, cache_write: 200 } }, HALT],
       { prices: async () => card },
     );
     await outcomeOf(config(), harness);

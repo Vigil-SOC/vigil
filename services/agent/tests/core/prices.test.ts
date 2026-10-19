@@ -32,6 +32,17 @@ describe("what the catalog could not price", () => {
     expect(costOf(rates, { input: 1000, output: 1000, cache_read: 0, cache_write: 0 })).toBe(0);
   });
 
+  // input is the total, so a cached share is billed once, at the cache rate.
+  it("bills a cached share once, at the cache rate, and never at the input rate too", () => {
+    const card = { input: 1e-6, output: 1e-5, cache_read: 1e-7, cache_write: 1.25e-6, source: "exact", fetched_at: null };
+    // 100 prompt tokens, 90 of them served from cache, as the OpenAI route reports it.
+    expect(costOf(card, { input: 100, output: 20, cache_read: 90, cache_write: 0 })).toBeCloseTo(10 * 1e-6 + 20 * 1e-5 + 90 * 1e-7, 12);
+    // Anthropic's write counter is part of the total too.
+    expect(costOf(card, { input: 80, output: 8, cache_read: 10, cache_write: 30 })).toBeCloseTo(40 * 1e-6 + 8 * 1e-5 + 10 * 1e-7 + 30 * 1.25e-6, 12);
+    // A cache hit never costs more than the same call uncached.
+    expect(costOf(card, { input: 100, output: 20, cache_read: 90, cache_write: 0 })).toBeLessThan(costOf(card, { input: 100, output: 20, cache_read: 0, cache_write: 0 }));
+  });
+
   it("prices nothing when a rate is missing rather than reading it as free", () => {
     expect(ratesOf({ input: 3e-6, output: 1.5e-5, cache_read: 3e-7, source: "exact" })).toBeNull();
   });

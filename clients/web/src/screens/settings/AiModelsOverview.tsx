@@ -57,7 +57,7 @@ export const AGENT_MODEL_TABLE_ID = 'ai-model-for-each-agent'
 export default function AiModelsOverview({ notify }: SectionProps) {
   const ma = useModelAssignment()
   const bf = useBifrostProviders()
-  const names = bf.providers.map((p) => p.name)
+  const names = bf.shown.map((p) => p.name)
   const defaultName = defaultProviderName(ma.assignments[CHAT_DEFAULT_KEY], ma.models, names)
 
   return (

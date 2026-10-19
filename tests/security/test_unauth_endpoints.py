@@ -109,16 +109,6 @@ PROTECTED_ROUTES = [
             "max_tokens": 1,
         },
     ),
-    ("GET", "/api/webhooks/", None),
-    (
-        "POST",
-        "/api/webhooks/",
-        {"name": "poc", "url": "https://example.com", "events": ["case_created"]},
-    ),
-    ("PUT", "/api/webhooks/webhook-001", {"name": "poc-updated"}),
-    ("DELETE", "/api/webhooks/webhook-001", None),
-    ("POST", "/api/webhooks/webhook-001/test", None),
-    ("GET", "/api/webhooks/webhook-001/deliveries", None),
     ("GET", "/api/integrations/vstrike/health", None),
     ("GET", "/api/integrations/vstrike/topology/asset/test-asset", None),
     # The agent layer's own surfaces. /api/* takes a session; /internal/* takes

@@ -44,6 +44,15 @@ daemon:
   persistence:
     size: 1Gi
 
+mcpRunner:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
 postgresql:
   persistence:
     size: 5Gi
