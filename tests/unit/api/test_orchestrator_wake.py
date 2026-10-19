@@ -31,7 +31,7 @@ def test_wake_queues_a_new_human_ask_on_the_same_case(status):
     orch = _orch(status)
     with (
         patch.object(router, "_get_orchestrator", return_value=orch),
-        patch.object(router, "insert_intake_trigger") as insert,
+        patch("services.daemon.orchestrator.insert_intake_trigger") as insert,
     ):
         result = router.wake_investigation("inv-old")
 
@@ -57,7 +57,7 @@ def test_wake_sends_no_hypothesis_when_the_file_is_empty():
     orch = _orch("failed", hypotheses="")
     with (
         patch.object(router, "_get_orchestrator", return_value=orch),
-        patch.object(router, "insert_intake_trigger") as insert,
+        patch("services.daemon.orchestrator.insert_intake_trigger") as insert,
     ):
         router.wake_investigation("inv-old")
 
@@ -69,7 +69,7 @@ def test_wake_rejects_unfinished_investigations(status):
     orch = _orch(status)
     with (
         patch.object(router, "_get_orchestrator", return_value=orch),
-        patch.object(router, "insert_intake_trigger") as insert,
+        patch("services.daemon.orchestrator.insert_intake_trigger") as insert,
     ):
         with pytest.raises(HTTPException) as err:
             router.wake_investigation("inv-old")

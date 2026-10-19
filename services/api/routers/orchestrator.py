@@ -21,7 +21,6 @@ from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
-from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
 router = APIRouter()
 
@@ -364,6 +363,8 @@ def wake_investigation(investigation_id: str):
                 detail=f"Cannot restart investigation in status '{inv.get('status')}'",
             )
 
+        from services.daemon.orchestrator import insert_intake_trigger
+
         case_id = inv.get("case_id")
         insert_intake_trigger(
             kind="human_ask",
@@ -418,6 +419,8 @@ def kill_investigation(investigation_id: str):
 @router.post("/investigations")
 def create_investigation(request: InvestigationCreateRequest):
     """Manually create a new investigation."""
+    from services.daemon.orchestrator import insert_intake_trigger
+
     payload = {
         "workflow_id": request.workflow_id,
         "finding_ids": request.finding_ids,
@@ -481,6 +484,11 @@ def scan_existing_findings(request: ScanFindingsRequest):
                 skipped_existing += 1
                 continue
             to_investigate.append({"finding_id": fid, "severity": f.severity})
+
+    from services.daemon.orchestrator import (
+        insert_intake_trigger,
+        intake_severity_band,
+    )
 
     queued = 0
     for finding_data in to_investigate:
