@@ -11,7 +11,6 @@ DELETE /api/detection-rules/sources/{source_id}
 DELETE /api/findings/{finding_id}/noise
 DELETE /api/skills/{name}
 DELETE /api/sla-policies/{policy_id}
-DELETE /api/webhooks/{webhook_id}
 DELETE /api/workflows/custom/{workflow_id}
 DELETE /api/workflows/runs/{run_id}
 PATCH /api/agents/custom/{agent_id}
@@ -68,8 +67,6 @@ POST /api/skills/{name}/test
 POST /api/sla-policies/
 POST /api/sla-policies/{policy_id}/set-default
 POST /api/v1/cases/search
-POST /api/webhooks/
-POST /api/webhooks/{webhook_id}/test
 POST /api/workflows/custom
 POST /api/workflows/generate
 POST /api/workflows/reload
@@ -83,6 +80,5 @@ PUT /api/federation/settings
 PUT /api/kafka/config
 PUT /api/sla-policies/{policy_id}
 PUT /api/users/{user_id}
-PUT /api/webhooks/{webhook_id}
 PUT /api/workflows/custom/{workflow_id}
 PUT /api/workflows/{workflow_id}/enabled
