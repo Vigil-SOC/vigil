@@ -1,4 +1,4 @@
-import type { ResolutionPayload, RunOutcome, TerminalHandoff } from "../../contracts/events.js";
+import type { ResolutionPayload, RunOutcome, Severity, TerminalHandoff } from "../../contracts/events.js";
 import { httpAnswers } from "../../core/answers.js";
 import { errorFields, logger } from "../../core/log.js";
 
@@ -29,6 +29,7 @@ export interface TerminalResult {
   summary: string;
   cost_usd?: number;
   handoffs?: TerminalHandoff[];
+  severity?: Severity;
 }
 
 // Where a run stands while it is still open. paused is a run waiting on someone

@@ -43,6 +43,7 @@ skills: [investigate-case]          # core/skills/library/<name>/SKILL.md, loade
 conclusion:                         # or `conclusion: prose`
   summary_field: summary
   citations_field: citations        # optional; numbers results so the answer can cite them
+  severity_field: severity          # optional; an enum of low|medium|high|critical, raises the case's priority
   schema: { ... }                   # JSON schema the final answer must match
 guard:                              # optional second look before a guarded answer stands
   field: disposition

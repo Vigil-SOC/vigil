@@ -12,6 +12,7 @@ import type {
   RunKind,
   RunOutcome,
   RunPayload,
+  Severity,
   TerminalHandoff,
   TerminalPayload,
   UnboundPayload,
@@ -29,7 +30,7 @@ import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
-import type { RunEventKind } from "../contracts/events.js";
+import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
 // journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
@@ -309,7 +310,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     review = await reviewOf(ctx, conclusion, callsIn(held));
     await harness.state.append(run_id, [event(options, "review", review)]);
   }
-  return end(ctx, "completed", summaryOf(options.plugin, conclusion, review));
+  return end(ctx, "completed", summaryOf(options.plugin, conclusion, review), undefined, undefined, severityOf(options.plugin, conclusion));
 }
 
 // The registry and dispatch the run actually holds: the deployment's tools, the
@@ -1171,6 +1172,13 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
 }
 
+// The rating the answer gave, when its plugin asks for one and it is a case priority.
+export function severityOf(plugin: PluginManifest, conclusion: ConclusionPayload): Severity | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.severity_field : undefined;
+  const rated = field === undefined ? undefined : conclusion.value[field];
+  return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
+}
+
 // Why the guard moved the answer off what was asked; null when it did not.
 export function heldBecause(review: ReviewPayload): string | null {
   const guarded = review.guarded;
@@ -1249,6 +1257,7 @@ async function end(
   reason: string,
   summary?: string | null,
   handoffs?: readonly TerminalHandoff[],
+  severity?: Severity,
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1262,6 +1271,7 @@ async function end(
     reason,
     ...(deliver === undefined ? {} : { summary: deliver }),
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
+    ...(severity === undefined ? {} : { severity }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);
