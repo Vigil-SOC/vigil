@@ -7,8 +7,8 @@ import { Field, NumberInput, PasswordInput, Popup, Select, TextInput, ToggleRow 
 import { Banner, extractApiError } from '../../shared/formKit'
 import { relativeTime, type LastTest } from './integrationHealth'
 import {
-  PROXY_FIELDS,
   SECTION_LABELS,
+  fieldsWithProxy,
   type IntegrationField,
   type IntegrationMetadata,
 } from '../../config/integrationSchema'
@@ -65,10 +65,7 @@ export default function IntegrationWizard({
     if (lastTest) setTested(lastTest)
   }, [lastTest])
 
-  const fields = useMemo(
-    () => (integration.proxy_supported ? [...integration.fields, ...PROXY_FIELDS] : integration.fields),
-    [integration],
-  )
+  const fields = useMemo(() => fieldsWithProxy(integration), [integration])
   const mainFields = fields.filter((f) => !f.section)
   const sections = useMemo(() => {
     const groups: Record<string, IntegrationField[]> = {}
@@ -189,7 +186,7 @@ export default function IntegrationWizard({
       {mainFields.map(renderField)}
 
       {Object.entries(sections).map(([name, secFields]) => (
-        <div key={name} className="card card-sq">
+        <div key={name} className="card card-sq shrink-0">
           <button
             className="card-h w-full text-left"
             style={{ cursor: 'pointer' }}

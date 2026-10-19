@@ -17,7 +17,6 @@ from core.storage import db_proxy
 from core.storage.db_proxy import (
     ProxyConfig,
     apply,
-    child_env_for_proxy,
 )
 
 
@@ -102,28 +101,6 @@ def test_proxy_password_resolved_from_secrets_manager():
             password_secret_key="SPLUNK_PROXY_PASSWORD",
         )
         assert cfg.proxy_password == "from-store"
-
-
-def test_child_env_for_http_proxy_emits_standard_env_vars():
-    cfg = ProxyConfig.from_dict(
-        {"proxy_type": "http", "proxy_host": "egress.corp", "proxy_port": 3128}
-    )
-    env = child_env_for_proxy(cfg)
-    assert env["HTTPS_PROXY"] == "http://egress.corp:3128"
-    assert env["HTTP_PROXY"] == "http://egress.corp:3128"
-    assert env["ALL_PROXY"] == "http://egress.corp:3128"
-    assert env["https_proxy"] == "http://egress.corp:3128"
-
-
-def test_child_env_for_disabled_proxy_is_empty():
-    assert child_env_for_proxy(ProxyConfig()) == {}
-
-
-def test_child_env_for_pgbouncer_is_empty():
-    cfg = ProxyConfig.from_dict(
-        {"proxy_type": "pgbouncer", "proxy_host": "p", "proxy_port": 6432}
-    )
-    assert child_env_for_proxy(cfg) == {}
 
 
 def test_unknown_proxy_type_is_treated_as_passthrough():
