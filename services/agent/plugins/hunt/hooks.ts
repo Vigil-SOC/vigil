@@ -175,14 +175,15 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         return {
           projection: book.projection,
           ended: book.ended(),
-          concluded: book.hunt.outcome === "completed",
+          concluded: book.hunt.outcome === "completed" || book.hunt.outcome === "data_starved",
           suspended: book.hunt.status === "parked" || book.hunt.status === "pending_approval",
           why: book.suspendedBecause(),
         };
       });
       await reportOut(ctx, ports, settled.projection, filed, linked);
-      // A hunt that concluded cleanly is asked for its answer, the disposition among it,
-      // before it ends; any other ending, and any call after the conclusion, halts at once.
+      // A hunt that concluded on its own predicate (data_starved is an honest inconclusive)
+      // is asked for its answer, the disposition among it, before it ends; any other
+      // ending, and any call after the conclusion, halts at once.
       const answers = settled.concluded && seen.call.tool === "conclude_hunt" && seen.attempt.result.ok && asksDisposition(ctx);
       if (settled.ended && !answers) return "halt";
       if (settled.suspended) {
