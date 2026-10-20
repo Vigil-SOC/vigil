@@ -2415,6 +2415,17 @@ describe('a case with several runs', () => {
     expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · runs spent $0.60, 1 run unpriced')
   })
 
+  it('still says how many runs are unpriced on the door when none is priced', async () => {
+    threeRuns('case-none-priced')
+    testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
+    testState.runs['run-rca'] = { status: 'completed', projection: { ...ROOT_CAUSE, cost_usd: null } }
+    testState.runs['run-hunt'] = { status: 'running', hunt: { ...HUNT, status: 'running', cost_usd: null } }
+    renderCase('case-none-priced')
+    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
+    await waitFor(() => expect(door).toHaveTextContent('3 runs unpriced'))
+    expect(door).not.toHaveTextContent('$')
+  })
+
   it('names the Checked header’s figure as what the runs spent', async () => {
     threeRuns('case-spent')
     renderCase('case-spent')
@@ -2489,6 +2500,52 @@ describe('a case with several runs', () => {
     expect(button).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Loading older rows…' })).not.toBeInTheDocument()
     expect(evidenceIds()).toHaveLength(51)
+  })
+
+  it('offers Show older again when the read fails, and asks again on the next press', async () => {
+    withRecords('case-older-fail')
+    const stamp = (i: number) => `2026-06-15T09:${String(i).padStart(2, '0')}:00Z`
+    const rows = Array.from({ length: 50 }, (_, i) => ({ ...huntRows[0], evidence_id: `h${i}`, summary: `hunt row ${i}`, captured_at: stamp(i) })).reverse()
+    testState.runs['run-hunt'] = { status: 'completed', hunt: { ...HUNT, status: 'completed', evidence: rows, evidence_count: 60 } }
+    renderCase('case-older-fail')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    await screen.findByText('transferred 4 GB')
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    expect(evidenceIds()).toHaveLength(51)
+    // the bigger ask fails; the run keeps its old detail, so nothing on screen changes but the button
+    const ok = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string, limit?: number) => (limit === 100 ? Promise.reject(new Error('down')) : ok(runId)))
+    vi.mocked(workflowApi.getRun).mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-hunt', 100))
+    const button = await screen.findByRole('button', { name: 'Show older' })
+    expect(button).toBeEnabled()
+    expect(evidenceIds()).toHaveLength(51)
+    // the same ask again reads again, rather than waiting on a limit that is already set
+    vi.mocked(workflowApi.getRun).mockClear()
+    fireEvent.click(button)
+    await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-hunt', 100))
+    expect(await screen.findByRole('button', { name: 'Show older' })).toBeEnabled()
+    vi.mocked(workflowApi.getRun).mockImplementation(ok)
+  })
+
+  it('offers Show older again on a single run when its read fails', async () => {
+    testState.cases = [{ ...openCase('case-one-fail'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-one')] }]
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      evidence_id: `n${i}`, iteration: 9, source_system: 'elastic', summary: `row ${i}`, is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [],
+    }))
+    testState.runs['run-one'] = { hunt: { ...HUNT, evidence_count: 80, evidence: rows } }
+    renderCase('case-one-fail')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    await screen.findByText('row 0')
+    const ok = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string, limit?: number) => (limit === 100 ? Promise.reject(new Error('down')) : ok(runId)))
+    vi.mocked(workflowApi.getRun).mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-one', 100))
+    expect(await screen.findByRole('button', { name: 'Show older' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Loading older rows…' })).not.toBeInTheDocument()
+    vi.mocked(workflowApi.getRun).mockImplementation(ok)
   })
 
   it('tags what each run checked in one list', async () => {

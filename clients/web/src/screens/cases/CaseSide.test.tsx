@@ -4,7 +4,7 @@ import { useRef } from 'react'
 import { CaseSide } from './CaseSide'
 import { casesApi } from '../../services/api'
 import { useNoSideways } from '../../shared/useNoSideways'
-import type { RunFold } from './caseFold'
+import { readFold, type RunFold } from './caseFold'
 import casesCss from './cases.css?inline'
 
 vi.mock('../../services/api', () => ({
@@ -107,11 +107,11 @@ describe('case side panel Cost across runs (#2481)', () => {
   const hunt = ref('run-h', 'threat-hunt', 0.2, '2026-06-15T09:00:00Z')
   const inv = ref('run-i', 'incident-response', 0.1, '2026-06-15T10:00:00Z')
   const unpriced = ref('run-u', 'root-cause-analysis', 0, '2026-06-15T11:00:00Z')
-  const renderCost = (refs: typeof hunt[]) =>
+  const renderCost = (refs: typeof hunt[], folds: Record<string, RunFold | null> = {}) =>
     render(
       <aside className="case-side">
         <CaseSide
-          caseId="case-1" linked={[]} owner="—" latest={refs[0]} runs={refs.map((one) => ({ ref: one, fold: null }))}
+          caseId="case-1" linked={[]} owner="—" latest={refs[0]} runs={refs.map((one) => ({ ref: one, fold: folds[one.run_id] ?? null }))}
           workflowNames={{ 'threat-hunt': 'Hunt', 'incident-response': 'Investigate', 'root-cause-analysis': 'Root cause' }}
           sla={null} closed={false} fold={null} latestFold={null}
         />
@@ -137,6 +137,19 @@ describe('case side panel Cost across runs (#2481)', () => {
     expect(block()).toHaveTextContent('$0.20')
     expect(block()).toHaveTextContent('across 2 runs · 1 unpriced')
     expect(within(block()).getAllByRole('listitem')[1]).toHaveTextContent('Root cause · started 11:00—')
+  })
+
+  it('still counts the unpriced runs when none is priced', () => {
+    renderCost([{ ...hunt, cost_usd: 0 }, unpriced])
+    expect(block()).toHaveTextContent('—across 2 runs · 2 unpriced')
+  })
+
+  it('reads a priced $0.00 run as $0.00, as the rest of the page does', () => {
+    const zero = readFold({ status: 'completed', projection: { findings: [], cost_usd: 0 } })
+    renderCost([hunt, unpriced], { 'run-u': zero })
+    expect(block()).toHaveTextContent('$0.20')
+    expect(block()).not.toHaveTextContent('unpriced')
+    expect(within(block()).getAllByRole('listitem')[1]).toHaveTextContent('Root cause · started 11:00$0.00')
   })
 
   it('keeps one run as it was: its cost against its limit, no per-run lines', () => {

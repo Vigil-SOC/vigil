@@ -220,10 +220,28 @@ function readsKey(runs: TrailRun[]): string {
     .join(' ')
 }
 
-export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => void }) {
-  // The row count asked for, until a read answers it.
+/** Holds the row count asked for until that ask's read settles, rows or not; a later ask supersedes it. */
+function useAsk(setAsked: (shown: number | null) => void) {
+  const latest = useRef(0)
+  return (shown: number, answered: Promise<unknown>) => {
+    const mine = ++latest.current
+    setAsked(shown)
+    void answered.finally(() => {
+      if (latest.current === mine) setAsked(null)
+    })
+  }
+}
+
+export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: {
+  fold: RunFold | null
+  phase: Phase
+  focusId: string | null
+  /** Settles when the read it asked for answers, with rows or without. */
+  onShowOlder?: (shown: number) => Promise<void>
+}) {
+  // The row count asked for, until the read answers it, whether it brings rows or fails.
   const [asked, setAsked] = useState<number | null>(null)
-  useEffect(() => setAsked(null), [fold])
+  const ask = useAsk(setAsked)
   const focusRef = useFocusRow(focusId, fold)
 
   if (phase === 'loading') return <p>Loading the run…</p>
@@ -247,10 +265,7 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
             type="button"
             className="btn neutral"
             disabled={asked === fold.evidence.length}
-            onClick={() => {
-              setAsked(fold.evidence.length)
-              onShowOlder(fold.evidence.length)
-            }}
+            onClick={() => ask(fold.evidence.length, onShowOlder(fold.evidence.length))}
           >
             {asked === fold.evidence.length ? 'Loading older rows…' : 'Show older'}
           </button>
@@ -278,15 +293,15 @@ export function MergedEvidence({ runs, focusId, focusRunId, onShowOlder }: {
   focusId: string | null
   /** Only this run's rows take the citation focus. */
   focusRunId: string | null
-  onShowOlder: (runId: string, shown: number) => void
+  /** Settles when that run's read answers, with rows or without. */
+  onShowOlder: (runId: string, shown: number) => Promise<void>
 }) {
   const [limit, setLimit] = useState(EVIDENCE_PAGE)
   const [asked, setAsked] = useState<number | null>(null)
+  const ask = useAsk(setAsked)
   const ready = runs.filter((run) => run.phase === 'ready' && run.fold)
   const held = ready.reduce((n, run) => n + (run.fold && run.fold.kind === 'hunt' ? run.fold.evidence.length : 0), 0)
   const reads = readsKey(ready)
-  // any read answers the ask, even one that brought no new rows, so the button never sticks on Loading
-  useEffect(() => setAsked(null), [reads])
   const focusRef = useFocusRow(focusId, reads)
 
   const all = mergeRows(ready.map((run) => ({ id: run.id, tag: run.tag, rows: run.fold ? rowsOf(run.fold) : [] })))
@@ -317,8 +332,7 @@ export function MergedEvidence({ runs, focusId, focusRunId, onShowOlder }: {
                 onClick={() => {
                   setLimit(limit + EVIDENCE_PAGE)
                   if (all.length > limit) return
-                  setAsked(held)
-                  more.forEach((one) => onShowOlder(one.id, one.shown))
+                  ask(held, Promise.allSettled(more.map((one) => onShowOlder(one.id, one.shown))))
                 }}
               >
                 {all.length <= limit && asked === held ? 'Loading older rows…' : 'Show older'}

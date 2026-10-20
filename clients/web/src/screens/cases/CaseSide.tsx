@@ -208,26 +208,26 @@ function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
 
 /** Several runs: what the case cost in all, then each run's own line. Only the primary run has a limit and a level shown. */
 function CaseCost({ runs, latest, spend, names }: { runs: SideRun[]; latest: CaseInvestigationRef | null; spend: Spend; names: Record<string, string> }) {
+  // null is a run nothing priced: left out of the total, and counted beside it; a priced $0.00 reads as it does on the rest of the page
   const costs = runs.map((run) => costOf(run.ref, run.fold))
-  // $0 is a run nothing priced: left out of the total, and counted beside it
-  const all = costAcross(costs.map((cost) => (cost !== null && cost > 0 ? cost : null)))
+  const all = costAcross(costs)
   return (
     <>
       <div className="side-cost">
         <span>{all.total}</span>
-        <span className="side-total">across {runs.length} runs{all.unpriced > 0 && all.unpriced < runs.length ? ` · ${all.unpriced} unpriced` : ''}</span>
+        <span className="side-total">across {runs.length} runs{all.unpriced > 0 ? ` · ${all.unpriced} unpriced` : ''}</span>
       </div>
       <ul className="side-runs">
         {runs.map((run, i) => {
           const label = runLabel(run.ref, names)
           const primary = run.ref === latest
           const cost = costs[i]
-          const text = cost !== null && cost > 0 ? (primary && spend.cap ? `${fmtCost(cost)} of ${fmtCost(spend.cap)}` : fmtCost(cost)) : '—'
+          const text = cost !== null ? (primary && spend.cap ? `${fmtCost(cost)} of ${fmtCost(spend.cap)}` : fmtCost(cost)) : '—'
           return (
             <li key={run.ref.run_id}>
               <span className="side-clamp" title={label}>{label}</span>
               <span className="num">{text}</span>
-              {primary && spend.cap && cost !== null && cost > 0 && <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />}
+              {primary && spend.cap && cost !== null && <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />}
             </li>
           )
         })}

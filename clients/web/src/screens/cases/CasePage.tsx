@@ -566,8 +566,9 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
   const spend = costAcross(read.map((one) => one.costUsd))
-  // a run nothing priced is left out of the total, and says so beside it
-  const cost = spend.unpriced && spend.unpriced < read.length ? `${spend.total} · ${plural(spend.unpriced, 'run')} unpriced` : spend.total
+  // a run nothing priced is left out of the total, and says so beside it; when none is priced, the count alone
+  const unpriced = `${plural(spend.unpriced, 'run')} unpriced`
+  const cost = !spend.unpriced ? spend.total : spend.unpriced < read.length ? `${spend.total} · ${unpriced}` : read.length > 1 ? unpriced : spend.total
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
@@ -586,11 +587,13 @@ interface CaseRun {
 }
 
 /** Reads one run on the case on Watch a run's interval while it is in flight, and reports each read up. Renders nothing. */
-function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
+function RunReader({ runId, evidenceLimit, onRead, onLoader, onSettled, onReread }: {
   runId: string
   evidenceLimit?: number
   onRead: (runId: string, read: { fold: RunFold | null; phase: Phase } | null) => void
-  onLoader: (runId: string, load: (() => void) | null) => void
+  onLoader: (runId: string, load: (() => Promise<void>) | null) => void
+  /** A read at this evidence limit has answered, whether it brought rows or failed. */
+  onSettled: (runId: string, evidenceLimit: number) => void
   /** A re-read of a run that was in flight: the case and record follow it. */
   onReread: () => void
 }) {
@@ -598,10 +601,10 @@ function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
   const { load, setDphase } = run
   useEffect(() => {
     setDphase('loading')
-    void load()
-  }, [load, setDphase])
+    void load().finally(() => onSettled(runId, evidenceLimit ?? 0))
+  }, [load, setDphase, onSettled, runId, evidenceLimit])
   useEffect(() => {
-    onLoader(runId, () => void load()) // a failed read keeps what is shown
+    onLoader(runId, load) // a failed read keeps what is shown
     return () => onLoader(runId, null)
   }, [runId, load, onLoader])
   const detail = run.detail?.run_id === runId ? run.detail : null
@@ -1047,10 +1050,38 @@ export function CasePage({
       return held[key]?.fold === read.fold && held[key]?.phase === read.phase ? held : { ...held, [key]: read }
     })
   }, [])
-  const loaders = useRef(new Map<string, () => void>())
-  const onLoader = useCallback((key: string, load: (() => void) | null) => {
+  const loaders = useRef(new Map<string, () => Promise<void>>())
+  const onLoader = useCallback((key: string, load: (() => Promise<void>) | null) => {
     if (load) loaders.current.set(key, load)
     else loaders.current.delete(key)
+  }, [])
+  // "Show older" asks a run for more rows; each ask settles when a read at its limit answers, rows or not (#2512).
+  const heldLimits = useRef(evidenceLimits)
+  heldLimits.current = evidenceLimits
+  const olderAsks = useRef(new Map<string, { limit: number; settle: () => void }[]>())
+  const askOlder = useCallback(
+    (key: string, shown: number) =>
+      new Promise<void>((settle) => {
+        const limit = shown + EVIDENCE_PAGE
+        if ((heldLimits.current[key] ?? 0) >= limit) {
+          // asked for already, and that read failed or brought nothing: read again
+          const load = loaders.current.get(key)
+          if (load) void load().finally(settle)
+          else settle()
+          return
+        }
+        olderAsks.current.set(key, [...(olderAsks.current.get(key) ?? []), { limit, settle }])
+        setEvidenceLimits((held) => ({ ...held, [key]: limit }))
+      }),
+    [],
+  )
+  const onSettled = useCallback((key: string, limit: number) => {
+    const asks = olderAsks.current.get(key)
+    if (!asks) return
+    asks.filter((ask) => ask.limit <= limit).forEach((ask) => ask.settle())
+    const left = asks.filter((ask) => ask.limit > limit)
+    if (left.length > 0) olderAsks.current.set(key, left)
+    else olderAsks.current.delete(key)
   }, [])
   // Each re-read of any run that was in flight re-reads the case and the record too, the last one when it ends.
   const onRefreshRef = useRef(onRefresh)
@@ -1090,7 +1121,7 @@ export function CasePage({
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
-    if (runId) loaders.current.get(runId)?.()
+    if (runId) void loaders.current.get(runId)?.()
   }, [runId])
 
   useEffect(() => {
@@ -1409,7 +1440,7 @@ export function CasePage({
   return (
     <div className="detail-pane case-page">
       {caseRuns.map((ref) => (
-        <RunReader key={ref.run_id} runId={ref.run_id} evidenceLimit={evidenceLimits[ref.run_id]} onRead={onRead} onLoader={onLoader} onReread={onReread} />
+        <RunReader key={ref.run_id} runId={ref.run_id} evidenceLimit={evidenceLimits[ref.run_id]} onRead={onRead} onLoader={onLoader} onSettled={onSettled} onReread={onReread} />
       ))}
       <div className="detail-head">
         <div className="dh-crumb">
@@ -1546,14 +1577,14 @@ export function CasePage({
                   fold={alone.fold}
                   phase={alone.phase}
                   focusId={!alone.run || alone.run.ref === latest ? focusEvidence : null}
-                  onShowOlder={(alone.run?.ref.run_id ?? runId) ? (shown) => setEvidenceLimits((held) => ({ ...held, [(alone.run?.ref.run_id ?? runId) as string]: shown + EVIDENCE_PAGE })) : undefined}
+                  onShowOlder={(alone.run?.ref.run_id ?? runId) ? (shown) => askOlder((alone.run?.ref.run_id ?? runId) as string, shown) : undefined}
                 />
               ) : (
                 <MergedEvidence
                   runs={shownRuns.map((one) => ({ id: one.ref.run_id, tag: runLabels[one.ref.run_id], fold: one.fold, phase: one.phase }))}
                   focusId={focusEvidence}
                   focusRunId={runId}
-                  onShowOlder={(key, shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE }))}
+                  onShowOlder={askOlder}
                 />
               )}
             </>
