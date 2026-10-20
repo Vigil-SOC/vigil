@@ -13,13 +13,21 @@ from typing import Optional, Sequence
 from core.findings.arrival_counts import utc_day_bounds
 from core.response.approval_service import pending_approval_case_ids
 from core.storage.connection import get_db_manager
-from core.storage.models import Case, CaseClosureInfo, Finding, case_findings
+from core.storage.models import (
+    Case,
+    CaseClosureInfo,
+    Finding,
+    IntakeTrigger,
+    case_findings,
+)
 
 TERMINAL_LABELS = {
+    "dismissed": "Dropped",
     "needs_you": "Needs you",
     "resolved_auto": "Resolved automatically",
     "resolved_person": "Closed by a person",
     "working": "Still working",
+    "scoring": "Scoring",
     "waiting": "Not in a case",
 }
 
@@ -32,9 +40,18 @@ class _LinkedCase:
     closed_by_kind: Optional[str]
 
 
-def _state(case: Optional[_LinkedCase], pending: set[str]) -> str:
+def _state(
+    case: Optional[_LinkedCase],
+    pending: set[str],
+    *,
+    dismissed: bool = False,
+    scoring: bool = False,
+) -> str:
+    # A dismissal is the finding's own terminal state, ahead of any case.
+    if dismissed:
+        return "dismissed"
     if case is None:
-        return "waiting"
+        return "scoring" if scoring else "waiting"
     if case.case_id in pending:
         return "needs_you"
     if case.status == "closed":
@@ -82,7 +99,27 @@ def terminal_states_for(finding_ids: Sequence[str]) -> dict[str, str]:
     db = get_db_manager()
     with db.session_scope() as session:
         cases = _cases_for(session, ids)
-    return {finding_id: _state(cases.get(finding_id), pending) for finding_id in ids}
+        dismissed = {
+            row[0]
+            for row in session.query(Finding.finding_id).filter(
+                Finding.finding_id.in_(ids), Finding.noise_marked_at.isnot(None)
+            )
+        }
+        scoring = {
+            row[0]
+            for row in session.query(IntakeTrigger.finding_id).filter(
+                IntakeTrigger.finding_id.in_(ids), IntakeTrigger.state == "queued"
+            )
+        }
+    return {
+        finding_id: _state(
+            cases.get(finding_id),
+            pending,
+            dismissed=finding_id in dismissed,
+            scoring=finding_id in scoring,
+        )
+        for finding_id in ids
+    }
 
 
 def terminal_states_today(day: Optional[date] = None) -> list[dict]:
