@@ -23,6 +23,7 @@ import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
 import { evidenceStrength, sensorAttested, unmetPredicates } from "../../plugins/hunt/strength.js";
 import type { EvidenceRecord } from "../../plugins/hunt/types.js";
 import { evidenceOn, newLedger } from "../support/hunt.js";
+import { estateRef } from "../support/kernel-hunt.js";
 
 const SENSOR = { field: "conn_count", authored: "sensor" as const };
 const AUTHORED = { field: "filename", authored: "adversary" as const };
@@ -169,11 +170,13 @@ describe("what an ABANDON may rest on", () => {
   const abandonCiting = async (restsOn: unknown[]) => {
     const state = new InProcessState<HuntKinds>();
     const provider = modelOf([
+      () => ({ tool: "splunk_search", args: { sql: "select filename, conn_count from flows" } }),
       (request) => ({
         tool: "record_evidence",
         args: {
           results: [
             {
+              ref: estateRef(request),
               source_system: "network",
               summary: "the beacon's filename looks like an updater",
               salience: "notable",
@@ -210,6 +213,67 @@ describe("what an ABANDON may rest on", () => {
     expect(call.ok).toBe(true);
     expect(hypothesis.status).toBe("parked");
     expect(hypothesis.resolution_reason).toMatch(/^abandoned: looks benign/);
+  });
+});
+
+// A record names the search it was read from, and that search must be one the record
+// rests on (call_refs): served since the hunt's last record. Otherwise its values may be
+// the model's rather than the result's, and it reads as unattested.
+describe("which search a record may cite", () => {
+  const recorded = async (cite: (fresh: string | undefined, stale: string | undefined) => { ref?: string }) => {
+    const state = new InProcessState<HuntKinds>();
+    let stale: string | undefined;
+    const row = (request: TurnRequest, citing: { ref?: string }) => ({
+      ...citing,
+      source_system: "network",
+      summary: "412 connections",
+      salience: "notable",
+      why_notable: "regular",
+      payload: JSON.stringify({ conn_count: 412 }),
+      attacker_influenceable: false,
+      rests_on: [SENSOR],
+      supports: [hypothesisIn(request)],
+    });
+    const provider = modelOf([
+      () => ({ tool: "splunk_search", args: { sql: "select conn_count from flows" } }),
+      (request) => {
+        stale = estateRef(request);
+        return { tool: "record_evidence", args: { results: [row(request, { ref: stale! })] } };
+      },
+      () => ({ tool: "splunk_search", args: { sql: "select conn_count from flows where dst = '45.77.53.176'" } }),
+      (request) => ({ tool: "record_evidence", args: { results: [row(request, cite(estateRef(request), stale))] } }),
+      () => ({ say: "done" }),
+    ]);
+    await runHunt(harnessOf(SPEC, provider, state), { run_id: RUN, run_kind: "hunt", spec: SPEC, actions: [], queue: new InProcessDirectiveQueue() });
+    const records = [...fold((await state.read(RUN)) as readonly HuntEvent[]).evidence.values()].filter((one) => one.provenance === "worker");
+    expect(records).toHaveLength(2);
+    expect(stale).toBeDefined();
+    return { last: records[1]!, stale: stale! };
+  };
+
+  it("attests a record citing a search among the calls it rests on, and keeps the ref", async () => {
+    const { last, stale } = await recorded((fresh) => ({ ref: fresh! }));
+
+    expect(last.cited_refs).toHaveLength(1);
+    expect(last.call_refs).toEqual(last.cited_refs);
+    expect(last.cited_refs).not.toContain(stale);
+    expect(sensorAttested(last)).toBe(true);
+  });
+
+  it("counts a record citing a search from before the hunt's last record as unattested", async () => {
+    const { last, stale } = await recorded((_, old) => ({ ref: old! }));
+
+    expect(last.call_refs).not.toContain(stale);
+    expect(last.cited_refs).toEqual([stale]);
+    expect(last.rests_on).toEqual([{ field: SENSOR.field, authored: "adversary" }]);
+    expect(sensorAttested(last)).toBe(false);
+  });
+
+  it("counts a record citing no search as unattested", async () => {
+    const { last } = await recorded(() => ({}));
+
+    expect(last.cited_refs).toBeUndefined();
+    expect(sensorAttested(last)).toBe(false);
   });
 });
 

@@ -305,6 +305,9 @@ export interface EvidenceRecord {
   // The estate calls that answered since the hunt's last record, by ref: the results this
   // record rests on, which the guard on the hunt's conclusion reads a citation against.
   call_refs?: string[];
+  // The results the record says its values were read from, by ref. Kept as named, so a
+  // reader can open them; a record naming none, or one outside call_refs, is unattested.
+  cited_refs?: string[];
 }
 
 // The note on a "neither" the controller filled in because the lead never ruled

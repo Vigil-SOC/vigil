@@ -110,7 +110,14 @@ export function harnessOf(spec: RunSpec, provider: Provider, state: InProcessSta
   return { provider, registry: registryOf([], {}), dispatch, budget: budgetOf({ ...spec.budgets, max_calls: 40 }, unmeteredQuota), memory, state };
 }
 
-export const finding = (source: string, hypothesis: string) => ({
+// The ref of the newest estate result the model was shown: what a record cites.
+export function estateRef(request: TurnRequest): string | undefined {
+  const refs = [...shown(request).matchAll(/<vigil:tool_result tool="[^"]+" ref="(r\d+)">\s*\d+ row\(s\) from (?!hunt\b|skills\b)/g)];
+  return refs.at(-1)?.[1];
+}
+
+export const finding = (source: string, hypothesis: string, ref?: string) => ({
+  ...(ref === undefined ? {} : { ref }),
   source_system: source,
   summary: `every 300s +/- 4s over 6 hours, 412 connections from 10.0.0.5 to 45.77.53.176 (${source})`,
   salience: "anomalous",

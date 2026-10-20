@@ -22,6 +22,13 @@ so a summary with nothing behind it cannot be checked. Keep each finding's
 `finding_id` on the rows you copy from it: that is how the alert reaches the
 case, and how the row names the product it came from.
 
+**ref** is the ref of the result the finding's values were read from, such as
+`r7`, shown on every result you receive. Name it on every finding; when the
+values came from more than one result, name each in **refs**. Cite only results
+returned since your last `record_evidence`. A finding with no ref, or one citing
+an earlier result, is unattested: it can neither clear a branch nor carry a
+verdict on its own.
+
 **supports / weakens** name the hypothesis ids a finding genuinely bears on.
 
 A query that failed, timed out, was refused or returned nothing is not a

@@ -486,7 +486,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         additionalProperties: false,
         required: ["results"],
         properties: {
-          results: { type: "array", items: guarded(ctx) ? withRef(resultItem(ctx.options.spec)) : resultItem(ctx.options.spec) },
+          results: { type: "array", items: withRef(resultItem(ctx.options.spec)) },
           follow_up: {
             type: "array",
             description: "New leads this opened, each a question worth asking next.",
@@ -496,10 +496,10 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
       },
       async (args) => {
         const given = Array.isArray(args["results"]) ? (args["results"] as Record<string, unknown>[]) : [];
-        const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
         const calls = callsIn(await state(ctx).read(ctx.options.run_id));
         const served = servedSince(calls, ctx.options.spec.tools);
         const call_refs = servedRefsSince(calls);
+        const results = guarded(ctx) ? await fromRefs(ctx, given, call_refs) : given.map((one) => cited(one, call_refs));
         return withBook(ctx, ports, (book) => {
           const evidence = evidenceFrom({ results }).map((result) => ({ ...result, call_refs, ...(served === null ? {} : { served_by: served }) }));
           const records = book.appendEvidence(evidence);
@@ -634,11 +634,12 @@ export function servedSince(calls: readonly CallPayload[], tools: readonly ToolS
   return servers.size === 1 && only !== undefined ? only : null;
 }
 
-// The estate calls that answered since the turn of the hunt's last record: the results a
-// record written now rests on, which a conclusion cites by ref and the guard checks it against.
+// The estate calls that answered after the hunt's last record: the results a record written
+// now rests on, which it and a conclusion cite by ref. Calls are journaled as they run, so a
+// search made earlier in the turn of the last record came before it, and is not counted.
 export function servedRefsSince(calls: readonly CallPayload[]): string[] {
   const own = agentCalls(calls);
-  const since = own.filter((call) => call.turn >= (own.findLast((one) => one.tool === "record_evidence" && one.ok)?.turn ?? 0));
+  const since = own.slice(own.findLastIndex((one) => one.tool === "record_evidence" && one.ok) + 1);
   return since.filter((call) => !OWN.has(call.tool) && call.tool !== SKILL_TOOL && classOf(call) === "served").map((call) => call.ref);
 }
 
@@ -646,6 +647,17 @@ export function servedRefsSince(calls: readonly CallPayload[]): string[] {
 function expandTool(ctx: PluginContext): RegisteredTool[] {
   const specs = ctx.options.spec.tools.filter((tool) => tool.id === "expand");
   return specs.length === 0 ? [] : toolsFrom(specs, { expand: expandFrom(state(ctx), ctx.options.run_id) });
+}
+
+// A record names the results it was read from (ref, refs), and each must be among the
+// calls it rests on (call_refs). One naming none, or any outside them, is unattested: what
+// it says may be the model's rather than the result's, so it cannot clear a branch or
+// carry a verdict alone. The refs it named stay on it as cited_refs, for a reader to open.
+function cited(given: Record<string, unknown>, call_refs: readonly string[]): Record<string, unknown> {
+  const { ref, refs, ...rest } = given;
+  const named = [...new Set([...(typeof ref === "string" ? [ref] : []), ...strings(refs)])];
+  const record = named.length === 0 ? rest : { ...rest, cited_refs: named };
+  return named.length === 0 || named.some((one) => !call_refs.includes(one)) ? unattested(record) : record;
 }
 
 // Experimental guards (core/guards.ts). A record names the result it came
@@ -662,7 +674,13 @@ function withRef(item: Record<string, unknown>): Record<string, unknown> {
       ...properties,
       ref: {
         type: "string",
-        description: "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested.",
+        description:
+          "The ref of the result this finding's values were read from, such as r4: one returned since your last record_evidence. Without one, or with an older one, nothing in the record counts as sensor-attested.",
+      },
+      refs: {
+        type: "array",
+        items: { type: "string" },
+        description: "Every result this finding's values were read from, when there was more than one, each returned since your last record_evidence.",
       },
     },
   };
@@ -677,7 +695,7 @@ const unattested = (record: Record<string, unknown>): Record<string, unknown> =>
   };
 };
 
-async function fromRefs(ctx: PluginContext, given: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+async function fromRefs(ctx: PluginContext, given: readonly Record<string, unknown>[], call_refs: readonly string[]): Promise<Record<string, unknown>[]> {
   if (!given.some((one) => typeof one["ref"] === "string")) return given.map(unattested);
   // By the ref the decider was shown (ref="r7"), which is the one it cites, and by
   // the ledger's own as a fallback.
@@ -691,7 +709,8 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
   return given.map((one) => {
     const { ref, ...rest } = one;
     const call = typeof ref === "string" ? calls.get(ref) : undefined;
-    if (call === undefined) return unattested(rest);
+    // Only among the calls the record rests on, as without guards.
+    if (call === undefined || !call_refs.includes(call.ref)) return unattested(rest);
     const read = readOf(call.read);
     // Sensor-attested only when the reader said observed AND the value has a shape no
     // free text has (core/guards.ts typeSafe): code, not a model, decides what can

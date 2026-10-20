@@ -271,6 +271,7 @@ export function evidenceFrom(answer: WorkerAnswer): WorkerEvidence[] {
         ? { attacker_influenceable: record["attacker_influenceable"] }
         : {}),
       ...(restsOn(record["rests_on"]).length > 0 ? { rests_on: restsOn(record["rests_on"]) } : {}),
+      ...(Array.isArray(record["cited_refs"]) ? { cited_refs: record["cited_refs"].filter((one): one is string => typeof one === "string") } : {}),
       ...(typeof record["attack_technique"] === "string" && record["attack_technique"] !== ""
         ? { attack_technique: record["attack_technique"] }
         : {}),

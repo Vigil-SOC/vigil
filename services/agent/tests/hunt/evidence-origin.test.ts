@@ -5,7 +5,7 @@ import type { CallPayload } from "../../contracts/events.js";
 import type { ToolSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
-import { servedSince } from "../../plugins/hunt/hooks.js";
+import { servedRefsSince, servedSince } from "../../plugins/hunt/hooks.js";
 import type { HuntEvent, HuntKinds } from "../../plugins/hunt/ledger.js";
 import { huntProjection } from "../../plugins/hunt/projection.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
@@ -38,6 +38,16 @@ describe("the integration a record's rows came from", () => {
   it("counts no call that failed, and nothing before the hunt has queried", () => {
     expect(servedSince([call("virustotal_get_ip_report", false), call("splunk-selfhosted_splunk_execute")], TOOLS)).toBe("splunk-selfhosted");
     expect(servedSince([], TOOLS)).toBeNull();
+  });
+});
+
+describe("the calls a record rests on", () => {
+  // Calls are journaled as they run: a search made earlier in the turn of the last record
+  // came before it, and a record written now was not read from it.
+  it("are those served after the hunt's last record, not those earlier in its turn", () => {
+    const turn = (one: CallPayload, n: number): CallPayload => ({ ...one, turn: n });
+    const calls = [turn(call("splunk-selfhosted_splunk_execute"), 1), turn(call("record_evidence"), 1), turn(call("splunk-selfhosted_splunk_execute"), 2)];
+    expect(servedRefsSince(calls)).toEqual([calls[2]!.ref]);
   });
 });
 

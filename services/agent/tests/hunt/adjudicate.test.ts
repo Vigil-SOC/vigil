@@ -20,6 +20,7 @@ import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
 import { BASE_RATE_PROVENANCE, briefHypothesis, startHunt } from "../../plugins/hunt/opening.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
 import { huntSpecFor } from "../support/hunt.js";
+import { estateRef } from "../support/kernel-hunt.js";
 
 // The hunt with a different caller: handed intake's finding and chosen workflow, the agent
 // proposes a workflow, never starts one. handoff_ir is never offered; conclude_hunt needs proposed_workflow.
@@ -92,7 +93,8 @@ const estate: ToolDispatch = {
   },
 };
 
-const finding = (source: string, hypothesis: string) => ({
+const finding = (source: string, hypothesis: string, ref?: string) => ({
+  ...(ref === undefined ? {} : { ref }),
   source_system: source,
   summary: `10.128.0.5 -> 198.51.100.7: 412 connections, 300s +/- 4s (${source})`,
   salience: "anomalous",
@@ -126,7 +128,7 @@ describe("a scripted adjudication runs end to end on the kernel", () => {
     const spec = adjudicateSpec();
     const provider = modelOf([
       () => ({ tool: "splunk_search", args: { sql: "select * from flows where src = '10.128.0.5'" } }),
-      (request) => ({ tool: "record_evidence", args: { results: [finding("network", intentIn(request)), finding("endpoint", intentIn(request))] } }),
+      (request) => ({ tool: "record_evidence", args: { results: [finding("network", intentIn(request), estateRef(request)), finding("endpoint", intentIn(request), estateRef(request))] } }),
       (request) => ({ tool: "validate_hypothesis", args: { hypothesis_id: intentIn(request) } }),
       () => ({ tool: "conclude_hunt", args: { reason: "I agree with intake: containment comes before any further hunting", proposed_workflow: "incident-response" } }),
     ]);

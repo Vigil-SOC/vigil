@@ -10,7 +10,7 @@ import { huntProjection } from "../../plugins/hunt/projection.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
 import { huntKernelReplay, huntView } from "../../plugins/hunt/view.js";
 
-import { RUN, specOf, hypothesisIn, modelOf, estate, harnessOf, finding, shown, type Step } from "../support/kernel-hunt.js";
+import { estateRef, RUN, specOf, hypothesisIn, modelOf, estate, harnessOf, finding, shown, type Step } from "../support/kernel-hunt.js";
 
 describe("a hunt run by one agent", () => {
   it("queries, records, wins a verdict, escalates and concludes on the hunt's own record", async () => {
@@ -20,7 +20,7 @@ describe("a hunt run by one agent", () => {
       () => ({ tool: "load_skill", args: { name: "hunt-method" } }),
       () => ({ tool: "splunk_search", args: { sql: "select * from flows where src = '10.0.0.5'" } }),
       () => ({ tool: "search_findings", args: { query: "45.77.53.176" } }),
-      (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request)), finding("endpoint", hypothesisIn(request))] } }),
+      (request) => ({ tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request), estateRef(request)), finding("endpoint", hypothesisIn(request), estateRef(request))] } }),
       (request) => ({ tool: "validate_hypothesis", args: { hypothesis_id: hypothesisIn(request) } }),
       (request) => ({ tool: "handoff_ir", args: { hypothesis_id: hypothesisIn(request), rationale: "isolate 10.0.0.5 first" } }),
       () => ({ tool: "conclude_hunt", args: { reason: "the beacon is proven and handed off" } }),
