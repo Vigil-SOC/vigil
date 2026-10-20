@@ -105,13 +105,14 @@ describe('workflow reader pane', () => {
     expect(within(panel('What it may do on its own')).getAllByText('Not connected')).toHaveLength(2)
     expect(within(panel('Stops when')).getByText('An explanation is proven')).toBeInTheDocument()
     expect(within(panel('Stops when')).getByText('The budget ($15) or step limit (12) is reached')).toBeInTheDocument()
-    expect(within(panel('Stops when')).getByText('Per-stage stops · Not measured yet')).toBeInTheDocument()
+    expect(panel('Stops when')).not.toHaveTextContent('Per-stage')
     expect(within(panel('Stops when')).getByText('Review the verdict before closing')).toBeInTheDocument()
 
     // Weigh and review: only the reviewer, no tools, no checkpoint
     fireEvent.click(within(strip).getByRole('button', { name: /Weigh and review/ }))
     expect(within(panel('Who does it')).getByText('Critic')).toBeInTheDocument()
     expect(within(panel('Who does it')).queryByText('Hunt lead')).toBeNull()
+    expect(within(panel('Who does it')).queryByText('Skills')).toBeNull()
     expect(within(panel('What it may do on its own')).queryByText('findings_search')).toBeNull()
     expect(within(panel('Stops when')).getByText('No checkpoint at this stage.')).toBeInTheDocument()
 
@@ -119,6 +120,9 @@ describe('workflow reader pane', () => {
     fireEvent.click(within(strip).getByRole('button', { name: /Gather evidence/ }))
     expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
     expect(within(panel('Who does it')).queryByText('Critic')).toBeNull()
+    // the lead holds the plugin's skills at every stage it works, though its tools never list a skill tool
+    expect(within(panel('Who does it')).getByText('Skills')).toBeInTheDocument()
+    for (const s of hunt.preflight.skills) expect(within(panel('Who does it')).getByText(s)).toBeInTheDocument()
     expect(within(panel('What it may do on its own')).getByText('findings_search')).toBeInTheDocument()
     expect(within(panel('What it may do on its own')).queryByText('Start incident response on a proven explanation')).toBeNull()
     expect(within(panel('Stops when')).getByText('Ask before widening scope')).toBeInTheDocument()
@@ -151,6 +155,9 @@ describe('workflow reader pane', () => {
     serve({ definition: { ...hunt.definition, run_kind: 'adjudicate' }, preflight: { ...hunt.preflight, permissions: [] , permissions_note: 'It holds no tools.' } })
     const { unmount } = renderPane(<WorkflowReaderPane wf={row({ id: 'shadow-adjudication', runKind: 'adjudicate', huntLike: true })} {...actions} />)
     expect(await screen.findByText('Records a verdict and the workflow it would have run. It starts nothing.')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('region', { name: 'How it runs' })).getByRole('button', { name: /Gather evidence/ }))
+    expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
+    for (const s of hunt.preflight.skills) expect(within(panel('Who does it')).getByText(s)).toBeInTheDocument()
     unmount()
 
     serve({

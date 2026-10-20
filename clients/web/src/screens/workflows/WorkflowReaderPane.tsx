@@ -275,7 +275,7 @@ function ModelLine({ pre }: { pre: Partial<Preflight> }) {
 
 const SKILLS_SHOWN = 12
 
-function WhoDoesIt({ entries, pre, stage, missing }: { entries: Entry[]; pre: Partial<Preflight>; stage: StageDef | null; missing: string }) {
+function WhoDoesIt({ entries, pre, stage, huntLike, missing }: { entries: Entry[]; pre: Partial<Preflight>; stage: StageDef | null; huntLike: boolean; missing: string }) {
   const agentMeta = useAgentMeta()
   const shown = covered(entries, stage?.roles ?? null)
   const skills = pre.skills ?? []
@@ -304,8 +304,8 @@ function WhoDoesIt({ entries, pre, stage, missing }: { entries: Entry[]; pre: Pa
         )
       })}
       {shown.length > 0 && <ModelLine pre={pre} />}
-      {/* the library is the workflow's, so a stage shows it only where a card can read it */}
-      {shown.length > 0 && pre.roles && (!stage || shown.some((e) => e.tools.includes('read_skill'))) && (
+      {/* a stage shows the library only where a role holds the skill tool; a hunt's lead holds it through its plugin loader, which the payload's tools never list */}
+      {shown.length > 0 && pre.roles && (!stage || shown.some((e) => e.tools.includes('read_skill') || (huntLike && e.kind === 'lead'))) && (
         <>
           <SubLabel>Skills</SubLabel>
           {skills.length > 0 ? (
@@ -381,7 +381,6 @@ function StopsAndCheckpoints({ definition, single, pre, stage, selected, missing
           <span className="text-accent inline-flex pt-0.5"><Icon name="info" size={10} /></span>{line}
         </span>
       ))}
-      <Muted>Per-stage stops · Not measured yet</Muted>
       <SubLabel>Checkpoints</SubLabel>
       {!pre.checkpoints && <Muted>{missing}</Muted>}
       {classes.map((c) => (
@@ -559,7 +558,7 @@ export default function WorkflowReaderPane(props: ReaderProps) {
     </div>
   ) : (
     <div className="grid grid-cols-3 gap-3 items-start">
-      <WhoDoesIt entries={entries} pre={pre} stage={stage} missing={missing} />
+      <WhoDoesIt entries={entries} pre={pre} stage={stage} huntLike={huntLike} missing={missing} />
       <MayDo entries={entries} pre={pre} stage={stage} missing={missing} />
       <StopsAndCheckpoints definition={definition} single={false} pre={pre} stage={stage} selected={selected} missing={missing} />
     </div>
