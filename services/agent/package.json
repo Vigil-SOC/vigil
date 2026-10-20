@@ -27,7 +27,8 @@
     "openai": "^4.104.0",
     "p-limit": "^6.2.0",
     "pg": "^8.13.1",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "zod4": "npm:zod@4.6.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
