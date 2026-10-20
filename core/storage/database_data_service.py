@@ -167,7 +167,7 @@ class DatabaseDataService:
         data_source: Optional[str] = None,
         cluster_id: Optional[str] = None,
         min_anomaly_score: Optional[float] = None,
-        status: Optional[str] = None,
+        state: Optional[str] = None,
         search_query: Optional[str] = None,
         sort_by: str = "timestamp",
         sort_order: str = "desc",
@@ -185,7 +185,7 @@ class DatabaseDataService:
                     data_source=data_source,
                     cluster_id=cluster_id,
                     min_anomaly_score=min_anomaly_score,
-                    status=status,
+                    state=state,
                     search_query=search_query,
                     limit=limit,
                     offset=offset,
@@ -223,7 +223,7 @@ class DatabaseDataService:
         data_source: Optional[str] = None,
         cluster_id: Optional[str] = None,
         min_anomaly_score: Optional[float] = None,
-        status: Optional[str] = None,
+        state: Optional[str] = None,
         search_query: Optional[str] = None,
         exclusions: str = "include",
     ) -> int:
@@ -236,7 +236,7 @@ class DatabaseDataService:
                     data_source=data_source,
                     cluster_id=cluster_id,
                     min_anomaly_score=min_anomaly_score,
-                    status=status,
+                    state=state,
                     search_query=search_query,
                     exclusions=exclusions,
                 )
@@ -251,12 +251,12 @@ class DatabaseDataService:
         data_source: Optional[str] = None,
         cluster_id: Optional[str] = None,
         min_anomaly_score: Optional[float] = None,
-        status: Optional[str] = None,
+        state: Optional[str] = None,
         search_query: Optional[str] = None,
         exclusions: str = "include",
         top_ips: int = 0,
     ) -> Dict[str, Any]:
-        """``{total, by_severity, by_data_source, by_status}`` over every match,
+        """``{total, by_severity, by_data_source, by_state}`` over every match,
         plus the ``top_ips`` busiest source and destination addresses if asked.
 
         Aggregated in SQL against the database, so it is not capped by the
@@ -268,7 +268,8 @@ class DatabaseDataService:
                 "total": len(findings),
                 "by_severity": _tally(findings, "severity"),
                 "by_data_source": _tally(findings, "data_source"),
-                "by_status": _tally(findings, "status"),
+                # the demo rows carry no dismissal or case, so every one is open
+                "by_state": {"open": len(findings)} if findings else {},
             }
             if top_ips:
                 summary.update(_tally_ips(findings, top_ips))
@@ -279,7 +280,7 @@ class DatabaseDataService:
                 data_source=data_source,
                 cluster_id=cluster_id,
                 min_anomaly_score=min_anomaly_score,
-                status=status,
+                state=state,
                 search_query=search_query,
                 exclusions=exclusions,
                 top_ips=top_ips,
@@ -287,7 +288,7 @@ class DatabaseDataService:
             if summary is not None:
                 return summary
         empty: Dict[str, Any] = {"total": 0, "by_severity": {}, "by_data_source": {}}
-        empty["by_status"] = {}
+        empty["by_state"] = {}
         if top_ips:
             empty.update({facet: {} for facet in IP_FACET_KEYS})
         return empty

@@ -487,6 +487,12 @@
       color: var(--ok);
    }
 
+   /* a dismissed finding: the board's Dropped is the neutral pill */
+   .status.dropped {
+      background: var(--bg-3);
+      color: var(--tx-2);
+   }
+
    .prio {
       font-size: 12px;
       font-weight: 600;

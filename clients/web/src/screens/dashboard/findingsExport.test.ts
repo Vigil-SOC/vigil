@@ -14,7 +14,8 @@ const finding: Finding = {
   time: 'Jun 14, 17:30',
   ts: Date.parse('2026-06-14T17:30:00Z'),
   score: 0.91,
-  status: 'open',
+  status: 'working',
+  caseId: '0042',
   extra: { device_id: 'device-7', analyst_note: '=WEBSERVICE("https://example.invalid")' },
 }
 
@@ -27,6 +28,7 @@ describe('buildFindingsCsv', () => {
     expect(csv).toContain('"analyst ""one"""')
     expect(csv).toContain('2026-06-14T17:30:00.000Z')
     expect(csv).toContain("'=WEBSERVICE")
+    expect(csv).toContain(',0.91,Case 0042,')
     expect(csv.endsWith('\n')).toBe(true)
   })
 })

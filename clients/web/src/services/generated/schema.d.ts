@@ -3565,8 +3565,8 @@ export interface paths {
          * Get Findings Summary
          * @description Get summary statistics for findings.
          *
-         *     Counted and grouped in SQL with the same exclusion filter as the list
-         *     endpoint, so ``total`` matches ``GET /findings`` with no row cap (#1438).
+         *     Counted and grouped in SQL with the same exclusion and state filters as the
+         *     list endpoint, so ``total`` matches ``GET /findings`` with no row cap (#1438).
          *
          *     Returns:
          *         Summary statistics
@@ -6336,8 +6336,8 @@ export interface paths {
          * Get Findings Summary
          * @description Get summary statistics for findings.
          *
-         *     Counted and grouped in SQL with the same exclusion filter as the list
-         *     endpoint, so ``total`` matches ``GET /findings`` with no row cap (#1438).
+         *     Counted and grouped in SQL with the same exclusion and state filters as the
+         *     list endpoint, so ``total`` matches ``GET /findings`` with no row cap (#1438).
          *
          *     Returns:
          *         Summary statistics
@@ -9005,6 +9005,8 @@ export interface components {
             ai_enrichment?: unknown | null;
             /** Anomaly Score */
             anomaly_score?: number | null;
+            /** Case Id */
+            case_id?: string | null;
             /** Cluster Id */
             cluster_id?: string | null;
             /** Created At */
@@ -9028,6 +9030,10 @@ export interface components {
             severity?: string | null;
             /** Status */
             status?: string | null;
+            /** Terminal Label */
+            terminal_label?: string | null;
+            /** Terminal State */
+            terminal_state?: string | null;
             /** Timestamp */
             timestamp?: string | null;
             /** Title */
@@ -9060,8 +9066,6 @@ export interface components {
             }[] | null;
             /** Severity */
             severity?: string | null;
-            /** Status */
-            status?: string | null;
         };
         /** FindingUpdateResponse */
         FindingUpdateResponse: {
@@ -9082,6 +9086,10 @@ export interface components {
             };
             /** By Severity */
             by_severity?: {
+                [key: string]: number;
+            };
+            /** By State */
+            by_state?: {
                 [key: string]: number;
             };
             /** Total */
@@ -9817,8 +9825,6 @@ export interface components {
             noise_marked_by_kind?: string | null;
             /** Noise Reason */
             noise_reason?: string | null;
-            /** Status */
-            status: string;
         };
         /**
          * OrchestratorConfigResponse
@@ -17531,7 +17537,8 @@ export interface operations {
                 data_source?: string | null;
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
-                status?: string | null;
+                /** @description The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all. */
+                state?: ("open" | "dismissed" | "resolved") | null;
                 /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
@@ -17638,6 +17645,8 @@ export interface operations {
             query?: {
                 /** @description Count findings naming an analyst-excluded IP (include, the default), leave them out (hide), or count only them (only). */
                 exclusions?: "include" | "hide" | "only";
+                /** @description The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all. */
+                state?: ("open" | "dismissed" | "resolved") | null;
             };
             header?: {
                 authorization?: string | null;
@@ -22246,7 +22255,8 @@ export interface operations {
                 data_source?: string | null;
                 cluster_id?: number | null;
                 min_anomaly_score?: number | null;
-                status?: string | null;
+                /** @description The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all. */
+                state?: ("open" | "dismissed" | "resolved") | null;
                 /** @description Text search across finding IDs, descriptions, entity context; whitespace/comma-separated terms must all match */
                 search?: string | null;
                 offset?: number;
@@ -22289,6 +22299,8 @@ export interface operations {
             query?: {
                 /** @description Count findings naming an analyst-excluded IP (include, the default), leave them out (hide), or count only them (only). */
                 exclusions?: "include" | "hide" | "only";
+                /** @description The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all. */
+                state?: ("open" | "dismissed" | "resolved") | null;
             };
             header?: {
                 authorization?: string | null;

@@ -70,7 +70,7 @@ def test_mark_then_clear_hides_and_restores_the_feed_row(client):
     marked = client.post("/api/findings/ov-act-noise/noise")
     assert marked.status_code == 200
     assert marked.json()["noise_marked_by"] == "user-ov"
-    assert marked.json()["status"] == "new"
+    assert "status" not in marked.json()
     assert marked.json()["noise_marked_at"]
     assert "ov-act-noise" not in _ids(AT)
 
@@ -78,7 +78,7 @@ def test_mark_then_clear_hides_and_restores_the_feed_row(client):
     assert cleared.status_code == 200
     assert cleared.json()["noise_marked_at"] is None
     assert cleared.json()["noise_marked_by"] is None
-    assert cleared.json()["status"] == "new"
+    assert "status" not in cleared.json()
     assert "ov-act-noise" in _ids(AT)
 
 

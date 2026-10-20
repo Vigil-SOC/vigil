@@ -9,6 +9,7 @@ import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import { EmptyState, Popup } from '../../shared/ui'
+import { stateWord } from '../../shared/findingState'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
@@ -21,7 +22,8 @@ import api, {
   type OverviewPayload,
 } from '../../services/api'
 
-const NOISE_INFO = 'The mark is stored and does not change scoring.'
+const NOISE_INFO =
+  'The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it.'
 
 const POLL_MS = 10_000
 
@@ -86,6 +88,8 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const [read, setRead] = useState<AlertRead | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [marked, setMarked] = useState(false)
+  // the alert as read back after a mark or undo, until the popup closes
+  const [fresh, setFresh] = useState<OverviewFeedItem | null>(null)
   const [launchNote, setLaunchNote] = useState<string | null>(null)
   const [ticketNote, setTicketNote] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -95,6 +99,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const shown = useRef<OverviewFeedItem | null>(null)
   if (!alertId) shown.current = null
   const open =
+    (fresh?.finding_id === alertId ? fresh : null) ??
     (alertId ? data?.feed.find((row) => row.finding_id === alertId) : null) ??
     (read?.id === alertId ? read?.item : null) ??
     (shown.current?.finding_id === alertId ? shown.current : null) ??
@@ -164,6 +169,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   useEffect(() => {
     if (!alertId) {
       setRead(null)
+      setFresh(null)
       return
     }
     if (hasOpen || !feedSettled) return
@@ -229,6 +235,13 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
       else await findingsApi.markNoise(findingId)
       if (stillOpen(findingId)) setMarked(!wasMarked)
       load()
+      // the Status row reads the state after the mark, whether or not the feed still holds it
+      overviewApi
+        .alert(findingId)
+        .then((res) => {
+          if (stillOpen(findingId)) setFresh(res.data)
+        })
+        .catch(() => {})
     } catch (error) {
       if (stillOpen(findingId)) {
         setActionError(errorText(error, wasMarked ? 'Couldn’t clear the noise mark' : 'Couldn’t mark this finding'))
@@ -332,8 +345,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
           <>
             <dl className="ov-facts">
               <div><dt>Source</dt><dd>{sourceLabel}</dd></div>
-              <div><dt>Status</dt><dd>{open.status}</dd></div>
-              <div><dt>Triage</dt><dd>{open.terminal_label}</dd></div>
+              <div><dt>Status</dt><dd>{stateWord(marked ? 'dismissed' : open.terminal_state, open.case_id)}</dd></div>
               <div>
                 <dt>Case</dt>
                 <dd>
@@ -351,7 +363,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
             <EvidenceBody item={open} />
             <div className="flex items-center gap-2 flex-wrap">
               <button type="button" className="btn ghost" onClick={markNoise}>
-                {marked ? 'Clear noise' : 'Mark as noise'}
+                {marked ? 'Undo' : 'Mark as noise (teaches triage)'}
               </button>
               <button type="button" className="btn ghost icon" aria-label={NOISE_INFO} title={NOISE_INFO}>
                 <Icon name="info" size={14} />

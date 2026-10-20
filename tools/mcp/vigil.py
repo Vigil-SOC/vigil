@@ -2,7 +2,7 @@ import json
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Iterator, Optional
+from typing import TYPE_CHECKING, Iterator, Literal, Optional
 
 from mcp.server.mcpserver import MCPServer
 
@@ -119,7 +119,7 @@ def get_data_service():
 def list_findings(
     severity: Optional[str] = None,
     data_source: Optional[str] = None,
-    status: Optional[str] = None,
+    state: Optional[Literal["open", "dismissed", "resolved"]] = None,
     cluster_id: Optional[str] = None,
     min_anomaly_score: Optional[float] = None,
     sort_by: str = "timestamp",
@@ -127,12 +127,13 @@ def list_findings(
     offset: int = 0,
     limit: int = 20,
 ) -> str:
-    """List findings, paged and filtered in SQL."""
+    """List findings, paged and filtered in SQL. ``state`` is the derived state:
+    open (not dismissed, in no closed case), dismissed, or resolved; absent is all."""
     return _call(
         tool_registry.list_findings,
         severity=severity,
         data_source=data_source,
-        status=status,
+        state=state,
         cluster_id=cluster_id,
         min_anomaly_score=min_anomaly_score,
         sort_by=sort_by,

@@ -1285,7 +1285,6 @@ export interface OverviewFeedItem {
   finding_id: string
   severity: string | null
   data_source: string
-  status: string
   terminal_state: string
   terminal_label: string
   title: string | null

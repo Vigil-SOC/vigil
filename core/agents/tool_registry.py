@@ -40,7 +40,7 @@ Args = Dict[str, Any]
 # A page of findings is what a hunt groups alerts by, so each carries the hosts,
 # users and indicators it names (#2277), bounded; the raw record stays behind
 # get_finding, which a hunt opens only for the alerts worth reading in full.
-def _compact(finding: Args) -> Args:
+def _compact(finding: Args, state: Optional[str] = None) -> Args:
     return {
         "finding_id": finding.get("finding_id"),
         "severity": finding.get("severity"),
@@ -48,7 +48,7 @@ def _compact(finding: Args) -> Args:
         "data_source": finding.get("data_source"),
         "cluster_id": finding.get("cluster_id"),
         "timestamp": finding.get("timestamp"),
-        "status": finding.get("status"),
+        "state": state,
         "summary": (finding.get("description") or "")[:200],
         "entities": finding_entity_summary(finding.get("entity_context")),
     }
@@ -62,8 +62,29 @@ TOP_IPS = 10
 # so one page query serves both rather than two that drift apart. The counts
 # cover every match, not the page, and come before it so a capped result keeps
 # them (#2312).
+def _compact_page(data: Any, findings: list) -> list:
+    from core.findings.alert_outcomes import stored_finding_states
+
+    states = stored_finding_states(data, [f.get("finding_id") for f in findings])
+    return [
+        _compact(f, states.get(f.get("finding_id"), (None, None))[0]) for f in findings
+    ]
+
+
+# The derived states a findings read filters by (core.storage.service.FINDING_STATES).
+FINDING_STATES = ("open", "dismissed", "resolved")
+
+
+def _bad_state(state: Optional[str]) -> Optional[Args]:
+    if state is None or state in FINDING_STATES:
+        return None
+    return {"error": f"state must be one of {', '.join(FINDING_STATES)}"}
+
+
 def _page(data: Any, args: Args, *, search: bool) -> Args:
-    filters = {key: args.get(key) for key in ("severity", "data_source", "status")}
+    filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
+    if (bad := _bad_state(filters["state"])) is not None:
+        return bad
     if search:
         filters["search_query"] = args.get("query", "")
     limit = args.get("limit", 20)
@@ -83,7 +104,7 @@ def _page(data: Any, args: Args, *, search: bool) -> Args:
         "offset": offset,
         "limit": limit,
         "has_more": (offset + limit) < total,
-        "findings": [_compact(f) for f in findings],
+        "findings": _compact_page(data, findings),
     }
     return {"query": filters["search_query"], **page} if search else page
 
@@ -109,7 +130,7 @@ def list_findings(
     *,
     severity: Optional[str] = None,
     data_source: Optional[str] = None,
-    status: Optional[str] = None,
+    state: Optional[str] = None,
     cluster_id: Optional[str] = None,
     min_anomaly_score: Optional[float] = None,
     sort_by: str = "timestamp",
@@ -117,10 +138,12 @@ def list_findings(
     offset: int = 0,
     limit: int = 20,
 ) -> Args:
+    if (bad := _bad_state(state)) is not None:
+        return bad
     filters = {
         "severity": severity,
         "data_source": data_source,
-        "status": status,
+        "state": state,
         "cluster_id": cluster_id,
         "min_anomaly_score": min_anomaly_score,
     }
@@ -138,7 +161,7 @@ def list_findings(
         "offset": offset,
         "limit": limit,
         "has_more": (offset + limit) < total,
-        "findings": [_compact(f) for f in findings],
+        "findings": _compact_page(data, findings),
     }
 
 

@@ -55,7 +55,6 @@ class NoiseMarkResponse(BaseModel):
     noise_marked_by: Optional[str] = None
     noise_marked_by_kind: Optional[str] = None
     noise_reason: Optional[str] = None
-    status: str
 
 
 class IntakeLaunchResponse(BaseModel):
@@ -171,7 +170,6 @@ def mark_finding_noise(
         noise_marked_by=finding.noise_marked_by,
         noise_marked_by_kind=finding.noise_marked_by_kind,
         noise_reason=finding.noise_reason,
-        status=finding.status,
     )
 
 
@@ -188,10 +186,7 @@ def clear_finding_noise(
     finding.noise_marked_by = None
     finding.noise_marked_by_kind = None
     finding.noise_reason = None
-    return NoiseMarkResponse(
-        finding_id=finding.finding_id,
-        status=finding.status,
-    )
+    return NoiseMarkResponse(finding_id=finding.finding_id)
 
 
 @router.post("/{finding_id}/intake", response_model=IntakeLaunchResponse)

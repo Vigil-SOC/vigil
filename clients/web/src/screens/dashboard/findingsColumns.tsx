@@ -3,13 +3,18 @@ import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
 import { MISSING_FINDING_SCORE, type Finding } from '../../data/data'
 import { formatFindingScore } from '../../data/mappers'
+import { STATE_RANK, stateWord, type TerminalState } from '../../shared/findingState'
 
 const NDASH = '—'
 
 const SEV_RANK: Record<Finding['sev'], number> = {
   Critical: 4, High: 3, Medium: 2, Low: 1, Unrated: 0,
 }
-const STATUS_RANK: Record<Finding['status'], number> = { open: 0, investigating: 1, closed: 2 }
+// the .status pill tones
+const STATE_TONE: Record<TerminalState, string> = {
+  waiting: 'open', scoring: 'open', working: 'investigating', needs_you: 'investigating',
+  resolved_auto: 'closed', resolved_person: 'closed', dismissed: 'dropped',
+}
 
 /** comparable time key: epoch-ms `ts` when the source supplied a time */
 function timeKey(f: Finding): number {
@@ -84,9 +89,11 @@ export function baseFindingColumns(
     },
     {
       key: 'status', label: 'Status',
-      render: (f) => <span className={`status ${f.status}`}>{f.status}</span>,
-      // status reads best low->high (open first); the rest read best high->low
-      sortVal: (f) => STATUS_RANK[f.status], defaultDir: 'asc',
+      render: (f) => (
+        <span className={`status ${f.status ? STATE_TONE[f.status] : ''}`}>{stateWord(f.status, f.caseId)}</span>
+      ),
+      // status reads best in board order (New first); the rest read best high->low
+      sortVal: (f) => (f.status ? STATE_RANK[f.status] : Number.POSITIVE_INFINITY), defaultDir: 'asc',
     },
     {
       key: 'actions', label: 'Actions', headless: true,

@@ -180,7 +180,7 @@ SECURITY_DETECTION_TOOLS = [
 DEEPTEMPO_FINDING_TOOLS = [
     {
         "name": "list_findings",
-        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the raw source record. Supports filtering by severity, data_source, status, and pagination via offset/limit.",
+        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the raw source record. Supports filtering by severity, data_source, state, and pagination via offset/limit. Each summary carries the finding's terminal state (e.g. waiting, working, resolved_auto, dismissed).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -193,9 +193,10 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "type": "string",
                     "description": "Filter by data source (e.g., 'sysmon', 'cloudtrail')",
                 },
-                "status": {
+                "state": {
                     "type": "string",
-                    "description": "Filter by status (e.g., 'new', 'investigating', 'resolved')",
+                    "enum": ["open", "dismissed", "resolved"],
+                    "description": "Filter by the finding's derived state: open (not dismissed and in no closed case), dismissed, or resolved (in a closed case). Omit for all.",
                 },
                 "cluster_id": {
                     "type": "string",
@@ -232,7 +233,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "search_findings",
-        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_status, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the raw source record behind a specific result.',
+        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_state as open/dismissed/resolved, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the raw source record behind a specific result.',
         "input_schema": {
             "type": "object",
             "properties": {
@@ -249,7 +250,11 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "type": "string",
                     "description": "Filter by data source",
                 },
-                "status": {"type": "string", "description": "Filter by status"},
+                "state": {
+                    "type": "string",
+                    "enum": ["open", "dismissed", "resolved"],
+                    "description": "Filter by the finding's derived state: open (not dismissed and in no closed case), dismissed, or resolved (in a closed case). Omit for all.",
+                },
                 "sort_by": {
                     "type": "string",
                     "enum": ["timestamp", "anomaly_score", "severity"],
@@ -268,7 +273,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_findings_stats",
-        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source and status. Takes no filters: for counts over a subset, use search_findings. Use this to get an overview before drilling into specific findings.",
+        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source and state (open, dismissed, resolved). Takes no filters: for counts over a subset, use search_findings. Use this to get an overview before drilling into specific findings.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {

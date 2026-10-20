@@ -92,6 +92,19 @@ def _cases_for(session, finding_ids: Sequence[str]) -> dict[str, _LinkedCase]:
 
 def terminal_states_for(finding_ids: Sequence[str]) -> dict[str, str]:
     """The same partition ``terminal_states_today`` uses, for these findings."""
+    return {fid: state for fid, (state, _case) in finding_states(finding_ids).items()}
+
+
+def stored_finding_states(data, finding_ids: Sequence[str]) -> dict:
+    """``finding_states`` for findings ``data`` read, or {} when it reads no database (demo mode)."""
+    info = getattr(data, "get_backend_info", None)
+    if info is None or not info().get("database_available"):
+        return {}
+    return finding_states(finding_ids)
+
+
+def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[str]]]:
+    """``{finding_id: (terminal_state, case_id)}``; the case is the one the state reads."""
     ids = list(finding_ids)
     if not ids:
         return {}
@@ -112,11 +125,14 @@ def terminal_states_for(finding_ids: Sequence[str]) -> dict[str, str]:
             )
         }
     return {
-        finding_id: _state(
-            cases.get(finding_id),
-            pending,
-            dismissed=finding_id in dismissed,
-            scoring=finding_id in scoring,
+        finding_id: (
+            _state(
+                cases.get(finding_id),
+                pending,
+                dismissed=finding_id in dismissed,
+                scoring=finding_id in scoring,
+            ),
+            cases[finding_id].case_id if finding_id in cases else None,
         )
         for finding_id in ids
     }

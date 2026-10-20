@@ -11,6 +11,8 @@ vi.mock('../../services/api', () => ({
     update: vi.fn(),
     delete: vi.fn(),
     launchIntake: vi.fn(),
+    markNoise: vi.fn(),
+    clearNoise: vi.fn(),
   },
 }))
 
@@ -20,7 +22,8 @@ const baseFinding = {
   data_source: 'loglm',
   timestamp: '2026-07-21T12:00:00Z',
   anomaly_score: 0.92,
-  status: 'new',
+  terminal_state: 'waiting',
+  case_id: null,
   mitre_predictions: {},
   entity_context: {},
 }
@@ -42,7 +45,6 @@ describe('FindingPopup missing source fields', () => {
         severity: null,
         timestamp: null,
         anomaly_score: null,
-        status: 'new',
         mitre_predictions: {},
         entity_context: {},
       },
@@ -331,5 +333,31 @@ describe('FindingPopup send to triage', () => {
     vi.mocked(findingsApi.launchIntake).mockRejectedValueOnce(new Error('boom'))
     fireEvent.click(await screen.findByRole('button', { name: 'Send to triage' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t send this finding to triage')
+  })
+})
+
+describe('FindingPopup Status row', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('shows the board word and dismisses then undoes through the noise routes', async () => {
+    vi.mocked(findingsApi.getById)
+      .mockResolvedValueOnce({ data: { ...baseFinding, terminal_state: 'working', case_id: '0042' } } as never)
+      .mockResolvedValueOnce({ data: { ...baseFinding, terminal_state: 'dismissed', case_id: '0042' } } as never)
+      .mockResolvedValueOnce({ data: { ...baseFinding, terminal_state: 'working', case_id: '0042' } } as never)
+    vi.mocked(findingsApi.markNoise).mockResolvedValueOnce({ data: {} } as never)
+    vi.mocked(findingsApi.clearNoise).mockResolvedValueOnce({ data: {} } as never)
+    const onChanged = vi.fn()
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} onChanged={onChanged} />)
+
+    expect(await screen.findByText('Case 0042')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(await screen.findByText('Dropped')).toBeInTheDocument()
+    expect(findingsApi.markNoise).toHaveBeenCalledWith('f-source-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByText('Case 0042')).toBeInTheDocument()
+    expect(findingsApi.clearNoise).toHaveBeenCalledWith('f-source-1')
+    expect(findingsApi.update).not.toHaveBeenCalled()
+    expect(onChanged).toHaveBeenCalledTimes(2)
   })
 })

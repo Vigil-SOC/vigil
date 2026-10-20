@@ -591,9 +591,14 @@
         "title": "Sort Order",
         "type": "string"
       },
-      "status": {
+      "state": {
         "anyOf": [
           {
+            "enum": [
+              "open",
+              "dismissed",
+              "resolved"
+            ],
             "type": "string"
           },
           {
@@ -601,7 +606,7 @@
           }
         ],
         "default": null,
-        "title": "Status"
+        "title": "State"
       }
     },
     "title": "list_findingsArguments",

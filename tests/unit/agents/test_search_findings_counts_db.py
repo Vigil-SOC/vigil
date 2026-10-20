@@ -80,7 +80,8 @@ async def test_counts_cover_every_match_not_the_page():
     assert result["total"] == 23
     assert result["by_severity"] == {"medium": 12, "high": 8, "critical": 3}
     assert result["by_data_source"] == {"darktrace": 13, "zeek": 10}
-    assert sum(result["by_status"].values()) == 23
+    assert result["by_state"] == {"open": 23}
+    assert {f["state"] for f in result["findings"]} == {"waiting"}
     # Each finding counts once per address, whichever key or how often it names it.
     assert result["by_source_ip"] == {HOST: 23}
     assert result["by_destination_ip"] == {

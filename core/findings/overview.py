@@ -210,7 +210,6 @@ def _feed_items(load) -> list[dict]:
                     "severity": finding.severity,
                     "data_source": finding.data_source,
                     "external_id": finding.external_id,
-                    "status": finding.status,
                     "title": finding.title,
                     "description": finding.description,
                     "created_at": created,

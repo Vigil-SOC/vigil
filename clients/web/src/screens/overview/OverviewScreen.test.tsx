@@ -84,7 +84,6 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
       finding_id: 'f-1',
       severity: 'high',
       data_source: 'splunk',
-      status: 'new',
       terminal_state: 'waiting',
       terminal_label: 'Not in a case',
       title: null,
@@ -276,12 +275,20 @@ describe('OverviewScreen', () => {
     fireEvent.click(await screen.findByText('f-1'))
     expect(screen.queryByRole('link', { name: /^Open in/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'https://example.test/raw' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'The mark is stored and does not change scoring.' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as noise' }))
-    expect(await screen.findByRole('button', { name: 'Clear noise' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^The alert reads Dropped and leaves this feed/ })).toBeInTheDocument()
+    const facts = screen.getByRole('dialog').querySelector('.ov-facts')!
+    expect(facts).toHaveTextContent('StatusNew')
+    // the read after the mark answers the state the alert landed in
+    vi.mocked(overviewApi.alert)
+      .mockResolvedValueOnce({ data: { ...item, terminal_state: 'dismissed', terminal_label: 'Dropped', noise_marked: true } } as never)
+      .mockResolvedValueOnce({ data: item } as never)
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as noise (teaches triage)' }))
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeInTheDocument()
+    expect(facts).toHaveTextContent('StatusDropped')
     expect(findingsApi.markNoise).toHaveBeenCalledWith('f-1')
-    fireEvent.click(screen.getByRole('button', { name: 'Clear noise' }))
-    expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByRole('button', { name: 'Mark as noise (teaches triage)' })).toBeInTheDocument()
+    await waitFor(() => expect(facts).toHaveTextContent('StatusNew'))
     expect(findingsApi.clearNoise).toHaveBeenCalledWith('f-1')
     fireEvent.click(screen.getByRole('button', { name: 'Send to triage' }))
     expect(await screen.findByRole('link', { name: 'Waiting in the Triage queue' })).toHaveAttribute('href', '/triage')
@@ -348,7 +355,7 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     vi.mocked(overviewApi.alert).mockClear()
     renderScreen('/overview?alert=f-1&keep=1')
-    expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Mark as noise (teaches triage)' })).toBeInTheDocument()
     expect(within(screen.getByRole('dialog')).getByText('Odd login')).toBeInTheDocument()
     expect(overviewApi.alert).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
@@ -365,7 +372,7 @@ describe('OverviewScreen', () => {
     expect(screen.getByText('Loading alert…')).toBeInTheDocument()
     expect(await within(await screen.findByRole('dialog')).findByText('Old one')).toBeInTheDocument()
     expect(overviewApi.alert).toHaveBeenCalledWith('f-old')
-    expect(screen.getByRole('button', { name: 'Clear noise' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
   })
 
   it('says an unknown alert is not found, and a failed read can be retried', async () => {
@@ -526,7 +533,7 @@ describe('OverviewScreen', () => {
 
   it('popup: header, fact grid and "Open in <source> ↗" only with a source link', async () => {
     const feed = [
-      item('f-1', { severity: 'high', title: 'Odd login alert', description: 'Odd login', case_id: 'case-7', status: 'new' }),
+      item('f-1', { severity: 'high', title: 'Odd login alert', description: 'Odd login', case_id: 'case-7', terminal_state: 'working', terminal_label: 'Still working' }),
       item('f-2', { source_link: null, title: null, description: 'Quiet one' }),
     ]
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
@@ -538,8 +545,8 @@ describe('OverviewScreen', () => {
     expect(dialog.querySelector('.ov-pop-desc')).toHaveTextContent('Odd login')
     const facts = dialog.querySelector('.ov-facts')!
     expect(facts).toHaveTextContent('SourceSplunk')
-    expect(facts).toHaveTextContent('Statusnew')
-    expect(facts).toHaveTextContent('TriageNot in a case')
+    expect(facts).toHaveTextContent('StatusCase case-7')
+    expect(facts).not.toHaveTextContent('Triage')
     expect(within(dialog).getByRole('link', { name: 'Open in Splunk ↗' })).toBeInTheDocument()
     fireEvent.click(within(facts as HTMLElement).getByRole('button', { name: 'Case case-7' }))
     expect(openCase).toHaveBeenCalledWith('case-7')
