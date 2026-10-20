@@ -84,7 +84,6 @@ vi.mock('./useSettings', async () => {
       defaults: DEFAULTS,
       bounds,
       profiles,
-      status: null,
       phase: state.phase,
       reload: state.reload,
       save: state.save,
@@ -128,6 +127,11 @@ describe('Limits and autonomy', () => {
   it('renders profiles with their values from the server, and Custom when nothing matches', () => {
     state.config = { ...DEFAULTS, max_concurrent_agents: 9 }
     render(<AutoInvestigateSection notify={notify} />)
+
+    expect(screen.queryByText(/Orchestrator is/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Conservative/ })).toHaveTextContent('Least spend')
+    expect(screen.getByRole('button', { name: /Broad/ })).toHaveTextContent('Widest coverage')
+    expect(screen.getByRole('button', { name: /Balanced/ })).not.toHaveTextContent(/Least spend|Widest coverage|Most teams/)
 
     expect(screen.getByRole('button', { name: /Conservative/ })).toHaveTextContent(
       '2 agents at once · $1 per investigation · $5 per hour',

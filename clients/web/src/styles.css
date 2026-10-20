@@ -4677,6 +4677,13 @@
       color: var(--good);
    }
 
+   .lim-profile-sum {
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
    .lim-profile-vals {
       font-size: 12px;
       line-height: 1.5;

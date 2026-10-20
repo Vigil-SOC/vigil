@@ -60,7 +60,7 @@ export default function AiConfigSection({ notify }: SectionProps) {
 }
 
 function AdvancedPanel({ notify }: SectionProps) {
-  const { settings, setSettings, phase, save } = useAiOperations()
+  const { settings, setSettings, retryBounds, phase, save } = useAiOperations()
   const lastSaved = useRef<AIOperationsSettings>(AI_OPS_DEFAULTS)
 
   useEffect(() => {
@@ -118,11 +118,16 @@ function AdvancedPanel({ notify }: SectionProps) {
               <NumberInput
                 aria-label="Retry attempts"
                 value={settings.local_ollama_recovery_retry_limit}
-                min={0}
-                max={3}
-                onChange={(e) =>
-                  setSettings({ ...settings, local_ollama_recovery_retry_limit: Math.max(0, Math.min(3, Number(e.target.value) || 0)) })
-                }
+                min={retryBounds?.min}
+                max={retryBounds?.max}
+                step={retryBounds?.step}
+                onChange={(e) => {
+                  const n = Number(e.target.value) || 0
+                  setSettings({
+                    ...settings,
+                    local_ollama_recovery_retry_limit: retryBounds ? Math.max(retryBounds.min, Math.min(retryBounds.max, n)) : n,
+                  })
+                }}
                 onBlur={() => {
                   if (settings.local_ollama_recovery_retry_limit !== lastSaved.current.local_ollama_recovery_retry_limit) persist(settings)
                 }}

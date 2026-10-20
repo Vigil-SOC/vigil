@@ -242,8 +242,21 @@ class TestAIOperationsSettingsModel:
         assert body["local_ollama_recovery_enabled"] is False
         assert body["local_ollama_recovery_retry_limit"] == 3
         assert body["local_ollama_recovery_restart_gateway"] is True
-        assert set(body) == set(AI_OPERATIONS_DEFAULTS)
+        assert set(body) == set(AI_OPERATIONS_DEFAULTS) | {"bounds"}
         assert set(body).isdisjoint(_REMOVED)
+
+    def test_get_serves_retry_bounds_on_both_return_paths(self):
+        from services.api.routers.config import get_ai_operations_config
+
+        expected = {"local_ollama_recovery_retry_limit": {"min": 0, "max": 3, "step": 1}}
+        svc = MagicMock()
+        svc.get_system_config.return_value = None
+        with patch("services.api.routers.config.get_config_service", return_value=svc):
+            assert get_ai_operations_config()["bounds"] == expected
+        with patch(
+            "services.api.routers.config.get_config_service", side_effect=RuntimeError
+        ):
+            assert get_ai_operations_config()["bounds"] == expected
 
 
 class TestCacheBehavior:

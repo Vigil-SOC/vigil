@@ -1276,7 +1276,9 @@ class AIOperationsSettingsConfig(BaseModel):
     """
 
     local_ollama_recovery_enabled: bool = True
-    local_ollama_recovery_retry_limit: int = Field(default=1, ge=0, le=3)
+    local_ollama_recovery_retry_limit: int = Field(
+        default=1, ge=0, le=3, json_schema_extra={"step": 1}
+    )
     local_ollama_recovery_restart_gateway: bool = True
 
 
@@ -1299,10 +1301,17 @@ def get_ai_operations_config():
             for key in allowed
             if isinstance(value, dict) and key in value
         }
-        return {**AI_OPERATIONS_DEFAULTS, **stored}
+        return {
+            **AI_OPERATIONS_DEFAULTS,
+            **stored,
+            "bounds": _model_bounds(AIOperationsSettingsConfig),
+        }
     except Exception as e:
         logger.error(f"Error getting AI operations config: {e}")
-        return AI_OPERATIONS_DEFAULTS
+        return {
+            **AI_OPERATIONS_DEFAULTS,
+            "bounds": _model_bounds(AIOperationsSettingsConfig),
+        }
 
 
 @router.post("/ai-operations", dependencies=_SETTINGS_WRITE)
@@ -1378,14 +1387,18 @@ class OrchestratorFieldBounds(BaseModel):
     step: float
 
 
-def _orchestrator_bounds() -> Dict[str, Dict[str, float]]:
-    """Bounds read back from the model's JSON schema, so there is no second dict."""
-    props = OrchestratorSettingsConfig.model_json_schema()["properties"]
+def _model_bounds(model: type[BaseModel]) -> Dict[str, Dict[str, float]]:
+    """Bounds read back from a model's JSON schema, so there is no second dict."""
+    props = model.model_json_schema()["properties"]
     return {
         name: {"min": p["minimum"], "max": p["maximum"], "step": p["step"]}
         for name, p in props.items()
         if "minimum" in p
     }
+
+
+def _orchestrator_bounds() -> Dict[str, Dict[str, float]]:
+    return _model_bounds(OrchestratorSettingsConfig)
 
 
 class InvestigationProfileValues(BaseModel):

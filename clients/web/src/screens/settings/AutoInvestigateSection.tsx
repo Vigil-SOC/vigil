@@ -15,7 +15,6 @@ import {
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
-import { fmtCost } from '../../shared/cost'
 import IntentReportCard from './IntentReportCard'
 
 // Raising any of these needs a confirm; lowering applies at once. Settings also
@@ -66,6 +65,12 @@ const ACT_TIP =
 
 const money = (v: number) => `$${v}`
 
+// One-phrase summaries from the board; Balanced has none (its claim is not checkable).
+const PROFILE_SUMMARY: Partial<Record<string, string>> = {
+  conservative: 'Least spend',
+  aggressive: 'Widest coverage',
+}
+
 interface LimitRow {
   field: keyof OrchestratorConfig & keyof InvestigationProfileValues
   title: string
@@ -86,7 +91,7 @@ const FLEET_ROWS: LimitRow[] = [
 ]
 
 export default function AutoInvestigateSection({ notify }: SectionProps) {
-  const { config, setConfig, defaults, bounds, profiles, status, phase, reload, save } = useOrchestrator()
+  const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const approval = useForceManualApproval()
   const lastSaved = useRef<OrchestratorConfig | null>(null)
   const configRef = useRef<OrchestratorConfig | null>(null)
@@ -291,19 +296,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         title="Automatic investigation"
         desc="The fastest way to cap cost: turn it off, run it dry, or pick a smaller profile."
       >
-        {status && (
-          <div className={`settings-banner ${status.enabled ? 'ok' : 'info'} mb-3`}>
-            <Icon name="info" size={14} />
-            <span>
-              Orchestrator is <strong>{status.enabled ? 'ENABLED' : 'DISABLED'}</strong>
-              {status.active_agents !== undefined && ` · ${status.active_agents} active agent(s)`}
-              {status.total_investigations !== undefined &&
-                ` · ${status.total_investigations} investigation(s)`}
-              {status.cost?.total_cost_usd !== undefined &&
-                ` · Total cost: ${fmtCost(status.cost.total_cost_usd)}`}
-            </span>
-          </div>
-        )}
         <div className="lim-switch">
           <div className="toggle-row-text">
             <span className="toggle-row-label">Investigate new alerts automatically</span>
@@ -340,6 +332,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                   {profile.label}
                   {profile.recommended && <span className="lim-profile-flag">Recommended</span>}
                 </span>
+                {PROFILE_SUMMARY[key] && <span className="lim-profile-sum">{PROFILE_SUMMARY[key]}</span>}
                 <span className="lim-profile-vals">
                   {v.max_concurrent_agents} agents at once · {money(v.max_cost_per_investigation)} per investigation ·{' '}
                   {money(v.max_total_hourly_cost)} per hour

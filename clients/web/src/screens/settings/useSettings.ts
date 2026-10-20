@@ -414,20 +414,12 @@ export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   workdir_base: 'data/investigations',
 }
 
-export interface OrchestratorStatus {
-  enabled?: boolean
-  active_agents?: number
-  total_investigations?: number
-  cost?: { total_cost_usd?: number }
-}
-
 export function useOrchestrator() {
   // null until the server has answered: there is no client-side default to show
   const [config, setConfig] = useState<OrchestratorConfig | null>(null)
   const [defaults, setDefaults] = useState<OrchestratorConfig | null>(null)
   const [bounds, setBounds] = useState<OrchestratorBounds>({})
   const [profiles, setProfiles] = useState<InvestigationProfiles>({})
-  const [status, setStatus] = useState<OrchestratorStatus | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -435,11 +427,9 @@ export function useOrchestrator() {
   useEffect(() => {
     let cancelled = false
     setPhase('loading')
-    Promise.all([
-      configApi.getOrchestrator(),
-      orchestratorApi.getStatus().catch(() => ({ data: null })),
-    ])
-      .then(([cfgRes, statusRes]) => {
+    configApi
+      .getOrchestrator()
+      .then((cfgRes) => {
         if (cancelled) return
         const { profiles: nextProfiles, defaults: nextDefaults, bounds: nextBounds, ...rest } =
           cfgRes.data as OrchestratorConfig & {
@@ -451,7 +441,6 @@ export function useOrchestrator() {
         setDefaults(nextDefaults ?? null)
         setBounds(nextBounds ?? {})
         setConfig(rest)
-        setStatus((statusRes.data as OrchestratorStatus | null) ?? null)
         setPhase('ready')
       })
       .catch(() => {
@@ -462,21 +451,13 @@ export function useOrchestrator() {
     }
   }, [reloadKey])
 
-  const save = useCallback(async (next: OrchestratorConfig) => {
-    const res = await configApi.setOrchestrator(next)
-    // the banner reads status, not config; a failed re-read keeps the last one
-    orchestratorApi
-      .getStatus()
-      .then(({ data }) => setStatus((data as OrchestratorStatus | null) ?? null))
-      .catch(() => {})
-    return res
-  }, [])
+  const save = useCallback((next: OrchestratorConfig) => configApi.setOrchestrator(next), [])
   const purgeAll = useCallback(
     () => orchestratorApi.purgeAll().then((res) => (res.data?.deleted ?? 0) as number),
     [],
   )
 
-  return { config, setConfig, defaults, bounds, profiles, status, phase, reload, save, purgeAll }
+  return { config, setConfig, defaults, bounds, profiles, phase, reload, save, purgeAll }
 }
 
 export const AUTONOMY_CHANGED = 'vigil:autonomy-changed'
@@ -643,6 +624,8 @@ export const AI_OPS_DEFAULTS: AIOperationsSettings = {
 
 export function useAiOperations() {
   const [settings, setSettings] = useState<AIOperationsSettings>(AI_OPS_DEFAULTS)
+  // null until the server answers: the bound has no client-side default
+  const [retryBounds, setRetryBounds] = useState<OrchestratorBound | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -654,7 +637,11 @@ export function useAiOperations() {
       .getAIOperations()
       .then((res) => {
         if (cancelled) return
-        setSettings({ ...AI_OPS_DEFAULTS, ...(res.data as Partial<AIOperationsSettings>) })
+        const { bounds, ...rest } = res.data as Partial<AIOperationsSettings> & {
+          bounds?: Partial<Record<keyof AIOperationsSettings, OrchestratorBound>>
+        }
+        setSettings({ ...AI_OPS_DEFAULTS, ...rest })
+        setRetryBounds(bounds?.local_ollama_recovery_retry_limit ?? null)
         setPhase('ready')
       })
       .catch(() => {
@@ -667,7 +654,7 @@ export function useAiOperations() {
 
   const save = useCallback((next: AIOperationsSettings) => configApi.setAIOperations(next), [])
 
-  return { settings, setSettings, phase, reload, save }
+  return { settings, setSettings, retryBounds, phase, reload, save }
 }
 
 export function useModelAssignment() {

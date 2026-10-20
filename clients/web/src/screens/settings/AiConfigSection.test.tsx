@@ -37,10 +37,11 @@ function render(ui: ReactElement, path = '/settings?section=ai-config') {
 }
 
 const ON = { local_ollama_recovery_enabled: true, local_ollama_recovery_retry_limit: 1, local_ollama_recovery_restart_gateway: true }
+const BOUNDS = { local_ollama_recovery_retry_limit: { min: 0, max: 3, step: 1 } }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  getAIOperations.mockResolvedValue({ data: ON })
+  getAIOperations.mockResolvedValue({ data: { ...ON, bounds: BOUNDS } })
 })
 
 describe('AiConfigSection', () => {
@@ -69,8 +70,20 @@ describe('AiConfigSection', () => {
     expect(setAIOperations).not.toHaveBeenCalled()
     fireEvent.blur(n)
     await waitFor(() => expect(setAIOperations).toHaveBeenCalledWith({ ...ON, local_ollama_recovery_retry_limit: 3 }))
+    expect((setAIOperations.mock.calls[0] as unknown[])[0]).not.toHaveProperty('bounds')
     fireEvent.click(screen.getByRole('button', { name: /Reset to defaults/ }))
     await waitFor(() => expect(setAIOperations).toHaveBeenLastCalledWith(ON))
+  })
+
+  it('takes the retry bound from the server and clamps typed values to it', async () => {
+    getAIOperations.mockResolvedValue({
+      data: { ...ON, bounds: { local_ollama_recovery_retry_limit: { min: 0, max: 5, step: 1 } } },
+    })
+    render(<AiConfigSection notify={() => {}} />)
+    const n = await screen.findByLabelText('Retry attempts')
+    expect(n).toHaveAttribute('max', '5')
+    fireEvent.change(n, { target: { value: '9' } })
+    expect(n).toHaveValue(5)
   })
 
   it('has no tab strip, and the Model catalogue is the last card, collapsed', async () => {
