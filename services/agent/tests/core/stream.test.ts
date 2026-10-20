@@ -7,7 +7,7 @@ import { noPrices, type Prices } from "../../core/prices.js";
 import { registryOf } from "../../core/registry.js";
 import { InProcessState } from "../../core/state.js";
 import { GatewayExhausted } from "../../core/limiter.js";
-import { ModelSilent } from "../../core/wire.js";
+import { ModelSilent, OutputCapReached } from "../../core/wire.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import { nullMemory } from "../../core/memory.js";
 import { emptyRecall } from "../../contracts/memory.js";
@@ -593,6 +593,36 @@ describe("what the stream reports", () => {
     // The retry is smaller, which is the whole point of retrying at all.
     expect(sent[1]!).toBeLessThan(sent[0]!);
     expect(outcome.rejected.join(" ")).toMatch(/folded transcript/);
+  });
+
+  // A reasoning model that thinks through the whole output cap gets no more of it
+  // from a folded transcript, and an empty emission is not a JSON mistake.
+  it("fails the write-up on the output cap at once, saying so", async () => {
+    let calls = 0;
+    const provider = {
+      model: "scripted/model",
+      provider_type: "scripted",
+      stream: async function* () {
+        calls += 1;
+        if (calls === 1) {
+          yield { type: "usage" as const, tokens: ZERO_TOKENS };
+          return;
+        }
+        throw new OutputCapReached("the model spent all 12000 output tokens before answering -- raise AGENT_MAX_OUTPUT_TOKENS", {
+          ...ZERO_TOKENS,
+          output: 12_000,
+        });
+      },
+    };
+    const harness = { ...harnessOf([]), provider } as unknown as Harness;
+    const history = Array.from({ length: 30 }, (_, index) => ({ role: "user" as const, content: `turn ${index}` }));
+    const { outcome } = await watch(config({ history }), harness);
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.reason).toContain("AGENT_MAX_OUTPUT_TOKENS");
+    expect(outcome.reason).not.toContain("not valid JSON");
+    expect(outcome.rejected).toEqual([]);
+    expect(calls).toBe(2);
   });
 
   // An abort is not an answer, and a run handed back on a lost lease must not read

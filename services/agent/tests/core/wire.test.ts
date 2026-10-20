@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type OpenAI from "openai";
 import { Limiter } from "../../core/limiter.js";
-import { EMIT_TOOL, ModelSilent, openAiSurface, resetEmitMode, resetOutputCap, setSilentPauses } from "../../core/wire.js";
+import { EMIT_TOOL, ModelSilent, OutputCapReached, openAiSurface, resetEmitMode, resetOutputCap, setSilentPauses } from "../../core/wire.js";
 import { ZERO_TOKENS, type TokenCounts } from "../../contracts/budget.js";
 import type { Message, Provider, ToolCall, Turn, TurnRequest } from "../../core/provider.js";
 
@@ -30,6 +30,7 @@ function limiter(): Limiter {
 function completion(
   message: Record<string, unknown>,
   usage?: Record<string, unknown> | null,
+  finish?: string,
 ): AsyncIterable<Chunk> {
   const chunks: Chunk[] = [];
   const push = (delta: Record<string, unknown>) =>
@@ -55,6 +56,16 @@ function completion(
     for (const piece of halves(call.function.arguments ?? "")) {
       push({ tool_calls: [{ index, type: "function", function: { name: null, arguments: piece } }] });
     }
+  }
+
+  if (finish !== undefined) {
+    chunks.push({
+      id: "chunk-1",
+      created: 1,
+      model: "m",
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: {}, finish_reason: finish }],
+    } as unknown as Chunk);
   }
 
   if (usage !== null) {
@@ -645,5 +656,57 @@ describe("an empty reply", () => {
 
     await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
     expect(calls).toBe(1);
+  });
+});
+
+// A reasoning-first model can think through the whole output cap and say nothing.
+// That is the cap, named as such, not an empty answer the role blames on itself.
+describe("the output cap", () => {
+  const SPENT = { prompt_tokens: 100, completion_tokens: 12_000, total_tokens: 12_100 };
+
+  afterEach(() => {
+    delete process.env["AGENT_MAX_OUTPUT_TOKENS"];
+  });
+
+  it("fails a reply cut off at the cap with nothing said, naming the cap and billing the spend", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      return completion({ role: "assistant", content: "" }, SPENT, "length");
+    });
+
+    const failed = turn(surface, { messages: [{ role: "user", content: "go" }], tools: [], emit: SCHEMA });
+    await expect(failed).rejects.toBeInstanceOf(OutputCapReached);
+    await expect(failed).rejects.toMatchObject({
+      message: expect.stringMatching(/all 12000 output tokens.*openai\/gpt-4o.*AGENT_MAX_OUTPUT_TOKENS/),
+      tokens: { input: 100, output: 12_000 },
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("leaves a reply cut off mid-answer to the caller", async () => {
+    const surface = surfaceOf(async () => completion({ role: "assistant", content: '{"verb": "HA' }, SPENT, "length"));
+    const cut = await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    expect(cut.content).toBe('{"verb": "HA');
+  });
+
+  it("is sent and journaled as AGENT_MAX_OUTPUT_TOKENS says, and as 12000 when that is not a positive integer", async () => {
+    const bodies: Body[] = [];
+    const surface = surfaceOf(async (body) => {
+      bodies.push(body);
+      return completion({ role: "assistant", content: "ok" });
+    });
+
+    process.env["AGENT_MAX_OUTPUT_TOKENS"] = "48000";
+    await turn(surface, { messages: [], tools: [] });
+    expect(bodies[0]!.max_tokens).toBe(48_000);
+    expect(surface.sampling?.["max_output_tokens"]).toBe(48_000);
+
+    for (const invalid of ["lots", "0", "-5", "1.5"]) {
+      process.env["AGENT_MAX_OUTPUT_TOKENS"] = invalid;
+      await turn(surface, { messages: [], tools: [] });
+      expect(bodies.at(-1)!.max_tokens).toBe(12_000);
+      expect(surface.sampling?.["max_output_tokens"]).toBe(12_000);
+    }
   });
 });

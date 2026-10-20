@@ -18,8 +18,15 @@ import { capture, traced } from "./tracing.js";
 import { noVirtualKey, type VirtualKey } from "./vk.js";
 
 // Unset, the gateway's own default cuts a long emission off mid-JSON, which
-// arrives as an unparseable answer rather than as a limit that was hit.
-const MAX_OUTPUT_TOKENS = 12_000;
+// arrives as an unparseable answer rather than as a limit that was hit. Kept low by
+// default: a provider with a smaller output limit answers 400 to a larger one.
+const DEFAULT_MAX_OUTPUT_TOKENS = 12_000;
+
+// Read per call, so the value journaled is the value sent.
+export function maxOutputTokens(): number {
+  const raw = Number(process.env["AGENT_MAX_OUTPUT_TOKENS"]);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_OUTPUT_TOKENS;
+}
 
 const log = logger("agent.wire");
 
@@ -68,6 +75,10 @@ export function setSilentPauses(pauses: readonly number[]): void {
 
 export class ModelSilent extends ProviderError {}
 
+// The output cap reached with nothing said: a reasoning model spent it all thinking.
+// Asking again over the same cap buys the same empty reply.
+export class OutputCapReached extends ProviderError {}
+
 // Ends the pause early when the run is aborted, rather than waiting out the 8 s.
 function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -87,15 +98,18 @@ function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
 // A forced emit with no arguments counts as nothing: "{}" at zero output tokens is the
 // gateway closing the call, not the model answering. A call to any other tool is an
 // answer even when it takes no arguments and the gateway billed it at zero.
-function silent(response: OpenAI.Chat.ChatCompletion): boolean {
+function said(response: OpenAI.Chat.ChatCompletion): boolean {
   const message = response.choices[0]?.message;
   const called = (message?.tool_calls ?? []).some((call) => {
     if (call.type !== "function" || call.function.name !== EMIT_TOOL) return true;
     const args = call.function.arguments.trim();
     return args !== "" && args !== "{}";
   });
-  const said = (message?.content ?? "").trim() !== "" || called;
-  return !said && (response.usage?.completion_tokens ?? 0) === 0;
+  return (message?.content ?? "").trim() !== "" || called;
+}
+
+function silent(response: OpenAI.Chat.ChatCompletion): boolean {
+  return !said(response) && (response.usage?.completion_tokens ?? 0) === 0;
 }
 
 // What the empty attempts were billed, carried onto the call that answered, so a
@@ -190,7 +204,7 @@ class OpenAiSurface implements Provider {
   get sampling(): Readonly<Record<string, unknown>> {
     return {
       wire_model: this.wire_model,
-      max_output_tokens: MAX_OUTPUT_TOKENS,
+      max_output_tokens: maxOutputTokens(),
       ...effortFields(this.provider_type, this.effort),
     };
   }
@@ -318,6 +332,14 @@ class OpenAiSurface implements Provider {
     let wasted: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
     for (let attempt = 0; ; attempt += 1) {
       const { response, reported } = await this.sendOnce(body, cap, signal);
+      if (response.choices[0]?.finish_reason === "length" && !said(response)) {
+        const spent = tokensOf(plus(response.usage, wasted));
+        throw new OutputCapReached(
+          `the model spent all ${maxOutputTokens()} output tokens before answering (finish_reason=length, empty reply) from ${this.wire_model}; ` +
+            "reasoning tokens count against the cap -- raise AGENT_MAX_OUTPUT_TOKENS",
+          spent,
+        );
+      }
       if (!reported || !silent(response)) return { ...response, usage: plus(response.usage, wasted) };
       const spent = tokensOf(response.usage);
       wasted = { input: wasted.input + spent.input, output: wasted.output + spent.output, cache_read: 0, cache_write: 0 };
@@ -334,7 +356,8 @@ class OpenAiSurface implements Provider {
   // an empty reply from one the stream lost.
   private async sendOnce(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<{ response: OpenAI.Chat.ChatCompletion; reported: boolean }> {
     let reported = false;
-    const limit = cap === "max_tokens" ? { max_tokens: MAX_OUTPUT_TOKENS } : { max_completion_tokens: MAX_OUTPUT_TOKENS };
+    const ceiling = maxOutputTokens();
+    const limit = cap === "max_tokens" ? { max_tokens: ceiling } : { max_completion_tokens: ceiling };
     const estimate = estimateTokens(JSON.stringify(body));
     const attributes = {
       "gen_ai.operation.name": "chat",
