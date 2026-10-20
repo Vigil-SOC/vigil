@@ -27,7 +27,7 @@ import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
-import { runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -569,8 +569,7 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
-  const priced = read.flatMap((one) => (one.costUsd == null ? [] : [one.costUsd]))
-  const cost = priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'
+  const cost = spentAcross(read.map((one) => one.costUsd), folds.length > 1)
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
@@ -579,6 +578,13 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
     'Memory and blind spots': recalls.length && recalls.every((r) => r.unavailable) ? 'Recall did not happen' : memory || (recalls.length ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
+}
+
+/** "$0.60 · 1 run unpriced": what the runs spent together, naming the runs nothing priced when there are several; never $0 for an unpriced run. */
+function spentAcross(costs: (number | null)[], several: boolean): string {
+  const { total, unpriced } = costAcross(costs)
+  const note = several && unpriced ? `${plural(unpriced, 'run')} unpriced` : ''
+  return [total ?? (note ? '' : '—'), note].filter(Boolean).join(' · ')
 }
 
 /** One run on the case, as the page has read it. */
@@ -1811,13 +1817,13 @@ function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<strin
   const read = runs.filter((one) => one.phase === 'ready' && one.fold)
   const calls = read.reduce((n, one) => n + one.fold!.calls.length, 0)
   const gaps = read.reduce((n, one) => n + visibilityGaps(one.fold).length, 0)
-  const priced = read.flatMap((one) => (one.fold!.costUsd == null ? [] : [one.fold!.costUsd]))
+  const cost = spentAcross(read.map((one) => one.fold!.costUsd), runs.length > 1)
   return (
     <>
       {calls > 0 || gaps > 0 ? (
         <section className="case-card case-checked">
           <h3>
-            What Vigil checked · {calls} {calls === 1 ? 'query' : 'queries'} · {priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'}
+            What Vigil checked · {calls} {calls === 1 ? 'query' : 'queries'} · {cost}
             <InfoTip
               label="About the cost"
               source="The selected runs' total spend, added."

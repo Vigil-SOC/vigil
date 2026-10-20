@@ -121,7 +121,8 @@ describe('case side panel Cost over every run (#2481)', () => {
     ])
     const view = cost()
     expect(view.getByText('$0.75')).toBeInTheDocument()
-    expect(view.getByText('across 3 runs')).toBeInTheDocument()
+    // the total leaves out the run nothing priced, and says so
+    expect(view.getByText('across 3 runs · 1 unpriced')).toBeInTheDocument()
     const lines = view.getAllByRole('listitem').map((li) => li.textContent)
     expect(lines).toEqual(['Threat hunt · started 09:00$0.25', 'incident-response · started 10:00$0.50', 'root-cause-analysis · started 11:00—'])
     // the bar belongs to the primary run's limit and says so
@@ -136,6 +137,18 @@ describe('case side panel Cost over every run (#2481)', () => {
       { ref: ref('incident-response', 'run-b', 0.5) },
     ])
     expect(cost().getByText('$2.00')).toBeInTheDocument()
+    expect(cost().getByText('across 2 runs')).toBeInTheDocument()
+  })
+
+  it('still lists the runs and counts them when none is priced, never as $0', () => {
+    renderCost([
+      { ref: ref('threat-hunt', 'run-a', 0, { primary: true }) },
+      { ref: ref('incident-response', 'run-b', 0, { created_at: '2026-06-15T10:00:00Z' }) },
+    ])
+    const view = cost()
+    expect(view.getByText('across 2 runs · 2 unpriced')).toBeInTheDocument()
+    expect(view.queryByText(/\$/)).not.toBeInTheDocument()
+    expect(view.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Threat hunt · started 09:00—', 'incident-response · started 10:00—'])
   })
 
   it('keeps one run as it was: the cost and its bar, no lines', () => {

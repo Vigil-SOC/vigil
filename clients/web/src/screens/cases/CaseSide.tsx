@@ -6,7 +6,7 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { fmtCost } from '../../shared/cost'
-import { runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import { IN_FLIGHT } from '../workflows/runRead'
 import type { RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
@@ -190,41 +190,36 @@ function Alerts({ items }: { items: CaseLinkedFinding[] }) {
   )
 }
 
-/** What the case has spent over every run, then each run's own line ("—" for a run nothing priced, never $0). The bar and word read the primary run alone, and the caption says so. */
+/** What the case has spent over every run, then each run's own line ("—" for a run nothing priced, never $0); the total says how many runs it could not add. The bar and word read the primary run alone, and the caption says so. */
 function CaseCost({ runs, spend, latest, names }: { runs: SideRun[]; spend: Spend; latest: CaseInvestigationRef | null; names: Record<string, string> }) {
-  const total = runs.reduce((sum, run) => sum + (costOf(run.ref, run.fold) ?? 0), 0)
+  const costs = runs.map((run) => costOf(run.ref, run.fold))
+  const all = costAcross(costs)
   return (
     <Block title="Cost">
-      {total > 0 ? (
+      <div className="side-cost">
+        <span>{all.total ?? '—'}</span>
+        <span className="side-meta">{`across ${runs.length} runs${all.unpriced ? ` · ${all.unpriced} unpriced` : ''}`}</span>
+      </div>
+      <ul className="side-run-costs">
+        {runs.map((run, i) => {
+          const cost = costs[i]
+          const label = runLabel(run.ref, names)
+          return (
+            <li key={run.ref.run_id}>
+              <span className="side-clamp" title={label}>{label}</span>
+              <span className="mono">{cost === null ? '—' : fmtCost(cost)}</span>
+            </li>
+          )
+        })}
+      </ul>
+      {latest && spend.cap && spend.cost !== null && (
         <>
           <div className="side-cost">
-            <span>{fmtCost(total)}</span>
-            <span className="side-meta">{`across ${runs.length} runs`}</span>
+            <span className="side-meta side-clamp">{`${runLabel(latest, names)} against its limit`}</span>
+            <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />
           </div>
-          <ul className="side-run-costs">
-            {runs.map((run) => {
-              const cost = costOf(run.ref, run.fold)
-              const label = runLabel(run.ref, names)
-              return (
-                <li key={run.ref.run_id}>
-                  <span className="side-clamp" title={label}>{label}</span>
-                  <span className="mono">{cost === null ? '—' : fmtCost(cost)}</span>
-                </li>
-              )
-            })}
-          </ul>
-          {latest && spend.cap && spend.cost !== null && (
-            <>
-              <div className="side-cost">
-                <span className="side-meta side-clamp">{`${runLabel(latest, names)} against its limit`}</span>
-                <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />
-              </div>
-              <MeterBar pct={(spend.cost / spend.cap) * 100} level={spend.level} label="Cost of the primary run against its limit" />
-            </>
-          )}
+          <MeterBar pct={(spend.cost / spend.cap) * 100} level={spend.level} label="Cost of the primary run against its limit" />
         </>
-      ) : (
-        <NotMeasured />
       )}
     </Block>
   )
