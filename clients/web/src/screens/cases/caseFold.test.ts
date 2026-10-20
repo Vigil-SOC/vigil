@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, agentRows, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
+import { actionWords, agentRows, caseVerdict, closureFlag, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
 import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 describe('actionWords', () => {
@@ -149,5 +149,64 @@ describe('the budget ceiling', () => {
     expect(ceiling(readFold({ projection: heldProjection }))).toBe(3)
     expect(ceiling(readFold({ projection: { budgets: { max_cost_usd: 4 } } }))).toBe(4)
     expect(ceiling(readFold({ projection: { max_cost_usd: 0 } }))).toBeNull()
+  })
+})
+
+describe('caseVerdict', () => {
+  const run = (label: string, disposition: string | null, phase: 'ready' | 'error' | 'loading' = 'ready', nextSteps: string[] = []) => ({
+    label,
+    phase,
+    fold: phase === 'ready' ? readFold({ status: 'completed', projection: { disposition, findings: [{ agent_id: 'a', answer: { summary: 's', next_steps: nextSteps } }] } }) : null,
+  })
+
+  it('reads null when no run says a word, and while any run is loading', () => {
+    expect(caseVerdict([run('A', null), run('B', null)])).toBeNull()
+    expect(caseVerdict([])).toBeNull()
+    expect(caseVerdict([run('A', 'benign'), run('B', null, 'loading')])).toBeNull()
+  })
+
+  it('takes the newest run, which is the first one given', () => {
+    expect(caseVerdict([run('new', 'inconclusive'), run('old', 'benign')])?.word).toBe('inconclusive')
+  })
+
+  it('keeps malicious over a later inconclusive, needs_review or silent run, and over suspicious', () => {
+    expect(caseVerdict([run('C', null), run('B', 'inconclusive'), run('A', 'malicious')])).toMatchObject({ word: 'malicious', basis: null })
+    expect(caseVerdict([run('B', 'needs_review'), run('A', 'suspicious')])?.word).toBe('suspicious')
+    expect(caseVerdict([run('B', 'suspicious'), run('A', 'malicious')])?.word).toBe('malicious')
+  })
+
+  it('reads needs_review naming the run a later dismissal contradicts', () => {
+    expect(caseVerdict([run('Rerun', 'benign'), run('Hunt', 'suspicious')])).toMatchObject({ word: 'needs_review', basis: 'Hunt says suspicious.' })
+    expect(caseVerdict([run('Rerun', 'false_positive'), run('Hunt', 'needs_review')])?.basis).toBe('Hunt says needs review.')
+  })
+
+  it('does not let a dismissal stand over an unread run, and names it', () => {
+    expect(caseVerdict([run('B', 'benign'), run('A', null, 'error')])).toMatchObject({ word: 'needs_review', basis: 'A could not be read.' })
+    expect(caseVerdict([run('B', 'suspicious'), run('A', null, 'error')])).toMatchObject({ word: 'suspicious', basis: null })
+  })
+
+  it('lets agreeing dismissals stand, and a lone run speak without a basis', () => {
+    expect(caseVerdict([run('B', 'benign'), run('A', 'false_positive')])).toMatchObject({ word: 'benign', basis: null })
+    expect(caseVerdict([run('A', 'benign')])).toEqual({ word: 'benign', basis: null, doNow: [] })
+  })
+
+  it('carries the speaking investigation’s next steps, and none from a hunt', () => {
+    expect(caseVerdict([run('A', 'malicious', 'ready', ['Isolate the host'])])?.doNow).toEqual(['Isolate the host'])
+    const hunt = readFold({ status: 'completed', hunt: { disposition: 'malicious', iteration: 1 } })
+    expect(caseVerdict([{ label: 'H', phase: 'ready', fold: hunt }])).toEqual({ word: 'malicious', basis: null, doNow: [] })
+  })
+})
+
+describe('closureFlag', () => {
+  const closure = (closure_category: string) => ({ closure_category })
+  it('flags a false positive or unspecified closure over an alarming or unresolved word only', () => {
+    const words = ['malicious', 'suspicious', 'needs_review', 'inconclusive', 'benign', 'false_positive']
+    for (const category of ['false_positive', 'unspecified']) {
+      expect(words.filter((word) => closureFlag(closure(category), word))).toEqual(['malicious', 'suspicious', 'needs_review'])
+    }
+    for (const category of ['resolved', 'duplicate', 'unable_to_resolve', '']) {
+      expect(words.some((word) => closureFlag(closure(category), word))).toBe(false)
+    }
+    expect(closureFlag(null, 'malicious')).toBe(false)
   })
 })

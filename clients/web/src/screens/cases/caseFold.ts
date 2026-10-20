@@ -1,6 +1,7 @@
 // What the case page reads off GET /workflows/runs/{id}. Hunt-like runs arrive
 // under `hunt`; every other kind arrives under `projection`.
 import { sourceBadge } from '../../config/sourceBadges'
+import type { Phase } from './useCases'
 
 export interface CallRow {
   question: string
@@ -195,6 +196,8 @@ interface LeadFold {
   worker: string
   moves: MoveRow[]
   findings: { agent_id: string; answer: string }[]
+  /** The steps the conclusion lists for a reader to take, most important first; empty when it lists none. */
+  nextSteps: string[]
   calls: CallRow[]
   gaps: LeadGapRow[]
   recall: RecallView | null
@@ -408,6 +411,12 @@ function answerText(answer: unknown): string {
   } catch {
     return ''
   }
+}
+
+// The conclusion's next_steps, which answerText flattens away; only strings count.
+function nextStepsOf(answer: unknown): string[] {
+  const steps = answer && typeof answer === 'object' ? (answer as Record<string, unknown>).next_steps : null
+  return Array.isArray(steps) ? steps.filter((one): one is string => typeof one === 'string' && one.trim() !== '') : []
 }
 
 function callsOf(raw: unknown): CallRow[] {
@@ -642,6 +651,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     worker: rows[0]?.worker ?? '',
     moves: rows,
     findings,
+    nextSteps: nextStepsOf(Array.isArray(raw.findings) && raw.findings[0] ? (raw.findings[0] as Record<string, unknown>).answer : null),
     calls: callsOf(raw.calls),
     gaps,
     recall: recallOf(raw.recall),
@@ -830,4 +840,57 @@ export function strongestRows(fold: RunFold | null): StrongRow[] {
   const picked = new Set([rows.find((r) => r.stance === 'For'), rows.find((r) => r.stance === 'Against')].filter(Boolean))
   for (const r of rows) if (picked.size < 3) picked.add(r)
   return rows.filter((r) => picked.has(r)).map(({ step, text, stance }) => ({ step, text, stance }))
+}
+
+/** One run as the case verdict reads it. */
+export interface VerdictRun {
+  fold: RunFold | null
+  /** The run's title, as the page's headings write it. */
+  label: string
+  phase: Phase
+}
+
+export interface CaseVerdict {
+  word: string
+  /** One sentence naming the run that objects or could not be read; null when the runs agree. */
+  basis: string | null
+  /** What the run that spoke says to do next; empty when it lists none (a hunt lists none). */
+  doNow: string[]
+}
+
+const ALARMS = ['malicious', 'suspicious']
+const DISMISSALS = ['benign', 'false_positive']
+
+/**
+ * The one word every run on the case stands behind, or null before one can be said. Runs come NEWEST
+ * FIRST (the page sorts by created_at descending; its own list puts the primary run first, which is not
+ * that order). A run with no disposition does not speak; one still loading holds the whole verdict back,
+ * so a dismissal never shows before every run is read. The newest speaker speaks, except that malicious
+ * outranks suspicious and neither is outranked by a later inconclusive or needs_review. A dismissal
+ * stands only over silent or dismissing runs and readable details: otherwise it reads needs_review and
+ * the basis names the objecting or unread run.
+ */
+export function caseVerdict(runs: VerdictRun[]): CaseVerdict | null {
+  if (runs.some((run) => run.phase === 'loading')) return null
+  const spoke = runs.flatMap((run) => (run.fold?.disposition ? [{ label: run.label, word: run.fold.disposition, fold: run.fold }] : []))
+  const newest = spoke[0]
+  if (!newest) return null
+  const doNow = (fold: RunFold) => (fold.kind === 'lead' ? fold.nextSteps : [])
+  if (!DISMISSALS.includes(newest.word)) {
+    const lead = ALARMS.map((word) => spoke.find((one) => one.word === word)).find(Boolean) ?? newest
+    return { word: lead.word, basis: null, doNow: doNow(lead.fold) }
+  }
+  const objectors = spoke.filter((one) => !DISMISSALS.includes(one.word))
+  const unread = runs.filter((run) => run.phase === 'error')
+  if (objectors.length === 0 && unread.length === 0) return { word: newest.word, basis: null, doNow: doNow(newest.fold) }
+  const parts = [...objectors.map((one) => `${one.label} says ${one.word.replace(/_/g, ' ')}`), ...unread.map((run) => `${run.label} could not be read`)]
+  // The objector's own steps: the dismissing run's would argue the other way.
+  const speaker = objectors[0] ?? newest
+  return { word: 'needs_review', basis: `${parts.join('; ')}.`, doNow: doNow(speaker.fold) }
+}
+
+/** A closure that says false positive or says nothing, over a verdict that is not a dismissal. */
+export function closureFlag(closure: { closure_category: string } | null | undefined, word: string | null | undefined): boolean {
+  const category: string = closure?.closure_category ?? ''
+  return (category === 'false_positive' || category === 'unspecified') && ['malicious', 'suspicious', 'needs_review'].includes(word ?? '')
 }

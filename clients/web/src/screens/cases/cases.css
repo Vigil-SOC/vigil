@@ -113,7 +113,7 @@
 .case-needs .needs-facts {
   margin: 0;
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
+  grid-template-columns: minmax(64px, 120px) minmax(0, 1fr);
   gap: 6px 14px;
   font-size: 13px;
   line-height: 1.5;
@@ -1899,4 +1899,26 @@
 .case-page .case-other-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx0); text-decoration: none; }
 .case-page .case-other-name:hover { text-decoration: underline; }
 .case-page .case-other-state { color: var(--tx2); font-size: 12px; }
+.case-page .case-other-state b { color: var(--tx1); font-weight: 650; }
 .case-page .case-other-runs .num { font-family: var(--mono); font-size: 12px; color: var(--tx1); }
+
+/* Summary: the account's verdict. The closed mood places it where the board's "Support" line sits (grid, 13px); the open moods have no board, so the card keeps the Summary cards' padding and type. */
+.case-page .case-verdict {
+  display: grid;
+  grid-template-columns: minmax(64px, 120px) minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.case-page .case-verdict.card {
+  box-sizing: border-box;
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+.case-page .case-verdict-label { color: var(--tx2); }
+.case-page .case-verdict-word { font-weight: 650; color: var(--tx0); }
+.case-page .case-verdict p { margin: 0; color: var(--tx1); }
+.case-page .case-verdict ul { margin: 0; padding-left: 16px; }

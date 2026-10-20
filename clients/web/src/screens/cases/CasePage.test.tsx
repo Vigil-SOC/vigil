@@ -2395,6 +2395,90 @@ describe('a case with several runs', () => {
   })
 })
 
+describe('the case verdict', () => {
+  const ref = (run_id: string, created_at: string, primary: boolean, workflow_id = 'threat-hunt') => ({
+    ...investigation('completed', false, run_id), workflow_id, created_at, primary,
+  })
+  const hunt = (disposition: string | null) => ({ status: 'completed', hunt: { ...HUNT, status: 'concluded', outcome: 'concluded', disposition } })
+  const lead = (disposition: string | null, nextSteps: string[] = []) => ({
+    status: 'completed',
+    projection: { disposition, outcome: 'concluded', findings: [{ agent_id: 'agent', answer: { summary: 'the account', disposition, next_steps: nextSteps } }], cost_usd: 0.1 },
+  })
+  const openWith = (id: string, investigations: unknown[], runs: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+    testState.cases = [{ ...openCase(id), combined_state: 'open', investigations, ...extra }]
+    Object.assign(testState.runs, runs)
+    renderCase(id)
+  }
+
+  it('reads needs review, naming the older hunt, when a newer rerun dismisses what it found', async () => {
+    openWith('case-rerun', [ref('run-old', '2026-06-15T09:00:00Z', true), ref('run-new', '2026-06-15T10:00:00Z', false)], { 'run-old': hunt('malicious'), 'run-new': hunt('benign') })
+    const verdict = await screen.findByRole('region', { name: 'Case verdict' })
+    expect(verdict).toHaveTextContent('Needs review')
+    expect(verdict).toHaveTextContent(/^Runs sayNeeds reviewthreat-hunt · started 09:00 says malicious\.$/)
+    expect(within(screen.getByRole('region', { name: 'Other runs on this case' })).getByText('Benign')).toBeInTheDocument()
+  })
+
+  it('holds back every verdict while a run is still loading', async () => {
+    vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
+    openWith('case-loading', [ref('run-a', '2026-06-15T09:00:00Z', true), ref('run-b', '2026-06-15T10:00:00Z', false)], { 'run-a': hunt('benign'), 'run-b': hunt('benign') })
+    await screen.findByRole('region', { name: 'Other runs on this case' })
+    expect(screen.queryByRole('region', { name: 'Case verdict' })).not.toBeInTheDocument()
+  })
+
+  it('does not let a dismissal stand over a run it could not read', async () => {
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
+      runId === 'run-bad' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
+    )
+    openWith('case-unread', [ref('run-ok', '2026-06-15T10:00:00Z', true), ref('run-bad', '2026-06-15T09:00:00Z', false)], { 'run-ok': hunt('benign') })
+    const verdict = await screen.findByRole('region', { name: 'Case verdict' })
+    expect(verdict).toHaveTextContent('Needs review')
+    expect(verdict).toHaveTextContent('threat-hunt · started 09:00 could not be read.')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
+  it('shows the lone run’s word with no basis, and Do now for an investigation but not a hunt', async () => {
+    openWith('case-one-inv', [ref('run-one', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-one': lead('suspicious', ['Isolate the host']) })
+    const verdict = await screen.findByRole('region', { name: 'Case verdict' })
+    expect(verdict).toHaveTextContent('Suspicious')
+    expect(within(verdict).getByText('Do now')).toBeInTheDocument()
+    expect(within(verdict).getByText('Isolate the host')).toBeInTheDocument()
+    cleanup()
+    openWith('case-one-hunt', [ref('run-h', '2026-06-15T09:00:00Z', true)], { 'run-h': hunt('suspicious') })
+    const hunted = await screen.findByRole('region', { name: 'Case verdict' })
+    expect(hunted).toHaveTextContent('Suspicious')
+    expect(within(hunted).queryByText('Do now')).not.toBeInTheDocument()
+  })
+
+  it('adds nothing when no run says a word', async () => {
+    openWith('case-silent', [ref('run-s', '2026-06-15T09:00:00Z', true)], { 'run-s': hunt(null) })
+    await screen.findByText(/Open case/)
+    await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-s')).toBe(true))
+    expect(screen.queryByRole('region', { name: 'Case verdict' })).not.toBeInTheDocument()
+  })
+
+  it('flags a false-positive closure over a malicious run, under the closure line', async () => {
+    openWith('case-flag', [ref('run-m', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-m': lead('malicious', ['Contain the host']) }, {
+      status: 'closed',
+      combined_state: 'closed',
+      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
+    })
+    const closed = await screen.findByRole('region', { name: 'Closed summary' })
+    expect(await within(closed).findByText('Malicious')).toBeInTheDocument()
+    expect(within(closed).getByText('Contain the host')).toBeInTheDocument()
+  })
+
+  it('does not flag a closure the runs agree with', async () => {
+    openWith('case-agree', [ref('run-b', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-b': lead('benign') }, {
+      status: 'closed',
+      combined_state: 'closed',
+      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
+    })
+    const closed = await screen.findByRole('region', { name: 'Closed summary' })
+    await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-b')).toBe(true))
+    expect(within(closed).queryByText('Runs say')).not.toBeInTheDocument()
+  })
+})
+
 describe('following a live run', () => {
   const live = (over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'running' }, ...over })
   const open = (id: string, run: unknown, state = 'executing') => {
