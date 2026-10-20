@@ -1,4 +1,4 @@
-import { bifrostApi, keyRefusal } from '../../services/bifrostApi'
+import { bifrostApi, keyRefusal, refusalText, type BifrostSecret } from '../../services/bifrostApi'
 
 /** What a test of a provider's key (or server) showed: a `good` or a `poor` banner. */
 export interface Outcome {
@@ -16,10 +16,15 @@ function modelList(names: string[]): string {
 /**
  * The verdict on a key Bifrost has just been given: its own refusal text, or the
  * models the provider now routes. Failing to list models never fails a pass.
+ * `url` is the Ollama endpoint the key holds, named in a refusal.
  */
-export async function checkKey(provider: string, keyId: string | undefined): Promise<Outcome> {
+export async function checkKey(
+  provider: string,
+  keyId: string | undefined,
+  url?: BifrostSecret | string,
+): Promise<Outcome> {
   const refusal = await keyRefusal(keyId)
-  if (refusal) return { tone: 'poor', text: `Key stored, but it cannot route: ${refusal}` }
+  if (refusal) return { tone: 'poor', text: refusalText(provider, refusal, url) }
   let names: string[] = []
   try {
     const { data } = await bifrostApi.providerModels(provider)
