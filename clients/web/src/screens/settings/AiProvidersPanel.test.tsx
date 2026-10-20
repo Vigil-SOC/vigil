@@ -15,6 +15,7 @@ const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'succe
 const routability = vi.fn()
 const createProvider = vi.fn(() => Promise.resolve({ data: { name: 'openai' } }))
 const setProviderBaseUrl = vi.fn(() => Promise.resolve({ data: {} }))
+const keyRefusal = vi.fn<(id?: string) => Promise<string | null>>(() => Promise.resolve(null))
 const removeProvider = vi.fn(() => Promise.resolve({ data: {} }))
 
 // This mock replaces the module wholesale, so anything the panel reaches for and
@@ -22,7 +23,8 @@ const removeProvider = vi.fn(() => Promise.resolve({ data: {} }))
 // error — which surfaces as the panel's generic failure state and says nothing
 // about the cause. Keep it in step with what AiProvidersPanel and useBifrost
 // import.
-vi.mock('../../services/bifrostApi', () => ({
+vi.mock('../../services/bifrostApi', async (importOriginal) => ({
+  refusalText: (await importOriginal<typeof import('../../services/bifrostApi')>()).refusalText,
   bifrostApi: {
     listProviders: () => listProviders(),
     listKeys: (...a: unknown[]) => listKeys(...(a as [])),
@@ -39,7 +41,7 @@ vi.mock('../../services/bifrostApi', () => ({
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
   isMasked: (v: unknown) =>
     (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')).includes('*'),
-  keyRefusal: () => Promise.resolve(null),
+  keyRefusal: (id?: string) => keyRefusal(id),
   secretEnvRef: (v: unknown) =>
     typeof v === 'object' && (v as { from_env?: boolean })?.from_env
       ? ((v as { env_var?: string }).env_var ?? '')
@@ -298,6 +300,56 @@ describe('a provider’s base URL', () => {
     fireEvent.change(field, { target: { value: 'http://10.0.0.6:9000' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.6:9000'))
+  })
+})
+
+/* Bifrost's refusal for an Ollama key is a generic "DNS lookup, connection
+   refused, etc." — the banner names the URL the gateway dialled. */
+describe('a refused key', () => {
+  const notify = vi.fn()
+  const mountKey = async (provider: string, key: Record<string, unknown>) => {
+    notify.mockClear()
+    listProviders.mockResolvedValue({ data: { providers: [{ name: provider }] } })
+    listKeys.mockResolvedValue({ data: { keys: [key], total: 1 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    keyRefusal.mockResolvedValue('network error occurred while connecting to provider API')
+    render(<AiProvidersPanel notify={notify} />)
+    await screen.findByText(key.name as string)
+    await openEditor()
+  }
+  const ollamaKey = (url: unknown) => ({
+    id: 'k1', name: 'ollama-key', value: '', models: ['*'], weight: 1, enabled: true, ollama_key_config: { url },
+  })
+
+  it('names the Ollama URL the save sent', async () => {
+    await mountKey('ollama', ollamaKey('http://host.docker.internal:11434'))
+    fireEvent.change(screen.getByDisplayValue('http://host.docker.internal:11434'), {
+      target: { value: 'http://host.docker.internal:1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'err',
+      'Key stored, but the gateway could not reach Ollama at http://host.docker.internal:1: network error occurred while connecting to provider API',
+    ))
+  })
+
+  it('names an env reference as written, never resolved', async () => {
+    await mountKey('ollama', ollamaKey({ value: 'http****1434', ref: 'env.OLLAMA_URL', type: 'env' }))
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'err',
+      'Key stored, but the gateway could not reach Ollama at env.OLLAMA_URL: network error occurred while connecting to provider API',
+    ))
+  })
+
+  it('keeps the wording for any other provider', async () => {
+    await mountKey('anthropic', FENCED)
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'err',
+      'Key stored, but it cannot route: network error occurred while connecting to provider API',
+    ))
   })
 })
 

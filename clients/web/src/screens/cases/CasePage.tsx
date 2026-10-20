@@ -30,6 +30,8 @@ import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
+  caseVerdict,
+  closureFlag,
   endedRun,
   EVIDENCE_PAGE,
   explanationWord,
@@ -48,6 +50,7 @@ import {
   strongestRows,
   visibilityGaps,
   wordDisplay,
+  type CaseVerdict,
   type EndedRun,
   type HypothesisRow,
   type OpenCheckpointRow,
@@ -631,17 +634,44 @@ function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<s
       <h3>Other runs on this case</h3>
       <ul>
         {runs.map((run) => {
+          const word = run.fold?.disposition
           const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—')
           return (
             <li key={run.ref.run_id}>
               <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runLabel(run.ref, names)} onClick={onFollow}>{runLabel(run.ref, names)}</Link>
-              <span className="case-other-state">{state}</span>
+              <span className="case-other-state">
+                {state}
+                {word && <> · <b>{wordDisplay(word)}</b></>}
+              </span>
               <span className="num">{spentLine(run)}</span>
             </li>
           )
         })}
       </ul>
     </section>
+  )
+}
+
+/** The one word the runs stand behind, its basis when they part ways, and what to do now. Open moods draw it as a card; the closed Summary draws it inside its own. */
+function VerdictBlock({ verdict, card }: { verdict: CaseVerdict; card: boolean }) {
+  return (
+    <div className={`case-verdict${card ? ' card' : ''}`} {...(card ? { role: 'region', 'aria-label': 'Case verdict' } : {})}>
+      <span className="case-verdict-label">Runs say</span>
+      <div>
+        <b className="case-verdict-word">{wordDisplay(verdict.word)}</b>
+        {verdict.basis && <p>{verdict.basis}</p>}
+      </div>
+      {verdict.doNow.length > 0 && (
+        <>
+          <span className="case-verdict-label">Do now</span>
+          <ul>
+            {verdict.doNow.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -1340,6 +1370,12 @@ export function CasePage({
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
     tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+  // Newest run first, which is not `runs` order (primary first).
+  const verdict = caseVerdict(
+    [...runs]
+      .sort((a, b) => (b.ref.created_at ?? '').localeCompare(a.ref.created_at ?? ''))
+      .map((one) => ({ fold: one.fold, label: runLabels[one.ref.run_id], phase: one.phase })),
+  )
   // A case with several runs can ask where they part ways; the brief carries every run.
   const disagree = investigations.length > 1 && (
     <div className="case-disagree">
@@ -1442,6 +1478,7 @@ export function CasePage({
                     {closedLine(closure)}
                   </span>
                   <h3>{closure?.verdict || '—'}</h3>
+                  {verdict && closureFlag(closure, verdict.word) && <VerdictBlock verdict={verdict} card={false} />}
                   <ClosedRows fold={fold} phase={foldPhase} />
                   <div className="case-assess">
                     <span>Your assessment</span>
@@ -1459,6 +1496,7 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
+                {verdict && <VerdictBlock verdict={verdict} card />}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}

@@ -11,28 +11,35 @@ from typing import Optional
 from urllib.parse import urlparse
 
 
-def validate_base_url_shape(base_url: Optional[str]) -> None:
+def validate_base_url_shape(base_url: Optional[str], subject: str = "base_url") -> None:
     """Cheap shape-only validation for a stored ``base_url``; raises ``ValueError``.
 
     Admins legitimately persist loopback URLs for self-hosted Ollama or
     private LLM gateways, so the SSRF IP gate doesn't apply here — it
     runs at HTTP-request time inside the discovery/test helpers. We
     still reject malformed inputs and obvious smuggling vectors (non-
-    http(s) scheme, userinfo, fragment) so they never reach disk.
+    http(s) scheme, userinfo, fragment, a port the gateway can't dial)
+    so they never reach disk. ``subject`` opens each message, naming the
+    field to whoever reads the 400.
     """
     if base_url is None or not base_url.strip():
         return
     parsed = urlparse(base_url.strip())
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"base_url: scheme not allowed: {parsed.scheme or '(missing)'}"
-        )
+        raise ValueError(f"{subject} must start with http:// or https://")
     if not parsed.hostname:
-        raise ValueError("base_url: missing host")
+        raise ValueError(f"{subject} has no host")
     if parsed.username or parsed.password:
-        raise ValueError("base_url: must not include userinfo")
+        raise ValueError(f"{subject} must not include userinfo")
     if parsed.fragment:
-        raise ValueError("base_url: must not include a fragment")
+        raise ValueError(f"{subject} must not include a fragment")
+    try:
+        port = parsed.port  # raises on "11434." and anything out of 0-65535
+    except ValueError:
+        port = 0
+    if port == 0:  # urllib takes ":0" as a port; nothing listens there
+        raw = parsed.netloc.rpartition("@")[2].rpartition(":")[2]
+        raise ValueError(f'{subject} has an invalid port "{raw}"')
 
 
 def normalize_openai_compat_base_url(base_url: str) -> str:

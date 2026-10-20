@@ -28,6 +28,7 @@ import { useBifrostProviders, useProviderModels, bifrostError } from './useBifro
 import {
   bifrostApi,
   keyRefusal,
+  refusalText,
   isMasked,
   secretText,
   secretEnvRef,
@@ -448,10 +449,9 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
             const saved = await saveKey(editing.provider, targetId(editing), data)
             setEditing(null)
             const refusal = await keyRefusal(saved?.id)
-            notify(
-              refusal ? 'err' : 'ok',
-              refusal ? `Key stored, but it cannot route: ${refusal}` : 'Key saved.',
-            )
+            // an edit that leaves the URL alone omits it from the write
+            const url = data.ollama_key_config?.url || editing.key?.ollama_key_config?.url
+            notify(refusal ? 'err' : 'ok', refusal ? refusalText(editing.provider, refusal, url) : 'Key saved.')
           }}
         />
       )}

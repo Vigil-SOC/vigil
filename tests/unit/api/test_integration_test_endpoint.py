@@ -302,11 +302,50 @@ def test_servers_up_and_credentials_accepted_passes(client, saved, credential_ou
     assert saved.tests[0]["success"] is True and saved.tests[0]["error"] is None
 
 
-def test_failed_servers_skip_the_credential_check(client, saved, credential_outcome):
-    mcp = _Client({"virustotal": (False, "connection refused", None)}, enabled=("virustotal",))
-    _post(client, "virustotal", _bridge({"virustotal": {}}), mcp, saved)
+def test_a_failed_server_still_reads_the_saved_credentials_as_their_own_row(
+    client, saved, credential_outcome
+):
+    # The alert adapter reads with the form's settings, not through falcon-mcp,
+    # which wants its own env: one can fail while the other works.
+    credential_outcome["outcome"] = (True, "Read CrowdStrike detections")
+    mcp = _Client(
+        {"crowdstrike": (False, None, ["FALCON_CLIENT_ID"])}, enabled=("crowdstrike",)
+    )
+    response = _post(
+        client, "crowdstrike", _bridge({"crowdstrike": {"client_id": "c"}}), mcp, saved
+    )
 
-    assert credential_outcome["asked"] == []
+    body = response.json()
+    assert body["success"] is False
+    assert body["servers"][0]["success"] is False
+    assert body["credentials"] == {
+        "success": True,
+        "message": "Read CrowdStrike detections",
+    }
+    assert credential_outcome["asked"] == ["crowdstrike"]
+    assert saved.tests[0]["error"] == body["message"]
+    assert "crowdstrike" in saved.tests[0]["error"]
+
+
+def test_a_failed_server_and_refused_credentials_both_reach_the_note(
+    client, saved, credential_outcome
+):
+    credential_outcome["outcome"] = (
+        False,
+        "CrowdStrike authentication failed: HTTP 401",
+    )
+    mcp = _Client({"crowdstrike": (False, "down", None)}, enabled=("crowdstrike",))
+    response = _post(
+        client, "crowdstrike", _bridge({"crowdstrike": {"client_id": "c"}}), mcp, saved
+    )
+
+    body = response.json()
+    assert body["success"] is False
+    assert body["credentials"]["success"] is False
+    assert body["message"] == (
+        "crowdstrike: down; CrowdStrike authentication failed: HTTP 401"
+    )
+    assert saved.tests[0]["error"] == body["message"]
 
 
 def test_no_enabled_server_probes_every_declared_server_temporarily(client, saved):

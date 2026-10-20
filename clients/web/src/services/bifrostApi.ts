@@ -14,7 +14,7 @@
 import api from './api'
 import type { Schema } from './apiTypes'
 
-interface BifrostSecret {
+export interface BifrostSecret {
   value: string
   /** Bifrost < 1.6 */
   env_var?: string
@@ -100,7 +100,9 @@ export function isMasked(v: BifrostSecret | string | undefined): boolean {
     is the only way to edit a seeded key (whose URL is `env.OLLAMA_URL`) without
     knowing what the environment resolved it to. */
 export function secretEnvRef(v: BifrostSecret | string | undefined): string {
-  return typeof v === 'object' && v?.from_env ? v.env_var || '' : ''
+  if (typeof v !== 'object' || !v) return ''
+  if (v.type === 'env') return v.ref || ''
+  return v.from_env ? v.env_var || '' : ''
 }
 
 /** A custom OpenAI-compatible provider: its own name and host. The passthrough
@@ -354,6 +356,21 @@ export async function keyRefusal(keyId: string | undefined): Promise<string | nu
   } catch {
     return null
   }
+}
+
+/** The banner for a `keyRefusal`. An Ollama key's credential is an endpoint the
+    gateway dials from its own container, so name the URL it tried — an `env.`
+    reference as written, never resolved. Bifrost's own text doesn't say. */
+export function refusalText(
+  provider: string,
+  refusal: string,
+  url?: BifrostSecret | string,
+): string {
+  // a masked read-back names nothing
+  const at = secretEnvRef(url) || (isMasked(url) ? '' : secretText(url))
+  return provider === 'ollama' && at
+    ? `Key stored, but the gateway could not reach Ollama at ${at}: ${refusal}`
+    : `Key stored, but it cannot route: ${refusal}`
 }
 
 /** Does any Bifrost provider have a routable key? Setup's system check ORs

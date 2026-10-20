@@ -193,6 +193,15 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
     """
     supplied = ollama.get("url")
     if supplied and not _is_masked(supplied):
+        if isinstance(supplied, str) and not supplied.startswith("env."):
+            # Rejected, never repaired: a URL the gateway can't dial fails
+            # every request later with an error that doesn't point here.
+            try:
+                validate_base_url_shape(
+                    supplied, subject=f'The Ollama server URL "{supplied}"'
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
         return
     stored = get_secret(_ollama_ref(key_id)) if key_id else None
     if not stored:

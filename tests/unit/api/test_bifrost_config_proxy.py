@@ -178,6 +178,42 @@ def test_ollama_url_key_needs_no_credential_substitution(monkeypatch):
     assert "value" not in body
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "url, part",
+    [
+        ("http://host.docker.internal:11434.", 'has an invalid port "11434."'),
+        ("http://localhost:abc", 'has an invalid port "abc"'),
+        ("http://localhost:70000", 'has an invalid port "70000"'),
+        ("http://localhost:0", 'has an invalid port "0"'),
+        ("host:11434", "must start with http:// or https://"),
+        ("http://:11434", "has no host"),
+    ],
+)
+def test_ollama_url_that_does_not_parse_is_a_400(monkeypatch, url, part):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(proxy, "get_secret", lambda ref: "http://stored:11434")
+    body = {"ollama_key_config": {"url": url}}
+    with pytest.raises(HTTPException) as exc:
+        proxy._resolve_key_value(body, "o1", "ollama")
+    assert exc.value.status_code == 400
+    assert exc.value.detail == f'The Ollama server URL "{url}" {part}'
+    assert body["ollama_key_config"]["url"] == url  # rejected, not repaired
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "url",
+    ["http://localhost:11434", "https://ollama.example", "env.OLLAMA_URL"],
+)
+def test_ollama_url_that_parses_passes_through(monkeypatch, url):
+    monkeypatch.setattr(proxy, "get_secret", lambda ref: None)
+    body = {"ollama_key_config": {"url": url}}
+    proxy._resolve_key_value(body, "o1", "ollama")
+    assert body["ollama_key_config"]["url"] == url
+
+
 # --- provider base URL -------------------------------------------------------
 
 _DOC = {
@@ -250,7 +286,14 @@ def test_clearing_nothing_leaves_a_seeded_private_flag_alone():
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "bad",
-    ["ftp://host/v1", "http://user:pw@host/v1", "http://host/v1#frag", "no-scheme", 7],
+    [
+        "ftp://host/v1",
+        "http://user:pw@host/v1",
+        "http://host/v1#frag",
+        "no-scheme",
+        "http://host:8000./v1",
+        7,
+    ],
 )
 def test_bad_base_url_is_a_400(bad):
     from fastapi import HTTPException
@@ -330,6 +373,19 @@ def test_put_without_a_base_url_passes_through_untouched(monkeypatch):
     res = _client(monkeypatch, gw).put("/api/bifrost/providers/openai", json=body)
     assert res.status_code == 200
     assert gw.writes == [body]
+
+
+@pytest.mark.unit
+def test_ollama_key_with_a_bad_url_is_refused_before_bifrost_sees_it(monkeypatch):
+    monkeypatch.setattr(proxy, "get_secret", lambda ref: None)
+    gw = _FakeGateway(_DOC)
+    res = _client(monkeypatch, gw).put(
+        "/api/bifrost/providers/ollama/keys/o1",
+        json={"ollama_key_config": {"url": "http://host.docker.internal:11434."}},
+    )
+    assert res.status_code == 400
+    assert 'invalid port "11434."' in res.json()["detail"]
+    assert gw.writes == []
 
 
 # --- custom (OpenAI-compatible) providers ------------------------------------

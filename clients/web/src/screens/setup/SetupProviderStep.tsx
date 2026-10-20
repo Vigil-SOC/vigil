@@ -122,13 +122,14 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
     if (!exists(name)) await addProvider(name)
   }
 
-  /** Save (when `write` returns a key id) and then check the key; the field's value is never echoed. */
-  const run = async (name: string, write: () => Promise<string | undefined>) => {
+  /** Save (when `write` returns a key id) and then check the key; the field's value is never echoed.
+      `url` is the Ollama endpoint the key ends up holding, named if it is refused. */
+  const run = async (name: string, write: () => Promise<string | undefined>, url?: Parameters<typeof checkKey>[2]) => {
     setBusy(true)
     setLocalErr(null)
     try {
       await ensureProvider(name)
-      record(name, await checkKey(name, await write()))
+      record(name, await checkKey(name, await write(), url))
     } catch (e) {
       record(name, { tone: 'poor', text: bifrostError(e, 'Save failed.') })
     } finally {
@@ -155,15 +156,21 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
     if (!provider || !card) return
     const existing = keyOf(provider)
     if (card.kind === 'local') {
-      await run(provider, async () =>
-        existing && !value
-          ? existing.id
-          : save(provider, {
-              ...keep(provider),
-              // an empty URL defers to whatever the deployment set, as KeyDialog does
-              ollama_key_config: { url: value || secretEnvRef(existing?.ollama_key_config?.url) || 'env.OLLAMA_URL' },
-              ...(secretText(existing?.value) ? {} : { value: '' }),
-            }),
+      const stored = existing?.ollama_key_config?.url
+      // an empty URL defers to whatever the deployment set, as KeyDialog does
+      const sent = value || secretEnvRef(stored) || 'env.OLLAMA_URL'
+      await run(
+        provider,
+        async () =>
+          existing && !value
+            ? existing.id
+            : save(provider, {
+                ...keep(provider),
+                ollama_key_config: { url: sent },
+                ...(secretText(existing?.value) ? {} : { value: '' }),
+              }),
+        // re-testing without a write names the URL the key already holds
+        existing && !value ? stored : sent,
       )
     } else {
       await run(provider, async () => (value ? save(provider, { ...keep(provider), value }) : existing?.id))
@@ -332,9 +339,10 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
           onClose={() => setDialogFor(null)}
           onSave={async (data) => {
             const name = dialogFor
+            const stored = keyOf(name)?.ollama_key_config?.url
             const id = await save(name, data)
             setDialogFor(null)
-            record(name, await checkKey(name, id))
+            record(name, await checkKey(name, id, data.ollama_key_config?.url || stored))
           }}
         />
       )}

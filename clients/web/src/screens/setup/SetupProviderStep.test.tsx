@@ -4,7 +4,8 @@ import SetupProviderStep from './SetupProviderStep'
 import { aiConfigApi } from '../../services/api'
 import { bifrostApi, keyRefusal } from '../../services/bifrostApi'
 
-vi.mock('../../services/bifrostApi', () => ({
+vi.mock('../../services/bifrostApi', async (importOriginal) => ({
+  refusalText: (await importOriginal<typeof import('../../services/bifrostApi')>()).refusalText,
   bifrostApi: {
     listProviders: vi.fn(),
     listKeys: vi.fn(),
@@ -167,6 +168,28 @@ describe('SetupProviderStep', () => {
       'ollama',
       expect.objectContaining({ ollama_key_config: { url: 'http://host.docker.internal:11434' }, value: '' }),
     )
+  })
+
+  it('names the Ollama URL a refused server was tested at, written or already stored', async () => {
+    const refused = 'network error occurred while connecting to provider API'
+    const banner = (url: string) => `Key stored, but the gateway could not reach Ollama at ${url}: ${refused}`
+    gateway({})
+    vi.mocked(keyRefusal).mockResolvedValue(refused)
+    const { unmount } = render(<SetupProviderStep onRoutable={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Local \(Ollama\)/ }))
+    paste('Ollama server URL', 'http://host.docker.internal:1')
+    fireEvent.click(screen.getByRole('button', { name: 'Test server' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(banner('http://host.docker.internal:1'))
+    unmount()
+
+    // re-testing the held key writes nothing; the banner names the URL it holds
+    gateway({ ollama: [key({ name: 'ollama-key', ollama_key_config: { url: 'http://10.0.0.9:11434' } })] })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    await screen.findByLabelText('Ollama server URL')
+    paste('Ollama server URL', '') // an empty field retests what is stored
+    fireEvent.click(screen.getByRole('button', { name: 'Test server' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(banner('http://10.0.0.9:11434'))
+    expect(bifrostApi.updateKey).not.toHaveBeenCalled()
   })
 
   it('opens the key dialog for a cloud account, defaulting to Bedrock', async () => {

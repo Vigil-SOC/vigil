@@ -1015,9 +1015,11 @@ async def test_integration(
     config of ``{}`` is still configured — secret-only rows keep the secret
     outside this dict. The integration's enabled flag does not block the
     probe: enabled MCP servers are contacted, and if none are enabled every
-    declared server is probed with a temporary session. Splunk and Elastic are
-    then also read with their saved URL and credentials (``credentials`` in the
-    answer), since a server starts whatever it is pointed at.
+    declared server is probed with a temporary session. The alert sources
+    (Splunk, Elastic, OpenSearch, Sentinel, Security Hub, Defender, CrowdStrike)
+    are also read with their saved URL and credentials, whether or not their
+    servers started (``credentials`` in the answer): a server starts whatever
+    it is pointed at, and the adapter that pulls alerts does not go through it.
     """
     require_integrations_admin(current_user)
 
@@ -1076,17 +1078,21 @@ async def test_integration(
             )
         )
     success = all(server["success"] for server in servers)
-    error_summary = None if success else _probe_error_summary(servers)
+    errors = [] if success else [_probe_error_summary(servers)]
 
     # The servers starting says nothing about the URL or credentials, so read
     # the saved settings against the real service (read-only) before saying Good.
+    # It runs whatever the probe said, as its own result: an alert source's
+    # adapter reads with these settings directly, not through an MCP server
+    # that may need other config or a browser sign-in.
     credentials = None
-    if success:
-        outcome = await check_credentials(integration_id)
-        if outcome is not None:
-            credentials = {"success": outcome[0], "message": outcome[1]}
-            if not outcome[0]:
-                success, error_summary = False, outcome[1]
+    outcome = await check_credentials(integration_id)
+    if outcome is not None:
+        credentials = {"success": outcome[0], "message": outcome[1]}
+        if not outcome[0]:
+            success = False
+            errors.append(outcome[1])
+    error_summary = "; ".join(error for error in errors if error) or None
 
     recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
         integration_id,
