@@ -1929,3 +1929,38 @@
 .case-page .case-verdict-word { font-weight: 650; color: var(--tx0); }
 .case-page .case-verdict p { margin: 0; color: var(--tx1); }
 .case-page .case-verdict ul { margin: 0; padding-left: 16px; }
+
+/* Summary: "How it started", the root-cause run's chain. No board draws it; it keeps the Summary card's padding and the other-runs row stack's type. */
+.case-page .how-started .how-origin { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.case-page .how-started .how-origin b { font-weight: 650; color: var(--tx0); }
+.case-page .how-started .how-origin span { font-size: 12px; color: var(--tx2); }
+.case-page .how-line { margin: 0; font-size: 12px; color: var(--tx2); }
+.case-page .how-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ln0);
+}
+.case-page .how-rows li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 9px 12px;
+  background: var(--bg2);
+  font-size: 13px;
+}
+.case-page .how-event { min-width: 0; overflow-wrap: anywhere; }
+.case-page .how-at { font-size: 12px; color: var(--tx2); white-space: nowrap; }
+.case-page .how-rows b { font-size: 12px; font-weight: 650; color: var(--tx2); }
+.case-page .how-rows b.good { color: var(--good); }
+.case-page .how-all { align-self: flex-start; font-size: 12px; color: var(--tx1); }
+@container (max-width: 420px) {
+  .case-page .how-rows li { grid-template-columns: minmax(0, 1fr) auto; }
+  .case-page .how-event { grid-column: 1 / -1; }
+}

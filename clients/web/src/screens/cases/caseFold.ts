@@ -212,7 +212,19 @@ interface LeadFold {
   disposition: string | null
 }
 
-/** A run whose chain stays on Watch a run (root cause): its head only. The row fields stay empty so every reader shows nothing for it. */
+/** One link of a root-cause chain as the projection serves it; `cause_id` names the earlier step. */
+export interface ChainStep {
+  step_id: string
+  event: string
+  who: string
+  at: string
+  link: string
+  cause_id: string | null
+  origin: boolean
+  proven: boolean
+}
+
+/** A run whose chain stays on Watch a run (root cause): its head and chain. The row fields stay empty so every reader shows nothing for it. */
 interface HeadFold {
   kind: 'head'
   run: RunMeta
@@ -223,6 +235,9 @@ interface HeadFold {
   maxCostUsd: number | null
   /** The word the run concluded on, as held by the reviewer guard; null when it said none. */
   disposition: string | null
+  /** The recorded chain in projection order; empty when absent. */
+  steps: ChainStep[]
+  proven: number
   doing: ''
   worker: ''
   moves: MoveRow[]
@@ -597,8 +612,39 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   }
 }
 
+function stepsOf(raw: unknown): ChainStep[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{
+      step_id: str(o.step_id),
+      event: str(o.event),
+      who: str(o.who),
+      at: str(o.at),
+      link: str(o.link),
+      cause_id: str(o.cause_id) || null,
+      origin: o.origin === true,
+      proven: o.proven === true,
+    }]
+  })
+}
+
+/** The chain oldest first. `cause_id` points at the earlier step, so the walk goes forward from the origin; steps it does not reach keep projection order at the end. */
+export function chainOldestFirst(steps: ChainStep[]): ChainStep[] {
+  const start = steps.find((s) => s.origin) ?? steps.find((s) => s.cause_id === null)
+  const seen = new Set<ChainStep>()
+  for (let at = start; at && !seen.has(at); ) {
+    seen.add(at)
+    const id = at.step_id
+    at = id ? steps.find((s) => s.cause_id === id && !seen.has(s)) : undefined
+  }
+  return [...seen, ...steps.filter((s) => !seen.has(s))]
+}
+
 function asHead(raw: Record<string, unknown>, run: RunMeta): HeadFold {
   const ceiling = ceilingOf(raw)
+  const steps = stepsOf(raw.steps)
   return {
     kind: 'head',
     run,
@@ -608,6 +654,8 @@ function asHead(raw: Record<string, unknown>, run: RunMeta): HeadFold {
     costUsd: num(raw.cost_usd),
     maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
     disposition: dispositionOf(raw),
+    steps,
+    proven: num(raw.proven) ?? steps.filter((s) => s.proven).length,
     doing: '',
     worker: '',
     moves: [],
