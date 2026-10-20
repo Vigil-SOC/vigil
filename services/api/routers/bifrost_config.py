@@ -22,10 +22,15 @@ Bifrost, and because Bifrost trusts what it is sent:
   carries ``network_config.base_url`` is shape-checked, normalized, and merged
   into the stored provider document (see ``_with_base_url``). Bifrost's provider
   document is the one home of that value.
+* **A custom provider is validated here too.** A provider created with
+  ``custom_provider_config`` (a named host speaking the OpenAI wire format) must
+  carry a base URL and a name that cannot shadow a built-in; see
+  ``_check_custom_provider``.
 * **A key write mirrors a provider row.** Vigil indexes providers by
   ``llm_provider_configs``, so a key that exists only in Bifrost is unreachable
   to the model picker, to assignments, and to dispatch — see
-  ``core.llm.bifrost.mirror``.
+  ``core.llm.bifrost.mirror``. A provider create or delete does the same: a
+  key-less custom provider has no key write to trigger it.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ from core.llm.providers.base_url import (
     normalize_openai_compat_base_url,
     validate_base_url_shape,
 )
+from core.llm.providers.registry import VALID_PROVIDER_TYPES
 from core.routing import Auth, RouterMeta
 from core.secrets import delete_secret, get_secret, set_secret
 from core.storage.models import User
@@ -394,7 +400,73 @@ def _merge_base_url(doc: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]
     merged = {k: v for k, v in doc.items() if k in _PROVIDER_WRITE_FIELDS}
     merged.update({k: v for k, v in body.items() if k != "keys"})
     merged["network_config"] = network
+    if merged.get("custom_provider_config") and not network.get("base_url"):
+        raise HTTPException(
+            status_code=400, detail="A custom provider needs a base URL."
+        )
     return merged
+
+
+# Bifrost refuses a custom provider named like one of its own ("Custom provider
+# cannot be same as a standard provider") but owns that list; this is the subset
+# Vigil keys on, so a custom provider can never take over one of those rows.
+_RESERVED_PROVIDER_NAMES = VALID_PROVIDER_TYPES | {
+    "azure",
+    "bedrock",
+    "bifrost",
+    "cerebras",
+    "cohere",
+    "gemini",
+    "groq",
+    "huggingface",
+    "mistral",
+    "nebius",
+    "parasail",
+    "perplexity",
+    "replicate",
+    "sgl",
+    "together_ai",
+    "vllm",
+    "xai",
+}
+_CUSTOM_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+def _check_custom_provider(method: str, body: Dict[str, Any]) -> None:
+    """Refuse a malformed custom-provider write before Bifrost sees it.
+
+    Only a create may declare ``custom_provider_config``: turning an existing
+    (possibly built-in) provider into a custom one is not something the console
+    does, and ``_merge_base_url`` carries the stored block through every edit.
+    """
+    if "custom_provider_config" not in body:
+        return
+    custom = body["custom_provider_config"]
+    if method != "POST":
+        raise HTTPException(
+            status_code=400,
+            detail="custom_provider_config can only be set when the provider is created",
+        )
+    name = body.get("provider")
+    if not isinstance(name, str) or not _CUSTOM_NAME.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="A custom provider's name is lowercase letters, digits and dashes (40 at most).",
+        )
+    if name in _RESERVED_PROVIDER_NAMES:
+        raise HTTPException(
+            status_code=400, detail=f"{name} is a built-in provider; pick another name."
+        )
+    if not isinstance(custom, dict) or custom.get("base_provider_type") != "openai":
+        raise HTTPException(
+            status_code=400,
+            detail="Only OpenAI-compatible custom providers are supported.",
+        )
+    network = body.get("network_config")
+    if not isinstance(network, dict) or not network.get("base_url"):
+        raise HTTPException(
+            status_code=400, detail="A custom provider needs a base URL."
+        )
 
 
 async def _with_base_url(
@@ -500,11 +572,16 @@ async def proxy(
     if keys_match and isinstance(body, dict):
         _resolve_key_value(body, key_id, keys_match.group("provider"))
 
-    if _sets_base_url(body):
-        provider_match = _PROVIDER_PATH.match(path)
-        if provider_match or (path == "providers" and request.method == "POST"):
-            name = provider_match.group("provider") if provider_match else None
-            body = await _with_base_url(request.method, name, body)
+    provider_match = _PROVIDER_PATH.match(path)
+    creates_provider = path == "providers" and request.method == "POST"
+    deletes_provider = provider_match is not None and request.method == "DELETE"
+    if isinstance(body, dict) and (
+        creates_provider or (provider_match and request.method == "PUT")
+    ):
+        _check_custom_provider(request.method, body)
+    if _sets_base_url(body) and (provider_match or creates_provider):
+        name = provider_match.group("provider") if provider_match else None
+        body = await _with_base_url(request.method, name, body)
 
     url = f"{get_settings().bifrost_url.rstrip('/')}/api/{path}"
     try:
@@ -523,6 +600,16 @@ async def proxy(
         provider = keys_match.group("provider")
         _persist_key_secret(request.method, key_id, body, upstream, provider)
         await mirror.sync_provider(provider)
+    elif upstream.status_code < 400 and (creates_provider or deletes_provider):
+        # A key-less provider has no key write to trigger its row, and a
+        # deleted one would otherwise stay in the picker.
+        mirrored = (
+            provider_match.group("provider")
+            if provider_match
+            else (body or {}).get("provider")
+        )
+        if isinstance(mirrored, str):
+            await mirror.sync_provider(mirrored)
 
     return Response(
         content=upstream.content,

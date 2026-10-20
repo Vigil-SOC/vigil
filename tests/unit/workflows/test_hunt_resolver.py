@@ -303,21 +303,6 @@ def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
     assert "read_skill" in config_ids
     assert config_ids.count("read_skill") == 1
 
-    # The roster names capabilities. Compose grants tool ids, so _drop_missing
-    # drops those names; resolve_hunt never reads the list. read_skill still
-    # lands because the profile recommends it.
-    playbook, config_text = resolve("threat-hunt")
-    intel = next(
-        phase
-        for phase in yaml.safe_load(playbook)["phases"]
-        if phase["id"] == "threat_intel"
-    )
-    assert intel["tools"] == ["read_skill"]
-    assert "# IOC enrichment" not in intel["prompt"]
-    config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
-    assert "read_skill" in config_ids
-    assert config_ids.count("read_skill") == 1
-
 
 def test_a_compose_definition_still_resolves_to_phases():
     playbook, _ = resolve(
@@ -622,28 +607,13 @@ class TestTheCapabilityReport:
         assert "telemetry_search" in capability_report(registry)["bound"]
 
 
-class TestATurnedOffPhaseAgent:
-    # Compose refuses a turned-off phase agent, so a hunt that names one must too:
-    # "turned off" means one thing across workflow kinds.
+class TestATurnedOffBuiltInAgent:
+    # A hunt runs its plugin's agent and critic, not the built-ins compose names, so
+    # turning one off does not refuse it.
     @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
-    def test_refuses_the_run_and_says_which_agent(self, monkeypatch, workflow_id):
+    def test_does_not_refuse_the_run(self, monkeypatch, workflow_id):
         monkeypatch.setattr(
             "core.workflows.playbook_resolver.disabled_agent_ids",
-            lambda: {"threat_hunter"},
-        )
-        with pytest.raises(UnknownPlaybook, match="threat_hunter is turned off"):
-            resolve_hunt(workflow_id)
-
-    @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
-    def test_resolves_with_nothing_turned_off(self, monkeypatch, workflow_id):
-        monkeypatch.setattr(
-            "core.workflows.playbook_resolver.disabled_agent_ids", lambda: set()
+            lambda: {"threat_hunter", "network_analyst", "threat_intel"},
         )
         assert resolve_hunt(workflow_id)
-
-    def test_ignores_an_agent_turned_off_that_no_phase_names(self, monkeypatch):
-        monkeypatch.setattr(
-            "core.workflows.playbook_resolver.disabled_agent_ids",
-            lambda: {"reporter"},
-        )
-        assert resolve_hunt("threat-hunt")

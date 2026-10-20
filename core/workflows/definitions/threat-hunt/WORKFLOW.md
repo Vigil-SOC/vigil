@@ -1,6 +1,6 @@
 ---
 name: threat-hunt
-version: 2
+version: 3
 description: "Proactive, hypothesis-driven threat hunting across all available data sources with network analysis, malware examination, and intelligence enrichment."
 use_case: "Proactive threat hunting -- start with a hypothesis or IOC and systematically search for evidence across network, endpoint, and threat intel sources."
 trigger_examples:
@@ -24,7 +24,7 @@ run_kind: hunt
 # benign account needs no stating: the controller seeds it as the base rate on
 # every hunt, because it is the claim to beat rather than an objection to raise.
 hypotheses: []
-# The vocabulary a worker's technique citation is gated against, and nothing else.
+# The vocabulary the agent's technique citation is gated against, and nothing else.
 # It labels no hypothesis: pairing this list against `hypotheses` by position made
 # their order load-bearing and asserted a technique nobody had checked. What a
 # belief is about is what its evidence cited.
@@ -77,9 +77,9 @@ attack_techniques:
   - T1530       # Data from cloud storage
   - T1486       # Data encrypted for impact
   - T1496       # Resource hijacking
-# The telemetry vocabulary, and a contract rather than a hint: a worker's
+# The telemetry vocabulary, and a contract rather than a hint: the agent's
 # source_system is constrained to this list at spec build, and corroboration is
-# counted over distinct entries. A domain missing here is one no worker can name,
+# counted over distinct entries. A domain missing here is one the agent cannot name,
 # so this must describe the telemetry the deployment actually carries.
 data_domains:
   - net_flow
@@ -98,42 +98,13 @@ objectives:
   - "Characterise the network and artifact evidence bearing on it"
   - "Enrich every observable and attribute where the evidence supports it"
   - "Report the hypothesis as confirmed, refuted or inconclusive, with reasons"
-# The roster, not an order: the lead dispatches whichever of these the question in
-# front of it needs. Their tool grants live in plugins/hunt/plugin.yaml,
-# so what stands here is who can be asked and what each is for.
-phases:
-  - id: threat_hunter
-    agent: threat_hunter
-    name: "Behavioural hunting"
-    tools: [findings_search, telemetry_search, entity_recall]
-    instructions: |
-      Broad behavioural hunting across the signal detection already scored and the
-      telemetry behind it. "Nothing matched" is a finding about visibility, not a
-      failure: say which sources you queried and which you could not.
-
-  - id: network_analyst
-    agent: network_analyst
-    name: "Traffic shape"
-    tools: [telemetry_search, findings_search, entity_recall]
-    instructions: |
-      Beaconing intervals, jitter, volume asymmetry, DNS and HTTP. Quantify: a
-      regular interval with low variance is the signal, a busy host is not.
-
-  - id: threat_intel
-    agent: threat_intel
-    name: "Observable enrichment"
-    tools: [indicator_lookup, entity_recall]
-    instructions: |
-      Reputation and attribution for observables, against the indicator database
-      and whatever intel integrations are connected. A miss is not exoneration:
-      say "not in the feed" and never report an unknown observable as benign.
 ---
 
 # Threat Hunt Workflow
 
 Proactive, hypothesis-driven threat hunting. This text is the hunt's narrative — the Hunt Lead reads it as standing context for every decision it makes.
 
-A hunt does not walk a sequence of steps. It puts the hypotheses above on the board, and each iteration the Hunt Lead reads a digest of what has been gathered so far and chooses what to do next: dispatch a worker against an open question, expand a piece of evidence it was shown, pivot onto an entity, deepen a line that is paying off, abandon one that is not, validate a hypothesis it believes is settled, stop and ask for an operator, or conclude. What the evidence did to each belief is what drives the next move, which is why there is no phase order to state.
+A hunt does not walk a sequence of steps. It puts the hypotheses above on the board, and the Hunt Lead works them itself: it queries the estate, records what came back as evidence, links each record against every hypothesis on the board — the benign account included — and puts a belief up for validation, where an independent critic argues the strongest benign explanation before any verdict stands. Along the way it may expand a piece of evidence, pivot onto an entity, deepen a line that is paying off, abandon one that is not, stop and ask for an operator, or conclude. What the evidence did to each belief is what drives the next move, which is why there is no phase order to state.
 
 Every hypothesis ends as proven, disproven or inconclusive. Inconclusive is a legitimate ending and must be reported as itself: distinguish "we looked and it was not there" from "we could not look" — they read identically in a report that does not separate them, and only one of them clears the hypothesis.
 

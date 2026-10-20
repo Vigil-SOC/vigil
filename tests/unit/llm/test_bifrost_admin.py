@@ -1375,3 +1375,28 @@ def test_self_hosted_chat_models_excludes_embedding_ids(monkeypatch):
     assert asyncio.run(bifrost_admin.self_hosted_chat_models("ollama")) == [
         "llama3.1:8b"
     ]
+
+
+def test_a_custom_provider_floors_to_a_model_its_own_host_serves(monkeypatch):
+    """The datasheet knows nothing of a custom host's models, so the default
+    comes from what the gateway lists through that provider."""
+    import asyncio
+
+    from core.llm.providers.discovery import ModelMeta
+
+    async def _custom():
+        return frozenset({"lan-vllm"})
+
+    async def _list(provider_type):
+        assert provider_type == "lan-vllm"
+        return [ModelMeta(id="qwen2.5:3b", display_name="qwen2.5:3b")]
+
+    async def _no_catalogue(provider_type):
+        raise AssertionError("a custom provider has no datasheet to read")
+
+    monkeypatch.setattr(bifrost_admin, "bifrost_custom_providers", _custom)
+    monkeypatch.setattr(bifrost_admin, "list_gateway_models", _list)
+    monkeypatch.setattr(bifrost_admin, "fetch_catalogue_models", _no_catalogue)
+
+    assert asyncio.run(bifrost_admin.self_hosted_chat_models("lan-vllm")) == ["qwen2.5:3b"]
+    assert asyncio.run(bifrost_admin.default_model_for_provider_type("lan-vllm")) == "qwen2.5:3b"

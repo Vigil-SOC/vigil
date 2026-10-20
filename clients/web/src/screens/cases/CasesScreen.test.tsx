@@ -236,6 +236,17 @@ describe('server queue', () => {
     expect(cell).toHaveAttribute('title', id)
   })
 
+  it('carries a long title whole in the title cell', async () => {
+    const title = 'Suspicious PowerShell download cradle on finance workstation fin-ws-0142 after hours'
+    testState.cases = [{ ...CASE, title }]
+    renderCases('/cases')
+
+    const cell = (await screen.findByText(title)).closest('[role="cell"]')
+    expect(cell).toHaveClass('cg-what')
+    expect(cell?.querySelector('.cg-title')).toHaveTextContent(title)
+    expect(cell).toHaveAttribute('title', title) // no description, so hover gives the title
+  })
+
   it('labels needs-you rows and leaves the others unlabeled', async () => {
     testState.cases = [
       { ...CASE, case_id: 'needs', title: 'Waiting on a person', needs_you: true },

@@ -90,6 +90,7 @@ describe('a root-cause run', () => {
     reason: 'origin proven',
     cost_usd: 0.4,
     max_cost_usd: 2,
+    disposition: null,
     steps: [{ step_id: 's1', proven: true }],
     proven: 1,
     notices: ['a notice'],
@@ -121,6 +122,22 @@ describe('a root-cause run', () => {
     expect(readFold({ status: 'running', hunt: { iteration: 1, budgets: { max_cost_usd: 5 } } })).toMatchObject({ kind: 'hunt', maxCostUsd: 5 })
     expect(readFold({ status: 'running', hunt: { run_kind: 'hunt', iteration: 1, max_cost_usd: 3, budgets: { max_cost_usd: 5 } } })).toMatchObject({ kind: 'hunt', maxCostUsd: 3 })
     expect(readFold({ status: 'running', projection: { max_cost_usd: 1, findings: [] } })).toMatchObject({ kind: 'lead', maxCostUsd: 1 })
+  })
+})
+
+describe('the disposition', () => {
+  const disposition = (fold: RunFold | null) => fold?.disposition
+  it('is read off the head of every fold, and null when the head says none', () => {
+    expect(disposition(readFold({ hunt: { run_kind: 'hunt', disposition: 'malicious' } }))).toBe('malicious')
+    expect(disposition(readFold({ projection: { run_kind: 'investigate', disposition: 'needs_review', findings: [] } }))).toBe('needs_review')
+    expect(disposition(readFold({ projection: { run_kind: 'root_cause', disposition: null } }))).toBeNull()
+    expect(disposition(readFold({ hunt: { run_kind: 'hunt' } }))).toBeNull()
+    expect(disposition(readFold({ projection: { findings: [] } }))).toBeNull()
+  })
+
+  it('is not read out of the finding the lead shows', () => {
+    const fold = readFold({ projection: { run_kind: 'investigate', findings: [{ agent_id: 'agent', answer: { disposition: 'benign', summary: 'quiet' } }] } })
+    expect(fold).toMatchObject({ kind: 'lead', disposition: null })
   })
 })
 

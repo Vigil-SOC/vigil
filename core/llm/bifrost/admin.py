@@ -750,6 +750,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
     bifrost_results: Dict[str, bool] = {}
     base_url_results: Dict[str, bool] = {}
     per_row_models: Dict[str, List[str]] = {}
+    custom_providers = await bifrost_custom_providers()
 
     # Rates for every active type, on every run. The same read stands in for a
     # failed discovery below; otherwise it touches only the rates.
@@ -799,7 +800,9 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
 
             # A server behind a host set in Bifrost alone. OpenAI's names are not
             # models it can run, so nothing may stand in for its catalogue.
-            via_gateway = bool(gateway_host) and _is_mirror_row(row_dict)
+            via_gateway = _is_mirror_row(row_dict) and (
+                bool(gateway_host) or provider_type in custom_providers
+            )
 
             try:
                 if via_gateway:
@@ -1131,6 +1134,33 @@ async def bifrost_custom_openai_host() -> Optional[str]:
     return _custom_openai_base_url(network.get("base_url"))
 
 
+async def bifrost_custom_providers() -> frozenset:
+    """Names of the gateway's custom providers (``custom_provider_config`` set).
+
+    Their model catalogue is whatever the host behind them lists, which only the
+    gateway can read. Empty when it could not be asked.
+    """
+
+    def read() -> frozenset:
+        try:
+            with httpx.Client() as client:
+                r = client.get(
+                    f"{_bifrost_base_url()}/api/providers", timeout=_DEFAULT_TIMEOUT
+                )
+                r.raise_for_status()
+                providers = r.json().get("providers") or []
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Bifrost: could not list providers: %s", e)
+            return frozenset()
+        return frozenset(
+            p["name"]
+            for p in providers
+            if p.get("name") and p.get("custom_provider_config")
+        )
+
+    return await asyncio.to_thread(read)
+
+
 async def list_gateway_models(provider_type: str) -> Optional[List[Any]]:
     """What the gateway lists for ``provider_type`` through its own host and keys.
 
@@ -1287,6 +1317,8 @@ async def self_hosted_chat_models(provider_type: str) -> Optional[List[str]]:
     if provider_type in _HOST_OWNED_CATALOGUE:
         models = await _list_ollama_models(None)
     elif provider_type == "openai" and await bifrost_custom_openai_host():
+        models = await list_gateway_models(provider_type)
+    elif provider_type in await bifrost_custom_providers():
         models = await list_gateway_models(provider_type)
     else:
         return None

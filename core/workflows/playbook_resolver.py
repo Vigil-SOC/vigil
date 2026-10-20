@@ -225,7 +225,7 @@ def _profile_for(agent_id: str) -> Any:
 
 
 # Phase agents that are turned off, in phase order. One read of the switch for the
-# whole definition; hunt-like kinds name agents here without resolving profiles.
+# whole definition.
 # A caller checking many definitions passes the set it already read.
 def disabled_phase_agents(
     definition: Any, disabled: Optional[Set[str]] = None
@@ -522,9 +522,6 @@ def resolve_hunt(
     definition = (workflows or WorkflowsService()).get_workflow(workflow_id)
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
-
-    if off := disabled_phase_agents(definition):
-        raise UnknownPlaybook(f"phase names {disabled_message(off[0])}")
 
     # Empty is the shipped case, not an error: what a hunt tests belongs to the caller.
     # A run with none from either source is refused in execute_workflow.

@@ -31,12 +31,19 @@ UPSTREAM = {
 }
 
 
+# What the host behind a custom provider serves. The gateway's datasheet knows
+# nothing of it, so only /v1/models can say.
+CUSTOM_UPSTREAM = ["qwen2.5:3b"]
+
+
 class FakeBifrost:
     """A fresh Bifrost: the providers ``config.json`` seeds, none of them OpenRouter."""
 
     def __init__(self) -> None:
         self.providers: Dict[str, List[Dict[str, Any]]] = {"anthropic": []}
         self.network: Dict[str, Dict[str, Any]] = {}
+        # custom providers: name -> custom_provider_config
+        self.custom: Dict[str, Dict[str, Any]] = {}
         self._ids = itertools.count(1)
 
     def allowed(self, provider: str) -> List[str]:
@@ -57,9 +64,11 @@ class FakeBifrost:
         method = request.method
         if path == ["api", "providers"]:
             if method == "GET":
-                return httpx.Response(
-                    200, json={"providers": [{"name": n} for n in self.providers]}
-                )
+                listed = [
+                    {"name": n, **({"custom_provider_config": self.custom[n]} if n in self.custom else {})}
+                    for n in self.providers
+                ]
+                return httpx.Response(200, json={"providers": listed})
             name = body["provider"]
             if name in self.providers:
                 return httpx.Response(409, json={"error": "exists"})
@@ -91,6 +100,10 @@ class FakeBifrost:
                             200, json={**keys[i], "status": "success"}
                         )
                 return httpx.Response(404, json={"error": "Key not found"})
+        if path == ["v1", "models"]:
+            provider = parse_qs(urlparse(str(request.url)).query)["provider"][0]
+            data = [{"id": f"{provider}/{m}"} for m in CUSTOM_UPSTREAM]
+            return httpx.Response(200, json={"data": data})
         if path == ["api", "models", "details"]:
             provider = parse_qs(urlparse(str(request.url)).query)["provider"][0]
             models = [
@@ -256,3 +269,25 @@ def test_a_sync_keeps_an_allow_list_the_operator_narrowed(
 
     assert bifrost.providers["openrouter"][0]["models"] == [HAIKU]
     assert model_registry.catalogue_of("openrouter") == [HAIKU]
+
+
+def test_a_custom_provider_lists_through_the_gateway_and_is_never_rewritten(
+    bifrost, mirrored, monkeypatch
+):
+    bifrost.providers["lan-vllm"] = [{"id": "key-0", "name": "k", "models": ["*"]}]
+    bifrost.custom["lan-vllm"] = {"base_provider_type": "openai"}
+    row = _Row("bifrost-lan-vllm", "lan-vllm")
+    row.config = {"managed_by": "bifrost"}
+    host_writes: List[Any] = []
+    monkeypatch.setattr(ba, "sync_provider_base_url", lambda *a: host_writes.append(a))
+
+    result = _sync(monkeypatch, [row], {})
+
+    assert mirrored["lan-vllm"] == "qwen2.5:3b"
+    # The picker gets the models its own host serves, not an empty list.
+    assert model_registry._MODEL_LIST_CACHE["bifrost-lan-vllm"] == ["qwen2.5:3b"]
+    assert "bifrost-lan-vllm" in model_registry._LIVE_CATALOGUES
+    # Its key keeps the allow-list it has, and its host is not pushed by type.
+    assert bifrost.providers["lan-vllm"][0]["models"] == ["*"]
+    assert result["bifrost"]["lan-vllm"] is True
+    assert host_writes == []

@@ -554,7 +554,7 @@ function answerText(answer: unknown, lead: boolean): string {
 }
 
 /** What a run concluded, in one line: the head's disposition when it carries one
- *  (not yet on any projection; #2451), and the kind's own headline: a hunt's account
+ *  (every projection's, #2451), and the kind's own headline: a hunt's account
  *  or report, an investigation's answer, a root cause's reason. */
 export function verdictOf(d: WfRunDetail, rootCauseReason: string | null): { disposition: string | null; headline: string } {
   const head = rec(d.hunt ?? d.projection)

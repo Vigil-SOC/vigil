@@ -164,6 +164,8 @@ interface HuntFold {
   costUsd: number | null
   /** What this run was granted, extensions included; null when the run row carries no budgets. */
   maxCostUsd: number | null
+  /** The word the run concluded on, as held by the reviewer guard; null when it said none. */
+  disposition: string | null
 }
 
 /** What a run's record holds: the explanations it weighed, the rows linked to them, the questions left open. */
@@ -201,6 +203,8 @@ interface LeadFold {
   costUsd: number | null
   /** What this run was granted; null when the projection carries no positive cap. */
   maxCostUsd: number | null
+  /** The word the run concluded on, as held by the reviewer guard; null when it said none. */
+  disposition: string | null
 }
 
 /** A run whose chain stays on Watch a run (root cause): its head only. The row fields stay empty so every reader shows nothing for it. */
@@ -212,6 +216,8 @@ interface HeadFold {
   reason: string
   costUsd: number | null
   maxCostUsd: number | null
+  /** The word the run concluded on, as held by the reviewer guard; null when it said none. */
+  disposition: string | null
   doing: ''
   worker: ''
   moves: MoveRow[]
@@ -534,6 +540,11 @@ function heldOf(raw: unknown): HeldRow | null {
   return str(o.asked) && str(o.final) ? { field: str(o.field), asked: str(o.asked), final: str(o.final), reason: str(o.reason) } : null
 }
 
+// Every projection carries its disposition in the head, null when the run concluded none.
+function dispositionOf(raw: Record<string, unknown>): string | null {
+  return str(raw.disposition) || null
+}
+
 // Every projection carries the ceiling in its head; a ledger read before it did keeps it under budgets.
 function ceilingOf(raw: Record<string, unknown>): number | null {
   const head = num(raw.max_cost_usd)
@@ -569,6 +580,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
     maxCostUsd: ceilingOf(raw),
+    disposition: dispositionOf(raw),
   }
 }
 
@@ -582,6 +594,7 @@ function asHead(raw: Record<string, unknown>, run: RunMeta): HeadFold {
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
     maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
+    disposition: dispositionOf(raw),
     doing: '',
     worker: '',
     moves: [],
@@ -636,6 +649,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
     maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
+    disposition: dispositionOf(raw),
   }
 }
 

@@ -25,15 +25,14 @@ export const RECALL_TOOL = "recall_entity";
 // What the arch asks for; a ToolSpec binds it to the tool id via `provides`.
 export const RECALL_CAPABILITY = "entity_recall";
 
-// Keyed by the role names plugins/hunt/plugin.yaml declares, not by a class called
-// "worker" that appears in no file. Empties are decisions: the lead never
-// queries, and narrative search -- the lead's alone -- ships no tool here.
+// Keyed by what plugins/hunt/plugin.yaml declares: its roles, and "agent" for the
+// one agent that queries, which holds the plugin's top-level `needs`. Empties are
+// decisions: the lead never queries, and narrative search -- the lead's alone --
+// ships no tool here.
 export const RECALL_GRANTS = {
   lead: [],
   critic: [],
-  threat_hunter: [RECALL_CAPABILITY],
-  network_analyst: [RECALL_CAPABILITY],
-  threat_intel: [RECALL_CAPABILITY],
+  agent: [RECALL_CAPABILITY],
 } as const;
 
 // Who concluded, as opposed to what the source is.

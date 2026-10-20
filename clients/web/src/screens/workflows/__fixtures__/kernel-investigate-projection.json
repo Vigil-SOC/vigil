@@ -2,6 +2,7 @@
  "run_id": "run-1",
  "run_kind": "investigate",
  "max_cost_usd": 3,
+ "disposition": "benign",
  "budgets": {
   "max_calls": 40,
   "max_cost_usd": 3,

@@ -181,12 +181,21 @@ export function declaredGaps(
   };
 }
 
-// The record bears on a cited ref: a supports or weakens link to a served call. What a
-// guarded answer must stand on when the plugin requires a record.
+// The record bears on a cited ref: a supports or weakens link to a served call, or to an
+// evidence record that names one among the calls it rests on (`call_refs`, which a plugin
+// with records of its own keeps). What a guarded answer must stand on when the plugin
+// requires a record.
 export function grounded(events: readonly { kind: string; payload: unknown }[], calls: readonly CallPayload[], cited: readonly string[]): boolean {
   const served = new Set(calls.filter((call) => classOf(call) === "served").map((call) => call.ref));
   const wanted = new Set(cited);
-  return recordOf(events).links.some((link) => link.relation !== "neither" && served.has(link.evidence_id) && wanted.has(link.evidence_id));
+  const rests = new Map<string, readonly string[]>();
+  for (const event of events) {
+    const row = event.kind === "evidence" ? (event.payload as { evidence_id?: unknown; call_refs?: unknown }) : null;
+    if (typeof row?.evidence_id === "string" && Array.isArray(row.call_refs)) rests.set(row.evidence_id, row.call_refs as string[]);
+  }
+  return recordOf(events).links.some(
+    (link) => link.relation !== "neither" && [link.evidence_id, ...(rests.get(link.evidence_id) ?? [])].some((ref) => served.has(ref) && wanted.has(ref)),
+  );
 }
 
 // --- the tools ---------------------------------------------------------------
