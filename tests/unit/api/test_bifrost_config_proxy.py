@@ -273,7 +273,7 @@ class _FakeGateway:
         def handle(request):
             if request.method == "GET":
                 return httpx.Response(200, json=self.doc)
-            self.writes.append(json.loads(request.content))
+            self.writes.append(json.loads(request.content) if request.content else None)
             return httpx.Response(200, json={"ok": True})
 
         return httpx.MockTransport(handle)
@@ -330,3 +330,131 @@ def test_put_without_a_base_url_passes_through_untouched(monkeypatch):
     res = _client(monkeypatch, gw).put("/api/bifrost/providers/openai", json=body)
     assert res.status_code == 200
     assert gw.writes == [body]
+
+
+# --- custom (OpenAI-compatible) providers ------------------------------------
+
+_CUSTOM_CREATE = {
+    "provider": "lan-vllm",
+    "network_config": {"base_url": "http://10.0.0.5:8000/v1"},
+    "custom_provider_config": {"base_provider_type": "openai", "is_key_less": True},
+}
+
+
+def _mirrored(monkeypatch):
+    seen = []
+
+    async def sync(provider):
+        seen.append(provider)
+
+    monkeypatch.setattr(proxy.mirror, "sync_provider", sync)
+    return seen
+
+
+@pytest.mark.unit
+def test_create_keeps_the_custom_block_normalizes_the_host_and_mirrors(monkeypatch):
+    gw, seen = _FakeGateway({}), _mirrored(monkeypatch)
+    res = _client(monkeypatch, gw).post("/api/bifrost/providers", json=_CUSTOM_CREATE)
+    assert res.status_code == 200
+    sent = gw.writes[0]
+    assert sent["provider"] == "lan-vllm"
+    assert sent["network_config"] == {
+        "base_url": "http://10.0.0.5:8000",
+        "allow_private_network": True,
+    }
+    assert sent["custom_provider_config"] == _CUSTOM_CREATE["custom_provider_config"]
+    # A key-less provider has no key write to create its row, so the create does.
+    assert seen == ["lan-vllm"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"provider": "openai"},  # a built-in's name
+        {"provider": "Lan_VLLM"},
+        {"provider": "-x"},
+        {"network_config": {}},  # no host to fall back to
+        {"network_config": {"base_url": ""}},
+        {"custom_provider_config": {"base_provider_type": "anthropic"}},
+    ],
+)
+def test_a_malformed_custom_provider_never_reaches_bifrost(monkeypatch, patch):
+    gw, seen = _FakeGateway({}), _mirrored(monkeypatch)
+    res = _client(monkeypatch, gw).post(
+        "/api/bifrost/providers", json={**_CUSTOM_CREATE, **patch}
+    )
+    assert res.status_code == 400
+    assert gw.writes == [] and seen == []
+
+
+@pytest.mark.unit
+def test_a_write_cannot_turn_an_existing_provider_custom(monkeypatch):
+    gw = _FakeGateway(_DOC)
+    res = _client(monkeypatch, gw).put(
+        "/api/bifrost/providers/openai",
+        json={"custom_provider_config": {"base_provider_type": "openai"}},
+    )
+    assert res.status_code == 400
+    assert gw.writes == []
+
+
+@pytest.mark.unit
+def test_editing_a_custom_provider_url_keeps_its_custom_block(monkeypatch):
+    doc = {
+        **_DOC,
+        "name": "lan-vllm",
+        "network_config": {"base_url": "http://10.0.0.5:8000", "allow_private_network": True},
+        "custom_provider_config": {"base_provider_type": "openai", "is_key_less": True},
+    }
+    gw = _FakeGateway(doc)
+    res = _client(monkeypatch, gw).put(
+        "/api/bifrost/providers/lan-vllm",
+        json={"network_config": {"base_url": "http://10.0.0.9:8000/v1"}},
+    )
+    assert res.status_code == 200
+    sent = gw.writes[0]
+    assert sent["network_config"]["base_url"] == "http://10.0.0.9:8000"
+    assert sent["custom_provider_config"] == doc["custom_provider_config"]
+
+
+@pytest.mark.unit
+def test_deleting_a_provider_retires_its_mirror_row_and_only_its_own(monkeypatch):
+    gw, seen = _FakeGateway({}), _mirrored(monkeypatch)
+    client = _client(monkeypatch, gw)
+    # The fake gateway answers every non-GET with 200.
+    assert client.delete("/api/bifrost/providers/lan-vllm").status_code == 200
+    assert client.delete("/api/bifrost/providers/lab-gw").status_code == 200
+    assert seen == ["lan-vllm", "lab-gw"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("blank", ["  ", "/v1"])
+def test_a_host_that_normalizes_to_nothing_is_not_a_custom_provider_host(
+    monkeypatch, blank
+):
+    gw = _FakeGateway({})
+    body = {**_CUSTOM_CREATE, "network_config": {"base_url": blank}}
+    res = _client(monkeypatch, gw).post("/api/bifrost/providers", json=body)
+    assert res.status_code == 400
+    assert gw.writes == []
+
+
+@pytest.mark.unit
+def test_a_custom_provider_cannot_lose_its_host_or_its_custom_block(monkeypatch):
+    doc = {
+        **_DOC,
+        "name": "lan-vllm",
+        "network_config": {"base_url": "http://10.0.0.5:8000"},
+        "custom_provider_config": {"base_provider_type": "openai"},
+    }
+    gw = _FakeGateway(doc)
+    client = _client(monkeypatch, gw)
+    cleared = client.put(
+        "/api/bifrost/providers/lan-vllm", json={"network_config": {"base_url": ""}}
+    )
+    unset = client.put(
+        "/api/bifrost/providers/lan-vllm", json={"custom_provider_config": None}
+    )
+    assert cleared.status_code == unset.status_code == 400
+    assert gw.writes == []
