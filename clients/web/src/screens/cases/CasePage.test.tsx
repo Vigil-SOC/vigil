@@ -958,6 +958,21 @@ describe('case page', () => {
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
   })
 
+  it('flags a false-positive closure while a run stands malicious, under the closure line', async () => {
+    closedCase(CLOSURE)
+    testState.runs['run-closed'] = { hunt: { ...HUNT, run_kind: 'hunt', disposition: 'malicious' } }
+    renderCase('case-closed')
+    const verdict = await screen.findByRole('region', { name: 'Verdict across runs' })
+    expect(within(verdict).getByText('Malicious')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
+    cleanup()
+
+    closedCase({ ...CLOSURE, closure_category: 'resolved' })
+    renderCase('case-closed')
+    expect(await screen.findByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Verdict across runs' })).not.toBeInTheDocument()
+  })
+
   it('drops a missing category and closer kind from the Closed line without stray separators', async () => {
     closedCase({ ...CLOSURE, closure_category: '', closed_by_kind: '' })
     testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
@@ -1411,6 +1426,75 @@ describe('case page', () => {
     await waitFor(() => expect(streamFetch).toHaveBeenCalled())
     const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
     expect(body.messages.at(-1)).toEqual({ role: 'user', content: "Where do this case's runs disagree, and what did each one say?" })
+  })
+
+  describe('the verdict across runs', () => {
+    const runCase = (investigations: unknown[], over: Record<string, unknown> = {}) => {
+      testState.cases = [{ ...openCase('case-verdict'), investigations, ...over }]
+    }
+    const hunt = (disposition: string | null) => ({ hunt: { ...HUNT, run_kind: 'hunt', disposition } })
+    const lead = (disposition: string | null, next_steps?: string[]) => ({
+      projection: { run_kind: 'investigate', disposition, findings: [{ agent_id: 'agent', answer: { summary: 'a summary', disposition, next_steps } }], calls: [], gaps: [], decisions: [] },
+    })
+    const two = (primary: string, other: string) => [
+      { ...investigation('completed', false, primary), workflow_id: 'hunt-wf', created_at: '2026-06-15T09:00:00Z' },
+      { ...investigation('completed', false, other), workflow_id: 'rerun-wf', investigation_id: 'inv-2', primary: false, created_at: '2026-06-15T11:00:00Z' },
+    ]
+
+    it('holds a rerun that says benign for review, naming the hunt that said malicious, and lists each run\'s word', async () => {
+      runCase(two('run-v1', 'run-v2'))
+      testState.runs['run-v1'] = hunt('malicious')
+      testState.runs['run-v2'] = lead('benign')
+      renderDetail('case-verdict')
+      const verdict = await screen.findByRole('region', { name: 'Verdict across runs' })
+      expect(within(verdict).getByText('Needs review')).toBeInTheDocument()
+      expect(verdict).toHaveTextContent(/hunt-wf · started .* said Malicious\./)
+      expect(within(screen.getByRole('region', { name: 'Other runs on this case' })).getByText(/Benign/)).toBeInTheDocument()
+    })
+
+    it('shows a lone investigate run\'s word with no basis, and its next steps as Do now', async () => {
+      runCase([investigation('completed', false, 'run-v1')])
+      testState.runs['run-v1'] = lead('benign', ['Close the alert'])
+      renderDetail('case-verdict')
+      const verdict = await screen.findByRole('region', { name: 'Verdict across runs' })
+      expect(within(verdict).getByText('Benign')).toBeInTheDocument()
+      expect(verdict.querySelector('.case-verdict-word span')).toBeNull()
+      expect(within(verdict).getByText('Do now')).toBeInTheDocument()
+      expect(within(verdict).getByText('Close the alert')).toBeInTheDocument()
+    })
+
+    it('shows no Do now for a hunt', async () => {
+      runCase([investigation('completed', false, 'run-v1')])
+      testState.runs['run-v1'] = hunt('suspicious')
+      renderDetail('case-verdict')
+      const verdict = await screen.findByRole('region', { name: 'Verdict across runs' })
+      expect(within(verdict).getByText('Suspicious')).toBeInTheDocument()
+      expect(within(verdict).queryByText('Do now')).not.toBeInTheDocument()
+    })
+
+    it('shows nothing for a case whose only run has no disposition', async () => {
+      runCase([investigation('completed', false, 'run-v1')])
+      testState.runs['run-v1'] = hunt(null)
+      renderDetail('case-verdict')
+      expect(await screen.findByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Verdict across runs' })).not.toBeInTheDocument()
+    })
+
+    it('shows no verdict while a run is loading, and names an unreadable run under a dismissal', async () => {
+      runCase(two('run-v1', 'run-v2'))
+      testState.runs['run-v1'] = lead('benign')
+      vi.mocked(workflowApi.getRun).mockImplementation((id: string) => (id === 'run-v2' ? new Promise(() => undefined) : Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })) as never)
+      const { unmount } = renderDetail('case-verdict')
+      expect(await screen.findByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Verdict across runs' })).not.toBeInTheDocument()
+      unmount()
+
+      vi.mocked(workflowApi.getRun).mockImplementation((id: string) => (id === 'run-v2' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })) as never)
+      renderDetail('case-verdict')
+      const verdict = await screen.findByRole('region', { name: 'Verdict across runs' })
+      expect(verdict).toHaveTextContent(/Needs review.*rerun-wf · started .* could not be read\./)
+      vi.mocked(workflowApi.getRun).mockImplementation((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } }) as never)
+    })
   })
 
   it('chips a hunt evidence id and opens that row, and drops the thread when the case changes', async () => {

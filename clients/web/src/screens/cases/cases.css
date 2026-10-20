@@ -1900,3 +1900,21 @@
 .case-page .case-other-name:hover { text-decoration: underline; }
 .case-page .case-other-state { color: var(--tx2); font-size: 12px; }
 .case-page .case-other-runs .num { font-family: var(--mono); font-size: 12px; color: var(--tx1); }
+
+/* Summary: the verdict the runs share, in the closed card's Support line type (CaseDetail board). */
+.case-page .case-verdict {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.case-page .case-verdict.case-card { display: grid; }
+.case-page .case-verdict-key { color: var(--tx2); }
+.case-page .case-verdict-word { display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.case-page .case-verdict-word b { font-weight: 650; color: var(--tx0); }
+.case-page .case-verdict-word b.poor { color: var(--poor); }
+.case-page .case-verdict ol { margin: 0; padding-left: 18px; overflow-wrap: anywhere; }
+@container (max-width: 420px) {
+  .case-page .case-verdict { grid-template-columns: minmax(0, 1fr); }
+}

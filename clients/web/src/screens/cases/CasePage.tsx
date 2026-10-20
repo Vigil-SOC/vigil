@@ -30,6 +30,8 @@ import { timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
+  caseVerdict,
+  closureFlag,
   endedRun,
   EVIDENCE_PAGE,
   explanationWord,
@@ -49,6 +51,7 @@ import {
   visibilityGaps,
   wordDisplay,
   type CallRow,
+  type CaseVerdict,
   type EndedRun,
   type HypothesisRow,
   type OpenCheckpointRow,
@@ -670,7 +673,7 @@ function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<s
       <h3>Other runs on this case</h3>
       <ul>
         {runs.map((run) => {
-          const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—')
+          const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : [wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—'), run.fold?.disposition && wordDisplay(run.fold.disposition)].filter(Boolean).join(' · ')
           return (
             <li key={run.ref.run_id}>
               <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runTitle(run.ref, names)} onClick={onFollow}>{runTitle(run.ref, names)}</Link>
@@ -680,6 +683,25 @@ function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<s
           )
         })}
       </ul>
+    </section>
+  )
+}
+
+/** The one word the runs on the case support, the run that objects or could not be read, and what to do next. */
+function VerdictLine({ verdict, card }: { verdict: CaseVerdict; card?: boolean }) {
+  return (
+    <section className={card ? 'case-card case-verdict' : 'case-verdict'} aria-label="Verdict across runs">
+      <span className="case-verdict-key">Runs say</span>
+      <span className="case-verdict-word">
+        <b className={verdict.word === 'malicious' || verdict.word === 'suspicious' ? 'poor' : undefined}>{wordDisplay(verdict.word)}</b>
+        {verdict.basis && <span>{verdict.basis}</span>}
+      </span>
+      {verdict.doNow.length > 0 && (
+        <>
+          <span className="case-verdict-key">Do now</span>
+          <ol>{verdict.doNow.map((step, i) => <li key={i}>{step}</li>)}</ol>
+        </>
+      )}
     </section>
   )
 }
@@ -1073,6 +1095,10 @@ export function CasePage({
   // The run id is unknown until the case read returns, so the run is still loading, not absent.
   const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId ? 'ready' : reads[runId]?.phase ?? 'loading'
   const single = { fold, phase: foldPhase }
+  // The runs newest first by start time: `runs` itself is primary first.
+  const verdict = caseVerdict(
+    [...runs].sort((a, b) => (b.ref.created_at ?? '').localeCompare(a.ref.created_at ?? '')).map((one) => ({ fold: one.fold, label: runTitle(one.ref, workflowNames), phase: one.phase })),
+  )
 
   // A case refresh that moves another run on the case (a hunt's root-cause follow-up) re-reads the record in place.
   const otherRuns = investigations.filter((item) => !item.primary).map((item) => `${item.run_id}:${item.status}`).join(' ')
@@ -1472,6 +1498,7 @@ export function CasePage({
                     {closedLine(closure)}
                   </span>
                   <h3>{closure?.verdict || '—'}</h3>
+                  {verdict && closureFlag(closure, verdict.word) && <VerdictLine verdict={verdict} />}
                   <ClosedRows fold={fold} phase={foldPhase} />
                   <div className="case-assess">
                     <span>Your assessment</span>
@@ -1489,6 +1516,7 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
+                {verdict && <VerdictLine verdict={verdict} card />}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}

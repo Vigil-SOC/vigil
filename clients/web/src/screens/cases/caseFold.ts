@@ -1,6 +1,7 @@
 // What the case page reads off GET /workflows/runs/{id}. Hunt-like runs arrive
 // under `hunt`; every other kind arrives under `projection`.
 import { sourceBadge } from '../../config/sourceBadges'
+import type { Phase } from './useCases'
 
 export interface CallRow {
   question: string
@@ -195,6 +196,8 @@ interface LeadFold {
   worker: string
   moves: MoveRow[]
   findings: { agent_id: string; answer: string }[]
+  /** What the conclusion says to do next, most important first; empty when it names none. */
+  nextSteps: string[]
   calls: CallRow[]
   gaps: LeadGapRow[]
   recall: RecallView | null
@@ -408,6 +411,14 @@ function answerText(answer: unknown): string {
   } catch {
     return ''
   }
+}
+
+// The steps live on the structured conclusion, which answerText flattens to a line.
+function nextStepsOf(findings: unknown): string[] {
+  const first = Array.isArray(findings) ? findings[0] : null
+  const answer = first && typeof first === 'object' ? (first as Record<string, unknown>).answer : null
+  const steps = answer && typeof answer === 'object' ? (answer as Record<string, unknown>).next_steps : null
+  return Array.isArray(steps) ? steps.filter((one): one is string => typeof one === 'string' && one.trim() !== '') : []
 }
 
 function callsOf(raw: unknown): CallRow[] {
@@ -642,6 +653,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     worker: rows[0]?.worker ?? '',
     moves: rows,
     findings,
+    nextSteps: nextStepsOf(raw.findings),
     calls: callsOf(raw.calls),
     gaps,
     recall: recallOf(raw.recall),
@@ -675,6 +687,48 @@ export function foldRecord(fold: RunFold | null): RunRecord | null {
 }
 
 /** "Asked benign · held as needs review": the answer the guard would not let stand, in words. */
+export interface CaseVerdict {
+  word: string
+  /** One sentence naming the run that objects or could not be read; empty when the runs agree. */
+  basis: string
+  /** The speaking run's next steps; empty for a hunt, which names none. */
+  doNow: string[]
+}
+
+const DISMISSALS = ['benign', 'false_positive']
+// What stops a dismissal, most severe first.
+const OBJECTIONS = ['malicious', 'suspicious', 'needs_review']
+
+/**
+ * The one word every run on the case supports. `runs` is newest first (the caller sorts by start time;
+ * the page's own list puts the primary first). Null while any run is loading or when no run has a
+ * disposition. The newest run speaks, but malicious, then suspicious, outrank a later word that is not a dismissal. A dismissal
+ * stands only when no other run objects and every run was read; otherwise the word is needs_review and
+ * the basis names the run that objects, or the one that could not be read. A run in flight has no
+ * disposition and does not speak.
+ */
+export function caseVerdict(runs: { fold: RunFold | null; label: string; phase: Phase }[]): CaseVerdict | null {
+  if (runs.some((run) => run.phase === 'loading')) return null
+  const spoke = runs.filter((run) => run.phase === 'ready' && run.fold?.disposition)
+  const said = (run: (typeof runs)[number]) => run.fold?.disposition ?? ''
+  if (spoke.length === 0) return null
+  // A later dismissal does not outrank an earlier malicious or suspicious run; it is held below.
+  const stern = DISMISSALS.includes(said(spoke[0])) ? undefined : OBJECTIONS.slice(0, 2).map((word) => spoke.find((run) => said(run) === word)).find(Boolean)
+  const speaker = stern ?? spoke[0]
+  const steps = (run: (typeof runs)[number]) => (run.fold?.kind === 'lead' ? run.fold.nextSteps : [])
+  if (!DISMISSALS.includes(said(speaker))) return { word: said(speaker), basis: '', doNow: steps(speaker) }
+  const objector = OBJECTIONS.flatMap((word) => spoke.filter((run) => said(run) === word))[0]
+  const unread = runs.find((run) => run.phase === 'error')
+  if (objector) return { word: 'needs_review', basis: `${objector.label} said ${wordDisplay(said(objector))}.`, doNow: steps(objector) }
+  if (unread) return { word: 'needs_review', basis: `${unread.label} could not be read.`, doNow: [] }
+  return { word: said(speaker), basis: '', doNow: steps(speaker) }
+}
+
+/** A closure that dismisses the case while the runs say otherwise. `unspecified` is a backend category the web list does not carry. */
+export function closureFlag(closure: { closure_category: string } | null, word: string | null): boolean {
+  return !!closure && ['false_positive', 'unspecified'].includes(closure.closure_category) && !!word && OBJECTIONS.includes(word)
+}
+
 export function heldLine(held: HeldRow): string {
   return `Asked ${held.asked.replace(/_/g, ' ')} · held as ${held.final.replace(/_/g, ' ')}`
 }
