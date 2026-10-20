@@ -3,9 +3,10 @@
 import { describe, expect, it } from "vitest";
 import type { CallPayload } from "../../contracts/events.js";
 import type { ToolSpec } from "../../core/spec.js";
+import { callsIn } from "../../core/agent.js";
 import { InProcessState } from "../../core/state.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
-import { servedSince } from "../../plugins/hunt/hooks.js";
+import { servedRefsSince, servedSince } from "../../plugins/hunt/hooks.js";
 import type { HuntEvent, HuntKinds } from "../../plugins/hunt/ledger.js";
 import { huntProjection } from "../../plugins/hunt/projection.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
@@ -38,6 +39,54 @@ describe("the integration a record's rows came from", () => {
   it("counts no call that failed, and nothing before the hunt has queried", () => {
     expect(servedSince([call("virustotal_get_ip_report", false), call("splunk-selfhosted_splunk_execute")], TOOLS)).toBe("splunk-selfhosted");
     expect(servedSince([], TOOLS)).toBeNull();
+  });
+});
+
+// #2520: a record rests on the searches whose results the model could have read when it wrote it.
+describe("the searches a record rests on", () => {
+  const at = (turn: number, ref: string, tool = "splunk-selfhosted_splunk_execute"): CallPayload => ({ ref, turn, call_id: ref, tool, arguments: "{}", result: "", ok: true, failure: null, class: "served" });
+  const s1 = at(3, "r1");
+
+  it("leaves out a search from the record's own batch, whose result the model had not seen", () => {
+    expect(servedRefsSince([s1], 3)).toEqual([]);
+  });
+
+  it("keeps a search read on the next turn, after a record in its batch", () => {
+    expect(servedRefsSince([s1, at(3, "r2", "record_evidence")], 4)).toEqual(["r1"]);
+  });
+
+  it("gives a second record in one batch nothing from that batch", () => {
+    expect(servedRefsSince([at(2, "r1"), s1, at(3, "r3", "record_evidence")], 3)).toEqual([]);
+  });
+
+  it("counts from the start of the hunt before any record, and drops what came before the last one", () => {
+    expect(servedRefsSince([at(1, "r1"), at(2, "r2")], 3)).toEqual(["r1", "r2"]);
+    expect(servedRefsSince([at(1, "r1"), at(2, "r2", "record_evidence"), at(2, "r3"), at(3, "r4")], 4)).toEqual(["r3", "r4"]);
+  });
+});
+
+describe("a hunt whose model searches and records in one response", () => {
+  it("gives that record no ref to the search beside it, and the next record the search", async () => {
+    const state = new InProcessState<HuntKinds>();
+    const spec = specOf();
+    const provider = modelOf([
+      (request) => ({
+        calls: [
+          { tool: "splunk_search", args: { sql: "select * from flows where src = '10.0.0.5'" } },
+          { tool: "record_evidence", args: { results: [finding("network", hypothesisIn(request))] } },
+        ],
+      }),
+      (request) => ({ tool: "record_evidence", args: { results: [finding("endpoint", hypothesisIn(request))] } }),
+      () => ({ say: "done" }),
+    ]);
+    await runHunt(harnessOf(spec, provider, state, estate()), { run_id: RUN, run_kind: "hunt", spec, actions: [], queue: new InProcessDirectiveQueue() });
+
+    const held = await state.read(RUN);
+    const search = callsIn(held).find((one) => one.tool === "splunk_search");
+    const rows = held.filter((one) => one.kind === "evidence").map((one) => one.payload as { source_system?: string; call_refs?: string[] });
+    expect(search).toBeDefined();
+    expect(rows.find((row) => row.source_system === "network")?.call_refs).toEqual([]);
+    expect(rows.find((row) => row.source_system === "endpoint")?.call_refs).toEqual([search?.ref]);
   });
 });
 

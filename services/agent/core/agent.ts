@@ -56,6 +56,8 @@ type Ledger = readonly AgentEvent<Kinds>[];
 export interface PluginContext {
   harness: Harness<Kinds>;
   options: AgentOptions;
+  // The model turn the loop is on: the turn a call answering now is journaled under.
+  turn(): number;
 }
 
 // Before the loop: park on a question of the plugin's own, or end the run here.
@@ -246,7 +248,10 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   if ((await harness.state.latestSeq(run_id)) === null) await open(harness, options);
   await journalAnswers(harness.state, run_id, options.run_kind, options.answers ?? noAnswers);
 
-  const ctx: PluginContext = { harness: equipped(harness, options), options };
+  // The kernel's turn counter, advanced by work() and read by the run's tools.
+  const clock = { turn: 0 };
+  const turn = () => clock.turn;
+  const ctx: PluginContext = { harness: equipped(harness, options, turn), options, turn };
   // The lease went to another worker, which is driving the run now: hand it back
   // untouched. A terminal written here would end the run it is in the middle of.
   if (options.signal?.aborted === true) return report(ctx, "aborted", LOST_LEASE, null);
@@ -265,7 +270,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   }
 
   if (options.conversation !== undefined) {
-    const loop = yield* work(ctx, await harness.state.read(run_id));
+    const loop = yield* work(ctx, await harness.state.read(run_id), clock);
     if (loop.kind === "parked") return loop.report;
     if (loop.kind === "stopped") return stopped(ctx, loop.directive);
     if (loop.kind === "waiting") return wait(ctx, loop.parked);
@@ -279,7 +284,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   let held = await harness.state.read(run_id);
   let conclusion = lastPayload<ConclusionPayload>(held, "conclusion");
   if (conclusion === null) {
-    const loop = yield* work(ctx, held);
+    const loop = yield* work(ctx, held, clock);
     if (loop.kind === "parked") return loop.report;
     if (loop.kind === "stopped") return stopped(ctx, loop.directive);
     if (loop.kind === "waiting") return wait(ctx, loop.parked);
@@ -331,8 +336,8 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
 
 // The registry and dispatch the run actually holds: the deployment's tools, the
 // plugin's own, and the skill loader, each shaped by the plugin if it asks.
-function equipped(harness: Harness<Kinds>, options: AgentOptions): Harness<Kinds> {
-  const ctx: PluginContext = { harness, options };
+function equipped(harness: Harness<Kinds>, options: AgentOptions, turn: () => number): Harness<Kinds> {
+  const ctx: PluginContext = { harness, options, turn };
   const own = [...(options.hooks?.tools?.(ctx) ?? []), ...recordToolsFor(ctx), ...concludeToolFor(ctx)];
   const registry =
     options.tools === undefined
@@ -423,7 +428,7 @@ type Loop =
 
 // The agent's own loop, picked up wherever the ledger left it. Every result is
 // journaled the moment it arrives, so a park or a crash loses nothing it learned.
-async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEvent<unknown>, Loop> {
+async function* work(ctx: PluginContext, held: Ledger, clock: { turn: number }): AsyncGenerator<StreamEvent<unknown>, Loop> {
   const { harness, options } = ctx;
   const calls = callsIn(held);
   // A conversation's turns are each the caller's whole transcript, so none
@@ -450,7 +455,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
   );
   const stream = streamTurn<unknown, Kinds>(cfg, harness);
 
-  let turn = used;
+  clock.turn = used;
   let spoken = "";
   let thought = "";
   let first = true;
@@ -475,7 +480,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
       else if (seen.type === "usage") {
         // A model call has answered. Whatever it said before asking for tools is the
         // thought its calls are filed under.
-        turn += 1;
+        clock.turn += 1;
         spent += seen.payload.cost_usd ?? 0;
         thought = spoken;
         spoken = "";
@@ -484,7 +489,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
         count += 1;
         const call: CallPayload = {
           ref: seen.ref ?? `${CALL_REF}${count}`,
-          turn,
+          turn: clock.turn,
           call_id: seen.call.id,
           tool: seen.call.tool,
           arguments: seen.call.args,
@@ -521,7 +526,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
         halted = true;
         halt.abort(new Error("the agent concluded"));
         await stream.return(undefined as never).catch(() => undefined);
-        return answeredBy(options, JSON.parse(seen.call.args === "" ? "{}" : seen.call.args) as Record<string, unknown>, turn, used, spent);
+        return answeredBy(options, JSON.parse(seen.call.args === "" ? "{}" : seen.call.args) as Record<string, unknown>, clock.turn, used, spent);
       }
     }
   } catch (error) {
@@ -779,11 +784,12 @@ export interface Subturn {
 
 export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<Outcome<T>> {
   const { harness, options } = ctx;
-  const available = dedupe([...(options.tools ?? []), ...(options.hooks?.tools?.(ctx) ?? [])]);
+  let turn = 0;
+  const available = dedupe([...(options.tools ?? []), ...(options.hooks?.tools?.({ ...ctx, turn: () => turn }) ?? [])]);
   const known = new Set(available.map((tool) => tool.id));
   const scoped: Harness<Kinds> = { ...harness, registry: registryOf(available, { [sub.role]: sub.tools.filter((id) => known.has(id)) }) };
   const calls = callsIn(await harness.state.read(options.run_id));
-  let turn = calls.reduce((max, call) => Math.max(max, call.turn), 0);
+  turn = calls.reduce((max, call) => Math.max(max, call.turn), 0);
   let count = calls.length;
   const cfg: TurnConfig = {
     run_id: options.run_id,
@@ -1246,7 +1252,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       tenant_id: null,
       started_by: options.started_by ?? "worker",
     };
-    await options.hooks.open({ harness, options }, base);
+    await options.hooks.open({ harness, options, turn: () => 0 }, base);
     return;
   }
   const unbound = unboundNeeds(options.plugin, options.spec.tools).map((capability) =>
