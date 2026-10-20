@@ -83,7 +83,9 @@ function places(value: unknown): number | null {
   return found === null ? null : (found[1]?.length ?? 0);
 }
 
-// Claimed 33.5 against a result's 33.48: the record rounded it, not got it wrong.
+// Claimed 33.5 against a result's 33.48: the record rounded it, not got it wrong. Cut
+// off counts the same way: an epoch of 1534759305 written for 1534759305.832 dropped
+// the fraction, which is how a timestamp is usually written down.
 function roundsTo(claimed: unknown, held: unknown): boolean {
   const want = scalar(claimed);
   const have = scalar(held);
@@ -91,7 +93,7 @@ function roundsTo(claimed: unknown, held: unknown): boolean {
   if (typeof want !== "number" || typeof have !== "number" || kept === null || want === have) return false;
   if ((places(held) ?? 0) <= kept) return false;
   const factor = 10 ** kept;
-  return Math.round(have * factor) / factor === want;
+  return Math.round(have * factor) / factor === want || Math.trunc(have * factor) / factor === want;
 }
 
 // A value is only telling found under an unrelated field when it could not turn up by
