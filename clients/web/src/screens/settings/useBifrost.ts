@@ -110,7 +110,7 @@ export function useBifrostProviders() {
 
   const addProvider = useCallback(
     async (name: string, custom?: CustomProviderWrite) => {
-      const res = await bifrostApi.createProvider(name, custom)
+      const res = await (custom ? bifrostApi.createProvider(name, custom) : bifrostApi.createProvider(name))
       reload()
       return res.data
     },

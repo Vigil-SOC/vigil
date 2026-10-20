@@ -275,7 +275,7 @@ describe('a provider’s base URL', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.5:8000/v1'))
-    expect(createProvider).toHaveBeenCalledWith('openai', undefined)
+    expect(createProvider).toHaveBeenCalledWith('openai')
   })
 
   it('is not offered for a provider whose URL lives on its key', async () => {
