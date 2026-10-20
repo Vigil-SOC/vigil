@@ -256,15 +256,21 @@ def _size(read: dict) -> int:
     return len(view.get("evidence") or []) if read["hunt"] else MAX_FINDINGS
 
 
-def _fit(compose: Callable[[int, int], str], alerts: int, rows: int) -> str:
-    """The fullest brief within the budget: the runs' oldest rows go first, then alerts."""
-    text = compose(alerts, rows)
+def _fit(
+    compose: Callable[[int, int, int], str], alerts: int, rows: int, runs: int
+) -> str:
+    """The fullest brief within the budget: the runs' oldest rows go first, then the
+    oldest other runs, then alerts."""
+    text = compose(alerts, rows, runs)
     while len(text) > MAX_BRIEF_CHARS and rows > 0:
         rows -= 1
-        text = compose(alerts, rows)
+        text = compose(alerts, rows, runs)
+    while len(text) > MAX_BRIEF_CHARS and runs > 0:
+        runs -= 1
+        text = compose(alerts, rows, runs)
     while len(text) > MAX_BRIEF_CHARS and alerts > 0:
         alerts -= 1
-        text = compose(alerts, rows)
+        text = compose(alerts, rows, runs)
     return text
 
 
@@ -291,9 +297,9 @@ async def case_brief(case_id: str, workflows: Any) -> str:
         ordered = [run, *(ref for ref in listed if ref is not run)] if run else []
         reads = await asyncio.gather(*(_read(ref, workflows) for ref in ordered))
 
-        def compose(alert_rows: int, run_rows: int) -> str:
+        def compose(alert_rows: int, run_rows: int, others: int) -> str:
             lines = [head, *_alerts(alerts, alert_rows)]
-            for i, (ref, read) in enumerate(zip(ordered, reads)):
+            for i, (ref, read) in enumerate(zip(ordered[: others + 1], reads)):
                 if i == 0:
                     lines += _run_state(
                         ref, read["row"], read["view"] or {}, read["hunt"]
@@ -304,9 +310,12 @@ async def case_brief(case_id: str, workflows: Any) -> str:
                     # The primary keeps the most rows; the others share half its count.
                     lines.append(_header("Other run", ref, read, workflows))
                     lines += _rows(read, run_rows // 2)
+            if len(ordered) > others + 1:
+                lines.append(f"({len(ordered) - others - 1} older runs not shown)")
             return "\n".join(lines)
 
-        body = _fit(compose, MAX_ALERTS, max((_size(r) for r in reads), default=0))
+        rows = max((_size(r) for r in reads), default=0)
+        body = _fit(compose, MAX_ALERTS, rows, max(len(ordered) - 1, 0))
     except Exception as exc:  # noqa: BLE001 — a brief is never worth the turn
         logger.warning("no case brief for %s: %s", case_id, exc)
         return ""

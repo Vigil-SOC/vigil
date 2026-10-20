@@ -230,6 +230,23 @@ async def test_three_runs_with_a_full_hunt_stay_within_the_cap(reads):
     assert sections[0].count("\n- ev-") > sections[2].count("\n- ev-") > 0
 
 
+async def test_many_runs_shed_the_oldest_runs_to_stay_within_the_cap(reads):
+    view = _hunt(n=5)
+    view["hypotheses"] = [
+        {"hypothesis_id": f"h-{i}-" + "i" * 70, "statement": "s" * 400}
+        for i in range(8)
+    ]
+    reads["view"] = view
+    reads["refs"] = [
+        ({"run_id": f"r-{i}", "workflow_id": "threat-hunt"}, "completed")
+        for i in range(6, 0, -1)
+    ]
+    body = (await mod.case_brief("C", WF)).split(mod.OPEN)[1].split(mod.CLOSE)[0]
+    assert len(body) <= mod.MAX_BRIEF_CHARS
+    assert "The case's run: r-6" in body and "Other run: r-5" in body
+    assert "Other run: r-1" not in body and "older runs not shown)" in body
+
+
 async def test_lead_run_lists_findings(reads):
     reads["hunt"] = False
     reads["view"] = {"findings": [{"agent_id": "triage", "answer": "benign login"}]}
