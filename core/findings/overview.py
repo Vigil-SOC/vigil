@@ -40,17 +40,12 @@ STEP_SOURCE = "The open phase on the newest live run, or that run's status when 
 UNMEASURED_TEXT = "Not measured yet"
 NEEDS_YOU_INFO = "This count is alerts, not decisions."
 
-# Ticket, dropped, paused, stuck, and incidents stay outside the sum.
+# Ticket, paused, stuck, and incidents stay outside the sum.
 _UNMEASURED = (
     (
         "ticket",
         "Ticket created",
         "Jira export returns an issue key and does not store it.",
-    ),
-    (
-        "dropped",
-        "Dropped as noise",
-        "There is no score floor, and a noise mark is not a disposition.",
     ),
     (
         "paused",
@@ -65,8 +60,12 @@ _LIVE_ORDER = (
     "resolved_person",
     "working",
     "needs_you",
+    "dismissed",
+    "scoring",
     "waiting",
 )
+# The board names the dismissed node apart from its pill ("Dropped").
+_NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dropped as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _LIVE_STATUSES = ("running", "paused")
 _OPEN_PHASE = ("running", "pending_approval")
@@ -90,7 +89,7 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
         nodes.append(
             {
                 "state": state,
-                "label": TERMINAL_LABELS[state],
+                "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
                 "source_text": OUTCOME_SOURCE,
                 "info": NEEDS_YOU_INFO if state == "needs_you" else None,

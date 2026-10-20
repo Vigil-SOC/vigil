@@ -24,6 +24,7 @@ from core.storage.models import (
     CustomWorkflow,
     FederationSource,
     Finding,
+    IntakeTrigger,
     Investigation,
     WorkflowRun,
     WorkflowRunPhase,
@@ -42,6 +43,9 @@ IN_WINDOW = datetime(2099, 5, 20, 8, 0, 0)
 def _clean(throwaway_database):
     def purge():
         with unit_of_work() as session:
+            session.query(IntakeTrigger).filter(
+                IntakeTrigger.finding_id.like("ov-%")
+            ).delete(synchronize_session=False)
             session.query(ApprovalAction).filter(
                 ApprovalAction.action_id.like("ov-%")
             ).delete(synchronize_session=False)
@@ -150,6 +154,7 @@ def test_terminal_states_partition_the_day():
                 _case("ov-c-auto", "closed", inside),
                 _case("ov-c-person", "closed", inside),
                 _case("ov-c-work", "open", inside),
+                _case("ov-c-drop", "open", inside),
                 _case("ov-c-old", "open", datetime(2099, 1, 1)),
                 _case("ov-c-new", "open", datetime(2099, 6, 1)),
                 _finding(
@@ -177,6 +182,15 @@ def test_terminal_states_partition_the_day():
                 _finding("ov-f-work", inside),
                 _finding("ov-f-latest", inside),
                 _finding("ov-f-wait", inside),
+                _finding(
+                    "ov-f-drop",
+                    inside,
+                    noise_marked_at=inside,
+                    noise_marked_by="agent",
+                    noise_marked_by_kind="agent",
+                    noise_reason="benign scanner",
+                ),
+                _finding("ov-f-score", inside),
                 _finding("ov-f-start", DAY),
                 _finding("ov-f-before", DAY - timedelta(seconds=1)),
                 _finding("ov-f-after", DAY + timedelta(days=1)),
@@ -213,6 +227,11 @@ def test_terminal_states_partition_the_day():
                     trigger_context={"case_id": "ov-c-run"},
                     started_at=IN_WINDOW,
                 ),
+                IntakeTrigger(kind="detection", finding_id="ov-f-score"),
+                IntakeTrigger(kind="detection", finding_id="ov-f-drop"),
+                IntakeTrigger(
+                    kind="detection", finding_id="ov-f-wait", state="claimed"
+                ),
                 Investigation(
                     investigation_id="ov-inv",
                     case_id="ov-c-inv",
@@ -232,6 +251,7 @@ def test_terminal_states_partition_the_day():
             ("ov-c-auto", "ov-f-auto"),
             ("ov-c-person", "ov-f-person"),
             ("ov-c-work", "ov-f-work"),
+            ("ov-c-drop", "ov-f-drop"),
             ("ov-c-old", "ov-f-latest"),
             ("ov-c-new", "ov-f-latest"),
         ):
@@ -266,6 +286,9 @@ def test_terminal_states_partition_the_day():
         "ov-f-latest": "working",
         "ov-f-wait": "waiting",
         "ov-f-start": "waiting",
+        # A dismissal reads ahead of its open case; a queued trigger with no case is scoring.
+        "ov-f-drop": "dismissed",
+        "ov-f-score": "scoring",
     }
     assert "ov-f-before" not in states
     assert "ov-f-after" not in states
@@ -290,13 +313,18 @@ def test_terminal_states_partition_the_day():
     unmeasured = {
         node["state"]: node
         for node in payload["outcomes"]
-        if node["state"] in {"ticket", "dropped", "paused", "stuck", "incidents"}
+        if node["state"] in {"ticket", "paused", "stuck", "incidents"}
     }
-    assert set(unmeasured) == {"ticket", "dropped", "paused", "stuck", "incidents"}
+    assert set(unmeasured) == {"ticket", "paused", "stuck", "incidents"}
     for node in unmeasured.values():
         assert node["count"] is None
         assert node["unmeasured_text"] == "Not measured yet"
-    needs = next(node for node in payload["outcomes"] if node["state"] == "needs_you")
+    nodes = {node["state"]: node for node in payload["outcomes"]}
+    assert nodes["dismissed"]["label"] == "Dropped as noise"
+    assert nodes["dismissed"]["count"] >= 1
+    assert nodes["scoring"]["count"] >= 1
+    assert "dropped" not in nodes
+    needs = nodes["needs_you"]
     assert "alerts" in needs["info"]
     assert "No count" in payload["engine"]["source_text"]
     assert "count" not in payload["engine"]
@@ -530,7 +558,9 @@ def test_alert_read_matches_the_feed_item_and_reaches_past_the_feed(client):
         )
         session.flush()
         _link(session, "ov-c-one", "ov-old")
-    feed = {r["finding_id"]: r for r in overview_payload(day=base.date(), now=base)["feed"]}
+    feed = {
+        r["finding_id"]: r for r in overview_payload(day=base.date(), now=base)["feed"]
+    }
     assert "ov-old" not in feed and "ov-marked-one" not in feed
     assert all(row["noise_marked"] is False for row in feed.values())
 
@@ -544,8 +574,14 @@ def test_alert_read_matches_the_feed_item_and_reaches_past_the_feed(client):
     assert old["case_id"] == "ov-c-one"
     assert old["noise_marked"] is False
     # noise-marked: not skipped, and says so
-    assert client.get("/api/overview/alerts/ov-marked-one").json()["noise_marked"] is True
-    assert overview_alert("ov-marked-one")["terminal_state"] == "waiting"
+    assert (
+        client.get("/api/overview/alerts/ov-marked-one").json()["noise_marked"] is True
+    )
+    marked = overview_alert("ov-marked-one")
+    assert (marked["terminal_state"], marked["terminal_label"]) == (
+        "dismissed",
+        "Dropped",
+    )
 
 
 def test_alert_read_404_names_the_id(client):
@@ -558,7 +594,7 @@ def test_overview_route_marks_unmeasured_nodes(client):
     response = client.get("/api/overview")
     assert response.status_code == 200
     body = response.json()
-    for state in ("ticket", "dropped", "paused", "stuck", "incidents"):
+    for state in ("ticket", "paused", "stuck", "incidents"):
         node = next(item for item in body["outcomes"] if item["state"] == state)
         assert node["count"] is None
         assert node["unmeasured_text"] == "Not measured yet"
