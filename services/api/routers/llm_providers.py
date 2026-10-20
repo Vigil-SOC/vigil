@@ -19,6 +19,7 @@ from core.llm.bifrost.admin import (
     sync_all_provider_models,
 )
 from core.llm.providers import provider_service
+from core.llm.providers.base_url import validate_base_url_shape
 from core.llm.providers.registry import (
     VALID_PROVIDER_TYPES,
     invalidate_model_cache,
@@ -50,34 +51,11 @@ def _secret_ref_for(provider_id: str) -> str:
 
 
 def _validate_provider_base_url_shape(base_url: Optional[str]) -> None:
-    """Cheap shape-only validation for stored ``base_url``.
-
-    Admins legitimately persist loopback URLs for self-hosted Ollama or
-    private LLM gateways, so the SSRF IP gate doesn't apply here — it
-    runs at HTTP-request time inside the discovery/test helpers. We
-    still reject malformed inputs and obvious smuggling vectors (non-
-    http(s) scheme, userinfo, fragment) so they never reach disk.
-    """
-    if base_url is None or not base_url.strip():
-        return
-    from urllib.parse import urlparse
-
-    parsed = urlparse(base_url.strip())
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"base_url: scheme not allowed: {parsed.scheme or '(missing)'}",
-        )
-    if not parsed.hostname:
-        raise HTTPException(status_code=400, detail="base_url: missing host")
-    if parsed.username or parsed.password:
-        raise HTTPException(
-            status_code=400, detail="base_url: must not include userinfo"
-        )
-    if parsed.fragment:
-        raise HTTPException(
-            status_code=400, detail="base_url: must not include a fragment"
-        )
+    """Shape-only check (see ``validate_base_url_shape``), as a 400."""
+    try:
+        validate_base_url_shape(base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class LLMProviderCreate(BaseModel):

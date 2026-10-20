@@ -502,7 +502,7 @@ if [ "$do_bifrost" = true ]; then
 fi
 
 if [ "$do_budget" = true ]; then
-  put /analytics/budget '{"default_vk":"","budget_limit_usd":0,"enforcement_mode":"warning"}' >/dev/null
+  put /analytics/budget '{"default_vk":""}' >/dev/null
   echo -e "  ${GREEN}cleared budget${NC}"
 fi
 

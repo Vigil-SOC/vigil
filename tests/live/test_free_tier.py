@@ -57,19 +57,19 @@ def _virustotal_domain(payload: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Shodan. Any free account has an API key. dns_lookup is GET /dns/resolve, which
-# 401s without a valid key (checked) and is not the credit-metered part of the
-# API (search filters are). ip_lookup (/shodan/host/{ip}) and cve_lookup
-# (cvedb.shodan.io) are not probed: both answer with no key or a bad one, so a
-# pass would say nothing about the credential.
+# Shodan. Any free account has an API key. api_info is GET /api-info, which 401s
+# without a valid key (checked) and costs no credits. dns_lookup answers a free
+# key with "Requires membership or higher", and ip_lookup (/shodan/host/{ip})
+# and the cvedb tools answer with no key or a bad one, so a pass there would say
+# nothing about the credential.
 # ---------------------------------------------------------------------------
 
 
-def _shodan_dns(payload: Any) -> str:
+def _shodan_api_info(payload: Any) -> str:
     assert isinstance(payload, dict), f"unexpected answer: {_text(payload)[:300]}"
-    rows = {r["Hostname"]: r["IP Address"] for r in payload.get("DNS Resolutions") or []}
-    assert rows.get("dns.google") in {"8.8.8.8", "8.8.4.4"}, f"dns.google resolved to {rows}"
-    return f"dns.google -> {rows['dns.google']}"
+    plan = payload.get("Plan")
+    assert plan and plan != "Unknown", f"no plan in the answer: {_text(payload)[:300]}"
+    return f"plan {plan}"
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ PROBES = [
         {"domain": "google.com", "relationships": []},
         expect=_virustotal_domain,
     ),
-    Probe("shodan", "dns_lookup", {"hostnames": ["dns.google"]}, expect=_shodan_dns),
+    Probe("shodan", "api_info", {}, expect=_shodan_api_info),
     Probe(
         "firecrawl",
         "firecrawl_scrape",

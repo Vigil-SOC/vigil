@@ -1,4 +1,6 @@
 import { DEFAULT_PARK_MS, type BudgetLimits, type Refusal } from "../../contracts/budget.js";
+import type { HypothesisStatus } from "../../contracts/events.js";
+import type { Allowance } from "../../core/spec.js";
 // Type-only, so the cycle with the spec loader is erased at compile time.
 import type { HuntSpec } from "./config.js";
 
@@ -63,13 +65,7 @@ export const OUTCOME_PRECEDENCE: Record<HuntOutcome, number> = {
 
 // handed_off is terminal for the hunt but not an ending of it: the claim now
 // belongs to incident response, and the hunt carries on with the rest.
-export type HypothesisStatus =
-  | "active"
-  | "proven"
-  | "disproven"
-  | "inconclusive"
-  | "parked"
-  | "handed_off";
+export type { HypothesisStatus };
 
 export type Salience = "routine" | "notable" | "anomalous";
 // "neither" is a first-class answer, not an omission: considered-and-irrelevant
@@ -79,22 +75,15 @@ export type LinkRelation = "supports" | "weakens" | "neither";
 // The harness counts model calls; a hunt counts turns, and one turn costs several.
 export type Budgets = BudgetLimits & { max_iterations: number };
 
-// A turn dispatches up to max_workers workers, each running its own tool loop, plus
-// the lead and the pass that argues against them; the two spare turns per agent are the
-// emission retries. Derived rather than guessed, since a flat constant undercounts a
-// fan-out. Cost is the governor; calls only backstop a turn running away.
-export function callsPerIteration(maxWorkers: number, maxTurns: number): number {
-  return (maxWorkers + 2) * (maxTurns + 2);
-}
-
-// The shape the shipped arch and runtime describe: 4 workers, 8 turns each.
-export const CALLS_PER_ITERATION = callsPerIteration(4, 8);
+// What plugin.yaml's allowance states, for a ledger journaled before it stated one.
+// Cost is the governor; calls only backstop a turn running away.
+export const HUNT_ALLOWANCE: Allowance = { turns_per_iteration: 6, calls_per_iteration: 60 };
 
 // 90 minutes: a hunt averages several minutes an iteration once workers fan out, and
 // a wall that fires first makes every other budget decorative.
 export const DEFAULT_BUDGETS: Budgets = {
   max_iterations: 8,
-  max_calls: 8 * CALLS_PER_ITERATION,
+  max_calls: 8 * HUNT_ALLOWANCE.calls_per_iteration,
   max_cost_usd: 15.0,
   max_wall_ms: 5_400_000,
   max_park_ms: DEFAULT_PARK_MS,

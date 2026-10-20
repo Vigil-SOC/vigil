@@ -168,7 +168,7 @@ def test_backend_candidates_are_in_the_tool_manifest():
     assert not missing, f"backend candidates absent from BACKEND_TOOLS: {missing}"
 
 
-# Corroboration is counted over distinct source systems, and a worker's schema is
+# Corroboration is counted over distinct source systems, and the finding schema is
 # narrowed to this list at spec build. Declaring nothing leaves the field an open
 # string; declaring the wrong things collapses every domain into one bucket.
 @pytest.mark.parametrize("workflow_id", [wf for _, wf in HUNT_LIKE])
@@ -178,125 +178,32 @@ def test_the_definition_declares_a_telemetry_vocabulary(workflow_id):
     ), f"{workflow_id} declares no data_domains, so source_system is unconstrained"
 
 
-# Recorded runs show workers answering with their own agent id -- threat_hunter,
-# network_analyst -- which the prompts forbid. If one of those were a declared
-# domain, a worker would corroborate itself and two of its findings would read as
-# two independent sources.
-@pytest.mark.parametrize(("arch_name", "workflow_id"), HUNT_LIKE)
-def test_no_declared_domain_is_the_name_of_a_worker(arch_name, workflow_id):
+# The allowance is stated three times: the plugin manifests a run is built from,
+# the agent layer's fallback for a ledger journaled before the manifest stated it, and
+# the resolver's max_calls. If they drift, the resolver hands over a call ceiling the
+# agent layer immediately overrides, and a resumed hunt runs to different ceilings.
+@pytest.mark.parametrize("arch_path", ARCHES, ids=lambda path: path.name)
+def test_both_sides_agree_what_an_iteration_may_spend(arch_path):
     import yaml
 
-    arch = yaml.safe_load(
-        (ROOT / "services" / "agent" / "plugins" / arch_name).read_text()
-    )
-    overlap = set(_declared_domains(workflow_id)) & set(arch["roles"]["workers"])
+    from core.workflows.playbook_resolver import CALLS_PER_ITERATION
 
-    assert (
-        not overlap
-    ), f"these data_domains name a worker rather than a domain: {sorted(overlap)}"
-
-
-# The definition's phases block is the roster of who the lead may dispatch, and the
-# arch is what they actually are. A name in one and not the other reads as a
-# worker that can be asked for and never answers.
-@pytest.mark.parametrize(("arch_name", "workflow_id"), HUNT_LIKE)
-def test_the_definition_rosters_the_workers_the_arch_carries(arch_name, workflow_id):
-    import yaml
-
-    from core.workflows.workflows_service import WorkflowsService
-
-    arch = yaml.safe_load(
-        (ROOT / "services" / "agent" / "plugins" / arch_name).read_text()
-    )
-    rostered = WorkflowsService().get_workflow(workflow_id).agents
-
-    assert set(rostered) == set(arch["roles"]["workers"])
-
-
-# The markdown tools are what the reader shows. The arch's needs are what a run
-# grants. Same worker, same names, same order — resolve_hunt never reads the list.
-@pytest.mark.parametrize(("arch_name", "workflow_id"), HUNT_LIKE)
-def test_a_rostered_workers_tools_are_its_needs_in_order(arch_name, workflow_id):
-    import yaml
-
-    from core.workflows.workflows_service import WorkflowsService
-
-    arch = yaml.safe_load(
-        (ROOT / "services" / "agent" / "plugins" / arch_name).read_text()
-    )
-    workers = arch["roles"]["workers"]
-    phases = WorkflowsService().get_workflow(workflow_id).phases
-    by_agent: Dict[str, List[List[str]]] = {}
-    for phase in phases:
-        agent = (phase or {}).get("agent") or (phase or {}).get("agent_id")
-        by_agent.setdefault(agent, []).append(list((phase or {}).get("tools") or []))
-
-    mismatches = []
-    for name, spec in workers.items():
-        needs = list(spec.get("needs") or [])
-        stated = by_agent.get(name)
-        if stated is None:
-            mismatches.append(f"{name}: in the arch and missing from the roster")
-            continue
-        mismatches += [
-            f"{name}: tools {tools} are not needs {needs}"
-            for tools in stated
-            if tools != needs
-        ]
-
-    assert not mismatches, "\n".join(mismatches)
-
-
-# The two sides state the per-turn call cost independently, and the agent layer
-# raises max_calls by its own copy. If they drift, the resolver hands over a call
-# ceiling the agent layer immediately overrides, and the number an operator sees
-# in the config is not the one that governs the run.
-def test_both_sides_agree_what_a_turn_costs_in_calls():
-    from core.workflows.playbook_resolver import (
-        CALLS_PER_ITERATION,
-        DEFAULT_RUNTIME,
-        HUNT_MAX_WORKERS,
-    )
-
+    allowance = yaml.safe_load(arch_path.read_text())["allowance"]
     types_ts = (
         ROOT / "services" / "agent" / "plugins" / "hunt" / "types.ts"
     ).read_text()
-
-    # The formula, so a change to either side's arithmetic is a failure here and
-    # not a number that quietly stops matching.
-    formula = re.search(
-        r"function callsPerIteration\(maxWorkers: number, "
-        r"maxTurns: number\): number \{\s*"
-        r"return \(maxWorkers \+ 2\) \* \(maxTurns \+ 2\);",
+    stated = re.search(
+        r"HUNT_ALLOWANCE: Allowance = \{ turns_per_iteration: (\d+), "
+        r"calls_per_iteration: (\d+) \}",
         types_ts,
     )
-    assert formula is not None, "types.ts states a different per-turn formula"
+    assert stated is not None, "types.ts no longer states HUNT_ALLOWANCE"
 
-    # And the inputs, which are the half that actually drifts: the arch's fan-out
-    # and the runtime's turn cap live in files neither side reads from the other.
-    stated = re.search(
-        r"CALLS_PER_ITERATION = callsPerIteration\((\d+), (\d+)\)", types_ts
-    )
-    assert stated is not None, "types.ts no longer states CALLS_PER_ITERATION"
-    workers, turns = int(stated.group(1)), int(stated.group(2))
-
-    assert workers == HUNT_MAX_WORKERS
-    assert turns == int(DEFAULT_RUNTIME["max_turns"])
-    assert (workers + 2) * (turns + 2) == CALLS_PER_ITERATION
-
-
-# The number the ratchet above pins is only right if it matches the arch a run is
-# actually built from, which is a third file again.
-@pytest.mark.parametrize("arch_path", ARCHES, ids=lambda path: path.name)
-def test_the_arch_fans_out_to_the_workers_the_budget_assumes(arch_path):
-    from core.workflows.playbook_resolver import HUNT_MAX_WORKERS
-
-    arch = arch_path.read_text()
-    # Anchored: a comment a line above says "Serial is max_workers: 1", and an
-    # unanchored search reads that instead of the setting.
-    match = re.search(r"^\s+max_workers:\s*(\d+)", arch, re.MULTILINE)
-    assert match is not None, f"{arch_path.name} declares no max_workers"
-    assert int(match.group(1)) == HUNT_MAX_WORKERS
+    # The numbers the retired fan-out arithmetic produced: 4 workers plus the lead
+    # and the critic, each with 8 turns and 2 emission retries.
+    assert allowance == {"turns_per_iteration": 6, "calls_per_iteration": 60}
+    assert (int(stated.group(1)), int(stated.group(2))) == (6, 60)
+    assert allowance["calls_per_iteration"] == CALLS_PER_ITERATION
 
 
 # The cost ceiling is stated on both sides, and the agent layer derives the hard

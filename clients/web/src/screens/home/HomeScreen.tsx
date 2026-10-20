@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem, type TriageRow } from '../../services/api'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { briefText } from '../../shared/brief'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
+import { HOME_SETUP_ID, hideSetupStep, openSetupSteps, readSetupHidden } from './setupHidden'
 import './home.css'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
-const HIDDEN_KEY = 'vigil.home.setup.hidden'
 
 type SetupStep = {
   id: string
@@ -74,15 +75,6 @@ const NEEDS_TIP = {
   calculation: 'Oldest first, top four shown',
 }
 
-function readHidden(): string[] {
-  try {
-    const parsed = JSON.parse(sessionStorage.getItem(HIDDEN_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : []
-  } catch {
-    return []
-  }
-}
-
 const FIRST_RUN_HEADLINE = 'Nothing is connected yet, so nothing needs you'
 
 function headline(count: number): string {
@@ -117,6 +109,21 @@ function errorText(error: unknown, fallback: string): string {
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
 
+/**
+ * The ask as verb and object (PRD HM-P4). A hypothesis approval names the explanation it starts
+ * testing, shortened, with every one it tests in full on hover; the benign one is what they are
+ * tested against, not what is approved. Anything else reads as served.
+ */
+function cardAsk(item: NeedsYouItem): { text: string; full: string } {
+  const tested = (item.hypotheses ?? []).filter((h) => h.provenance !== 'base_rate' && h.statement.trim())
+  if (tested.length === 0) return { text: item.title, full: item.title }
+  const more = tested.length > 1 ? ` and ${tested.length - 1} more` : ''
+  return {
+    text: `Start testing “${briefText(tested[0].statement)}”${more}`,
+    full: tested.map((h) => h.statement).join('\n'),
+  }
+}
+
 function DecisionCard({
   item,
   busy,
@@ -134,6 +141,7 @@ function DecisionCard({
   const [reason, setReason] = useState('')
   const caseId = item.case_id
   const meta = [caseId && `Case ${caseId}`, item.reason].filter(Boolean).join(' · ')
+  const ask = cardAsk(item)
 
   return (
     <article className="home-card">
@@ -141,7 +149,7 @@ function DecisionCard({
         <span className="home-waited">{waited(item.created_at)}</span>
         <span className="home-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
       </div>
-      <h3>{item.title}</h3>
+      <h3 title={ask.full}>{ask.text}</h3>
       {meta && (
         <p className="home-card-meta" title={meta}>
           {meta}
@@ -211,7 +219,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const [showAll, setShowAll] = useState(false)
   const [setup, setSetup] = useState<SetupSteps | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
-  const [hidden, setHidden] = useState<string[]>(() => readHidden())
+  const [hidden, setHidden] = useState<string[]>(() => readSetupHidden())
   const [demoMessage, setDemoMessage] = useState<string | null>(null)
   const [demoBusy, setDemoBusy] = useState(false)
   const busyRef = useRef<string | null>(null)
@@ -279,11 +287,17 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
     void load()
   }, [settled, load])
 
-  const dismiss = (id: string) => {
-    const next = hidden.includes(id) ? hidden : [...hidden, id]
-    sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(next))
-    setHidden(next)
-  }
+  const dismiss = (id: string) => setHidden(hideSetupStep(hidden, id))
+
+  // ?section=setup (the shell's Finish setup chip) scrolls to whichever setup list is showing,
+  // once the steps have loaded and picked it
+  const [searchParams] = useSearchParams()
+  const { key: locationKey } = useLocation()
+  const wantsSetup = searchParams.get('section') === 'setup'
+  const setupSettled = setup !== null || setupError !== null
+  useEffect(() => {
+    if (wantsSetup && setupSettled) document.getElementById(HOME_SETUP_ID)?.scrollIntoView?.({ block: 'start' })
+  }, [wantsSetup, setupSettled, locationKey])
 
   const exploreDemo = async () => {
     setDemoBusy(true)
@@ -332,7 +346,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const visible = showAll ? shown : shown.slice(0, VISIBLE)
   const rest = shown.slice(visible.length)
   const moreWaiting = rest.length
-  const openSteps = (setup?.steps ?? []).filter((step) => !step.done && !hidden.includes(step.id))
+  const openSteps = openSetupSteps(setup?.steps ?? [], hidden)
   const noAlerts = setup !== null && setup.alerts_exist === 0
   const doneCount = (setup?.steps ?? []).filter((step) => step.done).length
   const stepCount = setup?.steps.length ?? 0
@@ -394,7 +408,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
         )}
         {error && <p role="alert">{error}</p>}
         {!noAlerts && (
-          <section aria-label="Setup">
+          <section aria-label="Setup" id={HOME_SETUP_ID}>
             {sectionHead(
               'Get more from Vigil',
               'Fixed order · most impact first',
@@ -441,7 +455,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
             <>
           {setupError && <p role="alert">{setupError}</p>}
           <div className="home-first-grid">
-            <div className="home-ready">
+            <div className="home-ready" id={HOME_SETUP_ID}>
               <div className="home-ready-head">
                 <div>
                   <h2>Get Vigil ready</h2>

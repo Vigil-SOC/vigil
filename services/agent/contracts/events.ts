@@ -178,7 +178,15 @@ export interface TerminalPayload {
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;
   handoffs?: TerminalHandoff[];
+  proposed_actions?: ProposedAction[];
+  // How bad the run rated what it found, in case priorities, for the case it was
+  // started from. Only a completed run whose plugin names a severity_field sets it.
+  severity?: Severity;
 }
+
+// The ratings a run may conclude with: the case priorities, less unknown.
+export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
+export type Severity = (typeof SEVERITIES)[number];
 
 // Work the run finished by giving away, each carrying the document it hands over
 // rather than a pointer to one: the receiver has no access to this ledger.
@@ -186,6 +194,15 @@ export interface TerminalHandoff {
   case_id: string;
   title: string;
   markdown: string;
+}
+
+// An action a run's conclusion asks a person to approve. The run takes none of
+// them; the backend files each as a pending approval on the run's case.
+export interface ProposedAction {
+  action_type: string;
+  target: string;
+  reason: string;
+  confidence?: number;
 }
 
 // What a tool result was: served (an answer, empty or not), visibility_gap (the estate did
@@ -305,12 +322,18 @@ export interface ChildPayload {
   cost_usd: number;
 }
 
+// handed_off is terminal for a hunt's belief but not an ending of it: the claim now
+// belongs to incident response. Restated in core/cases/case_record.py and the console's
+// caseFold.ts, which tests/unit/_ratchets/test_recall_contract_agrees.py holds to this.
+export const HYPOTHESIS_STATUSES = ["active", "proven", "disproven", "inconclusive", "parked", "handed_off"] as const;
+export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
+
 // The hypothesis record's kernel shape. A plugin may write a richer one under the
 // same kind (the hunt's carries its verdict machinery); every field here is in it.
 export interface HypothesisPayload {
   hypothesis_id: string;
   statement: string;
-  status: string;
+  status: HypothesisStatus;
   provenance: string;
   resolution_reason: string | null;
 }

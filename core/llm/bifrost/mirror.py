@@ -296,6 +296,10 @@ HEALTH_UNVERIFIED = "unverified"
 HEALTH_UNVERIFIABLE = "unverifiable"
 HEALTH_REJECTED = "rejected"
 HEALTH_DISABLED = "disabled"
+# A first-boot seed whose credential still points at an unset env var
+# (``_cred_from_env``): nothing was ever configured here, which the console
+# tells apart from a key it should show as unverified or rejected.
+HEALTH_PLACEHOLDER = "placeholder"
 
 
 def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
@@ -307,6 +311,8 @@ def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
     status = key.get("status")
     if status == "success":
         return HEALTH_HEALTHY
+    if _cred_from_env(key):
+        return HEALTH_PLACEHOLDER
     if not status or status == "unknown":
         return HEALTH_UNVERIFIED
     if status == "list_models_failed" and _list_check_unavailable(
