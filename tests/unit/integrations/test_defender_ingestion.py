@@ -65,3 +65,53 @@ class TestTransformAlert:
 
     def test_handles_transform_error(self, ingestion):
         assert ingestion.transform_alert_to_finding(None) is None
+
+
+class TestLegacyAlertShape:
+    def test_top_level_fields_fill_entity_context(self, ingestion):
+        finding = ingestion.transform_alert_to_finding(
+            {
+                "id": "legacy-1",
+                "evidence": [],
+                "computerDnsName": "host-1.corp.example",
+                "loggedOnUsers": [
+                    {"accountName": "jsmith", "domainName": "CORP"},
+                    {"userName": "admin"},
+                ],
+                "domains": ["evil.example"],
+            }
+        )
+        ctx = finding["entity_context"]
+        assert ctx["hostnames"] == ["host-1.corp.example"]
+        assert ctx["usernames"] == ["jsmith", "admin"]
+        assert ctx["domains"] == ["evil.example"]
+
+    def test_evidence_first_and_deduplicated(self, ingestion):
+        finding = ingestion.transform_alert_to_finding(
+            {
+                "id": "legacy-2",
+                "evidence": [
+                    {"entityType": "Machine", "deviceDnsName": "host-1"},
+                    {"entityType": "User", "userPrincipalName": "jsmith"},
+                ],
+                "computerDnsName": "host-1",
+                "loggedOnUsers": [{"accountName": "other"}, {"userName": "jsmith"}],
+            }
+        )
+        ctx = finding["entity_context"]
+        assert ctx["hostnames"] == ["host-1"]
+        assert ctx["usernames"] == ["jsmith", "other"]
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"loggedOnUsers": "jsmith", "domains": "evil.example"},
+            {"loggedOnUsers": [None, "x", 5, {"userName": None, "accountName": 7}]},
+            {"domains": [None, 3, {"a": 1}, "ok.example"], "computerDnsName": 42},
+        ],
+    )
+    def test_malformed_top_level_fields_do_not_drop_finding(self, ingestion, extra):
+        finding = ingestion.transform_alert_to_finding({"id": "bad", **extra})
+        assert finding is not None
+        assert finding["entity_context"]["usernames"] == []
+        assert finding["entity_context"]["hostnames"] == []
