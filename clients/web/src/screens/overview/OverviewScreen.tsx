@@ -88,8 +88,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const [read, setRead] = useState<AlertRead | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [marked, setMarked] = useState(false)
-  // the alert as read back after a mark or undo, until the popup closes
-  const [fresh, setFresh] = useState<OverviewFeedItem | null>(null)
+  const [marking, setMarking] = useState(false)
   const [launchNote, setLaunchNote] = useState<string | null>(null)
   const [ticketNote, setTicketNote] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -99,7 +98,6 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const shown = useRef<OverviewFeedItem | null>(null)
   if (!alertId) shown.current = null
   const open =
-    (fresh?.finding_id === alertId ? fresh : null) ??
     (alertId ? data?.feed.find((row) => row.finding_id === alertId) : null) ??
     (read?.id === alertId ? read?.item : null) ??
     (shown.current?.finding_id === alertId ? shown.current : null) ??
@@ -169,7 +167,6 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   useEffect(() => {
     if (!alertId) {
       setRead(null)
-      setFresh(null)
       return
     }
     if (hasOpen || !feedSettled) return
@@ -226,26 +223,27 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const stillOpen = (findingId: string) => openId.current === findingId
 
   const markNoise = async () => {
-    if (!open) return
+    if (!open || marking) return
     const findingId = open.finding_id
     const wasMarked = marked
     setActionError(null)
+    setMarking(true)
     try {
       if (wasMarked) await findingsApi.clearNoise(findingId)
       else await findingsApi.markNoise(findingId)
-      if (stillOpen(findingId)) setMarked(!wasMarked)
+      // Read the alert back so the Status row shows the state it landed in, in or out of the feed.
+      const after = await overviewApi.alert(findingId).then((res) => res.data, () => null)
+      if (stillOpen(findingId)) {
+        if (after) setRead({ id: findingId, status: 'ready', item: after })
+        setMarked(!wasMarked)
+      }
       load()
-      // the Status row reads the state after the mark, whether or not the feed still holds it
-      overviewApi
-        .alert(findingId)
-        .then((res) => {
-          if (stillOpen(findingId)) setFresh(res.data)
-        })
-        .catch(() => {})
     } catch (error) {
       if (stillOpen(findingId)) {
         setActionError(errorText(error, wasMarked ? 'Couldn’t clear the noise mark' : 'Couldn’t mark this finding'))
       }
+    } finally {
+      setMarking(false)
     }
   }
 
@@ -362,7 +360,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
             {open.title && open.description && <p className="ov-pop-desc">{open.description}</p>}
             <EvidenceBody item={open} />
             <div className="flex items-center gap-2 flex-wrap">
-              <button type="button" className="btn ghost" onClick={markNoise}>
+              <button type="button" className="btn ghost" onClick={markNoise} disabled={marking}>
                 {marked ? 'Undo' : 'Mark as noise (teaches triage)'}
               </button>
               <button type="button" className="btn ghost icon" aria-label={NOISE_INFO} title={NOISE_INFO}>
