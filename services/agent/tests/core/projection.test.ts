@@ -290,7 +290,41 @@ describe("compose projection", () => {
     ] as const;
 
     const folded = composeProjection(RUN, events);
-    expect(folded).toEqual({ run_id: RUN, run_kind: "compose", results: [executeResult], unbound: [] });
+    expect(folded).toMatchObject({ run_id: RUN, run_kind: "compose", results: [executeResult], unbound: [] });
     expect(archFor("compose").projection!(RUN, events)).toEqual(folded);
+  });
+
+  describe("what the kernel journaled", () => {
+    type Compose = Parameters<typeof composeProjection>[1][number];
+    const fold = async (...events: readonly NewEvent<LeadKinds>[]) => {
+      const state = new InProcessState<LeadKinds>();
+      await state.append(RUN, events);
+      return composeProjection(RUN, (await state.read(RUN)) as unknown as readonly Compose[]);
+    };
+
+    it("reports a run with no terminal and nothing parked as running", async () => {
+      const folded = await fold(spent(0.5));
+
+      expect(folded).toMatchObject({ run_kind: "compose", status: "running", outcome: null, open_checkpoint: null, cost_usd: 0.5 });
+    });
+
+    it.each(["completed", "failed"] as const)("reports a %s terminal", async (outcome) => {
+      const folded = await fold(parked(), answered("reject"), ended(outcome, "phase approval rejected"));
+
+      expect(folded).toMatchObject({ status: "terminal", outcome, reason: "phase approval rejected", open_checkpoint: null });
+    });
+
+    it("reports an open phase checkpoint as waiting_approval", async () => {
+      const folded = await fold(parked());
+
+      expect(folded.status).toBe("waiting_approval");
+      expect(folded.open_checkpoint).toMatchObject({ checkpoint_id: CHECKPOINT });
+    });
+
+    it("reports a resolved checkpoint on a run still going as running", async () => {
+      const folded = await fold(parked(), answered("approve"));
+
+      expect(folded).toMatchObject({ status: "running", open_checkpoint: null });
+    });
   });
 });

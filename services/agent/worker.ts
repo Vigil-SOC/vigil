@@ -34,8 +34,8 @@ import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugin
 import { runCompose } from "./plugins/compose/workflow.js";
 import type { ComposeKinds } from "./plugins/compose/vocabulary.js";
 import { runHunt } from "./plugins/hunt/workflow.js";
-import { runRootCause } from "./plugins/rootcause/workflow.js";
-import type { RootCauseKinds } from "./plugins/rootcause/proof.js";
+import { runRootCauseV3 } from "./plugins/rootcause/v3/engine.js";
+import type { V3Kinds } from "./plugins/rootcause/v3/ledger.js";
 import type { HuntKinds } from "./plugins/hunt/ledger.js";
 import type { DirectiveQueue } from "./plugins/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./plugins/hunt/directives.js";
@@ -228,8 +228,8 @@ async function drive(
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {
-    const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
-    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
+    const harness = build(kind, spec, as<V3Kinds>(state), undefined, seed);
+    await runRootCauseV3(harness, { run_id, spec, started_by, signal, stop: stopFrom(directives, run_id), log: (line) => log.info(line, { run_id }) });
     return null;
   }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
