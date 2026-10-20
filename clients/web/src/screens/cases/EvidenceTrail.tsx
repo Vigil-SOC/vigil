@@ -4,6 +4,7 @@ import { EmptyState } from '../../shared/ui'
 import { LATER_RELEASE } from '../../shared/later'
 import { EVIDENCE_PAGE, STANCE_WORD, TIER_WORD, evidenceSource, foldRecord, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type RunRecord, type Stance } from './caseFold'
 import { RunNote } from './RunChecks'
+import { utcStamp } from './caseFormat'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -95,7 +96,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
 }
 
 const timeOf = (at: string): number => {
-  const ms = Date.parse(at)
+  const ms = at ? Date.parse(utcStamp(at)) : NaN
   return Number.isNaN(ms) ? -Infinity : ms
 }
 
@@ -196,14 +197,27 @@ function TrailTable({ rows, focusId, focusRunId, focusRef, children }: {
   )
 }
 
-/** Scrolls the cited row into view, and re-does it when the run is read again. */
-function useFocusRow(focusId: string | null, ...deps: unknown[]) {
+/** Scrolls the cited row into view, and re-does it when `read` changes: the run, or the runs, read again. */
+function useFocusRow(focusId: string | null, read: unknown) {
   const focusRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const node = focusRef.current
     if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
-  }, [focusId, ...deps]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [focusId, read])
   return focusRef
+}
+
+/** A number per fold read, so a list of runs' reads is one string that changes whenever any run is read again. */
+const readIds = new WeakMap<RunFold, number>()
+let lastReadId = 0
+function readsKey(runs: TrailRun[]): string {
+  return runs
+    .map((run) => {
+      if (!run.fold) return `${run.id}:-`
+      if (!readIds.has(run.fold)) readIds.set(run.fold, ++lastReadId)
+      return `${run.id}:${readIds.get(run.fold)}`
+    })
+    .join(' ')
 }
 
 export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => void }) {
@@ -270,9 +284,10 @@ export function MergedEvidence({ runs, focusId, focusRunId, onShowOlder }: {
   const [asked, setAsked] = useState<number | null>(null)
   const ready = runs.filter((run) => run.phase === 'ready' && run.fold)
   const held = ready.reduce((n, run) => n + (run.fold && run.fold.kind === 'hunt' ? run.fold.evidence.length : 0), 0)
-  useEffect(() => setAsked(null), [held])
-  const folds = ready.map((run) => run.fold)
-  const focusRef = useFocusRow(focusId, folds.length, ...folds)
+  const reads = readsKey(ready)
+  // any read answers the ask, even one that brought no new rows, so the button never sticks on Loading
+  useEffect(() => setAsked(null), [reads])
+  const focusRef = useFocusRow(focusId, reads)
 
   const all = mergeRows(ready.map((run) => ({ id: run.id, tag: run.tag, rows: run.fold ? rowsOf(run.fold) : [] })))
   const rows = all.slice(0, limit)

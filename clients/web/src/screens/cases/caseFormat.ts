@@ -1,3 +1,4 @@
+import { fmtCost } from '../../shared/cost'
 import { utcClock, utcDayClock } from '../../shared/utc'
 import type { CaseInvestigationRef } from './useCases'
 
@@ -18,8 +19,17 @@ export function timeLeft(due: string): string {
 /** A run's name on the case: its workflow and when it started, else a short id. The one label for every tag, filter entry and cost line. */
 export function runLabel(ref: CaseInvestigationRef, names: Record<string, string>): string {
   const name = names[ref.workflow_id] || ref.workflow_id
-  // refs carry naive UTC stamps; without an offset a browser would read them as local time
-  const at = ref.created_at && (/(Z|[+-]\d\d:?\d\d)$/.test(ref.created_at) ? ref.created_at : `${ref.created_at}Z`)
-  const clock = at ? utcClock(at) : null
+  const clock = ref.created_at ? utcClock(utcStamp(ref.created_at)) : null
   return name ? (clock ? `${name} · started ${clock}` : name) : ref.run_id.slice(0, 8)
+}
+
+/** A stamp read as UTC: the server sends some without an offset, which a browser would read as local time. */
+export function utcStamp(at: string): string {
+  return /(Z|[+-]\d\d:?\d\d)$/.test(at) ? at : `${at}Z`
+}
+
+/** What several runs cost together, and how many had no price to add; null is a run nothing priced, never $0. */
+export function costAcross(costs: (number | null)[]): { total: string; unpriced: number } {
+  const priced = costs.flatMap((cost) => (cost === null ? [] : [cost]))
+  return { total: priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—', unpriced: costs.length - priced.length }
 }

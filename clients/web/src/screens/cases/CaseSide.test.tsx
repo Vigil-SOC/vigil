@@ -123,6 +123,7 @@ describe('case side panel Cost across runs (#2481)', () => {
     renderCost([hunt, inv])
     expect(block()).toHaveTextContent('$0.30')
     expect(block()).toHaveTextContent('across 2 runs')
+    expect(block()).not.toHaveTextContent('unpriced')
     const lines = within(block()).getAllByRole('listitem')
     expect(lines).toHaveLength(2)
     expect(lines[0]).toHaveTextContent('Hunt · started 09:00$0.20 of $5.00')
@@ -134,6 +135,7 @@ describe('case side panel Cost across runs (#2481)', () => {
   it('says a dash for a run nothing priced, never $0', () => {
     renderCost([hunt, unpriced])
     expect(block()).toHaveTextContent('$0.20')
+    expect(block()).toHaveTextContent('across 2 runs · 1 unpriced')
     expect(within(block()).getAllByRole('listitem')[1]).toHaveTextContent('Root cause · started 11:00—')
   })
 

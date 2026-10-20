@@ -2384,6 +2384,46 @@ describe('a case with several runs', () => {
     expect(await screen.findByText('transferred 4 GB')).toBeInTheDocument()
   })
 
+  it('forgets the run filter with the case: A, then B, then A again shows every run', async () => {
+    withRecords('case-a')
+    const caseA = { ...testState.cases[0], title: 'Case A' }
+    testState.cases = [caseA, { ...caseA, case_id: 'case-b', title: 'Case B' }]
+    const { showCase } = renderDetail('case-a')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    await screen.findByText('Credentials were reused')
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show runs' })).getByRole('button', { name: TAGS.hunt }))
+    expect(screen.queryByText('Credentials were reused')).not.toBeInTheDocument()
+
+    showCase('case-b')
+    expect(await screen.findByRole('heading', { name: 'Case B' })).toBeInTheDocument()
+    showCase('case-a')
+    expect(await screen.findByRole('heading', { name: 'Case A' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('Credentials were reused')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'All runs' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(screen.getByRole('group', { name: 'Show runs' })).getByRole('button', { name: TAGS.hunt })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('says how many runs are unpriced beside the total, on the door and the Checked header, never as $0', async () => {
+    threeRuns('case-unpriced')
+    testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
+    renderCase('case-unpriced')
+    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
+    await waitFor(() => expect(door).toHaveTextContent('$0.60 · 1 run unpriced'))
+    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
+    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+    expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · runs spent $0.60, 1 run unpriced')
+  })
+
+  it('names the Checked header’s figure as what the runs spent', async () => {
+    threeRuns('case-spent')
+    renderCase('case-spent')
+    fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
+    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+    await waitFor(() => expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · runs spent $0.70'))
+    expect(card.querySelector('h3')).not.toHaveTextContent('unpriced')
+  })
+
   it('says the honest line once when no selected run keeps a record', async () => {
     threeRuns('case-honest')
     testState.runs['run-hunt'] = { status: 'completed', projection: ROOT_CAUSE }
@@ -2429,6 +2469,26 @@ describe('a case with several runs', () => {
     expect(evidenceIds()).toHaveLength(51)
     expect(screen.getByRole('button', { name: 'Loading older rows…' })).toBeDisabled()
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
+  it('offers Show older again when the read brings back no new rows', async () => {
+    withRecords('case-older-same')
+    const stamp = (i: number) => `2026-06-15T09:${String(i).padStart(2, '0')}:00Z`
+    const rows = Array.from({ length: 50 }, (_, i) => ({ ...huntRows[0], evidence_id: `h${i}`, summary: `hunt row ${i}`, captured_at: stamp(i) })).reverse()
+    testState.runs['run-hunt'] = { status: 'completed', hunt: { ...HUNT, status: 'completed', evidence: rows, evidence_count: 60 } }
+    renderCase('case-older-same')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    await screen.findByText('transferred 4 GB')
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    expect(evidenceIds()).toHaveLength(51)
+    // the server answers the bigger ask with the same 50 rows
+    vi.mocked(workflowApi.getRun).mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-hunt', 100))
+    const button = await screen.findByRole('button', { name: 'Show older' })
+    expect(button).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Loading older rows…' })).not.toBeInTheDocument()
+    expect(evidenceIds()).toHaveLength(51)
   })
 
   it('tags what each run checked in one list', async () => {

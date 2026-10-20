@@ -6,7 +6,7 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { fmtCost } from '../../shared/cost'
-import { runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import { IN_FLIGHT } from '../workflows/runRead'
 import type { RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
@@ -209,12 +209,13 @@ function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
 /** Several runs: what the case cost in all, then each run's own line. Only the primary run has a limit and a level shown. */
 function CaseCost({ runs, latest, spend, names }: { runs: SideRun[]; latest: CaseInvestigationRef | null; spend: Spend; names: Record<string, string> }) {
   const costs = runs.map((run) => costOf(run.ref, run.fold))
-  const priced = costs.flatMap((cost) => (cost !== null && cost > 0 ? [cost] : []))
+  // $0 is a run nothing priced: left out of the total, and counted beside it
+  const all = costAcross(costs.map((cost) => (cost !== null && cost > 0 ? cost : null)))
   return (
     <>
       <div className="side-cost">
-        <span>{priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'}</span>
-        <span className="side-total">across {runs.length} runs</span>
+        <span>{all.total}</span>
+        <span className="side-total">across {runs.length} runs{all.unpriced > 0 && all.unpriced < runs.length ? ` · ${all.unpriced} unpriced` : ''}</span>
       </div>
       <ul className="side-runs">
         {runs.map((run, i) => {

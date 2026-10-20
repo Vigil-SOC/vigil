@@ -26,7 +26,7 @@ import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
-import { runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -562,8 +562,9 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
-  const priced = read.flatMap((one) => (one.costUsd == null ? [] : [one.costUsd]))
-  const cost = priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'
+  const spend = costAcross(read.map((one) => one.costUsd))
+  // a run nothing priced is left out of the total, and says so beside it
+  const cost = spend.unpriced && spend.unpriced < read.length ? `${spend.total} · ${plural(spend.unpriced, 'run')} unpriced` : spend.total
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
@@ -970,6 +971,7 @@ export function CasePage({
     setNote('')
     setChip('all')
     setEvidenceLimits({})
+    setRunPick(null)
   }, [id])
 
   // leaving the Record tab (or the case) drops its status and ignores a call still in flight
@@ -1033,7 +1035,7 @@ export function CasePage({
   // The run id is unknown until the case read returns, so the run is still loading, not absent.
   const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId ? 'ready' : reads[runId]?.phase ?? 'loading'
   const single = { fold, phase: foldPhase }
-  // The run filter is shared by the four grouped tabs: All (null), or one run on the case, forgotten with the case or the run.
+  // The run filter is shared by the four grouped tabs: All (null), or one run on the case. A new case clears it, and a run gone from the case drops it.
   const [runPick, setRunPick] = useState<{ caseId: string; runId: string } | null>(null)
   const picked = runPick?.caseId === id && caseRuns.some((ref) => ref.run_id === runPick.runId) ? runPick.runId : null
   const listed = investigations.flatMap((item) => runs.find((one) => one.ref === item) ?? []) // investigations[] order
@@ -1597,13 +1599,13 @@ export function CasePage({
                 <div className="rec-rows">
                   {shown.map((row) => {
                     const type = recordChip(row.kind, row.source)
-                    const runLabel = row.run_id ? runLabels[row.run_id] || row.run_id.slice(0, 8) : null
+                    const runTag = row.run_id ? runLabels[row.run_id] || row.run_id.slice(0, 8) : null
                     return (
                       <div key={row.id} className="rec-row">
                         <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
                         <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
                         <span className="rec-text" title={row.text}>
-                          {runLabel && <span className="rec-run">{runLabel}</span>}
+                          {runTag && <span className="rec-run">{runTag}</span>}
                           {row.text || row.kind}
                           {row.chained && <span className="rec-chained">chained</span>}
                         </span>
@@ -1782,7 +1784,8 @@ function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<strin
   const asked = read.filter((one) => one.fold.calls.length > 0 || one.gaps.length > 0)
   const queries = read.reduce((n, one) => n + one.fold.calls.length, 0)
   const gaps = read.reduce((n, one) => n + one.gaps.length, 0)
-  const priced = read.flatMap((one) => (one.fold.costUsd == null ? [] : [one.fold.costUsd]))
+  const spend = costAcross(read.map((one) => one.fold.costUsd))
+  const spent = spend.unpriced === read.length ? 'no run spend priced' : `runs spent ${spend.total}${spend.unpriced ? `, ${plural(spend.unpriced, 'run')} unpriced` : ''}`
   return (
     <>
       {waiting.map((run) => <RunNote key={run.ref.run_id} tag={labels[run.ref.run_id]} phase={run.phase} />)}
@@ -1791,10 +1794,10 @@ function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<strin
       ) : (
         <section className="case-card case-checked">
           <h3>
-            What Vigil checked · {queries} {queries === 1 ? 'query' : 'queries'} · {priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'}
+            What Vigil checked · {queries} {queries === 1 ? 'query' : 'queries'} · {spent}
             <InfoTip
               label="About the cost"
-              source="Each run's total spend, added together."
+              source="Each run's total spend, added together: what the runs cost, not what the queries cost. A run nothing priced is left out and counted as unpriced."
               calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
             />
             {gaps > 0 && ` · ${gaps} with no source`}
