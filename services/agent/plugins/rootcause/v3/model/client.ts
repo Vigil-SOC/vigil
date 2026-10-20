@@ -169,20 +169,13 @@ export class KernelTurns {
   // The tools hooks grant: set once the run has a source to search.
   local: readonly RegisteredTool[] = [];
   private ctx: PluginContext;
-  // The last model turn journaled: a subturn counts on from here, and the hook context reports it.
-  private at = 0;
   constructor(harness: Harness<AgentKinds>, run: { run_id: string; run_kind: RunKind; spec: RunSpec; plugin: PluginManifest; tools: readonly RegisteredTool[]; started_by?: string; signal?: AbortSignal }) {
     const hooks: PluginHooks = { tools: () => this.local };
     const options: AgentOptions = { ...run, hooks };
-    this.ctx = { harness, options, turn: () => this.at };
+    // No outer model loop here: runSubturn hands hooks its own turn counter.
+    this.ctx = { harness, options, turn: () => 0 };
   }
-  async turn<T>(sub: Subturn): Promise<Outcome<T>> {
-    try {
-      return await runSubturn<T>(this.ctx, sub);
-    } finally {
-      this.at = (await this.calls()).reduce((max, call) => Math.max(max, call.turn), 0);
-    }
-  }
+  turn<T>(sub: Subturn): Promise<Outcome<T>> { return runSubturn<T>(this.ctx, sub); }
   async calls(): Promise<CallPayload[]> {
     return (await this.ctx.harness.state.read(this.ctx.options.run_id)).filter((e) => e.kind === "call").map((e) => e.payload as CallPayload);
   }

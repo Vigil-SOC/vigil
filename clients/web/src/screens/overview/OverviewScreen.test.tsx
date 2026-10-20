@@ -47,9 +47,10 @@ const OUTCOMES = [
   measured('resolved_person', 'Closed by a person', 0),
   measured('working', 'Still working', 0),
   measured('needs_you', 'Needs you', 0, 'This count is alerts, not decisions.'),
+  measured('dismissed', 'Dropped as noise', 0),
+  measured('scoring', 'Scoring', 0),
   measured('waiting', 'Not in a case', 2),
   unmeasured('ticketed', 'Ticket created'),
-  unmeasured('dropped', 'Dropped as noise'),
   unmeasured('paused', 'Paused'),
   unmeasured('stuck', 'Stuck'),
   unmeasured('incidents', 'Incidents'),
@@ -222,16 +223,15 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     const { setWallMode } = renderScreen()
     const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
-    const counts = { 'Resolved automatically': '0', 'Closed by a person': '0', 'Still working': '0', 'Needs you': '0', 'Not in a case': '2' }
+    const counts = { 'Resolved automatically': '0', 'Closed by a person': '0', 'Still working': '0', 'Needs you': '0', 'Dropped as noise': '0', Scoring: '0', 'Not in a case': '2' }
     for (const [label, count] of Object.entries(counts)) {
       const node = within(flow).getByLabelText(label)
       expect(node).toHaveTextContent(count)
       expect(node.querySelector('a')).toBeNull()
     }
     expect(within(flow).getByRole('button', { name: 'This count is alerts, not decisions.' })).toBeInTheDocument()
-    expect(within(flow).queryByLabelText('Dropped as noise')).not.toBeInTheDocument()
     const line = within(flow).getByText(/Not measured yet:/)
-    expect(line).toHaveTextContent('Not measured yet: Ticket created · Dropped as noise · Paused · Stuck · Incidents')
+    expect(line).toHaveTextContent('Not measured yet: Ticket created · Paused · Stuck · Incidents')
     expect(within(line).getByText('Paused')).toHaveAttribute('title', 'Paused is not measured.')
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(setWallMode).toHaveBeenCalledWith(true)

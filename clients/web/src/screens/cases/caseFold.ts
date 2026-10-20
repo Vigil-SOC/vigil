@@ -912,6 +912,8 @@ export interface CaseVerdict {
 
 const ALARMS = ['malicious', 'suspicious']
 const DISMISSALS = ['benign', 'false_positive']
+// The words that challenge a dismissal: a run that found something, or was itself held.
+const OBJECTIONS = ['malicious', 'suspicious', 'needs_review']
 
 /**
  * The one word every run on the case stands behind, or null before one can be said. Runs come NEWEST
@@ -919,8 +921,8 @@ const DISMISSALS = ['benign', 'false_positive']
  * that order). A run with no disposition does not speak; one still loading holds the whole verdict back,
  * so a dismissal never shows before every run is read. The newest speaker speaks, except that malicious
  * outranks suspicious and neither is outranked by a later inconclusive or needs_review. A dismissal
- * stands only over silent or dismissing runs and readable details: otherwise it reads needs_review and
- * the basis names the objecting or unread run.
+ * stands over silent, inconclusive or dismissing runs and readable details: a malicious, suspicious or
+ * needs_review run, or an unread one, makes it read needs_review and the basis names that run.
  */
 export function caseVerdict(runs: VerdictRun[]): CaseVerdict | null {
   if (runs.some((run) => run.phase === 'loading')) return null
@@ -932,7 +934,7 @@ export function caseVerdict(runs: VerdictRun[]): CaseVerdict | null {
     const lead = ALARMS.map((word) => spoke.find((one) => one.word === word)).find(Boolean) ?? newest
     return { word: lead.word, basis: null, doNow: doNow(lead.fold) }
   }
-  const objectors = spoke.filter((one) => !DISMISSALS.includes(one.word))
+  const objectors = spoke.filter((one) => OBJECTIONS.includes(one.word))
   const unread = runs.filter((run) => run.phase === 'error')
   if (objectors.length === 0 && unread.length === 0) return { word: newest.word, basis: null, doNow: doNow(newest.fold) }
   const parts = [...objectors.map((one) => `${one.label} says ${one.word.replace(/_/g, ' ')}`), ...unread.map((run) => `${run.label} could not be read`)]
@@ -944,5 +946,5 @@ export function caseVerdict(runs: VerdictRun[]): CaseVerdict | null {
 /** A closure that says false positive or says nothing, over a verdict that is not a dismissal. */
 export function closureFlag(closure: { closure_category: string } | null | undefined, word: string | null | undefined): boolean {
   const category: string = closure?.closure_category ?? ''
-  return (category === 'false_positive' || category === 'unspecified') && ['malicious', 'suspicious', 'needs_review'].includes(word ?? '')
+  return (category === 'false_positive' || category === 'unspecified') && OBJECTIONS.includes(word ?? '')
 }

@@ -129,6 +129,14 @@ def add_findings_noise_mark(conn):
             ADD COLUMN IF NOT EXISTS noise_marked_by VARCHAR(50);
     """))
 
+@migration("Add noise reason and actor kind columns to findings")
+def add_findings_noise_reason(conn):
+    conn.execute(text("""
+        ALTER TABLE findings
+            ADD COLUMN IF NOT EXISTS noise_marked_by_kind VARCHAR(20),
+            ADD COLUMN IF NOT EXISTS noise_reason TEXT;
+    """))
+
 @migration("Create GIN trigram index on findings.description")
 def create_findings_description_gin_index(conn):
     conn.execute(text("""
