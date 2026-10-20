@@ -181,6 +181,16 @@ async def test_every_run_has_a_section_primary_first_then_newest(reads):
     assert "say what each run found and cite it" in brief
 
 
+async def test_a_short_primary_does_not_starve_another_runs_rows(reads):
+    reads["refs"] = [
+        ({"run_id": "r-2", "workflow_id": "threat-hunt"}, "completed"),
+        ({"run_id": "r-1", "workflow_id": "threat-hunt"}, "completed"),
+    ]
+    reads["views"] = {"r-2": _hunt(n=0), "r-1": _hunt(n=3)}
+    brief = await mod.case_brief("C", WF)
+    assert brief.count("\n- ev-") == 3 and "not shown" not in brief
+
+
 async def test_one_failed_run_read_is_one_line_and_the_rest_of_the_brief(
     reads, monkeypatch
 ):

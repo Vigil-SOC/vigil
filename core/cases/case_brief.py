@@ -314,7 +314,8 @@ async def case_brief(case_id: str, workflows: Any) -> str:
                 lines.append(f"({len(ordered) - others - 1} older runs not shown)")
             return "\n".join(lines)
 
-        rows = max((_size(r) for r in reads), default=0)
+        # Enough that every run starts with all its rows; others get half the count.
+        rows = max([_size(r) * (2 if i else 1) for i, r in enumerate(reads)] or [0])
         body = _fit(compose, MAX_ALERTS, rows, max(len(ordered) - 1, 0))
     except Exception as exc:  # noqa: BLE001 — a brief is never worth the turn
         logger.warning("no case brief for %s: %s", case_id, exc)
