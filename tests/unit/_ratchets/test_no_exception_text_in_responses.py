@@ -19,7 +19,7 @@ ALLOWED = {
     ("core/workflows/workflows_router.py", "narrate_workflow_run"),
     ("core/workflows/workflows_router.py", "replay_workflow_run"),
     ("core/workflows/workflows_router.py", "verify_workflow_run"),
-    ("services/api/routers/cases.py", "get_case_record"),
+    ("services/api/routers/cases.py", "_run_events"),  # the Record row says why
     ("services/api/routers/storage_status.py", "reconnect_database"),  # admin only
     # Shared-secret callback for the agent layer, which reads the failure; no session.
     ("core/agents/tools_router.py", "invoke"),

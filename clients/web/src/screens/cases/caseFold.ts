@@ -189,7 +189,23 @@ interface LeadFold {
   maxCostUsd: number | null
 }
 
-export type RunFold = HuntFold | LeadFold
+/** A run whose chain stays on Watch a run (root cause): its head only. The row fields stay empty so every reader shows nothing for it. */
+interface HeadFold {
+  kind: 'head'
+  run: RunMeta
+  openCheckpoint: OpenCheckpointRow | null
+  outcome: string | null
+  reason: string
+  costUsd: number | null
+  maxCostUsd: number | null
+  doing: ''
+  worker: ''
+  moves: MoveRow[]
+  calls: CallRow[]
+  recall: null
+}
+
+export type RunFold = HuntFold | LeadFold | HeadFold
 
 export type RecordChip = 'memory' | 'human' | 'system' | 'agent'
 
@@ -198,6 +214,10 @@ const HONEST = 'This workflow does not test explanations yet.'
 export function honestLine(): string {
   return HONEST
 }
+
+// The hypothesis statuses explanationWord maps: HYPOTHESIS_STATUSES in services/agent
+// contracts/events.ts, held to it by tests/unit/_ratchets/test_recall_contract_agrees.py.
+export const EXPLAINED_STATUSES = ['active', 'proven', 'disproven', 'inconclusive', 'parked', 'handed_off'] as const
 
 export function explanationWord(status: string, supports: number, weakens: number): string {
   if (status === 'proven') return 'proven'
@@ -342,6 +362,7 @@ export function recordChip(kind: string, source = 'run'): RecordChip {
     case 'run':
     case 'spend':
     case 'resumed':
+    case 'unread':
       return 'system'
     default:
       return 'agent'
@@ -492,6 +513,13 @@ function heldOf(raw: unknown): HeldRow | null {
   return str(o.asked) && str(o.final) ? { field: str(o.field), asked: str(o.asked), final: str(o.final), reason: str(o.reason) } : null
 }
 
+// Every projection carries the ceiling in its head; a ledger read before it did keeps it under budgets.
+function ceilingOf(raw: Record<string, unknown>): number | null {
+  const head = num(raw.max_cost_usd)
+  if (head !== null) return head
+  return raw.budgets && typeof raw.budgets === 'object' ? num((raw.budgets as Record<string, unknown>).max_cost_usd) : null
+}
+
 function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
   // The server sends moves newest first.
@@ -505,7 +533,6 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
       iteration: num(o.iteration),
     }]
   })
-  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
@@ -520,7 +547,25 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
-    maxCostUsd: budgets ? num(budgets.max_cost_usd) : null,
+    maxCostUsd: ceilingOf(raw),
+  }
+}
+
+function asHead(raw: Record<string, unknown>, run: RunMeta): HeadFold {
+  const ceiling = ceilingOf(raw)
+  return {
+    kind: 'head',
+    run,
+    openCheckpoint: checkpointOf(raw.open_checkpoint),
+    outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
+    reason: str(raw.reason),
+    costUsd: num(raw.cost_usd),
+    maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
+    doing: '',
+    worker: '',
+    moves: [],
+    calls: [],
+    recall: null,
   }
 }
 
@@ -551,6 +596,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
         }]
       })
     : []
+  const ceiling = ceilingOf(raw)
   return {
     kind: 'lead',
     // A legacy lead ledger keeps no record, so carries none of its fields.
@@ -568,7 +614,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
-    maxCostUsd: (num(raw.max_cost_usd) ?? 0) > 0 ? num(raw.max_cost_usd) : null,
+    maxCostUsd: (ceiling ?? 0) > 0 ? ceiling : null,
   }
 }
 
@@ -576,16 +622,21 @@ export function readFold(body: unknown): RunFold | null {
   if (!body || typeof body !== 'object') return null
   const row = body as Record<string, unknown>
   const hunt = row.hunt && typeof row.hunt === 'object' ? (row.hunt as Record<string, unknown>) : null
+  const projection = row.projection && typeof row.projection === 'object' ? (row.projection as Record<string, unknown>) : null
+  const folded = hunt ?? projection
+  if (!folded) return null
   const run = { status: str(row.status), error: str(row.error), reason: str(row.reason), huntStatus: str(hunt?.status) }
-  if (hunt) return asHunt(hunt, run)
-  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>, run)
-  return null
+  // The head's run_kind decides; a body without one (a hunt before #2399) goes by the key it came under.
+  const kind = str(folded.run_kind)
+  if (kind === 'root_cause') return asHead(folded, run)
+  if (kind === 'hunt' || (!kind && hunt)) return asHunt(folded, { ...run, huntStatus: str(folded.status) })
+  return asLead(folded, run)
 }
 
 /** The record a run keeps, a hunt's or an investigation's; null for a run that tests no explanations. */
 export function foldRecord(fold: RunFold | null): RunRecord | null {
   if (!fold) return null
-  return fold.kind === 'hunt' ? fold : fold.record
+  return fold.kind === 'hunt' ? fold : fold.kind === 'lead' ? fold.record : null
 }
 
 /** "Asked benign · held as needs review": the answer the guard would not let stand, in words. */
@@ -674,6 +725,7 @@ export function plural(n: number, one: string, many = `${one}s`): string {
 export function runSentence(fold: RunFold | null): string {
   if (!fold) return ''
   if (fold.kind === 'lead') return `Step ${fold.iterations} · ${plural(fold.findings.length, 'finding')} so far`
+  if (fold.kind === 'head') return ''
   return `Step ${fold.iteration} · ${plural(fold.hypotheses.length, 'explanation')} · ${plural(fold.evidenceCount, 'evidence row')} so far`
 }
 
@@ -689,6 +741,7 @@ export function visibilityGaps(fold: RunFold | null): { id: string; text: string
       .filter((row) => row.is_gap)
       .map((row) => ({ id: row.evidence_id, text: row.gap_detail || row.summary || 'Could not look' }))
   }
+  if (fold.kind === 'head') return []
   return fold.gaps.map((gap) => ({
     id: gap.dispatch_id,
     text: [gap.query_intent || gap.agent_id, gap.failure_reason].filter(Boolean).join(' — ') || 'Dispatch failed',
@@ -727,7 +780,7 @@ interface StrongRow {
 
 /** Up to 3 rows for the closed summary: a hunt's evidence that bears on a hypothesis, or a lead's answers. */
 export function strongestRows(fold: RunFold | null): StrongRow[] {
-  if (!fold) return []
+  if (!fold || fold.kind === 'head') return []
   if (fold.kind === 'lead') {
     return fold.findings.slice(0, 3).map((row) => ({ step: '—', text: row.answer || '—', stance: null }))
   }

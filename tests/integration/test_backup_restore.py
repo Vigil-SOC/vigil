@@ -568,11 +568,13 @@ def test_failed_location_removes_staging_siblings(scratch_databases, tmp_path: P
     dest = _empty_layout(dest_root)
     _create_database("vigil_r_part_dst", ledger=False)
     env = _child_env(dest_root, "vigil_r_part_dst", **dest)
-    env.pop("VIGIL_SKILLS_PATH")
+    # Empty turns operator skills off, so the snapshot's skills have nowhere to
+    # go. Unset would restore them into the State Directory's skills/ folder.
+    env["VIGIL_SKILLS_PATH"] = ""
     before = {name: _files(path) for name, path in dest.items()}
     proc = _restore(env, repo, passphrase)
     assert proc.returncode != 0
-    assert "VIGIL_SKILLS_PATH is unset" in proc.stderr
+    assert "operator skills are off" in proc.stderr
     assert {name: _files(path) for name, path in dest.items()} == before
     assert list(dest_root.rglob(".vigil-*")) == []
 

@@ -208,6 +208,10 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
+      # The daemon's /health and /status (setup checks, Kafka page). The default,
+      # localhost, is this container. Without --profile daemon the name doesn't
+      # resolve, which the checks report as not running.
+      DAEMON_HEALTH_HOST: soc-daemon
       # MCP servers run in mcp-runner, not here (#2303). The token comes from the
       # file mcp-runner-token writes unless MCP_RUNNER_TOKEN is set.
       MCP_RUNNER_URL: http://mcp-runner:6991
@@ -230,6 +234,7 @@ services:
       # The image pre-creates the dir owned by 1000:1000 so a fresh named
       # volume inherits that; a path the image does not create mounts as root.
       # Shared with soc-daemon and llm-worker, which read it via vigil_path().
+      # Operator skills land in its skills/ folder (VIGIL_SKILLS_PATH unset).
       - vigil_home:/home/vigil/.vigil
       # Detection rule repositories, fetched from Settings (security-detections
       # stays "not set up" until they are). Outside the State Directory so the

@@ -21,6 +21,12 @@ data:
          own Deployment now, so the backend has to be told where. */ -}}
   {{- $_ := set $computed "AGENT_URL" (printf "http://%s:%v" (include "vigil.agentServe.fullname" .) .Values.agentServe.service.port) }}
   {{- end }}
+  {{- if .Values.daemon.enabled }}
+  {{- /* Where the backend reads the daemon's /health and /status (setup checks,
+         Kafka page). core/config.py defaults it to localhost: the backend's own
+         pod. DAEMON_HEALTH_PORT stays in config, the daemon's own port. */ -}}
+  {{- $_ := set $computed "DAEMON_HEALTH_HOST" (include "vigil.daemon.fullname" .) }}
+  {{- end }}
   {{- if or .Values.agentWorker.enabled .Values.agentServe.enabled }}
   {{- /* The return leg, and the same localhost problem in the other direction:
          the agent layer's four /internal URLs all default to

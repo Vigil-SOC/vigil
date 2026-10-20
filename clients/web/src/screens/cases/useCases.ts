@@ -18,6 +18,8 @@ export interface CaseInvestigationRef {
   budget_health: string
   iteration_count: number
   created_at?: string | null
+  /** The case's run, the one its page reads; set by the API, not a follow-up a handoff started. */
+  primary?: boolean
 }
 
 export interface CaseClosureView {
@@ -176,6 +178,7 @@ function asInvestigations(raw: unknown): CaseInvestigationRef[] {
       budget_health: typeof o.budget_health === 'string' ? o.budget_health : 'healthy',
       iteration_count: typeof o.iteration_count === 'number' ? o.iteration_count : 0,
       created_at: typeof o.created_at === 'string' ? o.created_at : null,
+      primary: o.primary === true,
     }]
   })
 }

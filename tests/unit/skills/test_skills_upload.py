@@ -11,13 +11,13 @@ import stat
 import zipfile
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.config import Settings
 from core.skills import skill_library
 from core.skills.skill_library import read_skill
 from services.api.routers import skills as skills_router
+from tests.unit.skills.conftest import skills_app
 
 pytestmark = pytest.mark.unit
 
@@ -48,9 +48,7 @@ def operator(tmp_path, monkeypatch):
     root.mkdir()
     settings = Settings(vigil_skills_path=str(root))
     monkeypatch.setattr("core.skills.skill_library.get_settings", lambda: settings)
-    app = FastAPI()
-    app.include_router(skills_router.router, prefix="/api/skills")
-    return TestClient(app), root
+    return TestClient(skills_app()), root
 
 
 def _upload(client: TestClient, filename: str, data: bytes | str):
@@ -219,8 +217,6 @@ def test_unset_root_is_refused(tmp_path, monkeypatch):
         "core.skills.skill_library.get_settings",
         lambda: Settings(vigil_skills_path=""),
     )
-    app = FastAPI()
-    app.include_router(skills_router.router, prefix="/api/skills")
-    resp = _upload(TestClient(app), "SKILL.md", _skill_md())
+    resp = _upload(TestClient(skills_app()), "SKILL.md", _skill_md())
     assert resp.status_code == 400
-    assert "unset" in resp.json()["detail"]
+    assert "skills are off" in resp.json()["detail"]

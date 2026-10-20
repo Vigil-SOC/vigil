@@ -1,8 +1,9 @@
 """Skills API — skills loaded from disk, and writes under the operator root.
 
 Skills are directories of ``SKILL.md`` under the bundled library and the
-optional ``VIGIL_SKILLS_PATH`` root; see ``core.skills.skill_library``. Writes
-go only to that operator root. The bundled library is never modified.
+operator root (``VIGIL_SKILLS_PATH``, else ``~/.vigil/skills``); see
+``core.skills.skill_library``. Writes go only to that operator root. The
+bundled library is never modified.
 """
 
 import logging
@@ -11,6 +12,7 @@ from typing import Dict, Optional, Tuple
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, field_validator
 
+from core.auth.permissions import permission_gate
 from core.llm.cost.budget import BudgetExceeded
 from core.llm.providers.registry import get_registry
 from core.llm.router.router import LLMRouter, get_provider_spec
@@ -42,6 +44,10 @@ from services.api.routers.claude import NO_PROVIDER_DETAIL
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# A saved skill's description reaches every agent's system prompt, so writing
+# one is a settings change, not an analyst action. Reads and tests stay open.
+_SKILLS_WRITE = [permission_gate("settings.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/skills",
@@ -204,8 +210,13 @@ async def get_skill_file(name: str, path: str):
     return SkillFileContent(path=path, content=content)
 
 
-@router.post("", response_model=SkillResponse)
-@router.post("/", response_model=SkillResponse, include_in_schema=False)
+@router.post("", response_model=SkillResponse, dependencies=_SKILLS_WRITE)
+@router.post(
+    "/",
+    response_model=SkillResponse,
+    include_in_schema=False,
+    dependencies=_SKILLS_WRITE,
+)
 async def save_skill(req: SkillWriteRequest):
     """Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
 
@@ -225,7 +236,7 @@ async def save_skill(req: SkillWriteRequest):
     return _response(skill)
 
 
-@router.post("/upload", response_model=SkillResponse)
+@router.post("/upload", response_model=SkillResponse, dependencies=_SKILLS_WRITE)
 async def upload_skill(file: UploadFile = File(...)):
     """Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
 
@@ -239,7 +250,7 @@ async def upload_skill(file: UploadFile = File(...)):
     return _response(skill)
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", dependencies=_SKILLS_WRITE)
 async def remove_skill(name: str):
     """Delete an operator skill directory. A bundled skill is refused."""
     try:

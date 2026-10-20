@@ -989,6 +989,11 @@
             "title": "Max Cost Usd",
             "type": "number"
           },
+          "primary": {
+            "default": false,
+            "title": "Primary",
+            "type": "boolean"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"

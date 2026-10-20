@@ -320,7 +320,8 @@ load_env() {
     if [ -f "$REPO_ROOT/.env" ]; then
         set -a; source "$REPO_ROOT/.env"; set +a
     elif [ -f "$REPO_ROOT/env.example" ]; then
-        cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
+        # Owner-only: it comes to hold the agent layer's token (ensure_agent_token).
+        (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
         set -a; source "$REPO_ROOT/.env"; set +a
     fi
 }
@@ -343,6 +344,73 @@ ensure_jwt_secret() {
     fi
     JWT_SECRET_KEY="$(cat "$file")"
     export JWT_SECRET_KEY
+}
+
+# --- Values in .env ---
+# The value .env gives KEY, as sourcing it does: the last assignment wins, an
+# `export` prefix is allowed, quotes are dropped, and so is a trailing comment or
+# CR. scripts/agent_up.sh reads its token through this, so it and the backend
+# (which reads .env through dotenv) agree on which line counts.
+_ENV_LINE_RE='^[[:space:]]*(export[[:space:]]+)?'
+env_file_value() {
+    local key="$1" file="${2:-$REPO_ROOT/.env}" v
+    v="$(sed -nE "s/${_ENV_LINE_RE}${key}=//p" "$file" | tail -1)"
+    v="${v%$'\r'}"
+    case "$v" in
+        \"*) v="${v#\"}"; v="${v%%\"*}" ;;
+        \'*) v="${v#\'}"; v="${v%%\'*}" ;;
+        *) v="${v%%[[:space:]]*}" ;;
+    esac
+    printf '%s' "$v"
+}
+
+# --- Agent layer token ---
+# The backend and the agent layer share AGENT_INTERNAL_TOKEN. env.example ships
+# it empty, and empty means scripts/agent_up.sh refuses to start, so no chat turn
+# or workflow run gets through. Unlike the JWT secret it goes in .env: agent_up.sh
+# and `docker compose --env-file .env` read it there. Fills an empty value once
+# (a value the caller exported, else a new one) and never replaces a set one.
+# Never fails: start.sh runs under set -e, and agent_up.sh says what is missing.
+ensure_agent_token() {
+    local env="$REPO_ROOT/.env" re="${_ENV_LINE_RE}AGENT_INTERNAL_TOKEN=" lines token
+    [ -f "$env" ] || return 0
+    lines="$(grep -cE "$re" "$env" || true)"
+    # Which line to fill is a guess with two, and a wrong guess splits the
+    # backend and the agent layer onto different tokens.
+    if [ "$lines" -gt 1 ]; then
+        echo "Warning: .env sets AGENT_INTERNAL_TOKEN $lines times; left as is (the last one counts)." >&2
+        return 0
+    fi
+    [ -n "$(env_file_value AGENT_INTERNAL_TOKEN "$env")" ] && return 0
+    token="${AGENT_INTERNAL_TOKEN:-}"
+    [ -n "$token" ] || token="$(openssl rand -hex 32 2>/dev/null)" || token=""
+    [ -n "$token" ] || token="$(od -An -tx1 -N32 /dev/urandom 2>/dev/null | tr -d ' \n')" || token=""
+    if [ -z "$token" ]; then
+        echo "Warning: could not generate AGENT_INTERNAL_TOKEN; set it in .env." >&2
+        return 0
+    fi
+    # Private while it holds the token. Rewritten in place (cat, not mv) so .env
+    # keeps its owner and mode; the line keeps its `export` and its CR, if any.
+    if ! (umask 077; T="$token" awk -v re="$re" '
+        !done && $0 ~ re {
+            print substr($0, 1, index($0, "AGENT_INTERNAL_TOKEN=") - 1) \
+                "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" (/\r$/ ? "\r" : "")
+            done = 1; next
+        }
+        { print }
+        END { if (!done) print "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" }
+    ' "$env" > "$env.tmp.$$"); then
+        rm -f "$env.tmp.$$"
+        echo "Warning: could not write AGENT_INTERNAL_TOKEN to .env" >&2
+        return 0
+    fi
+    if ! cat "$env.tmp.$$" > "$env"; then
+        echo "Warning: could not rewrite .env; the filled copy is $env.tmp.$$" >&2
+        return 0
+    fi
+    rm -f "$env.tmp.$$"
+    export AGENT_INTERNAL_TOKEN="$token"
+    echo "Set AGENT_INTERNAL_TOKEN in .env (the agent layer's key to the API)"
 }
 
 # Is this venv the one .python-version asks for, on this machine's architecture?
