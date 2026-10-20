@@ -569,7 +569,7 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
-  const cost = spentAcross(read.map((one) => one.costUsd), folds.length > 1)
+  const cost = spentAcross(folds.map((one) => one?.costUsd ?? null), folds.length > 1)
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
@@ -1817,7 +1817,7 @@ function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<strin
   const read = runs.filter((one) => one.phase === 'ready' && one.fold)
   const calls = read.reduce((n, one) => n + one.fold!.calls.length, 0)
   const gaps = read.reduce((n, one) => n + visibilityGaps(one.fold).length, 0)
-  const cost = spentAcross(read.map((one) => one.fold!.costUsd), runs.length > 1)
+  const cost = spentAcross(runs.map((one) => (one.phase === 'ready' && one.fold ? one.fold.costUsd : null)), runs.length > 1)
   return (
     <>
       {calls > 0 || gaps > 0 ? (

@@ -2528,6 +2528,20 @@ describe('a case with several runs', () => {
     expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · $0.60 · 1 run unpriced')
   })
 
+  it('counts a run it could not read as unpriced, on the Checked door and header', async () => {
+    threeRuns('case-unread')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
+      runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
+    )
+    renderCase('case-unread')
+    const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
+    await waitFor(() => expect(door).toHaveTextContent('$0.60 · 1 run unpriced'))
+    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
+    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+    expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 2 queries · $0.60 · 1 run unpriced')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
   it('still counts the unpriced runs when none is priced', async () => {
     threeRuns('case-none-priced')
     testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
