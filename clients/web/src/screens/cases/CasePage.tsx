@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
@@ -19,14 +19,14 @@ import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
-import { EvidenceTrail } from './EvidenceTrail'
-import { BlindSpots, CheckedList, blindSpotsOf } from './RunChecks'
+import { EvidenceTrail, MergedEvidence } from './EvidenceTrail'
+import { BlindSpots, CheckedList, RunNote, blindSpotsOf } from './RunChecks'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
-import { timeLeft, when } from './caseFormat'
+import { runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -48,7 +48,6 @@ import {
   strongestRows,
   visibilityGaps,
   wordDisplay,
-  type CallRow,
   type EndedRun,
   type HypothesisRow,
   type OpenCheckpointRow,
@@ -151,7 +150,7 @@ function NoteCites({ ids, open, cites, onCite }: { ids: string[]; open: boolean;
 }
 
 /** One explanation: the title stops at a line and the justification at two; the full text is on hover and when the row is opened. */
-function ExplanationRow({ row, rootCauseRunId, cites, onCite }: { row: HypothesisRow; rootCauseRunId: string | null; cites: ReadonlyMap<string, Citation>; onCite: (cite: Citation) => void }) {
+function ExplanationRow({ row, tag, rootCauseRunId, cites, onCite }: { row: HypothesisRow; tag?: string; rootCauseRunId: string | null; cites: ReadonlyMap<string, Citation>; onCite: (cite: Citation) => void }) {
   const [open, setOpen] = useState(false)
   const word = explanationWord(row.status, row.supports, row.weakens)
   const by = addedBy(row.provenance)
@@ -178,6 +177,7 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite }: { row: Hypothesi
           <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
         </div>
         {by && <div className="case-expl-by">Added by {by}</div>}
+        {tag && <div className="case-expl-by case-expl-run" title={tag}>{tag}</div>}
         {row.status === 'handed_off' && rootCauseRunId && (
           <div className="case-expl-by">
             <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
@@ -528,6 +528,7 @@ function caseCounts(primary: RunFold | null, folds: (RunFold | null)[], record: 
 }
 
 const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
+const wordRank = (word: string) => (DOOR_ORDER.indexOf(word) < 0 ? DOOR_ORDER.length : DOOR_ORDER.indexOf(word))
 
 /** The line under each door's count, from the folds already loaded: the primary run's alone on a one-run case, every run's otherwise. */
 function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
@@ -543,10 +544,7 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
       tally.set(word, (tally.get(word) ?? 0) + 1)
     }
   }
-  const words = [...tally.keys()].sort((a, b) => {
-    const [i, j] = [DOOR_ORDER.indexOf(a), DOOR_ORDER.indexOf(b)]
-    return (i < 0 ? DOOR_ORDER.length : i) - (j < 0 ? DOOR_ORDER.length : j)
-  })
+  const words = [...tally.keys()].sort((a, b) => wordRank(a) - wordRank(b))
   let evidence = none
   if (folds.length > 1 && read.length) {
     const total = read.reduce((n, one) => n + counts(one, 0).Evidence, 0)
@@ -616,44 +614,6 @@ function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
   return null
 }
 
-/** A run's heading on a grouped tab: its workflow and when it started. */
-function runTitle(ref: CaseInvestigationRef, names: Record<string, string>): string {
-  return `${names[ref.workflow_id] || ref.workflow_id} · started ${clock(ref.created_at)}`
-}
-
-function RunHeading({ run, names }: { run: CaseRun; names: Record<string, string> }) {
-  return (
-    <h4 className="case-run-head" title={runTitle(run.ref, names)}>
-      {names[run.ref.workflow_id] || run.ref.workflow_id}
-      <span> · started {clock(run.ref.created_at)}</span>
-    </h4>
-  )
-}
-
-/**
- * A grouped tab: each run's rows under its own heading, primary run first. A case with one run shows
- * no heading, so the tab reads exactly as it did before there could be more.
- */
-function PerRun({ runs, names, single, children }: {
-  runs: CaseRun[]
-  names: Record<string, string>
-  /** The primary run's fold and phase, shown alone on a case with at most one run. */
-  single: { fold: RunFold | null; phase: Phase }
-  children: (fold: RunFold | null, phase: Phase, run: CaseRun | null) => ReactNode
-}) {
-  if (runs.length <= 1) return <>{children(single.fold, single.phase, runs[0] ?? null)}</>
-  return (
-    <>
-      {runs.map((run) => (
-        <section key={run.ref.run_id} className="case-run" aria-label={runTitle(run.ref, names)}>
-          <RunHeading run={run} names={names} />
-          {children(run.fold, run.phase, run)}
-        </section>
-      ))}
-    </>
-  )
-}
-
 /** "$0.12 of $1.00": what a run has spent against what it was granted, read off its fold once read; a cost nothing priced is a dash, never $0. */
 function spentLine(run: CaseRun): string {
   const cost = run.fold ? run.fold.costUsd : null
@@ -673,7 +633,7 @@ function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<s
           const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—')
           return (
             <li key={run.ref.run_id}>
-              <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runTitle(run.ref, names)} onClick={onFollow}>{runTitle(run.ref, names)}</Link>
+              <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runLabel(run.ref, names)} onClick={onFollow}>{runLabel(run.ref, names)}</Link>
               <span className="case-other-state">{state}</span>
               <span className="num">{spentLine(run)}</span>
             </li>
@@ -1073,6 +1033,13 @@ export function CasePage({
   // The run id is unknown until the case read returns, so the run is still loading, not absent.
   const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId ? 'ready' : reads[runId]?.phase ?? 'loading'
   const single = { fold, phase: foldPhase }
+  // The run filter is shared by the four grouped tabs: All (null), or one run on the case, forgotten with the case or the run.
+  const [runPick, setRunPick] = useState<{ caseId: string; runId: string } | null>(null)
+  const picked = runPick?.caseId === id && caseRuns.some((ref) => ref.run_id === runPick.runId) ? runPick.runId : null
+  const listed = investigations.flatMap((item) => runs.find((one) => one.ref === item) ?? []) // investigations[] order
+  const shownRuns = picked ? listed.filter((one) => one.ref.run_id === picked) : listed
+  // One run to show alone reads as it always has; several are merged into one list.
+  const alone = shownRuns.length > 1 ? null : runs.length <= 1 ? { ...single, run: runs[0] ?? null } : { fold: shownRuns[0]?.fold ?? null, phase: shownRuns[0]?.phase ?? ('loading' as Phase), run: shownRuns[0] ?? null }
 
   // A case refresh that moves another run on the case (a hunt's root-cause follow-up) re-reads the record in place.
   const otherRuns = investigations.filter((item) => !item.primary).map((item) => `${item.run_id}:${item.status}`).join(' ')
@@ -1086,17 +1053,8 @@ export function CasePage({
     setRecordKey((k) => k + 1)
   }, [id, otherRuns, phase])
 
-  // Each run row is labelled with its run: the workflow and when it started, else a short id.
-  const runLabels = useMemo(() => {
-    const labels: Record<string, string> = {}
-    for (const item of investigations) {
-      const name = workflowNames[item.workflow_id] || item.workflow_id
-      // refs carry naive UTC stamps; without an offset a browser would read them as local time
-      const at = item.created_at && (/(Z|[+-]\d\d:?\d\d)$/.test(item.created_at) ? item.created_at : `${item.created_at}Z`)
-      labels[item.run_id] = name ? (at ? `${name} · ${clock(at)}` : name) : item.run_id.slice(0, 8)
-    }
-    return labels
-  }, [investigations, workflowNames])
+  // One label per run, for every tag, filter entry and cost line.
+  const runLabels = useMemo(() => Object.fromEntries(investigations.map((item) => [item.run_id, runLabel(item, workflowNames)])), [investigations, workflowNames])
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
@@ -1400,6 +1358,16 @@ export function CasePage({
     />
   )
 
+  // Above each grouped tab, on a case with more than one run only.
+  const runFilter = listed.length > 1 && (
+    <div className="case-run-filter" role="group" aria-label="Show runs">
+      <FilterChip label="All runs" active={picked === null} onClick={() => setRunPick(null)} />
+      {listed.map((one) => (
+        <FilterChip key={one.ref.run_id} label={runLabels[one.ref.run_id]} title={runLabels[one.ref.run_id]} active={picked === one.ref.run_id} onClick={() => setRunPick({ caseId: id, runId: one.ref.run_id })} />
+      ))}
+    </div>
+  )
+
   return (
     <div className="detail-pane case-page">
       {caseRuns.map((ref) => (
@@ -1514,45 +1482,55 @@ export function CasePage({
           )}
 
           {tab === 'Explanations' && (
-            <PerRun runs={runs} names={workflowNames} single={single}>
-              {(one, onePhase, run) => (
+            <>
+              {runFilter}
+              {alone ? (
                 <Explanations
-                  fold={one}
-                  phase={onePhase}
+                  fold={alone.fold}
+                  phase={alone.phase}
                   rootCauseRunId={rootCauseRunId}
-                  cites={run && run.ref !== latest ? NO_CITES : citeById}
+                  cites={alone.run && alone.run.ref !== latest ? NO_CITES : citeById}
                   onCite={openCite}
                 />
+              ) : (
+                <CaseExplanations runs={shownRuns} labels={runLabels} primary={latest} rootCauseRunId={rootCauseRunId} cites={citeById} onCite={openCite} />
               )}
-            </PerRun>
+            </>
           )}
 
           {tab === 'Evidence' && (
-            <PerRun runs={runs} names={workflowNames} single={single}>
-              {(one, onePhase, run) => {
-                const key = run?.ref.run_id ?? runId
-                return (
-                  <EvidenceTrail
-                    fold={one}
-                    phase={onePhase}
-                    focusId={!run || run.ref === latest ? focusEvidence : null}
-                    onShowOlder={key ? (shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE })) : undefined}
-                  />
-                )
-              }}
-            </PerRun>
+            <>
+              {runFilter}
+              {alone ? (
+                <EvidenceTrail
+                  fold={alone.fold}
+                  phase={alone.phase}
+                  focusId={!alone.run || alone.run.ref === latest ? focusEvidence : null}
+                  onShowOlder={(alone.run?.ref.run_id ?? runId) ? (shown) => setEvidenceLimits((held) => ({ ...held, [(alone.run?.ref.run_id ?? runId) as string]: shown + EVIDENCE_PAGE })) : undefined}
+                />
+              ) : (
+                <MergedEvidence
+                  runs={shownRuns.map((one) => ({ id: one.ref.run_id, tag: runLabels[one.ref.run_id], fold: one.fold, phase: one.phase }))}
+                  focusId={focusEvidence}
+                  focusRunId={runId}
+                  onShowOlder={(key, shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE }))}
+                />
+              )}
+            </>
           )}
 
           {tab === 'Checked' && (
-            <PerRun runs={runs} names={workflowNames} single={single}>
-              {(one, onePhase, run) => <Checked fold={one} phase={onePhase} runId={run?.ref.run_id ?? runId} />}
-            </PerRun>
+            <>
+              {runFilter}
+              {alone ? <Checked fold={alone.fold} phase={alone.phase} runId={alone.run?.ref.run_id ?? runId} /> : <MergedChecked runs={shownRuns} labels={runLabels} />}
+            </>
           )}
 
           {tab === 'Memory and blind spots' && (
-            <PerRun runs={runs} names={workflowNames} single={single}>
-              {(one, onePhase, run) => <Memory fold={one} phase={onePhase} runId={run?.ref.run_id ?? runId} />}
-            </PerRun>
+            <>
+              {runFilter}
+              {alone ? <Memory fold={alone.fold} phase={alone.phase} runId={alone.run?.ref.run_id ?? runId} /> : <MergedMemory runs={shownRuns} labels={runLabels} />}
+            </>
           )}
 
           {tab === 'Record' && (
@@ -1641,7 +1619,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} latestFold={runId === latest?.run_id ? fold : null} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} runs={listed} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} latestFold={runId === latest?.run_id ? fold : null} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />
@@ -1689,12 +1667,23 @@ function Explanations({ fold, phase, rootCauseRunId, cites, onCite }: {
         {honestLine()}
         <InfoTip
           label="About explanations"
-          text={fold?.kind === 'head' ? 'A root-cause run traces a chain of steps, shown on Watch a run.' : 'Hunt, root cause, and adjudicate test explanations. This run does not.'}
+          text={aboutExplanations([fold])}
           align="start"
         />
       </p>
     )
   }
+  return (
+    <ExplanationCard empty={record.hypotheses.length === 0}>
+      {record.hypotheses.map((row) => (
+        <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} cites={cites} onCite={onCite} />
+      ))}
+    </ExplanationCard>
+  )
+}
+
+/** The page's one Explanations card, whatever the rows came from. */
+function ExplanationCard({ empty, children }: { empty: boolean; children: ReactNode }) {
   return (
     <section className="case-expl-card">
       <div className="case-expl-head">
@@ -1707,16 +1696,60 @@ function Explanations({ fold, phase, rootCauseRunId, cites, onCite }: {
           <button type="button" disabled title={LATER_RELEASE}>Rule one out</button>
         </div>
       </div>
-      {record.hypotheses.length === 0 ? (
-        <EmptyState compact icon="search" title="No explanations yet" />
-      ) : (
-        <ul className="case-expl-rows">
-          {record.hypotheses.map((row) => (
-            <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} cites={cites} onCite={onCite} />
-          ))}
-        </ul>
-      )}
+      {empty ? <EmptyState compact icon="search" title="No explanations yet" /> : <ul className="case-expl-rows">{children}</ul>}
     </section>
+  )
+}
+
+const byNewest = (runs: CaseRun[]) => [...runs].sort((a, b) => (b.ref.created_at ?? '').localeCompare(a.ref.created_at ?? ''))
+
+/** Why a case's runs keep no explanations: the same words for one run or several. */
+const aboutExplanations = (folds: (RunFold | null)[]) =>
+  folds.every((fold) => fold?.kind === 'head') ? 'A root-cause run traces a chain of steps, shown on Watch a run.' : 'Hunt, root cause, and adjudicate test explanations. This run does not.'
+
+/**
+ * Every explanation any selected run held, in one list: by standing word, then newest run first, each
+ * row tagged with its run. Rows are never matched, paired or merged across runs.
+ */
+function CaseExplanations({ runs, labels, primary, rootCauseRunId, cites, onCite }: {
+  runs: CaseRun[]
+  labels: Record<string, string>
+  primary: CaseInvestigationRef | null
+  rootCauseRunId: string | null
+  /** The primary run's citation chips; another run's rows have none. */
+  cites: ReadonlyMap<string, Citation>
+  onCite: (cite: Citation) => void
+}) {
+  const waiting = runs.filter((run) => run.phase !== 'ready')
+  const rows = byNewest(runs)
+    .flatMap((run) => (run.phase === 'ready' ? foldRecord(run.fold)?.hypotheses ?? [] : []).map((row) => ({ run, row })))
+    .sort((a, b) => wordRank(explanationWord(a.row.status, a.row.supports, a.row.weakens)) - wordRank(explanationWord(b.row.status, b.row.supports, b.row.weakens)))
+  const keeps = runs.some((run) => run.phase === 'ready' && foldRecord(run.fold))
+  return (
+    <>
+      {waiting.map((run) => <RunNote key={run.ref.run_id} tag={labels[run.ref.run_id]} phase={run.phase} />)}
+      {keeps ? (
+        <ExplanationCard empty={rows.length === 0}>
+          {rows.map(({ run, row }) => (
+            <ExplanationRow
+              key={`${run.ref.run_id}:${row.hypothesis_id}`}
+              row={row}
+              tag={labels[run.ref.run_id]}
+              rootCauseRunId={rootCauseRunId}
+              cites={run.ref === primary ? cites : NO_CITES}
+              onCite={onCite}
+            />
+          ))}
+        </ExplanationCard>
+      ) : (
+        !runs.some((run) => run.phase === 'loading') && (
+          <p>
+            {honestLine()}
+            <InfoTip label="About explanations" text={aboutExplanations(runs.map((run) => run.fold))} align="start" />
+          </p>
+        )
+      )}
+    </>
   )
 }
 
@@ -1742,16 +1775,66 @@ function Checked({ fold, phase, runId }: { fold: RunFold | null; phase: Phase; r
   )
 }
 
+/** The queries every selected run asked, newest run first, one card; each turn is tagged with its run. */
+function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<string, string> }) {
+  const waiting = runs.filter((run) => run.phase !== 'ready')
+  const read = byNewest(runs).flatMap((run) => (run.phase === 'ready' && run.fold ? [{ run, fold: run.fold, gaps: visibilityGaps(run.fold) }] : []))
+  const asked = read.filter((one) => one.fold.calls.length > 0 || one.gaps.length > 0)
+  const queries = read.reduce((n, one) => n + one.fold.calls.length, 0)
+  const gaps = read.reduce((n, one) => n + one.gaps.length, 0)
+  const priced = read.flatMap((one) => (one.fold.costUsd == null ? [] : [one.fold.costUsd]))
+  return (
+    <>
+      {waiting.map((run) => <RunNote key={run.ref.run_id} tag={labels[run.ref.run_id]} phase={run.phase} />)}
+      {asked.length === 0 ? (
+        waiting.length === 0 && <EmptyState compact icon="search" title="No questions asked yet" />
+      ) : (
+        <section className="case-card case-checked">
+          <h3>
+            What Vigil checked · {queries} {queries === 1 ? 'query' : 'queries'} · {priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'}
+            <InfoTip
+              label="About the cost"
+              source="Each run's total spend, added together."
+              calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
+            />
+            {gaps > 0 && ` · ${gaps} with no source`}
+          </h3>
+          {asked.map((one) => (
+            <CheckedList key={one.run.ref.run_id} runId={one.run.ref.run_id} calls={one.fold.calls} tag={labels[one.run.ref.run_id]} />
+          ))}
+        </section>
+      )}
+    </>
+  )
+}
+
+/** Whether a run has anything for the Memory tab: a recall, recalled calls, gaps, open questions or lost queries. */
+function hasMemory(fold: RunFold | null): boolean {
+  return !!fold?.recall || recallEntityCalls(fold).length > 0 || visibilityGaps(fold).length > 0 || leftOpen(fold).length > 0 || blindSpotsOf(fold).groups.length > 0
+}
+
 /** One run's recall and blind spots. */
 function Memory({ fold, phase, runId }: { fold: RunFold | null; phase: Phase; runId: string | null }) {
-  const gaps = visibilityGaps(fold)
-  const recalled = recallEntityCalls(fold)
   if (phase === 'loading') return <EmptyState loading compact icon="brain" title="Loading the run…" />
   if (phase === 'error') return <EmptyState error compact icon="alert" title="The run could not be read" />
-  if (!fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0 && blindSpotsOf(fold).groups.length === 0) {
-    return <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
-  }
-  return <MemoryCards fold={fold} recalled={recalled} gaps={gaps} runId={runId} />
+  if (!hasMemory(fold)) return <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
+  return <MemoryCards parts={[{ fold, runId }]} />
+}
+
+/** Every selected run's recall and blind spots, newest run first, in the same two cards with each row tagged. */
+function MergedMemory({ runs, labels }: { runs: CaseRun[]; labels: Record<string, string> }) {
+  const waiting = runs.filter((run) => run.phase !== 'ready')
+  const parts = byNewest(runs).flatMap((run) => (run.phase === 'ready' && hasMemory(run.fold) ? [{ fold: run.fold, runId: run.ref.run_id, tag: labels[run.ref.run_id] }] : []))
+  return (
+    <>
+      {waiting.map((run) => <RunNote key={run.ref.run_id} tag={labels[run.ref.run_id]} phase={run.phase} />)}
+      {parts.length > 0 ? (
+        <MemoryCards parts={parts} />
+      ) : (
+        waiting.length === 0 && <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
+      )}
+    </>
+  )
 }
 
 const KIND_LABEL: Record<string, string> = { hunt: 'Hunt', case: 'Case', analyst: 'Analyst' }
@@ -1762,83 +1845,101 @@ function provenance(p: RecallProvenance): string {
   return [[KIND_LABEL[p.kind] ?? p.kind, p.id].filter(Boolean).join(' '), day].filter(Boolean).join(' · ')
 }
 
-function MemoryRow({ text, meta, tone, tag, action }: { text: string; meta?: string; tone?: 'poor'; tag?: string; action?: ReactNode }) {
+function MemoryRow({ text, meta, tone, tag, run, action }: { text: string; meta?: string; tone?: 'poor'; tag?: string; run?: string; action?: ReactNode }) {
   return (
     <div className={`case-mem-row${tone ? ` ${tone}` : ''}`}>
-      <span className="case-mem-text">{tag && <span className="tag">{tag}</span>}{text}</span>
+      <span className="case-mem-text">{run && <span className="rec-run">{run}</span>}{tag && <span className="tag">{tag}</span>}{text}</span>
       {(meta || action) && <span className="case-mem-meta">{meta}{action}</span>}
     </div>
   )
 }
 
+/** One run's part of the Memory cards; `tag` names the run where several share them. */
+interface MemoryPart {
+  fold: RunFold | null
+  runId: string | null
+  tag?: string
+}
+
 /** Recalled and Blind spots. Withdraw and Record a blind spot wait on Written back, so they are shown disabled. */
-function MemoryCards({ fold, recalled, gaps, runId }: { fold: RunFold | null; recalled: CallRow[]; gaps: { id: string; text: string }[]; runId: string | null }) {
-  const recall = fold?.recall
-  const opened = recall && !recall.unavailable ? recall : null
-  const open = leftOpen(fold)
+function MemoryCards({ parts }: { parts: MemoryPart[] }) {
+  const each = parts.map((part) => ({ ...part, recall: part.fold?.recall, recalled: recallEntityCalls(part.fold), gaps: visibilityGaps(part.fold), open: leftOpen(part.fold) }))
+  const none = each.every((one) => one.gaps.length === 0 && !one.recall?.gaps.length && one.open.length === 0)
   return (
     <>
       <section className="case-mem-card" aria-label="Recalled">
         <div className="case-mem-head"><h3>Recalled</h3></div>
-        {recall?.unavailable ? (
-          <p className="muted">Recall did not happen: {recall.unavailable}{recall.keys.length ? ` (${recall.keys.join(', ')})` : ''}</p>
-        ) : opened ? (
-          <p className="muted">{opened.keys.length ? `Asked about ${opened.keys.join(', ')}` : 'No entities recalled.'}</p>
-        ) : (
-          <p className="muted">The run did not journal an opening recall.</p>
-        )}
-        {(opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
-          <div className="case-mem-rows">
-            {opened?.sightings.map((row, i) => (
-              <MemoryRow
-                key={`s${i}`}
-                text={[row.entity, row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
-                meta={provenance(row)}
-              />
-            ))}
-            {opened?.verdicts.map((row, i) => (
-              <MemoryRow
-                key={`v${i}`}
-                text={[row.outcome, row.statement].filter(Boolean).join(' — ')}
-                meta={provenance(row)}
-                action={<button type="button" className="btn ghost" disabled title={LATER_RELEASE}>Withdraw</button>}
-              />
-            ))}
-            {recalled.map((call, i) => (
-              <MemoryRow key={`c${i}`} text={`recall_entity · ${call.question || '—'}`} meta={`${call.result_length} bytes`} />
-            ))}
-          </div>
-        ) : null}
+        {each.map(({ tag, recall, recalled }, n) => {
+          const opened = recall && !recall.unavailable ? recall : null
+          const lead = tag ? <span className="rec-run">{tag}</span> : null
+          return (
+            <Fragment key={parts[n].runId ?? n}>
+              {recall?.unavailable ? (
+                <p className="muted">{lead}Recall did not happen: {recall.unavailable}{recall.keys.length ? ` (${recall.keys.join(', ')})` : ''}</p>
+              ) : opened ? (
+                <p className="muted">{lead}{opened.keys.length ? `Asked about ${opened.keys.join(', ')}` : 'No entities recalled.'}</p>
+              ) : (
+                <p className="muted">{lead}The run did not journal an opening recall.</p>
+              )}
+              {(opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
+                <div className="case-mem-rows">
+                  {opened?.sightings.map((row, i) => (
+                    <MemoryRow
+                      key={`s${i}`}
+                      text={[row.entity, row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
+                      meta={provenance(row)}
+                    />
+                  ))}
+                  {opened?.verdicts.map((row, i) => (
+                    <MemoryRow
+                      key={`v${i}`}
+                      text={[row.outcome, row.statement].filter(Boolean).join(' — ')}
+                      meta={provenance(row)}
+                      action={<button type="button" className="btn ghost" disabled title={LATER_RELEASE}>Withdraw</button>}
+                    />
+                  ))}
+                  {recalled.map((call, i) => (
+                    <MemoryRow key={`c${i}`} text={`recall_entity · ${call.question || '—'}`} meta={`${call.result_length} bytes`} />
+                  ))}
+                </div>
+              ) : null}
+            </Fragment>
+          )
+        })}
       </section>
       <section className="case-mem-card" aria-label="Blind spots">
         <div className="case-mem-head">
           <h3>Blind spots that touched this case</h3>
           <button type="button" className="btn ghost" disabled title={LATER_RELEASE}>Record a blind spot</button>
         </div>
-        {gaps.length === 0 && !recall?.gaps.length && open.length === 0 ? (
-          <p className="muted">None recorded.</p>
-        ) : !recall?.gaps.length && open.length === 0 ? null : (
-          <div className="case-mem-rows">
-            {recall?.gaps.map((gap, i) => (
-              <MemoryRow
-                key={`d${i}`}
-                tone="poor"
-                tag="Declared"
-                text={[gap.disposition.replace(/_/g, ' '), gap.statement].filter(Boolean).join(' — ')}
-                meta={provenance(gap)}
-              />
-            ))}
-            {open.map((q) => <MemoryRow key={q.question_id} tone="poor" tag="Open question" text={q.question} />)}
-          </div>
-        )}
-        {blindSpotsOf(fold).groups.length > 0 ? (
-          <BlindSpots fold={fold} runId={runId} />
-        ) : gaps.length > 0 && (
-          // A run whose calls do not say which failed: its gaps as it wrote them.
-          <div className="case-mem-rows">
-            {gaps.map((gap) => <MemoryRow key={gap.id} tone="poor" tag="Visibility" text={gap.text} />)}
-          </div>
-        )}
+        {none && <p className="muted">None recorded.</p>}
+        {each.map(({ fold, runId, tag, recall, gaps, open }, n) => (
+          <Fragment key={parts[n].runId ?? n}>
+            {(recall?.gaps.length || open.length > 0) ? (
+              <div className="case-mem-rows">
+                {recall?.gaps.map((gap, i) => (
+                  <MemoryRow
+                    key={`d${i}`}
+                    tone="poor"
+                    run={tag}
+                    tag="Declared"
+                    text={[gap.disposition.replace(/_/g, ' '), gap.statement].filter(Boolean).join(' — ')}
+                    meta={provenance(gap)}
+                  />
+                ))}
+                {open.map((q) => <MemoryRow key={q.question_id} tone="poor" run={tag} tag="Open question" text={q.question} />)}
+              </div>
+            ) : null}
+            {blindSpotsOf(fold).groups.length > 0 ? (
+              <BlindSpots fold={fold} runId={runId} tag={tag} />
+            ) : gaps.length > 0 && (
+              // A run whose calls do not say which failed: its gaps as it wrote them.
+              <div className="case-mem-rows">
+                {gaps.map((gap) => <MemoryRow key={gap.id} tone="poor" run={tag} tag="Visibility" text={gap.text} />)}
+              </div>
+            )}
+          </Fragment>
+        ))}
       </section>
     </>
   )

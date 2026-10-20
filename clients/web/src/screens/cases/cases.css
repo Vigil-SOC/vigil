@@ -403,6 +403,11 @@
 .side-ent.long .side-ent-head { max-width: calc(100% - var(--ent-tail, 4.2em)); } /* room for the six-character tail, as measured */
 
 .side-cost { display: flex; justify-content: space-between; gap: 8px; }
+.side-total { color: var(--tx2); font-size: 12px; }
+.side-runs { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.side-runs li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.side-runs li .side-clamp { flex: 1; min-width: 0; color: var(--tx2); }
+.side-runs li .num { white-space: nowrap; }
 .side-level { font-weight: 650; }
 .side-level.good { color: var(--good); }
 .side-level.fair { color: var(--fair); }
@@ -1850,20 +1855,14 @@
 }
 .case-page .case-expl-cites .cite-chip:hover { background: var(--ac); color: var(--ac-tx); }
 
-/* A run's rows on a grouped tab, under its heading: the one addition to the boards (#2400). */
-.case-page .case-run { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.case-page .case-run + .case-run { margin-top: 8px; }
-.case-page .case-run > p { margin: 0; font-size: 13px; }
-.case-page .case-run-head {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--tx0);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.case-page .case-run-head span { font-size: 12px; font-weight: 400; color: var(--tx2); }
+/* One run filter above the four grouped tabs, laid out like the Record tab's chip bar; each run's tag rides the rows in the Record's own run tag (#2481). */
+.case-page .case-run-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.case-page .case-run-filter .filter-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-page .case-run-note { margin: 0; font-size: 13px; }
+.case-page .case-expl-run { overflow: hidden; text-overflow: ellipsis; }
+.case-page .ev-run { color: var(--tx2); }
+.case-page .checked-turn-head p .rec-run,
+.case-page .blind-title .rec-run { margin-right: 8px; }
 
 /* Summary: the other runs' head lines under the primary run's cards, laid out like the agent rows. */
 .case-page .case-other-runs {

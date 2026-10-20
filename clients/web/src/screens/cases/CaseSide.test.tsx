@@ -46,6 +46,7 @@ function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'] }: { 
         linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
         owner="—"
         latest={null}
+        runs={[]}
         workflowNames={{}}
         sla={null}
         closed={false}
@@ -96,6 +97,50 @@ describe('case side panel Entities show values that fit whole (#2459)', () => {
   it('lists a value once when a recall key and an alert both name it', () => {
     renderSide({ keys: ['host:FIN-WS-114'], entities: ['FIN-WS-114'] })
     expect(Array.from(document.querySelectorAll('.side-ent')).map((el) => el.textContent)).toEqual(['FIN-WS-114'])
+  })
+})
+
+describe('case side panel Cost across runs (#2481)', () => {
+  const ref = (run_id: string, workflow_id: string, cost_usd: number, created_at: string) => ({
+    investigation_id: null, status: 'completed', workflow_id, run_id, live: false, cost_usd, max_cost_usd: 5, budget_health: 'healthy', iteration_count: 1, created_at,
+  })
+  const hunt = ref('run-h', 'threat-hunt', 0.2, '2026-06-15T09:00:00Z')
+  const inv = ref('run-i', 'incident-response', 0.1, '2026-06-15T10:00:00Z')
+  const unpriced = ref('run-u', 'root-cause-analysis', 0, '2026-06-15T11:00:00Z')
+  const renderCost = (refs: typeof hunt[]) =>
+    render(
+      <aside className="case-side">
+        <CaseSide
+          caseId="case-1" linked={[]} owner="—" latest={refs[0]} runs={refs.map((one) => ({ ref: one, fold: null }))}
+          workflowNames={{ 'threat-hunt': 'Hunt', 'incident-response': 'Investigate', 'root-cause-analysis': 'Root cause' }}
+          sla={null} closed={false} fold={null} latestFold={null}
+        />
+      </aside>,
+    )
+  const block = () => screen.getByRole('heading', { name: 'Cost' }).closest('section') as HTMLElement
+
+  it('totals every run and lists each, the primary run’s limit on its own line only', () => {
+    renderCost([hunt, inv])
+    expect(block()).toHaveTextContent('$0.30')
+    expect(block()).toHaveTextContent('across 2 runs')
+    const lines = within(block()).getAllByRole('listitem')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toHaveTextContent('Hunt · started 09:00$0.20 of $5.00')
+    expect(lines[1]).toHaveTextContent('Investigate · started 10:00$0.10')
+    expect(lines[1]).not.toHaveTextContent('of $5.00')
+    expect(screen.queryByRole('meter')).not.toBeInTheDocument()
+  })
+
+  it('says a dash for a run nothing priced, never $0', () => {
+    renderCost([hunt, unpriced])
+    expect(block()).toHaveTextContent('$0.20')
+    expect(within(block()).getAllByRole('listitem')[1]).toHaveTextContent('Root cause · started 11:00—')
+  })
+
+  it('keeps one run as it was: its cost against its limit, no per-run lines', () => {
+    renderCost([hunt])
+    expect(block()).toHaveTextContent('$0.20 of $5.00')
+    expect(within(block()).queryAllByRole('listitem')).toHaveLength(0)
   })
 })
 
