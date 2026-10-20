@@ -84,12 +84,17 @@ function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-// A call with no arguments counts as nothing: a forced emit that comes back as "{}"
-// at zero output tokens is the gateway closing the call, not the model answering.
+// A forced emit with no arguments counts as nothing: "{}" at zero output tokens is the
+// gateway closing the call, not the model answering. A call to any other tool is an
+// answer even when it takes no arguments and the gateway billed it at zero.
 function silent(response: OpenAI.Chat.ChatCompletion): boolean {
   const message = response.choices[0]?.message;
-  const args = (message?.tool_calls ?? []).map((call) => (call.type === "function" ? call.function.arguments.trim() : "x"));
-  const said = (message?.content ?? "").trim() !== "" || args.some((one) => one !== "" && one !== "{}");
+  const called = (message?.tool_calls ?? []).some((call) => {
+    if (call.type !== "function" || call.function.name !== EMIT_TOOL) return true;
+    const args = call.function.arguments.trim();
+    return args !== "" && args !== "{}";
+  });
+  const said = (message?.content ?? "").trim() !== "" || called;
   return !said && (response.usage?.completion_tokens ?? 0) === 0;
 }
 

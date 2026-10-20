@@ -624,6 +624,18 @@ describe("an empty reply", () => {
     expect(calls).toBe(3);
   });
 
+  it("does not suspect a call to another tool that takes no arguments", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      return completion({ role: "assistant", content: null, tool_calls: [{ id: "c1", function: { name: "list_cases", arguments: "{}" } }] }, EMPTY);
+    });
+
+    const called = await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    expect(called.tool_calls).toHaveLength(1);
+    expect(calls).toBe(1);
+  });
+
   it("is not suspected when the gateway sent no usage at all", async () => {
     let calls = 0;
     const surface = surfaceOf(async () => {
