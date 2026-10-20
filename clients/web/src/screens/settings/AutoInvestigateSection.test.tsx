@@ -128,7 +128,7 @@ describe('Limits and autonomy', () => {
     state.config = { ...DEFAULTS, max_concurrent_agents: 9 }
     render(<AutoInvestigateSection notify={notify} />)
 
-    expect(screen.queryByText(/Orchestrator is/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/active agent\(s\)/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Conservative/ })).toHaveTextContent('Least spend')
     expect(screen.getByRole('button', { name: /Broad/ })).toHaveTextContent('Widest coverage')
     expect(screen.getByRole('button', { name: /Balanced/ })).not.toHaveTextContent(/Least spend|Widest coverage|Most teams/)
