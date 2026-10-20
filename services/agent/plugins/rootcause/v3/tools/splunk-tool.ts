@@ -7,7 +7,6 @@
 //     refused with the top values of its fields, so the model aggregates or narrows.
 //  4. Output caps live in the backend (rows, chars, "showing N of M"); full output goes to the trace.
 //  5. A stated purpose with the expected result, so an empty result is usable as refuting evidence.
-import { z } from "zod4";
 import type { Domain } from "../types.js";
 import type { EvidenceTool, ToolContext } from "./registry.js";
 import { REPORTING, type SearchBackend } from "./search.js";
@@ -15,13 +14,20 @@ import { REPORTING, type SearchBackend } from "./search.js";
 export const PREFLIGHT_MAX = 500;
 const BEFORE_MS = 6 * 3600_000, AFTER_MS = 3600_000;
 
-const SplunkInput = z.object({
-  purpose: z.string().min(10).describe("what this search should show and the result you expect, e.g. 'confirm process X on host Y wrote the file; expect 1 event'. An empty or different result then counts against that expectation."),
-  spl: z.string().min(1).describe("SPL with index=, a sourcetype filter and field filters; aggregate with stats/tstats (count, values(), min/max(_time) by the identity or resource) before pulling raw events. No earliest=/latest= in the SPL."),
-  earliest: z.string().optional().describe("ISO 8601 window start. Default: 6 hours before the target's time (48 hours when looking for a cause; the whole data range when the target has no time)."),
-  latest: z.string().optional().describe("ISO 8601 window end. Default: 1 hour after the target's time (or the end of the data)."),
-});
-export type SplunkInputT = z.infer<typeof SplunkInput>;
+export interface SplunkInputT { purpose: string; spl: string; earliest?: string; latest?: string }
+
+// min 10 on purpose: a stated purpose with the result expected, not a word.
+const SplunkInput: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    purpose: { type: "string", minLength: 10, description: "what this search should show and the result you expect, e.g. 'confirm process X on host Y wrote the file; expect 1 event'. An empty or different result then counts against that expectation." },
+    spl: { type: "string", minLength: 1, description: "SPL with index=, a sourcetype filter and field filters; aggregate with stats/tstats (count, values(), min/max(_time) by the identity or resource) before pulling raw events. No earliest=/latest= in the SPL." },
+    earliest: { type: "string", description: "ISO 8601 window start. Default: 6 hours before the target's time (48 hours when looking for a cause; the whole data range when the target has no time)." },
+    latest: { type: "string", description: "ISO 8601 window end. Default: 1 hour after the target's time (or the end of the data)." },
+  },
+  required: ["purpose", "spl"],
+  additionalProperties: false,
+};
 
 const stMentions = (spl: string) => [
   ...[...spl.matchAll(/\bsourcetype\s*=\s*"?([^\s"|)]+)"?/gi)].map((m) => m[1]!),

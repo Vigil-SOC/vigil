@@ -2,7 +2,6 @@
 // (systems, identities, connections, network, normal activity, names) with aggregate searches. The map is
 // kept with the run and appended to the system prompt, so every later turn knows how the systems connect.
 // A hand-written environment map, when the run holds one, is used instead.
-import type { z } from "zod4";
 import { constraints, coverageLine, instructions } from "./model/prompts.js";
 import type { SubmitEnvironment } from "./model/schemas.js";
 import type { AgentConfig } from "./config.js";
@@ -11,7 +10,7 @@ import type { Deps } from "./types.js";
 export const SCOPE_SEARCHES = 14;
 export const SCOPE_MIN_COUNT = 10;
 
-export function renderEnvironment(e: z.infer<typeof SubmitEnvironment>): string {
+export function renderEnvironment(e: SubmitEnvironment): string {
   return [
     "## Your organisation's environment (mapped from the data before the investigation)",
     "How the systems connect and how often things happen (only activity seen at least 10 times). It says nothing about the incident; the logs decide what happened.",
@@ -25,7 +24,7 @@ export async function scope(deps: Deps, cfg: AgentConfig, range: [string, string
   if (!text) {
     const userContent = [instructions.scope(), constraints(cfg, range, deps.domains, deps.domains, coverageLine(deps.domains, {}, deps.sizes), SCOPE_SEARCHES)].join("\n\n");
     const r = await deps.model.runTurn({ move: "scope", correlationId: "environment", submitTool: "submit_environment", allowedDomains: deps.domains, maxSearches: SCOPE_SEARCHES, minCount: SCOPE_MIN_COUNT, trace: deps.trace.forTurn(0, undefined, "environment"), userContent });
-    const sub = r.submission as z.infer<typeof SubmitEnvironment> | null;
+    const sub = r.submission as SubmitEnvironment | null;
     if (!sub) return null;
     text = renderEnvironment(sub);
   }

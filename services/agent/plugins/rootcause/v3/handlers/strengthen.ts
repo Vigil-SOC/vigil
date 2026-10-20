@@ -1,6 +1,5 @@
 // strengthen: gather more evidence on one node or edge; its confidence moves up or down (spec §4).
 // On an attributed-to edge the identity signals settle who performed the action.
-import type { z } from "zod4";
 import { buildAttributionPatch } from "../attribution.js";
 import { instructions } from "../model/prompts.js";
 import type { SubmitAssessment } from "../model/schemas.js";
@@ -16,7 +15,7 @@ export const strengthen: Handler = async (d, g, ctx) => {
     userContent: userContent(g, id, instructions.strengthen(g, id), ctx, ctx.domains, "", ctx.cfg.strengthenSearches),
   });
   const bump = { incrementAttempts: [id] };
-  const sub = r.submission as z.infer<typeof SubmitAssessment> | null;
+  const sub = r.submission as SubmitAssessment | null;
   if (!sub) return merge(bump);
   noteSuspicious(sub, ctx);
   const v = new Vetter(ctx, r.toolCalls);

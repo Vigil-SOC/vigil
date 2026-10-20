@@ -1,7 +1,6 @@
 // branch: what else did a solid event produce? Effects become events with an explains edge event -> effect,
 // so the incident's other steps (credential theft, lateral movement, data theft) enter the graph even though
 // they are not causes of the alert.
-import type { z } from "zod4";
 import { instructions } from "../model/prompts.js";
 import type { SubmitEffects } from "../model/schemas.js";
 import { candidatePatch, merge, noteSuspicious, tempId, userContent, Vetter, withBaseline, type Handler } from "./common.js";
@@ -13,7 +12,7 @@ export const branch: Handler = async (d, g, ctx) => {
     userContent: userContent(g, id, instructions.branch(g, id), ctx, ctx.domains),
   });
   const bump = { incrementBranch: [id] };
-  const sub = r.submission as z.infer<typeof SubmitEffects> | null;
+  const sub = r.submission as SubmitEffects | null;
   if (!sub?.effects.length) return merge(bump);
   noteSuspicious(sub, ctx);
   const v = new Vetter(ctx, r.toolCalls);

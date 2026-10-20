@@ -1,7 +1,6 @@
 // test: run one prediction's search; the outcome scores the stories, the events it turns up enter the graph.
 // An event linked as a cause joins like an expand candidate; an effect or an unlinked event needs a baseline,
 // like a branch effect.
-import type { z } from "zod4";
 import { constraints, instructions } from "../model/prompts.js";
 import { snapshot } from "../model/snapshot.js";
 import type { SubmitTest } from "../model/schemas.js";
@@ -13,7 +12,7 @@ export const test: Handler = async (d, g, ctx) => {
   const id = d.targetId;
   const body = [snapshot(g), instructions.test(g, id), constraints(ctx.cfg, ctx.range, ctx.domains, ctx.domains, "", ctx.cfg.strengthenSearches, ctx.tools.coverage, ctx.sizes)].join("\n\n");
   const r = await ctx.model.runTurn({ move: "test", correlationId: id, submitTool: "submit_test", allowedDomains: ctx.domains, maxSearches: ctx.cfg.strengthenSearches, trace: ctx.trace, userContent: body });
-  const sub = r.submission as z.infer<typeof SubmitTest> | null;
+  const sub = r.submission as SubmitTest | null;
   if (!sub) return merge({ predictionResult: { id, status: "unclear", result: "no valid report", toolCallIds: [], supports: [], weakens: [] } });
   noteSuspicious(sub, ctx);
   const v = new Vetter(ctx, r.toolCalls);

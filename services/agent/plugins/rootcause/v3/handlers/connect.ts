@@ -2,7 +2,6 @@
 // shown). One move lists them with the chain top; the model searches for what passes from one to the next and
 // reports the steps in between and the links. A link into a node with an open boundary resolves that boundary:
 // its cause has been found.
-import type { z } from "zod4";
 import type { EdgeIn, GraphPatch } from "../graph.js";
 import { toConnect } from "../frontier.js";
 import { instructions } from "../model/prompts.js";
@@ -18,7 +17,7 @@ export const connect: Handler = async (d, g, ctx) => {
   if (!ids.length) return merge(done);
   const r = await ctx.model.runTurn({ move: "connect", correlationId: top, submitTool: "submit_links", allowedDomains: ctx.domains, trace: ctx.trace,
     userContent: userContent(g, top, instructions.connect(g, top, ids), ctx, ctx.domains) });
-  const sub = r.submission as z.infer<typeof SubmitLinks> | null;
+  const sub = r.submission as SubmitLinks | null;
   if (!sub) return merge(done);
   noteSuspicious(sub, ctx);
   const v = new Vetter(ctx, r.toolCalls);

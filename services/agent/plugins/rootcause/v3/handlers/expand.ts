@@ -4,7 +4,6 @@
 // become leads for the next attempt and a boundary into the source that matched most.
 import type { SubmitCauses } from "../model/schemas.js";
 import { instructions } from "../model/prompts.js";
-import type { z } from "zod4";
 import { sweep } from "../sweep.js";
 import { boundaryPatch, candidatePatch, merge, noteSuspicious, userContent, Vetter, type Handler } from "./common.js";
 
@@ -21,7 +20,7 @@ const causes = (fork: boolean): Handler => async (d, g, ctx) => {
     userContent: userContent(g, id, (fork ? instructions.fork(g, id) : instructions.expand(g, id)) + extra, ctx, ctx.domains),
   });
   const bump = fork ? { incrementForks: [id] } : { incrementExpand: [id] };
-  const sub = r.submission as z.infer<typeof SubmitCauses> | null;
+  const sub = r.submission as SubmitCauses | null;
   if (sub) noteSuspicious(sub, ctx);
   const v = new Vetter(ctx, r.toolCalls);
   const parts = (sub?.candidates ?? []).map((c) => candidatePatch(c, v, g, ctx, id).patch);

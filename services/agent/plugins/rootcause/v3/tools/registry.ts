@@ -1,8 +1,8 @@
 // Evidence tool registry (spec §12): the read-only guard, timeouts, and the refs a run cites its searches by.
 // A ref is the kernel's own (r1, r2, ... by position on the run's ledger): the kernel mints it for a search a
 // model makes, and this registry for one the code makes, and both are journaled as `call` events.
-import { z } from "zod4";
 import { CALL_REF } from "../../../../core/agent.js";
+import { schemaErrors } from "../../../../core/stream.js";
 import type { Domain } from "../types.js";
 
 export interface ToolContext {
@@ -19,7 +19,7 @@ export interface ToolResult { ok: boolean; data?: string; error?: string }
 export interface EvidenceTool<I = any> {
   name: string;
   description: string;
-  inputSchema: z.ZodType<I>;
+  inputSchema: Record<string, unknown>; // JSON Schema: the kernel offers it, `run` holds the input to it
   readOnly: true;
   run(input: I, ctx: ToolContext): Promise<ToolResult>;
 }
@@ -81,12 +81,12 @@ export class Registry implements ToolRegistry {
   async run(name: string, input: unknown, ctx: ToolContext): Promise<ToolResult> {
     const t = this.tools.get(name);
     if (!t) return { ok: false, error: `unknown tool ${name}` };
-    const parsed = t.inputSchema.safeParse(input);
-    if (!parsed.success) return { ok: false, error: `bad input: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}` };
+    const bad = schemaErrors(t.inputSchema, input);
+    if (bad) return { ok: false, error: `bad input: ${bad}` };
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        t.run(parsed.data, ctx),
+        t.run(input, ctx),
         new Promise<ToolResult>((r) => { timer = setTimeout(() => r({ ok: false, error: `timed out after ${ctx.timeoutMs / 1000}s` }), ctx.timeoutMs + 30_000); }),
       ]);
     } catch (e: any) {

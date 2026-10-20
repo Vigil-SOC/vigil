@@ -1,6 +1,5 @@
 // theorize: competing stories of the whole incident, each with predictions a search can check (no searches in
 // this move). Ids are prefixed with the round, so earlier rounds' tested predictions stay readable.
-import type { z } from "zod4";
 import type { Theory } from "../graph.js";
 import { constraints, instructions } from "../model/prompts.js";
 import type { SubmitTheories } from "../model/schemas.js";
@@ -19,7 +18,7 @@ export const theorize: Handler = async (d, g, ctx) => {
   const requireRare = rare.length && !tested.some((p) => mentionsRare(`${p.spl} ${p.expect}`, names));
   const userContent2 = requireRare ? userContent.replace("</move_instructions>", "At least one prediction must test a record from the rare-activity list in the system context, over the whole data range (earliest/latest = the data range), and be named in nextTests.\n</move_instructions>") : userContent;
   const r = await ctx.model.runTurn({ move: "theorize", correlationId: d.targetId, submitTool: "submit_theories", allowedDomains: ctx.domains, maxSearches: 0, trace: ctx.trace, userContent: userContent2 });
-  const sub = r.submission as z.infer<typeof SubmitTheories> | null;
+  const sub = r.submission as SubmitTheories | null;
   if (!sub) return { addNodes: [], addEdges: [], addEvidence: [], setTheories: [] };
   noteSuspicious(sub, ctx);
   const R = (id: string) => `R${round}.${id}`;

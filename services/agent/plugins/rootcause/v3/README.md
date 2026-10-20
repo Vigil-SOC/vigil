@@ -40,7 +40,8 @@ What the port changed:
 - Searches run through `tools/job.ts`'s `JobRunner`, fed by a `Source` (`tools/source.ts`)
   that turns the run's bound telemetry tool into the evidence tool and the survey. Splunk
   is the one backend so far (`tools/splunk-source.ts`), and the prompts' search rules are SPL.
-- Schemas are zod 4.6.5, imported as `zod4` (openai@4 pins zod 3 as a peer). Nothing
-  outside plugins/rootcause imports it.
+- Schemas are hand-written JSON Schema (`model/schemas.ts`, `tools/splunk-tool.ts`) with matching
+  interfaces. The agent's one ajv (`core/stream.ts`) holds an emission to them in the kernel, and
+  `schemaErrors` holds a search's input (`Registry.run`), a scripted submission and a salvage to them.
 - Type-checked by the package's tsconfig like the rest, `noUncheckedIndexedAccess`
   included, which the loop never compiled under.

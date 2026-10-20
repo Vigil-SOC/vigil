@@ -11,7 +11,6 @@ import { Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { harnessOf, modelOf, specOf, splunk } from "../../support/v3-run.js";
-import { z } from "zod4";
 
 const cfg = { ...defaultConfig };
 const range: [string, string] = ["2026-01-05T00:00:00Z", "2026-01-06T00:00:00Z"];
@@ -20,7 +19,7 @@ const range: [string, string] = ["2026-01-05T00:00:00Z", "2026-01-06T00:00:00Z"]
 const evidence = (answers: Record<string, string>): EvidenceTool => ({
   name: "splunk_query",
   description: "Search.",
-  inputSchema: z.object({ purpose: z.string(), spl: z.string() }),
+  inputSchema: { type: "object", properties: { purpose: { type: "string" }, spl: { type: "string" } }, required: ["purpose", "spl"] },
   readOnly: true,
   run: async (input) => (input.spl in answers ? { ok: true, data: answers[input.spl]! } : { ok: false, error: `refused: no such search ${input.spl}` }),
 });
@@ -94,6 +93,25 @@ describe("a move as a kernel turn", () => {
     const none = await t.client.runTurn(t.request({ move: "conclude", submitTool: "submit_conclusion", maxSearches: 0 }));
     expect(t.provider.requests.at(-1)!.tools).toEqual([]);
     expect(none.toolCalls).toEqual([]);
+  });
+
+  it("holds a search to the tool's schema: one without a purpose comes back as invalid_args and never reaches the backend", async () => {
+    const t = setup(
+      (request) => (request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : request.messages.some((m) => m.role === "tool") ? { content: "done" } : { calls: [{ tool: "splunk_query", args: { spl: SEARCH.spl } }] }),
+      { [SEARCH.spl]: "3 events matched" },
+    );
+    const out = await t.client.runTurn(t.request());
+    expect(out.toolCalls).toMatchObject([{ id: "r1", ok: false }]);
+    expect((await t.calls())[0]).toMatchObject({ ok: false, failure: "invalid_args" });
+    expect(out.toolCalls[0]!.text).toMatch(/^bad input: \/ must have required property 'purpose'/);
+  });
+
+  it("trims an over-long next.why instead of rejecting the submission", async () => {
+    const t = setup((request) => (request.emit !== undefined ? { emit: { candidates: [], reasoning: "r", next: { move: "expand", why: "x".repeat(400) } } } : { content: "done" }));
+    const out = await t.client.runTurn(t.request());
+    const why = (out.submission as { next: { why: string } }).next.why;
+    expect(why).toHaveLength(300);
+    expect(why.endsWith("…")).toBe(true);
   });
 
   it("cites only refs as the ledger spells them", async () => {

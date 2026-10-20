@@ -2,6 +2,7 @@
 // tool, then emits the move's submission against its schema. The kernel journals every search as a `call` event
 // with a ref, bills the model, delimits the results and resumes; what is left here is the move's own check, once.
 import { runSubturn, type PluginContext, type PluginHooks, type Subturn, type AgentKinds, type AgentOptions } from "../../../../core/agent.js";
+import { schemaErrors } from "../../../../core/stream.js";
 import type { CallPayload, RunKind } from "../../../../contracts/events.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../../../contracts/tool.js";
 import type { Harness, Outcome } from "../../../../core/loop.js";
@@ -12,7 +13,7 @@ import type { Move } from "../frontier.js";
 import { issued, type EvidenceTool, type Registry, type ToolRegistry } from "../tools/registry.js";
 import type { TurnTrace } from "../trace.js";
 import type { Domain } from "../types.js";
-import { SUBMIT, SUBMIT_DESCRIPTIONS, jsonSchema, type SubmitName } from "./schemas.js";
+import { SUBMIT, SUBMIT_DESCRIPTIONS, type SubmitName } from "./schemas.js";
 import { SYSTEM_PROMPT } from "./prompts.js";
 import { baselineProblem, type InputOf } from "../baseline.js";
 
@@ -58,20 +59,29 @@ export async function runTool(d: ClientDeps, req: TurnRequest, tool: string, inp
 }
 
 // Over-long text is trimmed, not refused: a long note must not throw away a correct finding.
-const LIMITS: Record<string, number> = { conclusion: 2500, map: 12000, summary: 300, label: 160, reason: 300, reasoning: 800, rootJustification: 400, story: 700, expect: 300, gaps: 300 };
+const LIMITS: Record<string, number> = { conclusion: 2500, map: 12000, summary: 300, label: 160, reason: 300, reasoning: 800, rootJustification: 400, story: 700, expect: 300, gaps: 300, why: 300 };
 // A list or object sent as a JSON string (models do send events that way) is parsed, not refused.
 const STRUCT = new Set(["takeover", "candidates", "effects", "causes", "events", "evidence", "nodeEvidence", "edgeEvidence", "artifacts", "identitySignals", "baseline", "boundary", "theories", "predictions", "nextTests", "toolCallIds", "supports", "weakens", "links", "unrelated", "contradicts"]);
 const unstring = (v: string): unknown => { try { const x = JSON.parse(v); return x && typeof x === "object" ? x : v; } catch { return v; } };
 const clip = (v: unknown, key = ""): unknown =>
   typeof v === "string" && STRUCT.has(key) && /^\s*[[{]/.test(v) && unstring(v) !== v ? clip(unstring(v), key)
   : typeof v === "string" ? (LIMITS[key] && v.length > LIMITS[key] ? v.slice(0, LIMITS[key] - 1) + "…" : v)
-  : Array.isArray(v) ? v.map((x) => (typeof x === "string" && key === "suspiciousContent" ? x.slice(0, 300) : clip(x)))
+  : Array.isArray(v) ? v.map((x) => (typeof x === "string" && (key === "suspiciousContent" || key === "openQuestions") ? x.slice(0, 300) : clip(x)))
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clip(x, k)])) : v;
 
-export const validate = (name: SubmitName, input: unknown) => SUBMIT[name].safeParse(clip(input));
+// Why a clipped value does not meet the move's schema (what the kernel's ajv holds an emission to, plus the length
+// caps), with the list items (key, index) the failure rests on, from the paths ajv reports; null when it does.
+function schemaProblem(name: SubmitName, value: unknown): { msg: string; drop: [string, number][] } | null {
+  const msg = schemaErrors(SUBMIT[name], value);
+  if (msg === null) return null;
+  const paths = msg.split("; ").map((e) => e.split(" ")[0]!.split("/").slice(1));
+  const drop = paths.filter((p) => p.length >= 2 && /^\d+$/.test(p[1]!)).map((p) => [p[0]!, Number(p[1])] as [string, number]);
+  return { msg, drop: drop.length === paths.length ? drop : [] };
+}
 
-// Schema, then citations: every toolCallId must be a search the run journaled. A failure is not sent back to the
-// model: salvage keeps what is sound and the move's attempt is spent.
+// The kernel's ajv has held the emission to the schema already; this clips it, then checks citations and the rest.
+// Every toolCallId must be a search the run journaled. A failure is not sent back to the model: salvage keeps what
+// is sound and the move's attempt is spent.
 type Cand = { label: string; baseline?: { unusual: boolean; toolCallIds: string[] } };
 // No "recon": it names resources too ("recon job"), and refusing on it lost a correct finding.
 export const ACCUSE = /\b(attacker|attacker's|malicious|adversary|threat actor|stolen|compromised|hijacked|backdoor|exfiltrat\w*|intruder|rogue|abus\w*|tamper\w*)\b/i;
@@ -95,11 +105,7 @@ export interface CheckCtx { inputOf?: InputOf; range?: [string, string] }
 export type CheckResult = { success: true; data: unknown } | { success: false; msg: string; drop: [string, number][] };
 
 export function check(name: SubmitName, input: unknown, callCount: number, cx: CheckCtx = {}): CheckResult {
-  const v = validate(name, input);
-  if (!v.success) {
-    const drop = v.error.issues.map((i) => i.path).filter((p) => typeof p[0] === "string" && typeof p[1] === "number" && p.length >= 2).map((p) => [p[0], p[1]] as [string, number]);
-    return { success: false, msg: v.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "), drop: drop.length === v.error.issues.length ? drop : [] };
-  }
+  const v = { data: clip(input) };
   // A list item citing a ref the run never issued fails the check and salvage drops it, the rest kept; a bad
   // citation outside any list fails the submission whole.
   const unissued = (x: unknown): string[] => Array.isArray(x) ? x.flatMap(unissued) : x && typeof x === "object" ? Object.entries(x).flatMap(([k, y]) => (k === "toolCallIds" && Array.isArray(y) ? y.map(String).filter((id) => !issued({ callCount }, id)) : unissued(y))) : [];
@@ -150,7 +156,8 @@ export function salvage(name: SubmitName, input: unknown, callCount: number, cx:
     const gone = new Set(r.drop.map(([k, j]) => `${k}.${j}`));
     cur = Object.fromEntries(Object.entries(cur).map(([k, x]) => [k, Array.isArray(x) ? x.filter((_, j) => !gone.has(`${k}.${j}`)) : x]));
     dropped += gone.size;
-    r = check(name, cur, callCount, cx);
+    const bad = schemaProblem(name, cur); // dropping can leave a list under its minimum
+    r = bad ? { success: false, ...bad } : check(name, cur, callCount, cx);
   }
   return r.success ? { data: r.data, dropped } : null;
 }
@@ -184,7 +191,7 @@ export class KernelTurns {
 // check, and must not cost the whole submission.
 const wire = (name: SubmitName): Record<string, unknown> => {
   const strip = (x: unknown): unknown => Array.isArray(x) ? x.map(strip) : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).filter(([k]) => k !== "maxLength").map(([k, y]) => [k, strip(y)])) : x;
-  return { description: SUBMIT_DESCRIPTIONS[name], ...(strip(jsonSchema(SUBMIT[name])) as Record<string, unknown>) };
+  return { description: SUBMIT_DESCRIPTIONS[name], ...(strip(SUBMIT[name]) as Record<string, unknown>) };
 };
 
 const argsOf = (raw: string): unknown => { try { return JSON.parse(raw); } catch { return {}; } };
@@ -211,7 +218,7 @@ export class KernelModelClient implements ModelClient {
       {
         id: t.name,
         description: t.description,
-        parameters: jsonSchema(t.inputSchema),
+        parameters: t.inputSchema,
         execute: async (args): Promise<ToolResult> => {
           const req = this.cur;
           if (req === undefined) return { ok: false, failure: { kind: "refused", detail: "no move is running" } };
@@ -316,9 +323,10 @@ export class ScriptedModelClient implements ModelClient {
     for (const c of s.toolCalls) toolCalls.push(await runTool(this.d, req, c.tool, c.input));
     const raw = mapIds(s.submission, (x) => (/^\$\d+$/.test(x) ? toolCalls[Number(x.slice(1))]?.id ?? x : x));
     if (raw === null) return { submission: null, toolCalls };
-    const v = validate(req.submitTool, raw);
-    if (!v.success) { req.trace.write("rejected-submission", { input: raw, error: v.error.message }); return { submission: null, toolCalls }; }
-    req.trace.write("submission", { tool: req.submitTool, submission: v.data });
-    return { submission: v.data, toolCalls };
+    const submission = clip(raw);
+    const bad = schemaErrors(SUBMIT[req.submitTool], submission);
+    if (bad) { req.trace.write("rejected-submission", { input: raw, error: bad }); return { submission: null, toolCalls }; }
+    req.trace.write("submission", { tool: req.submitTool, submission });
+    return { submission, toolCalls };
   }
 }

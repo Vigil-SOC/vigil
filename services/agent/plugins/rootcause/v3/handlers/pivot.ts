@@ -1,7 +1,6 @@
 // pivot (spec §7.1): forward investigation in the boundary's domain, one step per turn. Step 0 finds
 // entry events; each later step asks what the best lead produced. Every new node is run through the
 // stitch matcher against the marker's origin.
-import type { z } from "zod4";
 import type { GraphNode, GraphPatch, NodeIn } from "../graph.js";
 import { instructions } from "../model/prompts.js";
 import type { SubmitEffects, SubmitEntryPoints } from "../model/schemas.js";
@@ -37,7 +36,7 @@ export const pivot: Handler = async (d, g, ctx) => {
       move: "pivot-entry", correlationId: m.id, submitTool: "submit_entry_points", allowedDomains: allowed, trace: ctx.trace,
       userContent: userContent(g, m.id, instructions.pivotEntry(g, m.id, [start, end], into), ctx, allowed),
     });
-    const sub = r.submission as z.infer<typeof SubmitEntryPoints> | null;
+    const sub = r.submission as SubmitEntryPoints | null;
     if (!sub?.candidates.length) return exhausted();
     noteSuspicious(sub, ctx);
     const v = new Vetter(ctx, r.toolCalls);
@@ -66,7 +65,7 @@ export const pivot: Handler = async (d, g, ctx) => {
     move: "pivot-forward", correlationId: m.id, submitTool: "submit_effects", allowedDomains: allowed, focusTime: leaf.observedAt, trace: ctx.trace,
     userContent: userContent(g, leaf.id, instructions.pivotForward(g, m.id, leaf.id), ctx, allowed),
   });
-  const sub = r.submission as z.infer<typeof SubmitEffects> | null;
+  const sub = r.submission as SubmitEffects | null;
   const rest = m.forwardLeaves.filter((id) => id !== leaf.id);
   if (!sub?.effects.length) return merge({ updateMarkers: [{ markerId: m.id, pivotSteps: steps + 1, forwardLeaves: rest }] });
   noteSuspicious(sub, ctx);
