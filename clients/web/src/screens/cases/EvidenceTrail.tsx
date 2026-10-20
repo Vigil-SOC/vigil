@@ -187,8 +187,8 @@ function TrailCard({ title, note, rows, focusKey, focusRef, footer }: {
   )
 }
 
-export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => void }) {
-  // The row count asked for, until a read answers it.
+export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => Promise<void> }) {
+  // The row count asked for, until a read answers it, with rows or without.
   const [asked, setAsked] = useState<number | null>(null)
   useEffect(() => setAsked(null), [fold])
   const focusRef = useRef<HTMLDivElement>(null)
@@ -216,8 +216,9 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
             className="btn neutral"
             disabled={asked === fold.evidence.length}
             onClick={() => {
-              setAsked(fold.evidence.length)
-              onShowOlder(fold.evidence.length)
+              const shown = fold.evidence.length
+              setAsked(shown)
+              void onShowOlder(shown).finally(() => setAsked((held) => (held === shown ? null : held)))
             }}
           >
             {asked === fold.evidence.length ? 'Loading older rows…' : 'Show older'}
@@ -248,10 +249,11 @@ export function MergedEvidenceTrail({ runs, primaryId, focusId, onShowOlder }: {
   runs: TrailRun[]
   primaryId: string | null
   focusId: string | null
-  onShowOlder: (runId: string, shown: number) => void
+  /** Settles when the read it asked for answers, with rows or without. */
+  onShowOlder: (runId: string, shown: number) => Promise<void>
 }) {
   const [visible, setVisible] = useState(EVIDENCE_PAGE)
-  // The folds on screen when older rows were asked for; the ask stands until a read replaces one of them.
+  // The folds on screen when older rows were asked for; the ask stands until a read replaces one of them, or every read asked for answers.
   const [asked, setAsked] = useState<(RunFold | null)[] | null>(null)
   const focusRef = useRef<HTMLDivElement>(null)
   const folds = runs.map((run) => run.fold)
@@ -295,7 +297,7 @@ export function MergedEvidenceTrail({ runs, primaryId, focusId, onShowOlder }: {
                   setVisible(shownCount + EVIDENCE_PAGE)
                   if (shownCount + EVIDENCE_PAGE <= all.length) return
                   setAsked(folds)
-                  unread.forEach((run) => onShowOlder(run.id, run.listed))
+                  void Promise.allSettled(unread.map((run) => onShowOlder(run.id, run.listed))).then(() => setAsked((held) => (held === folds ? null : held)))
                 }}
               >
                 {waiting ? 'Loading older rows…' : 'Show older'}

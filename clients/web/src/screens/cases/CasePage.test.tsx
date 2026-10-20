@@ -549,6 +549,35 @@ describe('case page', () => {
     expect(await screen.findByRole('heading', { name: 'Evidence trail · 157 rows · showing 100 of 157 · 95 support · 3 go against · 59 neither' })).toBeInTheDocument()
   })
 
+  it('offers Show older again when the larger read fails, and reads again on the next press', async () => {
+    testState.cases = [{ ...openCase('case-older-fail'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-one')] }]
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      evidence_id: `n${i}`, iteration: 9, source_system: 'elastic', summary: `row ${i}`, is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [],
+    }))
+    testState.runs['run-one'] = { hunt: { ...HUNT, evidence_count: 80, evidence: rows } }
+    renderCase('case-older-fail')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    await screen.findByText('row 0')
+    const ok = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string, limit?: number) => (limit === 100 ? Promise.reject(new Error('down')) : ok(runId)))
+    try {
+      vi.mocked(workflowApi.getRun).mockClear()
+      fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+      await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-one', 100))
+      // the read failed and the run keeps what it showed, so the button comes back rather than spinning
+      const button = await screen.findByRole('button', { name: 'Show older' })
+      expect(button).toBeEnabled()
+      expect(screen.getByText('row 49')).toBeInTheDocument()
+      // the same ask again reads again, though its limit is already set
+      vi.mocked(workflowApi.getRun).mockClear()
+      fireEvent.click(button)
+      await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-one', 100))
+      expect(await screen.findByRole('button', { name: 'Show older' })).toBeEnabled()
+    } finally {
+      vi.mocked(workflowApi.getRun).mockImplementation(ok)
+    }
+  })
+
   it('shows loading, then a read error, instead of an empty evidence trail', async () => {
     testState.cases = [{
       case_id: 'case-err',
@@ -2515,6 +2544,32 @@ describe('a case with several runs', () => {
     expect(document.querySelectorAll('.ev-row').length).toBeGreaterThan(50)
     release()
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
+  it('offers "Show older" again across runs when the hunt\'s larger read fails, and reads again on the next press', async () => {
+    twoRuns('case-older-fail-many')
+    const many = Array.from({ length: 50 }, (_, i) => evidence(`n${i}`, `row ${i}`, new Date(Date.UTC(2026, 5, 15, 9, 0, 0) - i * 1000).toISOString()))
+    testState.runs['run-hunt'] = { status: 'completed', hunt: { ...(testState.runs['run-hunt'] as { hunt: object }).hunt, evidence: many, evidence_count: 60 } }
+    renderCase('case-older-fail-many')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('row 48')).toBeInTheDocument()
+    const ok = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string, limit?: number) => (limit === 100 ? Promise.reject(new Error('down')) : ok(runId)))
+    try {
+      vi.mocked(workflowApi.getRun).mockClear()
+      fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+      await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-hunt', 100))
+      // the read failed and the hunt keeps what it showed, so the button comes back rather than spinning
+      const button = await screen.findByRole('button', { name: 'Show older' })
+      expect(button).toBeEnabled()
+      expect(screen.getByText('row 49')).toBeInTheDocument()
+      vi.mocked(workflowApi.getRun).mockClear()
+      fireEvent.click(button)
+      await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-hunt', 100))
+      expect(await screen.findByRole('button', { name: 'Show older' })).toBeEnabled()
+    } finally {
+      vi.mocked(workflowApi.getRun).mockImplementation(ok)
+    }
   })
 
   it('tags Checked and Memory rows with their run, and opens a call in its own run', async () => {

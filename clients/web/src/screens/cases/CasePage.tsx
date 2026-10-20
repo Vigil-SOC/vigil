@@ -589,11 +589,13 @@ interface CaseRun {
 }
 
 /** Reads one run on the case on Watch a run's interval while it is in flight, and reports each read up. Renders nothing. */
-function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
+function RunReader({ runId, evidenceLimit, onRead, onLoader, onSettled, onReread }: {
   runId: string
   evidenceLimit?: number
   onRead: (runId: string, read: { fold: RunFold | null; phase: Phase } | null) => void
-  onLoader: (runId: string, load: (() => void) | null) => void
+  onLoader: (runId: string, load: (() => Promise<void>) | null) => void
+  /** A read at this evidence limit has answered, with rows or without. */
+  onSettled: (runId: string, evidenceLimit: number) => void
   /** A re-read of a run that was in flight: the case and record follow it. */
   onReread: () => void
 }) {
@@ -601,10 +603,10 @@ function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
   const { load, setDphase } = run
   useEffect(() => {
     setDphase('loading')
-    void load()
-  }, [load, setDphase])
+    void load().finally(() => onSettled(runId, evidenceLimit ?? 0))
+  }, [load, setDphase, onSettled, runId, evidenceLimit])
   useEffect(() => {
-    onLoader(runId, () => void load()) // a failed read keeps what is shown
+    onLoader(runId, load) // a failed read keeps what is shown
     return () => onLoader(runId, null)
   }, [runId, load, onLoader])
   const detail = run.detail?.run_id === runId ? run.detail : null
@@ -1051,10 +1053,37 @@ export function CasePage({
       return held[key]?.fold === read.fold && held[key]?.phase === read.phase ? held : { ...held, [key]: read }
     })
   }, [])
-  const loaders = useRef(new Map<string, () => void>())
-  const onLoader = useCallback((key: string, load: (() => void) | null) => {
+  const loaders = useRef(new Map<string, () => Promise<void>>())
+  const onLoader = useCallback((key: string, load: (() => Promise<void>) | null) => {
     if (load) loaders.current.set(key, load)
     else loaders.current.delete(key)
+  }, [])
+  // "Show older" asks a run for a larger page; the ask settles once a read at that size answers, with rows or without.
+  const heldLimits = useRef(evidenceLimits)
+  heldLimits.current = evidenceLimits
+  const olderAsks = useRef(new Map<string, { limit: number; settle: () => void }[]>())
+  const showOlder = useCallback(
+    (key: string, shown: number) =>
+      new Promise<void>((settle) => {
+        const limit = shown + EVIDENCE_PAGE
+        if ((heldLimits.current[key] ?? 0) >= limit) {
+          // already asked for, and that read failed: read again at the same size
+          const load = loaders.current.get(key)
+          if (load) void load().finally(settle)
+          else settle()
+          return
+        }
+        olderAsks.current.set(key, [...(olderAsks.current.get(key) ?? []), { limit, settle }])
+        setEvidenceLimits((held) => ({ ...held, [key]: limit }))
+      }),
+    [],
+  )
+  const onSettled = useCallback((key: string, limit: number) => {
+    const asks = olderAsks.current.get(key) ?? []
+    asks.filter((ask) => ask.limit <= limit).forEach((ask) => ask.settle())
+    const left = asks.filter((ask) => ask.limit > limit)
+    if (left.length) olderAsks.current.set(key, left)
+    else olderAsks.current.delete(key)
   }, [])
   // Each re-read of any run that was in flight re-reads the case and the record too, the last one when it ends.
   const onRefreshRef = useRef(onRefresh)
@@ -1092,7 +1121,7 @@ export function CasePage({
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
-    if (runId) loaders.current.get(runId)?.()
+    if (runId) void loaders.current.get(runId)?.()
   }, [runId])
 
   useEffect(() => {
@@ -1402,7 +1431,7 @@ export function CasePage({
   return (
     <div className="detail-pane case-page">
       {caseRuns.map((ref) => (
-        <RunReader key={ref.run_id} runId={ref.run_id} evidenceLimit={evidenceLimits[ref.run_id]} onRead={onRead} onLoader={onLoader} onReread={onReread} />
+        <RunReader key={ref.run_id} runId={ref.run_id} evidenceLimit={evidenceLimits[ref.run_id]} onRead={onRead} onLoader={onLoader} onSettled={onSettled} onReread={onReread} />
       ))}
       <div className="detail-head">
         <div className="dh-crumb">
@@ -1532,14 +1561,14 @@ export function CasePage({
                 runs={shownRuns.map((one) => ({ id: one.ref.run_id, label: runLabels[one.ref.run_id], fold: one.fold, phase: one.phase }))}
                 primaryId={runId}
                 focusId={focusEvidence}
-                onShowOlder={(key, shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE }))}
+                onShowOlder={showOlder}
               />
             ) : (
               <EvidenceTrail
                 fold={fold}
                 phase={foldPhase}
                 focusId={focusEvidence}
-                onShowOlder={runId ? (shown) => setEvidenceLimits((held) => ({ ...held, [runId]: shown + EVIDENCE_PAGE })) : undefined}
+                onShowOlder={runId ? (shown) => showOlder(runId, shown) : undefined}
               />
             )
           )}
