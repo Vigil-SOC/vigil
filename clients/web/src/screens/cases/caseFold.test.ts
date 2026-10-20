@@ -66,6 +66,11 @@ describe('recordChip', () => {
     expect(recordChip('recall', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'run')).toBe('memory')
   })
+
+  it('types a checkpoint answered by policy as the system\'s, and one answered by a person as theirs', () => {
+    expect(recordChip('policy')).toBe('system')
+    expect(recordChip('resolution')).toBe('human')
+  })
 })
 
 describe('an investigation\'s record', () => {

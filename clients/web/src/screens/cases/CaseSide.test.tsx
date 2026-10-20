@@ -39,19 +39,24 @@ const fold = {
   maxCostUsd: null,
 } as unknown as RunFold
 
-function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'] }: { keys?: string[]; entities?: string[] } = {}) {
+function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'], latest = null, recall = true }: {
+  keys?: string[]
+  entities?: string[]
+  latest?: CaseInvestigationRef | null
+  recall?: boolean
+} = {}) {
   return render(
     <aside className="case-side">
       <CaseSide
         caseId="case-1"
         linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
         owner="—"
-        latest={null}
+        latest={latest}
         runs={[]}
         workflowNames={{}}
         sla={null}
         closed={false}
-        fold={{ ...fold, recall: { ...(fold as unknown as { recall: object }).recall, keys } } as unknown as RunFold}
+        fold={{ ...fold, recall: recall ? { ...(fold as unknown as { recall: object }).recall, keys } : null } as unknown as RunFold}
         latestFold={null}
       />
     </aside>,
@@ -98,6 +103,21 @@ describe('case side panel Entities show values that fit whole (#2459)', () => {
   it('lists a value once when a recall key and an alert both name it', () => {
     renderSide({ keys: ['host:FIN-WS-114'], entities: ['FIN-WS-114'] })
     expect(Array.from(document.querySelectorAll('.side-ent')).map((el) => el.textContent)).toEqual(['FIN-WS-114'])
+  })
+})
+
+describe('case side panel Known (#2508)', () => {
+  const known = () => (screen.getByRole('heading', { name: 'Known about these entities' }).closest('section') as HTMLElement).textContent ?? ''
+  const run = { investigation_id: null, status: 'completed', workflow_id: 'threat-hunt', run_id: 'run-a', live: false, cost_usd: 0, max_cost_usd: 2, budget_health: 'healthy', iteration_count: 1 }
+
+  it('names no run on a case that has none', () => {
+    renderSide({ recall: false })
+    expect(known()).not.toMatch(/\brun\b/i)
+  })
+
+  it('says the run journaled no recall when a run exists without one', () => {
+    renderSide({ recall: false, latest: run })
+    expect(known()).toContain('The run did not journal a recall.')
   })
 })
 

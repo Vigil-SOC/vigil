@@ -384,6 +384,7 @@ export function recordChip(kind: string, source = 'run'): RecordChip {
     case 'directive':
     case 'case_audit_logs':
       return 'human'
+    case 'policy':
     case 'run':
     case 'spend':
     case 'resumed':

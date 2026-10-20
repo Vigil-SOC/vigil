@@ -461,3 +461,15 @@ def test_an_unread_run_is_one_unchained_row_in_time_order():
         "text": "Could not read the record of run gone — the agent layer answered 500",
         "run_id": "gone",
     }
+
+
+def test_a_checkpoint_answered_by_policy_is_a_policy_row_not_a_resolution():
+    def resolution(seq: int, actor: str) -> dict:
+        payload = {"checkpoint_id": "cp-1", "answer": "approve", "actor": actor}
+        return {"seq": seq, "ts": "", "kind": "resolution", "payload": payload}
+
+    rows = merge_record([("r1", [resolution(1, "policy:auto"), resolution(2, "ada")])], [])
+    by_seq = {row["id"]: row for row in rows}
+    assert by_seq["run:r1:1"]["kind"] == "policy"
+    assert by_seq["run:r1:2"]["kind"] == "resolution"
+    assert "actor" not in by_seq["run:r1:1"]
