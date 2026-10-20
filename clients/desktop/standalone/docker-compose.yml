@@ -83,7 +83,8 @@ services:
         condition: service_healthy
     healthcheck:
       # wget --spider does HEAD and Bifrost /health only answers GET (405 on HEAD).
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health | grep -q '\"status\":\"ok\"'"]
+      # Proxy vars cleared: busybox wget ignores no_proxy, so a gateway proxy would catch this loopback probe.
+      test: ["CMD-SHELL", "env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY wget -qO- http://localhost:8080/health | grep -q '\"status\":\"ok\"'"]
       interval: 15s
       timeout: 5s
       retries: 5
