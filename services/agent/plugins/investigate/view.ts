@@ -1,6 +1,5 @@
-import { agentProjection, agentReplay, modelMs, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
+import { agentProjection, agentReplay, dispositionOf, heldOf, modelMs, type AgentProjection, type AgentReplay, type Held } from "../../core/agent-view.js";
 import type { CallPayload } from "../../contracts/events.js";
-import { heldBecause } from "../../core/agent.js";
 import { classOf, recordOf, recordRows, type RecordQuestion, type RecordStanding } from "../../core/record.js";
 import { callViews } from "../../core/call-view.js";
 import type { EvidenceView } from "../hunt/projection.js";
@@ -19,14 +18,6 @@ interface Envelope {
 
 // The record in the hunt projection's row shapes, so the console reads both with one reader.
 type RecordEvidence = Pick<EvidenceView, "evidence_id" | "iteration" | "source_system" | "summary" | "is_gap" | "gap_detail" | "captured_at" | "bears_on">;
-
-// What the reviewer guard changed: the answer asked for, the one the run ends on, and why.
-export interface Held {
-  field: string;
-  asked: string;
-  final: string;
-  reason: string;
-}
 
 export interface InvestigateRecord {
   hypotheses: RecordStanding[];
@@ -56,6 +47,7 @@ export function investigateView(runId: string, events: readonly Envelope[]): Lea
     run_id: runId,
     run_kind: "investigate",
     max_cost_usd: kernel.budgets?.max_cost_usd ?? null,
+    disposition: dispositionOf(kernel),
     budgets: kernel.budgets,
     status: kernel.status,
     outcome: kernel.outcome,
@@ -92,12 +84,6 @@ export function investigateView(runId: string, events: readonly Envelope[]): Lea
     engine: "plugin",
     kernel,
   };
-}
-
-function heldOf(kernel: AgentProjection): Held | null {
-  const guarded = kernel.review?.guarded;
-  const reason = kernel.review === null ? null : heldBecause(kernel.review);
-  return guarded === undefined || reason === null ? null : { ...guarded, reason };
 }
 
 // Evidence is every call some link names, newest first as a hunt's is; neither counts

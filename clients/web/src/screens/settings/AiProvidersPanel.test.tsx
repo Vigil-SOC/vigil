@@ -3,7 +3,7 @@
    is only the fence. So a picker that trusted it alone could narrow a fence and
    never widen one, and would silently drop models it was not shown. */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import AiProvidersPanel from './AiProvidersPanel'
 
 const listProviders = vi.fn()
@@ -15,6 +15,7 @@ const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'succe
 const routability = vi.fn()
 const createProvider = vi.fn(() => Promise.resolve({ data: { name: 'openai' } }))
 const setProviderBaseUrl = vi.fn(() => Promise.resolve({ data: {} }))
+const removeProvider = vi.fn(() => Promise.resolve({ data: {} }))
 
 // This mock replaces the module wholesale, so anything the panel reaches for and
 // does not find here is `undefined` at the call site rather than a missing-export
@@ -32,7 +33,7 @@ vi.mock('../../services/bifrostApi', () => ({
     routability: () => routability(),
     createProvider: (...a: unknown[]) => createProvider(...(a as [])),
     setProviderBaseUrl: (...a: unknown[]) => setProviderBaseUrl(...(a as [])),
-    removeProvider: vi.fn(),
+    removeProvider: (...a: unknown[]) => removeProvider(...(a as [])),
     removeKey: vi.fn(),
   },
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
@@ -45,6 +46,7 @@ vi.mock('../../services/bifrostApi', () => ({
       : '',
   COMMON_PROVIDERS: ['anthropic', 'openai', 'ollama', 'vertex'],
   BASE_URL_PROVIDERS: ['openai', 'anthropic'],
+  CUSTOM_PROVIDER_NAME: /^[a-z0-9][a-z0-9-]{0,39}$/,
 }))
 
 // Fenced to two of the four the provider actually has.
@@ -296,5 +298,96 @@ describe('a provider’s base URL', () => {
     fireEvent.change(field, { target: { value: 'http://10.0.0.6:9000' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.6:9000'))
+  })
+})
+
+describe('a custom OpenAI-compatible provider', () => {
+  const custom = (name: string, url: string, keyLess = false) => ({
+    name,
+    network_config: { base_url: url },
+    custom_provider_config: { base_provider_type: 'openai', is_key_less: keyLess },
+  })
+
+  it('is created with its own name, host and key-less flag in one write', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={() => {}} addProviderRequested onAddProviderOpened={() => {}} />)
+    await screen.findByRole('dialog', { name: 'Add provider' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Custom (OpenAI-compatible)' }))
+    const add = screen.getByRole('button', { name: 'Add' })
+    expect(add).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText('lan-vllm'), { target: { value: 'lan-vllm' } })
+    expect(add).toBeDisabled() // a custom provider has no host to fall back to
+    fireEvent.change(screen.getByPlaceholderText(/llm\.internal\.example/), {
+      target: { value: ' http://10.0.0.5:8000/v1 ' },
+    })
+    fireEvent.click(screen.getByRole('switch', { name: 'No API key' }))
+    fireEvent.click(add)
+
+    await waitFor(() =>
+      expect(createProvider).toHaveBeenCalledWith('lan-vllm', {
+        network_config: { base_url: 'http://10.0.0.5:8000/v1' },
+        custom_provider_config: { base_provider_type: 'openai', is_key_less: true },
+      }),
+    )
+    // the host rides on the create, not on a second write
+    expect(setProviderBaseUrl).not.toHaveBeenCalledWith('lan-vllm', expect.anything())
+  })
+
+  it('refuses a name that is not lowercase letters, digits and dashes', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={() => {}} addProviderRequested onAddProviderOpened={() => {}} />)
+    await screen.findByRole('dialog', { name: 'Add provider' })
+    fireEvent.click(screen.getByRole('button', { name: 'Custom (OpenAI-compatible)' }))
+    fireEvent.change(screen.getByPlaceholderText('lan-vllm'), { target: { value: 'My Server' } })
+    fireEvent.change(screen.getByPlaceholderText(/llm\.internal\.example/), { target: { value: 'http://10.0.0.5:8000' } })
+    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  })
+
+  it('keeps two coexisting providers apart: each edits its own URL and deletes alone', async () => {
+    const providers = [
+      { name: 'openai' },
+      custom('lan-vllm', 'http://10.0.0.5:8000'),
+      custom('lab-gw', 'http://10.0.0.6:9000', true),
+    ]
+    listProviders.mockResolvedValue({ data: { providers } })
+    listKeys.mockImplementation((name: string) =>
+      Promise.resolve({
+        data: {
+          keys: name === 'lan-vllm' ? [{ id: 'k9', name: 'vllm-key', value: 'sk-****', models: ['*'], weight: 1 }] : [],
+          total: name === 'lan-vllm' ? 1 : 0,
+        },
+      }),
+    )
+    routability.mockResolvedValue({
+      data: {
+        providers: { 'lan-vllm': true, 'lab-gw': true },
+        keys: { k9: { provider: 'lan-vllm', routable: true, health: 'healthy' } },
+      },
+    })
+    render(<AiProvidersPanel notify={() => {}} />)
+    await screen.findByText('vllm-key')
+
+    // the key-less one routes without a key, so there is none to add to it
+    expect(screen.getByText(/No API key needed/)).toBeInTheDocument()
+    expect(screen.getAllByTitle('Edit provider')).toHaveLength(3) // openai, lan-vllm, lab-gw
+
+    fireEvent.click(screen.getAllByTitle('Edit provider')[2])
+    const field = await screen.findByDisplayValue('http://10.0.0.6:9000')
+    // a custom provider's host cannot be cleared
+    fireEvent.change(field, { target: { value: '' } })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(field, { target: { value: 'http://10.0.0.7:9000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('lab-gw', 'http://10.0.0.7:9000'))
+
+    fireEvent.click(within(screen.getByText('lab-gw').closest('tr')!).getByTitle('Delete provider'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(removeProvider).toHaveBeenCalledWith('lab-gw'))
+    expect(removeProvider).toHaveBeenCalledTimes(1)
   })
 })

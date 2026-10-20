@@ -731,15 +731,16 @@ describe('case page', () => {
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(2)
     const clock = '09:14' // UTC, whatever the machine's zone
-    for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'executing']) {
+    for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'Working']) {
       expect(within(rows[0]).getByText(text)).toBeInTheDocument()
     }
     // The older move of the same worker is not a second row; the state sits on the latest row only.
     expect(within(table).queryByText('rank the hosts')).not.toBeInTheDocument()
     expect(within(rows[1]).getByText('network_analyst')).toBeInTheDocument()
     expect(within(rows[1]).getByText('proxy_query')).toBeInTheDocument()
-    expect(within(rows[1]).queryByText('executing')).not.toBeInTheDocument()
+    expect(within(rows[1]).queryByText('Working')).not.toBeInTheDocument()
     expect(within(rows[1]).getByText('Idle')).toBeInTheDocument()
+    expect(table.textContent).not.toContain('executing')
     expect(screen.queryByText(/incident-response · executing/)).not.toBeInTheDocument()
 
     const doors = screen.getByRole('region', { name: 'Audit doors' })
@@ -764,8 +765,12 @@ describe('case page', () => {
 
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('The run has started and has not reported yet.')).toBeInTheDocument()
-    expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
     expect(workflowApi.getRun).toHaveBeenCalledWith('run-only')
+    // A run that has found nothing says so inside the Findings so far card.
+    const findings = screen.getByRole('region', { name: 'Findings so far' })
+    expect(findings).toHaveClass('case-card')
+    expect(within(findings).getByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
+    expect(within(findings).getByText('No findings yet.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
   })
 
@@ -799,15 +804,18 @@ describe('case page', () => {
     expect(within(doors).getByText('Findings, no for or against')).toBeInTheDocument()
   })
 
-  it('keeps the Now card copy for no run, a loading run and an unreadable run', async () => {
+  it('shows a case with no run only the agents card and the doors, and keeps the Now card copy for a loading and an unreadable run', async () => {
     testState.cases = [
       { ...openCase('case-none'), investigations: [] },
       { ...openCase('case-slow'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-slow')] },
       { ...openCase('case-bad'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-bad')] },
     ]
     renderCase('case-none')
-    expect(await screen.findByText('No run on this case yet.')).toBeInTheDocument()
-    expect(screen.getByText('No live investigation.')).toBeInTheDocument()
+    expect(await screen.findByText('No live investigation.')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
+    expect(screen.queryByText('What it changed')).not.toBeInTheDocument()
+    expect(screen.queryByText('Planned next')).not.toBeInTheDocument()
+    expect(screen.queryByText('Findings so far')).not.toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('No run yet')).toHaveLength(3)
     cleanup()
 
@@ -1014,7 +1022,8 @@ describe('case page', () => {
     closedCase(CLOSURE)
     vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
     renderCase('case-closed')
-    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+    const closed = await screen.findByRole('region', { name: 'Closed summary' }, { timeout: 5000 })
+    expect(within(closed).getByText('Loading the run…')).toBeInTheDocument()
   })
 
   it('says so when the run cannot be read', async () => {
@@ -1480,7 +1489,7 @@ describe('case page', () => {
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
     const body = document.querySelector('.detail-body') as HTMLElement
-    expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Findings so far') ?? -1)
+    expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Agents on this case') ?? -1)
     expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Isolate host') ?? -1)
     expect(screen.getByText('beacon')).toBeInTheDocument()
     expect(screen.getByText('Reversible')).toBeInTheDocument()
@@ -1507,6 +1516,8 @@ describe('case page', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
       expect(screen.getByText('Approving: Block 1.2.3.4')).toBeInTheDocument()
       expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+      // The fuse takes the item out of needs-you, but a run-less case grows no Now card in its place.
+      expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
 
       await tick(7999)
       expect(approvalsApi.approve).not.toHaveBeenCalled()
@@ -2475,7 +2486,7 @@ describe('watching a run, its cost and its agents', () => {
   it('offers no Watch link without a run', async () => {
     testState.cases = [openCase('case-none')]
     renderDetail('case-none')
-    await screen.findByText('No run on this case yet.')
+    await screen.findByText('No live investigation.')
     expect(screen.queryByRole('link', { name: 'Watch it run' })).not.toBeInTheDocument()
   })
 

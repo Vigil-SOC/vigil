@@ -24,6 +24,8 @@ export interface RootCauseProjection {
   cost_usd: number | null;
   // The ceiling the run opened with, so a reader can say how much of it is gone.
   max_cost_usd: number | null;
+  // A trace concludes no disposition: always null.
+  disposition: string | null;
   steps: RootCauseStepView[];
   proven: number;
   notices: string[];
@@ -108,6 +110,7 @@ export function rootCauseProjection(runId: string, events: readonly AgentEvent<R
     reason: terminal?.reason ?? "",
     cost_usd: cost,
     max_cost_usd: ceiling,
+    disposition: null,
     steps,
     proven: steps.filter((step) => step.proven).length,
     notices,

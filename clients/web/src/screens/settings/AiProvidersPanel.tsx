@@ -33,6 +33,7 @@ import {
   secretEnvRef,
   COMMON_PROVIDERS,
   BASE_URL_PROVIDERS,
+  CUSTOM_PROVIDER_NAME,
   type BifrostProvider,
   type KeyVerdict,
   type BifrostKey,
@@ -98,33 +99,55 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
   }, [addProviderRequested, onAddProviderOpened])
   const [newProvider, setNewProvider] = useState('')
   const [newBaseUrl, setNewBaseUrl] = useState('')
+  const [newCustom, setNewCustom] = useState(false)
+  const [newKeyLess, setNewKeyLess] = useState(false)
   const [editingProvider, setEditingProvider] = useState<BifrostProvider | null>(null)
   const [confirmDel, setConfirmDel] = useState<
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
   const [busy, setBusy] = useState(false)
 
+  // a key-less custom provider has nothing to add a key to
+  const keyable = providers.filter((p) => !p.custom_provider_config?.is_key_less)
   const addKey = () => {
-    if (providers.length === 1) setEditing({ provider: providers[0].name, key: null })
-    else if (providers.length > 1) setPickProvider(providers[0].name)
+    if (keyable.length === 1) setEditing({ provider: keyable[0].name, key: null })
+    else if (keyable.length > 1) setPickProvider(keyable[0].name)
   }
 
   const closeAddProvider = () => {
     setAddingProvider(false)
     setNewProvider('')
     setNewBaseUrl('')
+    setNewCustom(false)
+    setNewKeyLess(false)
   }
+
+  const customName = newProvider.trim().toLowerCase()
+  const customInvalid = newCustom && (!CUSTOM_PROVIDER_NAME.test(customName) || !newBaseUrl.trim())
 
   const handleAddProvider = async () => {
     const name = newProvider.trim().toLowerCase()
     if (!name) return
-    const baseUrl = BASE_URL_PROVIDERS.includes(name) ? newBaseUrl.trim() : ''
     const held = providers.some((p) => p.name === name)
+    if (newCustom && held) {
+      // never reuse a name: creating over a built-in must not be possible
+      notify('err', `A provider called ${name} already exists.`)
+      return
+    }
+    const baseUrl = newCustom || BASE_URL_PROVIDERS.includes(name) ? newBaseUrl.trim() : ''
     setBusy(true)
     try {
-      // Bifrost may already hold it, seeded but not set up: no create, then
-      // straight to its key
-      if (!held) await addProvider(name)
+      if (newCustom) {
+        // the URL rides on the create: a custom provider has no default host to fall back to
+        await addProvider(name, {
+          network_config: { base_url: baseUrl },
+          custom_provider_config: { base_provider_type: 'openai', is_key_less: newKeyLess },
+        })
+      } else if (!held) {
+        // Bifrost may already hold it, seeded but not set up: no create, then
+        // straight to its key
+        await addProvider(name)
+      }
     } catch (e) {
       notify('err', bifrostError(e, 'Bifrost rejected that provider name.'))
       setBusy(false)
@@ -132,7 +155,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     }
     // The URL is a second write, so the provider can exist without it.
     let urlError: string | null = null
-    if (baseUrl) {
+    if (baseUrl && !newCustom) {
       try {
         await setBaseUrl(name, baseUrl)
       } catch (e) {
@@ -142,6 +165,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     setBusy(false)
     closeAddProvider()
     if (urlError) notify('err', `Provider ${name} added, but its base URL was not saved: ${urlError}`)
+    else if (newCustom && newKeyLess) notify('ok', `Provider ${name} added. It needs no key.`)
     else if (!held) notify('ok', `Provider ${name} added. Add a key to make it routable.`)
     if (held) setEditing({ provider: name, key: null })
   }
@@ -171,7 +195,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
       title="Keys"
       desc="A provider can hold several keys; traffic is shared by weight and moves to another key if one is rejected. Saving a key tests it."
       actions={
-        <button className="btn ghost" disabled={providers.length === 0} onClick={addKey}>
+        <button className="btn ghost" disabled={keyable.length === 0} onClick={addKey}>
           <Icon name="plus" /> Add key
         </button>
       }
@@ -227,18 +251,26 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                         <div className="flex flex-col">
                           <span className="font-medium">{p.name}</span>
                           <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
-                            {p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}
+                            {p.custom_provider_config
+                              ? 'Custom provider'
+                              : p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}
                             <BaseUrlTag provider={p} />
                           </span>
                         </div>
                       </td>
-                      <td colSpan={4} className="text-sm text-tx-3">No key — this provider cannot route</td>
+                      <td colSpan={4} className="text-sm text-tx-3">
+                        {p.custom_provider_config?.is_key_less
+                          ? 'No API key needed — this provider routes without one'
+                          : 'No key — this provider cannot route'}
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="inline-flex gap-1.5">
                           <EditProviderButton provider={p} onEdit={setEditingProvider} />
-                          <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
-                            <Icon name="plus" size={14} /> Add key
-                          </button>
+                          {!p.custom_provider_config?.is_key_less && (
+                            <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
+                              <Icon name="plus" size={14} /> Add key
+                            </button>
+                          )}
                           <button
                             className="btn ghost icon"
                             title="Delete provider"
@@ -305,30 +337,72 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
 
       <Popup open={addingProvider} onClose={closeAddProvider} title="Add provider" width={440}>
         <Field
-          label="Provider name"
-          hint="Bifrost's own identifier for the upstream. It validates the name and reports back if it doesn't know it."
+          label="Type"
+          hint={
+            newCustom
+              ? 'A server of your own that speaks the OpenAI API (vLLM, LM Studio, a LAN gateway), under a name you choose.'
+              : 'A provider Bifrost already knows by name.'
+          }
         >
-          <input
-            className="field-input"
-            list="bf-providers"
-            value={newProvider}
-            onChange={(e) => setNewProvider(e.target.value)}
-            placeholder="anthropic"
-          />
-          <datalist id="bf-providers">
-            {COMMON_PROVIDERS.filter((n) => !providers.some((p) => p.name === n)).map((n) => (
-              <option key={n} value={n} />
+          <div className="inline-flex gap-1.5">
+            {(
+              [
+                [false, 'Built-in'],
+                [true, 'Custom (OpenAI-compatible)'],
+              ] as const
+            ).map(([custom, label]) => (
+              <button
+                key={label}
+                type="button"
+                className={`btn ${newCustom === custom ? 'primary' : 'ghost'}`}
+                onClick={() => setNewCustom(custom)}
+              >
+                {label}
+              </button>
             ))}
-          </datalist>
+          </div>
         </Field>
-        {BASE_URL_PROVIDERS.includes(newProvider.trim().toLowerCase()) && (
+        <div className="mt-3.5">
+          <Field
+            label="Provider name"
+            hint={
+              newCustom
+                ? 'Lowercase letters, digits and dashes. Models are routed as name/model, and the name cannot be a built-in provider.'
+                : "Bifrost's own identifier for the upstream. It validates the name and reports back if it doesn't know it."
+            }
+            error={newCustom && newProvider.trim() && !CUSTOM_PROVIDER_NAME.test(customName)
+              ? 'Use lowercase letters, digits and dashes only (40 at most).'
+              : null}
+          >
+            <input
+              className="field-input"
+              list={newCustom ? undefined : 'bf-providers'}
+              value={newProvider}
+              onChange={(e) => setNewProvider(e.target.value)}
+              placeholder={newCustom ? 'lan-vllm' : 'anthropic'}
+            />
+            <datalist id="bf-providers">
+              {COMMON_PROVIDERS.filter((n) => !providers.some((p) => p.name === n)).map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+          </Field>
+        </div>
+        {(newCustom || BASE_URL_PROVIDERS.includes(newProvider.trim().toLowerCase())) && (
           <div className="mt-3.5">
-            <BaseUrlField value={newBaseUrl} onChange={setNewBaseUrl} />
+            <BaseUrlField value={newBaseUrl} onChange={setNewBaseUrl} required={newCustom} />
+          </div>
+        )}
+        {newCustom && (
+          <div className="mt-3.5">
+            <Field label="No API key" hint="The server takes no credential. The provider can route without a key.">
+              <Toggle checked={newKeyLess} onChange={setNewKeyLess} label="No API key" />
+            </Field>
           </div>
         )}
         <div className="flex justify-end gap-2.5 mt-5">
           <button className="btn ghost" onClick={closeAddProvider}>Cancel</button>
-          <button className="btn primary" disabled={!newProvider.trim() || busy} onClick={handleAddProvider}>
+          <button className="btn primary" disabled={!newProvider.trim() || customInvalid || busy} onClick={handleAddProvider}>
             <Icon name="check2" /> {busy ? 'Adding…' : 'Add'}
           </button>
         </div>
@@ -338,7 +412,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         <Field label="Provider" hint="The key is added under this provider.">
           <Select
             value={pickProvider || ''}
-            options={providers.map((p) => ({ value: p.name, label: p.name }))}
+            options={keyable.map((p) => ({ value: p.name, label: p.name }))}
             onSelect={setPickProvider}
           />
         </Field>
@@ -418,7 +492,7 @@ function EditProviderButton({
   provider: BifrostProvider
   onEdit: (p: BifrostProvider) => void
 }) {
-  if (!BASE_URL_PROVIDERS.includes(provider.name)) return null
+  if (!provider.custom_provider_config && !BASE_URL_PROVIDERS.includes(provider.name)) return null
   return (
     <button className="btn ghost icon" title="Edit provider" onClick={() => onEdit(provider)}>
       <Icon name="gear" size={15} />
@@ -426,13 +500,26 @@ function EditProviderButton({
   )
 }
 
-function BaseUrlField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function BaseUrlField({
+  value,
+  onChange,
+  required,
+}: {
+  value: string
+  onChange: (v: string) => void
+  /** a custom provider has no host of its own to fall back to */
+  required?: boolean
+}) {
   // The gateway resolves this, and the shipped compose runs it in a container.
   const loopback = urlIsLoopback(value)
   return (
     <Field
-      label="Base URL (optional)"
-      hint="A self-hosted OpenAI-compatible server, a LAN gateway or a regional endpoint. Leave blank for the provider's own host. Resolved by the gateway, not by your browser."
+      label={required ? 'Base URL' : 'Base URL (optional)'}
+      hint={
+        required
+          ? 'Where the server answers, e.g. a LAN vLLM. Resolved by the gateway, not by your browser.'
+          : "A self-hosted OpenAI-compatible server, a LAN gateway or a regional endpoint. Leave blank for the provider's own host. Resolved by the gateway, not by your browser."
+      }
     >
       <TextInput
         value={value}
@@ -462,6 +549,7 @@ function ProviderDialog({
   onSave: (baseUrl: string) => Promise<void>
 }) {
   const stored = provider.network_config?.base_url || ''
+  const custom = !!provider.custom_provider_config
   const [url, setUrl] = useState(stored)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -481,14 +569,14 @@ function ProviderDialog({
   return (
     <Popup open onClose={onClose} title={`Edit provider · ${provider.name}`} width={440}>
       {err && <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> {err}</div>}
-      <BaseUrlField value={url} onChange={setUrl} />
+      <BaseUrlField value={url} onChange={setUrl} required={custom} />
       <p className="text-xs text-tx-3 mt-2">
         Shown without a trailing <code>/v1</code>: the gateway adds that itself. Saving a host lets the
         gateway reach private and LAN addresses for this provider.
       </p>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
-        <button className="btn primary" disabled={saving || url.trim() === stored} onClick={submit}>
+        <button className="btn primary" disabled={saving || url.trim() === stored || (custom && !url.trim())} onClick={submit}>
           <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
         </button>
       </div>

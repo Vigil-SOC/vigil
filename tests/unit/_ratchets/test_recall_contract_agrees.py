@@ -191,32 +191,30 @@ def test_the_role_grants_agree(ts: str):
     )
 
 
-# The plugin declares the lead and the critic; the other grant keys are the roster
-# the threat-hunt definition names, whose querying the plugin's one agent now does.
+# The plugin declares the lead and the critic as roles; "agent" is its one querying
+# agent, which exists where the plugin states top-level `needs`.
 def _hunt_roles() -> tuple[dict, frozenset]:
     import yaml
 
-    from core.workflows.workflows_service import WorkflowsService
-
     plugin = yaml.safe_load(ARCH.read_text())
-    rostered = WorkflowsService().get_workflow("threat-hunt").agents
-    return plugin, frozenset(plugin["roles"]) | frozenset(rostered)
+    agent = {"agent"} if plugin.get("needs") else set()
+    return plugin, frozenset(plugin["roles"]) | frozenset(agent)
 
 
 def test_every_granted_role_is_a_role_the_hunt_names():
     _, declared = _hunt_roles()
     missing = frozenset(py.RECALL_GRANTS) - declared
     assert not missing, (
-        "RECALL_GRANTS names roles neither plugins/hunt/plugin.yaml nor the threat-hunt "
-        "roster declares, and a grant on a role that does not exist is dropped silently:\n  "
+        "RECALL_GRANTS names roles plugins/hunt/plugin.yaml does not declare, and a "
+        "grant on a role that does not exist is dropped silently:\n  "
         + "\n  ".join(sorted(missing))
     )
 
 
 def test_the_plugin_asks_for_what_the_grants_declare():
-    # Where the grant takes effect (#732). The agent doing the rostered roles'
-    # querying holds what the plugin's `needs` asks for, and the binding drops an
-    # unasked-for capability silently -- the run goes without the tool and nothing
+    # Where the grant takes effect (#732). The plugin's one agent holds what its
+    # top-level `needs` asks for, and the binding drops an unasked-for capability
+    # silently -- the run goes without the tool and nothing
     # says why. The lead and the critic hold only what their own role asks for.
     plugin, _ = _hunt_roles()
     roles = plugin["roles"]

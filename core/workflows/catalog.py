@@ -116,13 +116,18 @@ def _blocked_by(
 ) -> List[str]:
     """Phase agents that are off, where Run would be refused for naming them.
 
-    Every run kind but a root-cause trace resolves its phase agents and refuses
-    an off one; a trace has no phases.
+    Other kinds resolve their phase agents and refuse an off one.
+    A root-cause trace has no phases, and a hunt-like run is its plugin's one
+    agent and critic, so neither is blocked by an agent switch.
     """
     if not off_agents:
         return []
     definition = service.get_workflow(workflow_id)
-    if definition is None or definition.run_kind == ROOT_CAUSE_RUN_KIND:
+    if (
+        definition is None
+        or definition.run_kind == ROOT_CAUSE_RUN_KIND
+        or is_hunt_like(definition.run_kind)
+    ):
         return []
     return disabled_phase_agents(definition, off_agents)
 

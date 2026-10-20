@@ -1,9 +1,10 @@
 import type { CallPayload, NewEvent, TerminalHandoff } from "../../contracts/events.js";
 import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBehind, type RunValues } from "../../core/guards.js";
 import { recalledPayloadOf } from "../../contracts/memory.js";
+import { isStructured } from "../../contracts/plugin.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
-import { agentCalls, callsIn, childOrdinal, runChild, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
-import { okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
+import { agentCalls, callsIn, childOrdinal, runChild, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
+import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
@@ -171,10 +172,20 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         if (!OWN.has(seen.call.tool) && failure !== null && isVisibilityGap(failure)) {
           book.appendGap(seen.call.tool, failure.kind as "timeout" | "unavailable" | "backend_error", null);
         }
-        return { projection: book.projection, ended: book.ended(), suspended: book.hunt.status === "parked" || book.hunt.status === "pending_approval", why: book.suspendedBecause() };
+        return {
+          projection: book.projection,
+          ended: book.ended(),
+          concluded: book.hunt.outcome === "completed" || book.hunt.outcome === "data_starved",
+          suspended: book.hunt.status === "parked" || book.hunt.status === "pending_approval",
+          why: book.suspendedBecause(),
+        };
       });
       await reportOut(ctx, ports, settled.projection, filed, linked);
-      if (settled.ended) return "halt";
+      // A hunt that concluded on its own predicate (data_starved is an honest inconclusive)
+      // is asked for its answer, the disposition among it, before it ends; any other
+      // ending, and any call after the conclusion, halts at once.
+      const answers = settled.concluded && seen.call.tool === "conclude_hunt" && seen.attempt.result.ok && asksDisposition(ctx);
+      if (settled.ended && !answers) return "halt";
       if (settled.suspended) {
         const [open] = pendingCheckpoints(settled.projection);
         return { parked: settled.why, ...(open === undefined ? {} : { checkpoint_id: open.checkpoint_id }) };
@@ -190,7 +201,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
       if (!guarded(ctx)) return null;
       return withBook(ctx, ports, (book) => {
         const open = [...book.projection.hypotheses.values()].filter((one) => one.status === "active");
-        if (open.length === 0) return null;
+        if (open.length === 0 || book.ended()) return null;
         const list = open.map((one) => `${one.hypothesis_id} (${one.statement})`).join("; ");
         return `The hunt is not finished: ${list} ${open.length === 1 ? "is" : "are"} still active. For each, do one of: put it up for a verdict with validate_hypothesis if new evidence bears on it; abandon it with abandon_hypothesis citing the evidence that rules it out; or run the queries that would settle it. Then conclude_hunt.`;
       });
@@ -200,6 +211,11 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
     // agent's say-so: at a ceiling it concludes if it can and parks if it cannot.
     finish: async (ctx, outcome): Promise<Ending | Parked> =>
       withBook(ctx, ports, async (book) => {
+        // Concluded by its own tool, then answered: nothing left to decide.
+        if (book.ended()) {
+          await book.ledger.flush();
+          return ending(ctx, book);
+        }
         // The harness refused a call: usually the wall clock, which stops a hunt with
         // turns and dollars still on the board. It parks on extend, conclude or abort.
         if (outcome.refusal !== null) {
@@ -232,6 +248,10 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
     // with its report, like any other ceiling it could not lift.
     exhausted: async (ctx, reason) =>
       withBook(ctx, ports, async (book) => {
+        if (book.ended()) {
+          await book.ledger.flush();
+          return ending(ctx, book);
+        }
         book.terminate("budget_terminated", reason);
         await book.ledger.flush();
         return { ...(await ending(ctx, book)), outcome: "budget_exhausted" as const, reason };
@@ -477,10 +497,12 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
       async (args) => {
         const given = Array.isArray(args["results"]) ? (args["results"] as Record<string, unknown>[]) : [];
         const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
-        const served = servedSince(callsIn(await state(ctx).read(ctx.options.run_id)), ctx.options.spec.tools);
+        const calls = callsIn(await state(ctx).read(ctx.options.run_id));
+        const served = servedSince(calls, ctx.options.spec.tools);
+        const call_refs = servedRefsSince(calls);
         return withBook(ctx, ports, (book) => {
-          const evidence = evidenceFrom({ results });
-          const records = book.appendEvidence(served === null ? evidence : evidence.map((result) => ({ ...result, served_by: served })));
+          const evidence = evidenceFrom({ results }).map((result) => ({ ...result, call_refs, ...(served === null ? {} : { served_by: served }) }));
+          const records = book.appendEvidence(evidence);
           const raised = (Array.isArray(args["follow_up"]) ? args["follow_up"] : []).map((one) => {
             const lead = one as { question?: unknown; entity?: unknown; hypothesis_id?: unknown };
             return book.raise(String(lead.question ?? ""), {
@@ -612,6 +634,14 @@ export function servedSince(calls: readonly CallPayload[], tools: readonly ToolS
   return servers.size === 1 && only !== undefined ? only : null;
 }
 
+// The estate calls that answered since the turn of the hunt's last record: the results a
+// record written now rests on, which a conclusion cites by ref and the guard checks it against.
+export function servedRefsSince(calls: readonly CallPayload[]): string[] {
+  const own = agentCalls(calls);
+  const since = own.filter((call) => call.turn >= (own.findLast((one) => one.tool === "record_evidence" && one.ok)?.turn ?? 0));
+  return since.filter((call) => !OWN.has(call.tool) && call.tool !== SKILL_TOOL && classOf(call) === "served").map((call) => call.ref);
+}
+
 // The expand tool reads raw payloads back off this run's own ledger.
 function expandTool(ctx: PluginContext): RegisteredTool[] {
   const specs = ctx.options.spec.tools.filter((tool) => tool.id === "expand");
@@ -687,6 +717,12 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
       ...(rests_on.length > 0 ? { rests_on, attacker_influenceable: rests_on.every((basis) => basis.authored !== "sensor") } : {}),
     };
   });
+}
+
+// Only a plugin whose conclusion carries a disposition waits for the answer after conclude_hunt.
+function asksDisposition(ctx: PluginContext): boolean {
+  const { conclusion } = ctx.options.plugin;
+  return isStructured(conclusion) && "disposition" in ((conclusion.schema["properties"] ?? {}) as Record<string, unknown>);
 }
 
 function guarded(ctx: PluginContext): boolean {

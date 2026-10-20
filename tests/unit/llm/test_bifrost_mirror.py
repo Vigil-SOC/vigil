@@ -133,3 +133,97 @@ def test_unresolved_seed_is_a_placeholder_whatever_bifrost_tried():
         key_health({**ollama, "status": "list_models_failed"}, "ollama") == "rejected"
     )
     assert key_health({"value": UNRESOLVED_ENV, "enabled": False}) == "disabled"
+
+
+# --- custom providers --------------------------------------------------------
+
+
+def _custom(name, *, key_less=False):
+    return {
+        "name": name,
+        "custom_provider_config": {"base_provider_type": "openai", "is_key_less": key_less},
+    }
+
+
+class _Gateway:
+    """``mirror._get`` over a dict of path -> payload; a missing path is a 404."""
+
+    def __init__(self, routes):
+        self.routes = routes
+
+    async def get(self, path):
+        import httpx
+
+        if path not in self.routes:
+            req = httpx.Request("GET", f"http://bifrost/api/{path}")
+            httpx.Response(404, request=req).raise_for_status()
+        return self.routes[path]
+
+
+def _applied(monkeypatch, routes):
+    from core.llm.bifrost import mirror
+
+    calls = []
+
+    async def fake_apply(provider, *, routable):
+        calls.append((provider, routable))
+
+    monkeypatch.setattr(mirror, "_get", _Gateway(routes).get)
+    monkeypatch.setattr(mirror, "_apply", fake_apply)
+    return calls
+
+
+KEY_OK = {"id": "k1", "status": "success", "value": LITERAL}
+
+
+@pytest.mark.asyncio
+async def test_a_key_less_provider_routes_with_no_key(monkeypatch):
+    from core.llm.bifrost import mirror
+
+    calls = _applied(
+        monkeypatch,
+        {"providers/lab-gw": _custom("lab-gw", key_less=True), "providers/lab-gw/keys": {"keys": None}},
+    )
+    await mirror.sync_provider("lab-gw")
+    assert calls == [("lab-gw", True)]
+
+
+@pytest.mark.asyncio
+async def test_a_custom_provider_without_a_key_does_not_route(monkeypatch):
+    from core.llm.bifrost import mirror
+
+    calls = _applied(
+        monkeypatch,
+        {"providers/lan-vllm": _custom("lan-vllm"), "providers/lan-vllm/keys": {"keys": None}},
+    )
+    await mirror.sync_provider("lan-vllm")
+    assert calls == [("lan-vllm", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_provider_deleted_in_bifrost_retires_its_row(monkeypatch):
+    from core.llm.bifrost import mirror
+
+    calls = _applied(monkeypatch, {})
+    await mirror.sync_provider("lan-vllm")
+    assert calls == [("lan-vllm", False)]
+
+
+@pytest.mark.asyncio
+async def test_two_custom_providers_are_judged_separately(monkeypatch):
+    from core.llm.bifrost import mirror
+
+    routes = {
+        "providers": {"providers": [_custom("lan-vllm"), _custom("lab-gw", key_less=True)]},
+        "providers/lan-vllm/keys": {"keys": [KEY_OK]},
+        "providers/lab-gw/keys": {"keys": None},
+    }
+    calls = _applied(monkeypatch, routes)
+    monkeypatch.setattr(mirror, "_get", _Gateway(routes).get)
+
+    assert await mirror.reconcile_all() == {"lan-vllm": True, "lab-gw": True}
+    assert sorted(calls) == [("lab-gw", True), ("lan-vllm", True)]
+
+    verdicts = await mirror.routability()
+    assert verdicts["providers"] == {"lan-vllm": True, "lab-gw": True}
+    assert verdicts["keys"]["k1"]["provider"] == "lan-vllm"

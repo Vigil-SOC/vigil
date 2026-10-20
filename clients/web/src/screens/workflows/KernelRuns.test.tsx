@@ -4,7 +4,7 @@
    kernel-view-fixtures.ts. A change on either side that the other cannot read
    fails here rather than in front of an operator. */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 import { readFold } from '../cases/caseFold'
 import huntProjection from './__fixtures__/kernel-hunt-projection.json'
@@ -132,13 +132,15 @@ describe('an investigate run on the kernel', () => {
 
   it('reads the held value on the verdict line of a held dismissal', () => {
     renderHeld()
-    expect(screen.getByLabelText('Verdict')).toHaveTextContent(/^Needs review — EDR detected credential dumping/)
+    const verdict = within(screen.getByLabelText('Verdict'))
+    expect(verdict.getByText('Needs review')).toHaveClass('chip')
+    expect(verdict.getByText(/^EDR detected credential dumping/)).toBeInTheDocument()
   })
 
   it('offers no tab the run did not produce', () => {
     render(<RunDetail d={{ run_id: 'run-1', status: 'completed', projection: investigateProjection } as never} onSteered={() => {}} />)
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Explanations3', 'Evidence3'])
-    expect(screen.getByLabelText('Verdict')).toHaveTextContent(/^Benign — /)
+    expect(within(screen.getByLabelText('Verdict')).getByText('Benign')).toHaveClass('chip')
   })
 
   it('reads on the case page, its answer and calls included', () => {
