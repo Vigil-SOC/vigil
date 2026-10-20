@@ -710,7 +710,7 @@ function WatchLink({ runId, onFollow }: { runId: string | null; onFollow: () => 
 }
 
 /** Now · step N: the latest move, who has it, with which tool, since when. */
-function NowCard({ fold, phase, hasRun, watch }: { fold: RunFold | null; phase: Phase; hasRun: boolean; watch: ReactNode }) {
+function NowCard({ fold, phase, watch }: { fold: RunFold | null; phase: Phase; watch: ReactNode }) {
   const move = fold?.moves[0]
   const meta = fold ? [fold.worker, moveTool(fold, move), `since ${clock(move?.at)}`].filter(Boolean).join(' · ') : ''
   return (
@@ -723,7 +723,7 @@ function NowCard({ fold, phase, hasRun, watch }: { fold: RunFold | null; phase: 
       <p className="clamp2" title={phase === 'ready' ? fold?.doing : undefined}>
         {phase === 'loading' && 'Loading the run…'}
         {phase === 'error' && 'The run could not be read.'}
-        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : hasRun ? 'The run has started and has not reported yet.' : 'No run on this case yet.')}
+        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : 'The run has started and has not reported yet.')}
       </p>
       {watch}
     </section>
@@ -797,7 +797,7 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
   )
 }
 
-function AgentsTable({ fold, phase, state }: { fold: RunFold | null; phase: Phase; state: string }) {
+function AgentsTable({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
   // A paused or stopped run is already said by the card above; its rows would be stale.
   if (stoppedRun(fold)) return null
   const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
@@ -816,8 +816,8 @@ function AgentsTable({ fold, phase, state }: { fold: RunFold | null; phase: Phas
               <span className="agent-doing" role="cell" title={row.doing}>{row.doing || '—'}</span>
               <span className="agent-tool" role="cell" title={row.tool}>{row.tool || '—'}</span>
               <span className="agent-since" role="cell">{clock(row.at)}</span>
-              {/* The run's state belongs to the agent holding the latest move; the others are between moves. */}
-              <span className={`agent-state${i === 0 ? ' live' : ''}`} role="cell"><span className="state-dot" aria-hidden="true" />{i === 0 ? state : 'Idle'}</span>
+              {/* The agent holding the latest move is working; the others are between moves. */}
+              <span className={`agent-state${i === 0 ? ' live' : ''}`} role="cell"><span className="state-dot" aria-hidden="true" />{i === 0 ? 'Working' : 'Idle'}</span>
             </div>
           ))}
         </div>
@@ -1030,7 +1030,6 @@ export function CasePage({
   const latest = investigations.find((item) => item.primary) ?? null
   const runId = latest?.run_id ?? null
   const rootCauseRunId = investigations.find((item) => item.workflow_id === ROOT_CAUSE_WORKFLOW)?.run_id ?? null
-  const live = investigations.filter((item) => item.live)
   // The list maps every status other than open/investigating to closed, so a
   // `new` case must not use that fallback while the detail read is in flight.
   const closed = combinedState === 'closed' || (phase === 'ready' && !combinedState && c?.status === 'closed')
@@ -1354,8 +1353,6 @@ export function CasePage({
   const stopped = closed || needsShown > 0 || answeredHere ? null : stoppedRun(fold)
   const ended = closed || needsShown > 0 ? null : endedRun(fold)
   const pillState = closed ? 'closed' : answeredHere ? (answer === 'reject' ? 'stopped' : 'executing') : stopped?.state ?? pill
-  // Only what exists: the live investigation's status, else the run's outcome.
-  const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
   // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
   // else took the key (a menu or dialog is showing, or a text field has focus). A closed dialog that
   // stays mounted, like the Ask Vigil dock, is aria-hidden and doesn't count.
@@ -1378,7 +1375,8 @@ export function CasePage({
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
   const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsShown > 0).tone
-  const running = !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
+  // Running furniture needs a run: a run-less case, or one whose needs item sits in the undo fuse, shows none.
+  const running = runId !== null && !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
     tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
@@ -1491,15 +1489,17 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
-                {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} watch={watch} />}
+                {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
                 {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, text })} />}
                 <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} onFollow={() => onExpand && onBack()} />
-                <section>
-                  <h3>Findings so far</h3>
-                  <FindingList fold={fold} />
-                </section>
+                {runId !== null && (
+                  <section className="case-card" aria-label="Findings so far">
+                    <h3>Findings so far</h3>
+                    <FindingList fold={fold} />
+                  </section>
+                )}
                 {disagree}
                 {running && (
                   <>
@@ -1507,7 +1507,7 @@ export function CasePage({
                     <LaterRow title="Planned next" line="What the run intends to do next." />
                   </>
                 )}
-                <AgentsTable fold={fold} phase={foldPhase} state={runState} />
+                <AgentsTable fold={fold} phase={foldPhase} />
                 {doors}
               </>
             )

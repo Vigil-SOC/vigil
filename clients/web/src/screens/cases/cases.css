@@ -1518,7 +1518,7 @@
 
 .cg-row {
   display: grid;
-  grid-template-columns: 26px 176px minmax(0, 3fr) 110px 86px 118px 150px 150px 110px 44px;
+  grid-template-columns: 26px 176px minmax(0, 3fr) 96px 86px 104px 150px 128px 92px 44px; /* the id keeps 176px (#2054); Kind, Status, SLA and Limit give the title their slack */
   gap: 12px;
   align-items: center;
   padding: 11px 16px;
