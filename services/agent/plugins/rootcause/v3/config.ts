@@ -4,8 +4,6 @@ export interface AgentConfig {
   strengthenSearches: number;
   maxTheorize: number;
   rareSweep: boolean;
-  theorizeEvery: number;
-  branchEvery: number;
   rawOutputMaxChars: number;
   toolTimeoutMs: number;
   maxStrengthenAttempts: number;
@@ -29,8 +27,6 @@ export const defaultConfig: AgentConfig = {
   strengthenSearches: 3, // a check needs a record or two; 6 let strengthen take a third of all searches
   rareSweep: true, // rare-activity sweep at the start of a run (rare.ts)
   maxTheorize: 8, // rounds of competing stories per run (4 ran out by mid-run with the key question open)
-  theorizeEvery: 4, // turns of other moves between rounds, once a round's tests are done
-  branchEvery: 6, // once the stories run, a branch from a chain event at least this often
   rawOutputMaxChars: 20_000, // v1 found 8k too small for 50 rows
   toolTimeoutMs: 90_000, // big sources (millions of events) need it; a slow search returns partial results
   maxStrengthenAttempts: 3,

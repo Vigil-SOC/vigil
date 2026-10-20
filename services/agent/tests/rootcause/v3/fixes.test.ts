@@ -1,7 +1,7 @@
 // Behaviour added after the first real runs.
 import { describe, expect, it } from "vitest";
 import { buildAttributionPatch } from "../../../plugins/rootcause/v3/attribution.js";
-import { selectFrontier } from "../../../plugins/rootcause/v3/frontier.js";
+import { options } from "../../../plugins/rootcause/v3/lead.js";
 import { check } from "../../../plugins/rootcause/v3/model/client.js";
 import { status } from "../../../plugins/rootcause/v3/scoring.js";
 import type { Evidence } from "../../../plugins/rootcause/v3/types.js";
@@ -59,32 +59,14 @@ describe("joint causes", () => {
   });
 });
 
-describe("frontier after the chain", () => {
-  it("branches from the root first once the chain is settled", () => {
+describe("branch availability", () => {
+  it("is offered from every live event except the symptom, until an event has been tried twice", () => {
     const g = seeded();
-    const solid = [ev("direct", "supports", ["d1"]), ev("corroborating", "supports", ["d2"])];
-    apply(g, { addNodes: [node("mid", { evidence: solid }), node("root", { isRoot: true, evidence: [ev("direct", "supports", ["r1"]), ev("corroborating", "supports", ["r2"])] })],
-      addEdges: [{ tempId: "e1", kind: "explains", source: "mid", target: "N1", prior: 0.3, evidence: [ev("direct", "supports", ["x1"]), ev("corroborating", "supports", ["x2"])] },
-        { tempId: "e2", kind: "explains", source: "root", target: "mid", prior: 0.3, evidence: [ev("direct", "supports", ["y1"]), ev("corroborating", "supports", ["y2"])] }] });
-    expect(selectFrontier(g, cfg, 2)).toMatchObject({ move: "branch", targetId: "N3", priority: 9 });
+    apply(g, { addNodes: [node("mid"), node("root", { isRoot: true })], addEdges: [{ tempId: "e1", kind: "explains", source: "mid", target: "N1", prior: 0.3, evidence: [] }, { tempId: "e2", kind: "explains", source: "root", target: "mid", prior: 0.3, evidence: [] }] });
+    expect(options(g, cfg).branch).toEqual(["N2", "N3"]);
     apply(g, { incrementBranch: ["N3"] }, 2);
-    expect(selectFrontier(g, cfg, 3)).toMatchObject({ move: "branch", targetId: "N2" });
-  });
-  it("branches first from events in the sourcetype searched least", () => {
-    const g = seeded();
-    const solid = [ev("direct", "supports", ["d1"]), ev("corroborating", "supports", ["d2"])];
-    apply(g, { addNodes: [node("mid", { evidence: solid }), node("root", { isRoot: true, domain: "k8s", evidence: [ev("direct", "supports", ["r1"]), ev("corroborating", "supports", ["r2"])] })],
-      addEdges: [{ tempId: "e1", kind: "explains", source: "mid", target: "N1", prior: 0.3, evidence: [ev("direct", "supports", ["x1"]), ev("corroborating", "supports", ["x2"])] },
-        { tempId: "e2", kind: "explains", source: "root", target: "mid", prior: 0.3, evidence: [ev("direct", "supports", ["y1"]), ev("corroborating", "supports", ["y2"])] }] });
-    const mid = g.nodes.N2!.domain;
-    expect(selectFrontier(g, cfg, 2, { [mid]: 1, k8s: 30 })).toMatchObject({ move: "branch", targetId: "N2" });
-  });
-  it("does not fork on a strong link that stalled", () => {
-    const g = seeded();
-    apply(g, { addNodes: [node("c", { evidence: [ev("direct", "supports", ["c1"])] })], addEdges: [{ tempId: "e", kind: "explains", source: "c", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["k1"])] }] });
-    for (let t = 2; t <= 4; t++) apply(g, { incrementAttempts: ["E1"] }, t);
-    expect(g.edges.E1!.confidence).toBeGreaterThan(0.6);
-    expect(selectFrontier(g, cfg, 5)?.move).not.toBe("fork");
+    apply(g, { incrementBranch: ["N3"] }, 3);
+    expect(options(g, cfg).branch).toEqual(["N2"]);
   });
 });
 
@@ -125,26 +107,16 @@ describe("end of run", () => {
   it("a chain link is settled once two checks do not move it, or once it is near-certain", () => {
     const g = seeded();
     apply(g, { addNodes: [node("root", { isRoot: true, evidence: solid(["r1", "r2"]) })], addEdges: [{ tempId: "e", kind: "explains", source: "root", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["k1"])] }] });
-    expect(selectFrontier(g, cfg, 2)).toMatchObject({ move: "strengthen", targetId: "E1" });
+    expect(options(g, cfg).strengthen).toContain("E1");
     apply(g, { incrementAttempts: ["E1"] }, 2); // one check found nothing new: it gets another
-    expect(selectFrontier(g, cfg, 3)).toMatchObject({ move: "strengthen", targetId: "E1" });
+    expect(options(g, cfg).strengthen).toContain("E1");
     apply(g, { incrementAttempts: ["E1"] }, 3); // two unmoved checks: settled
-    expect(selectFrontier(g, cfg, 4)?.targetId).not.toBe("E1");
+    expect(options(g, cfg).strengthen).not.toContain("E1");
     const g2 = seeded();
     apply(g2, { addNodes: [node("root", { isRoot: true, evidence: solid(["r1", "r2"]) })], addEdges: [{ tempId: "e", kind: "explains", source: "root", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["k1"]), ...["a", "b", "c", "d", "e", "f"].map((x) => ev("circumstantial", "supports", [x], `timing ${x}`))] }] });
     expect(g2.edges.E1!.status).toBe("suspected");
     expect(g2.edges.E1!.confidence).toBeGreaterThanOrEqual(0.95);
-    expect(selectFrontier(g2, cfg, 2)?.targetId).not.toBe("E1");
-  });
-  it("off-chain events get one check, and only plausible ones", () => {
-    const g = seeded();
-    apply(g, { setFlags: [{ nodeId: "N1", isRoot: true }], incrementBranch: ["N1"] });
-    apply(g, { addNodes: [node("weak", { prior: 0.3 }), node("plausible", { prior: 0.5, evidence: [ev("corroborating", "supports", ["p1"])] })] });
-    expect(selectFrontier(g, cfg, 2)).toMatchObject({ move: "branch" });
-    apply(g, { incrementBranch: ["N3"] }, 2);
-    expect(selectFrontier(g, cfg, 3)).toMatchObject({ move: "strengthen", targetId: "N3", priority: 10 });
-    apply(g, { incrementAttempts: ["N3"] }, 3);
-    expect(selectFrontier(g, cfg, 4)).toBeNull();
+    expect(options(g2, cfg).strengthen).not.toContain("E1");
   });
 });
 
@@ -153,7 +125,7 @@ describe("victim accounts and dead ends", () => {
     const g = seeded();
     apply(g, { setFlags: [{ nodeId: "N1", isRoot: true }], incrementBranch: ["N1"] });
     apply(g, { addNodes: [node("wipe", { deadEnd: true, prior: 0.5, evidence: [ev("direct", "supports", ["w1"])] })] });
-    expect(selectFrontier(g, cfg, 2)).toBeNull();
+    expect(options(g, cfg).branch).toBeUndefined();
   });
   it("the report names a victim account apart from the attacker who used it", async () => {
     const { renderReport } = await import("../../../plugins/rootcause/v3/report.js");
@@ -221,8 +193,7 @@ describe("same event, times, placeholders", () => {
     const g = seeded();
     apply(g, { addNodes: [node("m", { kind: "boundary-marker", originNodeId: "N1", targetDomain: "mail" })], addEdges: [{ tempId: "e", kind: "explains", source: "m", target: "N1", prior: 0.3, evidence: [] }] });
     apply(g, { updateMarkers: [{ markerId: "B1", pivotSteps: cfg.maxForwardSteps }] });
-    const d = selectFrontier(g, cfg, 2);
-    expect(d?.targetId).not.toBe("E1");
+    expect(options(g, cfg).strengthen).not.toContain("E1");
   });
 });
 
@@ -248,14 +219,6 @@ describe("identity chains", () => {
     apply(g, buildAttributionPatch("N2", [sig("arn:aws:iam::1111:user/mallory", "r5")], g, ctx), 5);
     expect(Object.values(g.edges).filter((e) => e.target === "N2" && e.disputed).length).toBeGreaterThan(0);
   });
-  it("disputed attribution gets at most 2 checks per action", () => {
-    const g = seeded();
-    apply(g, { addNodes: [node("a1", { kind: "actor", label: "ad:x" }), node("a2", { kind: "actor", label: "ad:y" })],
-      addEdges: [{ tempId: "x", kind: "attributed-to", source: "a1", target: "N1", prior: 0.3, evidence: [] }, { tempId: "y", kind: "attributed-to", source: "a2", target: "N1", prior: 0.3, evidence: [] }] });
-    apply(g, { incrementAttempts: ["E1"] }, 2);
-    apply(g, { incrementAttempts: ["E2"] }, 3);
-    expect(selectFrontier(g, cfg, 4)?.priority).not.toBe(2);
-  });
 });
 
 describe("accusing labels need a baseline", () => {
@@ -276,7 +239,7 @@ describe("legitimate steps", () => {
     apply(g, { addNodes: [node("dev", { label: "admin applied a Function resource from 6.6.6.6", legitimate: true, isRoot: true, evidence: [ev("direct", "supports", ["d1"]), ev("corroborating", "supports", ["d2"])] })],
       addEdges: [{ tempId: "e", kind: "explains", source: "dev", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["x1"]), ev("corroborating", "supports", ["x2"])] }] });
     expect(g.nodes.N2!.isRoot).toBeUndefined();
-    expect(selectFrontier(g, cfg, 2)).toMatchObject({ move: "expand", targetId: "N2" });
+    expect(options(g, cfg).expand).toContain("N2");
     apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "k8s:admin", toolCallIds: ["r1"] }], g, ctx));
     const { renderReport } = await import("../../../plugins/rootcause/v3/report.js");
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
@@ -295,13 +258,6 @@ describe("linked system identities", () => {
       { layer: "machine-facing", kind: "iam-principal", value: "arn:aws:sts::1111:assumed-role/admin/fn-sync", toolCallIds: ["r1"] },
     ], g, ctx));
     expect(Object.values(g.edges).every((e) => e.status === "confirmed")).toBe(true);
-  });
-  it("undisputed attribution gets one check", () => {
-    const g = seeded();
-    apply(g, { addNodes: [node("a1", { kind: "actor", label: "ad:x" })], addEdges: [{ tempId: "x", kind: "attributed-to", source: "a1", target: "N1", prior: 0.3, evidence: [] }] });
-    apply(g, { incrementAttempts: ["E1"] }, 2);
-    const d = selectFrontier(g, cfg, 3);
-    expect(d?.targetId).not.toBe("E1");
   });
 });
 
@@ -329,7 +285,7 @@ describe("pivot closes when a lead already explains the origin", () => {
     apply(g, { updateMarkers: [{ markerId: "B1", pivotSteps: 2, forwardLeaves: ["N2"] }] });
     const model = { runTurn: async () => { throw new Error("no model turn expected"); } };
     const ctx: any = { cfg, turn: 3, model, tools: { callCount: 0 }, trace: new MemoryTrace("t").forTurn(3, "pivot", "B1"), domains: ["edr", "k8s"], range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"] };
-    const patch = await pivot({ move: "pivot", targetId: "B1", turn: 3, priority: 1, reason: "" }, g, ctx);
+    const patch = await pivot({ move: "pivot", targetId: "B1", turn: 3, reason: "" }, g, ctx);
     apply(g, patch, 3);
     expect(g.nodes.B1!.resolvedTo).toBe("N2");
   });
@@ -447,7 +403,7 @@ describe("a test is absent only after a whole-range search", () => {
     const inputs: Record<string, unknown> = { r1: { spl: "index=x sourcetype=edr", earliest: "2026-03-13T11:00:00Z", latest: "2026-03-13T12:40:00Z" } };
     const sub = { outcome: "absent", summary: "nothing", toolCallIds: ["r1"], supports: [], weakens: ["R1.H1"], events: [], reasoning: "" };
     const ctx: any = { model: { runTurn: async () => ({ submission: sub, toolCalls: [] }) }, trace: new MemoryTrace("t").forTurn(2, "test", "R1.P1"), cfg, range: ["2026-03-11T00:00:00Z", "2026-03-14T00:00:00Z"], domains: ["edr"], tools: { callCount: 1, coverage: {}, inputOf: (id: string) => inputs[id] }, sizes: {} };
-    const patch = await testHandler({ move: "test", targetId: "R1.P1", turn: 2, priority: 1, reason: "" }, g, ctx);
+    const patch = await testHandler({ move: "test", targetId: "R1.P1", turn: 2, reason: "" }, g, ctx);
     expect(patch.predictionResult).toMatchObject({ status: "unclear", weakens: [] });
   });
 });

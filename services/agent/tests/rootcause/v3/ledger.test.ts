@@ -6,7 +6,6 @@ import type { AgentEvent } from "../../../contracts/events.js";
 import { defaultConfig, type AgentConfig } from "../../../plugins/rootcause/v3/config.js";
 import { applyPatch, createGraph, emptyPatch, type Graph, type GraphPatch, type Prediction } from "../../../plugins/rootcause/v3/graph.js";
 import { engineOf, fold, type V3Kinds } from "../../../plugins/rootcause/v3/ledger.js";
-import { ScriptedModelClient } from "../../../plugins/rootcause/v3/model/client.js";
 import { rootCauseV3Projection, rootCauseV3Replay } from "../../../plugins/rootcause/v3/projection.js";
 import { run, seedFromAlert } from "../../../plugins/rootcause/v3/orchestrator.js";
 import { domainsIn } from "../../../plugins/rootcause/v3/survey.js";
@@ -14,7 +13,7 @@ import { Registry } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { splunkTool } from "../../../plugins/rootcause/v3/tools/splunk-tool.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import type { Alert } from "../../../plugins/rootcause/v3/types.js";
-import { Cassette } from "./support.js";
+import { Cassette, SpendingScript } from "./support.js";
 
 const fx = (f: string) => new URL(`./fixtures/mini/${f}`, import.meta.url).pathname;
 const range: [string, string] = ["2026-05-05T06:00:00Z", "2026-05-05T18:00:00Z"];
@@ -42,7 +41,7 @@ function journal(cfg: AgentConfig) {
 function deps(cfg: AgentConfig, entries: unknown[], trace = new MemoryTrace("r1"), tools = new Registry()) {
   tools.register(splunkTool(new Cassette(fx("cassette.jsonl")), "lab"));
   const budget = { usd: 0 };
-  const model = new ScriptedModelClient({ cfg, tools, domains, survey, range }, entries as never);
+  const model = new SpendingScript({ cfg, tools, domains, survey, range }, entries as never, budget);
   return { model, tools, trace, budget, domains, clock: () => new Date() };
 }
 
@@ -110,7 +109,9 @@ describe("rootcause v3 ledger", () => {
     const folded = fold(events);
     expect(folded.lastTurn).toBe(3);
     const used = (first.model as unknown as { used: Set<number> }).used;
-    const rest = entries.filter((_, i) => !used.has(i));
+    // The choice the first worker carried is not in the ledger: the resumed run's first turn is a choose turn.
+    const carried = { move: "choose", correlationId: "N1", toolCalls: [], submission: { move: "strengthen", target: "E1", why: "the link to the cause is suspected" } };
+    const rest = [carried, ...entries.filter((_, i) => !used.has(i))];
     const trace = new MemoryTrace("r1", () => new Date(), folded.entries);
     const tools = new Registry();
     const second = deps(cfg, rest, trace, tools);

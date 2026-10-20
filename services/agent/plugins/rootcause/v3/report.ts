@@ -229,8 +229,8 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   // 4. Decisions per node
   out.push("## 4. Decisions", "");
   for (const e of trace.chronological().filter((x) => x.type === "decision")) {
-    const d = e.payload as { move: string; targetId: string; priority: number; reason: string };
-    out.push(`- turn ${e.turn}: P${d.priority} ${d.move} ${d.targetId} — ${d.reason}`);
+    const d = e.payload as { move: string; targetId: string; reason: string };
+    out.push(`- turn ${e.turn}: ${d.move} ${d.targetId} — ${d.reason}`);
   }
   out.push("");
 
