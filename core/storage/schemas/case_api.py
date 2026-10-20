@@ -131,6 +131,8 @@ class CaseRecordRow(BaseModel):
     source: str
     chained: bool
     text: str
+    # The run a run row is from; absent on audit and activity rows.
+    run_id: Optional[str] = None
 
 
 class CaseRecordResponse(BaseModel):

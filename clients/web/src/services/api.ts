@@ -126,7 +126,6 @@ export const aiDecisionsApi = {
   }) => api.get('/ai/decisions', { params }),
   
   submitFeedback: (decisionId: string, data: {
-    human_reviewer: string
     human_decision: string
     feedback_comment?: string
     accuracy_grade?: number
@@ -272,6 +271,8 @@ export interface CaseRecordRow {
   source: string
   chained: boolean
   text: string
+  /** The run a run row is from; absent on audit and activity rows. */
+  run_id?: string | null
 }
 
 export interface CaseRecordResponse {

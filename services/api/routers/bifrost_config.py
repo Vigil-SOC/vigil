@@ -5,10 +5,10 @@ allow-lists, pricing and governance. This router is the console's only door to
 it: Bifrost itself runs with admin auth disabled on a private network, so the
 gate has to live here.
 
-Three things it does beyond forwarding. The first two are because Bifrost's key
+Four things it does beyond forwarding. The first two are because Bifrost's key
 API cannot be driven honestly without them (see ``core.llm.bifrost.admin`` for
-how those were learned); the third is because the rest of Vigil does not read
-Bifrost:
+how those were learned); the others are because the rest of Vigil does not read
+Bifrost, and because Bifrost trusts what it is sent:
 
 * **Secrets stay ours.** A key's plaintext is mirrored into the secrets store
   under ``llm_key_<key_id>`` on write and dropped on delete, so credential
@@ -18,6 +18,10 @@ Bifrost:
   (``sk-a****key``) and Bifrost accepts a write that echoes the mask, storing
   the mask as the credential — every call then 401s with nothing to say why. A
   write that carries no new secret has the stored one substituted in.
+* **A provider's base URL is validated here, not in the browser.** A write that
+  carries ``network_config.base_url`` is shape-checked, normalized, and merged
+  into the stored provider document (see ``_with_base_url``). Bifrost's provider
+  document is the one home of that value.
 * **A key write mirrors a provider row.** Vigil indexes providers by
   ``llm_provider_configs``, so a key that exists only in Bifrost is unreachable
   to the model picker, to assignments, and to dispatch — see
@@ -38,6 +42,11 @@ from pydantic import BaseModel
 from core.auth.auth_service import AuthService
 from core.config import get_settings
 from core.llm.bifrost import mirror
+from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
+from core.llm.providers.base_url import (
+    normalize_openai_compat_base_url,
+    validate_base_url_shape,
+)
 from core.routing import Auth, RouterMeta
 from core.secrets import delete_secret, get_secret, set_secret
 from core.storage.models import User
@@ -75,6 +84,7 @@ _WRITE_METHODS = frozenset({"POST", "PUT", "DELETE"})
 # ``providers/{name}/keys`` and ``providers/{name}/keys/{key_id}`` — the only
 # paths carrying a credential, and so the only ones needing secret handling.
 _KEYS_PATH = re.compile(r"^providers/(?P<provider>[^/]+)/keys(?:/(?P<key_id>[^/]+))?$")
+_PROVIDER_PATH = re.compile(r"^providers/(?P<provider>[^/]+)$")
 
 
 def _secret_ref(key_id: str) -> str:
@@ -344,6 +354,71 @@ def _resolve_key_value(
     body["value"] = stored
 
 
+def _sets_base_url(body: Any) -> bool:
+    network = body.get("network_config") if isinstance(body, dict) else None
+    return isinstance(network, dict) and "base_url" in network
+
+
+def _merge_base_url(doc: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+    """The provider write that sets (or clears) ``network_config.base_url``.
+
+    ``doc`` is the stored provider document, ``{}`` for a create. Bifrost's PUT
+    replaces the whole document, so what the request did not mention is carried
+    over from ``doc``: every other ``network_config`` field, and every writable
+    provider field, but never ``keys``.
+
+    A host an operator typed into this admin-only setting is a destination they
+    chose, so ``allow_private_network`` is set with it — a LAN or loopback
+    gateway is refused by Bifrost otherwise — and dropped again when the host is
+    cleared. There is no private-range classifier here on purpose.
+    """
+    requested = dict(body["network_config"])
+    raw = requested.pop("base_url")
+    if raw is not None and not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="base_url: must be a string")
+    try:
+        validate_base_url_shape(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    url = normalize_openai_compat_base_url(raw) if raw else ""
+
+    network = {**(doc.get("network_config") or {}), **requested}
+    had_host = bool(network.get("base_url"))
+    if url:
+        network["base_url"] = url
+        network["allow_private_network"] = True
+    else:
+        network.pop("base_url", None)
+        if had_host:
+            network.pop("allow_private_network", None)
+    merged = {k: v for k, v in doc.items() if k in _PROVIDER_WRITE_FIELDS}
+    merged.update({k: v for k, v in body.items() if k != "keys"})
+    merged["network_config"] = network
+    return merged
+
+
+async def _with_base_url(
+    method: str, provider: Optional[str], body: Dict[str, Any]
+) -> Dict[str, Any]:
+    """``body`` with its ``base_url`` validated and merged over the stored document."""
+    doc: Dict[str, Any] = {}
+    if method == "PUT" and provider:
+        url = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                current = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
+        if current.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"No provider {provider}")
+        if current.status_code >= 400:
+            raise HTTPException(
+                status_code=502, detail=f"Bifrost refused to read {provider}"
+            )
+        doc = current.json()
+    return _merge_base_url(doc if isinstance(doc, dict) else {}, body)
+
+
 # Declared before the catch-all below, which FastAPI would otherwise match
 # first. Not a proxied path: this is Vigil's own verdict about Bifrost's keys,
 # computed in core.llm.bifrost.mirror so the console, the setup gate and
@@ -424,6 +499,12 @@ async def proxy(
     key_id = keys_match.group("key_id") if keys_match else None
     if keys_match and isinstance(body, dict):
         _resolve_key_value(body, key_id, keys_match.group("provider"))
+
+    if _sets_base_url(body):
+        provider_match = _PROVIDER_PATH.match(path)
+        if provider_match or (path == "providers" and request.method == "POST"):
+            name = provider_match.group("provider") if provider_match else None
+            body = await _with_base_url(request.method, name, body)
 
     url = f"{get_settings().bifrost_url.rstrip('/')}/api/{path}"
     try:

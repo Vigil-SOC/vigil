@@ -43,6 +43,7 @@ import httpx
 
 from core.config import get_settings
 from core.llm.outage import report_outage, report_recovered
+from core.llm.providers.base_url import normalize_openai_compat_base_url
 from core.llm.providers.discovery import is_embedding_model_id
 from core.platform.url_safety import DEFAULT_ALLOWED_PROVIDER_HOSTS
 
@@ -550,22 +551,11 @@ def open_allow_list(provider_type: str, *, key_value: Optional[str]) -> bool:
         return ok
 
 
-def _normalize_openai_compat_base_url(base_url: str) -> str:
-    """Strip a trailing ``/v1``; Bifrost appends the versioned path itself.
-
-    Any other path prefix (``/api``, ``/openai``, a tenant slug) is kept.
-    """
-    url = base_url.strip().rstrip("/")
-    if url.lower().endswith("/v1"):
-        url = url[:-3].rstrip("/")
-    return url
-
-
 def _custom_openai_base_url(base_url: Optional[str]) -> Optional[str]:
     """Normalized Bifrost form, or None when the stock host should stay."""
     if not base_url or not str(base_url).strip():
         return None
-    target = _normalize_openai_compat_base_url(str(base_url))
+    target = normalize_openai_compat_base_url(str(base_url))
     if not target:
         return None
     host = (urlparse(target).hostname or "").lower()
@@ -598,13 +588,17 @@ def sync_provider_base_url(provider_type: str, base_url: Optional[str]) -> bool:
 
     GET/PUT ``/api/providers/{name}`` (the provider document, not ``/keys``).
     Other ``network_config`` fields are preserved; only writable provider
-    fields are sent, never ``keys``. Reverting to empty/stock clears a
-    previously pushed custom host so inference does not keep using it.
+    fields are sent, never ``keys``. An explicitly stock host clears a
+    previously pushed custom host so inference does not keep using it; an
+    empty value says nothing and leaves whatever host Bifrost holds, since the
+    Settings panel sets one there that no Vigil row knows about.
 
     Returns True on success or when there is nothing to write. Failures are
     logged and return False so the catalog sync still proceeds.
     """
     if not provider_type or provider_type != "openai":
+        return True
+    if not base_url or not str(base_url).strip():
         return True
     target = _custom_openai_base_url(base_url)
 

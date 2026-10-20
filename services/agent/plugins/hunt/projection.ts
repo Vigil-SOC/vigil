@@ -1,6 +1,7 @@
 import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
 import { callViews, type CallView } from "../../core/call-view.js";
+import { recordRows, type BearsOn, type RecordQuestion, type RecordRows, type RecordStanding } from "../../core/record.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
 import { findingsCitedBy } from "./findings.js";
 import { citedTechniques, DEPLOYMENT_GAP_PROVENANCE, isGap, NULL_CHECK_PROVENANCE, sensorAttested, unboundInWords } from "./strength.js";
@@ -14,9 +15,7 @@ import type {
   HuntOutcome,
   HuntState,
   HuntStatus,
-  Hypothesis,
-  HypothesisStatus,
-  LinkRelation,
+  OpenQuestion,
   RestsOn,
   Salience,
 } from "./types.js";
@@ -25,6 +24,7 @@ import type {
 // report progress against, so what it has tested and how each belief stands is it.
 export interface HuntProjection {
   run_id: string;
+  run_kind: "hunt";
   name: string;
   // What the hunt was asked to cover, as the caller stated it at start.
   scope: Record<string, unknown>;
@@ -33,6 +33,8 @@ export interface HuntProjection {
   reason: string;
   iteration: number;
   cost_usd: number;
+  // The ceiling every projection carries in its head, off budgets below.
+  max_cost_usd: number;
   // What this run was granted, extensions included, so a reader can say how far
   // through its budget the hunt is.
   budgets: Budgets;
@@ -84,11 +86,8 @@ export interface HuntNarrative {
   written_at: string;
 }
 
-export interface QuestionView {
-  question_id: string;
-  question: string;
+export interface QuestionView extends RecordQuestion {
   entity_key: string | null;
-  hypothesis_id: string | null;
   spawned_iteration: number;
 }
 
@@ -158,27 +157,17 @@ export interface EvidenceView {
   finding_ids: string[];
   served_by: string | null;
   // Which beliefs it bears on and how. Evidence attached to nothing is worth seeing.
-  bears_on: { hypothesis_id: string; relation: LinkRelation }[];
+  bears_on: BearsOn[];
 }
 
-export interface HypothesisStanding {
-  hypothesis_id: string;
-  statement: string;
-  status: HypothesisStatus;
+// The record's row, counted from the full link set rather than the capped evidence list
+// above, with what the hunt adds to it.
+export interface HypothesisStanding extends RecordStanding {
   // What a belief was declared to test, which nothing declares any more. Kept because
   // the ledger's record carries it and a historical run has one.
   attack_technique: string | null;
   // What evidence bearing on this belief actually cited: earned rather than asserted.
   techniques_cited: string[];
-  resolution_reason: string | null;
-  // Where the belief came from: the definition, the caller, or the base rate.
-  provenance: string;
-  // From the full link set, not the capped evidence list above.
-  supports: number;
-  weakens: number;
-  // Every row that is not a critic verdict and links to this belief neither way, over
-  // the full ledger: supports + weakens + neither is the evidence the run gathered.
-  neither: number;
 }
 
 // A reader may ask for more than EVIDENCE_SHOWN rows, to page back through a long hunt.
@@ -191,9 +180,16 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
   const answered = new Set(view.resolutions.map((resolution) => resolution.checkpoint_id));
   const open = [...view.checkpoints.values()].find((checkpoint) => !answered.has(checkpoint.checkpoint_id));
   const report = reportIn(events);
+  // neither counts every row that is not a critic verdict, over the full ledger:
+  // supports + weakens + neither is the evidence the run gathered.
+  const record = recordRows(
+    view,
+    [...view.evidence.values()].filter((one) => one.provenance !== NULL_CHECK_PROVENANCE).map((one) => one.evidence_id),
+  );
 
   return {
     run_id: runId,
+    run_kind: "hunt",
     name: view.hunt.name,
     scope: view.hunt.scope,
     status: view.hunt.status,
@@ -201,30 +197,26 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
     reason: why(view.hunt),
     iteration: view.hunt.iteration,
     cost_usd: view.hunt.cost_usd,
+    max_cost_usd: view.hunt.budgets.max_cost_usd,
     budgets: view.hunt.budgets,
-    hypotheses: [...view.hypotheses.values()].map((hypothesis) => standing(hypothesis, view)),
+    hypotheses: record.hypotheses.map((row) => standing(row, view)),
     evidence_count: view.evidence.size,
     // Ledger order reversed rather than sorted on captured_at, which ties within a
     // millisecond.
     evidence: [...view.evidence.values()]
       .reverse()
       .slice(0, Math.max(EVIDENCE_SHOWN, options.evidence_limit ?? 0))
-      .map((record) => evidenceView(record, view.links)),
+      .map((one) => evidenceView(one, record.bears_on)),
     reviews: [...view.evidence.values()].filter((record) => record.provenance === NULL_CHECK_PROVENANCE).map(reviewView),
     open_checkpoint: open === undefined ? null : openCheckpoint(open),
     report,
     report_markdown: report === null ? null : renderReport(report, view, narrativeIn(events), recalledPayloadOf(events)),
     narrative: narrativeView(narrativeIn(events)),
     handoffs: events.filter((event) => event.kind === "handoff").map((event) => event.payload as Handoff),
-    open_questions: [...view.questions.values()]
-      .filter((question) => question.status === "open")
-      .map(({ question_id, question, entity_key, hypothesis_id, spawned_iteration }) => ({
-        question_id,
-        question,
-        entity_key,
-        hypothesis_id,
-        spawned_iteration,
-      })),
+    open_questions: record.open_questions.map(({ question_id, question, hypothesis_id }) => {
+      const { entity_key, spawned_iteration } = view.questions.get(question_id) as OpenQuestion;
+      return { question_id, question, entity_key, hypothesis_id, spawned_iteration };
+    }),
     moves: [...view.decisions].reverse().slice(0, MOVES_SHOWN).map(moveView),
     calls: callViews(view.dispatches.values()),
     recall: recalledPayloadOf(events),
@@ -290,10 +282,7 @@ function why(hunt: HuntState): string {
 // on a five-second poll.
 export const EVIDENCE_SHOWN = 50;
 
-function evidenceView(
-  record: EvidenceRecord,
-  links: readonly { evidence_id: string; hypothesis_id: string; relation: LinkRelation }[],
-): EvidenceView {
+function evidenceView(record: EvidenceRecord, bearsOn: RecordRows["bears_on"]): EvidenceView {
   return {
     evidence_id: record.evidence_id,
     iteration: record.iteration,
@@ -312,9 +301,7 @@ function evidenceView(
     captured_at: record.captured_at,
     finding_ids: findingsCitedBy(record),
     served_by: record.served_by ?? null,
-    bears_on: links
-      .filter((link) => link.evidence_id === record.evidence_id)
-      .map((link) => ({ hypothesis_id: link.hypothesis_id, relation: link.relation })),
+    bears_on: bearsOn.get(record.evidence_id) ?? [],
   };
 }
 
@@ -339,23 +326,18 @@ function reviewView(record: EvidenceRecord): ReviewView {
   };
 }
 
-function standing(hypothesis: Hypothesis, view: Projection): HypothesisStanding {
-  const { hypothesis_id, statement, status, attack_technique, resolution_reason, provenance } = hypothesis;
-  const links = view.links.filter((link) => link.hypothesis_id === hypothesis_id);
-  const supports = links.filter((link) => link.relation === "supports");
-  const weakens = links.filter((link) => link.relation === "weakens");
-  const taken = new Set([...supports, ...weakens].map((link) => link.evidence_id));
-  const counted = [...view.evidence.values()].filter((record) => record.provenance !== NULL_CHECK_PROVENANCE);
+function standing(row: RecordStanding, view: Projection): HypothesisStanding {
+  const { hypothesis_id, statement, status, resolution_reason, provenance, supports, weakens, neither } = row;
   return {
     hypothesis_id,
     statement,
     status,
-    attack_technique,
+    attack_technique: view.hypotheses.get(hypothesis_id)?.attack_technique ?? null,
     techniques_cited: citedTechniques(view, hypothesis_id),
     resolution_reason,
     provenance,
-    supports: supports.length,
-    weakens: weakens.length,
-    neither: counted.filter((record) => !taken.has(record.evidence_id)).length,
+    supports,
+    weakens,
+    neither,
   };
 }

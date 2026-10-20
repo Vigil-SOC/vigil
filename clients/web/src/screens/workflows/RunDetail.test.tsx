@@ -308,7 +308,8 @@ describe('the report', () => {
       hunt: hunt({ report_markdown: 'the ledger says this' }),
     })
 
-    expect(screen.getByText('the ledger says this')).toBeInTheDocument()
+    // Once on the verdict line, once as the report.
+    expect(screen.getAllByText('the ledger says this')).toHaveLength(2)
     expect(screen.queryByText('stale row copy')).toBeNull()
   })
 
@@ -329,7 +330,8 @@ describe('the report', () => {
       }),
     })
 
-    expect(screen.getByText('Two unrelated things happened, not one.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Verdict')).toHaveTextContent('Two unrelated things happened, not one.')
+    expect(screen.getAllByText('Two unrelated things happened, not one.')).toHaveLength(2)
     expect(screen.getByText(/A host beaconed to 45.77.53.176/)).toBeInTheDocument()
     // The duplicated half is gone, and so is the metadata the run bar already shows.
     expect(screen.queryByText(/a record nobody needs twice/)).toBeNull()
@@ -1372,10 +1374,10 @@ describe('investigate decisions from replay', () => {
     expect(screen.getByText('still here')).toBeInTheDocument()
   })
 
-  it('keeps the empty compose placeholder when replay 404s', async () => {
+  it('says it could not read a run with no record, once the replay 404s', async () => {
     renderPanel({})
 
-    expect(await screen.findByText('No additional detail recorded for this run.')).toBeInTheDocument()
+    expect(await screen.findByText('Couldn’t read this run’s record')).toBeInTheDocument()
     expect(screen.queryByText('Decisions')).toBeNull()
   })
 
@@ -1516,6 +1518,14 @@ describe('a root-cause trace while it runs', () => {
 
     expect(screen.getByText('$0.42')).toBeInTheDocument()
     expect(screen.getByText(/of \$15\.00/)).toBeInTheDocument()
+  })
+
+  it('opens on its reason as the verdict line, and on none while it has none', () => {
+    const { unmount } = renderPanel({ status: 'completed', projection: trace({ status: 'terminal', reason: 'the .lnk opened the stager' }) })
+    expect(screen.getByLabelText('Verdict')).toHaveTextContent('the .lnk opened the stager')
+    unmount()
+    renderPanel({ status: 'running', projection: trace() })
+    expect(screen.queryByLabelText('Verdict')).toBeNull()
   })
 
   it('lists each step as last written, with whether it is proven', () => {

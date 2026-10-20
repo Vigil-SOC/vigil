@@ -322,17 +322,20 @@ export interface ChildPayload {
   cost_usd: number;
 }
 
+// handed_off is terminal for a hunt's belief but not an ending of it: the claim now
+// belongs to incident response. Restated in core/cases/case_record.py and the console's
+// caseFold.ts, which tests/unit/_ratchets/test_recall_contract_agrees.py holds to this.
+export const HYPOTHESIS_STATUSES = ["active", "proven", "disproven", "inconclusive", "parked", "handed_off"] as const;
+export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
+
 // The hypothesis record's kernel shape. A plugin may write a richer one under the
 // same kind (the hunt's carries its verdict machinery); every field here is in it.
 export interface HypothesisPayload {
   hypothesis_id: string;
   statement: string;
-  status: string;
+  status: HypothesisStatus;
   provenance: string;
   resolution_reason: string | null;
-  // True for the innocent explanation, false for any other, when the agent said.
-  // Absent on older ledgers.
-  benign?: boolean;
 }
 
 // Evidence bearing on a hypothesis. evidence_id is a call ref in a plain run and
@@ -341,8 +344,6 @@ export interface LinkPayload {
   evidence_id: string;
   hypothesis_id: string;
   relation: "supports" | "weakens" | "neither";
-  // What the result shows, in the agent's words. Absent on older ledgers.
-  note?: string;
 }
 
 export interface QuestionPayload {

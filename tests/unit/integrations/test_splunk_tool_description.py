@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from core.integrations.splunk.client import SearchResult
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -27,7 +29,7 @@ def _load(monkeypatch, rows, service=object()):
         def search(self, query, earliest_time="-24h", max_count=1000):
             if rows is None:
                 raise RuntimeError("splunk is unreachable")
-            return rows
+            return SearchResult(rows)
 
     monkeypatch.setattr(
         module, "get_splunk_service", lambda: (None if service is None else _Service())
@@ -105,8 +107,10 @@ def test_names_the_time_formats_that_work_and_the_one_that_does_not(monkeypatch)
     assert "2018-08-19T00:00:00" in described
     assert "epoch second" in described
     assert "08/19/2018:00:00:00" in described and "does NOT take" in described
-    # There is no such parameter, so telling it to set one would waste a turn.
-    assert "no `latest` parameter" in described
+    # An inline `latest=<epoch>` overrides the job's "now" end; root cause's
+    # "count before T" proof depends on the model knowing that.
+    assert "always ends now" not in described
+    assert "`latest=<epoch seconds>` in spl_query" in described
 
 
 # nl_search takes no time range at all, so the same map is a warning rather than
@@ -141,7 +145,7 @@ def test_looks_again_after_a_deployment_that_was_not_configured_yet(monkeypatch)
         def search(self, query, earliest_time="-24h", max_count=1000):
             if unreachable["still"]:
                 raise RuntimeError("splunk is unreachable")
-            return _ROWS
+            return SearchResult(_ROWS)
 
     monkeypatch.setattr(module, "get_splunk_service", lambda: _Service())
     assert _describe(module)["splunk_execute"] == module._RESULT_SIZE_GUIDANCE

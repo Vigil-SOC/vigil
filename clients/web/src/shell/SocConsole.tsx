@@ -34,6 +34,7 @@ import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
 import AutoOpsScreen from '../screens/autoops/AutoOpsScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
+import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
@@ -85,7 +86,7 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
 const CHAT_WIDTH = 400
 
 const setupTip = (left: number) =>
-  `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup guide.`
+  `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup steps on Home.`
 
 export default function SocConsole() {
   return (
@@ -147,8 +148,9 @@ function SocConsoleInner() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
-  // open setup steps; null when unread or failed, so no chip and no menu count
-  const [setupLeft, setSetupLeft] = useState<number | null>(null)
+  // Home's setup steps; null when unread or failed, so no chip and no menu count
+  const [setupSteps, setSetupSteps] = useState<{ id: string; done: boolean }[] | null>(null)
+  const [setupHidden, setSetupHidden] = useState<string[]>(() => readSetupHidden())
   const moreRef = useRef<HTMLDivElement>(null)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
@@ -326,18 +328,29 @@ function SocConsoleInner() {
   // re-read on each screen change so finishing a step shows without a reload
   useEffect(() => {
     let live = true
+    setSetupHidden(readSetupHidden())
     configApi
       .getSetupSteps()
       .then((res) => {
-        if (live) setSetupLeft(res.data.steps.filter((step) => !step.done).length)
+        if (live) setSetupSteps(res.data.steps)
       })
       .catch(() => {
-        if (live) setSetupLeft(null)
+        if (live) setSetupSteps(null)
       })
     return () => {
       live = false
     }
   }, [current])
+
+  // Not now on Home hides a step without leaving the screen
+  useEffect(() => {
+    const reread = () => setSetupHidden(readSetupHidden())
+    window.addEventListener(SETUP_HIDDEN_CHANGED, reread)
+    return () => window.removeEventListener(SETUP_HIDDEN_CHANGED, reread)
+  }, [])
+
+  // counts what Home shows, so none for people who can't open Home
+  const setupLeft = setupSteps && canTourHome ? openSetupSteps(setupSteps, setupHidden).length : null
 
   useEffect(() => {
     let live = true
@@ -565,7 +578,7 @@ function SocConsoleInner() {
             )}
             {setupLeft !== null && setupLeft > 0 && (
               <Link
-                to="/setup"
+                to={HOME_SETUP_HREF}
                 className="vg-setup-chip"
                 title={setupTip(setupLeft)}
                 aria-label={setupTip(setupLeft)}

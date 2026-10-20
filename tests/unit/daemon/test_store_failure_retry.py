@@ -23,6 +23,7 @@ from aiohttp import ClientConnectorError, ClientSession
 
 from core.config import get_settings
 from core.ingestion.dedup import RedisDedupSet
+from core.integrations.splunk.client import SearchResult
 from services.daemon.config import PollingConfig, ProcessingConfig
 from services.daemon.poller import DataPoller
 from services.daemon.processor import FindingProcessor, _STORE_ATTEMPTS
@@ -91,9 +92,9 @@ class _Splunk:
         self.events = events
         self.queries: List[Dict[str, Any]] = []
 
-    def search(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def search(self, **kwargs: Any) -> SearchResult:
         self.queries.append(kwargs)
-        return list(self.events)
+        return SearchResult(list(self.events))
 
 
 class _CrowdStrike:

@@ -502,3 +502,69 @@ export function moveWord(action: string): string {
   const words = action.replace(/[_-]+/g, ' ').trim().toLowerCase()
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
+
+const rec = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {})
+const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
+
+/** An investigation's record on its projection (plugins/investigate/view.ts recordView),
+ *  read into the hunt's view so History lays it out with the hunt's own tables. Null
+ *  unless the projection carries `hypotheses`: a legacy lead ledger or compose has none. */
+export function investigationOf(projection: unknown): HuntView | null {
+  const p = rec(projection)
+  if (!Array.isArray(p.hypotheses)) return null
+  const hypotheses = p.hypotheses.map((raw): HuntStanding => {
+    const h = rec(raw)
+    return {
+      hypothesis_id: str(h.hypothesis_id), statement: str(h.statement), status: str(h.status),
+      resolution_reason: typeof h.resolution_reason === 'string' ? h.resolution_reason : null,
+      ...(typeof h.provenance === 'string' ? { provenance: h.provenance } : {}),
+      ...(num(h.supports) !== undefined ? { supports: num(h.supports) } : {}),
+      ...(num(h.weakens) !== undefined ? { weakens: num(h.weakens) } : {}),
+    }
+  })
+  const evidence = (Array.isArray(p.evidence) ? p.evidence : []).map((raw): HuntEvidence => {
+    const e = rec(raw)
+    return {
+      evidence_id: str(e.evidence_id), iteration: num(e.iteration) ?? 0, source_system: str(e.source_system), summary: str(e.summary),
+      is_gap: e.is_gap === true, gap_detail: typeof e.gap_detail === 'string' ? e.gap_detail : null,
+      bears_on: (Array.isArray(e.bears_on) ? e.bears_on : []).map((b) => ({ hypothesis_id: str(rec(b).hypothesis_id), relation: str(rec(b).relation) })),
+      ...(typeof e.captured_at === 'string' ? { captured_at: e.captured_at } : {}),
+    }
+  })
+  const open_questions = (Array.isArray(p.open_questions) ? p.open_questions : []).map((raw): HuntQuestion => {
+    const q = rec(raw)
+    return { question_id: str(q.question_id), question: str(q.question), hypothesis_id: typeof q.hypothesis_id === 'string' ? q.hypothesis_id : null }
+  })
+  return {
+    status: str(p.status), iteration: num(p.iterations) ?? 0, evidence_count: num(p.evidence_count) ?? evidence.length,
+    hypotheses, evidence, open_questions, report: null,
+  }
+}
+
+/** Copied from caseFold.ts answerText rather than imported, so History does not read
+ *  through the case fold. A structured conclusion leads with its disposition. */
+function answerText(answer: unknown, lead: boolean): string {
+  if (typeof answer === 'string') return answer
+  const o = rec(answer)
+  if (typeof o.summary === 'string' && o.summary) return [lead && typeof o.disposition === 'string' ? moveWord(o.disposition) : '', o.summary].filter(Boolean).join(' — ')
+  return ''
+}
+
+/** What a run concluded, in one line: the head's disposition when it carries one
+ *  (not yet on any projection; #2451), and the kind's own headline: a hunt's account
+ *  or report, an investigation's answer, a root cause's reason. */
+export function verdictOf(d: WfRunDetail, rootCauseReason: string | null): { disposition: string | null; headline: string } {
+  const head = rec(d.hunt ?? d.projection)
+  const disposition = typeof head.disposition === 'string' && head.disposition ? moveWord(head.disposition) : null
+  let headline = ''
+  if (d.hunt) {
+    const firstLine = (d.hunt.report_markdown ?? '').split('\n').map((line) => line.replace(/^#+\s*/, '').trim()).find(Boolean)
+    headline = d.hunt.narrative?.summary || firstLine || ''
+  } else if (rootCauseReason !== null) {
+    headline = rootCauseReason
+  } else if (Array.isArray(head.findings)) {
+    // The answer leads with its own disposition only when the head does not say it.
+    headline = answerText(rec(head.findings[0]).answer, disposition === null)
+  }
+  return { disposition, headline }
+}

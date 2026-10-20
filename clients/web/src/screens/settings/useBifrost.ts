@@ -116,6 +116,14 @@ export function useBifrostProviders() {
     [reload],
   )
 
+  const setBaseUrl = useCallback(
+    async (name: string, baseUrl: string) => {
+      await bifrostApi.setProviderBaseUrl(name, baseUrl)
+      reload()
+    },
+    [reload],
+  )
+
   const removeProvider = useCallback(
     async (name: string) => {
       await bifrostApi.removeProvider(name)
@@ -139,6 +147,7 @@ export function useBifrostProviders() {
     saveKey,
     removeKey,
     addProvider,
+    setBaseUrl,
     removeProvider,
   }
 }
