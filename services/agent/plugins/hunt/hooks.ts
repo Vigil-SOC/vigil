@@ -634,11 +634,13 @@ export function servedSince(calls: readonly CallPayload[], tools: readonly ToolS
   return servers.size === 1 && only !== undefined ? only : null;
 }
 
-// The estate calls that answered since the turn of the hunt's last record: the results a
-// record written now rests on, which a conclusion cites by ref and the guard checks it against.
+// The estate calls that answered after the hunt's last record: the results a record written
+// now rests on, which a conclusion cites by ref and the guard checks it against. Calls are
+// journaled as they run, so a search made earlier in the turn of the last record came before
+// it, and is not counted.
 export function servedRefsSince(calls: readonly CallPayload[]): string[] {
   const own = agentCalls(calls);
-  const since = own.filter((call) => call.turn >= (own.findLast((one) => one.tool === "record_evidence" && one.ok)?.turn ?? 0));
+  const since = own.slice(own.findLastIndex((one) => one.tool === "record_evidence" && one.ok) + 1);
   return since.filter((call) => !OWN.has(call.tool) && call.tool !== SKILL_TOOL && classOf(call) === "served").map((call) => call.ref);
 }
 
