@@ -12,7 +12,7 @@ import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput } from '../.
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { agentsApi, type AIModelInfo, type ComponentAssignment } from '../../services/api'
-import type { BifrostKey } from '../../services/bifrostApi'
+import type { BifrostKey, BifrostProvider } from '../../services/bifrostApi'
 import { bifrostStaysOnSite, residencyCopy } from '../setup/providerResidency'
 import { useToast } from '../../shell/toast'
 import { useBifrostProviders } from './useBifrost'
@@ -29,9 +29,21 @@ const PROVIDER_LABELS: Record<string, string> = {
   xai: 'xAI',
   openrouter: 'OpenRouter',
   together_ai: 'Together AI',
+  anthropic: 'Anthropic',
+  ollama: 'Ollama',
+  gemini: 'Gemini',
+  mistral: 'Mistral',
+  cohere: 'Cohere',
+  groq: 'Groq',
+  perplexity: 'Perplexity',
+  cerebras: 'Cerebras',
+  huggingface: 'Hugging Face',
+  nebius: 'Nebius',
+  parasail: 'Parasail',
+  replicate: 'Replicate',
 }
-const providerLabel = (name: string) =>
-  PROVIDER_LABELS[name] || name.charAt(0).toUpperCase() + name.slice(1)
+// stock providers have a display name; a custom one keeps the name it was typed with, as the Keys table shows it
+const providerLabel = (name: string) => PROVIDER_LABELS[name] || name
 
 /** The gateway provider behind the chat_default assignment. Assignments name an
     llm_provider_configs row ("anthropic-default"); the gateway names the upstream. */
@@ -71,17 +83,17 @@ export default function AiModelsOverview({ notify }: SectionProps) {
       )}
       {bf.phase === 'ready' && names.length > 0 && (
         <>
-          <ResidencyBanner names={names} keys={bf.keys} />
+          <ResidencyBanner providers={bf.shown} keys={bf.keys} />
           <div className="aim-cards">
-            {names.map((name) => (
+            {bf.shown.map((provider) => (
               <ProviderCard
-                key={name}
-                name={name}
-                keyCount={(bf.keys[name] || []).length}
-                stays={bifrostStaysOnSite(name, bf.keys[name] || [])}
-                isDefault={name === defaultName}
+                key={provider.name}
+                provider={provider}
+                keyCount={(bf.keys[provider.name] || []).length}
+                stays={bifrostStaysOnSite(provider.name, bf.keys[provider.name] || [], provider)}
+                isDefault={provider.name === defaultName}
                 // null verdicts is "could not ask" — no badge, never Poor
-                routable={bf.verdicts ? !!bf.verdicts.providers?.[name] : null}
+                routable={bf.verdicts ? !!bf.verdicts.providers?.[provider.name] : null}
               />
             ))}
           </div>
@@ -95,10 +107,10 @@ export default function AiModelsOverview({ notify }: SectionProps) {
 // the residency copy leads with its label ("Hosted: …"); the banner names each group itself
 const residencyPhrase = (stays: boolean) => residencyCopy(stays).replace(/^(Hosted|Local): /, '')
 
-function ResidencyBanner({ names, keys }: { names: string[]; keys: Record<string, BifrostKey[]> }) {
-  const stays = (n: string) => bifrostStaysOnSite(n, keys[n] || [])
-  const hosted = names.filter((n) => !stays(n)).map(providerLabel)
-  const local = names.filter(stays).map(providerLabel)
+function ResidencyBanner({ providers, keys }: { providers: BifrostProvider[]; keys: Record<string, BifrostKey[]> }) {
+  const stays = (p: BifrostProvider) => bifrostStaysOnSite(p.name, keys[p.name] || [], p)
+  const hosted = providers.filter((p) => !stays(p)).map((p) => providerLabel(p.name))
+  const local = providers.filter(stays).map((p) => providerLabel(p.name))
   return (
     <div className="aim-banner" role="status">
       <Icon name="info" size={17} />
@@ -112,16 +124,32 @@ function ResidencyBanner({ names, keys }: { names: string[]; keys: Record<string
   )
 }
 
-function ProviderCard({ name, keyCount, stays, isDefault, routable }: {
-  name: string
+/** host:port of a stored base URL, no scheme or path; null when absent or unparseable */
+function hostOf(url: string | undefined): string | null {
+  if (!url) return null
+  try {
+    return new URL(url).host || null
+  } catch {
+    return null
+  }
+}
+
+function ProviderCard({ provider, keyCount, stays, isDefault, routable }: {
+  provider: BifrostProvider
   keyCount: number
   stays: boolean
   isDefault: boolean
   routable: boolean | null
 }) {
-  const keys = keyCount > 0
-    ? `${keyCount} ${keyCount === 1 ? 'key' : 'keys'} · via the gateway`
-    : stays ? 'Local server · no key' : 'Not set up'
+  const { name } = provider
+  const url = provider.network_config?.base_url
+  const host = hostOf(url)
+  const keyLess = !!provider.custom_provider_config?.is_key_less
+  const count = `${keyCount} ${keyCount === 1 ? 'key' : 'keys'}`
+  let keys: string
+  if (keyCount > 0) keys = `${count} · ${host ?? 'via the gateway'}`
+  else if (keyLess && host) keys = `No key needed · ${host}`
+  else keys = stays ? 'Local server · no key' : 'Not set up'
   return (
     <div className={`aim-card${isDefault ? ' default' : ''}`}>
       <div className="aim-card-top">
@@ -129,9 +157,9 @@ function ProviderCard({ name, keyCount, stays, isDefault, routable }: {
           {providerLabel(name)}
           {isDefault && <small> · default</small>}
         </span>
-        {routable !== null && <LevelBadge variant="pill" level={routable ? 'good' : 'poor'} />}
+        {routable !== null && (keyCount > 0 || keyLess) && <LevelBadge variant="pill" level={routable ? 'good' : 'poor'} />}
       </div>
-      <span className="aim-card-keys">{keys}</span>
+      <span className="aim-card-keys" title={host ? url : undefined}>{keys}</span>
       <span className={`aim-card-where${stays ? ' local' : ''}`}>
         {residencyCopy(stays)}
       </span>
@@ -183,6 +211,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     return grouped
   }, [models])
   const providerIds = useMemo(() => Object.keys(modelsByProvider).sort(), [modelsByProvider])
+  // the group's provider_type is the gateway provider's name ("lan-vllm"); its id is a mirror row ("bifrost-lan-vllm")
+  const providerName = (pid: string) => {
+    const type = modelsByProvider[pid]?.[0]?.provider_type
+    return providerLabel(type || pid.replace(/^bifrost-/, ''))
+  }
 
   useEffect(() => {
     if (phase !== 'ready') return
@@ -393,7 +426,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                               disabled={saving.includes(c)}
                               options={[
                                 ...(c === CHAT_DEFAULT_KEY ? [] : [{ value: USE_DEFAULT, label: 'Use default' }]),
-                                ...providerIds.map((pid) => ({ value: pid, label: pid })),
+                                ...providerIds.map((pid) => ({ value: pid, label: providerName(pid) })),
                               ]}
                               onSelect={(v) => pickProvider(c, v)}
                             />

@@ -1,6 +1,6 @@
 import type { LLMProvider } from '../../services/api'
-import { secretText, type BifrostKey } from '../../services/bifrostApi'
-import { urlIsLoopback } from '../../shared/loopback'
+import { secretText, type BifrostKey, type BifrostProvider } from '../../services/bifrostApi'
+import { urlIsLoopback, urlIsPrivateHost } from '../../shared/loopback'
 
 const DATA_STAYS_ON_SITE = 'Local: data stays on site'
 const DATA_STAYS_IN_CLOUD = 'Data stays in your cloud'
@@ -14,8 +14,10 @@ export function residencyCopy(stays: boolean, inCloud = false): string {
   return stays ? DATA_STAYS_ON_SITE : DATA_LEAVES_THE_SITE
 }
 
-export function bifrostStaysOnSite(name: string, keys: BifrostKey[]): boolean {
+export function bifrostStaysOnSite(name: string, keys: BifrostKey[], provider?: BifrostProvider): boolean {
   if (name === 'ollama') return true
+  // a provider pointed at a LAN or loopback host keeps its traffic on site
+  if (urlIsPrivateHost(provider?.network_config?.base_url ?? '')) return true
   return keys.some((key) => urlIsLoopback(secretText(key.ollama_key_config?.url)))
 }
 

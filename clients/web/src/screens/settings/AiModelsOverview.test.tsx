@@ -2,6 +2,7 @@
    matters: only the chat_default row asks before it saves. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { BifrostProvider } from '../../services/bifrostApi'
 import AiModelsOverview from './AiModelsOverview'
 
 const bifrost = vi.fn()
@@ -17,7 +18,7 @@ vi.mock('./useSettings', () => ({ useModelAssignment: () => assignment() }))
 vi.mock('../../services/api', () => ({ agentsApi: { listCustom: () => listCustom(), updateCustom: vi.fn() } }))
 
 const key = (url?: string) => ({ id: 'k', name: 'k', ollama_key_config: url ? { url } : undefined })
-const providersReady = (over: { providers?: { name: string }[]; shown?: { name: string }[] } & Record<string, unknown> = {}) => {
+const providersReady = (over: { providers?: BifrostProvider[]; shown?: BifrostProvider[] } & Record<string, unknown> = {}) => {
   const providers = over.providers ?? [{ name: 'anthropic' }, { name: 'ollama' }, { name: 'bedrock' }]
   return {
     providers,
@@ -82,12 +83,62 @@ describe('provider cards', () => {
     mount()
     expect(screen.getByText('· default')).toBeTruthy()
     expect(screen.getAllByText('Good')).toHaveLength(1)
-    expect(screen.getAllByText('Poor')).toHaveLength(2)
+    expect(screen.getAllByText('Poor')).toHaveLength(1)
     expect(screen.getByText('2 keys · via the gateway')).toBeTruthy()
     expect(screen.getByText('Not set up')).toBeTruthy()
     expect(screen.getAllByText('Hosted: data leaves your site')).toHaveLength(2)
     expect(screen.getByText('Local: data stays on site')).toBeTruthy()
     expect(screen.getByText('Where your data goes:').parentElement?.textContent).toMatch(/Changing the default model asks you to confirm and is logged\.$/)
+  })
+
+  const lan = (extra: Partial<BifrostProvider> = {}): BifrostProvider => ({
+    name: 'lan-vllm',
+    network_config: { base_url: 'http://host.docker.internal:8000/v1' },
+    custom_provider_config: { base_provider_type: 'openai', is_key_less: true },
+    ...extra,
+  })
+
+  it('shows no level on a provider without a key', () => {
+    mount()
+    const card = screen.getByText('Not set up').closest('.aim-card') as HTMLElement
+    expect(card.textContent).toContain('AWS Bedrock')
+    expect(within(card).queryByText('Poor')).toBeNull()
+    expect(within(card).queryByText('Good')).toBeNull()
+  })
+
+  it('names the host of a keyed provider with a base URL, with the full URL on title', () => {
+    const openai = { name: 'openai', network_config: { base_url: 'https://llm.example.com:8443/v1' } }
+    bifrost.mockReturnValue(providersReady({ providers: [openai], keys: { openai: [key()] }, verdicts: { providers: { openai: true }, keys: {} } }))
+    mount()
+    const line = screen.getByText('1 key · llm.example.com:8443')
+    expect(line.getAttribute('title')).toBe('https://llm.example.com:8443/v1')
+    expect(screen.getByText('Hosted: data leaves your site')).toBeTruthy()
+  })
+
+  it('reads a key-less custom provider on a LAN host as local, with a level and its host', () => {
+    bifrost.mockReturnValue(
+      providersReady({ providers: [lan()], keys: { 'lan-vllm': [] }, verdicts: { providers: { 'lan-vllm': true }, keys: {} } }),
+    )
+    mount()
+    expect(screen.getByText('No key needed · host.docker.internal:8000')).toBeTruthy()
+    expect(screen.getByText('Good')).toBeTruthy()
+    expect(screen.getByText('Local: data stays on site')).toBeTruthy()
+    // named as typed, not title-cased
+    expect(screen.getByText('lan-vllm')).toBeTruthy()
+  })
+
+  it('does not print "undefined" for a key-less provider with no base URL', () => {
+    bifrost.mockReturnValue(providersReady({ providers: [lan({ network_config: undefined })], keys: { 'lan-vllm': [] }, verdicts: { providers: {}, keys: {} } }))
+    mount()
+    expect(document.querySelector('.aim-card-keys')?.textContent).not.toMatch(/undefined|No key needed/)
+  })
+
+  it('lists a LAN provider under local models in the banner', () => {
+    bifrost.mockReturnValue(providersReady({ providers: [{ name: 'anthropic' }, lan()], keys: { anthropic: [key()], 'lan-vllm': [] } }))
+    mount()
+    const banner = screen.getByText('Where your data goes:').parentElement?.textContent
+    expect(banner).toContain('hosted models (Anthropic)')
+    expect(banner).toContain('Local models (lan-vllm)')
   })
 
   it('gives no verdict, not Poor, when routability could not be asked', () => {
@@ -278,6 +329,23 @@ describe('model for each agent', () => {
   })
 })
 
+describe('the Change picker', () => {
+  it('labels a provider by its gateway name, not its mirror row id', () => {
+    assignment.mockReturnValue(
+      assignmentsReady({
+        models: [{ model_id: 'qwen', provider_id: 'bifrost-lan-vllm', provider_type: 'lan-vllm', display_name: 'Qwen' }],
+        assignments: { chat_default: { component: 'chat_default', provider_id: 'bifrost-lan-vllm', model_id: 'qwen' } },
+      }),
+    )
+    mount()
+    const row = rowOf('Triage agent')
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[0])
+    expect(screen.getByRole('option', { name: 'lan-vllm' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: 'bifrost-lan-vllm' })).toBeNull()
+  })
+})
+
 describe('a row that uses the default', () => {
   it('shows the default’s model as text with a chip, or Not set when there is no default', () => {
     const { unmount } = mount()
@@ -294,7 +362,7 @@ describe('a row that uses the default', () => {
     const row = rowOf('Triage agent')
     fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
     fireEvent.click(row.querySelectorAll('button.field-select')[0])
-    fireEvent.click(screen.getByRole('option', { name: 'anthropic-default' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Anthropic' }))
     fireEvent.click(row.querySelectorAll('button.field-select')[1])
     fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'haiku', {}))

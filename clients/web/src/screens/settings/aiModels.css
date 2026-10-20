@@ -34,7 +34,7 @@
 .aim-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .aim-card-name { font-size: 14px; font-weight: 700; color: var(--tx0); overflow-wrap: anywhere; }
 .aim-card-name small { font-size: 14px; font-weight: 500; color: var(--tx2); }
-.aim-card-keys { font-size: 12px; line-height: 1.45; color: var(--tx2); }
+.aim-card-keys { font-size: 12px; line-height: 1.45; color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .aim-card-where { font-size: 12px; font-weight: 600; color: var(--tx1); }
 .aim-card-where.local { color: var(--good); }
 

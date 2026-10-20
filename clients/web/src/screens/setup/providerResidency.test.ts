@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LLMProvider } from '../../services/api'
-import type { BifrostKey } from '../../services/bifrostApi'
+import type { BifrostKey, BifrostProvider } from '../../services/bifrostApi'
 import { bifrostStaysInCloud, bifrostStaysOnSite, legacyStaysOnSite, residencyCopy } from './providerResidency'
 
 const legacy = (over: Partial<LLMProvider>): LLMProvider =>
@@ -17,6 +17,14 @@ describe('provider residency', () => {
     expect(legacyStaysOnSite(legacy({ provider_type: 'ollama' }))).toBe(true)
     expect(legacyStaysOnSite(legacy({ base_url: 'http://localhost:11434/v1' }))).toBe(true)
     expect(residencyCopy(true)).toBe('Local: data stays on site')
+  })
+
+  it('keeps a provider whose base_url is a private host on site', () => {
+    const at = (base_url: string): BifrostProvider => ({ name: 'lan-vllm', network_config: { base_url } })
+    expect(bifrostStaysOnSite('lan-vllm', [], at('http://host.docker.internal:8000'))).toBe(true)
+    expect(bifrostStaysOnSite('lan-vllm', [], at('http://192.168.1.5:8000/v1'))).toBe(true)
+    expect(bifrostStaysOnSite('openai', [], at('https://api.openai.com'))).toBe(false)
+    expect(bifrostStaysOnSite('openai', [], { name: 'openai' })).toBe(false)
   })
 
   it('treats any other provider as leaving the site', () => {
