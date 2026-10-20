@@ -104,7 +104,7 @@ class TestProcessHandoff:
         svc = _run_service()
         with patch.object(rbr, "_open_case", return_value=None), patch.object(
             rbr, "_start_root_cause"
-        ) as start_rca:
+        ) as start_rca, patch.object(rbr, "_root_cause_unserved", return_value=[]):
             rbr._process_handoff("run-1", HANDOFF, "", True, svc)
         svc.set_case.assert_not_called()
         assert start_rca.call_args.args[2] == "case-abc"
