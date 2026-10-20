@@ -423,6 +423,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         handoffs: terminal.handoffs ?? [],
         proposed_actions: terminal.proposed_actions ?? [],
         ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
+        ...(terminal.disposition === undefined ? {} : { disposition: terminal.disposition }),
       });
     }
     told.delete(job.run_id);

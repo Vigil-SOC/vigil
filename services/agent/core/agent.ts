@@ -331,6 +331,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     undefined,
     severityOf(options.plugin, conclusion),
     proposalsOf(options.plugin, conclusion),
+    dispositionOf(options.plugin, conclusion, review),
   );
 }
 
@@ -1201,6 +1202,14 @@ export function severityOf(plugin: PluginManifest, conclusion: ConclusionPayload
   return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
 }
 
+// The disposition the answer gave, as the guard left it: a held benign goes out as its fallback.
+export function dispositionOf(plugin: PluginManifest, conclusion: ConclusionPayload, review: ReviewPayload): string | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.disposition_field : undefined;
+  if (field === undefined) return undefined;
+  const given = review.guarded?.field === field ? review.guarded.final : conclusion.value[field];
+  return typeof given === "string" && given !== "" ? given : undefined;
+}
+
 // The actions the answer asks a person to approve, when its plugin names a field for
 // them. The backend checks each one on its own and files the valid ones.
 export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayload): ProposedAction[] {
@@ -1289,6 +1298,7 @@ async function end(
   handoffs?: readonly TerminalHandoff[],
   severity?: Severity,
   proposed: readonly ProposedAction[] = [],
+  disposition?: string,
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1304,6 +1314,7 @@ async function end(
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
     ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
+    ...(disposition === undefined ? {} : { disposition }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);

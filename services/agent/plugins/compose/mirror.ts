@@ -32,6 +32,7 @@ export interface TerminalResult {
   handoffs?: TerminalHandoff[];
   proposed_actions?: ProposedAction[];
   severity?: Severity;
+  disposition?: string;
 }
 
 // Where a run stands while it is still open. paused is a run waiting on someone

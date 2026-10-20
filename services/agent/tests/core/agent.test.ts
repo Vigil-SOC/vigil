@@ -122,7 +122,7 @@ describe("the kernel runs a plugin to a conclusion", () => {
 
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
 
-    expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", severity: "critical" });
+    expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", severity: "critical", disposition: "malicious" });
   });
 
   it("carries the actions the answer proposes onto the terminal, and none when it proposes none", async () => {
@@ -166,7 +166,7 @@ describe("the kernel runs a plugin to a conclusion", () => {
 
     const review = (await state.read(RUN)).find((one) => one.kind === "review")?.payload as ReviewPayload;
     expect(review).toMatchObject({ stance: "uphold", cited: ["r1"], unknown_refs: [], grounded: true, guarded: { field: "disposition", asked: "benign", final: "benign" } });
-    expect((await state.terminal(RUN))?.summary).toBe("the lockouts are benign");
+    expect(await state.terminal(RUN)).toMatchObject({ summary: "the lockouts are benign", disposition: "benign" });
     // The reviewer holds no tools and is shown the step it was asked about.
     const asked = provider.requests.at(-1);
     expect(asked?.tools).toEqual([]);
@@ -203,6 +203,8 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const review = (await state.read(RUN)).find((one) => one.kind === "review")?.payload as ReviewPayload;
     expect(review.guarded).toEqual({ field: "disposition", asked: "false_positive", final: "needs_review" });
     expect((await state.terminal(RUN))?.summary).toContain("held as needs_review because the review was insufficient");
+    // The case is closed from the disposition on the far side, so a held dismissal goes out held.
+    expect(await state.terminal(RUN)).toMatchObject({ disposition: "needs_review" });
   });
 
   it("does not let an upheld answer stand on refs no step carries", async () => {
@@ -361,7 +363,7 @@ describe("plugins load from their directory", () => {
     const plugin = quiet(pluginFor("investigate"));
     expect(plugin.skills.map((one) => one.name)).toEqual(["investigate-case"]);
     expect(plugin.guard).toMatchObject({ field: "disposition", fallback: "needs_review" });
-    expect(plugin.conclusion).toMatchObject({ severity_field: "severity", proposals_field: "proposed_actions" });
+    expect(plugin.conclusion).toMatchObject({ severity_field: "severity", disposition_field: "disposition", proposals_field: "proposed_actions" });
     expect(pluginGrants(plugin, specOf().tools)["agent"]).toEqual(
       expect.arrayContaining(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators", "load_skill"]),
     );
@@ -406,6 +408,22 @@ conclusion:
 `;
     expect(() => parsePlugin(manifest("low, high"), [])).not.toThrow();
     expect(() => parsePlugin(manifest("low, severe"), [])).toThrow(SpecError);
+  });
+
+  it("refuses a disposition_field the schema does not declare", () => {
+    const manifest = `
+id: x
+description: d
+system: s
+conclusion:
+  summary_field: summary
+  disposition_field: verdict
+  schema:
+    type: object
+    properties:
+      summary: { type: string }
+`;
+    expect(() => parsePlugin(manifest, [])).toThrow(SpecError);
   });
 
   it("refuses a proposals_field the schema does not declare", () => {
