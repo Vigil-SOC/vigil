@@ -46,6 +46,7 @@ vi.mock('../../services/api', () => ({
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
     getRun: vi.fn((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })),
     verifyRun: vi.fn(),
+    getCall: vi.fn(),
     steer: vi.fn(() => Promise.resolve({ data: {} })),
   },
   orchestratorApi: { exportInvestigation: vi.fn() },
@@ -337,9 +338,9 @@ describe('case page', () => {
     renderCase('case-handoff')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim h')).toBeInTheDocument()
-    // the hunt is the case's run and comes first; the root-cause run is read for its own heading
-    const headings = await screen.findAllByRole('heading', { level: 4 })
-    expect(headings.map((h) => h.textContent)).toEqual([expect.stringMatching(/^threat-hunt · started/), expect.stringMatching(/^root-cause-analysis · started/)])
+    // the hunt is the case's run and comes first on the run filter
+    const filter = screen.getByRole('group', { name: 'Run' })
+    expect(within(filter).getAllByRole('button').map((b) => b.textContent)).toEqual(['All runs', 'threat-hunt', 'root-cause-analysis'])
     expect(screen.getByRole('link', { name: 'Open run run-rca' })).toHaveAttribute('href', '/workflows?run=run-rca')
     expect(screen.getAllByText('Handed off').length).toBeGreaterThan(0)
     expect(screen.queryByText(/handed_off/)).not.toBeInTheDocument()
@@ -1194,8 +1195,8 @@ describe('case page', () => {
       renderCase('case-rec')
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
       const row = async (text: string) => (await screen.findByText(text, { exact: false })).closest('.rec-row')
-      expect(await row('Hunt started')).toHaveTextContent('Incident response · 09:58')
-      expect(await row('Root cause started')).toHaveTextContent('root-cause · 10:20')
+      expect(await row('Hunt started')).toHaveTextContent('Incident response · started 09:58')
+      expect(await row('Root cause started')).toHaveTextContent('root-cause · started 10:20')
       // a run the case does not list falls back to a short id
       expect(await row('Could not read the record')).toHaveTextContent('gone-run')
       expect(await row('Could not read the record')).toHaveTextContent('System')
@@ -2334,10 +2335,49 @@ describe('a case with several runs', () => {
     testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }], cost_usd: 0.1 } }
     testState.runs['run-rca'] = { status: 'completed', projection: ROOT_CAUSE }
   }
-  const titles = () => screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)
-  const ORDER = [/^threat-hunt · started 09:00$/, /^root-cause-analysis · started 11:00$/, /^Incident response · started 10:00$/]
+  const HUNT_TAG = 'threat-hunt · started 09:00'
+  const RCA_TAG = 'root-cause-analysis · started 11:00'
+  const INV_TAG = 'Incident response · started 10:00'
+  const tabs = ['Explanations', 'Evidence', 'Checked', 'Memory and blind spots']
+  const hyp = (hypothesis_id: string, status: string, supports: number, weakens: number) =>
+    ({ hypothesis_id, statement: `claim ${hypothesis_id}`, status, supports, weakens, neither: 0, resolution_reason: null, provenance: 'agent' })
+  const evidence = (evidence_id: string, summary: string, captured_at: string, extra: object = {}) =>
+    ({ evidence_id, iteration: 1, source_system: 'elastic', summary, is_gap: false, gap_detail: null, source_tier: 'telemetry', origins: [], bears_on: [], captured_at, ...extra })
+  /** A hunt and the investigation it handed off to, each with a record. */
+  const twoRuns = (id: string) => {
+    testState.cases = [{
+      ...openCase(id),
+      investigations: [
+        ref('threat-hunt', 'run-hunt', '2026-06-15T09:00:00Z', true),
+        ref('incident-response', 'run-inv', '2026-06-15T10:00:00Z'),
+      ],
+    }]
+    testState.runs['run-hunt'] = {
+      status: 'completed',
+      hunt: {
+        ...HUNT,
+        status: 'concluded',
+        hypotheses: [hyp('h1', 'disproven', 0, 2), hyp('h2', 'proven', 3, 0)],
+        evidence: [
+          evidence('e-gap', 'the hunt’s empty query', '2026-06-15T09:30:00Z', { is_gap: true, provenance: 'tool_failure' }),
+          evidence('e-old', 'hunt row', '2026-06-15T09:10:00Z'),
+        ],
+        evidence_count: 2,
+      },
+    }
+    testState.runs['run-inv'] = {
+      status: 'completed',
+      projection: {
+        ...investigateProjection,
+        hypotheses: [hyp('h1', 'active', 2, 0), hyp('h3', 'proven', 4, 0)],
+        evidence: [evidence('e-transfer', 'the investigation’s transfer row', '2026-06-15T10:20:00Z')],
+        evidence_count: 1,
+      },
+    }
+  }
+  const rowText = (name: string) => (screen.getByText(name).closest('li') as HTMLElement).textContent
 
-  it('lists each run under its own heading, the primary run first, and the honest line only under runs with no record', async () => {
+  it('lists the case as one: its runs on a filter, the primary first, and the honest line only when no run keeps a record', async () => {
     threeRuns('case-three')
     renderCase('case-three')
     const now = await screen.findByRole('region', { name: 'Now' })
@@ -2351,47 +2391,166 @@ describe('a case with several runs', () => {
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveTextContent('2')
 
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
-    await waitFor(() => expect(titles()).toEqual(ORDER.map((re) => expect.stringMatching(re))))
-    const sections = ORDER.map((_, i) => screen.getAllByRole('heading', { level: 4 })[i].closest('section') as HTMLElement)
-    expect(within(sections[0]).getByText('The host is owned')).toBeInTheDocument()
-    expect(within(sections[0]).queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
-    expect(within(sections[1]).getByText('This workflow does not test explanations yet.')).toBeInTheDocument()
-    expect(within(sections[2]).getByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+    const filter = await screen.findByRole('group', { name: 'Run' })
+    expect(within(filter).getAllByRole('button').map((b) => b.textContent)).toEqual(['All runs', HUNT_TAG, RCA_TAG, INV_TAG])
+    // one card, the hunt's rows tagged; the two runs with no record add no line of their own
+    expect(await screen.findByText('The host is owned')).toBeInTheDocument()
+    expect(document.querySelectorAll('.case-expl-card')).toHaveLength(1)
+    expect(rowText('The host is owned')).toContain(HUNT_TAG)
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
-    await waitFor(() => expect(titles()).toEqual(ORDER.map((re) => expect.stringMatching(re))))
-    expect(screen.getByText('no login')).toBeInTheDocument()
+    expect(await screen.findByText('no login')).toBeInTheDocument()
     expect(screen.getByText('benign login')).toBeInTheDocument()
+    expect(document.querySelectorAll('.ev-trail')).toHaveLength(1)
 
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
-    await waitFor(() => expect(titles()).toHaveLength(3))
-    expect(screen.getByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
+    expect(await screen.findByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
   })
 
-  it('says under its own heading when one run cannot be read, and still shows the others', async () => {
+  it('says the honest line once when no run keeps a record, and a run that cannot be read under its own tag', async () => {
     threeRuns('case-broken')
+    testState.runs['run-hunt'] = { status: 'completed', projection: { findings: [], cost_usd: 0 } }
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
       runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
     )
     renderCase('case-broken')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
-    await waitFor(() => expect(titles()).toHaveLength(3))
-    const broken = screen.getByRole('region', { name: /^Incident response · started/ })
-    await waitFor(() => expect(broken).toHaveTextContent('The run could not be read.'))
-    expect(screen.getByRole('region', { name: /^threat-hunt · started/ })).toHaveTextContent('The host is owned')
-    expect(screen.getByRole('region', { name: /^root-cause-analysis · started/ })).toHaveTextContent('This workflow does not test explanations yet.')
+    const line = await screen.findByText(INV_TAG, { selector: '.case-run-line .rec-run' })
+    expect(line.closest('p')).toHaveTextContent('The run could not be read.')
+    // a run that cannot be read might keep a record, so the honest line waits for it
+    expect(screen.queryByText(/does not test explanations yet/)).not.toBeInTheDocument()
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
   })
 
-  it('shows no run heading and no other runs on a case with one run', async () => {
+  it('shows one Explanations list across runs, each row tagged, by standing word then newest run', async () => {
+    twoRuns('case-merged')
+    renderCase('case-merged')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim h3')).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelectorAll('.case-expl-rows li')).toHaveLength(4))
+    expect(document.querySelectorAll('.case-expl-card')).toHaveLength(1)
+    // proven first (newest run's first), then standing, then ruled out; the same id in two runs is two rows
+    const rows = Array.from(document.querySelectorAll('.case-expl-rows li')).map((li) => li.textContent as string)
+    expect(rows.map((text) => /claim (h\d)/.exec(text)?.[1])).toEqual(['h3', 'h2', 'h1', 'h1'])
+    expect(rows[0]).toContain('Proven')
+    expect(rows[0]).toContain(INV_TAG)
+    expect(rows[1]).toContain(HUNT_TAG)
+    expect(rows[2]).toContain('Standing')
+    expect(rows[2]).toContain(INV_TAG)
+    expect(rows[3]).toContain('Ruled out')
+    expect(rows[3]).toContain(HUNT_TAG)
+  })
+
+  it('narrows the four tabs to one run on the filter and leaves the tab counts alone', async () => {
+    twoRuns('case-filter')
+    renderCase('case-filter')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    await waitFor(() => expect(document.querySelectorAll('.case-expl-rows li')).toHaveLength(4))
+    const counts = () => tabs.map((name) => screen.getByRole('tab', { name: new RegExp(`^${name}`) }).textContent)
+    const before = counts()
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Run' })).getByRole('button', { name: HUNT_TAG }))
+    await waitFor(() => expect(document.querySelectorAll('.case-expl-rows li')).toHaveLength(2))
+    expect(screen.queryByText('claim h3')).not.toBeInTheDocument()
+    expect(counts()).toEqual(before)
+
+    // the choice is one for every tab
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('hunt row')).toBeInTheDocument()
+    expect(screen.queryByText('the investigation’s transfer row')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: 'Run' })).getByRole('button', { name: HUNT_TAG })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Run' })).getByRole('button', { name: 'All runs' }))
+    expect(await screen.findByText('the investigation’s transfer row')).toBeInTheDocument()
+  })
+
+  it('merges a gap row from the hunt and a row from the investigation into one Evidence table, newest first', async () => {
+    twoRuns('case-evidence')
+    renderCase('case-evidence')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('the investigation’s transfer row')).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelectorAll('.ev-row')).toHaveLength(3))
+    expect(document.querySelectorAll('.ev-trail')).toHaveLength(1)
+    const rows = Array.from(document.querySelectorAll('.ev-row')).map((row) => row.textContent as string)
+    expect(rows[0]).toContain('the investigation’s transfer row')
+    expect(rows[0]).toContain(INV_TAG)
+    expect(rows[1]).toContain('the hunt’s empty query (gap)')
+    expect(rows[1]).toContain(HUNT_TAG)
+    expect(rows[2]).toContain('hunt row')
+    expect(screen.getByText(/Evidence trail · 3 rows/)).toBeInTheDocument()
+    // no stance tally added up across two runs
+    expect(screen.queryByText(/support ·/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'About the totals' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the rows on screen while "Show older" asks the hunts that hold more', async () => {
+    twoRuns('case-older')
+    const many = Array.from({ length: 50 }, (_, i) => evidence(`n${i}`, `row ${i}`, new Date(Date.UTC(2026, 5, 15, 9, 0, 0) - i * 1000).toISOString()))
+    testState.runs['run-hunt'] = { status: 'completed', hunt: { ...(testState.runs['run-hunt'] as { hunt: object }).hunt, evidence: many, evidence_count: 60 } }
+    const inv = testState.runs['run-inv'] as { projection: { evidence: unknown[] } }
+    inv.projection.evidence.push(evidence('e-older', 'an older investigation row', '2026-06-15T08:00:00Z'))
+    renderCase('case-older')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('row 48')).toBeInTheDocument()
+    expect(screen.queryByText('row 49')).not.toBeInTheDocument()
+    expect(screen.getByText(/showing 50 of 61/)).toBeInTheDocument()
+    // the hunt holds rows newer than this one that it has not listed, so it waits
+    expect(screen.queryByText('an older investigation row')).not.toBeInTheDocument()
+
+    let release: () => void = () => undefined
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string, limit?: number) =>
+      limit
+        ? new Promise((resolve) => {
+            release = () => resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
+          })
+        : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    // the rows already read show at once, and the hunt is asked for a larger page
+    expect(await screen.findByText('row 49')).toBeInTheDocument()
+    await waitFor(() => expect(vi.mocked(workflowApi.getRun)).toHaveBeenCalledWith('run-hunt', 100))
+    expect(screen.getByRole('button', { name: 'Loading older rows…' })).toBeDisabled()
+    expect(screen.getByText('row 49')).toBeInTheDocument()
+    expect(document.querySelectorAll('.ev-row').length).toBeGreaterThan(50)
+    release()
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
+  it('tags Checked and Memory rows with their run, and opens a call in its own run', async () => {
+    twoRuns('case-checked')
+    testState.runs['run-hunt'] = {
+      status: 'completed',
+      hunt: { ...(testState.runs['run-hunt'] as { hunt: object }).hunt, calls: [{ ref: 'c1', question: 'who logged in', tool: 'search', result_length: 12, cost_usd: 0.01, iteration: 1 }] },
+    }
+    testState.runs['run-inv'] = {
+      status: 'completed',
+      projection: { ...(testState.runs['run-inv'] as { projection: object }).projection, calls: [{ ref: 'c9', question: 'read the proxy', tool: 'proxy_query', result_length: 4, cost_usd: 0.02, iteration: 1 }] },
+    }
+    vi.mocked(workflowApi.getCall).mockResolvedValue({ data: { ref: 'c9', tool: 'proxy_query', arguments: '{}', result: 'ok', ok: true } } as never)
+    renderCase('case-checked')
+    fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
+    expect(await screen.findByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
+    expect(document.querySelectorAll('.case-checked')).toHaveLength(1)
+    const turn = (text: string) => screen.getByText(text).closest('.checked-turn') as HTMLElement
+    expect(turn('who logged in')).toHaveTextContent(HUNT_TAG)
+    expect(turn('read the proxy')).toHaveTextContent(INV_TAG)
+    fireEvent.click(within(turn('read the proxy')).getByRole('button', { name: /c9/ }))
+    await waitFor(() => expect(vi.mocked(workflowApi.getCall)).toHaveBeenCalledWith('run-inv', 'c9'))
+  })
+
+  it('shows no run tag, filter or other runs on a case with one run', async () => {
     testState.cases = [{ ...openCase('case-one'), investigations: [investigation('executing', true, 'run-one')] }]
     testState.runs['run-one'] = { status: 'running', hunt: { ...HUNT, status: 'running' } }
     renderCase('case-one')
     expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Other runs on this case' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
-    expect(await screen.findByText('The host is owned')).toBeInTheDocument()
-    expect(screen.queryAllByRole('heading', { level: 4 })).toHaveLength(0)
+    for (const name of [/Explanations/, /^Evidence/, /Checked/, /Memory and blind spots/]) {
+      fireEvent.click(screen.getByRole('tab', { name }))
+      await waitFor(() => expect(document.querySelector('.case-expl-card, .ev-trail, .case-checked, .case-mem-card, .empty-state')).not.toBeNull())
+      expect(screen.queryByRole('group', { name: 'Run' })).not.toBeInTheDocument()
+      expect(document.querySelector('.rec-run')).toBeNull()
+    }
   })
 })
 

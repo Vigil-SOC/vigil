@@ -403,7 +403,10 @@
 .side-ent.long .side-ent-head { max-width: calc(100% - var(--ent-tail, 4.2em)); } /* room for the six-character tail, as measured */
 
 .side-cost { display: flex; justify-content: space-between; gap: 8px; }
-.side-level { font-weight: 650; }
+.side-level { font-weight: 650; flex-shrink: 0; }
+.side-run-costs { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+.side-run-costs li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+.side-run-costs .mono { color: var(--tx1); }
 .side-level.good { color: var(--good); }
 .side-level.fair { color: var(--fair); }
 .side-level.poor { color: var(--poor); }
@@ -1850,20 +1853,24 @@
 }
 .case-page .case-expl-cites .cite-chip:hover { background: var(--ac); color: var(--ac-tx); }
 
-/* A run's rows on a grouped tab, under its heading: the one addition to the boards (#2400). */
-.case-page .case-run { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.case-page .case-run + .case-run { margin-top: 8px; }
-.case-page .case-run > p { margin: 0; font-size: 13px; }
-.case-page .case-run-head {
+/* A run on the four record tabs (#2481): the Record's own tag (.rec-run) on its own line under what a row says, so a long
+   label is cut with an ellipsis instead of widening the row; the filter is the Record tab's chip row. */
+.case-page .case-expl-run { margin-top: 4px; min-width: 0; }
+.case-page .case-expl-run .rec-run,
+.case-page .ev-obs .rec-run,
+.case-page .case-mem-text .rec-run,
+.case-page .blind-title .rec-run,
+.case-page .case-run-line .rec-run,
+.case-page .checked-turn-head .rec-run {
+  display: block;
   margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--tx0);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.case-page .case-run-head span { font-size: 12px; font-weight: 400; color: var(--tx2); }
+.case-page .case-run-line { margin: 0; font-size: 13px; }
+.case-page .run-filter .filter-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.case-page .checked-turn-head { flex-wrap: wrap; }
+.case-page .checked-turn-head .rec-run { flex: 1 0 100%; }
 
 /* Summary: the other runs' head lines under the primary run's cards, laid out like the agent rows. */
 .case-page .case-other-runs {

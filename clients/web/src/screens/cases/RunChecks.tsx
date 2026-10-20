@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fmtCost } from '../../shared/cost'
 import { workflowApi } from '../../services/api'
 import type { CallRow, RunFold } from './caseFold'
+import { RunTag } from './RunTag'
 
 // What a reader checks a record against: the query a call sent and what came back,
 // read whole off the run's ledger, and the Checked tab's list of them by turn.
@@ -183,7 +184,7 @@ function turnsOf(calls: readonly CallRow[]): Turn[] {
   return turns
 }
 
-export function CheckedList({ runId, calls, focusRef }: { runId: string | null; calls: readonly CallRow[]; focusRef?: string | null }) {
+export function CheckedList({ runId, calls, focusRef, tag }: { runId: string | null; calls: readonly CallRow[]; focusRef?: string | null; tag?: string }) {
   const [open, setOpen] = useState<string | null>(focusRef ?? null)
   useEffect(() => {
     if (focusRef) setOpen(focusRef)
@@ -193,6 +194,7 @@ export function CheckedList({ runId, calls, focusRef }: { runId: string | null; 
       {turnsOf(calls).map((turn) => (
         <section key={turn.key} className="checked-turn">
           <header className="checked-turn-head">
+            {tag && <RunTag label={tag} />}
             <span className="mono">{turn.iteration === null ? 'Turn' : `Turn ${turn.iteration}`}</span>
             {turn.cost !== null && <span className="mono">{turnCost(turn.cost)}</span>}
             <p title={turn.thought}>{turn.thought || DASH}</p>
@@ -282,7 +284,7 @@ export function blindSpotsOf(fold: RunFold | null): { groups: GapGroup[]; unconn
   return { groups: list, unconnected }
 }
 
-export function BlindSpots({ fold, runId }: { fold: RunFold | null; runId: string | null }) {
+export function BlindSpots({ fold, runId, tag }: { fold: RunFold | null; runId: string | null; tag?: string }) {
   const [open, setOpen] = useState<string | null>(null)
   const [call, setCall] = useState<string | null>(null)
   const { groups, unconnected } = blindSpotsOf(fold)
@@ -298,6 +300,7 @@ export function BlindSpots({ fold, runId }: { fold: RunFold | null; runId: strin
               <span className="blind-dot" aria-hidden="true" />
               <span className="blind-title">
                 <b>{group.source}</b> {group.why}
+                {tag && <RunTag label={tag} />}
               </span>
               <span className="blind-count">
                 {group.calls.length > 0 ? `${group.calls.length} of ${total} ${total === 1 ? 'query' : 'queries'} lost` : ''}
@@ -334,6 +337,7 @@ export function BlindSpots({ fold, runId }: { fold: RunFold | null; runId: strin
             <span className="blind-dot muted" aria-hidden="true" />
             <span className="blind-title">
               <b>Not connected</b> {text}
+              {tag && <RunTag label={tag} />}
             </span>
           </div>
         </div>

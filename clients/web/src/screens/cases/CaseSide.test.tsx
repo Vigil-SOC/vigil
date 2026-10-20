@@ -5,6 +5,7 @@ import { CaseSide } from './CaseSide'
 import { casesApi } from '../../services/api'
 import { useNoSideways } from '../../shared/useNoSideways'
 import type { RunFold } from './caseFold'
+import type { CaseInvestigationRef } from './useCases'
 import casesCss from './cases.css?inline'
 
 vi.mock('../../services/api', () => ({
@@ -46,6 +47,7 @@ function renderSide({ keys = KEYS, entities = ['FIN-WS-114', 'priya.nair'] }: { 
         linked={[{ finding_id: 'dl-001', title: 'ISO delivered', description: null, source_link: null, entities }]}
         owner="—"
         latest={null}
+        runs={[]}
         workflowNames={{}}
         sla={null}
         closed={false}
@@ -96,6 +98,51 @@ describe('case side panel Entities show values that fit whole (#2459)', () => {
   it('lists a value once when a recall key and an alert both name it', () => {
     renderSide({ keys: ['host:FIN-WS-114'], entities: ['FIN-WS-114'] })
     expect(Array.from(document.querySelectorAll('.side-ent')).map((el) => el.textContent)).toEqual(['FIN-WS-114'])
+  })
+})
+
+describe('case side panel Cost over every run (#2481)', () => {
+  const ref = (workflow_id: string, run_id: string, cost_usd: number, extra: Partial<CaseInvestigationRef> = {}): CaseInvestigationRef => ({
+    investigation_id: null, status: 'completed', workflow_id, run_id, live: false, cost_usd, max_cost_usd: 2, budget_health: 'healthy', iteration_count: 1, created_at: '2026-06-15T09:00:00Z', ...extra,
+  })
+  const renderCost = (runs: { ref: CaseInvestigationRef; fold?: RunFold | null }[]) =>
+    render(
+      <aside className="case-side">
+        <CaseSide caseId="case-1" linked={[]} owner="—" latest={runs[0].ref} runs={runs.map((run) => ({ fold: null, ...run }))} workflowNames={{ 'threat-hunt': 'Threat hunt' }} sla={null} closed={false} fold={null} latestFold={null} />
+      </aside>,
+    )
+  const cost = () => within(screen.getByRole('heading', { name: 'Cost' }).closest('section') as HTMLElement)
+
+  it('totals the refs and lists each run, a run nothing priced as a dash', () => {
+    renderCost([
+      { ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) },
+      { ref: ref('incident-response', 'run-b', 0.5, { created_at: '2026-06-15T10:00:00Z' }) },
+      { ref: ref('root-cause-analysis', 'run-c', 0, { created_at: '2026-06-15T11:00:00Z' }), fold: { ...fold, costUsd: null, run: { ...(fold as unknown as { run: object }).run, status: 'completed' } } as unknown as RunFold },
+    ])
+    const view = cost()
+    expect(view.getByText('$0.75')).toBeInTheDocument()
+    expect(view.getByText('across 3 runs')).toBeInTheDocument()
+    const lines = view.getAllByRole('listitem').map((li) => li.textContent)
+    expect(lines).toEqual(['Threat hunt · started 09:00$0.25', 'incident-response · started 10:00$0.50', 'root-cause-analysis · started 11:00—'])
+    // the bar belongs to the primary run's limit and says so
+    expect(view.getByText('Threat hunt · started 09:00 against its limit')).toBeInTheDocument()
+    expect(view.getByRole('meter', { name: 'Cost of the primary run against its limit' })).toBeInTheDocument()
+  })
+
+  it('reads a run in flight off its fold', () => {
+    const live = { ...fold, costUsd: 1.5 } as unknown as RunFold
+    renderCost([
+      { ref: ref('threat-hunt', 'run-a', 0.1, { primary: true }), fold: live },
+      { ref: ref('incident-response', 'run-b', 0.5) },
+    ])
+    expect(cost().getByText('$2.00')).toBeInTheDocument()
+  })
+
+  it('keeps one run as it was: the cost and its bar, no lines', () => {
+    renderCost([{ ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) }])
+    expect(cost().getByText('$0.25 of $2.00')).toBeInTheDocument()
+    expect(cost().queryByRole('listitem')).not.toBeInTheDocument()
+    expect(cost().queryByText(/across/)).not.toBeInTheDocument()
   })
 })
 

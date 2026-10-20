@@ -80,6 +80,8 @@ interface EvidenceRow {
   bears_on: { hypothesis_id: string; relation: string }[]
   /** worker, tool_failure, deployment_gap, operator_gap, null_check... */
   provenance: string
+  /** When the row was captured, as the server stamped it; "" when the view carries none. */
+  captured_at: string
 }
 
 interface LeadGapRow {
@@ -526,6 +528,7 @@ function recordOf(raw: Record<string, unknown>): RunRecord {
           origins: Array.isArray(o.origins) ? o.origins.filter((one): one is string => typeof one === 'string' && one !== '') : [],
           bears_on: bears,
           provenance: str(o.provenance),
+          captured_at: str(o.captured_at),
         }]
       })
     : []

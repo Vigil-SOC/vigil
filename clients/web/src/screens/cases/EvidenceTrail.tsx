@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
 import { LATER_RELEASE } from '../../shared/later'
-import { STANCE_WORD, TIER_WORD, evidenceSource, foldRecord, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type RunRecord, type Stance } from './caseFold'
+import { EVIDENCE_PAGE, STANCE_WORD, TIER_WORD, evidenceSource, foldRecord, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type RunRecord, type Stance } from './caseFold'
+import { RunNotes, RunTag } from './RunTag'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -15,6 +16,13 @@ interface TrailRow {
   tier: string
   stance: Stance | null
   by: string
+  /** When it was captured, ms since the epoch; null when the view carries no usable time. */
+  at: number | null
+}
+
+const timeOf = (iso: string): number | null => {
+  const at = Date.parse(iso)
+  return Number.isNaN(at) ? null : at
 }
 
 const DASH = '—'
@@ -55,6 +63,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
         tier: DASH,
         stance: relations.size === 1 && (only === 'supports' || only === 'weakens') ? only : null,
         by: fold.findings[0]?.agent_id || 'agent',
+        at: timeOf(row.captured_at),
       }
     })
   }
@@ -69,6 +78,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
       tier: DASH,
       stance: null,
       by: row.agent_id || DASH,
+      at: null,
     }))
   }
   const against = huntHypothesis(fold)?.hypothesis_id
@@ -82,14 +92,20 @@ function rowsOf(fold: RunFold): TrailRow[] {
     tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
     stance: stanceOn(row, against),
     by: workerAt(fold, row.iteration) ?? DASH,
+    at: timeOf(row.captured_at),
   }))
 }
 
-function header(fold: RunFold): string {
-  const count = foldRecord(fold)?.evidenceCount ?? (fold.kind === 'lead' ? fold.findings.length : 0)
+/** The row count the record holds for a run, listed or not. */
+function totalOf(fold: RunFold): number {
+  return foldRecord(fold)?.evidenceCount ?? (fold.kind === 'lead' ? fold.findings.length : 0)
+}
+
+function header(fold: RunFold, listed = fold.kind === 'hunt' ? fold.evidence.length : 0): string {
+  const count = totalOf(fold)
   const head = `Evidence trail · ${count} ${count === 1 ? 'row' : 'rows'}`
   if (fold.kind !== 'hunt') return head
-  const shown = fold.evidence.length < count ? ` · showing ${fold.evidence.length} of ${count}` : ''
+  const shown = listed < count ? ` · showing ${listed} of ${count}` : ''
   const n = stanceTotals(fold)
   return n ? `${head}${shown} · ${n.supports} support · ${n.weakens} go against · ${n.neither} neither` : `${head}${shown}`
 }
@@ -104,27 +120,22 @@ function totalsNote(fold: RunFold): string | null {
   return `Each row is counted once, by its stance on the explanation this hunt set out to test (${name.length > 70 ? `${name.slice(0, 70)}…` : name}); a row that does not bear on it counts as neither. Totals cover every row the run holds and leave out critic rows, which are listed but not counted.${slice} A row's stance on each explanation is under “bears on”.`
 }
 
-export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => void }) {
-  // The row count asked for, until a read answers it.
-  const [asked, setAsked] = useState<number | null>(null)
-  useEffect(() => setAsked(null), [fold])
-  const focusRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const node = focusRef.current
-    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
-  }, [focusId, fold])
+type TableRow = TrailRow & { key: string; tag?: string }
 
-  if (phase === 'loading') return <p>Loading the run…</p>
-  if (phase === 'error') return <p>The run could not be read.</p>
-  const rows = fold ? rowsOf(fold) : []
-  if (!fold || rows.length === 0) return <EmptyState compact icon="shield" title="No evidence yet" />
-  const note = totalsNote(fold)
-
+/** The card and table both shapes of the trail draw; `footer` is what sits under the rows. */
+function TrailCard({ title, note, rows, focusKey, focusRef, footer }: {
+  title: string
+  note: string | null
+  rows: TableRow[]
+  focusKey: string | null
+  focusRef: RefObject<HTMLDivElement>
+  footer: ReactNode
+}) {
   return (
     <section className="ev-trail" aria-label="Evidence trail">
       <div>
         <div className="ev-title">
-          <h3>{header(fold)}</h3>
+          <h3>{title}</h3>
           {note && <InfoTip label="About the totals" text={note} align="start" />}
         </div>
         <p className="muted">Each observation, its source and tier, and whether it supports or goes against an explanation.</p>
@@ -144,9 +155,9 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
         <div className="ev-rows" role="rowgroup">
           {rows.map((row) => (
             <div
-              key={row.id}
-              ref={row.id === focusId ? focusRef : undefined}
-              className={`ev-grid ev-row${row.id === focusId ? ' cite-target' : ''}`}
+              key={row.key}
+              ref={row.key === focusKey ? focusRef : undefined}
+              className={`ev-grid ev-row${row.key === focusKey ? ' cite-target' : ''}`}
               role="row"
               data-evidence-id={row.id}
             >
@@ -154,6 +165,7 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
               <div role="cell" className="ev-obs">
                 <div className="ev-clamp" title={row.observation}>{row.observation}</div>
                 {row.bearsOn && <div className="ev-sub ev-line" title={row.bearsOn}>{row.bearsOn}</div>}
+                {row.tag && <div className="ev-sub ev-line"><RunTag label={row.tag} /></div>}
               </div>
               <div role="cell" className="ev-src">
                 <div className="ev-line" title={row.source}>{row.source}</div>
@@ -169,7 +181,36 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
             </div>
           ))}
         </div>
-        {fold.kind === 'hunt' && fold.evidence.length < fold.evidenceCount && onShowOlder && (
+        {footer}
+      </div>
+    </section>
+  )
+}
+
+export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => void }) {
+  // The row count asked for, until a read answers it.
+  const [asked, setAsked] = useState<number | null>(null)
+  useEffect(() => setAsked(null), [fold])
+  const focusRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const node = focusRef.current
+    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+  }, [focusId, fold])
+
+  if (phase === 'loading') return <p>Loading the run…</p>
+  if (phase === 'error') return <p>The run could not be read.</p>
+  const rows = fold ? rowsOf(fold) : []
+  if (!fold || rows.length === 0) return <EmptyState compact icon="shield" title="No evidence yet" />
+
+  return (
+    <TrailCard
+      title={header(fold)}
+      note={totalsNote(fold)}
+      rows={rows.map((row) => ({ ...row, key: row.id }))}
+      focusKey={focusId}
+      focusRef={focusRef}
+      footer={
+        fold.kind === 'hunt' && fold.evidence.length < fold.evidenceCount && onShowOlder && (
           <button
             type="button"
             className="btn neutral"
@@ -181,8 +222,91 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
           >
             {asked === fold.evidence.length ? 'Loading older rows…' : 'Show older'}
           </button>
-        )}
-      </div>
-    </section>
+        )
+      }
+    />
+  )
+}
+
+export interface TrailRun {
+  id: string
+  label: string
+  fold: RunFold | null
+  phase: Phase
+}
+
+/** Newest first by capture time; rows with no usable time follow, in the order given (the sort is stable). */
+function newestFirst<T extends { at: number | null }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => (a.at === null ? (b.at === null ? 0 : 1) : b.at === null ? -1 : b.at - a.at))
+}
+
+/**
+ * One trail across several runs, each row tagged with its run and the list paged as one. A hunt lists
+ * only its newest rows, so "Show older" asks the hunts that hold more for a larger page and keeps what is shown.
+ */
+export function MergedEvidenceTrail({ runs, primaryId, focusId, onShowOlder }: {
+  runs: TrailRun[]
+  primaryId: string | null
+  focusId: string | null
+  onShowOlder: (runId: string, shown: number) => void
+}) {
+  const [visible, setVisible] = useState(EVIDENCE_PAGE)
+  // The folds on screen when older rows were asked for; the ask stands until a read replaces one of them.
+  const [asked, setAsked] = useState<(RunFold | null)[] | null>(null)
+  const focusRef = useRef<HTMLDivElement>(null)
+  const folds = runs.map((run) => run.fold)
+  const read = runs.filter((run) => run.phase === 'ready')
+  const found = newestFirst(read.flatMap((run) => (run.fold ? rowsOf(run.fold) : []).map((row) => ({ ...row, key: `${run.id}:${row.id}`, tag: run.label }))))
+  const unread = read.flatMap((run) => (run.fold?.kind === 'hunt' && run.fold.evidence.length < run.fold.evidenceCount ? [{ id: run.id, listed: run.fold.evidence.length, since: Math.min(...rowsOf(run.fold).flatMap((row) => row.at ?? [])) }] : []))
+  // A hunt lists only its newest rows, so what it holds past its oldest listed row is newer than anything older another run shows: list nothing past it until it is read.
+  const floor = Math.max(-Infinity, ...unread.map((run) => run.since).filter(Number.isFinite))
+  const focusKey = focusId && primaryId ? `${primaryId}:${focusId}` : null
+  const all = found.filter((row) => floor === -Infinity || row.key === focusKey || (row.at !== null && row.at >= floor))
+  // a cited row is always listed, however old
+  const shownCount = Math.max(visible, focusKey ? all.findIndex((row) => row.key === focusKey) + 1 : 0)
+  const rows = all.slice(0, shownCount)
+  useEffect(() => {
+    const node = focusRef.current
+    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+  }, [focusKey, all.length])
+
+  const waiting = asked !== null && asked.length === folds.length && asked.every((fold, i) => fold === folds[i])
+  const total = read.reduce((n, run) => n + (run.fold ? totalOf(run.fold) : 0), 0)
+  // One hunt on its own keeps its stance totals and the note that explains them; they are not added across runs.
+  const solo = runs.length === 1 && read[0]?.fold?.kind === 'hunt' ? read[0].fold : null
+  const title = solo ? header(solo, rows.length) : `Evidence trail · ${total} ${total === 1 ? 'row' : 'rows'}${rows.length < total ? ` · showing ${rows.length} of ${total}` : ''}`
+
+  return (
+    <>
+      {rows.length > 0 ? (
+        <TrailCard
+          title={title}
+          note={solo ? totalsNote(solo) : null}
+          rows={rows}
+          focusKey={focusKey}
+          focusRef={focusRef}
+          footer={
+            (rows.length < all.length || unread.length > 0) && (
+              <button
+                type="button"
+                className="btn neutral"
+                disabled={waiting}
+                onClick={() => {
+                  setVisible(shownCount + EVIDENCE_PAGE)
+                  if (shownCount + EVIDENCE_PAGE <= all.length) return
+                  setAsked(folds)
+                  unread.forEach((run) => onShowOlder(run.id, run.listed))
+                }}
+              >
+                {waiting ? 'Loading older rows…' : 'Show older'}
+              </button>
+            )
+          }
+        />
+      ) : (
+        read.length === runs.length && <EmptyState compact icon="shield" title="No evidence yet" />
+      )}
+      <RunNotes runs={runs} />
+    </>
   )
 }
