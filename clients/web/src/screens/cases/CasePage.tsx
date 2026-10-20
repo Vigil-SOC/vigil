@@ -33,6 +33,7 @@ import {
   agentRows,
   caseVerdict,
   closureFlag,
+  chainOldestFirst,
   endedRun,
   EVIDENCE_PAGE,
   explanationWord,
@@ -54,6 +55,7 @@ import {
   type CaseVerdict,
   type EndedRun,
   type HypothesisRow,
+  type ChainStep,
   type OpenCheckpointRow,
   type OpenQuestionRow,
   type RecallProvenance,
@@ -653,6 +655,53 @@ function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<s
           )
         })}
       </ul>
+    </section>
+  )
+}
+
+/** The newest root-cause run on the case that recorded a chain, with its steps oldest first; else why the card is silent. */
+function howStarted(runs: CaseRun[]): { run: CaseRun; chain: ChainStep[] } | 'error' | null {
+  const newest = [...runs].sort((a, b) => (b.ref.created_at ?? '').localeCompare(a.ref.created_at ?? ''))
+  const ready = newest.find((one) => one.fold?.kind === 'head' && one.fold.steps.length > 0)
+  if (ready?.fold?.kind === 'head') return { run: ready, chain: chainOldestFirst(ready.fold.steps) }
+  return newest.some((one) => one.ref.workflow_id === ROOT_CAUSE_WORKFLOW && one.phase === 'error') ? 'error' : null
+}
+
+/** Where the incident started and how far the trace proved it: the root-cause run's chain, first and last links only. */
+function HowStarted({ started, names, onFollow }: { started: NonNullable<ReturnType<typeof howStarted>>; names: Record<string, string>; onFollow: () => void }) {
+  if (started === 'error') {
+    return (
+      <section className="case-card" aria-label="How it started">
+        <h3>How it started</h3>
+        <p className="how-line">The run could not be read.</p>
+      </section>
+    )
+  }
+  const { run, chain } = started
+  const origin = chain[0]
+  const rows = chain.length > 2 ? [origin, chain[chain.length - 1]] : chain
+  const proven = run.fold?.kind === 'head' ? run.fold.proven : 0
+  const to = `/workflows?run=${encodeURIComponent(run.ref.run_id)}`
+  return (
+    <section className="case-card how-started" aria-label="How it started">
+      <h3>How it started</h3>
+      <p className="how-origin">
+        <b>{origin.event || '—'}</b>
+        <span>{[origin.who, origin.at && when(origin.at)].filter(Boolean).join(' · ')}</span>
+      </p>
+      <p className="how-line">{plural(chain.length, 'event')} · {proven} proven</p>
+      <ul className="how-rows">
+        {rows.map((step, i) => (
+          <li key={step.step_id || i}>
+            <span className="how-event">{step.event || '—'}</span>
+            <span className="how-at">{step.at ? when(step.at) : '—'}</span>
+            <b className={step.proven ? 'good' : undefined}>{step.proven ? 'proven' : 'unproven'}</b>
+          </li>
+        ))}
+      </ul>
+      <Link className="how-all" to={to} title={runLabel(run.ref, names)} onClick={onFollow}>
+        {chain.length > 2 ? `Show all ${chain.length}` : 'Open the trace'}
+      </Link>
     </section>
   )
 }
@@ -1409,6 +1458,8 @@ export function CasePage({
       .map((one) => ({ fold: one.fold, label: runLabel(one.ref, workflowNames), phase: one.phase })),
   )
   // A case with several runs can ask where they part ways; the brief carries every run.
+  const started = howStarted(runs)
+  const startedCard = started && <HowStarted started={started} names={workflowNames} onFollow={() => onExpand && onBack()} />
   const disagree = investigations.length > 1 && (
     <div className="case-disagree">
       <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>
@@ -1512,6 +1563,7 @@ export function CasePage({
                     </div>
                   </div>
                 </section>
+                {startedCard}
                 {disagree}
                 {doors}
               </>
@@ -1519,6 +1571,7 @@ export function CasePage({
               <>
                 {needsBlock}
                 {verdict && <VerdictBlock verdict={verdict} card />}
+                {startedCard}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}

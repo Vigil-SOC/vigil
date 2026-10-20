@@ -28,6 +28,8 @@ import { isAgentRun } from "./core/agent.js";
 import { investigateKernelReplay } from "./plugins/investigate/view.js";
 import { huntKernelReplay } from "./plugins/hunt/view.js";
 import { rootCauseReplay } from "./plugins/rootcause/replay.js";
+import { ENGINE as ROOT_CAUSE_V3, engineOf } from "./plugins/rootcause/v3/ledger.js";
+import { rootCauseV3Replay } from "./plugins/rootcause/v3/projection.js";
 
 const log = logger("agent.serve");
 
@@ -237,7 +239,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   }
   if (opened?.run_kind === "root_cause") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(rootCauseReplay(runId, events)));
+    res.end(JSON.stringify(engineOf(events) === ROOT_CAUSE_V3 ? rootCauseV3Replay(runId, events) : rootCauseReplay(runId, events)));
     return;
   }
   // A judge or subagent, replayed from its own ledger like any kernel run.

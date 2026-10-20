@@ -690,6 +690,47 @@ class TestReconcile:
         orch._record_progress.assert_called_once()
         assert orch._update_investigation_status.call_args[0][1] == "executing"
 
+    # #2526: a compose run's fold now answers like every other kind, so a phase
+    # approval, a terminal and a live run each reach a status instead of reading as
+    # executing for good.
+    @pytest.mark.asyncio
+    async def test_a_compose_run_that_ended_failed_fails_the_investigation(self):
+        orch = _orchestrator()
+        await self._reconcile(
+            orch,
+            {
+                "run_kind": "compose",
+                "results": [],
+                "unbound": [],
+                "status": "terminal",
+                "outcome": "failed",
+                "reason": "phase approval rejected",
+                "open_checkpoint": None,
+            },
+        )
+
+        status, reason = orch._update_investigation_status.call_args[0][1:3]
+        assert status == "failed"
+        assert reason == "phase approval rejected"
+
+    @pytest.mark.asyncio
+    async def test_a_compose_run_on_a_phase_approval_waits_for_it(self):
+        orch = _orchestrator()
+        checkpoint = {"checkpoint_id": "apr-phase1", "question": "run phase 2?"}
+        raised = await self._reconcile(
+            orch,
+            {
+                "run_kind": "compose",
+                "results": [],
+                "unbound": [],
+                "status": "waiting_approval",
+                "open_checkpoint": checkpoint,
+            },
+        )
+
+        assert raised.call_args.kwargs["checkpoint_id"] == "apr-phase1"
+        assert orch._update_investigation_status.call_args[0][1] == "waiting_approval"
+
 
 # #2354: a hunt parked without a checkpoint reads as paused, says so once, and
 # goes back to executing (or to its TTL terminal) through the same reconcile.
