@@ -9,6 +9,7 @@ by the worker, not run late: ``submit`` sets the job's expiry to its timeout.
 import asyncio
 import logging
 from typing import Any, Dict, Optional
+from urllib.parse import unquote
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -29,22 +30,27 @@ def redis_settings() -> RedisSettings:
     the queue it drains is the one the gateway enqueues onto.
     """
     url = get_settings().redis_url or DEFAULT_REDIS_URL
-    # Parse redis://host:port/db
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    return RedisSettings(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 6379,
-        database=int(parsed.path.lstrip("/") or 0),
-        password=parsed.password,
-        # ARQ's create_pool retries on connect errors/timeouts; its defaults
-        # (1 s timeout, 5 retries) give up ~10 s into a cold Redis container.
-        # These allow ~45 s for a refused connection, ~90 s if every try times out.
-        conn_timeout=3,
-        conn_retries=15,
-        conn_retry_delay=3,
-    )
+    # ARQ parses the DSN itself, and keeps what reading host/port/db/password off
+    # the URL by hand drops: the scheme, so rediss:// sets ssl=True, and the
+    # username. Dropping the scheme dials a managed Redis (Azure Cache,
+    # ElastiCache) in the clear -- it accepts the socket and then answers
+    # nothing, so create_pool retries to exhaustion and every caller times out
+    # with no error saying why.
+    settings = RedisSettings.from_dsn(url)
+    # urlparse leaves the password percent-encoded and ARQ passes it through, so
+    # a key containing @ or / authenticates with the escapes still in it and
+    # Redis answers WRONGPASS. redis-py unquotes in from_url, which is what
+    # core/redis_client.py uses, and the agent decodes it in
+    # services/agent/core/db.ts; this was the one client sending it as written.
+    if settings.password:
+        settings.password = unquote(settings.password)
+    # ARQ's create_pool retries on connect errors/timeouts; its defaults
+    # (1 s timeout, 5 retries) give up ~10 s into a cold Redis container.
+    # These allow ~45 s for a refused connection, ~90 s if every try times out.
+    settings.conn_timeout = 3
+    settings.conn_retries = 15
+    settings.conn_retry_delay = 3
+    return settings
 
 
 # ---------------------------------------------------------------------------

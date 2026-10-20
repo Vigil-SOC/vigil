@@ -31,6 +31,9 @@ export interface RedisConfig {
   port: number;
   db: number;
   password?: string;
+  // TLS, which ioredis reads from this same field. Set from the URL's scheme
+  // below: an external Redis reaches the agent as a URL and nowhere else.
+  tls?: Record<string, never>;
 }
 
 // The parts win, unlike poolConfig above: vigil.env hands every pod a REDIS_URL
@@ -55,5 +58,13 @@ export function redisConfig(): RedisConfig {
     port: Number(url.port || 6379),
     db: Number(url.pathname.slice(1) || 0),
     ...(url.password === "" ? {} : { password: decodeURIComponent(url.password) }),
+    // A rediss:// URL asks for TLS, and reading only host/port/password off it
+    // would dial the TLS port in the clear. Azure Cache for Redis answers a
+    // plaintext client with nothing at all -- no error to log, just a socket
+    // that never speaks -- so the connection churns through retries, BullMQ
+    // never takes the queue, and /readyz answers 503 while /healthz stays green.
+    // The scheme is the only place this is said: the discrete REDIS_HOST form is
+    // emitted for an in-cluster Redis alone, which has no TLS to ask for.
+    ...(url.protocol === "rediss:" ? { tls: {} } : {}),
   };
 }

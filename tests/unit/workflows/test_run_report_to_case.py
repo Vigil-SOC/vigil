@@ -52,6 +52,12 @@ class _Runs:
     def finalize_run(self, run_id: str, **kwargs):
         self.finalized = {"run_id": run_id, **kwargs}
 
+    def set_case(self, run_id: str, case_id: str):
+        if self.trigger_context.get("case_id"):
+            return False
+        self.trigger_context = {**self.trigger_context, "case_id": case_id}
+        return True
+
 
 def _terminate(update: TerminalUpdate, trigger_context: Dict[str, Any], cases: _Cases):
     runs = _Runs(trigger_context)

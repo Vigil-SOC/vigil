@@ -237,7 +237,15 @@ def record_terminal(
     # so re-sending them here is a safety net rather than a second of either.
     start_rca = _source_is_hunt(run_id)
     for handoff in update.handoffs:
-        _process_handoff(run_id, handoff, origin, start_rca, run_service, registry)
+        # Read again per handoff: the one before may have filed the hunt under its case.
+        _process_handoff(
+            run_id,
+            handoff,
+            _origin_case(run_id, run_service),
+            start_rca,
+            run_service,
+            registry,
+        )
 
 
 # A handoff pushed the moment the hunt journals it, ahead of the terminal that will
@@ -324,7 +332,12 @@ def _process_handoff(
         _record_handoff(origin, run_id, handoff)
         case_id: Optional[str] = origin
     else:
-        case_id = _open_case(run_id, handoff) or handoff.case_id
+        opened = _open_case(run_id, handoff)
+        # The hunt is filed under the case it opened, or the case would hold its
+        # root-cause run but not the hunt that proved what it traces.
+        if opened:
+            run_service.set_case(run_id, opened)
+        case_id = opened or handoff.case_id
     if not start_rca or _rca_exists(run_id, handoff, run_service):
         return
     unbound = _root_cause_unserved(registry)

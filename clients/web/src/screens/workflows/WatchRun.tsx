@@ -316,10 +316,68 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
   )
 }
 
+// A step at full size and the gap after it, and a folded stretch's chip: what the bar spends on each.
+const STEP_PX = 16
+const FOLD_PX = 72
+// Before the bar has been measured, and where nothing measures it.
+const ASSUMED_PX = 960
+
+export type BarItem = { kind: 'step'; i: number } | { kind: 'fold'; from: number; to: number }
+
+/** What the bar draws: every step when they fit; else the first and last, a window around the
+ *  cursor sized to the room left, and each stretch between folded into one count. */
+export function foldSteps(n: number, cursor: number, width: number): BarItem[] {
+  const all = (from: number, to: number): BarItem[] => Array.from({ length: to - from + 1 }, (_, k) => ({ kind: 'step', i: from + k }))
+  if (n * STEP_PX <= width) return all(0, n - 1)
+  const size = Math.max(9, Math.floor((width - 2 * (FOLD_PX + STEP_PX)) / STEP_PX))
+  let lo = Math.max(0, cursor - Math.floor(size / 2))
+  const hi = Math.min(n - 1, lo + size - 1)
+  lo = Math.max(0, hi - size + 1)
+  // A stretch of one step is drawn as that step: a chip counting one would say nothing.
+  const stretch = (from: number, to: number): BarItem[] => (from === to ? all(from, to) : [{ kind: 'fold', from, to }])
+  const items: BarItem[] = []
+  if (lo > 0) items.push({ kind: 'step', i: 0 })
+  if (lo > 1) items.push(...stretch(1, lo - 1))
+  items.push(...all(lo, hi))
+  if (hi < n - 2) items.push(...stretch(hi + 1, n - 2))
+  if (hi < n - 1) items.push({ kind: 'step', i: n - 1 })
+  return items
+}
+
+function useWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(ASSUMED_PX)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const watch = new ResizeObserver(([entry]) => { if (entry && entry.contentRect.width > 0) setWidth(entry.contentRect.width) })
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [ref])
+  return width
+}
+
 function Segments({ n, cursor, playing, ended, onJump, labels }: { n: number; cursor: number; playing: boolean; ended: boolean; onJump: (i: number) => void; labels: string[] }) {
+  const bar = useRef<HTMLDivElement>(null)
+  const items = foldSteps(n, cursor, useWidth(bar))
   return (
-    <div role="list" aria-label="Steps" className="grow min-w-0 flex items-center gap-1.5">
-      {Array.from({ length: n }, (_, i) => {
+    <div ref={bar} role="list" aria-label="Steps" className="grow min-w-0 flex items-center gap-1.5 overflow-hidden">
+      {items.map((item) => {
+        if (item.kind === 'fold') {
+          const count = item.to - item.from + 1
+          const middle = Math.floor((item.from + item.to) / 2)
+          return (
+            <button
+              key={`fold-${item.from}`} type="button"
+              title={`Steps ${item.from + 1}–${item.to + 1}`}
+              aria-label={`Steps ${item.from + 1} to ${item.to + 1}, ${count} folded. Open at step ${middle + 1}`}
+              onClick={() => onJump(middle)}
+              className="shrink-0 h-[20px] px-[9px] rounded-full border border-[var(--ln1)] bg-[var(--bg2)] text-[var(--tx2)] hover:text-[var(--tx0)] hover:border-[var(--ln2)] font-mono text-[11px] leading-[18px] tabular-nums cursor-pointer"
+            >
+              {`··· ${count}`}
+            </button>
+          )
+        }
+        const i = item.i
         const current = i === cursor
         return (
           <button

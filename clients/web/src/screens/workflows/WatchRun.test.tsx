@@ -2,7 +2,7 @@
    and which mark a step wears from where the cursor is. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { WatchRun, STEP_MS, UNSUPPORTED, PLAYBOOK } from './WatchRun'
+import { WatchRun, STEP_MS, UNSUPPORTED, PLAYBOOK, foldSteps } from './WatchRun'
 import { callFailure, moveWord, type WfRunDetail } from './runRead'
 import { workflowApi } from '../../services/api'
 
@@ -251,6 +251,30 @@ describe('a hunt', () => {
     expect(screen.getByText(/isn’t recorded/)).toBeInTheDocument()
   })
 
+  it('folds a long run’s steps into counts around a window that follows the cursor', () => {
+    const many = Array.from({ length: 151 }, (_, i) => move(151 - i))
+    render(<WatchRun d={hunt('completed', many)} onBack={vi.fn()} />)
+    const bar = screen.getByRole('list', { name: 'Steps' })
+    const steps = within(bar).getAllByRole('listitem')
+    expect(steps.length).toBeLessThan(151)
+    expect(steps[0]).toHaveAccessibleName(/^Step 1:/)
+    expect(steps[steps.length - 1]).toHaveAccessibleName(/^Step 151:/)
+    const fold = within(bar).getByRole('button', { name: /^Steps 2 to \d+, \d+ folded/ })
+    expect(fold.textContent).toMatch(/^··· \d+$/)
+    fireEvent.click(fold)
+    expect(caption()).toMatch(/^Step \d+ of 151/)
+    expect(caption()).not.toBe('Step 151 of 151 · Expand')
+    // now mid-run: a fold on each side of the window
+    expect(within(bar).getAllByRole('button', { name: /folded/ })).toHaveLength(2)
+  })
+
+  it('draws a short run’s steps all, with nothing folded', () => {
+    render(<WatchRun d={hunt('completed')} onBack={vi.fn()} />)
+    const bar = screen.getByRole('list', { name: 'Steps' })
+    expect(within(bar).getAllByRole('listitem')).toHaveLength(3)
+    expect(within(bar).queryByRole('button', { name: /folded/ })).not.toBeInTheDocument()
+  })
+
   it('says so in one line for a run with no steps, and shows no player', () => {
     render(<WatchRun d={hunt('completed', [])} onBack={vi.fn()} />)
     expect(screen.getByText('No steps were recorded for this run.')).toBeInTheDocument()
@@ -437,5 +461,45 @@ describe('reading a failed call', () => {
     expect(callFailure(wrapped('1 row(s) from x\n[{"msg":"failed: timeout -- x"}]'))).toBeNull()
     expect(callFailure({ tool: 'x' })).toBeNull()
     expect(callFailure(null)).toBeNull()
+  })
+})
+
+describe('foldSteps', () => {
+  const shape = (items: ReturnType<typeof foldSteps>) => items.map((x) => (x.kind === 'step' ? x.i : `${x.from}-${x.to}`))
+
+  it('keeps every step when they fit', () => {
+    expect(foldSteps(10, 4, 960)).toHaveLength(10)
+  })
+
+  it('keeps the first and last step and folds each side of the window', () => {
+    const items = foldSteps(151, 75, 600)
+    expect(shape(items)[0]).toBe(0)
+    expect(shape(items)[items.length - 1]).toBe(150)
+    expect(items.filter((x) => x.kind === 'fold')).toHaveLength(2)
+    const shown = items.filter((x) => x.kind === 'step').map((x) => (x as { i: number }).i)
+    expect(shown).toContain(75)
+  })
+
+  it('folds one side only when the cursor is at an end', () => {
+    expect(foldSteps(151, 150, 600).filter((x) => x.kind === 'fold')).toHaveLength(1)
+    expect(foldSteps(151, 0, 600).filter((x) => x.kind === 'fold')).toHaveLength(1)
+  })
+
+  it('draws a stretch of one step as that step, not as a count of one', () => {
+    for (const [n, cursor, width] of [[20, 13, 300], [11, 0, 100], [20, 6, 300]]) {
+      expect(foldSteps(n, cursor, width).filter((x) => x.kind === 'fold' && x.from === x.to)).toEqual([])
+    }
+  })
+
+  it('accounts for every step exactly once', () => {
+    for (const cursor of [0, 1, 40, 75, 149, 150]) {
+      const covered = foldSteps(151, cursor, 600).flatMap((x) => (x.kind === 'step' ? [x.i] : Array.from({ length: x.to - x.from + 1 }, (_, k) => x.from + k)))
+      expect(covered).toEqual(Array.from({ length: 151 }, (_, i) => i))
+    }
+  })
+
+  it('shows more of the run on a wider bar', () => {
+    const count = (w: number) => foldSteps(151, 75, w).filter((x) => x.kind === 'step').length
+    expect(count(1400)).toBeGreaterThan(count(600))
   })
 })
