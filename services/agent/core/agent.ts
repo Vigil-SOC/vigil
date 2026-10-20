@@ -786,7 +786,7 @@ export interface Subturn {
   cite?: boolean;
 }
 
-export async function runSubturn<T>(ctx: Omit<PluginContext, "turn">, sub: Subturn): Promise<Outcome<T>> {
+export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<Outcome<T>> {
   const { harness, options } = ctx;
   let turn = 0;
   const available = dedupe([...(options.tools ?? []), ...(options.hooks?.tools?.({ ...ctx, turn: () => turn }) ?? [])]);
