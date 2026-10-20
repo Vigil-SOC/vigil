@@ -179,7 +179,7 @@ export class KernelTurns {
   constructor(harness: Harness<AgentKinds>, run: { run_id: string; run_kind: RunKind; spec: RunSpec; plugin: PluginManifest; tools: readonly RegisteredTool[]; started_by?: string; signal?: AbortSignal }) {
     const hooks: PluginHooks = { tools: () => this.local };
     const options: AgentOptions = { ...run, hooks };
-    this.ctx = { harness, options };
+    this.ctx = { harness, options, turn: () => 0 };
   }
   turn<T>(sub: Subturn): Promise<Outcome<T>> { return runSubturn<T>(this.ctx, sub); }
   async calls(): Promise<CallPayload[]> {
