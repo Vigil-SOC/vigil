@@ -1,4 +1,4 @@
-/** One level and one sentence from the four reads the shell already has. */
+/** One level and one sentence from the five reads the shell polls. */
 
 type StatusLevel = 'good' | 'fair' | 'poor'
 
@@ -13,12 +13,18 @@ export interface HealthRead {
   schema?: { state?: string }
 }
 
+/** Each running, unhealthy, not_running or unknown; the agent layer also no_token. */
+export interface ProcessesRead {
+  agent_layer?: string
+  daemon?: string
+}
+
 export interface FederationRead {
   sources?: { source_id?: string; enabled?: boolean; consecutive_errors?: number }[]
 }
 
 export interface McpRead {
-  statuses?: { name?: string; status?: string; enabled?: boolean }[]
+  statuses?: { name?: string; status?: string; enabled?: boolean; setup?: string; setup_action?: string }[]
 }
 
 export interface RoutabilityRead {
@@ -31,6 +37,7 @@ export interface StatusReads {
   federation: FederationRead | null
   mcp: McpRead | null
   routability: RoutabilityRead | null
+  processes: ProcessesRead | null
 }
 
 /** An enabled federation source that is erroring. Disabled and never-seeded sources report none. */
@@ -38,14 +45,27 @@ export function failingFederationSource(read: FederationRead | null) {
   return read?.sources?.find((source) => source.enabled && (source.consecutive_errors ?? 0) > 0)
 }
 
-/** An enabled MCP server that is not running. */
+/** Not running, and not down either: waiting for its first call, or for the
+ * install to set it up (security-detections before its rules are fetched). */
+export const WAITING_MCP_STATUSES = new Set(['on_demand', 'not_set_up'])
+
+/** An enabled MCP server that should be running and is not. */
 export function stoppedMcpServer(read: McpRead | null) {
-  return read?.statuses?.find((server) => server.enabled && server.status !== 'running')
+  return read?.statuses?.find(
+    (server) => server.enabled && server.status !== 'running' && !WAITING_MCP_STATUSES.has(server.status ?? ''),
+  )
 }
 
 interface Fact {
   level: 'poor' | 'fair'
   sentence: string
+}
+
+/** Each one stops chat and workflow runs. */
+const AGENT_LAYER_FACT: Partial<Record<string, string>> = {
+  no_token: 'Agent layer has no internal token.',
+  not_running: 'Agent layer is not running.',
+  unhealthy: 'Agent layer is not ready.',
 }
 
 /** Worst fact wins. Poor outranks Fair; within a level, earlier checks outrank later ones. */
@@ -66,6 +86,13 @@ export function foldStatus(reads: StatusReads): StatusFold {
     if (state === 'drifted' || state === 'empty') {
       facts.push({ level: 'poor', sentence: `Schema is ${state}.` })
     }
+  }
+
+  const agentLayer = AGENT_LAYER_FACT[reads.processes?.agent_layer ?? '']
+  if (agentLayer) facts.push({ level: 'fair', sentence: agentLayer })
+  // Not running is the foreground default (#902), not a fault; the setup checks say it.
+  if (reads.processes?.daemon === 'unhealthy') {
+    facts.push({ level: 'fair', sentence: 'SOC daemon reports a stopped component.' })
   }
 
   const failing = failingFederationSource(reads.federation)

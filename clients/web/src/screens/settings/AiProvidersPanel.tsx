@@ -28,10 +28,14 @@ import { useBifrostProviders, useProviderModels, bifrostError } from './useBifro
 import {
   bifrostApi,
   keyRefusal,
+  refusalText,
   isMasked,
   secretText,
   secretEnvRef,
   COMMON_PROVIDERS,
+  BASE_URL_PROVIDERS,
+  CUSTOM_PROVIDER_NAME,
+  type BifrostProvider,
   type KeyVerdict,
   type BifrostKey,
   type BifrostKeyWrite,
@@ -69,7 +73,9 @@ interface AiProvidersPanelProps extends SectionProps {
 export default function AiProvidersPanel({ notify, addProviderRequested, onAddProviderOpened }: AiProvidersPanelProps) {
   const {
     providers,
+    shown,
     keys,
+    seeds,
     verdicts,
     phase,
     error,
@@ -77,9 +83,13 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     saveKey,
     removeKey,
     addProvider,
+    setBaseUrl,
     removeProvider,
   } = useBifrostProviders()
   const [editing, setEditing] = useState<{ provider: string; key: BifrostKey | null } | null>(null)
+  // a first key takes the place of the provider's unset seed key rather than sitting beside it
+  const targetId = (e: { provider: string; key: BifrostKey | null }) =>
+    e.key?.id || ((keys[e.provider] || []).length === 0 ? (seeds[e.provider] || [])[0]?.id : undefined) || null
   // The header "Add key" picks the provider first when there is more than one.
   const [pickProvider, setPickProvider] = useState<string | null>(null)
   const [addingProvider, setAddingProvider] = useState(false)
@@ -89,30 +99,76 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     onAddProviderOpened?.()
   }, [addProviderRequested, onAddProviderOpened])
   const [newProvider, setNewProvider] = useState('')
+  const [newBaseUrl, setNewBaseUrl] = useState('')
+  const [newCustom, setNewCustom] = useState(false)
+  const [newKeyLess, setNewKeyLess] = useState(false)
+  const [editingProvider, setEditingProvider] = useState<BifrostProvider | null>(null)
   const [confirmDel, setConfirmDel] = useState<
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
   const [busy, setBusy] = useState(false)
 
+  // a key-less custom provider has nothing to add a key to
+  const keyable = providers.filter((p) => !p.custom_provider_config?.is_key_less)
   const addKey = () => {
-    if (providers.length === 1) setEditing({ provider: providers[0].name, key: null })
-    else if (providers.length > 1) setPickProvider(providers[0].name)
+    if (keyable.length === 1) setEditing({ provider: keyable[0].name, key: null })
+    else if (keyable.length > 1) setPickProvider(keyable[0].name)
   }
+
+  const closeAddProvider = () => {
+    setAddingProvider(false)
+    setNewProvider('')
+    setNewBaseUrl('')
+    setNewCustom(false)
+    setNewKeyLess(false)
+  }
+
+  const customName = newProvider.trim().toLowerCase()
+  const customInvalid = newCustom && (!CUSTOM_PROVIDER_NAME.test(customName) || !newBaseUrl.trim())
 
   const handleAddProvider = async () => {
     const name = newProvider.trim().toLowerCase()
     if (!name) return
+    const held = providers.some((p) => p.name === name)
+    if (newCustom && held) {
+      // never reuse a name: creating over a built-in must not be possible
+      notify('err', `A provider called ${name} already exists.`)
+      return
+    }
+    const baseUrl = newCustom || BASE_URL_PROVIDERS.includes(name) ? newBaseUrl.trim() : ''
     setBusy(true)
     try {
-      await addProvider(name)
-      notify('ok', `Provider ${name} added. Add a key to make it routable.`)
-      setAddingProvider(false)
-      setNewProvider('')
+      if (newCustom) {
+        // the URL rides on the create: a custom provider has no default host to fall back to
+        await addProvider(name, {
+          network_config: { base_url: baseUrl },
+          custom_provider_config: { base_provider_type: 'openai', is_key_less: newKeyLess },
+        })
+      } else if (!held) {
+        // Bifrost may already hold it, seeded but not set up: no create, then
+        // straight to its key
+        await addProvider(name)
+      }
     } catch (e) {
       notify('err', bifrostError(e, 'Bifrost rejected that provider name.'))
-    } finally {
       setBusy(false)
+      return
     }
+    // The URL is a second write, so the provider can exist without it.
+    let urlError: string | null = null
+    if (baseUrl && !newCustom) {
+      try {
+        await setBaseUrl(name, baseUrl)
+      } catch (e) {
+        urlError = bifrostError(e, 'Bifrost rejected that base URL.')
+      }
+    }
+    setBusy(false)
+    closeAddProvider()
+    if (urlError) notify('err', `Provider ${name} added, but its base URL was not saved: ${urlError}`)
+    else if (newCustom && newKeyLess) notify('ok', `Provider ${name} added. It needs no key.`)
+    else if (!held) notify('ok', `Provider ${name} added. Add a key to make it routable.`)
+    if (held) setEditing({ provider: name, key: null })
   }
 
   const handleDelete = async () => {
@@ -140,7 +196,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
       title="Keys"
       desc="A provider can hold several keys; traffic is shared by weight and moves to another key if one is rejected. Saving a key tests it."
       actions={
-        <button className="btn ghost" disabled={providers.length === 0} onClick={addKey}>
+        <button className="btn ghost" disabled={keyable.length === 0} onClick={addKey}>
           <Icon name="plus" /> Add key
         </button>
       }
@@ -166,7 +222,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
         />
       )}
-      {phase === 'ready' && providers.length === 0 && (
+      {phase === 'ready' && shown.length === 0 && (
         <EmptyState
           compact
           icon="sparkle"
@@ -175,7 +231,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           primary={{ label: 'Add provider', onClick: () => setAddingProvider(true), icon: 'plus' }}
         />
       )}
-      {phase === 'ready' && providers.length > 0 && (
+      {phase === 'ready' && shown.length > 0 && (
         <div className="table-wrap">
           <table className="tbl">
             <thead>
@@ -185,7 +241,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
               </tr>
             </thead>
             <tbody>
-              {providers.map((p) => {
+              {shown.map((p) => {
                 const pk = keys[p.name] || []
                 const live = pk.filter((k) => k.enabled !== false)
                 const totalWeight = live.reduce((n, k) => n + (Number(k.weight) || 0), 0)
@@ -195,15 +251,27 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                       <td>
                         <div className="flex flex-col">
                           <span className="font-medium">{p.name}</span>
-                          <span className="text-xs text-tx-3">{p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}</span>
+                          <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
+                            {p.custom_provider_config
+                              ? 'Custom provider'
+                              : p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}
+                            <BaseUrlTag provider={p} />
+                          </span>
                         </div>
                       </td>
-                      <td colSpan={4} className="text-sm text-tx-3">No key — this provider cannot route</td>
+                      <td colSpan={4} className="text-sm text-tx-3">
+                        {p.custom_provider_config?.is_key_less
+                          ? 'No API key needed — this provider routes without one'
+                          : 'No key — this provider cannot route'}
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="inline-flex gap-1.5">
-                          <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
-                            <Icon name="plus" size={14} /> Add key
-                          </button>
+                          <EditProviderButton provider={p} onEdit={setEditingProvider} />
+                          {!p.custom_provider_config?.is_key_less && (
+                            <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
+                              <Icon name="plus" size={14} /> Add key
+                            </button>
+                          )}
                           <button
                             className="btn ghost icon"
                             title="Delete provider"
@@ -221,8 +289,9 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     <td>
                       <div className="flex flex-col">
                         <span className="font-medium">{k.name}</span>
-                        <span className="text-xs text-tx-3">
+                        <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
                           {p.name}{k.enabled === false ? ' · Disabled' : ''}
+                          <BaseUrlTag provider={p} />
                         </span>
                       </div>
                     </td>
@@ -242,6 +311,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="inline-flex gap-1.5">
+                        <EditProviderButton provider={p} onEdit={setEditingProvider} />
                         <button
                           className="btn ghost"
                           title="Edit"
@@ -266,27 +336,74 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         </div>
       )}
 
-      <Popup open={addingProvider} onClose={() => setAddingProvider(false)} title="Add provider" width={440}>
+      <Popup open={addingProvider} onClose={closeAddProvider} title="Add provider" width={440}>
         <Field
-          label="Provider name"
-          hint="Bifrost's own identifier for the upstream. It validates the name and reports back if it doesn't know it."
+          label="Type"
+          hint={
+            newCustom
+              ? 'A server of your own that speaks the OpenAI API (vLLM, LM Studio, a LAN gateway), under a name you choose.'
+              : 'A provider Bifrost already knows by name.'
+          }
         >
-          <input
-            className="field-input"
-            list="bf-providers"
-            value={newProvider}
-            onChange={(e) => setNewProvider(e.target.value)}
-            placeholder="anthropic"
-          />
-          <datalist id="bf-providers">
-            {COMMON_PROVIDERS.filter((n) => !providers.some((p) => p.name === n)).map((n) => (
-              <option key={n} value={n} />
+          <div className="inline-flex gap-1.5">
+            {(
+              [
+                [false, 'Built-in'],
+                [true, 'Custom (OpenAI-compatible)'],
+              ] as const
+            ).map(([custom, label]) => (
+              <button
+                key={label}
+                type="button"
+                className={`btn ${newCustom === custom ? 'primary' : 'ghost'}`}
+                onClick={() => setNewCustom(custom)}
+              >
+                {label}
+              </button>
             ))}
-          </datalist>
+          </div>
         </Field>
+        <div className="mt-3.5">
+          <Field
+            label="Provider name"
+            hint={
+              newCustom
+                ? 'Lowercase letters, digits and dashes. Models are routed as name/model, and the name cannot be a built-in provider.'
+                : "Bifrost's own identifier for the upstream. It validates the name and reports back if it doesn't know it."
+            }
+            error={newCustom && newProvider.trim() && !CUSTOM_PROVIDER_NAME.test(customName)
+              ? 'Use lowercase letters, digits and dashes only (40 at most).'
+              : null}
+          >
+            <input
+              className="field-input"
+              list={newCustom ? undefined : 'bf-providers'}
+              value={newProvider}
+              onChange={(e) => setNewProvider(e.target.value)}
+              placeholder={newCustom ? 'lan-vllm' : 'anthropic'}
+            />
+            <datalist id="bf-providers">
+              {COMMON_PROVIDERS.filter((n) => !providers.some((p) => p.name === n)).map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+          </Field>
+        </div>
+        {(newCustom || BASE_URL_PROVIDERS.includes(newProvider.trim().toLowerCase())) && (
+          <div className="mt-3.5">
+            <BaseUrlField value={newBaseUrl} onChange={setNewBaseUrl} required={newCustom} />
+          </div>
+        )}
+        {newCustom && (
+          <div className="mt-3.5">
+            <Field label="No API key" hint="The server takes no credential. The provider can route without a key.">
+              <Toggle checked={newKeyLess} onChange={setNewKeyLess} label="No API key" />
+            </Field>
+          </div>
+        )}
         <div className="flex justify-end gap-2.5 mt-5">
-          <button className="btn ghost" onClick={() => setAddingProvider(false)}>Cancel</button>
-          <button className="btn primary" disabled={!newProvider.trim() || busy} onClick={handleAddProvider}>
+          <button className="btn ghost" onClick={closeAddProvider}>Cancel</button>
+          <button className="btn primary" disabled={!newProvider.trim() || customInvalid || busy} onClick={handleAddProvider}>
             <Icon name="check2" /> {busy ? 'Adding…' : 'Add'}
           </button>
         </div>
@@ -296,7 +413,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         <Field label="Provider" hint="The key is added under this provider.">
           <Select
             value={pickProvider || ''}
-            options={providers.map((p) => ({ value: p.name, label: p.name }))}
+            options={keyable.map((p) => ({ value: p.name, label: p.name }))}
             onSelect={setPickProvider}
           />
         </Field>
@@ -311,19 +428,30 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
         </div>
       </Popup>
 
+      {editingProvider && (
+        <ProviderDialog
+          provider={editingProvider}
+          onClose={() => setEditingProvider(null)}
+          onSave={async (url) => {
+            await setBaseUrl(editingProvider.name, url)
+            setEditingProvider(null)
+            notify('ok', url ? `Base URL for ${editingProvider.name} saved.` : `${editingProvider.name} is back on its default host.`)
+          }}
+        />
+      )}
+
       {editing && (
         <KeyDialog
           provider={editing.provider}
           existing={editing.key}
           onClose={() => setEditing(null)}
           onSave={async (data) => {
-            const saved = await saveKey(editing.provider, editing.key?.id || null, data)
+            const saved = await saveKey(editing.provider, targetId(editing), data)
             setEditing(null)
             const refusal = await keyRefusal(saved?.id)
-            notify(
-              refusal ? 'err' : 'ok',
-              refusal ? `Key stored, but it cannot route: ${refusal}` : 'Key saved.',
-            )
+            // an edit that leaves the URL alone omits it from the write
+            const url = data.ollama_key_config?.url || editing.key?.ollama_key_config?.url
+            notify(refusal ? 'err' : 'ok', refusal ? refusalText(editing.provider, refusal, url) : 'Key saved.')
           }}
         />
       )}
@@ -351,6 +479,111 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
   )
 }
 
+/* ---------------- Provider base URL ---------------- */
+function BaseUrlTag({ provider }: { provider: BifrostProvider }) {
+  const url = provider.network_config?.base_url
+  return url ? <span className="font-mono" title={url}> · {url}</span> : null
+}
+
+function EditProviderButton({
+  provider,
+  onEdit,
+}: {
+  provider: BifrostProvider
+  onEdit: (p: BifrostProvider) => void
+}) {
+  if (!provider.custom_provider_config && !BASE_URL_PROVIDERS.includes(provider.name)) return null
+  return (
+    <button className="btn ghost icon" title="Edit provider" onClick={() => onEdit(provider)}>
+      <Icon name="gear" size={15} />
+    </button>
+  )
+}
+
+function BaseUrlField({
+  value,
+  onChange,
+  required,
+}: {
+  value: string
+  onChange: (v: string) => void
+  /** a custom provider has no host of its own to fall back to */
+  required?: boolean
+}) {
+  // The gateway resolves this, and the shipped compose runs it in a container.
+  const loopback = urlIsLoopback(value)
+  return (
+    <Field
+      label={required ? 'Base URL' : 'Base URL (optional)'}
+      hint={
+        required
+          ? 'Where the server answers, e.g. a LAN vLLM. Resolved by the gateway, not by your browser.'
+          : "A self-hosted OpenAI-compatible server, a LAN gateway or a regional endpoint. Leave blank for the provider's own host. Resolved by the gateway, not by your browser."
+      }
+    >
+      <TextInput
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="https://llm.internal.example:8000/v1"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {loopback && (
+        <p className="text-xs mt-1.5" style={{ color: 'var(--high)' }}>
+          The gateway runs in a container, so loopback is the container itself, not this
+          machine. A server on the host is <code>http://host.docker.internal:&lt;port&gt;</code>.
+        </p>
+      )}
+    </Field>
+  )
+}
+
+/* ---------------- Provider editor ---------------- */
+function ProviderDialog({
+  provider,
+  onClose,
+  onSave,
+}: {
+  provider: BifrostProvider
+  onClose: () => void
+  onSave: (baseUrl: string) => Promise<void>
+}) {
+  const stored = provider.network_config?.base_url || ''
+  const custom = !!provider.custom_provider_config
+  const [url, setUrl] = useState(stored)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const submit = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      await onSave(url.trim())
+    } catch (e) {
+      setErr(bifrostError(e, 'Save failed.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Popup open onClose={onClose} title={`Edit provider · ${provider.name}`} width={440}>
+      {err && <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> {err}</div>}
+      <BaseUrlField value={url} onChange={setUrl} required={custom} />
+      <p className="text-xs text-tx-3 mt-2">
+        Shown without a trailing <code>/v1</code>: the gateway adds that itself. Saving a host lets the
+        gateway reach private and LAN addresses for this provider.
+      </p>
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button className="btn primary" disabled={saving || url.trim() === stored || (custom && !url.trim())} onClick={submit}>
+          <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </Popup>
+  )
+}
+
 /* ---------------- Key editor ---------------- */
 export function KeyDialog({
   provider,
@@ -363,8 +596,8 @@ export function KeyDialog({
   onClose: () => void
   onSave: (data: BifrostKeyWrite) => Promise<void>
 }) {
-  // Vertex takes either a bare API key or a service-account JSON scoped by
-  // project/region — so it gets a mode switch and its own fields.
+  // Vertex takes either a bare API key or a service-account JSON, both scoped
+  // by project/region — so it gets a mode switch and its own fields.
   const isVertex = provider === 'vertex'
   const isOllama = provider === 'ollama'
   const storedUrl = secretText(existing?.ollama_key_config?.url)
@@ -372,8 +605,10 @@ export function KeyDialog({
   const storedUrlEnv = secretEnvRef(existing?.ollama_key_config?.url)
   const storedProject = secretText(existing?.vertex_key_config?.project_id)
   const storedRegion = secretText(existing?.vertex_key_config?.region)
+  // The mode is whichever credential the key holds: a service account reads
+  // back a masked `auth_credentials`, an express key a masked `value`.
   const [vertexAuth, setVertexAuth] = useState<'service_account' | 'api_key'>(
-    storedProject ? 'service_account' : 'api_key',
+    secretText(existing?.vertex_key_config?.auth_credentials) ? 'service_account' : 'api_key',
   )
   // A key Bifrost holds no token for reads back as an empty `value`, which is
   // the unauthenticated case — the common one, so it leads.
@@ -419,16 +654,18 @@ export function KeyDialog({
         // An empty `value` is no credential; an omitted one keeps the stored token.
         if (ollamaAuth === 'none') base.value = ''
         else if (secret.trim()) base.value = secret.trim()
-      } else if (isVertex && vertexAuth === 'service_account') {
+      } else if (isVertex) {
+        // Both modes carry the scope — Bifrost skips a vertex key without it.
         // Every field is omitted when left blank; the backend substitutes its
-        // stored copy, and for the credential mirrors it into `value` too.
+        // stored copy.
+        const sa = vertexAuth === 'service_account'
         base.vertex_key_config = {
           ...(projectId.trim() ? { project_id: projectId.trim() } : {}),
           ...(region.trim() ? { region: region.trim() } : {}),
-          ...(secret.trim() ? { auth_credentials: secret.trim() } : {}),
+          ...(sa && secret.trim() ? { auth_credentials: secret.trim() } : {}),
         }
+        if (!sa && secret.trim()) base.value = secret.trim()
       } else if (secret.trim()) {
-        // API-key vertex takes the plain-value path like any other provider.
         // Omitted when left blank: the backend substitutes the stored
         // credential, since Bifrost has no models-only update.
         base.value = secret.trim()
@@ -441,13 +678,12 @@ export function KeyDialog({
     }
   }
 
-  // A create needs a credential; a service-account vertex create also needs
-  // project + region.
+  // A create needs a credential; a vertex create also needs project + region.
   const missingCredential = !existing && !(isOllama ? url.trim() : secret.trim())
   const missingOllamaToken =
     isOllama && ollamaAuth === 'api_key' && !existing && !secret.trim()
   const missingVertexScope =
-    isVertex && vertexAuth === 'service_account' && !existing && (!projectId.trim() || !region.trim())
+    isVertex && !existing && (!projectId.trim() || !region.trim())
 
   return (
     <Popup open onClose={onClose} title={existing ? `Edit key · ${provider}` : `Add key · ${provider}`}>
@@ -554,38 +790,38 @@ export function KeyDialog({
                 ))}
               </div>
             </Field>
+            <div className="settings-grid-2" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
+              <Field
+                label="Project ID"
+                hint={
+                  storedProject
+                    ? 'Leave blank to keep the stored project.'
+                    : 'The GCP project that owns the Vertex AI endpoint.'
+                }
+              >
+                <TextInput
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  placeholder={storedProject || 'my-gcp-project'}
+                />
+              </Field>
+              <Field
+                label="Region"
+                hint={
+                  storedRegion
+                    ? 'Leave blank to keep the stored region.'
+                    : 'Vertex location, e.g. us-central1.'
+                }
+              >
+                <TextInput
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  placeholder={storedRegion || 'us-central1'}
+                />
+              </Field>
+            </div>
             {vertexAuth === 'service_account' ? (
               <>
-                <div className="settings-grid-2" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
-                  <Field
-                    label="Project ID"
-                    hint={
-                      storedProject
-                        ? 'Leave blank to keep the stored project.'
-                        : 'The GCP project that owns the Vertex AI endpoint.'
-                    }
-                  >
-                    <TextInput
-                      value={projectId}
-                      onChange={(e) => setProjectId(e.target.value)}
-                      placeholder={storedProject || 'my-gcp-project'}
-                    />
-                  </Field>
-                  <Field
-                    label="Region"
-                    hint={
-                      storedRegion
-                        ? 'Leave blank to keep the stored region.'
-                        : 'Vertex location, e.g. us-central1.'
-                    }
-                  >
-                    <TextInput
-                      value={region}
-                      onChange={(e) => setRegion(e.target.value)}
-                      placeholder={storedRegion || 'us-central1'}
-                    />
-                  </Field>
-                </div>
                 <Field
                   label="Service account JSON"
                   hint={

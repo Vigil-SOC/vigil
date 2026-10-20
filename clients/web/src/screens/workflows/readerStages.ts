@@ -57,8 +57,8 @@ const frame: StageDef = {
 const gather: StageDef = {
   title: 'Gather evidence',
   body: 'Picks the explanation with the most to gain, then queries the sources that can confirm or rule it out.',
-  roles: ['lead', 'helpers'],
-  tools: ['lead', 'helpers'],
+  roles: ['lead'],
+  tools: ['lead'],
   checkpoints: ['scope_extension', 'budget_anomaly'],
 }
 const weigh: StageDef = {

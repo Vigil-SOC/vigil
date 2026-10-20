@@ -14,10 +14,14 @@
 import api from './api'
 import type { Schema } from './apiTypes'
 
-interface BifrostSecret {
+export interface BifrostSecret {
   value: string
-  env_var: string
-  from_env: boolean
+  /** Bifrost < 1.6 */
+  env_var?: string
+  from_env?: boolean
+  /** Bifrost >= 1.6: `env.FOO` / `vault.…`, with `type` "env" or "vault" */
+  ref?: string
+  type?: string
 }
 
 export interface BifrostProvider {
@@ -28,8 +32,13 @@ export interface BifrostProvider {
     stream_idle_timeout_in_seconds?: number
     retry_backoff_initial?: number
     retry_backoff_max?: number
+    /** Bifrost's stored host, without a trailing `/v1`; absent for the provider's own. */
+    base_url?: string
+    allow_private_network?: boolean
   }
   concurrency_and_buffer_size?: { concurrency?: number; buffer_size?: number }
+  /** Set on a custom provider only: a named host that speaks a built-in wire format. */
+  custom_provider_config?: { base_provider_type?: string; is_key_less?: boolean }
   proxy_config?: unknown | null
   provider_status?: string
   status?: string
@@ -62,9 +71,9 @@ export interface BifrostKey {
   }
 }
 
-/** Vertex's credential is not an API key: it is a service-account JSON plus the
-    project/region that scope it. Bifrost holds the JSON under `auth_credentials`;
-    the passthrough mirrors it to the key's `value` so one secret ref backs both.
+/** The project/region every Vertex key is scoped by, plus — for a service
+    account — its JSON under `auth_credentials`. An express-mode API key sends a
+    bare `value` beside this block instead.
 
     All three fields are omitted on an edit that isn't changing them — Bifrost
     masks each on read, and echoing a mask back stores the mask, so the
@@ -91,7 +100,16 @@ export function isMasked(v: BifrostSecret | string | undefined): boolean {
     is the only way to edit a seeded key (whose URL is `env.OLLAMA_URL`) without
     knowing what the environment resolved it to. */
 export function secretEnvRef(v: BifrostSecret | string | undefined): string {
-  return typeof v === 'object' && v?.from_env ? v.env_var || '' : ''
+  if (typeof v !== 'object' || !v) return ''
+  if (v.type === 'env') return v.ref || ''
+  return v.from_env ? v.env_var || '' : ''
+}
+
+/** A custom OpenAI-compatible provider: its own name and host. The passthrough
+    validates the name and URL and sets `allow_private_network` with the host. */
+export interface CustomProviderWrite {
+  network_config: { base_url: string }
+  custom_provider_config: { base_provider_type: 'openai'; is_key_less: boolean }
 }
 
 export interface BifrostKeyWrite {
@@ -102,7 +120,7 @@ export interface BifrostKeyWrite {
   /** Omit to keep the stored credential — the passthrough fills it in. */
   value?: string
   use_for_batch_api?: boolean
-  /** Vertex only — sent instead of a bare `value`. */
+  /** Vertex only — the scope, and a service account's JSON. */
   vertex_key_config?: VertexKeyConfig
   /** Ollama only — its credential is an endpoint, not a secret. Omit to keep
       the stored URL. */
@@ -216,13 +234,44 @@ export const COMMON_PROVIDERS = [
   'xai',
 ]
 
+/** Providers whose `network_config.base_url` Bifrost v2.2.1 sends traffic to,
+    each checked against a live gateway by pointing it at a stub. Left out on
+    purpose: ollama, vllm and sgl take their URL on the key; azure, bedrock and
+    vertex are addressed by their key's endpoint or region. */
+export const BASE_URL_PROVIDERS = [
+  'openai',
+  'anthropic',
+  'gemini',
+  'mistral',
+  'cohere',
+  'openrouter',
+  'groq',
+  'xai',
+  'perplexity',
+  'cerebras',
+  'huggingface',
+  'nebius',
+  'parasail',
+  'replicate',
+]
+
+/** A custom provider's name, as the passthrough accepts it. */
+export const CUSTOM_PROVIDER_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
+
 const bf = '/bifrost'
 
 export const bifrostApi = {
   listProviders: () => api.get<{ providers: BifrostProvider[] }>(`${bf}/providers`),
   // `provider` in, `name` back out — Bifrost's create payload does not use the
   // field its response does, and sending `name` fails with "Missing provider".
-  createProvider: (provider: string) => api.post<BifrostProvider>(`${bf}/providers`, { provider }),
+  createProvider: (provider: string, custom?: CustomProviderWrite) =>
+    api.post<BifrostProvider>(`${bf}/providers`, { provider, ...custom }),
+  // The passthrough validates, trims `/v1`, and merges this into the stored
+  // document; an empty string clears the host. Nothing else is touched.
+  setProviderBaseUrl: (name: string, baseUrl: string) =>
+    api.put<BifrostProvider>(`${bf}/providers/${encodeURIComponent(name)}`, {
+      network_config: { base_url: baseUrl },
+    }),
   removeProvider: (name: string) => api.delete(`${bf}/providers/${encodeURIComponent(name)}`),
 
   listKeys: (provider: string) =>
@@ -307,6 +356,21 @@ export async function keyRefusal(keyId: string | undefined): Promise<string | nu
   } catch {
     return null
   }
+}
+
+/** The banner for a `keyRefusal`. An Ollama key's credential is an endpoint the
+    gateway dials from its own container, so name the URL it tried — an `env.`
+    reference as written, never resolved. Bifrost's own text doesn't say. */
+export function refusalText(
+  provider: string,
+  refusal: string,
+  url?: BifrostSecret | string,
+): string {
+  // a masked read-back names nothing
+  const at = secretEnvRef(url) || (isMasked(url) ? '' : secretText(url))
+  return provider === 'ollama' && at
+    ? `Key stored, but the gateway could not reach Ollama at ${at}: ${refusal}`
+    : `Key stored, but it cannot route: ${refusal}`
 }
 
 /** Does any Bifrost provider have a routable key? Setup's system check ORs

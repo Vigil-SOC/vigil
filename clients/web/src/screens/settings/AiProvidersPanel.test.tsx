@@ -3,7 +3,7 @@
    is only the fence. So a picker that trusted it alone could narrow a fence and
    never widen one, and would silently drop models it was not shown. */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import AiProvidersPanel from './AiProvidersPanel'
 
 const listProviders = vi.fn()
@@ -13,13 +13,18 @@ const modelParameters = vi.fn()
 const createKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const routability = vi.fn()
+const createProvider = vi.fn(() => Promise.resolve({ data: { name: 'openai' } }))
+const setProviderBaseUrl = vi.fn(() => Promise.resolve({ data: {} }))
+const keyRefusal = vi.fn<(id?: string) => Promise<string | null>>(() => Promise.resolve(null))
+const removeProvider = vi.fn(() => Promise.resolve({ data: {} }))
 
 // This mock replaces the module wholesale, so anything the panel reaches for and
 // does not find here is `undefined` at the call site rather than a missing-export
 // error — which surfaces as the panel's generic failure state and says nothing
 // about the cause. Keep it in step with what AiProvidersPanel and useBifrost
 // import.
-vi.mock('../../services/bifrostApi', () => ({
+vi.mock('../../services/bifrostApi', async (importOriginal) => ({
+  refusalText: (await importOriginal<typeof import('../../services/bifrostApi')>()).refusalText,
   bifrostApi: {
     listProviders: () => listProviders(),
     listKeys: (...a: unknown[]) => listKeys(...(a as [])),
@@ -28,19 +33,22 @@ vi.mock('../../services/bifrostApi', () => ({
     createKey: (...a: unknown[]) => createKey(...(a as [])),
     updateKey: (...a: unknown[]) => updateKey(...(a as [])),
     routability: () => routability(),
-    createProvider: vi.fn(),
-    removeProvider: vi.fn(),
+    createProvider: (...a: unknown[]) => createProvider(...(a as [])),
+    setProviderBaseUrl: (...a: unknown[]) => setProviderBaseUrl(...(a as [])),
+    removeProvider: (...a: unknown[]) => removeProvider(...(a as [])),
     removeKey: vi.fn(),
   },
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
   isMasked: (v: unknown) =>
     (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')).includes('*'),
-  keyRefusal: () => Promise.resolve(null),
+  keyRefusal: (id?: string) => keyRefusal(id),
   secretEnvRef: (v: unknown) =>
     typeof v === 'object' && (v as { from_env?: boolean })?.from_env
       ? ((v as { env_var?: string }).env_var ?? '')
       : '',
   COMMON_PROVIDERS: ['anthropic', 'openai', 'ollama', 'vertex'],
+  BASE_URL_PROVIDERS: ['openai', 'anthropic'],
+  CUSTOM_PROVIDER_NAME: /^[a-z0-9][a-z0-9-]{0,39}$/,
 }))
 
 // Fenced to two of the four the provider actually has.
@@ -217,6 +225,17 @@ describe('the keys table', () => {
     expect(await screen.findByText('No providers configured')).toBeInTheDocument()
   })
 
+  it('leaves out a provider whose only key the backend calls a placeholder', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'openai' }] } })
+    listKeys.mockResolvedValue({
+      data: { keys: [{ id: 's1', name: 'default-openai-key', models: ['*'], weight: 1, value: { value: '', ref: 'env.OPENAI_API_KEY', type: 'env' } }], total: 1 },
+    })
+    routability.mockResolvedValue({ data: { providers: { openai: false }, keys: { s1: { provider: 'openai', routable: false, health: 'placeholder' } } } })
+    render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText('No providers configured')).toBeInTheDocument()
+    expect(screen.queryByText('default-openai-key')).not.toBeInTheDocument()
+  })
+
   it('lists a provider with no key and offers to add one', async () => {
     await mount([], [])
     expect(screen.getByText(/No key — this provider cannot route/)).toBeInTheDocument()
@@ -236,5 +255,191 @@ describe('the page head’s Add provider', () => {
     expect(opened).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: 'Add provider' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Add key' }).length).toBeGreaterThan(0)
+  })
+})
+
+describe('a provider’s base URL', () => {
+  const mountProviders = async (providers: unknown[]) => {
+    listProviders.mockResolvedValue({ data: { providers } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={notify} addProviderRequested onAddProviderOpened={() => {}} />)
+    await screen.findByRole('dialog', { name: 'Add provider' })
+  }
+  const notify = vi.fn()
+
+  it('is written right after the provider is created', async () => {
+    await mountProviders([{ name: 'anthropic' }])
+    fireEvent.change(screen.getByPlaceholderText('anthropic'), { target: { value: 'openai' } })
+    fireEvent.change(screen.getByPlaceholderText(/llm\.internal\.example/), {
+      target: { value: ' http://10.0.0.5:8000/v1 ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.5:8000/v1'))
+    expect(createProvider).toHaveBeenCalledWith('openai')
+  })
+
+  it('is not offered for a provider whose URL lives on its key', async () => {
+    await mountProviders([{ name: 'anthropic' }])
+    fireEvent.change(screen.getByPlaceholderText('anthropic'), { target: { value: 'ollama' } })
+    expect(screen.queryByPlaceholderText(/llm\.internal\.example/)).not.toBeInTheDocument()
+  })
+
+  it('shows the stored host on the provider and edits it in place', async () => {
+    listProviders.mockResolvedValue({
+      data: { providers: [{ name: 'openai', network_config: { base_url: 'http://10.0.0.5:8000' } }] },
+    })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText(/http:\/\/10\.0\.0\.5:8000/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Edit provider'))
+    const field = await screen.findByDisplayValue('http://10.0.0.5:8000')
+    fireEvent.change(field, { target: { value: 'http://10.0.0.6:9000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('openai', 'http://10.0.0.6:9000'))
+  })
+})
+
+/* Bifrost's refusal for an Ollama key is a generic "DNS lookup, connection
+   refused, etc." — the banner names the URL the gateway dialled. */
+describe('a refused key', () => {
+  const notify = vi.fn()
+  const mountKey = async (provider: string, key: Record<string, unknown>) => {
+    notify.mockClear()
+    listProviders.mockResolvedValue({ data: { providers: [{ name: provider }] } })
+    listKeys.mockResolvedValue({ data: { keys: [key], total: 1 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    keyRefusal.mockResolvedValue('network error occurred while connecting to provider API')
+    render(<AiProvidersPanel notify={notify} />)
+    await screen.findByText(key.name as string)
+    await openEditor()
+  }
+  const ollamaKey = (url: unknown) => ({
+    id: 'k1', name: 'ollama-key', value: '', models: ['*'], weight: 1, enabled: true, ollama_key_config: { url },
+  })
+
+  it('names the Ollama URL the save sent', async () => {
+    await mountKey('ollama', ollamaKey('http://host.docker.internal:11434'))
+    fireEvent.change(screen.getByDisplayValue('http://host.docker.internal:11434'), {
+      target: { value: 'http://host.docker.internal:1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'err',
+      'Key stored, but the gateway could not reach Ollama at http://host.docker.internal:1: network error occurred while connecting to provider API',
+    ))
+  })
+
+  it('names an env reference as written, never resolved', async () => {
+    await mountKey('ollama', ollamaKey({ value: 'http****1434', ref: 'env.OLLAMA_URL', type: 'env' }))
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'err',
+      'Key stored, but the gateway could not reach Ollama at env.OLLAMA_URL: network error occurred while connecting to provider API',
+    ))
+  })
+
+  it('keeps the wording for any other provider', async () => {
+    await mountKey('anthropic', FENCED)
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'err',
+      'Key stored, but it cannot route: network error occurred while connecting to provider API',
+    ))
+  })
+})
+
+describe('a custom OpenAI-compatible provider', () => {
+  const custom = (name: string, url: string, keyLess = false) => ({
+    name,
+    network_config: { base_url: url },
+    custom_provider_config: { base_provider_type: 'openai', is_key_less: keyLess },
+  })
+
+  it('is created with its own name, host and key-less flag in one write', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={() => {}} addProviderRequested onAddProviderOpened={() => {}} />)
+    await screen.findByRole('dialog', { name: 'Add provider' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Custom (OpenAI-compatible)' }))
+    const add = screen.getByRole('button', { name: 'Add' })
+    expect(add).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText('lan-vllm'), { target: { value: 'lan-vllm' } })
+    expect(add).toBeDisabled() // a custom provider has no host to fall back to
+    fireEvent.change(screen.getByPlaceholderText(/llm\.internal\.example/), {
+      target: { value: ' http://10.0.0.5:8000/v1 ' },
+    })
+    fireEvent.click(screen.getByRole('switch', { name: 'No API key' }))
+    fireEvent.click(add)
+
+    await waitFor(() =>
+      expect(createProvider).toHaveBeenCalledWith('lan-vllm', {
+        network_config: { base_url: 'http://10.0.0.5:8000/v1' },
+        custom_provider_config: { base_provider_type: 'openai', is_key_less: true },
+      }),
+    )
+    // the host rides on the create, not on a second write
+    expect(setProviderBaseUrl).not.toHaveBeenCalledWith('lan-vllm', expect.anything())
+  })
+
+  it('refuses a name that is not lowercase letters, digits and dashes', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    render(<AiProvidersPanel notify={() => {}} addProviderRequested onAddProviderOpened={() => {}} />)
+    await screen.findByRole('dialog', { name: 'Add provider' })
+    fireEvent.click(screen.getByRole('button', { name: 'Custom (OpenAI-compatible)' }))
+    fireEvent.change(screen.getByPlaceholderText('lan-vllm'), { target: { value: 'My Server' } })
+    fireEvent.change(screen.getByPlaceholderText(/llm\.internal\.example/), { target: { value: 'http://10.0.0.5:8000' } })
+    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  })
+
+  it('keeps two coexisting providers apart: each edits its own URL and deletes alone', async () => {
+    const providers = [
+      { name: 'openai' },
+      custom('lan-vllm', 'http://10.0.0.5:8000'),
+      custom('lab-gw', 'http://10.0.0.6:9000', true),
+    ]
+    listProviders.mockResolvedValue({ data: { providers } })
+    listKeys.mockImplementation((name: string) =>
+      Promise.resolve({
+        data: {
+          keys: name === 'lan-vllm' ? [{ id: 'k9', name: 'vllm-key', value: 'sk-****', models: ['*'], weight: 1 }] : [],
+          total: name === 'lan-vllm' ? 1 : 0,
+        },
+      }),
+    )
+    routability.mockResolvedValue({
+      data: {
+        providers: { 'lan-vllm': true, 'lab-gw': true },
+        keys: { k9: { provider: 'lan-vllm', routable: true, health: 'healthy' } },
+      },
+    })
+    render(<AiProvidersPanel notify={() => {}} />)
+    await screen.findByText('vllm-key')
+
+    // the key-less one routes without a key, so there is none to add to it
+    expect(screen.getByText(/No API key needed/)).toBeInTheDocument()
+    expect(screen.getAllByTitle('Edit provider')).toHaveLength(3) // openai, lan-vllm, lab-gw
+
+    fireEvent.click(screen.getAllByTitle('Edit provider')[2])
+    const field = await screen.findByDisplayValue('http://10.0.0.6:9000')
+    // a custom provider's host cannot be cleared
+    fireEvent.change(field, { target: { value: '' } })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(field, { target: { value: 'http://10.0.0.7:9000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setProviderBaseUrl).toHaveBeenCalledWith('lab-gw', 'http://10.0.0.7:9000'))
+
+    fireEvent.click(within(screen.getByText('lab-gw').closest('tr')!).getByTitle('Delete provider'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(removeProvider).toHaveBeenCalledWith('lab-gw'))
+    expect(removeProvider).toHaveBeenCalledTimes(1)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomeScreen, { dropChips, parseCreatedAt } from './HomeScreen'
+import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -42,10 +43,10 @@ function item(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
   }
 }
 
-function renderHome(extra: Partial<ConsoleScreenProps> = {}) {
+function renderHome(extra: Partial<ConsoleScreenProps> = {}, path = '/home') {
   return render(
     <ToastProvider>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <HomeScreen {...props} {...extra} />
       </MemoryRouter>
     </ToastProvider>,
@@ -198,10 +199,23 @@ describe('Home', () => {
     expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
   })
 
-  it('says the board is clear when nothing is waiting', async () => {
+  it('lists a hunt stopped at a limit as waiting, answered on its case rather than approved here', async () => {
+    mockQueue([item({ kind: 'parked', source_id: 'run-9', run_id: 'run-9', title: 'Keep the hunt going?', reason: 'Ran out of turns: iteration 48 of 48', created_at: '' })])
+    renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Keep the hunt going?' })).closest('article') as HTMLElement
+    expect(screen.getByText('1 decision waits on you. Everything else is running.')).toBeInTheDocument()
+    expect(within(card).getByText('Stopped at a limit')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open case' })).toHaveClass('primary')
+  })
+
+  it('says the board is clear when nothing is waiting, once', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     renderHome()
     expect(await screen.findByText('Board clear.')).toBeInTheDocument()
+    expect(await screen.findByText(/Nothing waits on you\./)).toBeInTheDocument()
+    expect(screen.getAllByText(/board clear/i)).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Needs your attention' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Cases →' })).toHaveAttribute('href', '/cases')
     expect(screen.getByRole('heading', { name: 'Get more from Vigil' })).toBeInTheDocument()
@@ -217,10 +231,9 @@ describe('Home', () => {
     vi.mocked(approvalsApi.needsYou).mockReturnValue(new Promise((r) => { resolve = r }) as never)
     renderHome()
     await screen.findByRole('heading', { name: 'Needs your attention' })
-    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument() // loading
+    expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument() // loading
     await act(async () => resolve({ data: { count: 0, items: [] } } as never))
-    expect(await screen.findByRole('heading', { name: 'Board clear' })).toBeInTheDocument()
-    expect(screen.getByText(/Nothing waits on you\./)).toBeInTheDocument()
+    expect(await screen.findByText(/Nothing waits on you\./)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Needs your attention is calculated' }))
     expect(screen.getByRole('tooltip')).toHaveTextContent('Source Pending approvals and checkpoints (B1)')
     expect(screen.getByRole('tooltip')).toHaveTextContent('Calculation Oldest first, top four shown')
@@ -230,7 +243,7 @@ describe('Home', () => {
     vi.mocked(approvalsApi.needsYou).mockRejectedValue(new Error('queue down'))
     renderHome()
     expect(await screen.findByRole('alert')).toHaveTextContent('queue down')
-    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
     expect(screen.queryByText('Board clear.')).not.toBeInTheDocument()
   })
 
@@ -238,7 +251,7 @@ describe('Home', () => {
     mockQueue([item()])
     renderHome()
     await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
-    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
   })
 
   it('hides a step for this tab when alerts exist, and keeps Get more from Vigil', async () => {
@@ -260,10 +273,48 @@ describe('Home', () => {
     expect(screen.queryByText('No alerts yet')).not.toBeInTheDocument()
     expect(screen.queryByText(/of \d+ done/)).not.toBeInTheDocument()
 
-    fireEvent.click(within(step as HTMLElement).getByRole('button', { name: 'Not now' }))
+    // the shell's Finish setup chip listens for this to recount
+    const changed = vi.fn()
+    window.addEventListener(SETUP_HIDDEN_CHANGED, changed)
+    try {
+      fireEvent.click(within(step as HTMLElement).getByRole('button', { name: 'Not now' }))
+    } finally {
+      window.removeEventListener(SETUP_HIDDEN_CHANGED, changed)
+    }
+    expect(changed).toHaveBeenCalledOnce()
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
     expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('?section=setup scrolls to Get more from Vigil once the steps load, or to Get Vigil ready on first run', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    try {
+      const plain = renderHome()
+      await screen.findByText('Nothing to suggest right now.')
+      expect(scrolled).toEqual([])
+      plain.unmount()
+
+      const more = renderHome({}, '/home?section=setup')
+      await screen.findByText('Nothing to suggest right now.')
+      expect(scrolled).toEqual([screen.getByRole('region', { name: 'Setup' })])
+      more.unmount()
+
+      scrolled.length = 0
+      vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+        data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+      } as never)
+      renderHome({}, '/home?section=setup')
+      const ready = (await screen.findByRole('heading', { name: 'Get Vigil ready' })).closest('.home-ready')
+      expect(scrolled).toEqual([ready])
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
   })
 
   it('lays the open steps out in one numbered row and Not now renumbers the rest', async () => {
@@ -353,6 +404,49 @@ describe('Home', () => {
     expect(within(second).getByText('Checkpoint')).toBeInTheDocument()
     expect(second.querySelector('.home-card-meta')).toBeNull()
     expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+  })
+
+  it('names the explanation a hypothesis approval starts testing, shortened, with the full text on hover (#2456)', async () => {
+    const pdf =
+      'A finance workstation that opened an invoice-themed ISO attachment has executed rundll32.exe from a shortcut and is beaconing over HTTPS to DUSKY LANTERN infrastructure.'
+    mockQueue([
+      item({
+        source_id: 'gate',
+        kind: 'checkpoint',
+        title: 'Approve and start this hunt on 2 explanations',
+        checkpoint_class: 'hypothesis_approval',
+        case_id: 'case-7',
+        hypotheses: [
+          { hypothesis_id: 'h1', statement: pdf, provenance: 'operator' },
+          { hypothesis_id: 'h0', statement: 'The activity behind "A finance workstation…" has a legitimate explanation.', provenance: 'base_rate' },
+        ],
+      }),
+    ])
+    renderHome()
+    const head = await screen.findByRole('heading', { name: 'Start testing “A finance workstation that opened an invoice-themed ISO…”' })
+    expect(head).toHaveAttribute('title', pdf)
+    expect(screen.queryByText(/on 2 explanations/)).not.toBeInTheDocument()
+    expect(within(head.closest('article') as HTMLElement).getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-7')
+  })
+
+  it('counts the other explanations a hypothesis approval tests, and keeps the served title for anything else', async () => {
+    mockQueue([
+      item({
+        source_id: 'gate',
+        kind: 'checkpoint',
+        title: 'Approve and start this hunt on 3 explanations',
+        hypotheses: [
+          { hypothesis_id: 'h1', statement: 'Lateral movement over SMB', provenance: 'operator' },
+          { hypothesis_id: 'h2', statement: 'Credential theft from LSASS', provenance: 'hunt_spec' },
+          { hypothesis_id: 'h0', statement: 'The activity has a benign explanation and no attack occurred.', provenance: 'base_rate' },
+        ],
+      }),
+      item({ source_id: 'b', title: 'Block IP' }),
+    ])
+    renderHome()
+    const head = await screen.findByRole('heading', { name: 'Start testing “Lateral movement over SMB” and 1 more' })
+    expect(head).toHaveAttribute('title', 'Lateral movement over SMB\nCredential theft from LSASS')
+    expect(screen.getByRole('heading', { name: 'Block IP' })).toBeInTheDocument()
   })
 
   it('prints the served reason as the card meta line, with no ledger rule', async () => {

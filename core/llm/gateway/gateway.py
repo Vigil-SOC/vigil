@@ -2,12 +2,14 @@
 
 The daemon's triage and the AI-insights refresh call through here; the
 llm-worker drains the queue under a shared cap on calls in flight, with ARQ's
-job persistence and retries.
+job persistence and retries. A job whose caller has stopped waiting is dropped
+by the worker, not run late: ``submit`` sets the job's expiry to its timeout.
 """
 
 import asyncio
 import logging
 from typing import Any, Dict, Optional
+from urllib.parse import unquote
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -28,16 +30,27 @@ def redis_settings() -> RedisSettings:
     the queue it drains is the one the gateway enqueues onto.
     """
     url = get_settings().redis_url or DEFAULT_REDIS_URL
-    # Parse redis://host:port/db
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    return RedisSettings(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 6379,
-        database=int(parsed.path.lstrip("/") or 0),
-        password=parsed.password,
-    )
+    # ARQ parses the DSN itself, and keeps what reading host/port/db/password off
+    # the URL by hand drops: the scheme, so rediss:// sets ssl=True, and the
+    # username. Dropping the scheme dials a managed Redis (Azure Cache,
+    # ElastiCache) in the clear -- it accepts the socket and then answers
+    # nothing, so create_pool retries to exhaustion and every caller times out
+    # with no error saying why.
+    settings = RedisSettings.from_dsn(url)
+    # urlparse leaves the password percent-encoded and ARQ passes it through, so
+    # a key containing @ or / authenticates with the escapes still in it and
+    # Redis answers WRONGPASS. redis-py unquotes in from_url, which is what
+    # core/redis_client.py uses, and the agent decodes it in
+    # services/agent/core/db.ts; this was the one client sending it as written.
+    if settings.password:
+        settings.password = unquote(settings.password)
+    # ARQ's create_pool retries on connect errors/timeouts; its defaults
+    # (1 s timeout, 5 retries) give up ~10 s into a cold Redis container.
+    # These allow ~45 s for a refused connection, ~90 s if every try times out.
+    settings.conn_timeout = 3
+    settings.conn_retries = 15
+    settings.conn_retry_delay = 3
+    return settings
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +114,15 @@ class LLMGateway:
         timeout: int = 90,
         provider_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Enqueue one stateless completion and wait for its result."""
+        """Enqueue one stateless completion and wait for its result.
+
+        The job expires after ``timeout`` seconds. A worker that picks it up
+        later skips it without a model call, so a caller that gave up leaves
+        no stale work behind. The expiry is set at enqueue time because the
+        daemon wraps the whole call in ``asyncio.wait_for`` with the same
+        timeout and usually cancels this coroutine before a ``TimeoutError``
+        handler here could run.
+        """
         job = await self._pool.enqueue_job(
             "llm_call",
             prompt=prompt,
@@ -111,6 +132,7 @@ class LLMGateway:
             provider_id=provider_id,
             traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
+            _expires=timeout,
         )
         try:
             return await job.result(timeout=timeout)

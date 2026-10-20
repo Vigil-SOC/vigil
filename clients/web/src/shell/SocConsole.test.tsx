@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, it, expect, beforeAll, vi } from 'vitest'
 import { act, cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
+import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
+import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
 
@@ -49,6 +51,14 @@ function renderConsole(path = '/dashboard') {
 
 // Literals are inlined below because vi.mock is hoisted.
 vi.mock('../services/api', () => ({
+  caseMetricsApi: {
+    getSummary: () => Promise.resolve({ data: {} }),
+    getMTTD: () => Promise.resolve({ data: {} }),
+    getMTTR: () => Promise.resolve({ data: {} }),
+    getByPriority: () => Promise.resolve({ data: {} }),
+    getByStatus: () => Promise.resolve({ data: {} }),
+    getAnalystPerformance: () => Promise.resolve({ data: {} }),
+  },
   casesApi: {
     getAll: () =>
       Promise.resolve({
@@ -122,6 +132,7 @@ vi.mock('../services/api', () => ({
       data: { status: 'healthy', version: '1.2.3', storage: { database_available: true }, schema: { state: 'current' } },
     })),
     getRoutability: vi.fn(() => Promise.resolve({ data: { providers: { gemini: true } } })),
+    getProcesses: vi.fn(() => Promise.resolve({ data: { agent_layer: 'running', daemon: 'running' } })),
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
@@ -309,12 +320,16 @@ const defaultViewportWidth = window.innerWidth
 afterEach(() => {
   authState.allow = () => true
   localStorage.clear()
+  sessionStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
   vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   vi.mocked(consoleApi.getHealth).mockResolvedValue({
     data: { status: 'healthy', version: '1.2.3', storage: { database_available: true }, schema: { state: 'current' } },
   } as never)
   vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { gemini: true } } } as never)
+  vi.mocked(consoleApi.getProcesses).mockResolvedValue({
+    data: { agent_layer: 'running', daemon: 'running' },
+  } as never)
   vi.mocked(configApi.getAutonomy).mockResolvedValue({
     data: { auto_response_enabled: true, force_manual_approval: false },
   } as never)
@@ -525,39 +540,96 @@ describe('SocConsole', () => {
     }
   })
 
-  it('shows Finish setup with the open step count and links to /setup', async () => {
-    const step = (done: boolean) => ({ id: 'x', title: 'x', state_line: '', done, href: '/x' })
-    const read = (...steps: boolean[]) =>
+  describe('Finish setup chip', () => {
+    const tip = (n: number) =>
+      `Finish setting up Vigil: ${n === 1 ? '1 step is' : `${n} steps are`} left. Opens the setup steps on Home.`
+    // ids a, b, c...; true = done
+    const read = (...done: boolean[]) =>
       vi.mocked(configApi.getSetupSteps).mockResolvedValue({
-        data: { steps: steps.map(step), alerts_exist: 0, demo_enabled: false },
+        data: {
+          steps: done.map((d, i) => {
+            const id = String.fromCharCode(97 + i)
+            return { id, title: `Step ${id}`, state_line: '', done: d, href: `/${id}` }
+          }),
+          alerts_exist: 1,
+          demo_enabled: false,
+        },
       } as never)
 
-    read(true, false, false)
-    const first = renderConsole()
-    const chip = await screen.findByRole('link', { name: 'Finish setting up Vigil: 2 steps are left. Opens the setup guide.' })
-    expect(chip).toHaveTextContent('Finish setup')
-    expect(chip).toHaveTextContent('2 left')
-    expect(chip).toHaveAttribute('href', '/setup')
-    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    expect(screen.getByRole('menuitem', { name: 'Setup guide 2 left' })).toBeInTheDocument()
-    first.unmount()
+    afterEach(() => {
+      vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+        data: { steps: [], alerts_exist: 1, demo_enabled: false },
+      } as never)
+    })
 
-    read(true, false)
-    const second = renderConsole()
-    expect(await screen.findByRole('link', { name: 'Finish setting up Vigil: 1 step is left. Opens the setup guide.' })).toHaveTextContent('1 left')
-    // a step finished elsewhere shows on the next screen change
-    read(true, true)
-    clickScreen('Cases')
-    await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
-    second.unmount()
+    it('counts the open steps and links to the setup steps on Home', async () => {
+      read(true, false, false)
+      const first = renderConsole()
+      const chip = await screen.findByRole('link', { name: tip(2) })
+      expect(chip).toHaveTextContent('Finish setup')
+      expect(chip).toHaveTextContent('2 left')
+      expect(chip).toHaveAttribute('href', '/home?section=setup')
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.getByRole('menuitem', { name: 'Finish setup 2 left' })).toBeInTheDocument()
+      first.unmount()
 
-    vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('boom'))
-    renderConsole()
-    await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
-    expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
-    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
-      data: { steps: [], alerts_exist: 1, demo_enabled: false },
-    } as never)
+      read(true, false)
+      const second = renderConsole()
+      expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
+      // a step finished elsewhere shows on the next screen change
+      read(true, true)
+      clickScreen('Cases')
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      second.unmount()
+
+      vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('boom'))
+      renderConsole()
+      await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+      expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+    })
+
+    it('leaves out steps hidden with Not now, and shows no chip once every open step is hidden', async () => {
+      read(true, false, false)
+      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'a']))
+      const first = renderConsole()
+      expect(await screen.findByRole('link', { name: tip(1) })).toHaveTextContent('1 left')
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.getByRole('menuitem', { name: 'Finish setup 1 left' })).toBeInTheDocument()
+      first.unmount()
+
+      sessionStorage.setItem(SETUP_HIDDEN_KEY, JSON.stringify(['b', 'c']))
+      renderConsole()
+      await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+      await screen.findByText('Security operations overview')
+      expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
+    })
+
+    it('drops a step hidden on Home without a screen change', async () => {
+      read(false, false)
+      renderConsole('/home')
+      expect(await screen.findByRole('link', { name: tip(2) })).toBeInTheDocument()
+      const calls = vi.mocked(configApi.getSetupSteps).mock.calls.length
+      const setup = await screen.findByRole('region', { name: 'Setup' })
+      fireEvent.click((await within(setup).findAllByRole('button', { name: 'Not now' }))[0])
+      expect(await screen.findByRole('link', { name: tip(1) })).toBeInTheDocument()
+      fireEvent.click(within(setup).getByRole('button', { name: 'Not now' }))
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+      expect(within(setup).getByText('Nothing to suggest right now.')).toBeInTheDocument()
+      // the chip recounted from the hidden list, not a fresh read
+      expect(vi.mocked(configApi.getSetupSteps).mock.calls.length).toBe(calls)
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
+    })
+
+    it('shows no chip for people who cannot open Home', async () => {
+      authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+      read(false, false)
+      renderConsole()
+      await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+      await screen.findByText('Security operations overview')
+      expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+    })
   })
 
   it('puts the status chip in the nav row, with no separate strip', async () => {
@@ -687,6 +759,56 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'New case' })).toBeInTheDocument()
   })
 
+  describe('the case drawer and browser history', () => {
+    let navigate: NavigateFunction = () => {}
+    function Probe() {
+      navigate = useNavigate()
+      return null
+    }
+    const renderWithHistory = () =>
+      render(
+        <ColorSchemeProvider>
+          <MemoryRouter initialEntries={['/dashboard']}>
+            <Probe />
+            <Routes>
+              <Route path="/">
+                <Route index element={<LandingRedirect />} />
+                <Route path=":screen" element={<ConsoleAt />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </ColorSchemeProvider>,
+      )
+    const openDrawer = async () => {
+      clickScreen('Cases')
+      fireEvent.click(await screen.findByText('Defense Evasion: Obfuscated Loader'))
+      return screen.findByRole('dialog', { name: 'Case' })
+    }
+
+    it('comes back to the case on Back from a page the drawer led to, as Watch it run and Replay do', async () => {
+      renderWithHistory()
+      await openDrawer()
+      // Watch it run: the drawer closes as the link takes the page to the run.
+      act(() => navigate('/workflows?run=run-1'))
+      fireEvent.keyDown(window, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
+      act(() => navigate(-1))
+      const back = await screen.findByRole('dialog', { name: 'Case' })
+      expect(within(back).getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
+    })
+
+    it('stays closed on Back once the case was closed where it was open', async () => {
+      renderWithHistory()
+      const drawer = await openDrawer()
+      fireEvent.click(within(drawer).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
+      act(() => navigate('/workflows'))
+      act(() => navigate(-1))
+      await screen.findByRole('button', { name: 'New case' })
+      expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+    })
+  })
+
   describe('⌘K Tab', () => {
     const ask = (text: string) => {
       const input = screen.getByRole('combobox', { name: /Find a case/ })
@@ -727,6 +849,28 @@ describe('SocConsole', () => {
       await screen.findByRole('tab', { name: /Summary/ })
       ask('why this loader?')
       await sentOnCase()
+    })
+
+    // #2457: the expanded case pins its composer only while the view is full-height; a tour
+    // started from the account menu cleared that, and the composer fell under the fold.
+    it('keeps the expanded case page full-height, its composer pinned, after a tour clears the view', async () => {
+      localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      const view = document.querySelector('main.view') as HTMLElement
+      const pinned = () => {
+        expect(view.style.overflowY).toBe('hidden')
+        expect((view.querySelector('.screen') as HTMLElement).style.height).toBe('100%')
+        expect(view.querySelector('.case-page > .case-composer')).not.toBeNull()
+      }
+      pinned()
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Take the tour' }))
+      await waitFor(pinned)
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
+      pinned()
     })
 
     it('opens the dock from the command bar on a case page opened by its URL', async () => {
@@ -939,14 +1083,14 @@ describe('SocConsole', () => {
     renderConsole()
     clickScreen('AI Decisions')
     fireEvent.click(await screen.findByText('Cluster merge'))
-    fireEvent.change(screen.getByPlaceholderText('Your name / analyst ID'), {
-      target: { value: 'QA Analyst' },
-    })
+    // no name to type: the server records the signed-in user
+    expect(screen.queryByPlaceholderText('Your name / analyst ID')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
     expect(vi.mocked(aiDecisionsApi.submitFeedback)).toHaveBeenCalledWith(
       'd-4471',
-      expect.objectContaining({ human_reviewer: 'QA Analyst', human_decision: 'agree' }),
+      expect.objectContaining({ human_decision: 'agree' }),
     )
+    expect(vi.mocked(aiDecisionsApi.submitFeedback).mock.lastCall?.[1]).not.toHaveProperty('human_reviewer')
   })
 
   it('exports the visible timeline events as CSV', async () => {
@@ -1047,6 +1191,17 @@ describe('SocConsole', () => {
     expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
 
+  it('re-reads the autonomy badge when Settings saves Ask first / Act', async () => {
+    renderConsole()
+    expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
+
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: true, force_manual_approval: true },
+    } as never)
+    act(() => notifyAutonomyChanged())
+    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
+  })
+
   it('opens Limits & autonomy from the chip in both Assist and Act', async () => {
     const act = renderConsole()
     fireEvent.click(await screen.findByRole('button', { name: 'Autonomy · Act · reversible changes on its own' }))
@@ -1115,6 +1270,21 @@ describe('SocConsole', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('goes Fair when the agent layer is down, and omits a failed processes read', async () => {
+    vi.mocked(consoleApi.getProcesses).mockResolvedValue({
+      data: { agent_layer: 'not_running', daemon: 'not_running' },
+    } as never)
+    const { unmount } = renderConsole()
+    const fair = await screen.findByRole('status', { name: 'System status' })
+    expect(fair).toHaveAttribute('data-level', 'fair')
+    expect(fair).toHaveTextContent('Agent layer is not running.')
+    unmount()
+
+    vi.mocked(consoleApi.getProcesses).mockRejectedValue(new Error('401'))
+    renderConsole()
+    expect(await screen.findByRole('status', { name: 'System status' })).toHaveAttribute('data-level', 'good')
   })
 
   it('omits a failed routability read instead of calling the line Fair', async () => {

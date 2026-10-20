@@ -6,6 +6,9 @@ from core.integrations._base.descriptor import (
     register_descriptor,
 )
 
+# Auth is either/or (API key or user/password), so only the URL is required.
+ELASTIC_REQUIRED = ("elasticsearch_url",)
+
 ELASTIC = register_descriptor(
     IntegrationDescriptor(
         id="elastic-siem",

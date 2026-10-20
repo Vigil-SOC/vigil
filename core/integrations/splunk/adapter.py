@@ -104,9 +104,8 @@ class SplunkAdapter:
             earliest_time = "-1m"
             last = now - timedelta(minutes=1)
 
-        # search() returns None on any error (it logs and swallows them), so a
-        # query failed if it returned None or raised. An empty list ran and
-        # found nothing; it falls through, since on non-ES installs
+        # search() raises on any error, so a query failed if it raised. An empty
+        # result ran and found nothing; it falls through, since on non-ES installs
         # `index=notable` is empty by design and the fallbacks must be reached.
         # A failed query fails the tick (the runner keeps the cursor and records
         # last_error), else a fallback's results would hide the events it missed.
@@ -117,21 +116,20 @@ class SplunkAdapter:
         for i, query_tmpl in enumerate(_QUERIES):
             query = query_tmpl.format(limit=max_items)
             try:
-                # search() polls its job with time.sleep for up to ~60s.
-                results = await asyncio.to_thread(
-                    svc.search,
-                    query=query,
-                    earliest_time=earliest_time,
-                    latest_time="now",
-                    max_count=max_items,
-                )
-                error = "search returned no result" if results is None else None
+                # search() polls its job with time.sleep for up to SEARCH_DEADLINE_S.
+                results = (
+                    await asyncio.to_thread(
+                        svc.search,
+                        query=query,
+                        earliest_time=earliest_time,
+                        latest_time="now",
+                        max_count=max_items,
+                    )
+                ).results
             except Exception as e:
-                results, error = None, str(e)
-            if results is None:
-                logger.warning("Splunk query failed (%s): %s", query, error)
+                logger.warning("Splunk query failed (%s): %s", query, e)
                 if i < len(_QUERIES) - 1:
-                    raise RuntimeError(f"Splunk: query failed ({query}): {error}")
+                    raise RuntimeError(f"Splunk: query failed ({query}): {e}") from e
                 continue
             if results:
                 events = results

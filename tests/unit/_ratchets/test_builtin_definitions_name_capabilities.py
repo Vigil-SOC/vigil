@@ -80,6 +80,6 @@ def test_every_builtin_definition_grants_only_capabilities():
     paths = sorted(DEFINITIONS.glob("*/WORKFLOW.md"))
     assert paths
     found = [v for p in paths for v in violations(p.parent.name, p.read_text())]
+    # No built-in grants phase tools today (a hunt's are its plugin's); the cases
+    # above keep this from passing vacuously once one does.
     assert found == []
-    # Guard against a vacuous pass: some built-in must grant phase tools.
-    assert any("tools:" in p.read_text() for p in paths)

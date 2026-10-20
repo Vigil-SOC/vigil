@@ -28,6 +28,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
+import { LATER_RELEASE } from '../../shared/later'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
@@ -54,7 +55,6 @@ const STATE_OPTIONS = [
   { value: 'assigned', label: 'Assigned' },
   { value: 'executing', label: 'Executing' },
   { value: 'waiting_approval', label: 'Waiting approval' },
-  { value: 'review_submitted', label: 'In review' },
   { value: 'closed', label: 'Closed' },
 ]
 
@@ -128,7 +128,7 @@ function useWorkflowCatalog(): { kinds: string[]; names: Record<string, string> 
   return catalog
 }
 
-export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
+export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
@@ -136,9 +136,11 @@ export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSee
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
 
   useEffect(() => {
-    // the list fills the view and scrolls inside its card; the full page is full-bleed too
-    setViewFull(true)
-  }, [setViewFull])
+    // the list fills the view and scrolls inside its card; the full page is full-bleed too, which
+    // is what pins the case composer to the bottom (#2457). Asked again whenever the shell clears
+    // it, as a tour starting does, or the page grows past the viewport and the composer falls under it.
+    if (viewFull !== true) setViewFull(true)
+  }, [setViewFull, viewFull])
 
   return selected ? (
     <CasesDetail id={selected} onBack={backToList} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
@@ -360,7 +362,7 @@ function CasesTable({
                     onClick={() => onSelect(c.id)}
                     onKeyDown={(e) => { if (e.target === e.currentTarget) activateOnKey(() => onSelect(c.id))(e) }}
                   >
-                    <span role="cell" title="Coming in a later release" onClick={(e) => e.stopPropagation()}>
+                    <span role="cell" title={LATER_RELEASE} onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" className="cg-check" disabled aria-label={`Select case ${c.id}`} />
                     </span>
                     <span role="cell" className="cg-id" title={c.id}>{c.id}</span>

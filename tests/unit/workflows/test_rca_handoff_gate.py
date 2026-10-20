@@ -8,6 +8,7 @@ import pytest
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import (
     TerminalHandoff,
+    TerminalUpdate,
     _source_is_hunt,
     _start_root_cause,
 )
@@ -69,7 +70,7 @@ class TestTeeingUpTheRootCause:
         params, triggered_by = enqueue.await_args.args
         assert triggered_by == "handoff:run-1:case-abc"
         # Only what the run reads. agent_id and source_run_id used to ride along
-        # here unconsumed — the roster is rootcause.yaml's, and triggered_by above
+        # here unconsumed — the roster is plugins/rootcause/plugin.yaml's, and triggered_by above
         # already carries which run this traces back from.
         assert set(params) == {"context", "case_id"}
         assert "hypothesis" not in params
@@ -86,12 +87,36 @@ class TestProcessHandoff:
         svc = _run_service()
         with patch.object(
             rbr, "_open_case", return_value="case-opened"
-        ) as open_case, patch.object(rbr, "_start_root_cause") as start_rca:
+        ) as open_case, patch.object(
+            rbr, "_start_root_cause"
+        ) as start_rca, patch.object(
+            rbr, "_root_cause_unserved", return_value=[]
+        ):
             rbr._process_handoff("run-1", HANDOFF, "", True, svc)
         open_case.assert_called_once()
         start_rca.assert_called_once()
         # The RCA is teed onto the case that was just opened, not the agent-side id.
         assert start_rca.call_args.args[2] == "case-opened"
+        # And the hunt is filed under it, so the case lists the run that proved it.
+        svc.set_case.assert_called_once_with("run-1", "case-opened")
+
+    def test_a_case_that_did_not_open_files_the_hunt_nowhere(self):
+        svc = _run_service()
+        with patch.object(rbr, "_open_case", return_value=None), patch.object(
+            rbr, "_start_root_cause"
+        ) as start_rca, patch.object(rbr, "_root_cause_unserved", return_value=[]):
+            rbr._process_handoff("run-1", HANDOFF, "", True, svc)
+        svc.set_case.assert_not_called()
+        assert start_rca.call_args.args[2] == "case-abc"
+
+    def test_a_hunt_started_on_a_case_is_not_refiled(self):
+        svc = _run_service()
+        with patch.object(rbr, "_record_handoff"), patch.object(
+            rbr, "_open_case"
+        ) as open_case, patch.object(rbr, "_start_root_cause"):
+            rbr._process_handoff("run-1", HANDOFF, "case-own", True, svc)
+        open_case.assert_not_called()
+        svc.set_case.assert_not_called()
 
     def test_a_second_arrival_tees_no_second_rca(self):
         # The /handoff push already teed the RCA; the terminal re-carries the same
@@ -114,6 +139,39 @@ class TestProcessHandoff:
             rbr._process_handoff("run-2", HANDOFF, "", False, svc)
         open_case.assert_called_once()
         start_rca.assert_not_called()
+
+
+class TestTheDeploymentGate:
+    """A root-cause trace searches telemetry. Without a SIEM it fails on its first
+    turn, so a handoff starts none and the case says why instead."""
+
+    def test_no_siem_starts_no_run_and_records_the_reason(self):
+        svc = _run_service()
+        with patch.object(rbr, "_start_root_cause") as start_rca, patch.object(
+            rbr, "_record_root_cause_not_started"
+        ) as said:
+            rbr._process_handoff("run-1", HANDOFF, "case-1", True, svc, None)
+        start_rca.assert_not_called()
+        said.assert_called_once_with("case-1", "run-1", HANDOFF, ["telemetry_search"])
+
+    def test_a_connected_siem_starts_the_run(self):
+        class _Registry:
+            def get_all_tools(self):
+                return [
+                    {
+                        "name": "splunk-selfhosted_splunk_execute",
+                        "description": "Execute SPL",
+                        "input_schema": {},
+                    }
+                ]
+
+        svc = _run_service()
+        with patch.object(rbr, "_start_root_cause") as start_rca, patch.object(
+            rbr, "_record_root_cause_not_started"
+        ) as said:
+            rbr._process_handoff("run-1", HANDOFF, "case-1", True, svc, _Registry())
+        start_rca.assert_called_once_with("run-1", HANDOFF, "case-1")
+        said.assert_not_called()
 
 
 def test_the_finding_rides_in_context_and_there_is_no_hypothesis():
@@ -188,3 +246,64 @@ def test_root_cause_resolves_off_the_hunt_grant():
     assert config["budgets"]["max_wall_ms"] == 5_400_000
     assert config["budgets"]["max_calls"] > 12
     assert config["runtime"]["max_turns"] > 8
+
+
+class _FiledRuns:
+    """A run row whose set_case writes the case in, as the database would."""
+
+    def __init__(self):
+        self.trigger_context = {"run_kind": "hunt"}
+
+    def get_run(self, run_id):
+        return {"run_id": run_id, "trigger_context": dict(self.trigger_context)}
+
+    def set_case(self, run_id, case_id):
+        if self.trigger_context.get("case_id"):
+            return False
+        self.trigger_context = {**self.trigger_context, "case_id": case_id}
+        return True
+
+    def finalize_run(self, run_id, **kwargs):
+        pass
+
+    def find_run_by_trigger(self, *args, **kwargs):
+        return None
+
+
+class TestATerminalWithTwoHandoffs:
+    def test_the_second_handoff_lands_on_the_case_the_first_opened(self):
+        # A case-less hunt whose terminal carries two handoffs: the first opens the
+        # case and files the hunt on it; the second hands onto that case, not a new one.
+        other = TerminalHandoff(case_id="case-abc", title="Second", markdown="Second.")
+        runs = _FiledRuns()
+        update = TerminalUpdate(
+            outcome="completed", handoffs=[HANDOFF, other], summary=""
+        )
+        with patch.object(
+            rbr, "_open_case", return_value="case-A"
+        ) as open_case, patch.object(
+            rbr, "_record_handoff"
+        ) as record_handoff, patch.object(
+            rbr, "_start_root_cause"
+        ), patch.object(
+            rbr, "_source_is_hunt", return_value=True
+        ), patch.object(
+            rbr, "_root_cause_unserved", return_value=[]
+        ), patch.object(
+            rbr, "withdraw_for_run"
+        ), patch.object(
+            rbr, "authorise"
+        ):
+            rbr.record_terminal(
+                run_id="run-1",
+                update=update,
+                authorization="Bearer x",
+                run_service=runs,
+                approvals=None,
+            )
+        open_case.assert_called_once()
+        assert runs.trigger_context["case_id"] == "case-A"
+        # The first opened the case itself; the second is the one filed onto it.
+        record_handoff.assert_called_once()
+        assert record_handoff.call_args.args[0] == "case-A"
+        assert record_handoff.call_args.args[2] is other

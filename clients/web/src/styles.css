@@ -5049,6 +5049,11 @@
       border: 1px solid var(--line);
    }
 
+   /* a wrapped message must not squeeze the icon */
+   .settings-banner > svg {
+      flex: none;
+   }
+
    .settings-banner.ok {
       background: var(--ok-dim);
       border-color: var(--ok);

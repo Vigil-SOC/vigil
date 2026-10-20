@@ -4,9 +4,11 @@ import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
-import { IN_FLIGHT, useRunDetail } from '../workflows/runRead'
+import { IN_FLIGHT, extendRun, useRunDetail, type Grant } from '../workflows/runRead'
+import { KeepGoing, provenanceTag } from '../workflows/huntParts'
 import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
+import { LATER_RELEASE } from '../../shared/later'
 import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
@@ -18,17 +20,26 @@ import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail } from './EvidenceTrail'
+import { BlindSpots, CheckedList, blindSpotsOf } from './RunChecks'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
+import { caseCitations, evidenceInNote } from './caseCitations'
+import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
 import { timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
+  caseVerdict,
+  closureFlag,
+  endedRun,
   EVIDENCE_PAGE,
   explanationWord,
+  foldRecord,
+  heldLine,
   honestLine,
   moveTool,
+  plainLine,
   plural,
   readFold,
   recallEntityCalls,
@@ -40,7 +51,11 @@ import {
   visibilityGaps,
   wordDisplay,
   type CallRow,
+  type CaseVerdict,
+  type EndedRun,
   type HypothesisRow,
+  type OpenCheckpointRow,
+  type OpenQuestionRow,
   type RecallProvenance,
   type RecordChip,
   type RunFold,
@@ -53,7 +68,6 @@ const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blin
 type Tab = (typeof TABS)[number]
 const NEEDS_POLL_MS = 20_000
 
-const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
 const RECORD_CHIPS = ['agent', 'human', 'memory', 'system'] as const
 
 /** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
@@ -65,8 +79,9 @@ const EXPL_TONE: Record<string, string> = {
   'ruled out': 'muted',
 }
 
-const HUNT_WORKFLOW = 'threat-hunt'
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
+// What the Summary's disagreement button asks the composer, on a case with several runs.
+const DISAGREE_ASK = "Where do this case's runs disagree, and what did each one say?"
 
 function Mark({ text }: { text: string }) {
   return (
@@ -96,10 +111,6 @@ function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
 }
 
-function latency(ms: number | undefined): string {
-  return ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`
-}
-
 function detailOf(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
@@ -116,22 +127,54 @@ function waiting(since: string): string {
   return min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
 }
 
+/** The rows a note cites, in words while the row is shut and as chips that open them once it is opened (#2459). */
+function NoteCites({ ids, open, cites, onCite }: { ids: string[]; open: boolean; cites: ReadonlyMap<string, Citation>; onCite: (cite: Citation) => void }) {
+  const known = ids.flatMap((id) => cites.get(id) ?? [])
+  const rest = ids.length - known.length
+  if (!open || known.length === 0) return <> · {plural(ids.length, 'evidence row')}</>
+  return (
+    <span className="case-expl-cites">
+      {known.map((cite) => (
+        <button
+          key={cite.id}
+          type="button"
+          className="cite-chip evidence"
+          title={cite.text}
+          onClick={(e) => {
+            e.stopPropagation()
+            onCite(cite)
+          }}
+        >
+          {cite.label}
+        </button>
+      ))}
+      {rest > 0 && <span>and {plural(rest, 'older row')}</span>}
+    </span>
+  )
+}
+
 /** One explanation: the title stops at a line and the justification at two; the full text is on hover and when the row is opened. */
-function ExplanationRow({ row, rootCauseRunId }: { row: HypothesisRow; rootCauseRunId: string | null }) {
+function ExplanationRow({ row, rootCauseRunId, cites, onCite }: { row: HypothesisRow; rootCauseRunId: string | null; cites: ReadonlyMap<string, Citation>; onCite: (cite: Citation) => void }) {
   const [open, setOpen] = useState(false)
   const word = explanationWord(row.status, row.supports, row.weakens)
   const by = addedBy(row.provenance)
   const title = row.statement || row.hypothesis_id
+  const note = row.resolution_reason ? evidenceInNote(row.resolution_reason) : null
   return (
     <li>
       <div className={`case-expl-main${open ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v) } }}>
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v) } }}>
         <div className="case-expl-line">
           <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
           <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`} title={title}>{title}</span>
         </div>
-        {row.resolution_reason && <div className="case-expl-note" title={row.resolution_reason}>{row.resolution_reason}</div>}
+        {note && (
+          <div className="case-expl-note" title={note.text}>
+            {note.text}
+            {note.ids.length > 0 && <NoteCites ids={note.ids} open={open} cites={cites} onCite={onCite} />}
+          </div>
+        )}
       </div>
       <div className="case-expl-side">
         <div>
@@ -150,6 +193,59 @@ function ExplanationRow({ row, rootCauseRunId }: { row: HypothesisRow; rootCause
   )
 }
 
+/** A paused run's question, or a hunt stopped at a limit: each gets the full block. */
+const blocks = (it: NeedsYouItem) => it.kind === 'checkpoint' || it.kind === 'parked'
+
+/** Paused runs first, then proposed approvals, each kind in the order served. */
+function byWeight(items: NeedsYouItem[]): NeedsYouItem[] {
+  return [...items.filter(blocks), ...items.filter((it) => !blocks(it))]
+}
+
+/** What's waiting, in a line: a paused run's ask, else the one proposal, else how many there are. */
+function needsAsk(items: NeedsYouItem[]): string | undefined {
+  const paused = items.find(blocks)
+  if (paused || items.length < 2) return (paused ?? items[0])?.title
+  return `${items.length} proposed actions`
+}
+
+/** Stands in for a run's checkpoint until the approvals queue serves it; answered through the queue. */
+const FROM_RUN = 'run-checkpoint:'
+
+/** What the server says under each kind of question, for the moment before it has said it. */
+const CHECKPOINT_REASON: Record<string, string> = {
+  hypothesis_approval: 'Vigil wants your go-ahead on the explanations it will test.',
+}
+
+/** The run's own checkpoint as a decision, before the queue has caught up with it. */
+function fromRun(cp: OpenCheckpointRow, caseId: string, runId: string | null): NeedsYouItem {
+  return {
+    kind: 'checkpoint',
+    source_id: `${FROM_RUN}${cp.checkpoint_id}`,
+    title: cp.question,
+    reason: CHECKPOINT_REASON[cp.checkpoint_class] ?? '',
+    created_at: cp.raised_at,
+    reversibility: 'reversible',
+    case_id: caseId,
+    run_id: runId,
+    checkpoint_id: cp.checkpoint_id,
+    checkpoint_class: cp.checkpoint_class,
+    hypotheses: cp.hypotheses,
+  }
+}
+
+/** One explanation a hypothesis approval would start testing, and what it is to the hunt. */
+interface ApprovedRow { statement: string; benign: boolean; tag: string | null }
+
+/** Each explanation in full, the benign one last and labelled as what the others are tested against. */
+function approvedRows(item: NeedsYouItem, board: HypothesisRow[]): ApprovedRow[] {
+  const provenanceOf = new Map(board.map((h) => [h.hypothesis_id, h.provenance]))
+  const listed = (item.hypotheses ?? []).map((h) => {
+    const provenance = h.provenance || provenanceOf.get(h.hypothesis_id) || ''
+    return { statement: h.statement, benign: provenance === 'base_rate', tag: provenanceTag(provenance)?.text ?? null }
+  })
+  return [...listed.filter((row) => !row.benign), ...listed.filter((row) => row.benign)]
+}
+
 /** Under the tabs on every tab but Summary while a decision waits; the decision itself is on Summary. */
 function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
   return (
@@ -162,46 +258,112 @@ function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
   )
 }
 
+/** Compact rows shown before "+N more proposed actions". */
+const ROWS_SHOWN = 3
+
 function CaseNeeds({
   items,
   busy,
   error,
+  board,
   onApprove,
   onReject,
 }: {
   items: NeedsYouItem[]
   busy: boolean
   error: string | null
+  /** The run's explanations, to say which one an approval tests against when the queue does not. */
+  board: HypothesisRow[]
   onApprove: (item: NeedsYouItem) => void
   onReject: (item: NeedsYouItem, reason: string) => void
 }) {
+  const [showAll, setShowAll] = useState(false)
   if (items.length === 0) return null
+  // Every paused run gets the full block; with none, the first proposal does. Other proposals wait without blocking, so they collapse.
+  const ordered = byWeight(items)
+  const full = Math.max(1, ordered.filter(blocks).length)
+  const rows = ordered.slice(full)
+  const visible = showAll ? rows : rows.slice(0, ROWS_SHOWN)
   return (
     <section className="case-needs" aria-label="Needs you">
       {error && <p role="alert">{error}</p>}
-      {items.map((item) => (
-        <CaseNeed key={item.source_id} item={item} busy={busy} onApprove={onApprove} onReject={onReject} />
+      {ordered.slice(0, full).map((item) => (
+        <CaseNeed key={item.source_id} item={item} busy={busy} board={board} onApprove={onApprove} onReject={onReject} />
       ))}
+      {rows.length > 0 && (
+        <div className="needs-more">
+          <h3>{ordered[0].kind === 'approval' ? 'More proposed actions' : 'Proposed actions'} · {rows.length}</h3>
+          <ul aria-label="Proposed actions">
+            {visible.map((item) => (
+              <CaseNeedRow key={item.source_id} item={item} busy={busy} onApprove={onApprove} onReject={onReject} />
+            ))}
+          </ul>
+          {rows.length > visible.length && (
+            <div className="needs-more-foot">
+              <span>+{rows.length - visible.length} more proposed actions</span>
+              <button type="button" className="btn neutral" onClick={() => setShowAll(true)}>Show all</button>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   )
 }
 
-function CaseNeed({
-  item,
-  busy,
-  onApprove,
-  onReject,
-}: {
+type NeedProps = {
   item: NeedsYouItem
   busy: boolean
+  board?: HypothesisRow[]
   onApprove: (item: NeedsYouItem) => void
   onReject: (item: NeedsYouItem, reason: string) => void
-}) {
-  const [rejecting, setRejecting] = useState(false)
-  const [reason, setReason] = useState('')
-  const waited = waiting(item.created_at)
-  const reversible = item.reversibility === 'reversible'
+}
 
+function ApproveButton({ item, busy, onApprove, label }: NeedProps & { label?: string }) {
+  return item.reversibility === 'reversible' ? (
+    <button type="button" className="btn primary" aria-label={label} disabled={busy} onClick={() => onApprove(item)}>
+      Approve
+    </button>
+  ) : (
+    <HoldButton label="Hold to approve" name={label && `Hold to approve ${item.title}`} disabled={busy} onConfirm={() => onApprove(item)} />
+  )
+}
+
+function RejectForm({ item, busy, onReject }: NeedProps) {
+  const [reason, setReason] = useState('')
+  return (
+    <form
+      className="needs-reject"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const text = reason.trim()
+        if (!text) return
+        onReject(item, text)
+      }}
+    >
+      <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
+      <textarea
+        id={`reject-${item.source_id}`}
+        className="feedback-box"
+        aria-label="Rejection reason"
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        placeholder="Why is this being rejected?"
+        autoFocus
+      />
+      <button type="submit" className="btn neutral" disabled={busy || !reason.trim()}>
+        Confirm reject
+      </button>
+    </form>
+  )
+}
+
+function CaseNeed(props: NeedProps) {
+  const { item, busy, board = [] } = props
+  const [rejecting, setRejecting] = useState(false)
+  const waited = waiting(item.created_at)
+  const approving = approvedRows(item, board)
+
+  if (item.kind === 'parked') return <ParkedNeed item={item} waited={waited} />
   return (
     <article>
       <span className="needs-head">
@@ -209,6 +371,16 @@ function CaseNeed({
         Needs your decision{waited && ` · waiting ${waited}`}
       </span>
       <h3>{item.title}</h3>
+      {approving.length > 0 && (
+        <ul className="needs-approving" aria-label="What you are approving">
+          {approving.map((row, i) => (
+            <li key={i} className={row.benign ? 'benign' : undefined}>
+              <span className="needs-approving-tag">{row.benign ? 'The benign explanation it is tested against' : row.tag === 'yours' ? 'Yours, to test' : 'To test'}</span>
+              <span className="needs-approving-text">{row.statement}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <dl className="needs-facts">
         {item.reason && (
           <>
@@ -217,16 +389,10 @@ function CaseNeed({
           </>
         )}
         <dt>Reversibility</dt>
-        <dd>{reversible ? 'Reversible' : 'Cannot be undone'}</dd>
+        <dd>{item.reversibility === 'reversible' ? 'Reversible' : 'Cannot be undone'}</dd>
       </dl>
       <div className="needs-actions">
-        {reversible ? (
-          <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item)}>
-            Approve
-          </button>
-        ) : (
-          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item)} />
-        )}
+        <ApproveButton {...props} />
         <button
           type="button"
           className="btn neutral"
@@ -237,32 +403,80 @@ function CaseNeed({
           Reject
         </button>
       </div>
-      {rejecting && (
-        <form
-          className="needs-reject"
-          onSubmit={(event) => {
-            event.preventDefault()
-            const text = reason.trim()
-            if (!text) return
-            onReject(item, text)
-          }}
-        >
-          <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
-          <textarea
-            id={`reject-${item.source_id}`}
-            className="feedback-box"
-            aria-label="Rejection reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="Why is this being rejected?"
-            autoFocus
-          />
-          <button type="submit" className="btn neutral" disabled={busy || !reason.trim()}>
-            Confirm reject
-          </button>
-        </form>
-      )}
+      {rejecting && <RejectForm {...props} />}
     </article>
+  )
+}
+
+/** Keep going on a hunt stopped at a limit: the run page's control, sending the run page's directive. */
+function KeepGoingRow({ runId }: { runId: string }) {
+  const [busy, setBusy] = useState(false)
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null)
+  const grant = (amount: Grant, label: string) => {
+    setBusy(true)
+    setSaid(null)
+    extendRun(runId, '', amount)
+      .then(() => setSaid({ ok: true, text: `Keep going sent: ${label}. The hunt carries on from where it stopped at its next turn.` }))
+      .catch((e) => setSaid({ ok: false, text: detailOf(e, 'Could not send Keep going') }))
+      .finally(() => setBusy(false))
+  }
+  if (said?.ok) return <p className="needs-sent" role="status">{said.text}</p>
+  return (
+    <div className="needs-actions needs-keep-going">
+      <KeepGoing busy={busy} className="btn neutral" onGrant={grant} />
+      {said && <span role="alert" className="needs-error">{said.text}</span>}
+    </div>
+  )
+}
+
+/** A hunt stopped at its turn, time or budget limit: it keeps what it found and waits for Keep going. */
+function ParkedNeed({ item, waited }: { item: NeedsYouItem; waited: string }) {
+  return (
+    <article>
+      <span className="needs-head">
+        <span className="needs-dot" aria-hidden="true" />
+        Needs your decision{waited && ` · waiting ${waited}`}
+      </span>
+      <h3>{item.title}</h3>
+      <dl className="needs-facts">
+        <dt>Why it stopped</dt>
+        <dd>{item.reason || 'It reached one of its own limits.'}</dd>
+        <dt>If you do nothing</dt>
+        <dd>It keeps everything it found and waits here.</dd>
+      </dl>
+      <KeepGoingRow runId={item.run_id || item.source_id} />
+    </article>
+  )
+}
+
+/** One proposed action as a row: title, reversibility, its own Approve and Reject. */
+function CaseNeedRow(props: NeedProps) {
+  const { item, busy } = props
+  const [rejecting, setRejecting] = useState(false)
+  const reversible = item.reversibility === 'reversible'
+  return (
+    <li>
+      <div className="needs-row">
+        <span className="needs-row-title">{item.title}</span>
+        <span className={reversible ? 'needs-row-rev' : 'needs-row-rev irreversible'}>
+          {reversible ? 'Reversible' : 'Cannot be undone'}
+        </span>
+        <div className="needs-actions">
+          <ApproveButton {...props} label={`Approve ${item.title}`} />
+          <button
+            type="button"
+            className="btn neutral"
+            aria-label={`Reject ${item.title}`}
+            aria-expanded={rejecting}
+            disabled={busy}
+            onClick={() => setRejecting((open) => !open)}
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+      {rejecting && <RejectForm {...props} />}
+    </li>
   )
 }
 
@@ -270,23 +484,29 @@ function CaseNeed({
 function memoryRows(fold: RunFold | null): number {
   const recall = fold?.recall
   const opening = recall && !recall.unavailable ? recall.sightings.length + recall.verdicts.length : 0
-  return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length
+  return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length + leftOpen(fold).length
+}
+
+/** An investigation's questions still open on its record: blind spots it declared. A hunt's open questions are leads, shown where it stopped on one. */
+function leftOpen(fold: RunFold | null): OpenQuestionRow[] {
+  return fold?.kind === 'lead' ? fold.record?.openQuestions ?? [] : []
 }
 
 function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   const calls = fold?.calls.length ?? 0
   const memory = memoryRows(fold)
-  if (fold?.kind === 'hunt') {
+  const kept = foldRecord(fold)
+  if (kept) {
     return {
-      Summary: fold.hypotheses.length,
-      Explanations: fold.hypotheses.length,
-      Evidence: fold.evidenceCount,
+      Summary: kept.hypotheses.length,
+      Explanations: kept.hypotheses.length,
+      Evidence: kept.evidenceCount,
       Checked: calls,
       'Memory and blind spots': memory,
       Record: record,
     }
   }
-  const findings = fold?.findings.length ?? 0
+  const findings = fold?.kind === 'lead' ? fold.findings.length : 0
   return {
     Summary: findings,
     Explanations: 0,
@@ -297,14 +517,31 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   }
 }
 
+/** The grouped tabs count every run's rows, so a door's number is what its tab lists; Summary stays the primary run's. */
+function caseCounts(primary: RunFold | null, folds: (RunFold | null)[], record: number): Record<Tab, number> {
+  const each = folds.map((fold) => counts(fold, record))
+  const sum = (tab: Tab) => each.reduce((n, one) => n + one[tab], 0)
+  return {
+    ...counts(primary, record),
+    Explanations: sum('Explanations'),
+    Evidence: sum('Evidence'),
+    Checked: sum('Checked'),
+    'Memory and blind spots': sum('Memory and blind spots'),
+  }
+}
+
 const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 
-/** The line under each door's count, from the fold already loaded. */
-function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
+/** The line under each door's count, from the folds already loaded: the primary run's alone on a one-run case, every run's otherwise. */
+function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
   const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : hasRun ? 'Run started' : 'No run yet'
+  const read = folds.filter((one): one is RunFold => one !== null)
+  const fold = folds.length === 1 ? folds[0] : null
   const tally = new Map<string, number>()
-  if (fold?.kind === 'hunt') {
-    for (const row of fold.hypotheses) {
+  const records = read.flatMap((one) => foldRecord(one) ?? [])
+  const record = records.length ? records[0] : null
+  for (const kept of records) {
+    for (const row of kept.hypotheses) {
       const word = explanationWord(row.status, row.supports, row.weakens)
       tally.set(word, (tally.get(word) ?? 0) + 1)
     }
@@ -314,24 +551,167 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
     return (i < 0 ? DOOR_ORDER.length : i) - (j < 0 ? DOOR_ORDER.length : j)
   })
   let evidence = none
-  if (fold?.kind === 'hunt') {
+  if (folds.length > 1 && read.length) {
+    const total = read.reduce((n, one) => n + counts(one, 0).Evidence, 0)
+    evidence = `${plural(total, 'row')} across ${plural(folds.length, 'run')}`
+  } else if (fold?.kind === 'hunt') {
     const n = stanceTotals(fold)
     evidence = !fold.evidence.length ? 'None shown' : !n ? plural(fold.evidenceCount, 'row') : `${n.supports} support · ${n.weakens} go against · ${n.neither} neither`
+  } else if (record) {
+    evidence = record.evidenceCount ? `${plural(record.evidenceCount, 'row')} weighed` : 'None linked yet'
   } else if (fold) {
     evidence = 'Findings, no for or against'
   }
-  const recall = fold?.recall
-  const recallRows = (recall ? recall.sightings.length + recall.verdicts.length + recall.gaps.length : 0) + recallEntityCalls(fold).length
-  const blind = visibilityGaps(fold).length
-  const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap')].filter(Boolean).join(' · ')
+  const recalls = read.flatMap((one) => one.recall ?? [])
+  const recallRows = recalls.reduce((n, r) => n + r.sightings.length + r.verdicts.length + r.gaps.length, 0) + read.reduce((n, one) => n + recallEntityCalls(one).length, 0)
+  const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
+  const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
+  const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
+  const priced = read.flatMap((one) => (one.costUsd == null ? [] : [one.costUsd]))
+  const cost = priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'
   const chained = rows.filter((row) => row.chained).length
   return {
-    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
+    Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
     Evidence: evidence,
-    Checked: fold ? `${fold.costUsd == null ? '—' : fmtCost(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
-    'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
+    Checked: read.length ? `${cost} · ${plural(blind, 'gap')}` : none,
+    'Memory and blind spots': recalls.length && recalls.every((r) => r.unavailable) ? 'Recall did not happen' : memory || (recalls.length ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
+}
+
+/** One run on the case, as the page has read it. */
+interface CaseRun {
+  ref: CaseInvestigationRef
+  fold: RunFold | null
+  phase: Phase
+}
+
+/** Reads one run on the case on Watch a run's interval while it is in flight, and reports each read up. Renders nothing. */
+function RunReader({ runId, evidenceLimit, onRead, onLoader, onReread }: {
+  runId: string
+  evidenceLimit?: number
+  onRead: (runId: string, read: { fold: RunFold | null; phase: Phase } | null) => void
+  onLoader: (runId: string, load: (() => void) | null) => void
+  /** A re-read of a run that was in flight: the case and record follow it. */
+  onReread: () => void
+}) {
+  const run = useRunDetail(runId, true, undefined, evidenceLimit)
+  const { load, setDphase } = run
+  useEffect(() => {
+    setDphase('loading')
+    void load()
+  }, [load, setDphase])
+  useEffect(() => {
+    onLoader(runId, () => void load()) // a failed read keeps what is shown
+    return () => onLoader(runId, null)
+  }, [runId, load, onLoader])
+  const detail = run.detail?.run_id === runId ? run.detail : null
+  const fold = useMemo(() => readFold(detail), [detail])
+  const phase: Phase = detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+  useEffect(() => onRead(runId, { fold, phase }), [runId, fold, phase, onRead])
+  useEffect(() => () => onRead(runId, null), [runId, onRead])
+  const seen = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = detail?.status ?? null
+    if (detail && prev && IN_FLIGHT.includes(prev)) onReread()
+  }, [detail]) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
+}
+
+/** A run's heading on a grouped tab: its workflow and when it started. */
+function runTitle(ref: CaseInvestigationRef, names: Record<string, string>): string {
+  return `${names[ref.workflow_id] || ref.workflow_id} · started ${clock(ref.created_at)}`
+}
+
+function RunHeading({ run, names }: { run: CaseRun; names: Record<string, string> }) {
+  return (
+    <h4 className="case-run-head" title={runTitle(run.ref, names)}>
+      {names[run.ref.workflow_id] || run.ref.workflow_id}
+      <span> · started {clock(run.ref.created_at)}</span>
+    </h4>
+  )
+}
+
+/**
+ * A grouped tab: each run's rows under its own heading, primary run first. A case with one run shows
+ * no heading, so the tab reads exactly as it did before there could be more.
+ */
+function PerRun({ runs, names, single, children }: {
+  runs: CaseRun[]
+  names: Record<string, string>
+  /** The primary run's fold and phase, shown alone on a case with at most one run. */
+  single: { fold: RunFold | null; phase: Phase }
+  children: (fold: RunFold | null, phase: Phase, run: CaseRun | null) => ReactNode
+}) {
+  if (runs.length <= 1) return <>{children(single.fold, single.phase, runs[0] ?? null)}</>
+  return (
+    <>
+      {runs.map((run) => (
+        <section key={run.ref.run_id} className="case-run" aria-label={runTitle(run.ref, names)}>
+          <RunHeading run={run} names={names} />
+          {children(run.fold, run.phase, run)}
+        </section>
+      ))}
+    </>
+  )
+}
+
+/** "$0.12 of $1.00": what a run has spent against what it was granted, read off its fold once read; a cost nothing priced is a dash, never $0. */
+function spentLine(run: CaseRun): string {
+  const cost = run.fold ? run.fold.costUsd : null
+  const cap = run.fold?.maxCostUsd || (run.ref.max_cost_usd > 0 ? run.ref.max_cost_usd : null)
+  const spent = cost == null ? '—' : fmtCost(cost)
+  return cap == null ? spent : `${spent} of ${fmtCost(cap)}`
+}
+
+/** The other runs on the case, one head line each, under the primary run's cards. */
+function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<string, string>; onFollow: () => void }) {
+  if (runs.length === 0) return null
+  return (
+    <section className="case-other-runs" aria-label="Other runs on this case">
+      <h3>Other runs on this case</h3>
+      <ul>
+        {runs.map((run) => {
+          const word = run.fold?.disposition
+          const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—')
+          return (
+            <li key={run.ref.run_id}>
+              <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runTitle(run.ref, names)} onClick={onFollow}>{runTitle(run.ref, names)}</Link>
+              <span className="case-other-state">
+                {state}
+                {word && <> · <b>{wordDisplay(word)}</b></>}
+              </span>
+              <span className="num">{spentLine(run)}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+/** The one word the runs stand behind, its basis when they part ways, and what to do now. Open moods draw it as a card; the closed Summary draws it inside its own. */
+function VerdictBlock({ verdict, card }: { verdict: CaseVerdict; card: boolean }) {
+  return (
+    <div className={`case-verdict${card ? ' card' : ''}`} {...(card ? { role: 'region', 'aria-label': 'Case verdict' } : {})}>
+      <span className="case-verdict-label">Runs say</span>
+      <div>
+        <b className="case-verdict-word">{wordDisplay(verdict.word)}</b>
+        {verdict.basis && <p>{verdict.basis}</p>}
+      </div>
+      {verdict.doNow.length > 0 && (
+        <>
+          <span className="case-verdict-label">Do now</span>
+          <ul>
+            {verdict.doNow.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
 }
 
 /** Five doors into the audit tabs, in every mood. */
@@ -360,40 +740,94 @@ function WatchLink({ runId, onFollow }: { runId: string | null; onFollow: () => 
 }
 
 /** Now · step N: the latest move, who has it, with which tool, since when. */
-function NowCard({ fold, phase, hasRun, watch }: { fold: RunFold | null; phase: Phase; hasRun: boolean; watch: ReactNode }) {
+function NowCard({ fold, phase, watch }: { fold: RunFold | null; phase: Phase; watch: ReactNode }) {
   const move = fold?.moves[0]
   const meta = fold ? [fold.worker, moveTool(fold, move), `since ${clock(move?.at)}`].filter(Boolean).join(' · ') : ''
   return (
     <section className="case-now" aria-label="Now">
       <div className="now-head">
         <span className="now-dot" aria-hidden="true" />
-        <b>{fold ? `Now · step ${fold.kind === 'hunt' ? fold.iteration : fold.iterations}` : 'Now'}</b>
+        <b>{fold ? `Now · step ${Math.max(fold.kind === 'hunt' ? fold.iteration : fold.kind === 'lead' ? fold.iterations : 0, move?.iteration ?? 0)}` : 'Now'}</b>
         {meta && <span className="now-meta">{meta}</span>}
       </div>
       <p className="clamp2" title={phase === 'ready' ? fold?.doing : undefined}>
         {phase === 'loading' && 'Loading the run…'}
         {phase === 'error' && 'The run could not be read.'}
-        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : hasRun ? 'The run has started and has not reported yet.' : 'No run on this case yet.')}
+        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : 'The run has started and has not reported yet.')}
       </p>
-      {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
       {watch}
     </section>
   )
 }
 
-/** A run that is not going on: paused or stopped, with the one-line why and the raw text behind the ⓘ. */
-function StoppedCard({ stopped, watch }: { stopped: StoppedRun; watch: ReactNode }) {
+/** A run that is not going on: paused or stopped, with the one-line why and the raw text behind the ⓘ.
+ *  A hunt stopped at a limit takes Keep going here too, before the queue has listed it. */
+function StoppedCard({ stopped, runId, watch }: { stopped: StoppedRun; runId: string | null; watch: ReactNode }) {
   return (
     <section className="case-stopped" aria-label="Run state">
-      <b>{wordDisplay(stopped.state)}</b>
-      <span className="clamp2" title={stopped.raw || stopped.line}>{stopped.line}</span>
-      {stopped.raw && <InfoTip label="What the run reported" text={stopped.raw} align="start" />}
-      {watch}
+      <div className="stopped-line">
+        <b>{wordDisplay(stopped.state)}</b>
+        <span className="clamp2" title={stopped.raw || stopped.line}>{stopped.line}</span>
+        {stopped.raw && <InfoTip label="What the run reported" text={stopped.raw} align="start" />}
+        {watch}
+      </div>
+      {stopped.atLimit && runId && <KeepGoingRow runId={runId} />}
     </section>
   )
 }
 
-function AgentsTable({ fold, phase, state }: { fold: RunFold | null; phase: Phase; state: string }) {
+/** A question answered here, while the run has yet to read the answer: said at once, so the page never
+ *  flips back to waiting. */
+function AnsweredCard({ answer, watch }: { answer: 'approve' | 'reject' | null; watch: ReactNode }) {
+  const word = answer === 'approve' ? 'Approved' : answer === 'reject' ? 'Rejected' : 'Answered'
+  const next = answer === 'reject' ? 'The run stops at its next turn.' : 'The run carries on at its next turn.'
+  return (
+    <section className="case-stopped case-answered" aria-label="Run state">
+      <div className="stopped-line">
+        <b>{word}</b>
+        <span className="clamp2">{next}</span>
+        {watch}
+      </div>
+    </section>
+  )
+}
+
+/** A run that has ended: its verdicts in one statement, the run's own words behind the ⓘ, and the open
+ *  question it could not conclude past put to you as a decision rather than buried in prose. */
+function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNode; onAsk: (text: string) => void }) {
+  return (
+    <>
+      <section className="case-stopped case-ended" aria-label="Run outcome">
+        <div className="stopped-line">
+          <b>Ended</b>
+          <span className="clamp2" title={ended.line}>{ended.line}</span>
+          {ended.raw && <InfoTip label="What the run reported" text={ended.raw} align="start" />}
+          {watch}
+        </div>
+      </section>
+      {ended.question && (
+        <section className="case-needs" aria-label="Left open">
+          <article>
+            <span className="needs-head">
+              <span className="needs-dot" aria-hidden="true" />
+              Left open · the hunt would not conclude without it
+            </span>
+            <h3>{ended.question.question}</h3>
+            <dl className="needs-facts">
+              <dt>Why it matters</dt>
+              <dd>The hunt stopped with this unanswered, so the verdicts above are where it stopped, not where it would have ended.</dd>
+            </dl>
+            <div className="needs-actions">
+              <button type="button" className="btn primary" onClick={() => onAsk(ended.question!.question)}>Ask about this</button>
+            </div>
+          </article>
+        </section>
+      )}
+    </>
+  )
+}
+
+function AgentsTable({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
   // A paused or stopped run is already said by the card above; its rows would be stale.
   if (stoppedRun(fold)) return null
   const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
@@ -412,8 +846,8 @@ function AgentsTable({ fold, phase, state }: { fold: RunFold | null; phase: Phas
               <span className="agent-doing" role="cell" title={row.doing}>{row.doing || '—'}</span>
               <span className="agent-tool" role="cell" title={row.tool}>{row.tool || '—'}</span>
               <span className="agent-since" role="cell">{clock(row.at)}</span>
-              {/* The run's state belongs to the agent holding the latest move; the others are between moves. */}
-              <span className={`agent-state${i === 0 ? ' live' : ''}`} role="cell"><span className="state-dot" aria-hidden="true" />{i === 0 ? state : 'Idle'}</span>
+              {/* The agent holding the latest move is working; the others are between moves. */}
+              <span className={`agent-state${i === 0 ? ' live' : ''}`} role="cell"><span className="state-dot" aria-hidden="true" />{i === 0 ? 'Working' : 'Idle'}</span>
             </div>
           ))}
         </div>
@@ -553,6 +987,10 @@ export function CasePage({
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const decisionBusyRef = useRef<string | null>(null)
+  // Checkpoints the queue has served for this case, and how each one answered here was answered: a
+  // checkpoint that has left the queue while the run still holds it open has been answered.
+  const [seenCheckpoints, setSeenCheckpoints] = useState<ReadonlySet<string>>(() => new Set())
+  const [answers, setAnswers] = useState<Record<string, 'approve' | 'reject'>>({})
   const { pending, settled } = useToast()
   const needsTicket = useRef(0)
   const seenCase = useRef(id)
@@ -564,6 +1002,8 @@ export function CasePage({
     setNeedsCount(0)
     setDecisionBusy(null)
     setDecisionError(null)
+    setSeenCheckpoints(new Set())
+    setAnswers({})
   }
 
   const loadNeeds = useCallback(async () => {
@@ -588,11 +1028,18 @@ export function CasePage({
   }, [loadNeeds])
 
   useEffect(() => {
+    const served = needsItems.flatMap((it) => (it.checkpoint_id ? [it.checkpoint_id] : []))
+    if (served.every((cp) => seenCheckpoints.has(cp))) return
+    setSeenCheckpoints((held) => new Set([...held, ...served]))
+  }, [needsItems, seenCheckpoints])
+
+  useEffect(() => {
     setTab('Summary')
     setAskSeed(null)
     setFocusEvidence(null)
     setNote('')
     setChip('all')
+    setEvidenceLimits({})
   }, [id])
 
   // leaving the Record tab (or the case) drops its status and ignores a call still in flight
@@ -608,47 +1055,83 @@ export function CasePage({
     onSeedConsumed?.()
   }, [seed, id, onSeedConsumed])
 
-  const latest = investigations[0] ?? null
-  // A hunt's handoff queues a root-cause run onto the same case; the hunt's own
-  // explanations, evidence and checked data stay read from the hunt run.
-  const runId = (investigations.find((item) => item.workflow_id === HUNT_WORKFLOW) ?? latest)?.run_id ?? null
+  // The run the page reads, header and record included: a hunt's handoff queues a
+  // root-cause run onto the same case, and that follow-up is not the case's run.
+  const latest = investigations.find((item) => item.primary) ?? null
+  const runId = latest?.run_id ?? null
   const rootCauseRunId = investigations.find((item) => item.workflow_id === ROOT_CAUSE_WORKFLOW)?.run_id ?? null
-  const live = investigations.filter((item) => item.live)
   // The list maps every status other than open/investigating to closed, so a
   // `new` case must not use that fallback while the detail read is in flight.
   const closed = combinedState === 'closed' || (phase === 'ready' && !combinedState && c?.status === 'closed')
   const pill = combinedState || (phase === 'loading' ? '…' : c?.status || '—')
 
-  // The newest run, re-read on Watch a run's interval while it is in flight.
-  const [evidenceLimit, setEvidenceLimit] = useState<number | undefined>(undefined)
-  useEffect(() => setEvidenceLimit(undefined), [runId])
-  const run = useRunDetail(runId ?? '', runId !== null, undefined, evidenceLimit)
-  const { load: loadRun, setDphase: setRunPhase } = run
-  useEffect(() => {
-    if (!runId) return
-    setRunPhase('loading')
-    void loadRun()
-  }, [runId, loadRun, setRunPhase])
-  const detail = runId && run.detail?.run_id === runId ? run.detail : null
-  const fold = useMemo(() => readFold(detail), [detail])
-  // The run id is unknown until the case read returns, so the run is still loading, not absent.
-  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
-
-  // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
-  const seen = useRef<{ runId: string; status: string } | null>(null)
-  useEffect(() => {
-    const prev = seen.current
-    seen.current = detail && runId ? { runId, status: detail.status } : null
-    if (!prev || !detail || prev.runId !== runId || !IN_FLIGHT.includes(prev.status)) return
+  // Every run on the case, the primary first, then the rest newest first. Each is read by its own
+  // RunReader, re-read on Watch a run's interval while it is in flight, and pages its evidence alone.
+  const caseRuns = useMemo(() => {
+    const rest = investigations
+      .filter((item, i) => item.run_id && investigations.findIndex((one) => one.run_id === item.run_id) === i && item.run_id !== latest?.run_id)
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    return latest ? [latest, ...rest] : rest
+  }, [investigations, latest])
+  const [evidenceLimits, setEvidenceLimits] = useState<Record<string, number>>({})
+  const [reads, setReads] = useState<Record<string, { fold: RunFold | null; phase: Phase }>>({})
+  const onRead = useCallback((key: string, read: { fold: RunFold | null; phase: Phase } | null) => {
+    setReads((held) => {
+      if (read === null) {
+        if (!(key in held)) return held
+        const { [key]: _gone, ...rest } = held // eslint-disable-line @typescript-eslint/no-unused-vars
+        return rest
+      }
+      return held[key]?.fold === read.fold && held[key]?.phase === read.phase ? held : { ...held, [key]: read }
+    })
+  }, [])
+  const loaders = useRef(new Map<string, () => void>())
+  const onLoader = useCallback((key: string, load: (() => void) | null) => {
+    if (load) loaders.current.set(key, load)
+    else loaders.current.delete(key)
+  }, [])
+  // Each re-read of any run that was in flight re-reads the case and the record too, the last one when it ends.
+  const onRefreshRef = useRef(onRefresh)
+  onRefreshRef.current = onRefresh
+  const onReread = useCallback(() => {
     quietRecord.current = true
     setRecordKey((k) => k + 1)
-    onRefresh?.()
-  }, [detail]) // eslint-disable-line react-hooks/exhaustive-deps
+    onRefreshRef.current?.()
+  }, [])
+  const runs: CaseRun[] = caseRuns.map((ref) => ({ ref, fold: reads[ref.run_id]?.fold ?? null, phase: reads[ref.run_id]?.phase ?? 'loading' }))
+  const fold = runId ? reads[runId]?.fold ?? null : null
+  // The run id is unknown until the case read returns, so the run is still loading, not absent.
+  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId ? 'ready' : reads[runId]?.phase ?? 'loading'
+  const single = { fold, phase: foldPhase }
+
+  // A case refresh that moves another run on the case (a hunt's root-cause follow-up) re-reads the record in place.
+  const otherRuns = investigations.filter((item) => !item.primary).map((item) => `${item.run_id}:${item.status}`).join(' ')
+  const seenOthers = useRef<{ id: string; runs: string } | null>(null)
+  useEffect(() => {
+    if (phase !== 'ready') return // the first read of the case is not a change
+    const prev = seenOthers.current
+    seenOthers.current = { id, runs: otherRuns }
+    if (!prev || prev.id !== id || prev.runs === otherRuns) return
+    quietRecord.current = true
+    setRecordKey((k) => k + 1)
+  }, [id, otherRuns, phase])
+
+  // Each run row is labelled with its run: the workflow and when it started, else a short id.
+  const runLabels = useMemo(() => {
+    const labels: Record<string, string> = {}
+    for (const item of investigations) {
+      const name = workflowNames[item.workflow_id] || item.workflow_id
+      // refs carry naive UTC stamps; without an offset a browser would read them as local time
+      const at = item.created_at && (/(Z|[+-]\d\d:?\d\d)$/.test(item.created_at) ? item.created_at : `${item.created_at}Z`)
+      labels[item.run_id] = name ? (at ? `${name} · ${clock(at)}` : name) : item.run_id.slice(0, 8)
+    }
+    return labels
+  }, [investigations, workflowNames])
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
-    void loadRun() // a failed read keeps what is shown
-  }, [loadRun])
+    if (runId) loaders.current.get(runId)?.()
+  }, [runId])
 
   useEffect(() => {
     let cancelled = false
@@ -710,9 +1193,7 @@ export function CasePage({
     }
   }, [id, recordKey])
 
-  const tabCounts = counts(fold, rows.length)
-  const gaps = visibilityGaps(fold)
-  const recalled = recallEntityCalls(fold)
+  const tabCounts = runs.length > 1 ? caseCounts(fold, runs.map((one) => one.fold), rows.length) : counts(fold, rows.length)
   const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind, row.source) === chip)
   const chipCounts = useMemo(() => {
     const counts: Record<RecordChip, number> = { agent: 0, human: 0, memory: 0, system: 0 }
@@ -776,23 +1257,59 @@ export function CasePage({
   const onChangedRef = useRef(onChanged)
   onChangedRef.current = onChanged
   const seenSettled = useRef(settled)
+  const lastPending = useRef(pending)
   useEffect(() => {
+    const before = lastPending.current
+    lastPending.current = pending
+    // A fuse started or was undone: nothing was sent.
     if (seenSettled.current === settled) return
     seenSettled.current = settled
+    // What was just sent leaves the block now, not when the re-read lands; a failed one comes back with it.
+    const sent = before.filter((key) => !pending.includes(key))
+    if (sent.length > 0) setNeedsItems((items) => items.filter((it) => !sent.includes(it.source_id)))
     void loadNeeds()
     onChangedRef.current()
-  }, [settled, loadNeeds])
+  }, [settled, pending, loadNeeds])
 
   // Reversible approve and every reject commit through the toast's undo fuse, the same path as
   // Home's card, and survive closing the case. A held (irreversible) approve commits at once via decide().
   const fused = useFusedDecision(decisionFailText)
 
-  const approve = (item: NeedsYouItem) => {
-    if (item.reversibility === 'reversible') fused.approve(item)
-    else void decide(item.source_id, () => approvalsApi.approve(item.source_id))
+  /** A decision drawn from the run before the queue served it is answered through the queue's own item. */
+  const throughQueue = async (item: NeedsYouItem, act: (served: NeedsYouItem) => void) => {
+    if (!item.source_id.startsWith(FROM_RUN)) return act(item)
+    const forCase = id
+    try {
+      const res = await approvalsApi.needsYou(forCase)
+      if (seenCase.current !== forCase) return
+      const served = res.data.items.find((it) => it.checkpoint_id === item.checkpoint_id)
+      if (served) {
+        setNeedsItems(res.data.items)
+        setNeedsCount(res.data.count)
+        act(served)
+      } else setDecisionError('This decision has not reached the approvals queue yet. Try again in a moment.')
+    } catch (e) {
+      if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
+    }
   }
 
-  const reject = fused.reject
+  const answered = (item: NeedsYouItem, answer: 'approve' | 'reject') => {
+    const cp = item.checkpoint_id
+    if (cp) setAnswers((held) => ({ ...held, [cp]: answer }))
+  }
+
+  const approve = (item: NeedsYouItem) =>
+    void throughQueue(item, (served) => {
+      answered(served, 'approve')
+      if (served.reversibility === 'reversible') fused.approve(served)
+      else void decide(served.source_id, () => approvalsApi.approve(served.source_id))
+    })
+
+  const reject = (item: NeedsYouItem, reason: string) =>
+    void throughQueue(item, (served) => {
+      answered(served, 'reject')
+      fused.reject(served, reason)
+    })
 
   const decide = async (sourceId: string, act: () => Promise<unknown>) => {
     if (decisionBusyRef.current) return
@@ -829,25 +1346,56 @@ export function CasePage({
     }
   }
 
+  // The question the run itself is stopped on. The queue mirrors it a moment later, and polls slower
+  // than the run is read, so until it serves it the decision is drawn from the run; once the queue has
+  // served it and it has gone (here, or from Home), it was answered and the run has yet to read that.
+  const runCheckpoint = fold?.kind === 'hunt' && !closed ? fold.openCheckpoint : null
+  const queued = runCheckpoint ? needsItems.find((it) => it.checkpoint_id === runCheckpoint.checkpoint_id) : undefined
+  const awaitingQueue = runCheckpoint !== null && !queued && !seenCheckpoints.has(runCheckpoint.checkpoint_id)
+  const answeredHere = runCheckpoint !== null && !awaitingQueue && (!queued || pending.includes(queued.source_id))
+  const answer = runCheckpoint ? answers[runCheckpoint.checkpoint_id] ?? null : null
+  // Each read of the run asks the queue again until it serves the run's question.
+  useEffect(() => {
+    if (awaitingQueue) void loadNeeds()
+  }, [awaitingQueue, fold, loadNeeds])
+  // A run that moves on (resumes, parks, ends) changes what waits on a person.
+  const runMood = `${fold?.run.status}|${fold?.run.huntStatus}|${runCheckpoint?.checkpoint_id ?? ''}`
+  const lastMood = useRef(runMood)
+  useEffect(() => {
+    if (lastMood.current === runMood) return
+    lastMood.current = runMood
+    void loadNeeds()
+  }, [runMood, loadNeeds])
+
   // items whose fuse is running stay out of the block, the ask and the count, so a poll can't bring them back
-  const shownNeeds = needsItems.filter((it) => !pending.includes(it.source_id))
-  const needsShown = Math.max(0, needsCount - (needsItems.length - shownNeeds.length))
-  const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
+  const served = needsItems.filter((it) => !pending.includes(it.source_id))
+  const shownNeeds = awaitingQueue && runCheckpoint ? [fromRun(runCheckpoint, id, runId), ...served] : served
+  const needsShown = Math.max(0, needsCount - (needsItems.length - served.length)) + (shownNeeds.length - served.length)
+  const hypotheses = foldRecord(fold)?.hypotheses ?? []
+  const citations = caseCitations(fold, linkedFindings)
+  const citeById = new Map(citations.map((cite) => [cite.id, cite]))
+  const openCite = (cite: Citation) => {
+    setTab(cite.kind === 'explanation' ? 'Explanations' : 'Evidence')
+    if (cite.kind === 'evidence') setFocusEvidence(cite.id)
+  }
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
-  const stopped = closed || needsShown > 0 ? null : stoppedRun(fold)
-  const pillState = closed ? 'closed' : stopped?.state ?? pill
-  // Only what exists: the live investigation's status, else the run's outcome.
-  const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
+  const stopped = closed || needsShown > 0 || answeredHere ? null : stoppedRun(fold)
+  const ended = closed || needsShown > 0 ? null : endedRun(fold)
+  const pillState = closed ? 'closed' : answeredHere ? (answer === 'reject' ? 'stopped' : 'executing') : stopped?.state ?? pill
   // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
-  // else took the key (a menu or dialog is open, or a text field has focus).
+  // else took the key (a menu or dialog is showing, or a text field has focus). A closed dialog that
+  // stays mounted, like the Ask Vigil dock, is aria-hidden and doesn't count.
   useEffect(() => {
     if (onExpand) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
       const t = e.target as HTMLElement | null
       if (t?.closest('input, textarea, select, [contenteditable="true"]')) return
-      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      const showing = [...document.querySelectorAll('[role="dialog"], [role="menu"]')].some(
+        (el) => !el.closest('[aria-hidden="true"], [hidden]'),
+      )
+      if (showing) return
       onBack()
     }
     window.addEventListener('keydown', onKey)
@@ -855,17 +1403,34 @@ export function CasePage({
   }, [onExpand, onBack])
 
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
-  const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
+  const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsShown > 0).tone
-  const running = !closed && !stopped && tone !== 'needs'
+  // Running furniture needs a run: a run-less case, or one whose needs item sits in the undo fuse, shows none.
+  const running = runId !== null && !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+    tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+  // Newest run first, which is not `runs` order (primary first).
+  const verdict = caseVerdict(
+    [...runs]
+      .sort((a, b) => (b.ref.created_at ?? '').localeCompare(a.ref.created_at ?? ''))
+      .map((one) => ({ fold: one.fold, label: runTitle(one.ref, workflowNames), phase: one.phase })),
+  )
+  // A case with several runs can ask where they part ways; the brief carries every run.
+  const disagree = investigations.length > 1 && (
+    <div className="case-disagree">
+      <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>
+        Where do the runs disagree?
+      </button>
+    </div>
+  )
   const needsBlock = (
     <CaseNeeds
+      key={id} // Show all is per case
       items={shownNeeds}
       busy={decisionBusy !== null}
       error={decisionError}
+      board={hypotheses}
       onApprove={approve}
       onReject={reject}
     />
@@ -873,6 +1438,9 @@ export function CasePage({
 
   return (
     <div className="detail-pane case-page">
+      {caseRuns.map((ref) => (
+        <RunReader key={ref.run_id} runId={ref.run_id} evidenceLimit={evidenceLimits[ref.run_id]} onRead={onRead} onLoader={onLoader} onReread={onReread} />
+      ))}
       <div className="detail-head">
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
@@ -927,7 +1495,7 @@ export function CasePage({
         />
       </div>
 
-      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={shownNeeds[0]?.title} onDecide={() => setTab('Summary')} />}
+      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={needsAsk(shownNeeds)} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
@@ -940,129 +1508,89 @@ export function CasePage({
                     {closedLine(closure)}
                   </span>
                   <h3>{closure?.verdict || '—'}</h3>
+                  {verdict && closureFlag(closure, verdict.word) && <VerdictBlock verdict={verdict} card={false} />}
                   <ClosedRows fold={fold} phase={foldPhase} />
                   <div className="case-assess">
                     <span>Your assessment</span>
-                    <button type="button" className="btn" disabled title={LATER}>Agree</button>
-                    <button type="button" className="btn" disabled title={LATER}>Disagree</button>
-                    <span className="case-assess-later">Coming in a later release</span>
+                    <button type="button" className="btn" disabled title={LATER_RELEASE}>Agree</button>
+                    <button type="button" className="btn" disabled title={LATER_RELEASE}>Disagree</button>
+                    <span className="case-assess-later">{LATER_RELEASE}</span>
                     <div className="case-actions">
                       <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
                     </div>
                   </div>
                 </section>
+                {disagree}
                 {doors}
               </>
             ) : (
               <>
                 {needsBlock}
-                {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} watch={watch} />}
-                {stopped && <StoppedCard stopped={stopped} watch={watch} />}
-                <section>
-                  <h3>Findings so far</h3>
-                  <FindingList fold={fold} />
-                </section>
+                {verdict && <VerdictBlock verdict={verdict} card />}
+                {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}
+                {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
+                {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
+                {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, text })} />}
+                <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} onFollow={() => onExpand && onBack()} />
+                {runId !== null && (
+                  <section className="case-card" aria-label="Findings so far">
+                    <h3>Findings so far</h3>
+                    <FindingList fold={fold} />
+                  </section>
+                )}
+                {disagree}
                 {running && (
                   <>
                     <LaterRow title="What it changed" line="What this phase changed in the estate." />
                     <LaterRow title="Planned next" line="What the run intends to do next." />
                   </>
                 )}
-                <AgentsTable fold={fold} phase={foldPhase} state={runState} />
+                <AgentsTable fold={fold} phase={foldPhase} />
                 {doors}
               </>
             )
           )}
 
           {tab === 'Explanations' && (
-            foldPhase === 'loading' ? (
-              <p className="muted">Loading the run…</p>
-            ) : foldPhase === 'error' ? (
-              <p>The run could not be read.</p>
-            ) : fold?.kind === 'hunt' ? (
-              <section className="case-expl-card">
-                <div className="case-expl-head">
-                  <div>
-                    <span className="case-expl-title">Every explanation this case has held</span>
-                    <div className="case-expl-sub">Status, the rows for and against, who added it, and why it moved.</div>
-                  </div>
-                  <div className="case-expl-actions">
-                    <button type="button" disabled title={LATER}>+ Add an explanation</button>
-                    <button type="button" disabled title={LATER}>Rule one out</button>
-                  </div>
-                </div>
-                {hypotheses.length === 0 ? (
-                  <EmptyState compact icon="search" title="No explanations yet" />
-                ) : (
-                  <ul className="case-expl-rows">
-                    {hypotheses.map((row) => (
-                      <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} />
-                    ))}
-                  </ul>
-                )}
-              </section>
-            ) : (
-              <p>
-                {honestLine()}
-                <InfoTip label="About explanations" text="Hunt, root cause, and adjudicate test explanations. This run does not." align="start" />
-              </p>
-            )
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase, run) => (
+                <Explanations
+                  fold={one}
+                  phase={onePhase}
+                  rootCauseRunId={rootCauseRunId}
+                  cites={run && run.ref !== latest ? NO_CITES : citeById}
+                  onCite={openCite}
+                />
+              )}
+            </PerRun>
           )}
 
-          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} onShowOlder={(shown) => setEvidenceLimit(shown + EVIDENCE_PAGE)} />}
+          {tab === 'Evidence' && (
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase, run) => {
+                const key = run?.ref.run_id ?? runId
+                return (
+                  <EvidenceTrail
+                    fold={one}
+                    phase={onePhase}
+                    focusId={!run || run.ref === latest ? focusEvidence : null}
+                    onShowOlder={key ? (shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE })) : undefined}
+                  />
+                )
+              }}
+            </PerRun>
+          )}
 
           {tab === 'Checked' && (
-            foldPhase === 'loading' ? (
-              <EmptyState loading compact icon="search" title="Loading the run…" />
-            ) : foldPhase === 'error' ? (
-              <EmptyState error compact icon="search" title="The run could not be read." />
-            ) : !fold || (fold.calls.length === 0 && gaps.length === 0) ? (
-              <EmptyState compact icon="search" title="No questions asked yet" />
-            ) : (
-              <section className="case-card case-checked">
-                <h3>
-                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
-                  <InfoTip
-                    label="About the cost"
-                    source="The run's total spend."
-                    calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
-                  />
-                  {gaps.length > 0 && ` · ${gaps.length} with no source`}
-                </h3>
-                <ul className="case-stack">
-                  {fold.calls.map((call, i) => (
-                    <li key={`${call.tool}-${i}`}>
-                      <span className="clamp2" title={call.question}>{call.question || '—'}</span>
-                      <span className="src">{call.tool || '—'}</span>
-                      <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
-                      <span className="num">{fmtCost(call.cost_usd)}</span>
-                      <span className="num">{latency(call.duration_ms)}</span>
-                    </li>
-                  ))}
-                  {gaps.map((gap) => (
-                    <li key={gap.id} className="gap">
-                      <span className="clamp2" title={gap.text}>{gap.text}</span>
-                      <span className="src">No source</span>
-                      <span className="num">—</span>
-                      <span className="num">—</span>
-                      <span className="num">—</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase, run) => <Checked fold={one} phase={onePhase} runId={run?.ref.run_id ?? runId} />}
+            </PerRun>
           )}
 
           {tab === 'Memory and blind spots' && (
-            foldPhase === 'loading' ? (
-              <EmptyState loading compact icon="brain" title="Loading the run…" />
-            ) : foldPhase === 'error' ? (
-              <EmptyState error compact icon="alert" title="The run could not be read" />
-            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 ? (
-              <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
-            ) : (
-              <MemoryCards fold={fold} recalled={recalled} gaps={gaps} />
-            )
+            <PerRun runs={runs} names={workflowNames} single={single}>
+              {(one, onePhase, run) => <Memory fold={one} phase={onePhase} runId={run?.ref.run_id ?? runId} />}
+            </PerRun>
           )}
 
           {tab === 'Record' && (
@@ -1076,9 +1604,9 @@ export function CasePage({
                   <InfoTip
                     label="About the record"
                     align="start"
-                    source="The run’s journal, the case audit log and the case’s activity history, newest first."
+                    source="Each run’s journal, the case audit log and the case’s activity history, newest first."
                     calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
-                    limit="Only the run’s rows are hash-chained. Case audit and activity rows are not."
+                    limit="Only run rows are hash-chained. Case audit and activity rows are not."
                   />
                 </div>
                 <div className="rec-actions">
@@ -1129,11 +1657,13 @@ export function CasePage({
                 <div className="rec-rows">
                   {shown.map((row) => {
                     const type = recordChip(row.kind, row.source)
+                    const runLabel = row.run_id ? runLabels[row.run_id] || row.run_id.slice(0, 8) : null
                     return (
                       <div key={row.id} className="rec-row">
                         <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
                         <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
                         <span className="rec-text" title={row.text}>
+                          {runLabel && <span className="rec-run">{runLabel}</span>}
                           {row.text || row.kind}
                           {row.chained && <span className="rec-chained">chained</span>}
                         </span>
@@ -1171,18 +1701,98 @@ export function CasePage({
         seed={askSeed?.id === id ? askSeed.text : null}
         onSeedConsumed={() => setAskSeed(null)}
         onTurnDone={refreshFold}
-        evidenceIds={fold?.kind === 'hunt' ? fold.evidence.map((row) => row.evidence_id) : []}
-        onCite={(evidenceId) => {
-          setTab('Evidence')
-          setFocusEvidence(evidenceId)
-        }}
+        citations={citations}
+        onCite={openCite}
       />
     </div>
   )
 }
 
+const NO_CITES: ReadonlyMap<string, Citation> = new Map()
+
+/** One run's explanations; the honest line for a run that keeps no record. */
+function Explanations({ fold, phase, rootCauseRunId, cites, onCite }: {
+  fold: RunFold | null
+  phase: Phase
+  rootCauseRunId: string | null
+  cites: ReadonlyMap<string, Citation>
+  onCite: (cite: Citation) => void
+}) {
+  if (phase === 'loading') return <p className="muted">Loading the run…</p>
+  if (phase === 'error') return <p>The run could not be read.</p>
+  const record = foldRecord(fold)
+  if (!record) {
+    return (
+      <p>
+        {honestLine()}
+        <InfoTip
+          label="About explanations"
+          text={fold?.kind === 'head' ? 'A root-cause run traces a chain of steps, shown on Watch a run.' : 'Hunt, root cause, and adjudicate test explanations. This run does not.'}
+          align="start"
+        />
+      </p>
+    )
+  }
+  return (
+    <section className="case-expl-card">
+      <div className="case-expl-head">
+        <div>
+          <span className="case-expl-title">Every explanation this case has held</span>
+          <div className="case-expl-sub">Status, the rows for and against, who added it, and why it moved.</div>
+        </div>
+        <div className="case-expl-actions">
+          <button type="button" disabled title={LATER_RELEASE}>+ Add an explanation</button>
+          <button type="button" disabled title={LATER_RELEASE}>Rule one out</button>
+        </div>
+      </div>
+      {record.hypotheses.length === 0 ? (
+        <EmptyState compact icon="search" title="No explanations yet" />
+      ) : (
+        <ul className="case-expl-rows">
+          {record.hypotheses.map((row) => (
+            <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} cites={cites} onCite={onCite} />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+/** What one run asked, at what cost, and where it had no source. */
+function Checked({ fold, phase, runId }: { fold: RunFold | null; phase: Phase; runId: string | null }) {
+  const gaps = visibilityGaps(fold)
+  if (phase === 'loading') return <EmptyState loading compact icon="search" title="Loading the run…" />
+  if (phase === 'error') return <EmptyState error compact icon="search" title="The run could not be read." />
+  if (!fold || (fold.calls.length === 0 && gaps.length === 0)) return <EmptyState compact icon="search" title="No questions asked yet" />
+  return (
+    <section className="case-card case-checked">
+      <h3>
+        What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
+        <InfoTip
+          label="About the cost"
+          source="The run's total spend."
+          calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
+        />
+        {gaps.length > 0 && ` · ${gaps.length} with no source`}
+      </h3>
+      <CheckedList runId={runId} calls={fold.calls} />
+    </section>
+  )
+}
+
+/** One run's recall and blind spots. */
+function Memory({ fold, phase, runId }: { fold: RunFold | null; phase: Phase; runId: string | null }) {
+  const gaps = visibilityGaps(fold)
+  const recalled = recallEntityCalls(fold)
+  if (phase === 'loading') return <EmptyState loading compact icon="brain" title="Loading the run…" />
+  if (phase === 'error') return <EmptyState error compact icon="alert" title="The run could not be read" />
+  if (!fold?.recall && recalled.length === 0 && gaps.length === 0 && leftOpen(fold).length === 0 && blindSpotsOf(fold).groups.length === 0) {
+    return <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
+  }
+  return <MemoryCards fold={fold} recalled={recalled} gaps={gaps} runId={runId} />
+}
+
 const KIND_LABEL: Record<string, string> = { hunt: 'Hunt', case: 'Case', analyst: 'Analyst' }
-const LATER_TIP = 'Coming in a later release'
 
 /** "Hunt h-12 · Jun 15, 2026": the investigation a recalled row concluded in. */
 function provenance(p: RecallProvenance): string {
@@ -1200,9 +1810,10 @@ function MemoryRow({ text, meta, tone, tag, action }: { text: string; meta?: str
 }
 
 /** Recalled and Blind spots. Withdraw and Record a blind spot wait on Written back, so they are shown disabled. */
-function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled: CallRow[]; gaps: { id: string; text: string }[] }) {
+function MemoryCards({ fold, recalled, gaps, runId }: { fold: RunFold | null; recalled: CallRow[]; gaps: { id: string; text: string }[]; runId: string | null }) {
   const recall = fold?.recall
   const opened = recall && !recall.unavailable ? recall : null
+  const open = leftOpen(fold)
   return (
     <>
       <section className="case-mem-card" aria-label="Recalled">
@@ -1228,7 +1839,7 @@ function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled:
                 key={`v${i}`}
                 text={[row.outcome, row.statement].filter(Boolean).join(' — ')}
                 meta={provenance(row)}
-                action={<button type="button" className="btn ghost" disabled title={LATER_TIP}>Withdraw</button>}
+                action={<button type="button" className="btn ghost" disabled title={LATER_RELEASE}>Withdraw</button>}
               />
             ))}
             {recalled.map((call, i) => (
@@ -1240,11 +1851,11 @@ function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled:
       <section className="case-mem-card" aria-label="Blind spots">
         <div className="case-mem-head">
           <h3>Blind spots that touched this case</h3>
-          <button type="button" className="btn ghost" disabled title={LATER_TIP}>Record a blind spot</button>
+          <button type="button" className="btn ghost" disabled title={LATER_RELEASE}>Record a blind spot</button>
         </div>
-        {gaps.length === 0 && !recall?.gaps.length ? (
+        {gaps.length === 0 && !recall?.gaps.length && open.length === 0 ? (
           <p className="muted">None recorded.</p>
-        ) : (
+        ) : !recall?.gaps.length && open.length === 0 ? null : (
           <div className="case-mem-rows">
             {recall?.gaps.map((gap, i) => (
               <MemoryRow
@@ -1255,6 +1866,14 @@ function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled:
                 meta={provenance(gap)}
               />
             ))}
+            {open.map((q) => <MemoryRow key={q.question_id} tone="poor" tag="Open question" text={q.question} />)}
+          </div>
+        )}
+        {blindSpotsOf(fold).groups.length > 0 ? (
+          <BlindSpots fold={fold} runId={runId} />
+        ) : gaps.length > 0 && (
+          // A run whose calls do not say which failed: its gaps as it wrote them.
+          <div className="case-mem-rows">
             {gaps.map((gap) => <MemoryRow key={gap.id} tone="poor" tag="Visibility" text={gap.text} />)}
           </div>
         )}
@@ -1268,7 +1887,7 @@ function LaterRow({ title, line }: { title: string; line: string }) {
     <div className="case-later" aria-disabled="true">
       <b>{title}</b>
       <span>{line}</span>
-      <Mark text={LATER} />
+      <Mark text={LATER_RELEASE} />
     </div>
   )
 }
@@ -1296,27 +1915,38 @@ function Clamped({ text }: { text: string }) {
   return <span className="clamp2" title={text}>{text}</span>
 }
 
+/** Findings so far as rows, never as raw list markup: a hunt's explanations by their word, a lead's answers as one plain line each. */
 function FindingList({ fold }: { fold: RunFold | null }) {
   if (!fold) return <p className="muted">No findings yet.</p>
-  if (fold.kind === 'hunt') {
-    if (fold.hypotheses.length === 0) return <p className="muted">No findings yet.</p>
-    const ranked = [...fold.hypotheses].sort((a, b) => b.supports - a.supports || b.weakens - a.weakens)
-    return (
-      <ul>
-        {ranked.slice(0, 6).map((row) => (
-          <li key={row.hypothesis_id}>
-            <Clamped text={`${explanationWord(row.status, row.supports, row.weakens).replace(/_/g, ' ')} — ${row.statement || row.hypothesis_id}`} />
-          </li>
-        ))}
-      </ul>
-    )
-  }
-  if (fold.findings.length === 0) return <p className="muted">No findings yet.</p>
+  const ranked = [...(foldRecord(fold)?.hypotheses ?? [])].sort((a, b) => b.supports - a.supports || b.weakens - a.weakens)
+  // A hunt's findings are its explanations; an investigation's are its answer, a held one first, then what it weighed.
+  const lead = fold.kind === 'lead' ? fold : null
+  const held = lead?.held ?? null
+  const answers = lead?.findings ?? []
+  if (!held && answers.length === 0 && ranked.length === 0) return <p className="muted">No findings yet.</p>
   return (
-    <ul>
-      {fold.findings.slice(0, 6).map((row, i) => (
-        <li key={i}><Clamped text={`${row.agent_id}: ${row.answer || '—'}`} /></li>
+    <ul className="case-findings">
+      {held && (
+        <li>
+          <span className="case-expl-pill poor">Held</span>
+          <Clamped text={`${heldLine(held)}: ${held.reason}`} />
+        </li>
+      )}
+      {answers.slice(0, 6).map((row, i) => (
+        <li key={i}>
+          <span className="case-findings-who">{row.agent_id}</span>
+          <Clamped text={plainLine(row.answer) || '—'} />
+        </li>
       ))}
+      {ranked.slice(0, 6).map((row) => {
+        const word = explanationWord(row.status, row.supports, row.weakens)
+        return (
+          <li key={row.hypothesis_id}>
+            <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+            <Clamped text={row.statement || row.hypothesis_id} />
+          </li>
+        )
+      })}
     </ul>
   )
 }

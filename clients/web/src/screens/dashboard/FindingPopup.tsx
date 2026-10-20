@@ -1,6 +1,6 @@
 /* The embedded VStrike NetworkContextPanel is deliberately not ported: it needs
    the VStrike provider, which isn't mounted under the console shell. */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
@@ -8,6 +8,7 @@ import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/m
 import { techniqueName } from '../../data/mitre'
 import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
+import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import SourceChip from '../../shared/SourceChip'
 import type { Phase } from '../cases/useCases'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -38,14 +39,15 @@ interface Enrichment {
   indicators?: { malicious_ips?: string[]; suspicious_domains?: string[] }
   analysis_notes?: string
   raw_response?: string
+  generated_at?: string
 }
 
 const ENRICHMENT_PROGRESS = [
-  'Preparing a local AI analysis…',
-  'Reviewing the finding with your local model…',
-  'Still analysing — local models often take a minute or two.',
-  'Checking the local AI gateway and automatically retrying if needed. Please keep this window open…',
-  'Local gateway recovery can take up to a minute. The analysis is still running…',
+  'Preparing the AI analysis…',
+  'Reviewing the finding with your configured model…',
+  'Still analysing — this can take a minute or two.',
+  'Checking the AI gateway and automatically retrying if needed. Please keep this window open…',
+  'Gateway recovery can take up to a minute. The analysis is still running…',
 ]
 
 const RISK_COLOR: Record<string, string> = {
@@ -183,6 +185,11 @@ export default function FindingPopup({
   const [status, setStatus] = useState('')
   const [acting, setActing] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [triageNote, setTriageNote] = useState<string | null>(null)
+  const [triageError, setTriageError] = useState<string | null>(null)
+  const [triaging, setTriaging] = useState(false)
+  // the finding the triage note belongs to; a reply for any other finding is dropped
+  const triageFor = useRef<string | null>(null)
 
   // excluding an address from here, while looking at the finding that names it
   const { notify } = useToast()
@@ -201,6 +208,9 @@ export default function FindingPopup({
     setEnrichment(null)
     setEnrichPhase('idle')
     setEnrichError(null)
+    triageFor.current = id
+    setTriageNote(null)
+    setTriageError(null)
     setExcludeIp(null)
     setExcludeReason('')
     setExcludeError(null)
@@ -212,7 +222,9 @@ export default function FindingPopup({
         const data = res.data as RawFinding
         setRaw(data)
         setStatus((data as { status?: string }).status || '')
-        if (data.ai_enrichment) {
+        // The daemon writes triage keys into ai_enrichment too; only a
+        // generated analysis carries generated_at.
+        if (data.ai_enrichment?.generated_at) {
           setEnrichment(data.ai_enrichment)
           setEnrichPhase('ready')
         }
@@ -300,6 +312,18 @@ export default function FindingPopup({
       .then(() => onChanged?.())
       .catch(() => setStatus(status)) // revert on failure
       .finally(() => setActing(false))
+  }
+
+  const sendToTriage = () => {
+    if (!id || triaging) return
+    const target = id
+    setTriaging(true)
+    setTriageNote(null)
+    setTriageError(null)
+    sendFindingToTriage(target)
+      .then(note => { if (triageFor.current === target) setTriageNote(note) })
+      .catch(() => { if (triageFor.current === target) setTriageError(SEND_TO_TRIAGE_FAILED) })
+      .finally(() => setTriaging(false))
   }
 
   const doDelete = () => {
@@ -524,10 +548,13 @@ export default function FindingPopup({
 
           {/* actions */}
           <div className="fp-actions">
+            <button className="btn ghost" onClick={sendToTriage} disabled={triaging}>Send to triage</button>
             <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={acting}>
               <Icon name="trash" size={14} /> Delete finding
             </button>
           </div>
+          {triageNote && <div className="field-hint" style={{ marginTop: 10 }}>{triageNote}</div>}
+          {triageError && <div className="field-hint err" role="alert" style={{ marginTop: 10 }}>{triageError}</div>}
         </>
       )}
 

@@ -22,10 +22,7 @@ def test_catalog_loads_without_a_project_virtualenv(tmp_path):
             }
         )
     )
-    assert check_catalog(tmp_path) == {
-        "catalog_entries": 1,
-        "missing_runtime_prerequisites": [],
-    }
+    assert check_catalog(tmp_path) == {"catalog_entries": 1}
     service = MCPService(
         project_root=tmp_path,
         integration_bridge=SimpleNamespace(derive_remote_mcp_env=lambda: {}),
@@ -90,6 +87,30 @@ def test_baked_pins_launch_the_installed_copy(tmp_path, monkeypatch):
         ("uvx", ["--from", "other==1.0", "falcon-mcp"]),
     ]:
         assert launch(command, args) == (command, args)
+
+
+def test_git_tool_with_python_exe_launches_its_venv(tmp_path, monkeypatch):
+    """Okta's shape: ``--from git+…@ref python -m mod`` runs the tool venv's python."""
+    _baked(tmp_path, monkeypatch)
+    url = "https://github.com/fctr-id/okta-mcp-server"
+    venv = tmp_path / "tools" / "okta-mcp-server"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").touch()
+    info = venv / "lib" / "python3.12" / "site-packages" / "okta_mcp-0.1.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Name: okta-mcp\nVersion: 0.1\n")
+    (info / "direct_url.json").write_text(
+        json.dumps(
+            {"url": f"{url}.git", "vcs_info": {"requested_revision": "02.0-beta"}}
+        )
+    )
+    args = ["--from", f"git+{url}.git@02.0-beta", "python", "-m", "okta_mcp.server"]
+    assert packaged.installed_launch("uvx", args) == (
+        str(venv / "bin" / "python"),
+        ["-m", "okta_mcp.server"],
+    )
+    other = ["--from", f"git+{url}.git@0.1.1-beta", "python", "-m", "okta_mcp.server"]
+    assert packaged.installed_launch("uvx", other) == ("uvx", other)
 
 
 def test_bump_without_image_list_fails_verify_catalog(tmp_path, monkeypatch):

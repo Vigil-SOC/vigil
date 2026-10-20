@@ -165,6 +165,24 @@ class TestBeginAndFinalize:
         assert service.set_progress(run_id, iteration=9, max_cost_usd=20.0) is False
         assert stored() == (8, 15.0)
 
+    def test_set_case_files_a_caseless_run_and_keeps_its_trigger(
+        self, service, clean_runs
+    ):
+        run_id = service.begin_run(
+            workflow_id="test-wf-case",
+            workflow_name="Test WF",
+            trigger_context={"run_kind": "hunt", "hypothesis": "h"},
+        )
+        assert service.set_case(run_id, "case-opened")
+        assert service.get_run(run_id)["trigger_context"] == {
+            "run_kind": "hunt",
+            "hypothesis": "h",
+            "case_id": "case-opened",
+        }
+        # A run already on a case stays there.
+        assert service.set_case(run_id, "case-other") is False
+        assert service.get_run(run_id)["trigger_context"]["case_id"] == "case-opened"
+
     def test_finalize_failure_records_error(self, service, clean_runs):
         run_id = service.begin_run(
             workflow_id="test-wf-003",

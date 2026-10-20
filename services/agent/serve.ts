@@ -1,27 +1,33 @@
+import { SpanKind } from "@opentelemetry/api";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import pg from "pg";
-import { archFor, isHuntLike, registeredKinds } from "./arch/registry.js";
-import { cachedReady, handleHealth, type Ready } from "./core/health.js";
+import { archFor, isHuntLike, registeredKinds } from "./plugins/kinds.js";
+import { bindHost, cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
+import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
 import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
-import { chatEvents, sse } from "./workflows/chat/sse.js";
-import { runChat, type Turn } from "./workflows/chat/workflow.js";
+import { chatEvents, sse } from "./plugins/chat/sse.js";
+import { runChat, type Turn } from "./plugins/chat/workflow.js";
 import { harnessFor, type HarnessFactory } from "./harness.js";
-import type { ProjectionOptions } from "./workflows/hunt/projection.js";
-import { narrateRun } from "./workflows/hunt/workflow.js";
-import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
-import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
-import { investigateReplay } from "./workflows/lead/replay.js";
-import { rootCauseReplay } from "./workflows/rootcause/replay.js";
+import type { ProjectionOptions } from "./plugins/hunt/projection.js";
+import { narrateRun } from "./plugins/hunt/workflow.js";
+import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
+import { replay, type ReplayReport } from "./plugins/hunt/replay.js";
+import { agentReplay } from "./core/agent-view.js";
+import { investigateReplay } from "./plugins/investigate/legacy/replay.js";
+import { isAgentRun } from "./core/agent.js";
+import { investigateKernelReplay } from "./plugins/investigate/view.js";
+import { huntKernelReplay } from "./plugins/hunt/view.js";
+import { rootCauseReplay } from "./plugins/rootcause/replay.js";
 
 const log = logger("agent.serve");
 
@@ -39,6 +45,9 @@ const VERIFY = /^\/runs\/([0-9a-fA-F-]{36})\/verify$/;
 // GET /runs/<id>/events[?snapshots=1] -- the ledger itself. Snapshots stay off
 // unless asked: a decision snapshot is the digest, and the case record does not show it.
 const EVENTS = /^\/runs\/([0-9a-fA-F-]{36})\/events$/;
+// GET /runs/<id>/calls/<ref>: one call as it was journaled -- the query it sent and
+// the result it got back -- for a reader checking a record against its source.
+const CALL = /^\/runs\/([0-9a-fA-F-]{36})\/calls\/(r\d+)$/;
 // A conversation is prose and a config, not an upload. Anything larger is a
 // mistake or an attack, and either way it is refused before it is parsed.
 const MAX_BODY = 1_000_000;
@@ -115,6 +124,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
     }
   } catch (error) {
     log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
+    failed(error);
     res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
   }
   res.end();
@@ -159,6 +169,7 @@ function refuse(res: ServerResponse, status: number, detail: string): void {
 // A route that threw: logged with the run, then answered as the refusal it is.
 function fail(res: ServerResponse, status: number, route: string, runId: string, error: unknown): void {
   log.error("request failed", { route, run_id: runId, status, ...errorFields(error) });
+  failed(error);
   refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
@@ -221,7 +232,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   const opened = events[0];
   if (opened?.run_kind === "investigate") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(investigateReplay(runId, events)));
+    res.end(JSON.stringify(isAgentRun(events) ? investigateKernelReplay(runId, events) : investigateReplay(runId, events)));
     return;
   }
   if (opened?.run_kind === "root_cause") {
@@ -229,7 +240,21 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     res.end(JSON.stringify(rootCauseReplay(runId, events)));
     return;
   }
+  // A judge or subagent, replayed from its own ledger like any kernel run.
+  if (opened?.run_kind === "subagent") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(agentReplay(runId, events)));
+    return;
+  }
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
+  // A kernel hunt has no digest to rebuild: what each turn was shown is the calls before it.
+  if (isAgentRun(events)) {
+    const report = huntKernelReplay(runId, events, decisionId);
+    if (decisionId !== null && report.decisions.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(report));
+    return;
+  }
 
   let report: ReplayReport;
   try {
@@ -244,7 +269,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     if (one.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
     // Counts follow the filtered list; hunt_id and recalled are report-level and stay.
     report.decisions = one;
-    report.reproduced = one.filter((decision) => decision.mismatch === null).length;
+    report.reproduced = one.filter((decision) => decision.rebuilt !== null && decision.mismatch === null).length;
     report.inexact = one.filter((decision) => !decision.exact).length;
   }
   res.writeHead(200, { "content-type": "application/json" });
@@ -255,6 +280,13 @@ async function readEvents(state: State, runId: string, snapshots: boolean, res: 
   const events = await state.read(runId, snapshots ? { snapshots: true } : {});
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ events }));
+}
+
+async function readCall(state: State, runId: string, ref: string, res: ServerResponse): Promise<void> {
+  const found = (await state.read(runId)).find((event) => event.kind === "call" && (event.payload as { ref?: unknown }).ref === ref);
+  if (found === undefined) return refuse(res, 404, `no call ${ref} in ${runId}`);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ run_id: runId, ts: found.ts, ...(found.payload as object) }));
 }
 
 async function readVerify(runId: string, verify: VerifyRun | undefined, res: ServerResponse): Promise<void> {
@@ -282,7 +314,13 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
   // Headers before the first token, so the reader is streaming rather than
   // buffering a response it will be handed all at once.
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  await streamChat(state, request, res, build);
+  const attributes = {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "chat",
+    "vigil.run_id": request.run_id,
+    ...(request.agent_id === undefined ? {} : { "gen_ai.agent.id": request.agent_id }),
+  };
+  await traced("invoke_agent chat", attributes, () => streamChat(state, request, res, build), { kind: SpanKind.SERVER, parent: req.headers });
 }
 
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
@@ -305,7 +343,11 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
 
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
-      if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
+      if (asked !== null) {
+        const runId = asked[1] as string;
+        const attributes = { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "narrate", "vigil.run_id": runId };
+        return traced("invoke_agent narrate", attributes, () => writeNarrative(state, runId, res, build), { kind: SpanKind.SERVER, parent: req.headers });
+      }
 
       // Parsed rather than matched raw because this route takes a query. Node accepts
       // request-targets URL rejects (absolute-form with a bad host), so a throw here
@@ -328,6 +370,9 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
       if (verified !== null) return readVerify(verified[1] as string, verify, res);
+
+      const called = req.method === "GET" ? CALL.exec(parsed.pathname) : null;
+      if (called !== null) return readCall(state, called[1] as string, called[2] as string, res);
 
       const logged = req.method === "GET" ? EVENTS.exec(parsed.pathname) : null;
       if (logged !== null) return readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);
@@ -360,14 +405,16 @@ export function serveReady(pool: pg.Pool): Ready {
 // loaded this module and exited. Its own pool: serve is a separate Deployment from
 // the worker now, and a pool cannot be shared across processes.
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
+  initTracing("vigil-agent-serve");
   const pool = new pg.Pool(poolConfig());
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
   const serving = chatServer(new LedgerRepository(pool), cachedReady(serveReady(pool)), harnessFor, (runId) =>
     verifyLedger(pool, runId),
-  ).listen(chatPort());
+  ).listen(chatPort(), bindHost());
   const stop = () => {
-    serving.close();
+    // Flushed once the open chats have drained, so their spans are not the ones lost.
+    serving.close(() => void shutdownTracing());
     void pool.end();
   };
   process.on("SIGTERM", stop);

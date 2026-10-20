@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 DISTIL_MAPPING_VERSION = 2
 
 # The other side's version: the wire schema of the payload this understands,
-# which `DISTIL_SCHEMA_VERSION` in services/agent/workflows/hunt/distil.ts
+# which `DISTIL_SCHEMA_VERSION` in services/agent/plugins/hunt/distil.ts
 # stamps. A newer one is refused rather than mis-mapped -- a field that changed
 # meaning is worse read optimistically than not read at all, and the marker's
 # absence brings the investigation back next tick.

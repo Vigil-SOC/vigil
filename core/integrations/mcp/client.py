@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import threading
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 try:
@@ -26,24 +27,71 @@ except ImportError:
             ClientSession = Any
             StdioServerParameters = Any
 
+from core.integrations._base.config import missing as missing_fields
+from core.integrations._base.config import resolve
+from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
 from core.integrations.mcp.child_env import ca_bundle_env
+from core.integrations.mcp.runner import (
+    RunnerError,
+    RunnerServer,
+    runner_env,
+    runner_url,
+)
 from core.integrations.mcp.service import MCPService
+from core.integrations.opensearch.descriptor import OPENSEARCH, OPENSEARCH_REQUIRED
+from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
+
+# Servers whose tool.py reads its config through resolve(), so there is no
+# ${VAR} placeholder to gate on. Not keyed off descriptor.mcp_server_names: the
+# official "splunk" server shares that descriptor but reads SPLUNK_MCP_URL.
+_DESCRIPTOR_GATED = {
+    "splunk-selfhosted": (SPLUNK, SPLUNK_SELFHOSTED_REQUIRED),
+    "elastic": (ELASTIC, ELASTIC_REQUIRED),
+    "opensearch": (OPENSEARCH, OPENSEARCH_REQUIRED),
+}
+
+
+@asynccontextmanager
+async def open_transport(
+    server_params, runner: Optional[RunnerServer] = None, *, recheck: bool = False
+):
+    """The (read, write) streams to one server: the runner's, or a stdio child's.
+
+    In runner mode this PUTs the server first, so a reconnect also restarts one
+    that stopped. ``recheck`` refuses a server disabled since the session opened:
+    a reconnect must not start what another process turned off.
+    """
+    if runner is None:
+        async with stdio_client(server_params) as (read, write):
+            yield read, write
+        return
+    if recheck and not runner.enabled():
+        raise RunnerError(f"{runner.name} is disabled")
+    await runner.start()
+    async with runner.streams() as (read, write):
+        yield read, write
 
 
 class PersistentServerSession:
     """Manages a persistent connection to an MCP server."""
 
-    def __init__(self, server_name: str, server_params):
+    def __init__(
+        self, server_name: str, server_params, runner: Optional[RunnerServer] = None
+    ):
         self.server_name = server_name
         self.server_params = server_params
+        self.runner = runner
         self.session: Optional[ClientSession] = None
         self.read_stream = None
         self.write_stream = None
-        self.stdio_context = None
+        self.transport_context = None
         self.session_context = None
+        # The task holding the transport and session open (see _open).
+        self._holder: Optional[asyncio.Task] = None
+        self._closing = asyncio.Event()
         self.is_connected = False
         self.last_error: Optional[str] = None
         self.lock = asyncio.Lock()
@@ -55,32 +103,55 @@ class PersistentServerSession:
                 return True
 
             try:
-                # Create stdio client connection
-                self.stdio_context = stdio_client(self.server_params)
-                self.read_stream, self.write_stream = (
-                    await self.stdio_context.__aenter__()
-                )
-
-                # Create session
-                self.session_context = ClientSession(
-                    self.read_stream, self.write_stream
-                )
-                self.session = await self.session_context.__aenter__()
-
-                # Initialize session
-                await self.session.initialize()
-
-                self.is_connected = True
+                await self._open()
                 logger.info(
                     f"✓ Established persistent connection to {self.server_name}"
                 )
                 return True
 
             except Exception as e:
-                self.last_error = f"{type(e).__name__}: {e}"
+                # The runner's own words, so Settings shows why it refused.
+                self.last_error = (
+                    str(e) if isinstance(e, RunnerError) else f"{type(e).__name__}: {e}"
+                )
                 logger.error(f"Failed to connect to {self.server_name}: {e}")
                 await self._cleanup()
                 return False
+
+    async def _open(self, recheck: bool = False) -> None:
+        """Open transport and session (must be called with lock held).
+
+        Held open by a task of its own, which also closes them: the transport's
+        task groups must exit in the task, and the order, they were entered in,
+        and sessions are opened by one request and closed by another, or all
+        at once by ``close_all``.
+        """
+        ready = asyncio.get_running_loop().create_future()
+        closing = asyncio.Event()
+
+        async def hold():
+            try:
+                async with open_transport(
+                    self.server_params, self.runner, recheck=recheck
+                ) as (read, write), ClientSession(read, write) as session:
+                    await session.initialize()
+                    self.session = session
+                    ready.set_result(None)
+                    await closing.wait()
+            except BaseException as e:  # noqa: BLE001 - handed to the opener
+                if ready.done():
+                    logger.debug("MCP session to %s ended: %s", self.server_name, e)
+                elif isinstance(e, asyncio.CancelledError):
+                    ready.cancel()
+                else:
+                    ready.set_exception(e)
+            finally:
+                self.is_connected = False
+
+        self._closing = closing
+        self._holder = asyncio.create_task(hold())
+        await ready
+        self.is_connected = True
 
     async def disconnect(self):
         """Disconnect from the server."""
@@ -89,6 +160,13 @@ class PersistentServerSession:
 
     async def _cleanup(self):
         """Internal cleanup method (must be called with lock held)."""
+        holder, self._holder = self._holder, None
+        if holder is not None:
+            self._closing.set()
+            try:
+                await asyncio.wait_for(holder, timeout=10)  # hold() never raises
+            except asyncio.TimeoutError:
+                logger.warning("Closing %s timed out", self.server_name)
         try:
             if self.session_context:
                 try:
@@ -96,15 +174,15 @@ class PersistentServerSession:
                 except Exception:
                     pass
 
-            if self.stdio_context:
+            if self.transport_context:
                 try:
-                    await self.stdio_context.__aexit__(None, None, None)
+                    await self.transport_context.__aexit__(None, None, None)
                 except Exception:
                     pass
 
             self.session = None
             self.session_context = None
-            self.stdio_context = None
+            self.transport_context = None
             self.read_stream = None
             self.write_stream = None
             self.is_connected = False
@@ -161,15 +239,7 @@ class PersistentServerSession:
     async def _connect_internal(self) -> bool:
         """Internal connect (must be called with lock held)."""
         try:
-            self.stdio_context = stdio_client(self.server_params)
-            self.read_stream, self.write_stream = await self.stdio_context.__aenter__()
-
-            self.session_context = ClientSession(self.read_stream, self.write_stream)
-            self.session = await self.session_context.__aenter__()
-
-            await self.session.initialize()
-
-            self.is_connected = True
+            await self._open(recheck=True)
             return True
 
         except Exception as e:
@@ -198,6 +268,9 @@ class MCPClient:
         # structured list of env var names when credentials are missing.
         self.last_errors: Dict[str, str] = {}
         self.last_missing_credentials: Dict[str, List[str]] = {}
+        # Servers held back because the install has not set them up (rules not
+        # fetched), keyed to the reason. Retried once that clears.
+        self.last_setup_required: Dict[str, str] = {}
 
     async def connect_to_server(
         self,
@@ -233,10 +306,13 @@ class MCPClient:
             self.last_errors: Dict[str, str] = {}
         if not hasattr(self, "last_missing_credentials"):
             self.last_missing_credentials: Dict[str, List[str]] = {}
+        if not hasattr(self, "last_setup_required"):
+            self.last_setup_required: Dict[str, str] = {}
         # Clear any stale state from a prior attempt so the UI always
         # reflects the most recent connect.
         self.last_errors.pop(server_name, None)
         self.last_missing_credentials.pop(server_name, None)
+        self.last_setup_required.pop(server_name, None)
 
         if not MCP_AVAILABLE:
             logger.error("MCP SDK not available")
@@ -261,6 +337,15 @@ class MCPClient:
             if self.persistent_sessions[server_name].is_connected:
                 logger.debug(f"Already connected to {server_name}")
                 return True
+
+        # Setup gate: a server with nothing to serve until the install fetches
+        # it (security-detections' rules) is not spawned. Like the credential
+        # gate below, this is a state to show, not an error to record.
+        needs = self.setup_required(server_name)
+        if needs:
+            self.last_setup_required[server_name] = needs
+            logger.info("MCP server %s not set up: %s", server_name, needs)
+            return False
 
         server = self.mcp_service.servers[server_name]
 
@@ -292,11 +377,14 @@ class MCPClient:
                 env={**ca_bundle_env(), **(server.env or {})},
             )
 
+            # In the runner when MCP_RUNNER_URL is set; server_params then unused.
+            runner = self._runner_for(server_name)
+
             if persistent:
                 # Create persistent session
                 if server_name not in self.persistent_sessions:
                     self.persistent_sessions[server_name] = PersistentServerSession(
-                        server_name, server_params
+                        server_name, server_params, runner
                     )
 
                 # Connect. The session logs and swallows the spawn error;
@@ -313,10 +401,22 @@ class MCPClient:
 
             else:
                 # Temporary connection just to get tools
-                async with stdio_client(server_params) as (read_stream, write_stream):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        tools_result = await session.list_tools()
+                try:
+                    async with open_transport(server_params, runner) as (
+                        read_stream,
+                        write_stream,
+                    ):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            await session.initialize()
+                            tools_result = await session.list_tools()
+                finally:
+                    # A probe of a disabled server leaves nothing running.
+                    if (
+                        runner is not None
+                        and runner.last_action in ("started", "restarted")
+                        and not self.mcp_service.is_server_enabled(server_name)
+                    ):
+                        await runner.stop()
 
             # Cache tools
             self.tools_cache[server_name] = []
@@ -352,21 +452,71 @@ class MCPClient:
             # reason (e.g. "FileNotFoundError: uvx", "ModuleNotFoundError:
             # mcp", "missing env var GITHUB_TOKEN") instead of a
             # generic "Failed to connect".
-            self.last_errors[server_name] = f"{type(e).__name__}: {e}"
+            self.last_errors[server_name] = (
+                str(e) if isinstance(e, RunnerError) else f"{type(e).__name__}: {e}"
+            )
             logger.error(f"Failed to connect to {server_name}: {e}")
             return False
+
+    def _runner_for(self, server_name: str) -> Optional[RunnerServer]:
+        """The runner serving ``server_name``, or None for a stdio child."""
+        url = runner_url(server_name)
+        if url is None:
+            return None
+        service = self.mcp_service
+        return RunnerServer(
+            url,
+            server_name,
+            env=lambda: self._runner_env(server_name),
+            enabled=lambda: service.is_server_enabled(server_name),
+        )
+
+    def _runner_env(self, server_name: str) -> Dict[str, str]:
+        # Every process sharing the runner must send the same env, or each PUT
+        # restarts the server the others use: rule paths come from the saved
+        # sources (setup_required refreshes them), not this process's copy.
+        self.setup_required(server_name)
+        # Looked up at each start: reload_server_configs replaces the entry.
+        return runner_env(self.mcp_service.servers[server_name])
 
     def _missing_credentials_for(self, server) -> List[str]:
         # Resolves through get_secret, so a credential saved via the integration
         # wizard (encrypted store, not the process env) does not read as dormant.
+        gated = _DESCRIPTOR_GATED.get(getattr(server, "name", None))
+        if gated:
+            descriptor, required = gated
+            try:
+                return list(missing_fields(resolve(descriptor), *required))
+            except Exception as exc:  # noqa: BLE001
+                # A DB or decrypt failure must not read as configured.
+                logger.warning(
+                    "Config lookup for %s failed: %s", server.name, type(exc).__name__
+                )
+                return list(required)
         required = getattr(server, "required_env_vars", None) or []
-        if not required:
-            return []
-        missing: List[str] = []
-        for var in required:
-            if not get_secret(var):
-                missing.append(var)
-        return missing
+        return [var for var in required if not get_secret(var)]
+
+    def setup_required(self, server_name: str) -> Optional[str]:
+        """Why ``server_name`` is not set up yet, or None (see ``MCPService``)."""
+        check = getattr(self.mcp_service, "setup_required", None)
+        reason = check(server_name) if callable(check) else None
+        return reason if isinstance(reason, str) and reason else None
+
+    def was_dialled(self, server_name: str) -> bool:
+        """Whether this process has tried to connect ``server_name`` at all.
+
+        With eager connect off a server is only dialled on first use, so one
+        nothing has used yet is waiting, not down.
+        """
+        return (
+            server_name in self.persistent_sessions
+            or server_name in getattr(self, "last_errors", {})
+            or server_name in getattr(self, "last_missing_credentials", {})
+        )
+
+    def held_for_setup(self, server_name: str) -> bool:
+        """Whether the last connect of ``server_name`` stopped at the setup gate."""
+        return server_name in getattr(self, "last_setup_required", {})
 
     def get_missing_credentials(self, server_name: str) -> Optional[List[str]]:
         """Return the list of unset required env vars from the last connect."""
@@ -409,13 +559,16 @@ class MCPClient:
             name
             for name, missing in list(self.last_missing_credentials.items())
             if missing
-        ]
+        ] + list(getattr(self, "last_setup_required", {}))
         for server_name in candidates:
             server = self.mcp_service.servers.get(server_name)
             if server is None:
                 continue
-            # Cheap precheck — skip unless creds actually resolve now.
-            if self._missing_credentials_for(server):
+            # Cheap precheck — skip unless creds actually resolve now, and the
+            # install has set the server up.
+            if self._missing_credentials_for(server) or self.setup_required(
+                server_name
+            ):
                 continue
             # Rate-limit: don't retry the same server more than once
             # per _RETRY_MIN_INTERVAL_S seconds.
@@ -524,7 +677,9 @@ class MCPClient:
                 kind=SpanKind.CLIENT,
                 attributes={
                     "mcp.server.name": server_name,
-                    "mcp.transport": "stdio",
+                    "mcp.transport": (
+                        "streamable-http" if runner_url(server_name) else "stdio"
+                    ),
                     "vigil.tool.name": tool_name,
                     "vigil.tool.input_size": len(_json.dumps(arguments, default=str)),
                 },
@@ -536,12 +691,17 @@ class MCPClient:
         if server_name not in self.persistent_sessions:
             logger.info(f"Creating persistent connection to {server_name}...")
             if not await self.connect_to_server(server_name, persistent=True):
+                needs = getattr(self, "last_setup_required", {}).get(server_name)
                 _err = {
                     "error": True,
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Failed to connect to server: {server_name}",
+                            "text": (
+                                f"{server_name} is not set up: {needs}"
+                                if needs
+                                else f"Failed to connect to server: {server_name}"
+                            ),
                         }
                     ],
                 }
@@ -630,22 +790,36 @@ class MCPClient:
         """
         Disconnect from a specific MCP server.
 
+        In runner mode this also stops it there, for every process using it:
+        only disable and restart call this, never a client's own shutdown.
+
         Args:
             server_name: Name of the server to disconnect from
 
         Returns:
             True if successful, False otherwise
         """
+        ok = True
         if server_name in self.persistent_sessions:
             try:
                 await self.persistent_sessions[server_name].disconnect()
                 del self.persistent_sessions[server_name]
                 logger.info(f"Disconnected from {server_name}")
-                return True
             except Exception as e:
                 logger.error(f"Error disconnecting from {server_name}: {e}")
-                return False
-        return True
+                ok = False
+        runner = (
+            self._runner_for(server_name)
+            if server_name in self.mcp_service.servers
+            else None
+        )
+        if runner is not None:
+            try:
+                await runner.stop()
+            except Exception as e:
+                logger.error("Could not stop %s in the MCP runner: %s", server_name, e)
+                ok = False
+        return ok
 
     def get_connection_status(self) -> Dict[str, bool]:
         """
@@ -681,7 +855,7 @@ class MCPClient:
         logger.info("All MCP connections closed")
 
 
-# An MCPClient owns persistent stdio child processes that only its creator closes, so
+# An MCPClient owns persistent sessions (stdio children) that only its creator closes, so
 # exactly one may exist per process. The owner builds it and installs it here.
 _process_client: Optional[MCPClient] = None
 

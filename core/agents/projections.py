@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import get_settings
 from core.secrets import get_secret
+from core.telemetry import inject_traceparent
 from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def _headers() -> Dict[str, str]:
     token = get_secret("AGENT_INTERNAL_TOKEN") or ""
     if not token:
         raise RuntimeError("AGENT_INTERNAL_TOKEN is not configured")
-    return {"Authorization": f"Bearer {token}"}
+    return {**inject_traceparent(), "Authorization": f"Bearer {token}"}
 
 
 def _note_read(ok: bool, message: str, *args: Any) -> None:
@@ -90,7 +91,7 @@ async def read_projection(
 
 
 # What episodic memory reads once a run has ended, folded on the side that owns
-# the events; see services/agent/workflows/hunt/distil.ts for why it is not the
+# the events; see services/agent/plugins/hunt/distil.ts for why it is not the
 # projection. None reads as "nothing to distil yet", never as "this run saw
 # nothing" — the difference matters, because the second would be a fact.
 async def read_distil(run_id: str) -> Optional[Dict[str, Any]]:
@@ -145,6 +146,29 @@ async def read_replay(
     try:
         async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
             response = await client.get(url, headers=_headers(), params=params)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    return response.json()
+
+
+async def read_call(run_id: str, ref: str) -> Optional[Dict[str, Any]]:
+    """One call of ``run_id`` as journaled: the query it sent and what came back.
+
+    None is serve's 404, an unknown run or ref. Anything else raises, because an
+    operator opened the call to check a record against it.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/calls/{ref}")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
 

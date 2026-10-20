@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, type RunFold } from './caseFold'
+import { actionWords, agentRows, caseVerdict, closureFlag, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
+import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 describe('actionWords', () => {
   it('has plain words for every hunt action', () => {
@@ -64,5 +65,148 @@ describe('recordChip', () => {
     expect(recordChip('resolution', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'case_activities')).toBe('human')
     expect(recordChip('recall', 'run')).toBe('memory')
+  })
+})
+
+describe('an investigation\'s record', () => {
+  it('reads it through the hunt\'s parsers, and a lead with none keeps no record', () => {
+    const held = readFold({ status: 'completed', projection: heldProjection })
+    expect(foldRecord(held)?.hypotheses.map((h) => [h.hypothesis_id, h.supports, h.weakens])).toEqual([['h1', 1, 2], ['h2', 0, 0], ['h3', 2, 0]])
+    expect(foldRecord(held)?.openQuestions).toHaveLength(1)
+    expect(endedRun(held)?.line).toBe('Asked benign · held as needs review · 1 standing · 1 weakened · 1 forming')
+
+    const legacy = readFold({ status: 'completed', projection: { findings: [{ agent_id: 'lead', answer: 'benign' }] } })
+    expect(foldRecord(legacy)).toBeNull()
+    expect(endedRun(legacy)?.line).toBe('1 finding')
+  })
+})
+
+describe('a root-cause run', () => {
+  const head = {
+    run_id: 'run-rca',
+    run_kind: 'root_cause',
+    status: 'terminal',
+    outcome: 'concluded',
+    reason: 'origin proven',
+    cost_usd: 0.4,
+    max_cost_usd: 2,
+    disposition: null,
+    steps: [{ step_id: 's1', proven: true }],
+    proven: 1,
+    notices: ['a notice'],
+    searches: 3,
+    recent_searches: [{ tool: 'search', args: '{}', rows: 2, failed: false }],
+    open_checkpoint: null,
+  }
+
+  it('folds to its head only, and every reader shows nothing for it', () => {
+    const fold = readFold({ status: 'completed', projection: head })
+    expect(fold).toMatchObject({ kind: 'head', outcome: 'concluded', reason: 'origin proven', costUsd: 0.4, maxCostUsd: 2, openCheckpoint: null, calls: [], moves: [] })
+    expect(foldRecord(fold)).toBeNull()
+    expect(visibilityGaps(fold)).toEqual([])
+    expect(agentRows(fold)).toEqual([])
+    expect(strongestRows(fold)).toEqual([])
+    expect(stoppedRun(fold)).toBeNull()
+    expect(endedRun(fold)?.line).toBe('0 findings')
+  })
+
+  it('still folds without run_kind, through the projection key as before', () => {
+    const { run_kind: _kind, ...bare } = head // eslint-disable-line @typescript-eslint/no-unused-vars
+    const fold = readFold({ status: 'completed', projection: bare })
+    expect(fold?.kind).toBe('lead')
+    expect(foldRecord(fold)).toBeNull()
+    expect(visibilityGaps(fold)).toEqual([])
+  })
+
+  it('leaves hunt and lead folds as they were, and reads the hunt ceiling off the head or its budgets', () => {
+    expect(readFold({ status: 'running', hunt: { iteration: 1, budgets: { max_cost_usd: 5 } } })).toMatchObject({ kind: 'hunt', maxCostUsd: 5 })
+    expect(readFold({ status: 'running', hunt: { run_kind: 'hunt', iteration: 1, max_cost_usd: 3, budgets: { max_cost_usd: 5 } } })).toMatchObject({ kind: 'hunt', maxCostUsd: 3 })
+    expect(readFold({ status: 'running', projection: { max_cost_usd: 1, findings: [] } })).toMatchObject({ kind: 'lead', maxCostUsd: 1 })
+  })
+})
+
+describe('the disposition', () => {
+  const disposition = (fold: RunFold | null) => fold?.disposition
+  it('is read off the head of every fold, and null when the head says none', () => {
+    expect(disposition(readFold({ hunt: { run_kind: 'hunt', disposition: 'malicious' } }))).toBe('malicious')
+    expect(disposition(readFold({ projection: { run_kind: 'investigate', disposition: 'needs_review', findings: [] } }))).toBe('needs_review')
+    expect(disposition(readFold({ projection: { run_kind: 'root_cause', disposition: null } }))).toBeNull()
+    expect(disposition(readFold({ hunt: { run_kind: 'hunt' } }))).toBeNull()
+    expect(disposition(readFold({ projection: { findings: [] } }))).toBeNull()
+  })
+
+  it('is not read out of the finding the lead shows', () => {
+    const fold = readFold({ projection: { run_kind: 'investigate', findings: [{ agent_id: 'agent', answer: { disposition: 'benign', summary: 'quiet' } }] } })
+    expect(fold).toMatchObject({ kind: 'lead', disposition: null })
+  })
+})
+
+describe('the budget ceiling', () => {
+  it('is read off the head, and off budgets on a ledger written before the head carried it', () => {
+    const ceiling = (fold: RunFold | null) => fold?.maxCostUsd
+    expect(ceiling(readFold({ hunt: { max_cost_usd: 5, budgets: { max_cost_usd: 2 } } }))).toBe(5)
+    expect(ceiling(readFold({ hunt: { budgets: { max_cost_usd: 2 } } }))).toBe(2)
+    expect(ceiling(readFold({ projection: heldProjection }))).toBe(3)
+    expect(ceiling(readFold({ projection: { budgets: { max_cost_usd: 4 } } }))).toBe(4)
+    expect(ceiling(readFold({ projection: { max_cost_usd: 0 } }))).toBeNull()
+  })
+})
+
+describe('caseVerdict', () => {
+  const run = (label: string, disposition: string | null, phase: 'ready' | 'error' | 'loading' = 'ready', nextSteps: string[] = []) => ({
+    label,
+    phase,
+    fold: phase === 'ready' ? readFold({ status: 'completed', projection: { disposition, findings: [{ agent_id: 'a', answer: { summary: 's', next_steps: nextSteps } }] } }) : null,
+  })
+
+  it('reads null when no run says a word, and while any run is loading', () => {
+    expect(caseVerdict([run('A', null), run('B', null)])).toBeNull()
+    expect(caseVerdict([])).toBeNull()
+    expect(caseVerdict([run('A', 'benign'), run('B', null, 'loading')])).toBeNull()
+  })
+
+  it('takes the newest run, which is the first one given', () => {
+    expect(caseVerdict([run('new', 'inconclusive'), run('old', 'benign')])?.word).toBe('inconclusive')
+  })
+
+  it('keeps malicious over a later inconclusive, needs_review or silent run, and over suspicious', () => {
+    expect(caseVerdict([run('C', null), run('B', 'inconclusive'), run('A', 'malicious')])).toMatchObject({ word: 'malicious', basis: null })
+    expect(caseVerdict([run('B', 'needs_review'), run('A', 'suspicious')])?.word).toBe('suspicious')
+    expect(caseVerdict([run('B', 'suspicious'), run('A', 'malicious')])?.word).toBe('malicious')
+  })
+
+  it('reads needs_review naming the run a later dismissal contradicts', () => {
+    expect(caseVerdict([run('Rerun', 'benign'), run('Hunt', 'suspicious')])).toMatchObject({ word: 'needs_review', basis: 'Hunt says suspicious.' })
+    expect(caseVerdict([run('Rerun', 'false_positive'), run('Hunt', 'needs_review')])?.basis).toBe('Hunt says needs review.')
+  })
+
+  it('does not let a dismissal stand over an unread run, and names it', () => {
+    expect(caseVerdict([run('B', 'benign'), run('A', null, 'error')])).toMatchObject({ word: 'needs_review', basis: 'A could not be read.' })
+    expect(caseVerdict([run('B', 'suspicious'), run('A', null, 'error')])).toMatchObject({ word: 'suspicious', basis: null })
+  })
+
+  it('lets agreeing dismissals stand, and a lone run speak without a basis', () => {
+    expect(caseVerdict([run('B', 'benign'), run('A', 'false_positive')])).toMatchObject({ word: 'benign', basis: null })
+    expect(caseVerdict([run('A', 'benign')])).toEqual({ word: 'benign', basis: null, doNow: [] })
+  })
+
+  it('carries the speaking investigation’s next steps, and none from a hunt', () => {
+    expect(caseVerdict([run('A', 'malicious', 'ready', ['Isolate the host'])])?.doNow).toEqual(['Isolate the host'])
+    const hunt = readFold({ status: 'completed', hunt: { disposition: 'malicious', iteration: 1 } })
+    expect(caseVerdict([{ label: 'H', phase: 'ready', fold: hunt }])).toEqual({ word: 'malicious', basis: null, doNow: [] })
+  })
+})
+
+describe('closureFlag', () => {
+  const closure = (closure_category: string) => ({ closure_category })
+  it('flags a false positive or unspecified closure over an alarming or unresolved word only', () => {
+    const words = ['malicious', 'suspicious', 'needs_review', 'inconclusive', 'benign', 'false_positive']
+    for (const category of ['false_positive', 'unspecified']) {
+      expect(words.filter((word) => closureFlag(closure(category), word))).toEqual(['malicious', 'suspicious', 'needs_review'])
+    }
+    for (const category of ['resolved', 'duplicate', 'unable_to_resolve', '']) {
+      expect(words.some((word) => closureFlag(closure(category), word))).toBe(false)
+    }
+    expect(closureFlag(null, 'malicious')).toBe(false)
   })
 })

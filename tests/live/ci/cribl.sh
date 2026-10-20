@@ -5,10 +5,9 @@
 #
 # The mcp-config.json entry gates on CRIBL_BASE_URL / CRIBL_CLIENT_ID /
 # CRIBL_CLIENT_SECRET (the cloud auth shape). The package's `local` mode reads
-# CRIBL_USERNAME / CRIBL_PASSWORD instead, which the entry does not declare
-# (they reach the server only because the child inherits the parent env), so
-# the client id/secret below are placeholders that satisfy the gate and are
-# never sent anywhere in local mode.
+# CRIBL_USERNAME / CRIBL_PASSWORD instead, which the entry declares as optional
+# (`${VAR:-}`, so they do not gate it), so the client id/secret below are
+# placeholders that satisfy the gate and are never sent anywhere in local mode.
 set -euo pipefail
 
 NAME=vigil-live-cribl

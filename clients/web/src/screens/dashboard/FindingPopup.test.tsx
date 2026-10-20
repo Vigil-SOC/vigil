@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FindingPopup from './FindingPopup'
 import { exclusionsApi, findingsApi } from '../../services/api'
@@ -10,6 +10,7 @@ vi.mock('../../services/api', () => ({
     getEnrichment: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    launchIntake: vi.fn(),
   },
 }))
 
@@ -227,6 +228,34 @@ describe('FindingPopup IP exclusions', () => {
   })
 })
 
+describe('FindingPopup stored AI enrichment', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('offers generation when ai_enrichment holds only triage keys', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({
+      data: { ...baseFinding, ai_enrichment: { ai_triage: { verdict: 'benign' }, enriched_at: '2026-10-01' } },
+    } as never)
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: 'Generate AI analysis' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Regenerate/ })).not.toBeInTheDocument()
+  })
+
+  it('shows a generated analysis with Regenerate', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({
+      data: {
+        ...baseFinding,
+        ai_enrichment: { threat_summary: 'Beaconing to a known C2', generated_at: '2026-10-01T00:00:00Z' },
+      },
+    } as never)
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+
+    expect(await screen.findByText('Beaconing to a known C2')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Regenerate/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generate AI analysis' })).not.toBeInTheDocument()
+  })
+})
+
 describe('FindingPopup AI enrichment errors', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -263,5 +292,44 @@ describe('FindingPopup AI enrichment errors', () => {
     expect(await screen.findByText('AI enrichment failed')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     expect(screen.queryByText('Virtual-key budget spent')).not.toBeInTheDocument()
+  })
+
+  it('never says the model is local while the analysis runs', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({ data: baseFinding } as never)
+    vi.mocked(findingsApi.getEnrichment).mockReturnValueOnce(new Promise(() => {}))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Generate AI analysis' }))
+      // walk every timed progress message (4s, 15s, 45s, 75s)
+      for (const ms of [0, 4_000, 11_000, 30_000, 30_000]) {
+        act(() => vi.advanceTimersByTime(ms))
+        const text = document.querySelector('.fp-ai-progress')?.textContent ?? ''
+        expect(text).not.toBe('')
+        expect(text).not.toMatch(/local/i)
+      }
+      expect(document.querySelector('.fp-ai-progress')).toHaveTextContent('still running')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('FindingPopup send to triage', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('queues the finding and says so', async () => {
+    openFinding({})
+    vi.mocked(findingsApi.launchIntake).mockResolvedValueOnce({ data: { already_queued: false } } as never)
+    fireEvent.click(await screen.findByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByText('Waiting in the Triage queue')).toBeInTheDocument()
+    expect(findingsApi.launchIntake).toHaveBeenCalledWith('f-source-1')
+  })
+
+  it('shows an error when queueing fails', async () => {
+    openFinding({})
+    vi.mocked(findingsApi.launchIntake).mockRejectedValueOnce(new Error('boom'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t send this finding to triage')
   })
 })

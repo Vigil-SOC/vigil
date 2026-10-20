@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { AgentEvent } from "../../contracts/events.js";
-import { PROVER_TOOL, type RootCauseKinds, type StepPayload } from "../../workflows/rootcause/proof.js";
-import { RECENT_SEARCHES, rootCauseProjection } from "../../workflows/rootcause/projection.js";
+import { PROVER_TOOL, type RootCauseKinds, type StepPayload } from "../../plugins/rootcause/proof.js";
+import { RECENT_SEARCHES, rootCauseProjection } from "../../plugins/rootcause/projection.js";
 
 const RUN = "5a2c2d3e-0000-4000-8000-000000000c39";
 const AT = "2024-01-02T03:00:00Z";
@@ -70,6 +70,7 @@ describe("the root-cause projection", () => {
       status: "running",
       outcome: null,
       searches: 1,
+      disposition: null,
       notices: ["the bound telemetry cannot prove a link"],
     });
     expect(folded.cost_usd).toBeCloseTo(0.03);

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
@@ -12,12 +11,14 @@ from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
 from core.agents.internal_auth import authorise
-from core.deps import provide_approvals, provide_workflow_runs
+from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
+from core.integrations.mcp.registry import MCPRegistry
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
 from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
+from core.workflows.handoff_cases import handoff_case_id
 from core.workflows.workflow_run_service import WorkflowRunService
 
 router = APIRouter()
@@ -76,6 +77,12 @@ class TerminalUpdate(BaseModel):
     summary: str = ""
     cost_usd: Optional[float] = None
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
+    # Loose on purpose: each item is checked on its own, so one malformed proposal
+    # is dropped rather than refusing the terminal that carries the rest.
+    proposed_actions: List[Any] = Field(default_factory=list)
+    # How bad the run rated what it found, for the case it was started from. A free
+    # string: an unrecognised rating is ignored, not grounds to refuse the terminal.
+    severity: Optional[str] = None
 
 
 class CitedFindings(BaseModel):
@@ -184,6 +191,7 @@ def record_terminal(
     authorization: Optional[str] = Header(default=None),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approvals: ApprovalService = Depends(provide_approvals),
+    registry: Optional[MCPRegistry] = Depends(provide_mcp_registry),
 ) -> None:
     authorise(authorization, "run outcome")
 
@@ -212,6 +220,13 @@ def record_terminal(
     origin = _origin_case(run_id, run_service)
     if origin:
         _record_report(origin, run_id, update)
+        # After the withdrawal above, and never linked to the run, so nothing that
+        # cleans up after the run takes them back: they are what it leaves to decide.
+        if update.outcome == "completed" and update.proposed_actions:
+            _propose_actions(origin, run_id, update.proposed_actions, approvals)
+        # Only a run that reached its conclusion has rated anything.
+        if update.outcome == "completed":
+            _raise_priority(origin, run_id, update.severity)
 
     # A threat hunt that proved a compromise tees up the backward root-cause run.
     # Computed once: an RCA's own handoff
@@ -222,7 +237,15 @@ def record_terminal(
     # so re-sending them here is a safety net rather than a second of either.
     start_rca = _source_is_hunt(run_id)
     for handoff in update.handoffs:
-        _process_handoff(run_id, handoff, origin, start_rca, run_service)
+        # Read again per handoff: the one before may have filed the hunt under its case.
+        _process_handoff(
+            run_id,
+            handoff,
+            _origin_case(run_id, run_service),
+            start_rca,
+            run_service,
+            registry,
+        )
 
 
 # A handoff pushed the moment the hunt journals it, ahead of the terminal that will
@@ -235,10 +258,13 @@ def record_handoff(
     handoff: TerminalHandoff,
     authorization: Optional[str] = Header(default=None),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
+    registry: Optional[MCPRegistry] = Depends(provide_mcp_registry),
 ) -> None:
     authorise(authorization, "run handoff")
     origin = _origin_case(run_id, run_service)
-    _process_handoff(run_id, handoff, origin, _source_is_hunt(run_id), run_service)
+    _process_handoff(
+        run_id, handoff, origin, _source_is_hunt(run_id), run_service, registry
+    )
 
 
 # Alerts the hunt's evidence cites, pushed as each iteration lands. They are linked
@@ -290,13 +316,15 @@ def _link_findings(case_id: str, run_id: str, finding_ids: List[str]) -> None:
 # itself: the case on the handoff it files (_open_case, _record_handoff), the
 # root-cause run on the handoff it traces back from (_rca_exists). One gate for both
 # would tie the case to a decision that is not about it, and would open a second case
-# for every handoff that tees up no root-cause run at all.
+# for every handoff that tees up no root-cause run at all. A root-cause run the
+# deployment cannot serve is not started: the case says why instead.
 def _process_handoff(
     run_id: str,
     handoff: TerminalHandoff,
     origin: str,
     start_rca: bool,
     run_service: WorkflowRunService,
+    registry: Optional[MCPRegistry] = None,
 ) -> None:
     # A hunt that already has a case hands off onto it: one case for the presenter
     # to follow, and the root-cause run files back onto it.
@@ -304,9 +332,30 @@ def _process_handoff(
         _record_handoff(origin, run_id, handoff)
         case_id: Optional[str] = origin
     else:
-        case_id = _open_case(run_id, handoff) or handoff.case_id
-    if start_rca and not _rca_exists(run_id, handoff, run_service):
-        _start_root_cause(run_id, handoff, case_id)
+        opened = _open_case(run_id, handoff)
+        # The hunt is filed under the case it opened, or the case would hold its
+        # root-cause run but not the hunt that proved what it traces.
+        if opened:
+            run_service.set_case(run_id, opened)
+        case_id = opened or handoff.case_id
+    if not start_rca or _rca_exists(run_id, handoff, run_service):
+        return
+    unbound = _root_cause_unserved(registry)
+    if unbound:
+        _record_root_cause_not_started(case_id, run_id, handoff, unbound)
+        return
+    _start_root_cause(run_id, handoff, case_id)
+
+
+# What a root-cause run needs that this deployment does not bind, read the way a
+# hunt's preflight reads its own and against the same catalogue resolve_root_cause
+# grants from. An integration that cannot be reached binds nothing there either, so
+# the run it would have started could not have searched.
+def _root_cause_unserved(registry: Optional[MCPRegistry]) -> List[str]:
+    from core.workflows.hunt_preflight import capabilities
+    from core.workflows.playbook_resolver import ROOT_CAUSE_CAPABILITIES
+
+    return list(capabilities(registry, ROOT_CAUSE_CAPABILITIES)["unbound"])
 
 
 def _origin_case(run_id: str, run_service: WorkflowRunService) -> str:
@@ -354,21 +403,167 @@ def _record_report(case_id: str, run_id: str, update: TerminalUpdate) -> None:
         )
 
 
-# The Vigil case a handoff opens, named for the handoff rather than for the moment
-# it arrived. Derived rather than looked up because there is nothing to look it up
-# by: create_case mints its own id, so a handoff arriving twice -- pushed the moment
-# the hunt journals it, then again on the terminal that re-carries it -- would open
-# two cases with nothing able to tell they are the same escalation. No date in the
-# key, so two arrivals either side of midnight still land on one case.
-#
-# 16 hex characters, not 8. A collision here does not merely reuse an id: the second
-# escalation finds the first one's case already open and returns, so its case file is
-# discarded with nothing said. 32 bits makes that a coin flip at seventy-odd thousand
-# escalations; 64 makes it unreachable, and cases.case_id is String(50) against the
-# 29 this spends, so the width is free.
+# The actions a conclusion may propose, and how each reads as an approval title.
+# The investigate plugin's schema offers the same set; an approval type outside it (a workflow
+# phase, a WAF rule) is not the lead's to ask for.
+PROPOSAL_TITLES = {
+    "isolate_host": "Isolate host",
+    "block_ip": "Block IP",
+    "block_domain": "Block domain",
+    "quarantine_file": "Quarantine file",
+    "disable_user": "Disable user",
+    "custom": "Act on",
+}
+
+
+def _proposal(raw: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    action_type, target, reason = (
+        raw.get("action_type"),
+        raw.get("target"),
+        raw.get("reason"),
+    )
+    if action_type not in PROPOSAL_TITLES:
+        return None
+    if not isinstance(target, str) or not target.strip():
+        return None
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    confidence = raw.get("confidence", 0.0)
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return None
+    if not 0.0 <= confidence <= 1.0:
+        return None
+    return {
+        "action_type": action_type,
+        "target": target.strip(),
+        "reason": reason.strip(),
+        "confidence": float(confidence),
+    }
+
+
+# Each proposal becomes a pending approval on the case. Not linked to the run by
+# workflow_run_id: the run is over, so approving one has no run to resume, and a
+# re-sent terminal would withdraw it as a question the run left unanswered. The
+# case id in parameters is what puts it on the case's decisions. Keyed per run,
+# action and target, so a terminal that arrives twice files each one once.
+def _propose_actions(
+    case_id: str,
+    run_id: str,
+    proposals: List[Any],
+    approvals: Optional[ApprovalService],
+) -> None:
+    from core.response.approval_service import ActionType
+
+    service = approvals or ApprovalService()
+    filed: List[str] = []
+    for index, raw in enumerate(proposals):
+        proposal = _proposal(raw)
+        if proposal is None:
+            logger.warning(
+                "dropped proposed action %d of %s: not a valid proposal: %r",
+                index,
+                run_id,
+                raw,
+            )
+            continue
+        action_type, target = proposal["action_type"], proposal["target"]
+        try:
+            action = service.create_action(
+                action_type=ActionType(action_type),
+                title=f"{PROPOSAL_TITLES[action_type]} {target}",
+                description=proposal["reason"],
+                target=target,
+                confidence=proposal["confidence"],
+                reason=proposal["reason"],
+                evidence=[run_id],
+                created_by="agent",
+                parameters={"case_id": case_id, "run_id": run_id},
+                idempotency_key=f"run-proposal:{run_id}:{action_type}:{target}",
+                # The confidence is the model's own claim, so it never releases
+                # the action: a person decides each one.
+                human_only=True,
+            )
+        except Exception:  # noqa: BLE001 — the run ended either way
+            logger.exception(
+                "could not file proposed %s on %s from %s", action_type, target, run_id
+            )
+            continue
+        filed.append(action.action_id)
+
+    if filed:
+        _record_proposals(case_id, run_id, filed)
+
+
+# Once per run: a re-sent terminal finds the same approvals, and the case already
+# says they were proposed.
+def _record_proposals(case_id: str, run_id: str, action_ids: List[str]) -> None:
+    from core.storage.database_data_service import DatabaseDataService
+
+    try:
+        case = DatabaseDataService().get_case(case_id) or {}
+        if any(
+            a.get("activity_type") == "actions_proposed"
+            and (a.get("details") or {}).get("run_id") == run_id
+            for a in case.get("activities") or []
+        ):
+            return
+        count = len(action_ids)
+        _add_activity(
+            case_id,
+            "actions_proposed",
+            f"Run {run_id} proposed {count} action{'' if count == 1 else 's'}"
+            " for approval",
+            {"run_id": run_id, "action_ids": action_ids},
+        )
+    except Exception:  # noqa: BLE001 — the approvals are filed either way
+        logger.exception(
+            "could not record the proposals of %s on case %s", run_id, case_id
+        )
+
+
+# The ratings a concluding run may give, which are the case priorities a human sets.
+# unknown is the absence of one, so it is never a conclusion.
+CONCLUDED_SEVERITIES = ("critical", "high", "medium", "low")
+
+
+# The run's rating of what it found, as its case's priority. Only ever raised:
+# lowering a case is a dismissal, which the investigate guard and agent closure
+# own, so a conclusion rated below the case's priority leaves it alone.
+def _raise_priority(case_id: str, run_id: str, severity: Optional[str]) -> None:
+    from core.cases.case_workflow_service import preferred_merge_priority
+    from core.storage.database_data_service import DatabaseDataService
+
+    rated = (severity or "").strip().lower()
+    if rated not in CONCLUDED_SEVERITIES:
+        return
+    try:
+        data = DatabaseDataService()
+        case = data.get_case(case_id)
+        if not case:
+            return
+        current = str(case.get("priority") or "").strip().lower() or "unknown"
+        if preferred_merge_priority(current, rated) == current:
+            return
+        if not data.update_case(case_id, priority=rated):
+            logger.error("could not raise the priority of case %s", case_id)
+            return
+        _add_activity(
+            case_id,
+            "agent_run_priority",
+            f"Priority raised from {current} to {rated} by the investigation",
+            {"run_id": run_id, "from": current, "to": rated},
+        )
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception(
+            "could not apply the severity of %s to case %s", run_id, case_id
+        )
+
+
+# The Vigil case a handoff opens (see handoff_cases), so the run page can name it too.
 def _handoff_case_id(source_run_id: str, handoff: TerminalHandoff) -> str:
-    digest = hashlib.sha256(f"{source_run_id}:{handoff.case_id}".encode()).hexdigest()
-    return f"case-handoff-{digest[:16]}"
+    return handoff_case_id(source_run_id, handoff.case_id)
 
 
 def _case_exists(data: Any, case_id: str) -> bool:
@@ -578,19 +773,27 @@ def _rca_context(handoff: TerminalHandoff) -> str:
     )
 
 
-# Once per handoff: it arrives pushed and again on the terminal, and on a hunt's own
-# case there is no new case whose existence says it was already filed.
-def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None:
+# Whether the case already carries this activity for this handoff. A handoff arrives
+# pushed and again on the terminal, and on a hunt's own case there is no new case
+# whose existence says it was already filed.
+def _filed(
+    case_id: str, activity_type: str, run_id: str, handoff: TerminalHandoff
+) -> bool:
     from core.storage.database_data_service import DatabaseDataService
 
+    case = DatabaseDataService().get_case(case_id) or {}
+    return any(
+        (a.get("details") or {}).get("handoff_id") == handoff.case_id
+        and (a.get("details") or {}).get("run_id") == run_id
+        for a in case.get("activities") or []
+        if a.get("activity_type") == activity_type
+    )
+
+
+# Once per handoff.
+def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None:
     try:
-        case = DatabaseDataService().get_case(case_id) or {}
-        if any(
-            (a.get("details") or {}).get("handoff_id") == handoff.case_id
-            and (a.get("details") or {}).get("run_id") == run_id
-            for a in case.get("activities") or []
-            if a.get("activity_type") == "agent_run_handoff"
-        ):
+        if _filed(case_id, "agent_run_handoff", run_id, handoff):
             return
         _add_activity(
             case_id,
@@ -602,10 +805,51 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
         logger.exception("could not record the handoff of %s on %s", run_id, case_id)
 
 
+# What the case says when a handoff's root-cause run was not started. Only
+# telemetry_search needs an integration, so the words name a SIEM rather than a
+# capability id. The retry is the start path every run has: the Run dialog on
+# Workflows, with this case's id.
+ROOT_CAUSE_NOT_STARTED = (
+    "Root cause was not started: it needs a SIEM to search, and none is connected. "
+    "Connect one, then run Root cause analysis on this case from Workflows."
+)
+
+
+# Once per handoff, like the handoff itself: the terminal re-carries it, finds no
+# root-cause run (none was started) and asks again.
+def _record_root_cause_not_started(
+    case_id: Optional[str], run_id: str, handoff: TerminalHandoff, unbound: List[str]
+) -> None:
+    if not case_id:
+        logger.warning(
+            "root-cause run for handoff %s of %s not started (unbound: %s), and "
+            "there is no case to say so on",
+            handoff.case_id,
+            run_id,
+            ", ".join(unbound),
+        )
+        return
+    try:
+        if _filed(case_id, "agent_run_root_cause_not_started", run_id, handoff):
+            return
+        _add_activity(
+            case_id,
+            "agent_run_root_cause_not_started",
+            ROOT_CAUSE_NOT_STARTED,
+            {"run_id": run_id, "handoff_id": handoff.case_id, "unbound": unbound},
+        )
+    except Exception:  # noqa: BLE001 — the handoff is filed either way
+        logger.exception(
+            "could not record on %s why %s's root cause was not started",
+            case_id,
+            run_id,
+        )
+
+
 # What the analyst reads under a checkpoint's question. Never the class name or a
 # threshold: those are config, not an explanation.
 _CHECKPOINT_REASONS = {
-    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "hypothesis_approval": "Vigil wants your go-ahead on the explanations it will test.",
     "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
     "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
     "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",

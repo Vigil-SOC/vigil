@@ -10,15 +10,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from core.workflows.hunt_preflight import LEAD_TOOLS
+from core.workflows.hunt_preflight import LEAD_TOOLS, PLUGIN_SKILLS
 from core.workflows.playbook_resolver import CHECKPOINT_CLASSES, DEFAULT_CHECKPOINTS
-from core.workflows.workflows_service import WorkflowsService
 
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[3]
-CHECKPOINTS_TS = ROOT / "services/agent/workflows/hunt/checkpoints.ts"
-ARCH = ROOT / "services/agent/arch"
+CHECKPOINTS_TS = ROOT / "services/agent/plugins/hunt/checkpoints.ts"
+ARCH = ROOT / "services/agent/plugins"
 
 
 def _ts_classes() -> list[str]:
@@ -55,9 +54,9 @@ def test_every_class_has_a_default():
 @pytest.mark.parametrize(
     ("kind", "arch"),
     [
-        ("hunt", "threathunt.yaml"),
-        ("adjudicate", "adjudicate.yaml"),
-        ("root_cause", "rootcause.yaml"),
+        ("hunt", "hunt/plugin.yaml"),
+        ("adjudicate", "adjudicate/plugin.yaml"),
+        ("root_cause", "rootcause/plugin.yaml"),
     ],
 )
 def test_the_lead_the_reader_names_holds_what_the_arch_grants(kind, arch):
@@ -68,22 +67,17 @@ def test_the_lead_the_reader_names_holds_what_the_arch_grants(kind, arch):
     )
 
 
+@pytest.mark.parametrize(
+    ("kind", "arch"),
+    [("hunt", "hunt/plugin.yaml"), ("adjudicate", "adjudicate/plugin.yaml")],
+)
+def test_the_skills_the_reader_names_are_the_plugins(kind, arch):
+    assert list(PLUGIN_SKILLS[kind]) == yaml.safe_load((ARCH / arch).read_text())["skills"]
+
+
 def test_the_investigate_lead_is_the_arch_lead():
     from core.workflows.playbook_resolver import INVESTIGATE_CAPABILITIES
 
-    lead = yaml.safe_load((ARCH / "investigate.yaml").read_text())["roles"]["lead"]
+    lead = yaml.safe_load((ARCH / "investigate/plugin.yaml").read_text())["roles"]["lead"]
 
     assert set(INVESTIGATE_CAPABILITIES) == set(lead["needs"])
-
-
-# The reader shows the roster as the helpers; a name the arch lacks would read as
-# a worker the lead can ask for and never gets.
-@pytest.mark.parametrize(
-    ("workflow_id", "arch"),
-    [("threat-hunt", "threathunt.yaml"), ("shadow-adjudication", "adjudicate.yaml")],
-)
-def test_the_rostered_helpers_are_arch_workers(workflow_id, arch):
-    workers = yaml.safe_load((ARCH / arch).read_text())["roles"]["workers"]
-    phases = WorkflowsService().get_workflow(workflow_id).phases
-
-    assert {p["agent"] for p in phases} <= set(workers)

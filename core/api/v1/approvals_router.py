@@ -97,7 +97,15 @@ class ApprovalActionResult(BaseModel):
     resume_result: Optional[Dict[str, Any]] = None
 
 
+class NeedsYouHypothesis(BaseModel):
+    hypothesis_id: str = ""
+    statement: str
+    provenance: str = ""
+
+
 class NeedsYouItem(BaseModel):
+    # approval, checkpoint, or parked: a hunt stopped at a limit, answered with
+    # Keep going on its case rather than here.
     kind: str
     source_id: str
     title: str
@@ -105,6 +113,10 @@ class NeedsYouItem(BaseModel):
     created_at: str
     reversibility: str
     case_id: Optional[str] = None
+    run_id: Optional[str] = None
+    checkpoint_id: Optional[str] = None
+    checkpoint_class: Optional[str] = None
+    hypotheses: List[NeedsYouHypothesis] = Field(default_factory=list)
 
 
 class NeedsYouResponse(BaseModel):

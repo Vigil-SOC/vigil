@@ -39,19 +39,22 @@ const hunt = {
   definition: { run_kind: 'hunt', hunt_like: true, version: 3, description: 'Hunt it', objectives: ['An explanation is proven'], phases: [] },
   preflight: {
     roles: {
-      lead: { name: 'Hunt lead', tools: ['expand'] },
-      helpers: [{ agent: 'threat_hunter', name: 'Behavioural hunting', tools: ['findings_search', 'telemetry_search'], approval_required: false }],
+      lead: { name: 'Hunt lead', tools: ['findings_search', 'get_finding', 'telemetry_search', 'indicator_lookup', 'entity_recall', 'expand'] },
+      helpers: [],
       reviewer: { name: 'Critic', tools: [] },
     },
     roles_note: null,
     model: 'Claude Sonnet 5',
     model_source: 'assignment',
-    skills: ['query-splunk'],
+    skills: ['hunt-method', 'recording-evidence', 'findings-and-telemetry', 'network-shape', 'threat-intel'],
     skills_note: null,
     permissions: [
-      { name: 'expand', changes: 'on_its_own' },
-      { name: 'findings_search', changes: 'on_its_own' },
+      { name: 'findings_search', changes: 'on_its_own', bound: true },
+      { name: 'get_finding', changes: 'on_its_own', bound: true },
       { name: 'telemetry_search', changes: 'on_its_own', bound: false },
+      { name: 'indicator_lookup', changes: 'on_its_own', bound: false },
+      { name: 'entity_recall', changes: 'on_its_own', bound: true },
+      { name: 'expand', changes: 'on_its_own' },
       { name: 'HANDOFF_IR', label: 'Start incident response on a proven explanation', changes: 'asks_you' },
     ],
     permissions_note: null,
@@ -95,7 +98,11 @@ describe('workflow reader pane', () => {
     expect(within(panel('Who does it')).getByText('Critic')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText('Claude Sonnet 5')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText('Investigation default')).toBeInTheDocument()
-    expect(within(panel('What it may do on its own')).getByText('Not connected')).toBeInTheDocument()
+    // one agent and a critic: no helper chips, and the plugin's five skills
+    expect(within(panel('Who does it')).queryByText('Threat hunter')).toBeNull()
+    for (const s of hunt.preflight.skills) expect(within(panel('Who does it')).getByText(s)).toBeInTheDocument()
+    expect(within(panel('What it may do on its own')).getByText('get_finding')).toBeInTheDocument()
+    expect(within(panel('What it may do on its own')).getAllByText('Not connected')).toHaveLength(2)
     expect(within(panel('Stops when')).getByText('An explanation is proven')).toBeInTheDocument()
     expect(within(panel('Stops when')).getByText('The budget ($15) or step limit (12) is reached')).toBeInTheDocument()
     expect(within(panel('Stops when')).getByText('Per-stage stops · Not measured yet')).toBeInTheDocument()
@@ -108,9 +115,10 @@ describe('workflow reader pane', () => {
     expect(within(panel('What it may do on its own')).queryByText('findings_search')).toBeNull()
     expect(within(panel('Stops when')).getByText('No checkpoint at this stage.')).toBeInTheDocument()
 
-    // Gather evidence: lead and helpers, their tools, scope and spend
+    // Gather evidence: the lead alone, its tools, scope and spend
     fireEvent.click(within(strip).getByRole('button', { name: /Gather evidence/ }))
-    expect(await within(panel('Who does it')).findByText('Threat hunter')).toBeInTheDocument()
+    expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
+    expect(within(panel('Who does it')).queryByText('Critic')).toBeNull()
     expect(within(panel('What it may do on its own')).getByText('findings_search')).toBeInTheDocument()
     expect(within(panel('What it may do on its own')).queryByText('Start incident response on a proven explanation')).toBeNull()
     expect(within(panel('Stops when')).getByText('Ask before widening scope')).toBeInTheDocument()
@@ -125,10 +133,17 @@ describe('workflow reader pane', () => {
 
   it('says a turned-off phase agent in Who does it even when every role is present', async () => {
     const note = 'Its phases cannot run as written: phase names agent threat_hunter is turned off'
-    serve({ ...hunt, preflight: { ...hunt.preflight, roles_note: note } })
-    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
+    serve({
+      definition: { run_kind: 'compose', hunt_like: false, objectives: [], phases: [] },
+      preflight: {
+        ...hunt.preflight,
+        roles: { lead: null, reviewer: null, helpers: [{ agent: 'threat_hunter', name: 'Hunt', tools: [], approval_required: false }] },
+        roles_note: note, checkpoints: {},
+      },
+    })
+    renderPane(<WorkflowReaderPane wf={row({ id: 'custom', name: 'Custom' })} {...actions} />)
     await screen.findByRole('region', { name: 'How it runs' })
-    expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
+    expect(await within(panel('Who does it')).findByText('Threat hunter')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText(note)).toBeInTheDocument()
   })
 

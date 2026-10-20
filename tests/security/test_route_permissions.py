@@ -29,7 +29,6 @@ RUN_ID = "9c1c2d3e-0000-4000-8000-000000000592"
 GATED_ROUTES = [
     ("POST", "/api/config/postgresql", {"connection_string": "x"}, "settings.write"),
     ("POST", "/api/config/claude", {"api_key": "x"}, "settings.write"),
-    ("POST", "/api/config/secrets/reinit", {}, "settings.write"),
     ("POST", "/api/config/secrets/migrate-to-encrypted", None, "settings.write"),
     ("POST", "/api/config/force-manual-approval", {"enabled": True}, "settings.write"),
     ("POST", "/api/config/integrations", {"integrations": {}}, "integrations.write"),
@@ -53,6 +52,12 @@ GATED_ROUTES = [
     ("POST", "/api/workflows/runs/r-1/resume", {}, "ai_decisions.approve"),
     (
         "POST",
+        "/api/ai/decisions/d-1/feedback",
+        {"human_decision": "agree"},
+        "ai_decisions.approve",
+    ),
+    (
+        "POST",
         "/api/workflows/runs/r-1/cancel",
         {"reason": "no"},
         "ai_decisions.approve",
@@ -71,6 +76,14 @@ GATED_ROUTES = [
     ),
     ("POST", "/api/workflows/w-1/execute", {}, "ai_chat.use"),
     ("POST", "/api/claude/chat/stream", {"messages": []}, "ai_chat.use"),
+    (
+        "POST",
+        "/api/skills",
+        {"name": "s", "description": "d", "body": "b"},
+        "settings.write",
+    ),
+    ("POST", "/api/skills/upload", None, "settings.write"),
+    ("DELETE", "/api/skills/s", None, "settings.write"),
 ]
 
 

@@ -7,7 +7,9 @@ import pytest
 
 from core.llm.chat_layers import changes_for_tool, changes_for_tools
 from core.workflows import catalog, hunt_preflight
+from core.workflows.hunt_preflight import HUNT_SKILLS
 from core.workflows.playbook_resolver import (
+    HUNT_CAPABILITIES,
     INVESTIGATE_BUDGETS,
     INVESTIGATE_CAPABILITIES,
 )
@@ -94,15 +96,13 @@ def test_every_kind_answers_every_key_and_an_empty_one_says_why(workflow_id):
     )
 
 
-def test_a_hunt_names_lead_helpers_reviewer_and_its_ceilings():
+def test_a_hunt_names_lead_reviewer_skills_and_its_ceilings():
     report = _file("threat-hunt")
+    tools = list(HUNT_CAPABILITIES) + ["expand"]
 
-    assert report["roles"]["lead"] == {"name": "Hunt lead", "tools": ["expand"]}
-    assert [h["agent"] for h in report["roles"]["helpers"]] == [
-        "threat_hunter",
-        "network_analyst",
-        "threat_intel",
-    ]
+    # One agent and a critic, as the plugin is: no worker roster.
+    assert report["roles"]["lead"] == {"name": "Hunt lead", "tools": tools}
+    assert report["roles"]["helpers"] == []
     assert report["roles"]["reviewer"] == {"name": "Critic", "tools": []}
     assert set(report["budgets"]) == {"max_iterations", "max_cost_usd", "max_wall_ms"}
     assert report["checkpoints"] == {
@@ -111,8 +111,20 @@ def test_a_hunt_names_lead_helpers_reviewer_and_its_ceilings():
         "verdict_review": "auto",
         "budget_anomaly": "auto",
     }
-    assert report["skills"] == [] and report["skills_note"]
+    assert report["skills"] == list(HUNT_SKILLS) and report["skills_note"] is None
+    assert [r["name"] for r in report["permissions"]] == tools + ["HANDOFF_IR"]
     assert set(report["capabilities"]) >= {"bound", "unbound"}
+
+
+def test_an_adjudication_holds_get_finding_because_the_resolver_grants_it():
+    report = _file("shadow-adjudication")
+
+    assert report["roles"]["lead"]["name"] == "Adjudication lead"
+    assert report["roles"]["helpers"] == []
+    assert report["skills"] == list(HUNT_SKILLS)
+    assert [r["name"] for r in report["permissions"]] == list(HUNT_CAPABILITIES) + [
+        "expand"
+    ]
 
 
 def test_only_a_hunt_can_hand_off_to_incident_response():
@@ -327,17 +339,16 @@ def test_an_unknown_id_is_none():
     )
 
 
-@pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
-def test_a_turned_off_phase_agent_is_noted_before_the_run_starts(
-    monkeypatch, workflow_id
+def test_a_turned_off_phase_agent_is_noted_on_a_compose_and_not_on_a_hunt(
+    monkeypatch,
 ):
     off = {"threat_hunter"}
     monkeypatch.setattr(
         "core.workflows.playbook_resolver.disabled_agent_ids", lambda: off
     )
-    report = _file(workflow_id)
+    report = _ask(_compose({"agent": "threat_hunter", "name": "Hunt"}))
     assert "phase names agent threat_hunter is turned off" in report["roles_note"]
-    assert report["roles"]["lead"]  # same roles as ever; the note is the addition
 
-    off.clear()
-    assert _file(workflow_id)["roles_note"] is None
+    # A hunt runs its plugin's agent, not the built-in, so the switch is not its.
+    for workflow_id in ("threat-hunt", "shadow-adjudication"):
+        assert _file(workflow_id)["roles_note"] is None

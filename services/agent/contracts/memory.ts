@@ -25,15 +25,14 @@ export const RECALL_TOOL = "recall_entity";
 // What the arch asks for; a ToolSpec binds it to the tool id via `provides`.
 export const RECALL_CAPABILITY = "entity_recall";
 
-// Keyed by the role names threathunt.yaml declares, not by a class called
-// "worker" that appears in no file. Empties are decisions: the lead never
-// queries, and narrative search -- the lead's alone -- ships no tool here.
+// Keyed by what plugins/hunt/plugin.yaml declares: its roles, and "agent" for the
+// one agent that queries, which holds the plugin's top-level `needs`. Empties are
+// decisions: the lead never queries, and narrative search -- the lead's alone --
+// ships no tool here.
 export const RECALL_GRANTS = {
   lead: [],
   critic: [],
-  threat_hunter: [RECALL_CAPABILITY],
-  network_analyst: [RECALL_CAPABILITY],
-  threat_intel: [RECALL_CAPABILITY],
+  agent: [RECALL_CAPABILITY],
 } as const;
 
 // Who concluded, as opposed to what the source is.
@@ -72,7 +71,7 @@ export type WindowSource = (typeof WINDOW_SOURCES)[number];
 export const GAP_DISPOSITIONS = ["deprioritised", "no_evidence_gathered", "budget_exhausted"] as const;
 export type GapDisposition = (typeof GAP_DISPOSITIONS)[number];
 
-// The rule is `defang` then case-fold, in workflows/hunt/entities.ts. The
+// The rule is `defang` then case-fold, in plugins/hunt/entities.ts. The
 // exception is the half that breaks silently: an ARN's resource part and an AWS
 // key id are case-significant, so folding them makes two principals one key and
 // the join still returns rows, just the wrong ones.

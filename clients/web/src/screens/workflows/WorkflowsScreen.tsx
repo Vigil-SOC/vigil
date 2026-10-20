@@ -14,13 +14,14 @@ import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import { skillsApi } from '../../services/skillsApi'
+import { useAuth } from '../../contexts/AuthContext'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
-import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
+import { KeepGoing, OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
-  IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
+  IN_FLIGHT, callLine, errMsg, fmtDuration, investigationOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
   type HuntQuestion, type HuntRecall, type HuntStanding, type HuntStrength, type HuntView,
   type InvestigateDecisionView, type RecalledFrom, type RecalledWindow,
@@ -512,7 +513,7 @@ function looksUnfinished(line: string): boolean {
 /** The ten kinds a key can carry, held to the hunt's own closed set by the spec
  *  loader, which refuses anything else rather than coercing it. Spelled here so
  *  the operator is told before submitting, and ratcheted against
- *  `workflows/hunt/types.ts` by `test_recall_contract_agrees` — a list that
+ *  `plugins/hunt/types.ts` by `test_recall_contract_agrees` — a list that
  *  drifts tells them a key is fine that no reader will ever query. */
 const ENTITY_TYPES = ['ip', 'domain', 'host', 'url', 'email', 'hash', 'arn', 'aws_key', 'user', 'process']
 
@@ -1099,6 +1100,8 @@ interface RootCauseView {
   notices: string[]
   searches: number
   recent_searches: RootCauseSearch[]
+  /** Why it ended, in the run's words: the verdict line's headline. */
+  reason: string | null
 }
 
 function rootCauseOf(projection: unknown): RootCauseView | null {
@@ -1115,6 +1118,7 @@ function rootCauseOf(projection: unknown): RootCauseView | null {
     notices: Array.isArray(view.notices) ? view.notices : [],
     searches: typeof view.searches === 'number' ? view.searches : 0,
     recent_searches: Array.isArray(view.recent_searches) ? view.recent_searches : [],
+    reason: typeof view.reason === 'string' && view.reason ? view.reason : null,
   }
 }
 
@@ -1283,7 +1287,8 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
 }
 
 /** What the run is doing, and Stop. It sits with the status rather than among the
- *  steering directives, which are only notes the lead reads at its next turn. */
+ *  steering directives, which are only notes the lead reads at its next turn. Under
+ *  it, one line saying what the run concluded. */
 function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView | null; trace: RootCauseView | null; onSteered: () => void }) {
   // The row's total is written only when the run ends; a projection prices it as it goes.
   const cost = hunt?.cost_usd ?? trace?.cost_usd ?? d.total_cost_usd
@@ -1292,31 +1297,40 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
     ? Math.min(100, (cost / ceiling) * 100)
     : null
+  const verdict = verdictOf(d, trace?.reason ?? null)
   return (
-    <div className="run-bar">
-      <span className="pill" style={{ color: runStatusColor(d.status) }}><span className="dot" />{d.status}</span>
-      {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
-        <span className="muted text-[11.5px]" title={hunt.reason ?? undefined}>{hunt.outcome}</span>
-      )}
-      {!hunt && <OutcomeBadge outcome={d.outcome} reason={d.reason} />}
-      <span className="mono text-[11.5px] text-tx-3">{d.run_id.slice(0, 13)}</span>
-      <span className="flex-1" />
-      <div className="meta">
-        {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-        <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
-        {spent !== null && (
-          <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
-            <div className="budget-fill" style={{ width: `${spent}%` }} />
-          </div>
+    <>
+      <div className="run-bar">
+        <span className="pill" style={{ color: runStatusColor(d.status) }}><span className="dot" />{d.status}</span>
+        {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
+          <span className="muted text-[11.5px]" title={hunt.reason ?? undefined}>{hunt.outcome}</span>
+        )}
+        {!hunt && <OutcomeBadge outcome={d.outcome} reason={d.reason} />}
+        <span className="mono text-[11.5px] text-tx-3">{d.run_id.slice(0, 13)}</span>
+        <span className="flex-1" />
+        <div className="meta">
+          {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
+          <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
+          {spent !== null && (
+            <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
+              <div className="budget-fill" style={{ width: `${spent}%` }} />
+            </div>
+          )}
+        </div>
+        {IN_FLIGHT.includes(d.status) && (
+          <>
+            <span className="sep" />
+            <StopRun runId={d.run_id} onStopped={onSteered} />
+          </>
         )}
       </div>
-      {IN_FLIGHT.includes(d.status) && (
-        <>
-          <span className="sep" />
-          <StopRun runId={d.run_id} onStopped={onSteered} />
-        </>
+      {(verdict.disposition || verdict.headline) && (
+        <div className="flex items-center gap-2 min-w-0 pt-2 text-[12.5px]" aria-label="Verdict">
+          {verdict.disposition && <span className="chip shrink-0">{verdict.disposition}</span>}
+          {verdict.headline && <span className="line-clamp-1 min-w-0 text-tx-2" title={verdict.headline}>{verdict.headline}</span>}
+        </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -1788,7 +1802,7 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
     return <div className="text-[12px] py-1" style={{ color: 'var(--high)' }}>Could not read what this move was shown — {opened.failed}</div>
   }
   const decision = opened.report?.decisions[0]
-  if (opened.report === null) return <div className="muted text-[12px] py-1">Rebuilding the digest from the ledger…</div>
+  if (opened.report === null) return <div className="muted text-[12px] py-1">Reading what this move was shown from the ledger…</div>
   if (decision === undefined) return <div className="muted text-[12px] py-1">Replay returned nothing for this decision.</div>
 
   const seen = decision.recorded
@@ -1797,10 +1811,12 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
     <div className="py-1" style={{ whiteSpace: 'normal' }}>
       <div className="flex gap-1.5 items-center flex-wrap mb-2">
         <h4 style={{ margin: 0 }}>What the lead was shown at turn {decision.iteration}</h4>
-        {decision.mismatch === null
-          ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
-          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
-        {!decision.exact && (
+        {decision.rebuilt === null
+          ? <span className="chip" style={{ fontSize: 10 }}>as recorded — not rebuilt</span>
+          : decision.mismatch === null
+            ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
+            : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
+        {decision.rebuilt !== null && !decision.exact && (
           <span className="muted text-[11px]">prefix inferred — the ledger predates digest_seq, so a difference may be the boundary rather than drift</span>
         )}
       </div>
@@ -2123,8 +2139,10 @@ function RejectPhaseGate({
 
 function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) {
   const replay = useInvestigateReplay(d.run_id, inFlight)
+  const record = investigationOf(d.projection)
   return (
     <>
+      {record && <InvestigationTabs record={record} />}
       {replay.kind === 'investigate' && <InvestigateDecisions decisions={replay.decisions} />}
       {replay.kind === 'failed' && (
         <div className="text-[12.5px] py-2" style={{ color: 'var(--crit)' }}>
@@ -2133,6 +2151,44 @@ function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) 
       )}
       <ComposeDetail d={d} suppressEmpty={replay.kind === 'pending' || replay.kind === 'investigate'} />
     </>
+  )
+}
+
+type InvestigationTab = 'hyp' | 'evidence' | 'open'
+
+/** An investigation's record in the hunt's own tabs. A view with nothing in it is not
+ *  offered, but Explanations always is: an empty board is itself the answer. */
+function InvestigationTabs({ record }: { record: HuntView }) {
+  const open = record.open_questions ?? []
+  const tabs: [InvestigationTab, string, number][] = [
+    ['hyp', 'Explanations', record.hypotheses.length],
+    ...(record.evidence_count > 0 ? ([['evidence', 'Evidence', record.evidence_count]] as [InvestigationTab, string, number][]) : []),
+    ...(open.length > 0 ? ([['open', 'Open questions', open.length]] as [InvestigationTab, string, number][]) : []),
+  ]
+  const [tab, setTab] = useState<InvestigationTab>('hyp')
+  const shown = tabs.some(([k]) => k === tab) ? tab : 'hyp'
+  return (
+    <HypLabels.Provider value={labelsOf(record.hypotheses)}>
+      <div className="detail-tabs" role="tablist" aria-label="Investigation views">
+        {tabs.map(([k, label, count]) => (
+          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+            {label}<span className="mono text-[10.5px] text-tx-3 ml-1.5">{count}</span>
+          </button>
+        ))}
+      </div>
+      {shown === 'hyp' && <HuntStandings hunt={record} />}
+      {shown === 'evidence' && <HuntEvidenceTable found={record.evidence ?? []} total={record.evidence_count} />}
+      {shown === 'open' && (
+        <ul className="text-[12.5px] leading-[1.5] mt-3 mb-0" style={{ paddingLeft: 18 }}>
+          {open.map((q) => (
+            <li key={q.question_id} className="mb-1">
+              {q.question}
+              {q.hypothesis_id && <span className="muted text-[11.5px]"> · on <Hyp id={q.hypothesis_id} /></span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </HypLabels.Provider>
   )
 }
 
@@ -2186,7 +2242,9 @@ function ComposeDetail({ d, suppressEmpty = false }: { d: WfRunDetail; suppressE
   const agentMeta = useAgentMeta()
   if (!d.result_summary && !d.phases?.length) {
     if (d.error || suppressEmpty) return null
-    return <div className="muted" style={{ padding: '10px 4px' }}>No additional detail recorded for this run.</div>
+    // Not compose (no phases, no summary) and nothing folded to read: say so rather than imply it is empty.
+    const unreadable = !d.hunt && (typeof d.projection !== 'object' || d.projection === null) && !IN_FLIGHT.includes(d.status)
+    return <div className="muted" style={{ padding: '10px 4px' }}>{unreadable ? 'Couldn’t read this run’s record' : 'No additional detail recorded for this run.'}</div>
   }
   return (
     <>
@@ -2229,15 +2287,6 @@ function ReportBody({ md }: { md: string }) {
     </div>
   )
 }
-
-/** What one press of extend buys. Sent as a typed grant rather than as prose the run
- *  has to parse: `extend` with an empty note parsed to nothing, journaled a note saying
- *  so, and left the hunt parked at the ceiling it was asking to be let past. */
-const GRANTS: [string, { iterations: number; cost_usd: number; wall_ms: number }][] = [
-  ['+3 turns', { iterations: 3, cost_usd: 0, wall_ms: 0 }],
-  ['+$5', { iterations: 0, cost_usd: 5, wall_ms: 0 }],
-  ['+30 min', { iterations: 0, cost_usd: 0, wall_ms: 30 * 60_000 }],
-]
 
 /** queued for the worker holding the ledger, so nothing here is instant — the
  *  panel re-reads rather than claiming the run obeyed */
@@ -2283,8 +2332,7 @@ function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSte
   )
 }
 
-/** Keep going, by a stated amount. The amount is the whole of the directive — an extend
- *  that grants nothing is refused now, so there is no press that quietly does nothing. */
+/** Keep going on the run page: the shared control, sending the shared directive with the note typed below. */
 function SteerExtend({
   busy, note, send,
 }: {
@@ -2293,19 +2341,8 @@ function SteerExtend({
   send: (kind: string, text: string, fields?: Record<string, unknown>) => void
 }) {
   return (
-    <div className="flex gap-2 items-center flex-wrap mb-2">
-      <span className="text-[11.5px] text-tx-3">Keep going:</span>
-      {GRANTS.map(([label, grant]) => (
-        <button
-          key={label}
-          className="btn ghost"
-          disabled={busy}
-          title={`extend this run by ${label.replace('+', '')} and let it carry on from where it parked`}
-          onClick={() => send('extend', note.trim(), { grant })}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="mb-2">
+      <KeepGoing busy={busy} onGrant={(grant) => send('extend', note.trim(), { grant })} />
     </div>
   )
 }
@@ -2680,9 +2717,13 @@ function HuntEscalations({ handoffs }: { handoffs: HuntHandoff[] }) {
         <table className="tbl">
           <thead><tr><th>Case</th><th>Hypothesis</th><th>Why</th></tr></thead>
           <tbody>
-            {handoffs.map((h) => (
-              <tr key={h.case_id}>
-                <td className="mono tight" style={{ fontSize: 11 }}>{h.case_id}</td>
+            {handoffs.map((h, i) => (
+              <tr key={`${h.case_id}:${h.handoff_key ?? i}`}>
+                <td className="mono tight" style={{ fontSize: 11 }}>
+                  <Link to={{ pathname: '/cases', search: `?case=${encodeURIComponent(h.case_id)}` }} className="underline" title={h.handoff_key ? `The hunt calls it ${h.handoff_key}` : undefined}>
+                    {h.case_id}
+                  </Link>
+                </td>
                 <td className="muted tight"><Hyp id={h.hypothesis_id} /></td>
                 <td>{h.rationale}</td>
               </tr>
@@ -3000,6 +3041,8 @@ function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) 
 
 function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
   const { rows, phase, error, reload } = feed
+  // Saving, importing and deleting answer 403 without it.
+  const canWrite = useAuth().hasPermission('settings.write')
   const [editName, setEditName] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
@@ -3033,9 +3076,13 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
             <span className="sk-offered-list">{offeredText}</span>
           </span>
         </div>
-        <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
-        <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
-        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
+        {canWrite && (
+          <>
+            <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
+            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
+            <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
+          </>
+        )}
       </div>
       {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
@@ -3062,7 +3109,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 <SkillUsage skill={s} align={i % 4 === 3 ? 'end' : 'start'} />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
-                  : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
+                  : canWrite && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
               </div>
             </div>
           ))}

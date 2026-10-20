@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type OpenAI from "openai";
 import { Limiter } from "../../core/limiter.js";
-import { EMIT_TOOL, openAiSurface, resetEmitMode, resetOutputCap } from "../../core/wire.js";
+import { EMIT_TOOL, ModelSilent, openAiSurface, resetEmitMode, resetOutputCap, setSilentPauses } from "../../core/wire.js";
 import { ZERO_TOKENS, type TokenCounts } from "../../contracts/budget.js";
 import type { Message, Provider, ToolCall, Turn, TurnRequest } from "../../core/provider.js";
 
@@ -96,6 +96,7 @@ async function turn(surface: Provider, request: TurnRequest): Promise<Turn> {
 beforeEach(() => {
   resetEmitMode();
   resetOutputCap();
+  setSilentPauses([0, 0]);
 });
 
 describe("the OpenAI surface", () => {
@@ -578,3 +579,71 @@ async function usage(reported: Record<string, unknown>): Promise<TokenCounts> {
   const surface = surfaceOf(async () => completion({ role: "assistant", content: "ok" }, reported));
   return (await turn(surface, { messages: [], tools: [] })).tokens;
 }
+
+// Seen on real runs: the gateway answered 200 with nothing in it, at zero output
+// tokens, turn after turn. That is the model failing, not the model answering.
+describe("an empty reply", () => {
+  const EMPTY = { prompt_tokens: 100, completion_tokens: 0, total_tokens: 100 };
+
+  it("is asked again, and the reply that answers carries what the empty ones were billed", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      return calls === 1 ? completion({ role: "assistant", content: "" }, EMPTY) : completion({ role: "assistant", content: "found it" });
+    });
+
+    const answered = await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    expect(answered.content).toBe("found it");
+    expect(calls).toBe(2);
+    expect(answered.tokens.input).toBe(110);
+  });
+
+  it("fails as ModelSilent once every attempt came back empty, with what they were billed", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      return completion({ role: "assistant", content: "" }, EMPTY);
+    });
+
+    const failed = turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    await expect(failed).rejects.toBeInstanceOf(ModelSilent);
+    await expect(failed).rejects.toMatchObject({ message: expect.stringContaining("3 empty replies in a row"), tokens: { input: 300, output: 0 } });
+    expect(calls).toBe(3);
+  });
+
+  it("counts a forced emit with no arguments at zero tokens as empty", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      if (calls < 3) return completion({ role: "assistant", content: null, tool_calls: [{ id: "c1", function: { name: EMIT_TOOL, arguments: "{}" } }] }, EMPTY);
+      return completion({ role: "assistant", content: '{"verb":"HALT"}' });
+    });
+
+    const emitted = await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [], emit: SCHEMA });
+    expect(emitted.content).toBe('{"verb":"HALT"}');
+    expect(calls).toBe(3);
+  });
+
+  it("does not suspect a call to another tool that takes no arguments", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      return completion({ role: "assistant", content: null, tool_calls: [{ id: "c1", function: { name: "list_cases", arguments: "{}" } }] }, EMPTY);
+    });
+
+    const called = await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    expect(called.tool_calls).toHaveLength(1);
+    expect(calls).toBe(1);
+  });
+
+  it("is not suspected when the gateway sent no usage at all", async () => {
+    let calls = 0;
+    const surface = surfaceOf(async () => {
+      calls += 1;
+      return completion({ role: "assistant", content: "" }, null);
+    });
+
+    await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    expect(calls).toBe(1);
+  });
+});

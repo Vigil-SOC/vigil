@@ -128,6 +128,28 @@ class WorkflowRunService:
             logger.error("Could not set run status %s: %s", run_id, e)
             return False
 
+    def set_case(self, run_id: str, case_id: str) -> bool:
+        """File a run under the case it opened, so the case lists it.
+
+        Only a run with no case of its own is filed: a run started on a case
+        stays on that case. The rest of its trigger is kept as recorded.
+        """
+        try:
+            db = get_db_manager()
+            with db.session_scope() as session:
+                row = session.get(WorkflowRun, run_id)
+                if row is None or (row.trigger_context or {}).get("case_id"):
+                    return False
+                # A new dict, so the JSONB column is written rather than mutated in place.
+                row.trigger_context = {
+                    **(row.trigger_context or {}),
+                    "case_id": case_id,
+                }
+            return True
+        except SQLAlchemyError as e:
+            logger.error("Could not file run %s under case %s: %s", run_id, case_id, e)
+            return False
+
     def set_progress(self, run_id: str, *, iteration: int, max_cost_usd: float) -> bool:
         """Record how far a hunt has got, for the case list.
 

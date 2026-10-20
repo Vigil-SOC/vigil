@@ -111,6 +111,17 @@ class TestCapabilityBinding:
         # splunk-selfhosted is declared first, so it wins over elastic.
         assert bound[0]["id"] == "splunk-selfhosted_splunk_nl_search"
 
+    # The integration behind a bound tool rides it, so a hunt can name the system a row
+    # with no alert behind it came from (#2287). A tool this backend implements names none.
+    def test_names_the_server_behind_a_bound_tool(self):
+        from core.workflows.playbook_resolver import _bound_capabilities
+
+        catalogue = {"splunk-selfhosted_splunk_execute": {}, "search_findings": {}}
+        bound = _bound_capabilities(["telemetry_search", "findings_search"], catalogue)
+
+        assert bound[0]["server"] == "splunk-selfhosted"
+        assert "server" not in bound[1]
+
     # The agent layer defaults to 30s when a spec states nothing, and a real search
     # over a wide window crosses it. The timeout then reads as a gap in visibility --
     # "no evidence" where the truth is "we gave up after thirty seconds".
@@ -138,7 +149,7 @@ class TestCapabilityBinding:
     def test_states_bounds_for_every_capability_a_hunt_binds(self):
         from core.workflows.playbook_resolver import CAPABILITY_BOUNDS
 
-        # case_records is the investigate lead's; get_finding keeps the default.
+        # case_records is the investigate lead's.
         assert set(CAPABILITY_BOUNDS) == set(HUNT_CAPABILITIES) | {"case_records"}
 
     # Dropped rather than fatal: the hunt journals the drop as a visibility gap,
@@ -288,21 +299,6 @@ def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
     ]
     assert 'read_skill("executive-summary")' in report["prompt"]
     assert "# Executive summary" not in report["prompt"]
-    config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
-    assert "read_skill" in config_ids
-    assert config_ids.count("read_skill") == 1
-
-    # The roster names capabilities. Compose grants tool ids, so _drop_missing
-    # drops those names; resolve_hunt never reads the list. read_skill still
-    # lands because the profile recommends it.
-    playbook, config_text = resolve("threat-hunt")
-    intel = next(
-        phase
-        for phase in yaml.safe_load(playbook)["phases"]
-        if phase["id"] == "threat_intel"
-    )
-    assert intel["tools"] == ["read_skill"]
-    assert "# IOC enrichment" not in intel["prompt"]
     config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
     assert "read_skill" in config_ids
     assert config_ids.count("read_skill") == 1
@@ -611,28 +607,13 @@ class TestTheCapabilityReport:
         assert "telemetry_search" in capability_report(registry)["bound"]
 
 
-class TestATurnedOffPhaseAgent:
-    # Compose refuses a turned-off phase agent, so a hunt that names one must too:
-    # "turned off" means one thing across workflow kinds.
+class TestATurnedOffBuiltInAgent:
+    # A hunt runs its plugin's agent and critic, not the built-ins compose names, so
+    # turning one off does not refuse it.
     @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
-    def test_refuses_the_run_and_says_which_agent(self, monkeypatch, workflow_id):
+    def test_does_not_refuse_the_run(self, monkeypatch, workflow_id):
         monkeypatch.setattr(
             "core.workflows.playbook_resolver.disabled_agent_ids",
-            lambda: {"threat_hunter"},
-        )
-        with pytest.raises(UnknownPlaybook, match="threat_hunter is turned off"):
-            resolve_hunt(workflow_id)
-
-    @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
-    def test_resolves_with_nothing_turned_off(self, monkeypatch, workflow_id):
-        monkeypatch.setattr(
-            "core.workflows.playbook_resolver.disabled_agent_ids", lambda: set()
+            lambda: {"threat_hunter", "network_analyst", "threat_intel"},
         )
         assert resolve_hunt(workflow_id)
-
-    def test_ignores_an_agent_turned_off_that_no_phase_names(self, monkeypatch):
-        monkeypatch.setattr(
-            "core.workflows.playbook_resolver.disabled_agent_ids",
-            lambda: {"reporter"},
-        )
-        assert resolve_hunt("threat-hunt")

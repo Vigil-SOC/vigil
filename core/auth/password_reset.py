@@ -63,6 +63,11 @@ def generate_reset_token(user_id: str) -> str:
     return _get_serializer().dumps({"user_id": user_id})
 
 
+def reset_link(base_url: str, token: str) -> str:
+    """Console URL that opens the reset screen for ``token``."""
+    return f"{base_url.rstrip('/')}/reset-password?token={token}"
+
+
 async def verify_reset_token(token: str) -> Optional[str]:
     """
     Return the user_id the token was issued for, or None if the token is

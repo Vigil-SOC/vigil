@@ -18,6 +18,10 @@ const api = axios.create({
 // 0 to disable the timeout for the life of the SSE connection.
 export const LLM_TIMEOUT = 180_000
 
+// Switching an MCP server on starts it and waits for it. A first start of an
+// npx/uvx server downloads the package, which can take well over 15s.
+export const MCP_START_TIMEOUT = 180_000
+
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
 function readCookie(name: string): string | null {
@@ -122,7 +126,6 @@ export const aiDecisionsApi = {
   }) => api.get('/ai/decisions', { params }),
   
   submitFeedback: (decisionId: string, data: {
-    human_reviewer: string
     human_decision: string
     feedback_comment?: string
     accuracy_grade?: number
@@ -142,13 +145,21 @@ export const aiDecisionsApi = {
 }
 
 export interface NeedsYouItem {
-  kind: 'checkpoint' | 'approval'
+  /** `parked`: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. */
+  kind: 'checkpoint' | 'approval' | 'parked'
   source_id: string
   title: string
   reason: string
+  /** '' when nothing recorded when it started waiting. */
   created_at: string
   reversibility: string
   case_id: string | null
+  run_id?: string | null
+  /** The run's own checkpoint this item answers, so a page reading the run can tell it was answered. */
+  checkpoint_id?: string | null
+  checkpoint_class?: string | null
+  /** A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat. */
+  hypotheses?: { hypothesis_id: string; statement: string; provenance: string }[]
 }
 
 export const approvalsApi = {
@@ -202,7 +213,7 @@ export const findingsApi = {
   delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    // may restart a local Bifrost gateway, then wait on a local model
+    // may restart the Bifrost gateway, then wait on the configured model
     api.post(`/findings/${id}/enrich`, null, {
       params: { force_regenerate },
       timeout: LLM_TIMEOUT,
@@ -260,6 +271,8 @@ export interface CaseRecordRow {
   source: string
   chained: boolean
   text: string
+  /** The run a run row is from; absent on audit and activity rows. */
+  run_id?: string | null
 }
 
 export interface CaseRecordResponse {
@@ -421,13 +434,29 @@ export const caseSearchApi = {
   }) => api.post('/case-search/', data),
 }
 
+export interface ReloadServersResponse {
+  /** false when any server in `failed` could not be reconnected or disconnected */
+  success: boolean
+  message: string
+  total_servers: number
+  servers: string[]
+  reconnected: string[]
+  disconnected: string[]
+  failed: Record<string, string | null>
+}
+
 export const mcpApi = {
   listServers: () => api.get('/mcp/servers'),
 
   getStatuses: () => api.get('/mcp/servers/status'),
 
   setServerEnabled: (name: string, enabled: boolean) =>
-    api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+    api.put(`/mcp/servers/${name}/enabled`, { enabled }, { timeout: MCP_START_TIMEOUT }),
+
+  // Re-reads mcp-config.json and integration URLs into the server catalog, then
+  // reconnects changed servers and stops removed or disabled ones. A file that
+  // does not parse answers 422 and changes nothing. Needs integrations.write.
+  reloadServers: () => api.post<ReloadServersResponse>('/mcp/servers/reload'),
 
   // Vigil's own MCP surface: whether it listens, and what may open it.
   getSurface: () => api.get('/mcp/surface'),
@@ -516,9 +545,10 @@ export interface AgentSummary {
   decision_id?: string
 }
 
-/** Reads the shell folds itself. Health is public; routability is admin-only. */
+/** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
+  getProcesses: () => api.get<{ agent_layer?: string; daemon?: string }>('/processes'),
   getRoutability: () =>
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
@@ -756,8 +786,6 @@ export const ingestionApi = {
 
 export interface BudgetSettings {
   default_vk: string
-  budget_limit_usd: number
-  enforcement_mode: 'warning' | 'hard_stop'
 }
 
 interface BifrostBudgetTier {
@@ -853,10 +881,11 @@ export const detectionRulesApi = {
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
   
+  // A clone or pull runs for minutes (the server allows 300 s per repository).
   updateSource: (sourceId: string) =>
-    api.post(`/detection-rules/sources/${sourceId}/update`),
+    api.post(`/detection-rules/sources/${sourceId}/update`, undefined, { timeout: 0 }),
   
-  updateAll: () => api.post('/detection-rules/update-all'),
+  updateAll: () => api.post('/detection-rules/update-all', undefined, { timeout: 0 }),
   
   getStats: () => api.get('/detection-rules/stats'),
   
@@ -905,7 +934,7 @@ export interface GeneratedDraft {
 }
 
 /** What a hunt lead was shown before one decision. Mirrors `Digest` in
- *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
+ *  services/agent/plugins/hunt/types.ts; only what the console renders is typed. */
 export interface ReplayDigest {
   iteration: number
   narrative: string
@@ -924,9 +953,10 @@ export interface ReplayedDecision {
   action: string
   target: string | null
   cost_usd: number
-  /** False when the ledger predates digest_seq and the prefix had to be inferred. */
+  /** False when the digest was not rebuilt exactly; always false now nothing is rebuilt. */
   exact: boolean
-  rebuilt: ReplayDigest
+  /** Null: the digest builder went with the controller, so the record is shown as journaled. */
+  rebuilt: ReplayDigest | null
   recorded: ReplayDigest
   mismatch: string | null
 }
@@ -990,6 +1020,8 @@ export const workflowApi = {
     api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
   replayRun: (runId: string) => api.get(`/workflows/runs/${runId}/replay`),
   verifyRun: (runId: string) => api.get(`/workflows/runs/${runId}/verify`),
+  /** One call as journaled: the query it sent and the result it got back. */
+  getCall: (runId: string, ref: string) => api.get(`/workflows/runs/${runId}/calls/${encodeURIComponent(ref)}`),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),
@@ -1055,8 +1087,6 @@ export const orchestratorApi = {
     api.post('/orchestrator/scan-findings', {
       severities: severities || ['critical', 'high'],
     }, { timeout: LLM_TIMEOUT }),
-  reviewInvestigation: (id: string, action: 'approve' | 'rework', notes?: string) =>
-    api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getChainOfCustody: (id: string) =>
     api.get(`/orchestrator/investigations/${id}/chain-of-custody`),
@@ -1377,15 +1407,35 @@ export const bootstrapApi = {
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
 }
 
-// Public password reset. `request` answers the same whether or not the email
-// matches an account; the emailed link lands on /reset-password?token=…
 export const authApi = {
+  // Public password reset. `request` answers the same whether or not the email
+  // matches an account; the emailed link lands on /reset-password?token=…
   requestPasswordReset: (email: string) =>
     api.post<{ message: string }>('/auth/password-reset/request', {
       email,
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
     api.post<{ message: string }>('/auth/password-reset/confirm', payload),
+  /** Revokes every token the user holds and clears the auth cookies, so the
+   *  caller is signed out once this resolves. */
+  changePassword: (body: Schema<'ChangePasswordRequest'>) =>
+    api.post<{ message: string }>('/auth/change-password', body),
+}
+
+// Self-service two-step sign-in (TOTP + recovery codes) for the signed-in user.
+export const mfaApi = {
+  setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
+  verify: (code: string) =>
+    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
+      code,
+    } satisfies Schema<'MFAVerifyRequest'>),
+  regenerateRecoveryCodes: () =>
+    api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes'),
+  // axios sends a DELETE body only through `data`
+  disable: (code: string) =>
+    api.delete<{ message: string }>('/auth/mfa', {
+      data: { code } satisfies Schema<'MFAVerifyRequest'>,
+    }),
 }
 
 export default api

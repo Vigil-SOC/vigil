@@ -217,6 +217,7 @@ done
 [ "$ALL_PROFILES" -eq 1 ] && EXTRA_SERVICES="$EXTRA_SERVICES pgadmin splunk kafka jaeger prometheus grafana otel-collector"
 
 # --- Prerequisites ---
+wsl_preflight
 ensure_docker || exit 1
 
 SKIP_FRONTEND=0
@@ -237,8 +238,14 @@ _CALLER_BIND_HOST="${BIND_HOST:-}"
 load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
+# Daemon and agent listeners follow BIND_HOST unless the operator opts out.
+export DAEMON_BIND_HOST="${DAEMON_BIND_HOST:-$BIND_HOST}"
+export AGENT_BIND_HOST="${AGENT_BIND_HOST:-$BIND_HOST}"
 # Auth is on unless .env opts into DEV_MODE; the backend needs a signing secret.
 ensure_jwt_secret || exit 1
+# And the agent layer needs its token, or agent_up.sh refuses to start. Covers
+# an install that skipped setup_dev.sh.
+ensure_agent_token
 
 # `bifrost` only resolves inside the compose network. Rewrite before starting
 # services: bringing Ollama up syncs its catalog into Bifrost, and that runs
@@ -309,6 +316,9 @@ start_agent_layer() {
     scripts/agent_up.sh || echo "Warning: agent layer failed to start (workflow runs won't be picked up)."
 }
 
+# Outlasts the worker's own Redis connect retries (core/llm/gateway/gateway.py).
+WORKER_READY_TIMEOUT=120
+
 if [ "$DAEMON" -eq 0 ]; then
     # Foreground
     cleanup() {
@@ -319,7 +329,7 @@ if [ "$DAEMON" -eq 0 ]; then
         [ -f logs/agent-worker.pid ] && kill "$(cat logs/agent-worker.pid)" 2>/dev/null
         [ -f logs/agent-serve.pid ] && kill "$(cat logs/agent-serve.pid)" 2>/dev/null
         pkill -f "uvicorn services.api.main:app" 2>/dev/null
-        exit 0
+        exit "${STARTUP_FAILED:-0}"
     }
     trap cleanup INT TERM EXIT
 
@@ -340,15 +350,21 @@ if [ "$DAEMON" -eq 0 ]; then
 
     python3 -m services.worker > >(tee -ia "$LOGS_DIR/llm_worker.log") 2>&1 &
     WORKER_PID=$!
+    # Logged from on_startup, i.e. once the worker has connected to Redis.
+    wait_for_log_line "LLM worker" "$WORKER_PID" "$LOGS_DIR/llm_worker.log" \
+        "LLM worker started" "$WORKER_READY_TIMEOUT" || { STARTUP_FAILED=1; exit 1; }
 
     start_frontend
     start_agent_layer
     print_ready
     echo "Press Ctrl+C to stop"
+    # The foreground is the local path and leaves the SOC daemon out (#902). Said
+    # out loud, so an empty alert queue isn't read as a quiet day.
+    echo "SOC daemon not started: no alert polling or auto-triage. ./start.sh -d runs it."
 
     # Open browser once frontend is ready
     if [ "$SKIP_FRONTEND" -eq 0 ]; then
-        (sleep 3 && open "http://localhost:6988/" 2>/dev/null || xdg-open "http://localhost:6988/" 2>/dev/null) &
+        (sleep 3 && open_url "http://localhost:6988/") &
     fi
 
     wait
@@ -376,12 +392,24 @@ else
 
     rotate_log logs/daemon.log
     nohup "${PWD}/venv/bin/python" services/daemon/main.py > logs/daemon.log 2>&1 &
-    echo $! > logs/daemon.pid
+    DAEMON_PID=$!
+    echo $DAEMON_PID > logs/daemon.pid
 
     # Started unconditionally, independent of orchestrator.settings (#581).
     rotate_log logs/llm_worker.log
     nohup "${PWD}/venv/bin/python" -m services.worker > logs/llm_worker.log 2>&1 &
-    echo $! > logs/llm_worker.pid
+    WORKER_PID=$!
+    echo $WORKER_PID > logs/llm_worker.pid
+
+    # Both start in parallel; without these checks a crash at startup (e.g. Redis
+    # not accepting connections yet) still ended in "Ready" (#2321).
+    if ! wait_for_log_line "SOC daemon" "$DAEMON_PID" logs/daemon.log \
+            "SOC Daemon fully operational" 60 \
+        || ! wait_for_log_line "LLM worker" "$WORKER_PID" logs/llm_worker.log \
+            "LLM worker started" "$WORKER_READY_TIMEOUT"; then
+        echo "Startup incomplete; stop the rest with ./shutdown_all.sh" >&2
+        exit 1
+    fi
 
     start_agent_layer
 

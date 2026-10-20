@@ -16,8 +16,8 @@ owns routing). One row per provider *type*, which is all the dispatch path
 reads off it — Bifrost load-balances the keys within a provider itself.
 
 Rows are written from two places, both of which converge on the same state:
-the config proxy on an accepted key write (``services/api/routers/bifrost_config``),
-and ``reconcile_all`` on every catalogue sync, which backfills providers that
+the config proxy on an accepted key write, provider create or provider delete
+(``services/api/routers/bifrost_config``), and ``reconcile_all`` on every catalogue sync, which backfills providers that
 were configured before this existed.
 """
 
@@ -214,9 +214,19 @@ async def _get(path: str) -> Any:
         return resp.json()
 
 
+def is_key_less(provider_doc: Dict[str, Any]) -> bool:
+    """True for a custom provider declared ``is_key_less``: its host takes no
+    credential, so the absence of a key is not what keeps it from routing."""
+    return bool((provider_doc.get("custom_provider_config") or {}).get("is_key_less"))
+
+
 async def _routable_keys(provider: str) -> List[Dict[str, Any]]:
     keys = (await _get(f"providers/{provider}/keys")).get("keys") or []
     return [k for k in keys if key_is_routable(k, provider)]
+
+
+async def _provider_routable(provider_doc: Dict[str, Any]) -> bool:
+    return is_key_less(provider_doc) or bool(await _routable_keys(provider_doc["name"]))
 
 
 async def _apply(provider: str, *, routable: bool) -> None:
@@ -250,7 +260,14 @@ async def sync_provider(provider: str) -> None:
     empty model picker with nothing else to go on.
     """
     try:
-        await _apply(provider, routable=bool(await _routable_keys(provider)))
+        try:
+            doc = await _get(f"providers/{provider}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            doc = None  # deleted in Bifrost: its row goes with it
+        routable = doc is not None and await _provider_routable(doc)
+        await _apply(provider, routable=routable)
     except Exception as exc:  # noqa: BLE001 - never fail an accepted write
         logger.warning("Could not mirror provider row for %s: %s", provider, exc)
 
@@ -280,7 +297,7 @@ async def reconcile_all() -> Optional[Dict[str, bool]]:
         if not name:
             continue
         try:
-            routable = bool(await _routable_keys(name))
+            routable = await _provider_routable(p)
             await _apply(name, routable=routable)
             verdicts[name] = routable
         except Exception as exc:  # noqa: BLE001
@@ -296,6 +313,10 @@ HEALTH_UNVERIFIED = "unverified"
 HEALTH_UNVERIFIABLE = "unverifiable"
 HEALTH_REJECTED = "rejected"
 HEALTH_DISABLED = "disabled"
+# A first-boot seed whose credential still points at an unset env var
+# (``_cred_from_env``): nothing was ever configured here, which the console
+# tells apart from a key it should show as unverified or rejected.
+HEALTH_PLACEHOLDER = "placeholder"
 
 
 def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
@@ -307,6 +328,8 @@ def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
     status = key.get("status")
     if status == "success":
         return HEALTH_HEALTHY
+    if _cred_from_env(key):
+        return HEALTH_PLACEHOLDER
     if not status or status == "unknown":
         return HEALTH_UNVERIFIED
     if status == "list_models_failed" and _list_check_unavailable(
@@ -337,9 +360,9 @@ async def routability() -> Dict[str, Any]:
             keys = (await _get(f"providers/{name}/keys")).get("keys") or []
         except Exception as exc:  # noqa: BLE001 - one provider must not fail all
             logger.warning("Routability: could not list keys for %s: %s", name, exc)
-            provider_verdicts[name] = False
+            provider_verdicts[name] = is_key_less(p)
             continue
-        routable_here = False
+        routable_here = is_key_less(p)
         for k in keys:
             key_id = k.get("id")
             verdict = key_is_routable(k, name)
