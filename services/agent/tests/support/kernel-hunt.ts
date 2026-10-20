@@ -41,7 +41,9 @@ export type Step = (request: TurnRequest) => { tool: string; args: unknown } | {
 
 // A model that reads the ids off the board and results, as a real one does. Asked for an
 // emission (the critic's argument, the narrator's account) it answers by schema.
-export function modelOf(steps: readonly Step[], answers: { critic?: unknown } = {}): Provider & { requests: TurnRequest[] } {
+// `conclusion` is what a hunt that carries a disposition adds to its answer, and `review` what the
+// guard's reviewer says to a dismissal.
+export function modelOf(steps: readonly Step[], answers: { critic?: unknown; conclusion?: { disposition: string; citations: string[] }; review?: { stance: string; reasons: string; missing: string[] } } = {}): Provider & { requests: TurnRequest[] } {
   const requests: TurnRequest[] = [];
   let at = 0;
   return {
@@ -52,10 +54,16 @@ export function modelOf(steps: readonly Step[], answers: { critic?: unknown } = 
       requests.push(request);
       if (request.emit !== undefined) {
         const properties = (request.emit["properties"] ?? {}) as Record<string, unknown>;
-        const answer = "benign_explanation_stands" in properties
+        const answer = "stance" in properties
+          ? (answers.review ?? { stance: "uphold", reasons: "the cited results show it", missing: [] })
+          : "benign_explanation_stands" in properties
           ? (answers.critic ?? { benign_explanation: "a backup job", benign_explanation_stands: false, rationale: "the interval is too regular for a backup" })
           : "open_questions" in properties
-            ? { summary: "the host beaconed; one claim is still open", open_questions: ["is the sync client sanctioned?"] }
+            ? {
+                summary: "the host beaconed; one claim is still open",
+                ...("disposition" in properties ? (answers.conclusion ?? { disposition: "malicious", citations: [] }) : {}),
+                open_questions: ["is the sync client sanctioned?"],
+              }
             : { summary: "the host beaconed", what_happened: "regular outbound flows", next_steps: ["isolate the host"] };
         yield { type: "text_delta", text: JSON.stringify(answer) };
         yield { type: "usage", tokens: ZERO_TOKENS };

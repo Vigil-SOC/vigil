@@ -12,6 +12,7 @@
  "iteration": 8,
  "cost_usd": 0,
  "max_cost_usd": 5,
+ "disposition": null,
  "budgets": {
   "max_calls": 2304,
   "max_cost_usd": 5,
@@ -520,6 +521,7 @@
    "overall_cap": 200
   }
  },
+ "held": null,
  "engine": "plugin",
  "kernel": {
   "run_id": "run-1",

@@ -70,6 +70,7 @@ describe("the root-cause projection", () => {
       status: "running",
       outcome: null,
       searches: 1,
+      disposition: null,
       notices: ["the bound telemetry cannot prove a link"],
     });
     expect(folded.cost_usd).toBeCloseTo(0.03);

@@ -35,6 +35,9 @@ export interface HuntProjection {
   cost_usd: number;
   // The ceiling every projection carries in its head, off budgets below.
   max_cost_usd: number;
+  // The word the hunt concluded on, held as the guard left it. Null here: only a kernel
+  // hunt concludes (huntView fills it).
+  disposition: string | null;
   // What this run was granted, extensions included, so a reader can say how far
   // through its budget the hunt is.
   budgets: Budgets;
@@ -198,6 +201,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
     iteration: view.hunt.iteration,
     cost_usd: view.hunt.cost_usd,
     max_cost_usd: view.hunt.budgets.max_cost_usd,
+    disposition: null,
     budgets: view.hunt.budgets,
     hypotheses: record.hypotheses.map((row) => standing(row, view)),
     evidence_count: view.evidence.size,
