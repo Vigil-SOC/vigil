@@ -71,8 +71,9 @@ available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.len
 }
 
 // The model's choice, checked against the graph after this turn's patch. Labels resolve to events created this
-// turn (the model cannot know their ids yet).
-export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig, turn: number, created: string[], env?: { index: string; range: [string, string] }): { decision?: FrontierDecision; refused?: string } {
+// turn (the model cannot know their ids yet). A probe comes back as the prediction to add, applied as a patch by
+// the caller, so the graph changes only through patches and a journal of them replays it.
+export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig, turn: number, created: string[], env?: { index: string; range: [string, string] }): { decision?: FrontierDecision; refused?: string; probe?: Prediction } {
   if (!next?.move) return {};
   const source = next.source?.trim() || undefined;
   // probe: a rare record becomes a prediction (whole range, forward from it) and the next turn tests it.
@@ -83,10 +84,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     const q = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
     const n = (g.theories ?? []).flatMap((t) => t.predictions).filter((p) => p.id.startsWith("PROBE")).length + 1;
     const p: Prediction = { id: `PROBE${n}`, sourcetype: r.sourcetype, expect: `the ${r.count} record(s) where ${r.field} is ${r.value}: what they are, which host and account, what followed them in time in any source, and whether they lead to anything in the graph`, spl: `index=${env.index} sourcetype=${q(r.sourcetype)} ${q(r.value)} | table _time *`, earliest: env.range[0], latest: env.range[1], separates: [], next: false, status: "open" };
-    let t = (g.theories ?? []).find((x) => x.id === "PROBES" && x.status === "live");
-    if (!t) { t = { id: "PROBES", round: g.theorizeCount ?? 0, story: "Rare records read on their own (not a story).", accountsFor: [], gaps: "", predictions: [], status: "live", support: 0, against: 0 }; (g.theories ??= []).push(t); }
-    t.predictions.push(p);
-    return { decision: { move: "test", targetId: p.id, turn: turn + 1, priority: -1, reason: `model probe: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
+    return { probe: p, decision: { move: "test", targetId: p.id, turn: turn + 1, priority: -1, reason: `model probe: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
   }
   const move = next.move as Move;
   const o = options(g, cfg);

@@ -29,7 +29,7 @@ describe("graph", () => {
     apply(g, { addNodes: [node("a", { label: "red herring", evidence: [ev("direct", "refutes")] })] });
     expect(g.nodes.N2!.status).toBe("ruled-out");
     expect(apply(g, { addNodes: [node("b", { label: "red herring" })] }).rejected).toHaveLength(1);
-    expect(apply(g, { addNodes: [node("c", { label: "red herring", evidence: [ev("direct", "supports", ["tc_2"]), ev("direct", "supports", ["tc_3"])] })] }).idMap.c).toBe("N2");
+    expect(apply(g, { addNodes: [node("c", { label: "red herring", evidence: [ev("direct", "supports", ["r2"]), ev("direct", "supports", ["r3"])] })] }).idMap.c).toBe("N2");
   });
   it("recomputes disputed", () => {
     const g = seeded();
@@ -37,7 +37,7 @@ describe("graph", () => {
       { tempId: "e1", kind: "explains", source: "a", target: "N1", prior: 0.3, evidence: [] },
       { tempId: "e2", kind: "explains", source: "b", target: "N1", prior: 0.3, evidence: [] }] });
     expect(g.edges.E1!.disputed && g.edges.E2!.disputed).toBe(true);
-    apply(g, { addEvidence: [{ targetId: "E2", evidence: ev("direct", "refutes", ["tc_9"]) }] });
+    apply(g, { addEvidence: [{ targetId: "E2", evidence: ev("direct", "refutes", ["r9"]) }] });
     expect(g.edges.E2!.status).toBe("ruled-out");
     expect(g.edges.E1!.disputed).toBe(false);
   });
@@ -47,7 +47,7 @@ describe("graph", () => {
       addEdges: [{ tempId: "me", kind: "explains", source: "m", target: "N1", prior: 0.3, evidence: [] },
         { tempId: "ce", kind: "explains", source: "c", target: "N1", prior: 0.3, evidence: [ev("corroborating")], stitchFor: "B1" }] });
     expect(g.nodes.B1!.resolvedTo).toBeUndefined();
-    const r = apply(g, { addEvidence: [{ targetId: "E2", evidence: ev("direct", "supports", ["tc_7"]) }] });
+    const r = apply(g, { addEvidence: [{ targetId: "E2", evidence: ev("direct", "supports", ["r7"]) }] });
     expect(r.resolvedMarkers).toEqual(["B1"]);
     expect(g.edges.E1!.retired).toBe(true);
   });

@@ -18,7 +18,7 @@ describe("snapshot", () => {
       "<graph_snapshot>
       NODES
       N1 [action|confirmed|0.88|edr] symptom SYMPTOM PATH
-         · +direct [tc_s]: direct supports
+         · +direct [rs]: direct supports
       N2 [action|suspected|0.72|edr] cause PATH
          · +circumstantial [b]: circumstantial supports
          · +corroborating [c]: corroborating supports

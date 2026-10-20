@@ -13,8 +13,8 @@ const ctx = { turn: 1, domain: "edr", traceIds: () => [] };
 
 describe("confirmation by independent corroboration", () => {
   it("two corroborating items on different searches confirm; on the same search they do not", () => {
-    expect(status(0.9, [e("corroborating", ["tc_1"]), e("corroborating", ["tc_2"])], cfg)).toBe("confirmed");
-    expect(status(0.9, [e("corroborating", ["tc_1"]), e("corroborating", ["tc_1", "tc_9"])], cfg)).toBe("suspected");
+    expect(status(0.9, [e("corroborating", ["r1"]), e("corroborating", ["r2"])], cfg)).toBe("confirmed");
+    expect(status(0.9, [e("corroborating", ["r1"]), e("corroborating", ["r1", "r9"])], cfg)).toBe("suspected");
   });
 });
 
@@ -23,9 +23,9 @@ describe("attribution relations and repeats", () => {
     const g = seeded();
     apply(g, { addNodes: [node("act")] });
     const sig = (call: string) => [{ layer: "machine-facing" as const, kind: "account", value: "alice", resolvesTo: "ad:alice", toolCallIds: [call] }];
-    apply(g, buildAttributionPatch("N2", sig("tc_1"), g, ctx));
+    apply(g, buildAttributionPatch("N2", sig("r1"), g, ctx));
     const once = Object.values(g.edges)[0]!.confidence;
-    apply(g, buildAttributionPatch("N2", sig("tc_2"), g, ctx), 2);
+    apply(g, buildAttributionPatch("N2", sig("r2"), g, ctx), 2);
     expect(Object.values(g.edges)).toHaveLength(1);
     expect(Object.values(g.edges)[0]!.confidence).toBeCloseTo(once, 9);
   });
@@ -33,8 +33,8 @@ describe("attribution relations and repeats", () => {
     const g = seeded();
     apply(g, { addNodes: [node("act")] });
     apply(g, buildAttributionPatch("N2", [
-      { layer: "machine-facing", relation: "ran-as", kind: "account", value: "alice", resolvesTo: "ad:alice", toolCallIds: ["tc_1"] },
-      { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "evil.test operator", toolCallIds: ["tc_2"] },
+      { layer: "machine-facing", relation: "ran-as", kind: "account", value: "alice", resolvesTo: "ad:alice", toolCallIds: ["r1"] },
+      { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "evil.test operator", toolCallIds: ["r2"] },
     ], g, ctx));
     const kinds = Object.values(g.edges).map((x) => `${x.kind}:${g.nodes[x.source]!.label}:${x.status}`).sort();
     expect(kinds).toEqual(["attributed-to:ad:alice:confirmed", "operated-by:evil.test operator:suspected"]);
@@ -43,8 +43,8 @@ describe("attribution relations and repeats", () => {
   it("an actor reported under a new name for the same principal is reused", () => {
     const g = seeded();
     apply(g, { addNodes: [node("a1"), node("a2")] });
-    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "user-1", toolCallIds: ["tc_1"] }], g, ctx));
-    apply(g, buildAttributionPatch("N3", [{ layer: "machine-facing", kind: "account", value: "user-1", resolvesTo: "ad:CORP\\user-1", toolCallIds: ["tc_1"] }], g, ctx));
+    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "user-1", toolCallIds: ["r1"] }], g, ctx));
+    apply(g, buildAttributionPatch("N3", [{ layer: "machine-facing", kind: "account", value: "user-1", resolvesTo: "ad:CORP\\user-1", toolCallIds: ["r1"] }], g, ctx));
     expect(Object.values(g.nodes).filter((n) => n.kind === "actor")).toHaveLength(1);
   });
 });
@@ -90,7 +90,7 @@ describe("frontier after the chain", () => {
 
 describe("citations", () => {
   it("refuses tool call ids never issued in the run", () => {
-    const sub = { evidence: [{ summary: "x", strength: "direct", polarity: "supports", toolCallIds: ["tc_9"] }], reasoning: "r" };
+    const sub = { evidence: [{ summary: "x", strength: "direct", polarity: "supports", toolCallIds: ["r9"] }], reasoning: "r" };
     expect(check("submit_assessment", sub, 3)).toMatchObject({ success: false });
     expect(check("submit_assessment", sub, 9)).toMatchObject({ success: true });
   });
@@ -161,8 +161,8 @@ describe("victim accounts and dead ends", () => {
     const g = seeded();
     apply(g, { addNodes: [node("repl", { label: "directory replication using alice's stolen credentials", evidence: [ev("direct", "supports", ["d1"])] })] });
     apply(g, buildAttributionPatch("N2", [
-      { layer: "machine-facing", relation: "ran-as", kind: "account", value: "alice", toolCallIds: ["tc_1"] },
-      { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "evil.test operator", toolCallIds: ["tc_2"] },
+      { layer: "machine-facing", relation: "ran-as", kind: "account", value: "alice", toolCallIds: ["r1"] },
+      { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "evil.test operator", toolCallIds: ["r2"] },
     ], g, ctx));
     const md = renderReport(g, new MemoryTrace("t"), null, { id: "a", source: "edr", title: "t", observedAt: "2026-04-02T00:00:00Z", artifacts: [], raw: {} });
     expect(md).toMatch(/- the attacker \(an operator the logs do not name\): attacker \(operated the malicious actions\); seen as evil\.test/);
@@ -176,7 +176,7 @@ describe("cross-source sweep", () => {
     const { sweepValues } = await import("../../../plugins/rootcause/v3/sweep.js");
     const g = seeded();
     apply(g, { addNodes: [node("x", { artifacts: [{ kind: "arn", value: "arn:aws:sts::1:assumed-role/deployer/ci-session" }, { kind: "ip", value: "192.0.2.9" }, { kind: "process-guid", value: "77" }] })] });
-    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "svc-a", toolCallIds: ["tc_1"] }], g, ctx));
+    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "svc-a", toolCallIds: ["r1"] }], g, ctx));
     expect(sweepValues(g, g.nodes.N2!)).toEqual(["deployer", "ci-session", "arn:aws:sts::1:assumed-role/deployer/ci-session", "192.0.2.9", "svc-a"]);
   });
   it("finds the source that pins the event and opens a boundary there when a cause search comes back empty", async () => {
@@ -187,13 +187,13 @@ describe("cross-source sweep", () => {
     const tools = { callCount: 0, list: () => [], call: async (_: string, input: any) => {
       calls.push(input.spl);
       const data = input.spl.includes("ABCD1234") ? '1 events matched\n{"sourcetype":"mail","count":"1","first":"1","last":"1"}' : '90 events matched\n{"sourcetype":"auth","count":"90","first":"1","last":"2"}';
-      return { toolCallId: `tc_${calls.length}`, tool: "splunk_query", input, result: { ok: true, data }, wrapped: "" };
+      return { toolCallId: `r${calls.length}`, tool: "splunk_query", input, result: { ok: true, data } };
     } };
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
     const r = await sweep(g, g.nodes.N2!, { cfg, tools, trace: new MemoryTrace("t").forTurn(1, "expand", "N2"), domains: ["edr", "mail", "auth"], range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "lab" } as any);
     expect(calls[0]).toMatch(/^index=lab NOT sourcetype="edr" "ABCD1234"/);
     expect(r.topDomain).toBe("mail");
-    expect(r.leads).toMatch(/"ABCD1234": mail 1 events .*\[tc_1\]/);
+    expect(r.leads).toMatch(/"ABCD1234": mail 1 events .*\[r1\]/);
   });
 });
 
@@ -212,10 +212,10 @@ describe("same event, times, placeholders", () => {
     const { Vetter } = await import("../../../plugins/rootcause/v3/handlers/common.js");
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
     const ctx: any = { turn: 1, tools: { callCount: 1 }, trace: new MemoryTrace("t").forTurn(1, "branch", "N1") };
-    const v = new Vetter(ctx, [{ id: "tc_1", tool: "splunk_query", input: {}, ok: true, traceId: "T1", text: '{"_time":"2026-04-02T08:31:05.000+00:00"} {"first":"1775118673"}' }]);
-    expect(v.checkTime("2026-04-02T08:31:05Z", ["tc_1"], "x")).toBe("2026-04-02T08:31:05Z");
-    expect(v.checkTime("2026-04-02T08:32:00Z", ["tc_1"], "x")).toBe("2026-04-02T08:32:00Z"); // epoch 1775118673 = 08:31:13Z, 47 s away
-    expect(v.checkTime("2026-04-02T13:11:00Z", ["tc_1"], "x")).toBeUndefined();
+    const v = new Vetter(ctx, [{ id: "r1", tool: "splunk_query", input: {}, ok: true, traceId: "T1", text: '{"_time":"2026-04-02T08:31:05.000+00:00"} {"first":"1775118673"}' }]);
+    expect(v.checkTime("2026-04-02T08:31:05Z", ["r1"], "x")).toBe("2026-04-02T08:31:05Z");
+    expect(v.checkTime("2026-04-02T08:32:00Z", ["r1"], "x")).toBe("2026-04-02T08:32:00Z"); // epoch 1775118673 = 08:31:13Z, 47 s away
+    expect(v.checkTime("2026-04-02T13:11:00Z", ["r1"], "x")).toBeUndefined();
   });
   it("a boundary's placeholder link is never strengthened", () => {
     const g = seeded();
@@ -228,7 +228,7 @@ describe("same event, times, placeholders", () => {
 
 describe("over-long submissions", () => {
   it("are trimmed, not rejected", () => {
-    const sub = { evidence: [{ summary: "x".repeat(500), strength: "direct", polarity: "supports", toolCallIds: ["tc_1"] }], reasoning: "y".repeat(2000) };
+    const sub = { evidence: [{ summary: "x".repeat(500), strength: "direct", polarity: "supports", toolCallIds: ["r1"] }], reasoning: "y".repeat(2000) };
     const r = check("submit_assessment", sub, 1);
     expect(r.success).toBe(true);
     expect(((r as any).data.evidence[0].summary as string).length).toBe(300);
@@ -240,12 +240,12 @@ describe("identity chains", () => {
     const g = seeded();
     apply(g, { addNodes: [node("act")] });
     const sig = (value: string, call: string) => ({ layer: "machine-facing" as const, kind: "iam-principal", value, toolCallIds: [call] });
-    apply(g, buildAttributionPatch("N2", [sig("arn:aws:sts::1111:assumed-role/admin/fn-sync", "tc_1")], g, ctx));
-    apply(g, buildAttributionPatch("N2", [sig("arn:aws:iam::1111:role/admin", "tc_2")], g, ctx), 2);
-    apply(g, buildAttributionPatch("N2", [sig("arn:aws:lambda:us-east-1:1111:function:fn-sync", "tc_3")], g, ctx), 3);
-    apply(g, buildAttributionPatch("N2", [sig("lambda.amazonaws.com", "tc_4")], g, ctx), 4);
+    apply(g, buildAttributionPatch("N2", [sig("arn:aws:sts::1111:assumed-role/admin/fn-sync", "r1")], g, ctx));
+    apply(g, buildAttributionPatch("N2", [sig("arn:aws:iam::1111:role/admin", "r2")], g, ctx), 2);
+    apply(g, buildAttributionPatch("N2", [sig("arn:aws:lambda:us-east-1:1111:function:fn-sync", "r3")], g, ctx), 3);
+    apply(g, buildAttributionPatch("N2", [sig("lambda.amazonaws.com", "r4")], g, ctx), 4);
     expect(Object.values(g.edges).filter((e) => e.target === "N2").some((e) => e.disputed)).toBe(false);
-    apply(g, buildAttributionPatch("N2", [sig("arn:aws:iam::1111:user/mallory", "tc_5")], g, ctx), 5);
+    apply(g, buildAttributionPatch("N2", [sig("arn:aws:iam::1111:user/mallory", "r5")], g, ctx), 5);
     expect(Object.values(g.edges).filter((e) => e.target === "N2" && e.disputed).length).toBeGreaterThan(0);
   });
   it("disputed attribution gets at most 2 checks per action", () => {
@@ -263,9 +263,9 @@ describe("accusing labels need a baseline", () => {
   it("refuses 'attacker ...' without a baseline, accepts it with one, and accepts neutral wording", () => {
     expect(check("submit_causes", { candidates: [cand("Attacker used stolen credential from 1.2.3.4")], reasoning: "r" }, 3)).toMatchObject({ success: false });
     // A takeover claim ("stolen credential") also needs the takeover record (v3-temp attribution rule).
-    expect(check("submit_causes", { candidates: [cand("Attacker used stolen credential from 1.2.3.4", { summary: "s", unusual: true, toolCallIds: ["tc_1"] })], reasoning: "r" }, 3)).toMatchObject({ success: false });
-    expect(check("submit_causes", { candidates: [{ ...cand("Attacker used stolen credential from 1.2.3.4", { summary: "s", unusual: true, toolCallIds: ["tc_1"] }), takeover: { summary: "key created for the account from 1.2.3.4", toolCallIds: ["tc_2"] } }], reasoning: "r" }, 3)).toMatchObject({ success: true });
-    expect(check("submit_causes", { candidates: [cand("Attacker ran kubectl from 1.2.3.4", { summary: "s", unusual: true, toolCallIds: ["tc_1"] })], reasoning: "r" }, 3)).toMatchObject({ success: true });
+    expect(check("submit_causes", { candidates: [cand("Attacker used stolen credential from 1.2.3.4", { summary: "s", unusual: true, toolCallIds: ["r1"] })], reasoning: "r" }, 3)).toMatchObject({ success: false });
+    expect(check("submit_causes", { candidates: [{ ...cand("Attacker used stolen credential from 1.2.3.4", { summary: "s", unusual: true, toolCallIds: ["r1"] }), takeover: { summary: "key created for the account from 1.2.3.4", toolCallIds: ["r2"] } }], reasoning: "r" }, 3)).toMatchObject({ success: true });
+    expect(check("submit_causes", { candidates: [cand("Attacker ran kubectl from 1.2.3.4", { summary: "s", unusual: true, toolCallIds: ["r1"] })], reasoning: "r" }, 3)).toMatchObject({ success: true });
     expect(check("submit_causes", { candidates: [cand("kubectl create from 1.2.3.4 as role/admin")], reasoning: "r" }, 3)).toMatchObject({ success: true });
   });
 });
@@ -277,7 +277,7 @@ describe("legitimate steps", () => {
       addEdges: [{ tempId: "e", kind: "explains", source: "dev", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["x1"]), ev("corroborating", "supports", ["x2"])] }] });
     expect(g.nodes.N2!.isRoot).toBeUndefined();
     expect(selectFrontier(g, cfg, 2)).toMatchObject({ move: "expand", targetId: "N2" });
-    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "k8s:admin", toolCallIds: ["tc_1"] }], g, ctx));
+    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", kind: "account", value: "k8s:admin", toolCallIds: ["r1"] }], g, ctx));
     const { renderReport } = await import("../../../plugins/rootcause/v3/report.js");
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
     const md = renderReport(g, new MemoryTrace("t"), null, { id: "a", source: "edr", title: "t", observedAt: "2026-01-01T00:00:00Z", artifacts: [], raw: {} });
@@ -291,8 +291,8 @@ describe("linked system identities", () => {
     const g = seeded();
     apply(g, { addNodes: [node("act")] });
     apply(g, buildAttributionPatch("N2", [
-      { layer: "machine-facing", kind: "iam-principal", value: "arn:aws:iam::1111:role/admin", toolCallIds: ["tc_1"] },
-      { layer: "machine-facing", kind: "iam-principal", value: "arn:aws:sts::1111:assumed-role/admin/fn-sync", toolCallIds: ["tc_1"] },
+      { layer: "machine-facing", kind: "iam-principal", value: "arn:aws:iam::1111:role/admin", toolCallIds: ["r1"] },
+      { layer: "machine-facing", kind: "iam-principal", value: "arn:aws:sts::1111:assumed-role/admin/fn-sync", toolCallIds: ["r1"] },
     ], g, ctx));
     expect(Object.values(g.edges).every((e) => e.status === "confirmed")).toBe(true);
   });
@@ -348,7 +348,7 @@ describe("disposition", () => {
 
 describe("submissions are not thrown away whole", () => {
   const ev1 = { label: "curl wrote /tmp/job.yaml on node-1", domain: "edr", prior: 0.4, artifacts: [], nodeEvidence: [], edgeEvidence: [] };
-  const test = (events: unknown) => ({ outcome: "found", summary: "s", toolCallIds: ["tc_1"], supports: [], weakens: [], events, reasoning: "r" });
+  const test = (events: unknown) => ({ outcome: "found", summary: "s", toolCallIds: ["r1"], supports: [], weakens: [], events, reasoning: "r" });
   it("accepts events sent as a JSON string and without isRootCause", () => {
     expect(check("submit_test", test(JSON.stringify([ev1])), 3)).toMatchObject({ success: true, data: { events: [{ label: ev1.label }] } });
   });
@@ -357,7 +357,7 @@ describe("submissions are not thrown away whole", () => {
   });
   it("salvage drops only the bad item", async () => {
     const { salvage } = await import("../../../plugins/rootcause/v3/model/client.js");
-    const input = test([ev1, { ...ev1, label: "attacker exfiltrated keys" }]);
+    const input = test([ev1, { ...ev1, label: "credential minted outside captured telemetry" }]);
     const first = check("submit_test", input, 3);
     expect(first).toMatchObject({ success: false, drop: [["events", 1]] });
     expect(salvage("submit_test", input, 3, {}, first)).toMatchObject({ dropped: 1, data: { events: [{ label: ev1.label }] } });
@@ -367,17 +367,28 @@ describe("submissions are not thrown away whole", () => {
 describe("baselines are checked, not taken on the model's word", () => {
   const range: [string, string] = ["2026-03-10T00:00:00Z", "2026-03-13T00:00:00Z"];
   const calls: Record<string, unknown> = {
-    tc_1: { spl: "index=i sourcetype=github actor=dev-a | stats count by action", earliest: range[0], latest: range[1] },
-    tc_2: { spl: "index=i sourcetype=github | stats count by actor", earliest: range[0], latest: range[1] }, // other accounts, not his own
-    tc_3: { spl: "index=i sourcetype=github actor=dev-a | stats count", earliest: "2026-03-12T10:00:00Z", latest: range[1] }, // a few hours
+    r1: { spl: "index=i sourcetype=github actor=dev-a | stats count by action", earliest: range[0], latest: range[1] },
+    r2: { spl: "index=i sourcetype=github | stats count by actor", earliest: range[0], latest: range[1] }, // other accounts, not his own
+    r3: { spl: "index=i sourcetype=github actor=dev-a | stats count", earliest: "2026-03-12T10:00:00Z", latest: range[1] }, // a few hours
   };
   const cx = { inputOf: (id: string) => calls[id], range };
   const cand = (ids: string[], unusual = true) => ({ label: "register_self_hosted_runner by dev-a", domain: "github", prior: 0.4, artifacts: [{ kind: "user", value: "dev-a" }], nodeEvidence: [], edgeEvidence: [], baseline: { summary: "s", unusual, toolCallIds: ids } });
   const sub = (c: object) => ({ effects: [c], reasoning: "r" });
-  it("needs a whole-range search naming the account, both for unusual and for routine", () => {
-    expect(check("submit_effects", sub(cand(["tc_1"])), 3, cx)).toMatchObject({ success: true });
-    expect(check("submit_effects", sub(cand(["tc_2"])), 3, cx)).toMatchObject({ success: false, drop: [["effects", 0]] });
-    expect(check("submit_effects", sub(cand(["tc_3"], false)), 3, cx)).toMatchObject({ success: false });
+  it("needs a whole-range search naming the account, both for unusual and for routine; a baseline that fails is dropped and the event tagged unverified", () => {
+    const kept = (r: ReturnType<typeof check>) => (r as { data: { effects: { baseline?: unknown; unverified?: boolean }[] } }).data.effects[0]!;
+    expect(kept(check("submit_effects", sub(cand(["r1"])), 3, cx))).toMatchObject({ baseline: { unusual: true } });
+    for (const e of [kept(check("submit_effects", sub(cand(["r2"])), 3, cx)), kept(check("submit_effects", sub(cand(["r3"], false)), 3, cx))]) {
+      expect(e.unverified).toBe(true);
+      expect(e.baseline).toBeUndefined();
+    }
+  });
+  it("drops an item citing a ref the run never issued, and keeps the rest", async () => {
+    const { salvage } = await import("../../../plugins/rootcause/v3/model/client.js");
+    const two = sub({ ...cand(["r1"]), label: "second" });
+    const input = { effects: [cand(["r1"]), { ...cand(["r9"]), label: "second" }, two.effects[0]], reasoning: "r" };
+    const first = check("submit_effects", input, 3, cx);
+    expect(first).toMatchObject({ success: false, drop: [["effects", 1]] });
+    expect(salvage("submit_effects", input, 3, cx, first)).toMatchObject({ dropped: 1, data: { effects: [{ label: "register_self_hosted_runner by dev-a" }, { label: "second" }] } });
   });
 });
 
@@ -410,7 +421,7 @@ describe("the same process re-described merges", () => {
 describe("rare outliers get tested, absent needs the whole range, routine must be shown", async () => {
   const { rareValues, mentionsRare } = await import("../../../plugins/rootcause/v3/rare.js");
   const { routineShown } = await import("../../../plugins/rootcause/v3/baseline.js");
-  const rare = `## Rare activity\n\n- edr:process:\n  ParentBaseFileName (39 distinct) [tc_6]: tool-a ×2 (2026-03-11 15:52 → 2026-03-11 15:52, node-1); xz ×5 (2026-03-11 15:54 → 2026-03-11 16:30, node-1); tool-b ×13 (2026-03-11 15:54, node-1)\n- git:audit:\n  actor (3 distinct) [tc_15]: outsider1 ×3 (2026-03-11 14:53 → 2026-03-11 14:54, sim)`;
+  const rare = `## Rare activity\n\n- edr:process:\n  ParentBaseFileName (39 distinct) [r6]: tool-a ×2 (2026-03-11 15:52 → 2026-03-11 15:52, node-1); xz ×5 (2026-03-11 15:54 → 2026-03-11 16:30, node-1); tool-b ×13 (2026-03-11 15:54, node-1)\n- git:audit:\n  actor (3 distinct) [r15]: outsider1 ×3 (2026-03-11 14:53 → 2026-03-11 14:54, sim)`;
   it("parses the rare list (few-times values only) and matches short names as words", () => {
     expect(rareValues(rare).map((x) => [x.value, x.sourcetype])).toEqual([["tool-a", "edr:process"], ["xz", "edr:process"], ["outsider1", "git:audit"]]);
     expect(mentionsRare('index=i ParentBaseFileName="xz"', ["xz"])).toBe(true);
@@ -420,10 +431,10 @@ describe("rare outliers get tested, absent needs the whole range, routine must b
     const range: [string, string] = ["2026-03-11T00:00:00Z", "2026-03-14T00:00:00Z"];
     const c = (ids: string[]) => ({ label: "x", domain: "d", prior: 0.3, artifacts: [], nodeEvidence: [], edgeEvidence: [], baseline: { summary: "s", unusual: false, toolCallIds: ids } });
     const head = "purpose: p window: 2026-03-11T00:00:00.000Z → 2026-03-14T00:00:00.000Z (as requested) 6 events matched\n";
-    const out: Record<string, string> = { tc_1: head + '{"first":"1773159600","last":"1773404800"}', tc_2: head + '{"first":"2026-03-12 12:46"}\n{"last":"2026-03-13 12:34"}' };
-    expect(routineShown(c(["tc_1"]), (id) => out[id], range)).toBe(true); // Mar 11 03:00 -> Mar 13 12:26
-    expect(routineShown(c(["tc_2"]), (id) => out[id], range)).toBe(false); // one day of three
-    expect(routineShown(c(["tc_3"]), (id) => ({ tc_3: head })[id], range)).toBe(false); // the header window alone is not activity
+    const out: Record<string, string> = { r1: head + '{"first":"1773159600","last":"1773404800"}', r2: head + '{"first":"2026-03-12 12:46"}\n{"last":"2026-03-13 12:34"}' };
+    expect(routineShown(c(["r1"]), (id) => out[id], range)).toBe(true); // Mar 11 03:00 -> Mar 13 12:26
+    expect(routineShown(c(["r2"]), (id) => out[id], range)).toBe(false); // one day of three
+    expect(routineShown(c(["r3"]), (id) => ({ r3: head })[id], range)).toBe(false); // the header window alone is not activity
   });
 });
 
@@ -433,8 +444,8 @@ describe("a test is absent only after a whole-range search", () => {
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
     const g = seeded();
     g.theories = [{ id: "R1.H1", round: 1, story: "s", accountsFor: [], gaps: "", status: "live", support: 0, against: 0, predictions: [{ id: "R1.P1", sourcetype: "edr", expect: "e", spl: "index=x sourcetype=edr", separates: [], next: true, status: "open" }] }];
-    const inputs: Record<string, unknown> = { tc_1: { spl: "index=x sourcetype=edr", earliest: "2026-03-13T11:00:00Z", latest: "2026-03-13T12:40:00Z" } };
-    const sub = { outcome: "absent", summary: "nothing", toolCallIds: ["tc_1"], supports: [], weakens: ["R1.H1"], events: [], reasoning: "" };
+    const inputs: Record<string, unknown> = { r1: { spl: "index=x sourcetype=edr", earliest: "2026-03-13T11:00:00Z", latest: "2026-03-13T12:40:00Z" } };
+    const sub = { outcome: "absent", summary: "nothing", toolCallIds: ["r1"], supports: [], weakens: ["R1.H1"], events: [], reasoning: "" };
     const ctx: any = { model: { runTurn: async () => ({ submission: sub, toolCalls: [] }) }, trace: new MemoryTrace("t").forTurn(2, "test", "R1.P1"), cfg, range: ["2026-03-11T00:00:00Z", "2026-03-14T00:00:00Z"], domains: ["edr"], tools: { callCount: 1, coverage: {}, inputOf: (id: string) => inputs[id] }, sizes: {} };
     const patch = await testHandler({ move: "test", targetId: "R1.P1", turn: 2, priority: 1, reason: "" }, g, ctx);
     expect(patch.predictionResult).toMatchObject({ status: "unclear", weakens: [] });

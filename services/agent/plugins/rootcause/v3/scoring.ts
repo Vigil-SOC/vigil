@@ -51,7 +51,7 @@ export interface EvidenceIn {
 
 // Evidence from a submission against the tool calls made in this run: a citation of a call never made is
 // rejected; no citation at all is downgraded to circumstantial.
-export function vetEvidence(e: EvidenceIn, callIds: ReadonlySet<string>): { ok: true; value: EvidenceIn } | { ok: false; reason: string } {
+export function vetEvidence(e: EvidenceIn, callIds: { has(id: string): boolean }): { ok: true; value: EvidenceIn } | { ok: false; reason: string } {
   const bad = e.toolCallIds.filter((id) => !callIds.has(id));
   if (bad.length) return { ok: false, reason: `cites tool calls never made in this run: ${bad.join(", ")}` };
   if (!e.toolCallIds.length) return { ok: true, value: { ...e, strength: "circumstantial" } };

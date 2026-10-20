@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { check } from "../../../plugins/rootcause/v3/model/client.js";
 
-const cand = (label: string, extra: object = {}) => ({ label, domain: "edr", prior: 0.3, artifacts: [], nodeEvidence: [{ summary: "s", strength: "direct", polarity: "supports", toolCallIds: ["tc_1"] }], edgeEvidence: [], ...extra });
-const base = { baseline: { summary: "first time from this address", unusual: true, toolCallIds: ["tc_2"] } };
+const cand = (label: string, extra: object = {}) => ({ label, domain: "edr", prior: 0.3, artifacts: [], nodeEvidence: [{ summary: "s", strength: "direct", polarity: "supports", toolCallIds: ["r1"] }], edgeEvidence: [], ...extra });
+const base = { baseline: { summary: "first time from this address", unusual: true, toolCallIds: ["r2"] } };
 
 describe("attribution: a takeover claim needs the takeover record", () => {
-  it("refuses 'stolen credential' with no takeover record, in loose mode too", () => {
-    const r = check("submit_causes", { candidates: [cand("Attacker using stolen admin credential ran kubectl", base)], reasoning: "r" }, 5, { loose: true });
+  it("refuses 'stolen credential' with no takeover record,", () => {
+    const r = check("submit_causes", { candidates: [cand("Attacker using stolen admin credential ran kubectl", base)], reasoning: "r" }, 5);
     expect(r.success).toBe(false);
     expect((r as { msg: string }).msg).toMatch(/no takeover record/);
   });
   it("refuses a takeover record that describes a missing record", () => {
-    const r = check("submit_causes", { candidates: [cand("admin credential compromised", { ...base, takeover: { summary: "no AssumeRole or login record found for this session", toolCallIds: ["tc_3"] } })], reasoning: "r" }, 5);
+    const r = check("submit_causes", { candidates: [cand("admin credential compromised", { ...base, takeover: { summary: "no AssumeRole or login record found for this session", toolCallIds: ["r3"] } })], reasoning: "r" }, 5);
     expect((r as { msg: string }).msg).toMatch(/describes a missing one/);
   });
   it("accepts a takeover claim citing the takeover record", () => {
-    const r = check("submit_causes", { candidates: [cand("alice's session used by the attacker's implant", { ...base, takeover: { summary: "rundll32 implant process running as alice", toolCallIds: ["tc_3"] } })], reasoning: "r" }, 5);
+    const r = check("submit_causes", { candidates: [cand("alice's session used by the attacker's implant", { ...base, takeover: { summary: "rundll32 implant process running as alice", toolCallIds: ["r3"] } })], reasoning: "r" }, 5);
     expect(r.success).toBe(true);
   });
   it("leaves neutral labels alone", () => {

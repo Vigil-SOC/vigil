@@ -6,7 +6,7 @@ export const EvidenceIn = z.object({
   summary: z.string().max(300).describe("what the cited results show, in one or two sentences"),
   strength: z.enum(["direct", "corroborating", "circumstantial"]),
   polarity: z.enum(["supports", "refutes"]),
-  toolCallIds: z.array(z.string()).describe("the tc_ ids of the searches this rests on"),
+  toolCallIds: z.array(z.string()).describe("the refs (r3 ...) of the searches this rests on"),
 });
 
 export const ArtifactIn = z.object({ kind: z.enum(ARTIFACT_KINDS), value: z.string().describe("copied exactly as the data spells it") });

@@ -3,7 +3,7 @@ import { applyPatch, createGraph, emptyPatch, type EvidenceDraft, type Graph, ty
 
 export const cfg: AgentConfig = { ...defaultConfig, maxTheorize: 0, linkNeedsSharedValue: false }; // stories are tested on their own (stories.test.ts); shared values in connect.test.ts
 
-export const ev = (strength: EvidenceDraft["strength"], polarity: EvidenceDraft["polarity"] = "supports", toolCallIds = ["tc_1"], summary = `${strength} ${polarity}`): EvidenceDraft =>
+export const ev = (strength: EvidenceDraft["strength"], polarity: EvidenceDraft["polarity"] = "supports", toolCallIds = ["r1"], summary = `${strength} ${polarity}`): EvidenceDraft =>
   ({ source: "edr", summary, strength, polarity, toolCallIds, traceIds: [], turn: 1 });
 
 export const node = (tempId: string, over: Partial<NodeIn> = {}): NodeIn =>
@@ -16,6 +16,6 @@ export function apply(g: Graph, p: Partial<GraphPatch>, turn = 1) {
 // symptom S (confirmed) <- edges built by the caller
 export function seeded(): Graph {
   const g = createGraph("t");
-  apply(g, { addNodes: [node("S", { isSymptom: true, label: "symptom", evidence: [ev("direct", "supports", ["tc_s"])] })] });
+  apply(g, { addNodes: [node("S", { isSymptom: true, label: "symptom", evidence: [ev("direct", "supports", ["rs"])] })] });
   return g;
 }

@@ -3,10 +3,12 @@ import type { AgentConfig } from "./config.js";
 import type { ModelClient } from "./model/client.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { TraceWriter, TurnTrace } from "./trace.js";
-import type { Budget } from "./budget.js";
 import type { Path } from "./graph.js";
 
 export type Domain = string;
+
+// What the run has spent so far, read from the pool that meters it.
+export interface Spent { readonly usd: number }
 
 export const ARTIFACT_KINDS = [
   "event-id", "process-guid", "parent-process-guid", "file-hash", "image-digest", "commit-sha", "workflow-run-id",
@@ -57,7 +59,7 @@ export interface LoopContext {
   model: ModelClient;
   tools: ToolRegistry;
   trace: TurnTrace;
-  budget: Budget;
+  budget: Spent;
   domains: Domain[];
   sizes?: Record<Domain, number>; // events per sourcetype, from the survey
   range: [string, string];
@@ -69,7 +71,7 @@ export interface Deps {
   model: ModelClient;
   tools: ToolRegistry;
   trace: TraceWriter;
-  budget: Budget;
+  budget: Spent;
   domains: Domain[];
   sizes?: Record<Domain, number>;
   clock: () => Date;

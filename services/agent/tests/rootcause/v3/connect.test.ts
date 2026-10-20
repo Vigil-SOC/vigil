@@ -45,7 +45,7 @@ describe("connect", () => {
     const { connect } = await import("../../../plugins/rootcause/v3/handlers/connect.js");
     const g = graph();
     apply(g, { addNodes: [{ tempId: "m", kind: "boundary-marker", label: "upstream cause of N2 in edr", domain: "edr", prior: 0.3, evidence: [], artifacts: [], targetDomain: "edr", originNodeId: "N2" }], addEdges: [{ tempId: "me", kind: "explains", source: "m", target: "N2", prior: 0.3, evidence: [] }] });
-    const cite = (summary: string) => [{ summary, strength: "direct", polarity: "supports", toolCallIds: ["tc_1"] }];
+    const cite = (summary: string) => [{ summary, strength: "direct", polarity: "supports", toolCallIds: ["r1"] }];
     const sub = {
       events: [{ ref: "X1", label: "token file read on the node", domain: "edr", prior: 0.4, observedAt: "2026-03-11T17:00:00Z", artifacts: [{ kind: "host", value: "node-b" }], nodeEvidence: cite("the read"), edgeEvidence: [] }],
       links: [
@@ -67,27 +67,33 @@ describe("connect", () => {
     expect(g.nodes.B1!.resolvedTo).toBe("N4");
     expect(islands(g)).toEqual([]);
   });
-  it("a legitimate step links into the attack only with direct evidence", async () => {
+  it("a legitimate step links into the attack as an inferred link unless it has direct evidence", async () => {
     const { connect } = await import("../../../plugins/rootcause/v3/handlers/connect.js");
     const g = graph();
     apply(g, { setFlags: [{ nodeId: "N4", legitimate: true }] });
-    const link = (strength: string) => ({ events: [], links: [{ from: "N4", to: "N2", prior: 0.4, evidence: [{ summary: "s", strength, polarity: "supports", toolCallIds: ["tc_1"] }] }], reasoning: "" });
-    expect((await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(link("circumstantial")))).addEdges).toEqual([]);
-    expect((await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(link("direct")))).addEdges).toHaveLength(1);
+    const link = (strength: string) => ({ events: [], links: [{ from: "N4", to: "N2", prior: 0.4, evidence: [{ summary: "s", strength, polarity: "supports", toolCallIds: ["r1"] }] }], reasoning: "" });
+    const weak = (await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(link("circumstantial")))).addEdges;
+    expect(weak).toHaveLength(1);
+    expect(weak![0]).toMatchObject({ inferred: true });
+    const strong = (await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(link("direct")))).addEdges;
+    expect(strong).toHaveLength(1);
+    expect(strong![0]!.inferred).toBeUndefined();
   });
 });
 
 describe("legitimate steps", () => {
-  it("a legitimate cause candidate needs direct edge evidence", async () => {
+  it("a legitimate cause candidate without direct edge evidence joins as an inferred link", async () => {
     const { candidatePatch, Vetter } = await import("../../../plugins/rootcause/v3/handlers/common.js");
     const g = graph();
     const ctx = ctxFor(null);
     ctx.tools.outputOf = () => '{"first":"1773194400","last":"1773450800"}'; // spread over the range: routine
     const c = (strength: "direct" | "circumstantial") => ({ label: "dev registered a runner", domain: "edr", prior: 0.3, artifacts: [], nodeEvidence: [], identitySignals: [],
-      edgeEvidence: [{ summary: "s", strength, polarity: "supports" as const, toolCallIds: ["tc_1"] }], legitimate: true, baseline: { summary: "b", unusual: false, toolCallIds: ["tc_2"] } });
+      edgeEvidence: [{ summary: "s", strength, polarity: "supports" as const, toolCallIds: ["r1"] }], legitimate: true, baseline: { summary: "b", unusual: false, toolCallIds: ["r2"] } });
     const v = new Vetter(ctx, []);
-    expect(candidatePatch(c("circumstantial"), v, g, ctx, "N2").patch).toEqual({});
-    expect(candidatePatch(c("direct"), v, g, ctx, "N2").patch.addEdges).toHaveLength(1);
+    expect(candidatePatch(c("circumstantial"), v, g, ctx, "N2").patch.addEdges).toMatchObject([{ inferred: true }]);
+    const direct = candidatePatch(c("direct"), v, g, ctx, "N2").patch.addEdges;
+    expect(direct).toHaveLength(1);
+    expect(direct![0]!.inferred).toBeUndefined();
   });
   it("no boundary and no pivot from a legitimate step; the stories' tests go before pivots", async () => {
     const { boundaryPatch } = await import("../../../plugins/rootcause/v3/handlers/common.js");
@@ -113,10 +119,10 @@ describe("legitimate steps", () => {
       node("merge", { label: "dev merged a PR", legitimate: true, prior: 0.5, artifacts: [{ kind: "user", value: "devuser" }], evidence: [ev("direct", "supports", ["a"]), ev("direct", "supports", ["b"])] }),
       node("run", { label: "workflow run on outsider's PR", prior: 0.5, artifacts: [{ kind: "user", value: "devuser" }, { kind: "user", value: "outsider" }], evidence: [ev("direct", "supports", ["c"]), ev("direct", "supports", ["d"])] }),
     ], addEdges: [{ tempId: "l", kind: "explains", source: "run", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["e"]), ev("direct", "supports", ["f"])] }] });
-    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", relation: "ran-as", kind: "actor-login", value: "devuser", resolvesTo: "github:devuser", toolCallIds: ["tc_1"] }], g, tctx));
+    apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", relation: "ran-as", kind: "actor-login", value: "devuser", resolvesTo: "github:devuser", toolCallIds: ["r1"] }], g, tctx));
     apply(g, buildAttributionPatch("N3", [
-      { layer: "machine-facing", relation: "ran-as", kind: "actor-login", value: "devuser", resolvesTo: "github:devuser", toolCallIds: ["tc_1"] },
-      { layer: "human-facing", relation: "operated-by", kind: "actor-login", value: "outsider", resolvesTo: "github:outsider", toolCallIds: ["tc_2"] },
+      { layer: "machine-facing", relation: "ran-as", kind: "actor-login", value: "devuser", resolvesTo: "github:devuser", toolCallIds: ["r1"] },
+      { layer: "human-facing", relation: "operated-by", kind: "actor-login", value: "outsider", resolvesTo: "github:outsider", toolCallIds: ["r2"] },
     ], g, tctx));
     const md = renderReport(g, new MemoryTrace("t"), null, { id: "a", source: "edr", title: "t", observedAt: "2026-04-02T00:00:00Z", artifacts: [], raw: {} });
     expect(md).toMatch(/- user: outsider\n/);
@@ -146,18 +152,18 @@ describe("islands", () => {
 describe("routine over several days", () => {
   it("two days of activity in a three-day range is not routine, even when a midnight day-bucket stretches the spread", async () => {
     const { routineShown } = await import("../../../plugins/rootcause/v3/baseline.js");
-    const c: any = { baseline: { summary: "s", unusual: false, toolCallIds: ["tc_1", "tc_2"] } };
-    const out: Record<string, string> = { tc_1: '{"_time":"2026-03-12T00:00","count":"10"}\n{"_time":"2026-03-13T00:00","count":"6"}', tc_2: '{"t":"1773320442"}\n{"t":"1773405275"}' };
+    const c: any = { baseline: { summary: "s", unusual: false, toolCallIds: ["r1", "r2"] } };
+    const out: Record<string, string> = { r1: '{"_time":"2026-03-12T00:00","count":"10"}\n{"_time":"2026-03-13T00:00","count":"6"}', r2: '{"t":"1773320442"}\n{"t":"1773405275"}' };
     expect(routineShown(c, (id) => out[id], range)).toBe(false);
-    out.tc_3 = '{"_time":"2026-03-11T00:00"}\n{"_time":"2026-03-12T00:00"}\n{"_time":"2026-03-13T00:00"}';
-    expect(routineShown({ baseline: { ...c.baseline, toolCallIds: ["tc_3", "tc_2"] } } as any, (id) => out[id], range)).toBe(true);
+    out.r3 = '{"_time":"2026-03-11T00:00"}\n{"_time":"2026-03-12T00:00"}\n{"_time":"2026-03-13T00:00"}';
+    expect(routineShown({ baseline: { ...c.baseline, toolCallIds: ["r3", "r2"] } } as any, (id) => out[id], range)).toBe(true);
   });
 });
 
 describe("a link needs a value both events carry", () => {
   const on = { ...cfg, linkNeedsSharedValue: true };
   const art = (kind: string, value: string) => ({ kind: kind as any, value });
-  it("refuses same host + nearby time across accounts or sources; keeps a shared process, file name or token", async () => {
+  it("keeps same host + nearby time across accounts or sources as an inferred link; a shared process, file name or token is a join", async () => {
     const { applyPatch, emptyPatch, createGraph, sharedValue } = await import("../../../plugins/rootcause/v3/graph.js");
     const g = createGraph("t");
     const add = (p: any) => applyPatch(g, { ...emptyPatch(), ...p }, 1, on);
@@ -169,7 +175,7 @@ describe("a link needs a value both events carry", () => {
       node("mail", { label: "email with attachment Invoice_10001.xlsm", domain: "email", artifacts: [art("domain-name", "bad.example")] }),
       node("excel", { label: "EXCEL opened the attachment", domain: "edr", artifacts: [art("process", '"EXCEL.EXE" C:\\Users\\a\\Downloads\\Invoice_10001.xlsm')] }),
     ] });
-    const sig = (id: string, v: string) => buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: v, resolvesTo: `ad:${v}`, toolCallIds: ["tc_1"] }], g, { turn: 1, domain: "wineventlog", traceIds: () => [] });
+    const sig = (id: string, v: string) => buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: v, resolvesTo: `ad:${v}`, toolCallIds: ["r1"] }], g, { turn: 1, domain: "wineventlog", traceIds: () => [] });
     add(sig("N1", "alice")); add(sig("N2", "bob"));
     expect(sharedValue(g, g.nodes.N1!, g.nodes.N2!)).toBeNull(); // host only, different accounts
     expect(sharedValue(g, g.nodes.N3!, g.nodes.N4!)).toBeNull(); // host only, different sources
@@ -178,8 +184,10 @@ describe("a link needs a value both events carry", () => {
       { tempId: "x", kind: "explains", source: "N1", target: "N2", prior: 0.4, evidence: [ev("direct")] },
       { tempId: "y", kind: "explains", source: "N5", target: "N6", prior: 0.4, evidence: [ev("direct")] },
     ] });
-    expect(r.rejected.map((x) => x.reason)).toEqual([expect.stringMatching(/no shared value: N1 and N2/)]);
-    expect(Object.values(g.edges).filter((e) => e.kind === "explains").map((e) => `${e.source}>${e.target}`)).toEqual(["N5>N6"]);
+    expect(r.rejected).toEqual([]);
+    const edges = Object.values(g.edges).filter((e) => e.kind === "explains");
+    expect(edges.map((e) => `${e.source}>${e.target}:${e.inferred === true}`)).toEqual(["N1>N2:true", "N5>N6:false"]);
+    expect(edges[0]!.evidence.every((v) => v.strength === "circumstantial")).toBe(true);
   });
 });
 
@@ -187,7 +195,7 @@ describe("contradicting tests and early roots", () => {
   it("a test result that contradicts a link refutes it there", async () => {
     const { test: testHandler } = await import("../../../plugins/rootcause/v3/handlers/test.js");
     const g = graph();
-    const sub = { outcome: "unclear", summary: "the pod stayed Pending and never ran", toolCallIds: ["tc_1"], supports: [], weakens: [], events: [], contradicts: ["E1", "N1", "E99"], reasoning: "" };
+    const sub = { outcome: "unclear", summary: "the pod stayed Pending and never ran", toolCallIds: ["r1"], supports: [], weakens: [], events: [], contradicts: ["E1", "N1", "E99"], reasoning: "" };
     const ctx = ctxFor(sub, 1); ctx.tools.inputOf = () => ({ earliest: range[0], latest: range[1] });
     const patch = await testHandler({ move: "test", targetId: "R1.P1", turn: 5, priority: 1, reason: "" }, g, ctx);
     // E1 is the chain link: refuted; N1 is the symptom (never refuted this way); E99 does not exist.
@@ -236,7 +244,7 @@ describe("role ARNs: a hand-off joins, two sessions of one role do not", () => {
       node("create", { label: "CreateFunction fn-sync with execution role admin", domain: "cloudtrail", artifacts: [role] }),
       node("run", { label: "fn-sync running as admin deleted the rule", domain: "cloudtrail", artifacts: [role] }),
     ] });
-    const sig = (id: string, v: string) => buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "iam-principal", value: v, resolvesTo: `aws:${v}`, toolCallIds: ["tc_1"] }], g, { turn: 1, domain: "cloudtrail", traceIds: () => [] });
+    const sig = (id: string, v: string) => buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "iam-principal", value: v, resolvesTo: `aws:${v}`, toolCallIds: ["r1"] }], g, { turn: 1, domain: "cloudtrail", traceIds: () => [] });
     add(sig("N1", "arn:aws:sts::111122223333:assumed-role/admin/session-a"));
     add(sig("N2", "arn:aws:sts::111122223333:assumed-role/ops-controller/svc-deploy"));
     add(sig("N3", "arn:aws:sts::111122223333:assumed-role/admin/fn-sync"));
@@ -256,7 +264,7 @@ describe("routine work leads to more routine work", () => {
       node("merge", { label: "dev-a merged pull request 7", domain: "github", legitimate: true, artifacts: [{ kind: "user", value: "dev-a" }] }),
       node("evil", { label: "attacker pushed a stolen token commit as dev-a", domain: "github", artifacts: [{ kind: "user", value: "dev-a" }] }),
     ] });
-    for (const id of ["N1", "N2", "N3"]) add(buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: "dev-a", resolvesTo: "github:dev-a", toolCallIds: ["tc_1"] }], g, { turn: 1, domain: "github", traceIds: () => [] }));
+    for (const id of ["N1", "N2", "N3"]) add(buildAttributionPatch(id, [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: "dev-a", resolvesTo: "github:dev-a", toolCallIds: ["r1"] }], g, { turn: 1, domain: "github", traceIds: () => [] }));
     add({ addEdges: [
       { tempId: "a", kind: "explains", source: "N1", target: "N2", prior: 0.6, evidence: [ev("direct")] },
       { tempId: "b", kind: "explains", source: "N3", target: "N2", prior: 0.6, evidence: [ev("direct")] },

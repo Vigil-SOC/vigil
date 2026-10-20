@@ -3,10 +3,9 @@
 // (and the grader) needs to see even when they are not on the root-cause chain.
 import { isDivergence } from "./attribution.js";
 import { ACCUSE, TAKEOVER } from "./model/client.js";
-import type { Budget } from "./budget.js";
 import { allPaths, bestPathFromSymptom, getParents, islands, type Graph, type GraphNode } from "./graph.js";
 import type { TraceWriter } from "./trace.js";
-import type { Alert, ExitReason } from "./types.js";
+import type { Alert, ExitReason, Spent } from "./types.js";
 
 const pct = (x: number) => x.toFixed(2);
 // An account the logs name (ad:, aws:, github:, k8s:..., an address or an email), as opposed to a description.
@@ -49,7 +48,7 @@ function forReport(g: Graph): Graph {
   return { ...g, nodes: Object.fromEntries(Object.entries(g.nodes).map(([id, n]) => [id, n.unverified ? { ...n, label: `${n.label.replace(ACCUSE_ALL, "[unverified]")} (unverified)` } : n])) };
 }
 
-export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | null, alert: Alert, budget?: Budget, opts: ReportOptions = {}): string {
+export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | null, alert: Alert, budget?: Spent, opts: ReportOptions = {}): string {
   const raw = !!opts.unfiltered;
   const g = raw ? g0 : forReport(g0);
   const path = bestPathFromSymptom(g);

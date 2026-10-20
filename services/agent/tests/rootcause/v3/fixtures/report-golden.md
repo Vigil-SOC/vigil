@@ -65,7 +65,7 @@ Root-cause chain, symptom first (path score 0.79):
 
 ## Established by targeted searches
 
-- (edr, found) j.doe's session was used from 198.51.100.9 only [tc_9]
+- (edr, found) j.doe's session was used from 198.51.100.9 only [r9]
 
 ## 4. Decisions
 

@@ -64,7 +64,7 @@ export function rareValues(text: string | undefined, maxCount = 5): RareValue[] 
   for (const line of (text ?? "").split("\n")) {
     const s = line.match(/^- (\S+):\s*$/);
     if (s) { st = s[1]!; continue; }
-    const m = line.match(/^\s+(\S+) \(\d+ distinct\) \[tc_\d+\]: (.*)$/);
+    const m = line.match(/^\s+(\S+) \(\d+ distinct\) \[\w+\]: (.*)$/);
     if (!m || !st) continue;
     for (const part of m[2]!.split(/; (?=\S[^;]*? ×\d+ \()/)) {
       const v = part.match(/^(.*?) ×(\d+) \(/);

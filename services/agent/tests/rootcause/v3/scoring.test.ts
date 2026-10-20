@@ -3,7 +3,7 @@ import { confidence, status, vetEvidence, clampPrior } from "../../../plugins/ro
 import type { Evidence } from "../../../plugins/rootcause/v3/types.js";
 import { cfg } from "./helpers.js";
 
-const e = (strength: Evidence["strength"], polarity: Evidence["polarity"] = "supports", toolCallIds = ["tc_1"]): Evidence =>
+const e = (strength: Evidence["strength"], polarity: Evidence["polarity"] = "supports", toolCallIds = ["r1"]): Evidence =>
   ({ id: "V", source: "x", summary: "", strength, polarity, toolCallIds, traceIds: [], turn: 1 });
 
 describe("scoring", () => {
@@ -19,10 +19,10 @@ describe("scoring", () => {
     expect(status(0.9, [e("direct")], cfg, true)).toBe("unknown");
   });
   it("uncited evidence is downgraded, unknown tool call rejected", () => {
-    const calls = new Set(["tc_1"]);
+    const calls = new Set(["r1"]);
     const up = vetEvidence({ summary: "", strength: "direct", polarity: "supports", toolCallIds: [] }, calls);
     expect(up.ok && up.value.strength).toBe("circumstantial");
-    expect(vetEvidence({ summary: "", strength: "direct", polarity: "supports", toolCallIds: ["tc_9"] }, calls).ok).toBe(false);
+    expect(vetEvidence({ summary: "", strength: "direct", polarity: "supports", toolCallIds: ["r9"] }, calls).ok).toBe(false);
   });
   it("duplicate evidence counts once", () => {
     expect(confidence(0.3, [e("direct"), e("direct")], cfg)).toBeCloseTo(confidence(0.3, [e("direct")], cfg), 6);

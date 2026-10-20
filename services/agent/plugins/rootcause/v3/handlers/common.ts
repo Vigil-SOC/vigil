@@ -9,6 +9,7 @@ import type { BoundaryT, CandidateT, EvidenceInT, IdentitySignalT } from "../mod
 import { snapshot } from "../model/snapshot.js";
 import { vetEvidence } from "../scoring.js";
 import { routineShown } from "../baseline.js";
+import { issued } from "../tools/registry.js";
 import type { Domain, LoopContext } from "../types.js";
 
 export type Handler = (decision: FrontierDecision, graph: Readonly<Graph>, ctx: LoopContext) => Promise<GraphPatch>;
@@ -20,11 +21,11 @@ export function userContent(g: Graph, targetId: string, instructions: string, ct
 // Evidence from the model, checked against this turn's tool calls. Rejected items go to the trace.
 // Citations may point at any search made in this run (earlier ones are shown with their ids in the snapshot).
 export class Vetter {
-  private ids: Set<string>;
+  private ids: { has(id: string): boolean };
   private traceOf: Map<string, string>;
   private textOf: Map<string, string>;
   constructor(private ctx: LoopContext, calls: ToolCallOut[]) {
-    this.ids = new Set([...calls.map((c) => c.id), ...Array.from({ length: ctx.tools.callCount }, (_, i) => `tc_${i + 1}`)]);
+    this.ids = { has: (id) => issued(ctx.tools, id) };
     this.traceOf = new Map(calls.map((c) => [c.id, c.traceId]));
     this.textOf = new Map(calls.map((c) => [c.id, c.text ?? ""]));
   }
@@ -99,15 +100,13 @@ export function candidatePatch(c: CandidateT, v: Vetter, g: Graph, ctx: LoopCont
   // first call on timing alone, and the run spent turns on the developer's CI).
   const edgeEv = target ? v.evidence(c.edgeEvidence, domain) : [];
   const unproven = !!target && !!node.legitimate && !g.nodes[target]?.legitimate && !edgeEv.some((e) => e.strength === "direct" && e.polarity === "supports");
-  // Loose: the link is kept as inferred (circumstantial) instead of dropping the step.
-  if (unproven && ctx.cfg.loose) {
+  // The link is kept as inferred (circumstantial) instead of dropping the step.
+  if (unproven) {
     for (const e of edgeEv) e.strength = "circumstantial";
     const edges: EdgeIn[] = [{ tempId: tempId("edge"), kind: "explains", source: id, target: target!, prior: c.prior, evidence: edgeEv, inferred: true }];
     const attr = buildAttributionPatch(id, v.signals(c.identitySignals), g, { turn: ctx.turn, domain, traceIds: v.traceIds });
     return { patch: { addNodes: [node, ...attr.addNodes], addEdges: [...edges, ...attr.addEdges] }, id, node };
   }
-  if (unproven) ctx.trace.write("rejected-evidence", { label: c.label, target, reason: "legitimate step with no direct evidence that it caused the target; not added" });
-  if (unproven) return { patch: {}, id, node };
   const edges: EdgeIn[] = target ? [{ tempId: tempId("edge"), kind: "explains", source: id, target, prior: c.prior, evidence: edgeEv, ...(c.jointCause ? { joint: true } : {}) }] : [];
   const attr = buildAttributionPatch(id, v.signals(c.identitySignals), g, { turn: ctx.turn, domain, traceIds: v.traceIds });
   return { patch: { addNodes: [node, ...attr.addNodes], addEdges: [...edges, ...attr.addEdges] }, id, node };
@@ -133,23 +132,19 @@ const routine = (c: CandidateT, ctx: LoopContext) => {
 // activity: cited, and unusual. Kept ones gain that comparison as corroborating evidence.
 // With keepLegitimate (pivot, test), routine activity that leads toward the origin is kept, marked legitimate.
 export function withBaseline<C extends CandidateT>(cands: C[], v: Vetter, ctx: LoopContext, keepLegitimate = false): { kept: C[]; evidenceFor: (c: CandidateT) => EvidenceDraft[] } {
-  const known = new Set(Array.from({ length: ctx.tools.callCount }, (_, i) => `tc_${i + 1}`));
-  const kept = cands.filter((c) => {
+  for (const c of cands) {
     const legit = keepLegitimate && (c.legitimate || (c.baseline && !c.baseline.unusual));
     // "Normal activity" drops an effect only when the baseline shows it spread over the range; otherwise it is kept.
     const shownNormal = !!c.baseline && !c.baseline.unusual && routineShown(c, ctx.tools.outputOf?.bind(ctx.tools), ctx.range);
-    const why = !c.baseline ? "no baseline comparison" : shownNormal && !legit ? `normal activity: ${c.baseline.summary}` : !c.baseline.toolCallIds.some((t) => known.has(t)) ? "baseline cites no search" : "";
-    // Loose: kept. Shown normal: marked legitimate; no usable baseline: unverified.
-    if (why && ctx.cfg.loose) {
+    const why = !c.baseline ? "no baseline comparison" : shownNormal && !legit ? `normal activity: ${c.baseline.summary}` : !c.baseline.toolCallIds.some((t) => issued(ctx.tools, t)) ? "baseline cites no search" : "";
+    // Kept. Shown normal: marked legitimate; no usable baseline: unverified.
+    if (why) {
       if (shownNormal) (c as { legitimate?: boolean }).legitimate = true;
       else { (c as { unverified?: boolean }).unverified = true; delete c.baseline; }
       ctx.trace.write("reasoning", { looseKept: c.label, was: why });
-      return true;
     }
-    if (why) ctx.trace.write("rejected-evidence", { effect: c.label, reason: `not added: ${why}` });
-    return !why;
-  });
-  return { kept, evidenceFor: (c) => !c.baseline ? [] : v.evidence([{ summary: `${c.baseline!.unusual ? "differs from baseline" : "routine for its account (legitimate step)"}: ${c.baseline!.summary}`, strength: "corroborating", polarity: "supports", toolCallIds: c.baseline!.toolCallIds }], c.domain) };
+  }
+  return { kept: cands, evidenceFor: (c) => !c.baseline ? [] : v.evidence([{ summary: `${c.baseline!.unusual ? "differs from baseline" : "routine for its account (legitimate step)"}: ${c.baseline!.summary}`, strength: "corroborating", polarity: "supports", toolCallIds: c.baseline!.toolCallIds }], c.domain) };
 }
 
 // Two events about the same process or container: a shared process id or container id on the same host.

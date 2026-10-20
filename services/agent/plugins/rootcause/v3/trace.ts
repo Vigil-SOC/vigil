@@ -33,7 +33,20 @@ export interface TraceWriter {
 export class MemoryTrace implements TraceWriter {
   private entries: TraceEntry[] = [];
   private seq = 0;
-  constructor(private runId: string, private clock: () => Date = () => new Date()) {}
+  private drained = 0;
+  // prior: the entries a resumed run already journaled, so its report still reads them.
+  constructor(private runId: string, private clock: () => Date = () => new Date(), prior: readonly TraceEntry[] = []) {
+    this.entries = [...prior];
+    this.seq = prior.reduce((max, e) => Math.max(max, Number(e.id.slice(1)) || 0), 0);
+    this.drained = this.entries.length;
+  }
+
+  // The entries written since the last drain, for whoever journals them turn by turn.
+  drain(): TraceEntry[] {
+    const fresh = this.entries.slice(this.drained);
+    this.drained = this.entries.length;
+    return fresh;
+  }
 
   forTurn(turn: number, move: Move | undefined, correlationId: string): TurnTrace {
     const mine: TraceEntry[] = [];

@@ -20,12 +20,12 @@ export function reportFixture(): { g: Graph; trace: MemoryTrace } {
     { tempId: "a", kind: "explains", source: "use", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["x1"]), ev("direct", "supports", ["x2"])] },
     { tempId: "b", kind: "explains", source: "dev", target: "use", prior: 0.5, evidence: [ev("direct", "supports", ["x3"]), ev("direct", "supports", ["x4"])] },
   ] });
-  apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: "devuser", toolCallIds: ["tc_1"] }], g, ctx));
+  apply(g, buildAttributionPatch("N2", [{ layer: "machine-facing", relation: "ran-as", kind: "account", value: "devuser", toolCallIds: ["r1"] }], g, ctx));
   apply(g, buildAttributionPatch("N3", [
-    { layer: "machine-facing", relation: "ran-as", kind: "account", value: "j.doe", toolCallIds: ["tc_1"] },
-    { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "intruder via the stolen session", toolCallIds: ["tc_2"] },
+    { layer: "machine-facing", relation: "ran-as", kind: "account", value: "j.doe", toolCallIds: ["r1"] },
+    { layer: "machine-facing", relation: "operated-by", kind: "operator", value: "intruder via the stolen session", toolCallIds: ["r2"] },
   ], g, ctx));
-  const pred = (id: string, status: "found" | "absent", result: string) => ({ id, sourcetype: "edr", expect: "e", spl: "index=x", separates: [], status, result, toolCallIds: ["tc_9"] });
+  const pred = (id: string, status: "found" | "absent", result: string) => ({ id, sourcetype: "edr", expect: "e", spl: "index=x", separates: [], status, result, toolCallIds: ["r9"] });
   g.theories = [
     { id: "R1.H1", round: 1, story: "an outsider took j.doe's session", accountsFor: ["N3"], gaps: "entry point", status: "replaced", support: 1, against: 0, predictions: [pred("R1.P1", "found", "devuser pushed the config at 10:00 from 192.0.2.7")] },
     { id: "R2.H1", round: 2, story: "devuser is the attacker", accountsFor: ["N2", "N3"], gaps: "none", status: "live", support: 0, against: 1, predictions: [pred("R2.P1", "absent", "the attacker left no file on host-b7"), pred("R2.P2", "found", "j.doe's session was used from 198.51.100.9 only")] },

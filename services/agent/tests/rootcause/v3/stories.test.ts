@@ -21,11 +21,11 @@ describe("stories", () => {
     expect(selectFrontier(g, cfg, 5)).toMatchObject({ move: "expand", targetId: "N1", priority: 1 });
     apply(g, { incrementExpand: ["N1"] }, 5);
     expect(selectFrontier(g, cfg, 5)).toMatchObject({ move: "test", targetId: "R1.P1" });
-    apply(g, { predictionResult: { id: "R1.P1", status: "absent", result: "nothing", toolCallIds: ["tc_1"], supports: ["R1.H2"], weakens: ["R1.H1"] } }, 5);
+    apply(g, { predictionResult: { id: "R1.P1", status: "absent", result: "nothing", toolCallIds: ["r1"], supports: ["R1.H2"], weakens: ["R1.H1"] } }, 5);
     expect(selectFrontier(g, cfg, 6)).toMatchObject({ move: "test", targetId: "R1.P3" });
-    apply(g, { predictionResult: { id: "R1.P3", status: "found", result: "the push", toolCallIds: ["tc_2"], supports: ["R1.H2"], weakens: [] } }, 6);
+    apply(g, { predictionResult: { id: "R1.P3", status: "found", result: "the push", toolCallIds: ["r2"], supports: ["R1.H2"], weakens: [] } }, 6);
     expect(g.theories!.map((t) => [t.id, t.support, t.against])).toEqual([["R1.H1", 0, 1], ["R1.H2", 2, 0]]);
-    expect(snapshot(g)).toMatch(/R1.H2 \[\+2 −0\][\s\S]*R1.P3 \[found\] github: record R1.P3 → the push \[tc_2\]/);
+    expect(snapshot(g)).toMatch(/R1.H2 \[\+2 −0\][\s\S]*R1.P3 \[found\] github: record R1.P3 → the push \[r2\]/);
   });
   it("a new round waits for other moves, unless the plan is out of moves; rounds are capped", () => {
     const g = seeded();
@@ -85,7 +85,7 @@ describe("theorize: the rare-activity list gets a test", () => {
     const { theorize } = await import("../../../plugins/rootcause/v3/handlers/theorize.js");
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
     const g = seeded();
-    g.rare = `- edr:process:\n  ParentBaseFileName (39 distinct) [tc_6]: xz ×5 (2026-03-11 15:54 → 2026-03-11 16:30, node-1)`;
+    g.rare = `- edr:process:\n  ParentBaseFileName (39 distinct) [r6]: xz ×5 (2026-03-11 15:54 → 2026-03-11 16:30, node-1)`;
     const theories = ["H1", "H2"].map((h) => ({ id: h, story: "s", accountsFor: [], gaps: "", predictions: [{ id: `${h}P`, sourcetype: "ct", expect: "a CloudTrail call", spl: "index=x sourcetype=ct", separates: [] }] }));
     let sent = "";
     const model = { runTurn: async (req: any) => { sent = req.userContent; return { submission: { theories, nextTests: ["H1P"], reasoning: "" }, toolCalls: [] }; } };

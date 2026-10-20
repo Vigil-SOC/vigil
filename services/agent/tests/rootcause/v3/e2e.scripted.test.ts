@@ -2,7 +2,6 @@
 // (mail -> dropped tool -> wbadmin delete catalog). Fully deterministic; asserts on artifacts, not ids.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { Budget } from "../../../plugins/rootcause/v3/budget.js";
 import { defaultConfig } from "../../../plugins/rootcause/v3/config.js";
 import type { Graph } from "../../../plugins/rootcause/v3/graph.js";
 import { ScriptedModelClient, type ModelClient, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
@@ -15,6 +14,8 @@ import type { Alert } from "../../../plugins/rootcause/v3/types.js";
 import { Cassette, scriptFrom } from "./support.js";
 
 const fx = (f: string) => new URL(`./fixtures/mini/${f}`, import.meta.url).pathname;
+// The recorded moves, then the closing turn every run ends with.
+const withConclusion = () => [...scriptFrom(fx("script.json")), { move: "conclude" as const, correlationId: "N1", toolCalls: [], submission: { conclusion: "A phishing mail dropped the tool that deleted the backup catalog.", chain: ["N4", "N3", "N2", "N1"], rootCause: "N4", openQuestions: ["who sent the mail"], reasoning: "from the graph" } }];
 
 describe("e2e scripted (mini)", () => {
   it("finds the root cause through a boundary, exonerates the spoofed identity", async () => {
@@ -22,9 +23,9 @@ describe("e2e scripted (mini)", () => {
     const survey = readFileSync(fx("survey.md"), "utf8");
     const domains = domainsIn(survey);
     const tools = new Registry().register(splunkTool(new Cassette(fx("cassette.jsonl")), "lab"));
-    const budget = new Budget(cfg.priceInPerM, cfg.priceOutPerM);
+    const budget = { usd: 0 };
     const range: [string, string] = ["2026-05-05T06:00:00Z", "2026-05-05T18:00:00Z"];
-    const script = new ScriptedModelClient({ cfg, tools, budget, domains, survey, range }, scriptFrom(fx("script.json")));
+    const script = new ScriptedModelClient({ cfg, tools, domains, survey, range }, withConclusion());
     const trace = new MemoryTrace("e2e");
     const alert: Alert = JSON.parse(readFileSync(fx("alert.json"), "utf8"));
     const lines: string[] = [];
@@ -68,11 +69,10 @@ describe("e2e scripted (mini)", () => {
     const survey = readFileSync(fx("survey.md"), "utf8");
     const domains = domainsIn(survey);
     const tools = new Registry().register(splunkTool(new Cassette(fx("cassette.jsonl")), "lab"));
-    const budget = new Budget(cfg.priceInPerM, cfg.priceOutPerM);
+    const budget = { usd: 0 };
     const range: [string, string] = ["2026-05-05T06:00:00Z", "2026-05-05T18:00:00Z"];
-    const entries = JSON.parse(readFileSync(fx("script.json"), "utf8"));
-    entries.push({ move: "conclude", correlationId: "N1", toolCalls: [], submission: { conclusion: "A phishing mail dropped the tool that deleted the backup catalog.", chain: ["N4", "N3", "N2", "N1"], rootCause: "N4", openQuestions: ["who sent the mail"], reasoning: "from the graph" } });
-    const script = new ScriptedModelClient({ cfg, tools, budget, domains, survey, range }, entries);
+    const entries = withConclusion();
+    const script = new ScriptedModelClient({ cfg, tools, domains, survey, range }, entries);
     const prompts: TurnRequest[] = [];
     const spy: ModelClient = { runTurn: (req) => { prompts.push(req); return script.runTurn(req); } };
     const trace = new MemoryTrace("e2e");

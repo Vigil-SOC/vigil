@@ -6,6 +6,7 @@ import { constraints, instructions } from "../model/prompts.js";
 import { snapshot } from "../model/snapshot.js";
 import type { SubmitTest } from "../model/schemas.js";
 import { wideSearch } from "../baseline.js";
+import { issued } from "../tools/registry.js";
 import { candidatePatch, merge, noteSuspicious, tempId, Vetter, withBaseline, type Handler } from "./common.js";
 
 export const test: Handler = async (d, g, ctx) => {
@@ -29,7 +30,7 @@ export const test: Handler = async (d, g, ctx) => {
       return x.patch;
     }),
   ];
-  const ids = sub.toolCallIds.filter((t) => /^tc_\d+$/.test(t) && Number(t.slice(3)) <= ctx.tools.callCount);
+  const ids = sub.toolCallIds.filter((t) => issued(ctx.tools, t));
   // "Absent" only when a cited search covered the whole data range; a narrow window that found nothing settles
   // nothing (EDR "absents" once all searched an hour near the alert, and the attack was two days earlier).
   const narrow = sub.outcome === "absent" && !!ctx.tools.inputOf && !ids.some((t) => wideSearch(ctx.tools.inputOf!(t), ctx.range));

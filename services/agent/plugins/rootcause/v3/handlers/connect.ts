@@ -52,8 +52,8 @@ export const connect: Handler = async (d, g, ctx) => {
       // was once linked to a stolen role's first call on timing alone).
       : a.legitimate && !b.legitimate && !evidence.some((x) => x.strength === "direct" && x.polarity === "supports") ? "a legitimate step links into the attack only with direct evidence"
       : "";
-    // Loose: a legitimate step's link without direct evidence is kept as inferred.
-    const inferred = ctx.cfg.loose && why === "a legitimate step links into the attack only with direct evidence";
+    // A legitimate step's link without direct evidence is kept as inferred.
+    const inferred = why === "a legitimate step links into the attack only with direct evidence";
     if (inferred) for (const x of evidence) x.strength = "circumstantial";
     if (why && !inferred) { ctx.trace.write("rejected-evidence", { link: l, reason: why }); continue; }
     // The cause of a node with an open boundary has been found: resolve the boundary with this link.

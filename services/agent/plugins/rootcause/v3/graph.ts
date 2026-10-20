@@ -168,6 +168,7 @@ export interface GraphPatch {
   setConclusion?: Conclusion;
   setTheories?: Theory[]; // a new round: replaces the live stories (empty: the round failed, the count still moves)
   predictionResult?: { id: string; status: Prediction["status"]; result: string; toolCallIds: string[]; supports: string[]; weakens: string[] };
+  addProbe?: Prediction; // a rare record the model chose to read (lead.ts), filed under the PROBES pseudo-story
 }
 
 export const emptyPatch = (): GraphPatch => ({ addNodes: [], addEdges: [], addEvidence: [] });
@@ -292,6 +293,11 @@ export function applyPatch(g: Graph, patch: GraphPatch, turn: number, cfg: Agent
       (g.theories ??= []).push(...patch.setTheories);
     }
   }
+  if (patch.addProbe) {
+    let t = (g.theories ?? []).find((x) => x.id === "PROBES" && x.status === "live");
+    if (!t) { t = { id: "PROBES", round: g.theorizeCount ?? 0, story: "Rare records read on their own (not a story).", accountsFor: [], gaps: "", predictions: [], status: "live", support: 0, against: 0 }; (g.theories ??= []).push(t); }
+    t.predictions.push(patch.addProbe);
+  }
   if (patch.predictionResult) {
     const r = patch.predictionResult;
     const p = (g.theories ?? []).flatMap((t) => t.predictions).find((x) => x.id === r.id);
@@ -371,28 +377,20 @@ export function applyPatch(g: Graph, patch: GraphPatch, turn: number, cfg: Agent
   for (const e of patch.addEdges) { const before = new Set(Object.keys(g.edges)); const id = addEdge(e); if (id) { idMap[e.tempId] = id; if (!before.has(id)) created.push(id); } }
   // A new link between two events needs a value both carry. Checked after the patch's attributions are in,
   // since whether a host or an account counts depends on who each event ran as.
-  const unjoined = (id: string) => {
+  const inferUnjoined = (id: string) => {
     const e = g.edges[id];
-    if (!cfg.linkNeedsSharedValue || e?.kind !== "explains" || e.createdTurn !== turn || e.evidence.length !== e.evidence.filter((v) => v.turn === turn).length) return false;
+    if (!cfg.linkNeedsSharedValue || e?.kind !== "explains" || e.createdTurn !== turn || e.evidence.length !== e.evidence.filter((v) => v.turn === turn).length) return;
     const a = g.nodes[e.source], b = g.nodes[e.target];
-    if (a?.kind !== "action" || b?.kind !== "action" || sharedValue(g, a, b, cfg.roleArnHandOff !== false)) return false;
-    // Loose: kept as an inferred link; its evidence counts as circumstantial (timing, naming), never as a join.
-    if (cfg.loose) {
-      e.inferred = true;
-      for (const v of e.evidence) v.strength = "circumstantial";
-      return false;
-    }
-    rejected.push({ item: { source: e.source, target: e.target }, reason: `no shared value: ${e.source} and ${e.target} carry no common process, session, container, token, key, file or address (a host counts only within one source for one account)` });
-    delete g.edges[id];
-    touched.delete(id);
-    for (const [k, v] of Object.entries(idMap)) if (v === id) delete idMap[k];
-    return true;
+    if (a?.kind !== "action" || b?.kind !== "action" || sharedValue(g, a, b, true)) return;
+    // Kept as an inferred link; its evidence counts as circumstantial (timing, naming), never as a join.
+    e.inferred = true;
+    for (const v of e.evidence) v.strength = "circumstantial";
   };
-  for (const id of created) unjoined(id);
+  for (const id of created) inferUnjoined(id);
   // Routine work by one account leads to more of its routine work: a step that causes its own account's legitimate
   // step is legitimate too, unless someone else operated it or it is labelled malicious (a developer's
   // routine step from their usual address was once left unmarked upstream of their legitimate one and became the chain top).
-  if (cfg.inheritLegit !== false) for (let changed = true; changed; ) {
+  for (let changed = true; changed; ) {
     changed = false;
     for (const e of Object.values(g.edges)) {
       if (e.kind !== "explains" || e.retired || e.status === "ruled-out") continue;
@@ -431,7 +429,11 @@ export function applyPatch(g: Graph, patch: GraphPatch, turn: number, cfg: Agent
     else {
       const had = new Set(Object.keys(g.edges));
       const join = addEdge({ tempId: `join:${markerId}`, kind: "explains", source: cand, target: m.originNodeId, prior: 0.3, evidence: joinEvidence });
-      if (join && !(had.has(join) ? false : unjoined(join))) { idMap[`join:${markerId}`] = join; resolveMarker(markerId, cand); }
+      if (join) {
+        if (!had.has(join)) inferUnjoined(join);
+        idMap[`join:${markerId}`] = join;
+        resolveMarker(markerId, cand);
+      }
     }
   }
 

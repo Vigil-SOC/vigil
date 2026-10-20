@@ -3,9 +3,9 @@ import { createGraph } from "../../../plugins/rootcause/v3/graph.js";
 import { isStalled, selectFrontier } from "../../../plugins/rootcause/v3/frontier.js";
 import { apply, cfg, ev, node, seeded } from "./helpers.js";
 
-const link = (tempId: string, source: string, target: string, evidence = [ev("direct", "supports", [`tc_${tempId}`])]) =>
+const link = (tempId: string, source: string, target: string, evidence = [ev("direct", "supports", [`r${tempId}`])]) =>
   ({ tempId, kind: "explains" as const, source, target, prior: 0.3, evidence });
-const solid = (tempId: string, over = {}) => node(tempId, { evidence: [ev("direct", "supports", [`tc_${tempId}`]), ev("corroborating", "supports", [`tc_${tempId}b`])], ...over });
+const solid = (tempId: string, over = {}) => node(tempId, { evidence: [ev("direct", "supports", [`r${tempId}`]), ev("corroborating", "supports", [`r${tempId}b`])], ...over });
 
 describe("frontier", () => {
   it("P0: strengthen an unconfirmed symptom", () => {
