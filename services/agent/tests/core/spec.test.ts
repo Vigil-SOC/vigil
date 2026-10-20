@@ -108,7 +108,7 @@ describe("the arch layer each plugin.yaml carries", () => {
   });
 
   // The other shape the indirection has to carry: one role, its tools, nothing to count.
-  it("reads root cause's as one investigator answering in prose", () => {
+  it("reads root cause's as one investigator with no tools of its own, answering in prose", () => {
     const spec = buildSpec(
       {
         arch: archFor("root_cause").arch,
@@ -119,9 +119,7 @@ describe("the arch layer each plugin.yaml carries", () => {
             "model: scripted/model",
             "budgets: { max_calls: 32, max_cost_usd: 15, max_wall_ms: 5400000 }",
             "runtime: { max_turns: 32, result_cap: 8000, recall_limit: 1 }",
-            "tools:",
-            "  - { id: record, kind: local, description: record a step, parameters: { type: object } }",
-            "  - { id: finish, kind: local, description: finish the trace, parameters: { type: object } }",
+            "tools: []",
             "approvals: []",
           ].join("\n"),
         ),
@@ -133,7 +131,7 @@ describe("the arch layer each plugin.yaml carries", () => {
     expect(spec.allowance).toBeUndefined();
     expect(spec.roles.critic).toBeUndefined();
     expect(spec.roles.lead?.output_schema).toBeNull();
-    expect(spec.roles.lead?.tools).toEqual(["record", "finish"]);
+    expect(spec.roles.lead?.tools).toEqual([]);
     expect(spec.roles.lead?.needs).toEqual(["telemetry_search"]);
   });
 

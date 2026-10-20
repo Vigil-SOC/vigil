@@ -765,11 +765,9 @@ def _rca_context(handoff: TerminalHandoff) -> str:
     finding = _rca_finding(handoff)
     return (
         "This run follows a CONFIRMED compromise handed to incident response. The "
-        "confirmed finding to work backward from:\n\n"
+        "confirmed finding:\n\n"
         f"{finding}\n\n"
-        "Work BACKWARD one event at a time to where it began. Record each step and "
-        "the value that ties it to the step before. Report the origin when nothing "
-        "earlier carries that value, and name what is still unproven when you stop."
+        "The run traces backward from it to where it began."
     )
 
 

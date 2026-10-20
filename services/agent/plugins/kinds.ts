@@ -72,8 +72,8 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     ...HUNT_LOOP,
     distil: (runId, events) => huntDistil(runId, events as readonly AgentEvent<HuntKinds>[]),
   },
-  // One investigator, prose, no hunt vocabulary. checkpoints is owned so a
-  // definition that sets hypothesis_approval: ask still parses and can park.
+  // Runs on the v3 graph loop; the packaged arch only builds the spec. checkpoints is
+  // owned so a definition that sets hypothesis_approval: ask still parses and can park.
   root_cause: {
     arch: packaged("rootcause"),
     workflow: "rootcause",
