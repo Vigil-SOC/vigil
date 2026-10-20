@@ -22,6 +22,7 @@ from core.llm.providers import provider_service
 from core.llm.providers.base_url import validate_base_url_shape
 from core.llm.providers.registry import (
     VALID_PROVIDER_TYPES,
+    attest_self_hosted,
     invalidate_model_cache,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -113,6 +114,12 @@ def _validate_type(provider_type: str) -> None:
         )
 
 
+def _refresh_self_hosted_attestation(db: UnitOfWorkSession) -> None:
+    """Apply ``config.self_hosted`` to this process's pricing now, not on the
+    next refresh. The worker and daemon converge on their own refresh interval."""
+    attest_self_hosted(provider_service.active_provider_configs(db))
+
+
 def _schedule_catalog_resync(reason: str) -> None:
     """Invalidate the model-list cache and fire a background sync.
 
@@ -180,6 +187,7 @@ async def create_provider(
         config=payload.config or {},
     )
     provider_service.insert(db, row, make_default=payload.is_default)
+    _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"created provider {provider_id}")
     return _to_response(row)
 
@@ -206,7 +214,10 @@ async def update_provider(
     if payload.is_active is not None:
         row.is_active = payload.is_active
     if payload.config is not None:
-        row.config = payload.config
+        # The write replaces config, but must not erase the marker that makes a
+        # mirror row a mirror row.
+        managed = {k: v for k, v in (row.config or {}).items() if k == "managed_by"}
+        row.config = {**managed, **payload.config}
 
     if payload.api_key is not None:
         # Empty string clears the key; non-empty rotates it.
@@ -246,6 +257,7 @@ async def update_provider(
         row.is_default = False
 
     provider_service.settle(db, row)
+    _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"updated provider {provider_id}")
     return _to_response(row)
 
@@ -294,5 +306,6 @@ async def delete_provider(
         )
 
     provider_service.remove(db, row)
+    _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"deleted provider {provider_id}")
     return {"success": True, "provider_id": provider_id}

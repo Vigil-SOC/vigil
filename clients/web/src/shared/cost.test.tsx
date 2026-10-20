@@ -26,16 +26,16 @@ describe('the one rule for a spend amount', () => {
     expect(fmtCost(0, 'unknown')).toBe('not priced')
   })
 
-  it('renders the hint as text on the label, pointing at the gateway pricing overrides', () => {
+  it('renders the hint as text on the label, pointing at the gateway pricing overrides and the self-hosted attestation', () => {
     render(<Cost usd={0} source="zero" />)
     const el = screen.getByText('not billed')
-    expect(el).toHaveAttribute('title', expect.stringMatching(/gateway’s pricing overrides/))
+    expect(el).toHaveAttribute('title', expect.stringMatching(/gateway’s pricing overrides.*config\.self_hosted/))
     expect(el.style.color).toBe('')
   })
 
   it('keeps a caller title behind the hint on a label', () => {
     render(<Cost usd={null} title="Token count via tiktoken." />)
-    expect(screen.getByText('not priced')).toHaveAttribute('title', expect.stringMatching(/pricing overrides\. Token count via tiktoken\.$/))
+    expect(screen.getByText('not priced')).toHaveAttribute('title', expect.stringMatching(/config\.self_hosted\) if it costs nothing\. Token count via tiktoken\.$/))
   })
 
   it('drops the ~ when there is nothing to approximate', () => {

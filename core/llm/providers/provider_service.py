@@ -9,7 +9,7 @@ it to a status code.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update
@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 def list_providers(db: Session) -> List[LLMProviderConfig]:
     return db.query(LLMProviderConfig).order_by(LLMProviderConfig.created_at).all()
+
+
+def active_provider_configs(db: Session) -> List[Tuple[str, Optional[dict]]]:
+    """``(provider_type, config)`` of every active row, for the pricing attestation."""
+    return [(r.provider_type, r.config) for r in list_providers(db) if r.is_active]
 
 
 def get_provider(db: Session, provider_id: str) -> Optional[LLMProviderConfig]:

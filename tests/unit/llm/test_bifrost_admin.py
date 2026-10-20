@@ -793,8 +793,8 @@ def test_refresh_gateway_rates_fills_rates_without_the_full_sync(monkeypatch):
         def filter(self, *_):
             return self
 
-        def distinct(self):
-            return iter([("anthropic",), ("vertex",)])
+        def __iter__(self):
+            return iter([("anthropic", {}), ("vertex", {"self_hosted": True})])
 
     class _Scope:
         def __enter__(self):
@@ -821,6 +821,7 @@ def test_refresh_gateway_rates_fills_rates_without_the_full_sync(monkeypatch):
     registry = model_registry.get_registry()
     assert registry.get_pricing_source("anthropic-m", "anthropic") == "exact"
     assert registry.get_pricing_source("vertex-m", "vertex") == "exact"
+    assert model_registry._SELF_HOSTED_TYPES == {"vertex"}
     assert model_registry._MODEL_LIST_CACHE == {}
     _reset_registry()
 

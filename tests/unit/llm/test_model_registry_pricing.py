@@ -100,6 +100,47 @@ def test_ollama_override_on_the_gateway_is_charged():
     assert get_registry().get_rates("llama3.1", "ollama")["pricing_source"] == "exact"
 
 
+def _attest(*rows):
+    model_registry.attest_self_hosted(rows)
+
+
+def test_an_attested_type_with_no_gateway_rate_is_zero_with_no_fetch_time():
+    _attest(("openai", {"self_hosted": True}))
+    rates = get_registry().get_rates("qwen3", "openai")
+    assert rates["pricing_source"] == "zero"
+    assert (rates["input"], rates["output"]) == (0.0, 0.0)
+    assert rates["rates_fetched_at"] is None
+
+
+def test_an_unattested_type_stays_unknown():
+    _attest(("openai", {}), ("vertex", {"self_hosted": "yes"}))
+    assert get_registry().get_pricing_source("m", "openai") == "unknown"
+    assert get_registry().get_pricing_source("m", "vertex") == "unknown"
+
+
+def test_a_mixed_type_stays_unknown():
+    _attest(("openai", {}), ("openai", {"self_hosted": True}))
+    assert get_registry().get_pricing_source("m", "openai") == "unknown"
+
+
+def test_a_datasheet_rate_beats_the_attestation():
+    _attest(("openai", {"self_hosted": True}))
+    record_live_meta("openai", [_sheet("m", 1e-6, 2e-6)], rates_only=True)
+    rates = get_registry().get_rates("m", "openai")
+    assert rates["pricing_source"] == "exact"
+    assert rates["rates_fetched_at"]
+
+
+def test_unflagging_or_deactivating_reverts_to_unknown():
+    _attest(("openai", {"self_hosted": True}))
+    assert get_registry().get_pricing_source("m", "openai") == "zero"
+    _attest(("openai", {"self_hosted": False}))
+    assert get_registry().get_pricing_source("m", "openai") == "unknown"
+    _attest(("openai", {"self_hosted": True}))
+    _attest()  # the row is no longer active
+    assert get_registry().get_pricing_source("m", "openai") == "unknown"
+
+
 def test_discovery_and_datasheet_merge_in_either_order():
     discovered = ModelMeta(
         id="claude-x",
