@@ -5,10 +5,10 @@ allow-lists, pricing and governance. This router is the console's only door to
 it: Bifrost itself runs with admin auth disabled on a private network, so the
 gate has to live here.
 
-Three things it does beyond forwarding. The first two are because Bifrost's key
+Four things it does beyond forwarding. The first two are because Bifrost's key
 API cannot be driven honestly without them (see ``core.llm.bifrost.admin`` for
-how those were learned); the third is because the rest of Vigil does not read
-Bifrost:
+how those were learned); the others are because the rest of Vigil does not read
+Bifrost, and because Bifrost trusts what it is sent:
 
 * **Secrets stay ours.** A key's plaintext is mirrored into the secrets store
   under ``llm_key_<key_id>`` on write and dropped on delete, so credential
@@ -18,10 +18,19 @@ Bifrost:
   (``sk-a****key``) and Bifrost accepts a write that echoes the mask, storing
   the mask as the credential — every call then 401s with nothing to say why. A
   write that carries no new secret has the stored one substituted in.
+* **A provider's base URL is validated here, not in the browser.** A write that
+  carries ``network_config.base_url`` is shape-checked, normalized, and merged
+  into the stored provider document (see ``_with_base_url``). Bifrost's provider
+  document is the one home of that value.
+* **A custom provider is validated here too.** A provider created with
+  ``custom_provider_config`` (a named host speaking the OpenAI wire format) must
+  carry a base URL and a name that cannot shadow a built-in; see
+  ``_check_custom_provider``.
 * **A key write mirrors a provider row.** Vigil indexes providers by
   ``llm_provider_configs``, so a key that exists only in Bifrost is unreachable
   to the model picker, to assignments, and to dispatch — see
-  ``core.llm.bifrost.mirror``.
+  ``core.llm.bifrost.mirror``. A provider create or delete does the same: a
+  key-less custom provider has no key write to trigger it.
 """
 
 from __future__ import annotations
@@ -38,6 +47,12 @@ from pydantic import BaseModel
 from core.auth.auth_service import AuthService
 from core.config import get_settings
 from core.llm.bifrost import mirror
+from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
+from core.llm.providers.base_url import (
+    normalize_openai_compat_base_url,
+    validate_base_url_shape,
+)
+from core.llm.providers.registry import VALID_PROVIDER_TYPES
 from core.routing import Auth, RouterMeta
 from core.secrets import delete_secret, get_secret, set_secret
 from core.storage.models import User
@@ -75,6 +90,7 @@ _WRITE_METHODS = frozenset({"POST", "PUT", "DELETE"})
 # ``providers/{name}/keys`` and ``providers/{name}/keys/{key_id}`` — the only
 # paths carrying a credential, and so the only ones needing secret handling.
 _KEYS_PATH = re.compile(r"^providers/(?P<provider>[^/]+)/keys(?:/(?P<key_id>[^/]+))?$")
+_PROVIDER_PATH = re.compile(r"^providers/(?P<provider>[^/]+)$")
 
 
 def _secret_ref(key_id: str) -> str:
@@ -344,6 +360,137 @@ def _resolve_key_value(
     body["value"] = stored
 
 
+def _sets_base_url(body: Any) -> bool:
+    network = body.get("network_config") if isinstance(body, dict) else None
+    return isinstance(network, dict) and "base_url" in network
+
+
+def _merge_base_url(doc: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+    """The provider write that sets (or clears) ``network_config.base_url``.
+
+    ``doc`` is the stored provider document, ``{}`` for a create. Bifrost's PUT
+    replaces the whole document, so what the request did not mention is carried
+    over from ``doc``: every other ``network_config`` field, and every writable
+    provider field, but never ``keys``.
+
+    A host an operator typed into this admin-only setting is a destination they
+    chose, so ``allow_private_network`` is set with it — a LAN or loopback
+    gateway is refused by Bifrost otherwise — and dropped again when the host is
+    cleared. There is no private-range classifier here on purpose.
+    """
+    requested = dict(body["network_config"])
+    raw = requested.pop("base_url")
+    if raw is not None and not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="base_url: must be a string")
+    try:
+        validate_base_url_shape(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    url = normalize_openai_compat_base_url(raw) if raw else ""
+
+    network = {**(doc.get("network_config") or {}), **requested}
+    had_host = bool(network.get("base_url"))
+    if url:
+        network["base_url"] = url
+        network["allow_private_network"] = True
+    else:
+        network.pop("base_url", None)
+        if had_host:
+            network.pop("allow_private_network", None)
+    merged = {k: v for k, v in doc.items() if k in _PROVIDER_WRITE_FIELDS}
+    merged.update({k: v for k, v in body.items() if k != "keys"})
+    merged["network_config"] = network
+    if merged.get("custom_provider_config") and not network.get("base_url"):
+        raise HTTPException(
+            status_code=400, detail="A custom provider needs a base URL."
+        )
+    return merged
+
+
+# Bifrost refuses a custom provider named like one of its own ("Custom provider
+# cannot be same as a standard provider") but owns that list; this is the subset
+# Vigil keys on, so a custom provider can never take over one of those rows.
+_RESERVED_PROVIDER_NAMES = VALID_PROVIDER_TYPES | {
+    "azure",
+    "bedrock",
+    "bifrost",
+    "cerebras",
+    "cohere",
+    "gemini",
+    "groq",
+    "huggingface",
+    "mistral",
+    "nebius",
+    "parasail",
+    "perplexity",
+    "replicate",
+    "sgl",
+    "together_ai",
+    "vllm",
+    "xai",
+}
+_CUSTOM_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+def _check_custom_provider(method: str, body: Dict[str, Any]) -> None:
+    """Refuse a malformed custom-provider write before Bifrost sees it.
+
+    Only a create may declare ``custom_provider_config``: turning an existing
+    (possibly built-in) provider into a custom one is not something the console
+    does, and ``_merge_base_url`` carries the stored block through every edit.
+    """
+    if "custom_provider_config" not in body:
+        return
+    custom = body["custom_provider_config"]
+    if method != "POST":
+        raise HTTPException(
+            status_code=400,
+            detail="custom_provider_config can only be set when the provider is created",
+        )
+    name = body.get("provider")
+    if not isinstance(name, str) or not _CUSTOM_NAME.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="A custom provider's name is lowercase letters, digits and dashes (40 at most).",
+        )
+    if name in _RESERVED_PROVIDER_NAMES:
+        raise HTTPException(
+            status_code=400, detail=f"{name} is a built-in provider; pick another name."
+        )
+    if not isinstance(custom, dict) or custom.get("base_provider_type") != "openai":
+        raise HTTPException(
+            status_code=400,
+            detail="Only OpenAI-compatible custom providers are supported.",
+        )
+    network = body.get("network_config")
+    if not isinstance(network, dict) or not network.get("base_url"):
+        raise HTTPException(
+            status_code=400, detail="A custom provider needs a base URL."
+        )
+
+
+async def _with_base_url(
+    method: str, provider: Optional[str], body: Dict[str, Any]
+) -> Dict[str, Any]:
+    """``body`` with its ``base_url`` validated and merged over the stored document."""
+    doc: Dict[str, Any] = {}
+    if method == "PUT" and provider:
+        url = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                current = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
+        if current.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"No provider {provider}")
+        if current.status_code >= 400:
+            raise HTTPException(
+                status_code=502, detail=f"Bifrost refused to read {provider}"
+            )
+        doc = current.json()
+    return _merge_base_url(doc if isinstance(doc, dict) else {}, body)
+
+
 # Declared before the catch-all below, which FastAPI would otherwise match
 # first. Not a proxied path: this is Vigil's own verdict about Bifrost's keys,
 # computed in core.llm.bifrost.mirror so the console, the setup gate and
@@ -425,6 +572,17 @@ async def proxy(
     if keys_match and isinstance(body, dict):
         _resolve_key_value(body, key_id, keys_match.group("provider"))
 
+    provider_match = _PROVIDER_PATH.match(path)
+    creates_provider = path == "providers" and request.method == "POST"
+    deletes_provider = provider_match is not None and request.method == "DELETE"
+    if isinstance(body, dict) and (
+        creates_provider or (provider_match and request.method == "PUT")
+    ):
+        _check_custom_provider(request.method, body)
+    if _sets_base_url(body) and (provider_match or creates_provider):
+        name = provider_match.group("provider") if provider_match else None
+        body = await _with_base_url(request.method, name, body)
+
     url = f"{get_settings().bifrost_url.rstrip('/')}/api/{path}"
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -442,6 +600,16 @@ async def proxy(
         provider = keys_match.group("provider")
         _persist_key_secret(request.method, key_id, body, upstream, provider)
         await mirror.sync_provider(provider)
+    elif upstream.status_code < 400 and (creates_provider or deletes_provider):
+        # A key-less provider has no key write to trigger its row, and a
+        # deleted one would otherwise stay in the picker.
+        mirrored = (
+            provider_match.group("provider")
+            if provider_match
+            else (body or {}).get("provider")
+        )
+        if isinstance(mirrored, str):
+            await mirror.sync_provider(mirrored)
 
     return Response(
         content=upstream.content,

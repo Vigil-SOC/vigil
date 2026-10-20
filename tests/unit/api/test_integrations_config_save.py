@@ -39,9 +39,12 @@ def _run(payload, *, set_secret, config_saved=True):
 
     config_service = MagicMock()
     config_service.set_integration_config.return_value = config_saved
+    # _mirror_to_file writes the State Directory: unpatched, a saved payload
+    # replaces the developer's own integrations_config.json with this fixture.
     with (
         patch.object(config_module, "set_secret", set_secret),
         patch.object(config_module, "get_config_service", return_value=config_service),
+        patch.object(config_module, "_mirror_to_file"),
     ):
         return config_module.set_integrations_config(payload, current_user=_User())
 
@@ -108,6 +111,7 @@ def _save(stored_config, incoming, *, secret_set):
                 "stored-pw" if secret_set and env == "SPLUNK_PASSWORD" else ""
             ),
         ),
+        patch.object(config_module, "_mirror_to_file"),
     ):
         result = config_module.set_integrations_config(payload, current_user=_User())
     return result, config_service, set_secret

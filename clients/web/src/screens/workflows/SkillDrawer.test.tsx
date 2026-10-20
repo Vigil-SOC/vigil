@@ -3,6 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SkillDrawer } from './SkillDrawer'
 import { skillsApi } from '../../services/skillsApi'
 
+const auth = vi.hoisted(() => ({ canWriteSkills: true }))
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasPermission: (p: string) => p !== 'settings.write' || auth.canWriteSkills }),
+}))
+
 vi.mock('../../services/skillsApi', () => ({
   skillsApi: {
     get: vi.fn(),
@@ -26,7 +31,23 @@ const open = (name: string | null = 'phishing-triage') =>
 describe('skill drawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    auth.canWriteSkills = true
     vi.mocked(skillsApi.get).mockResolvedValue(detail as never)
+  })
+
+  it('says why the skills folder is off, and keeps Save off', async () => {
+    vi.mocked(skillsApi.get).mockResolvedValue({ ...detail, operator_root_set: false } as never)
+    open()
+    expect(await screen.findByText(/Skills are off \(VIGIL_SKILLS_PATH is empty\)/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save new version' })).toBeDisabled()
+  })
+
+  it('is read-only, with no Save, for a role that cannot change settings', async () => {
+    auth.canWriteSkills = false
+    open()
+    expect(await screen.findByText(/can read skills but not save them/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Test with a sample' })).toBeInTheDocument()
   })
 
   it('keeps Save off, and says why, until both when-to-use and steps are filled', async () => {

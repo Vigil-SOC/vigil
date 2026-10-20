@@ -314,6 +314,7 @@ describe("the console reads a kernel run in the investigate shape", () => {
     expect(view.decisions.map((one) => one.action)).toEqual(["EXAMINE", "CONCLUDE"]);
     expect(view.calls).toEqual([expect.objectContaining({ tool: "get_finding", question: "check the finding", iteration: 1 })]);
     expect(view.findings[0]?.answer).toMatchObject({ disposition: "malicious" });
+    expect(view.disposition).toBe("malicious");
     expect(archFor("investigate").projection?.(RUN, events as never)).toMatchObject({ engine: "plugin" });
 
     const replay = investigateKernelReplay(RUN, events);
@@ -338,6 +339,7 @@ describe("the console reads a kernel run in the investigate shape", () => {
   it("shows a held dismissal as what it was held as, with what was asked and why", () => {
     const view = investigateView(RUN, ledger("kernel-investigate-held.jsonl"));
     expect(view.findings[0]?.answer).toMatchObject({ disposition: "needs_review" });
+    expect(view.disposition).toBe("needs_review");
     expect(view.held).toEqual({ field: "disposition", asked: "benign", final: "needs_review", reason: expect.stringMatching(/^the review was insufficient: Only the case note/) });
     expect(view.open_questions).toEqual([{ question_id: "q1", question: expect.stringContaining("registered red-team operator"), hypothesis_id: "h3" }]);
   });

@@ -1,4 +1,5 @@
 import { DEFAULT_PARK_MS, type BudgetLimits, type Refusal } from "../../contracts/budget.js";
+import type { HypothesisStatus } from "../../contracts/events.js";
 import type { Allowance } from "../../core/spec.js";
 // Type-only, so the cycle with the spec loader is erased at compile time.
 import type { HuntSpec } from "./config.js";
@@ -64,13 +65,7 @@ export const OUTCOME_PRECEDENCE: Record<HuntOutcome, number> = {
 
 // handed_off is terminal for the hunt but not an ending of it: the claim now
 // belongs to incident response, and the hunt carries on with the rest.
-export type HypothesisStatus =
-  | "active"
-  | "proven"
-  | "disproven"
-  | "inconclusive"
-  | "parked"
-  | "handed_off";
+export type { HypothesisStatus };
 
 export type Salience = "routine" | "notable" | "anomalous";
 // "neither" is a first-class answer, not an omission: considered-and-irrelevant
@@ -307,6 +302,9 @@ export interface EvidenceRecord {
   // one alone did: the system a row with no alert behind it came from. Absent when the
   // answers came from several, or from Vigil's own tools, rather than guessed at.
   served_by?: string;
+  // The estate calls that answered since the hunt's last record, by ref: the results this
+  // record rests on, which the guard on the hunt's conclusion reads a citation against.
+  call_refs?: string[];
 }
 
 // The note on a "neither" the controller filled in because the lead never ruled

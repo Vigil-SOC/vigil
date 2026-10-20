@@ -32,8 +32,13 @@ export interface BifrostProvider {
     stream_idle_timeout_in_seconds?: number
     retry_backoff_initial?: number
     retry_backoff_max?: number
+    /** Bifrost's stored host, without a trailing `/v1`; absent for the provider's own. */
+    base_url?: string
+    allow_private_network?: boolean
   }
   concurrency_and_buffer_size?: { concurrency?: number; buffer_size?: number }
+  /** Set on a custom provider only: a named host that speaks a built-in wire format. */
+  custom_provider_config?: { base_provider_type?: string; is_key_less?: boolean }
   proxy_config?: unknown | null
   provider_status?: string
   status?: string
@@ -96,6 +101,13 @@ export function isMasked(v: BifrostSecret | string | undefined): boolean {
     knowing what the environment resolved it to. */
 export function secretEnvRef(v: BifrostSecret | string | undefined): string {
   return typeof v === 'object' && v?.from_env ? v.env_var || '' : ''
+}
+
+/** A custom OpenAI-compatible provider: its own name and host. The passthrough
+    validates the name and URL and sets `allow_private_network` with the host. */
+export interface CustomProviderWrite {
+  network_config: { base_url: string }
+  custom_provider_config: { base_provider_type: 'openai'; is_key_less: boolean }
 }
 
 export interface BifrostKeyWrite {
@@ -220,13 +232,44 @@ export const COMMON_PROVIDERS = [
   'xai',
 ]
 
+/** Providers whose `network_config.base_url` Bifrost v2.2.1 sends traffic to,
+    each checked against a live gateway by pointing it at a stub. Left out on
+    purpose: ollama, vllm and sgl take their URL on the key; azure, bedrock and
+    vertex are addressed by their key's endpoint or region. */
+export const BASE_URL_PROVIDERS = [
+  'openai',
+  'anthropic',
+  'gemini',
+  'mistral',
+  'cohere',
+  'openrouter',
+  'groq',
+  'xai',
+  'perplexity',
+  'cerebras',
+  'huggingface',
+  'nebius',
+  'parasail',
+  'replicate',
+]
+
+/** A custom provider's name, as the passthrough accepts it. */
+export const CUSTOM_PROVIDER_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
+
 const bf = '/bifrost'
 
 export const bifrostApi = {
   listProviders: () => api.get<{ providers: BifrostProvider[] }>(`${bf}/providers`),
   // `provider` in, `name` back out — Bifrost's create payload does not use the
   // field its response does, and sending `name` fails with "Missing provider".
-  createProvider: (provider: string) => api.post<BifrostProvider>(`${bf}/providers`, { provider }),
+  createProvider: (provider: string, custom?: CustomProviderWrite) =>
+    api.post<BifrostProvider>(`${bf}/providers`, { provider, ...custom }),
+  // The passthrough validates, trims `/v1`, and merges this into the stored
+  // document; an empty string clears the host. Nothing else is touched.
+  setProviderBaseUrl: (name: string, baseUrl: string) =>
+    api.put<BifrostProvider>(`${bf}/providers/${encodeURIComponent(name)}`, {
+      network_config: { base_url: baseUrl },
+    }),
   removeProvider: (name: string) => api.delete(`${bf}/providers/${encodeURIComponent(name)}`),
 
   listKeys: (provider: string) =>

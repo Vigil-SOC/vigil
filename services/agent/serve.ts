@@ -36,8 +36,6 @@ const CHAT = "/chat/stream";
 const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
 const DISTIL = /^\/runs\/([0-9a-fA-F-]{36})\/distil$/;
-// GET /runs/<id>/account -- what the run concluded, in the shape the case page reads.
-const ACCOUNT = /^\/runs\/([0-9a-fA-F-]{36})\/account$/;
 const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
 // GET /runs/<id>/replay[?decision_id=...] -- what each decision was shown, rebuilt
 // from the ledger. Matched on the pathname, since this one takes a query.
@@ -47,6 +45,9 @@ const VERIFY = /^\/runs\/([0-9a-fA-F-]{36})\/verify$/;
 // GET /runs/<id>/events[?snapshots=1] -- the ledger itself. Snapshots stay off
 // unless asked: a decision snapshot is the digest, and the case record does not show it.
 const EVENTS = /^\/runs\/([0-9a-fA-F-]{36})\/events$/;
+// GET /runs/<id>/calls/<ref>: one call as it was journaled -- the query it sent and
+// the result it got back -- for a reader checking a record against its source.
+const CALL = /^\/runs\/([0-9a-fA-F-]{36})\/calls\/(r\d+)$/;
 // A conversation is prose and a config, not an upload. Anything larger is a
 // mistake or an attack, and either way it is refused before it is parsed.
 const MAX_BODY = 1_000_000;
@@ -172,11 +173,9 @@ function fail(res: ServerResponse, status: number, route: string, runId: string,
   refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
-type Fold = "projection" | "distil" | "account";
-
 // A run folded by the workflow that owns it. The events stay ours: a reader gets
 // what the run decided or what it saw, never how either was written down.
-async function foldedBy(state: State, runId: string, view: Fold, options?: ProjectionOptions): Promise<unknown | null> {
+async function foldedBy(state: State, runId: string, view: "projection" | "distil", options?: ProjectionOptions): Promise<unknown | null> {
   const events = await state.read(runId);
   const opened = events[0];
   if (opened === undefined || !registeredKinds().includes(opened.run_kind)) return null;
@@ -185,7 +184,7 @@ async function foldedBy(state: State, runId: string, view: Fold, options?: Proje
   return project === undefined ? null : project(runId, events, options);
 }
 
-async function readFold(state: State, runId: string, view: Fold, res: ServerResponse, options?: ProjectionOptions): Promise<void> {
+async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse, options?: ProjectionOptions): Promise<void> {
   let folded: unknown | null;
   try {
     folded = await foldedBy(state, runId, view, options);
@@ -283,6 +282,13 @@ async function readEvents(state: State, runId: string, snapshots: boolean, res: 
   res.end(JSON.stringify({ events }));
 }
 
+async function readCall(state: State, runId: string, ref: string, res: ServerResponse): Promise<void> {
+  const found = (await state.read(runId)).find((event) => event.kind === "call" && (event.payload as { ref?: unknown }).ref === ref);
+  if (found === undefined) return refuse(res, 404, `no call ${ref} in ${runId}`);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ run_id: runId, ts: found.ts, ...(found.payload as object) }));
+}
+
 async function readVerify(runId: string, verify: VerifyRun | undefined, res: ServerResponse): Promise<void> {
   if (verify === undefined) {
     log.error("ledger verify is not wired", { run_id: runId });
@@ -336,9 +342,6 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
 
-      const accounted = req.method === "GET" ? ACCOUNT.exec(url) : null;
-      if (accounted !== null) return readFold(state, accounted[1] as string, "account", res);
-
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
       if (asked !== null) {
         const runId = asked[1] as string;
@@ -367,6 +370,9 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
       if (verified !== null) return readVerify(verified[1] as string, verify, res);
+
+      const called = req.method === "GET" ? CALL.exec(parsed.pathname) : null;
+      if (called !== null) return readCall(state, called[1] as string, called[2] as string, res);
 
       const logged = req.method === "GET" ? EVENTS.exec(parsed.pathname) : null;
       if (logged !== null) return readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);

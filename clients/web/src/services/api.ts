@@ -126,7 +126,6 @@ export const aiDecisionsApi = {
   }) => api.get('/ai/decisions', { params }),
   
   submitFeedback: (decisionId: string, data: {
-    human_reviewer: string
     human_decision: string
     feedback_comment?: string
     accuracy_grade?: number
@@ -272,6 +271,8 @@ export interface CaseRecordRow {
   source: string
   chained: boolean
   text: string
+  /** The run a run row is from; absent on audit and activity rows. */
+  run_id?: string | null
 }
 
 export interface CaseRecordResponse {
@@ -544,9 +545,10 @@ export interface AgentSummary {
   decision_id?: string
 }
 
-/** Reads the shell folds itself. Health is public; routability is admin-only. */
+/** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
+  getProcesses: () => api.get<{ agent_layer?: string; daemon?: string }>('/processes'),
   getRoutability: () =>
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
@@ -1018,6 +1020,8 @@ export const workflowApi = {
     api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
   replayRun: (runId: string) => api.get(`/workflows/runs/${runId}/replay`),
   verifyRun: (runId: string) => api.get(`/workflows/runs/${runId}/verify`),
+  /** One call as journaled: the query it sent and the result it got back. */
+  getCall: (runId: string, ref: string) => api.get(`/workflows/runs/${runId}/calls/${encodeURIComponent(ref)}`),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),

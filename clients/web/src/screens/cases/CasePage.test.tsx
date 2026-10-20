@@ -120,6 +120,7 @@ function investigation(status: string, live: boolean, runId: string) {
     max_cost_usd: 5,
     budget_health: 'healthy',
     iteration_count: 1,
+    primary: true,
   }
 }
 
@@ -236,13 +237,15 @@ describe('case page', () => {
     const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
     expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.20')
     expect(card).not.toHaveTextContent('no source')
-    // the run's cost, not the row's; the row shows its own turn's cost and size in chars
-    const row = within(card).getByText('who logged in').closest('li') as HTMLElement
+    // the run's cost in the header; each turn shows its words and its own cost once
+    const turn = within(card).getByText('who logged in').closest('section') as HTMLElement
+    expect(turn).toHaveTextContent('Turn 3')
+    expect(turn).toHaveTextContent('$0.01')
+    const row = turn.querySelector('li') as HTMLElement
     expect(row).toHaveTextContent('search')
     expect(row).toHaveTextContent('12 chars')
-    expect(row).toHaveTextContent('$0.01')
-    // a latency the ledger never recorded says so, never a zero
-    expect(row).toHaveTextContent('not recorded')
+    // a latency the ledger never recorded is a dash, never a zero
+    expect(row).toHaveTextContent('—')
     expect(row).not.toHaveTextContent('0.0 s')
   })
 
@@ -327,14 +330,16 @@ describe('case page', () => {
   it('keeps reading the hunt run once a newer root-cause run is on the case, and links to it', async () => {
     huntCase('case-handoff')
     const run = (workflow_id: string, run_id: string) => ({ ...investigation('completed', false, run_id), workflow_id })
-    testState.cases[0].investigations = [run('root-cause-analysis', 'run-rca'), run('threat-hunt', 'run-hunt')]
+    testState.cases[0].investigations = [{ ...run('root-cause-analysis', 'run-rca'), primary: false }, run('threat-hunt', 'run-hunt')]
     testState.runs['run-hunt'] = {
       hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
     }
     renderCase('case-handoff')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim h')).toBeInTheDocument()
-    expect(workflowApi.getRun).not.toHaveBeenCalledWith('run-rca')
+    // the hunt is the case's run and comes first; the root-cause run is read for its own heading
+    const headings = await screen.findAllByRole('heading', { level: 4 })
+    expect(headings.map((h) => h.textContent)).toEqual([expect.stringMatching(/^threat-hunt · started/), expect.stringMatching(/^root-cause-analysis · started/)])
     expect(screen.getByRole('link', { name: 'Open run run-rca' })).toHaveAttribute('href', '/workflows?run=run-rca')
     expect(screen.getAllByText('Handed off').length).toBeGreaterThan(0)
     expect(screen.queryByText(/handed_off/)).not.toBeInTheDocument()
@@ -626,7 +631,7 @@ describe('case page', () => {
     renderCase('case-inv')
 
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Now · step 2')).toBeInTheDocument()
+    expect(await within(now).findByText('Now · step 2')).toBeInTheDocument()
     expect(within(now).getByText('Examine')).toBeInTheDocument()
     expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
@@ -726,15 +731,16 @@ describe('case page', () => {
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(2)
     const clock = '09:14' // UTC, whatever the machine's zone
-    for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'executing']) {
+    for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'Working']) {
       expect(within(rows[0]).getByText(text)).toBeInTheDocument()
     }
     // The older move of the same worker is not a second row; the state sits on the latest row only.
     expect(within(table).queryByText('rank the hosts')).not.toBeInTheDocument()
     expect(within(rows[1]).getByText('network_analyst')).toBeInTheDocument()
     expect(within(rows[1]).getByText('proxy_query')).toBeInTheDocument()
-    expect(within(rows[1]).queryByText('executing')).not.toBeInTheDocument()
+    expect(within(rows[1]).queryByText('Working')).not.toBeInTheDocument()
     expect(within(rows[1]).getByText('Idle')).toBeInTheDocument()
+    expect(table.textContent).not.toContain('executing')
     expect(screen.queryByText(/incident-response · executing/)).not.toBeInTheDocument()
 
     const doors = screen.getByRole('region', { name: 'Audit doors' })
@@ -758,9 +764,13 @@ describe('case page', () => {
     renderCase('case-run-only')
 
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('The run has started and has not reported yet.')).toBeInTheDocument()
-    expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
+    expect(await within(now).findByText('The run has started and has not reported yet.')).toBeInTheDocument()
     expect(workflowApi.getRun).toHaveBeenCalledWith('run-only')
+    // A run that has found nothing says so inside the Findings so far card.
+    const findings = screen.getByRole('region', { name: 'Findings so far' })
+    expect(findings).toHaveClass('case-card')
+    expect(within(findings).getByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
+    expect(within(findings).getByText('No findings yet.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
   })
 
@@ -794,15 +804,18 @@ describe('case page', () => {
     expect(within(doors).getByText('Findings, no for or against')).toBeInTheDocument()
   })
 
-  it('keeps the Now card copy for no run, a loading run and an unreadable run', async () => {
+  it('shows a case with no run only the agents card and the doors, and keeps the Now card copy for a loading and an unreadable run', async () => {
     testState.cases = [
       { ...openCase('case-none'), investigations: [] },
       { ...openCase('case-slow'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-slow')] },
       { ...openCase('case-bad'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-bad')] },
     ]
     renderCase('case-none')
-    expect(await screen.findByText('No run on this case yet.')).toBeInTheDocument()
-    expect(screen.getByText('No live investigation.')).toBeInTheDocument()
+    expect(await screen.findByText('No live investigation.')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
+    expect(screen.queryByText('What it changed')).not.toBeInTheDocument()
+    expect(screen.queryByText('Planned next')).not.toBeInTheDocument()
+    expect(screen.queryByText('Findings so far')).not.toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('No run yet')).toHaveLength(3)
     cleanup()
 
@@ -872,7 +885,7 @@ describe('case page', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('The run could not be read.')
     })
 
-    it('puts no-source gaps after the calls, in red, outside the query count; "—" when the run has no cost', async () => {
+    it('lists the calls only, counts the no-source gaps in the header; "—" when the run has no cost', async () => {
       leadCase(lead({
         calls: [{ question: 'who logged in', tool: 'okta', result_length: 1240, cost_usd: 0.02, duration_ms: 800 }],
         gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
@@ -880,24 +893,23 @@ describe('case page', () => {
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
       expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 1 query · — · 1 with no source')
+      // the gaps themselves are read on Memory and blind spots
       const rows = card.querySelectorAll('li')
-      expect(rows).toHaveLength(2)
+      expect(rows).toHaveLength(1)
       expect(rows[0]).toHaveTextContent('okta')
       expect(rows[0]).toHaveTextContent('1,240 chars')
       expect(rows[0]).toHaveTextContent('800 ms')
-      expect(rows[1]).toHaveClass('gap')
-      expect(rows[1]).toHaveTextContent('list users — tool down')
-      expect(rows[1]).toHaveTextContent('No source')
+      expect(card).not.toHaveTextContent('tool down')
       fireEvent.click(within(card).getByRole('button', { name: 'About the cost' }))
       expect(screen.getByRole('tooltip')).toHaveTextContent(/turn's cost/)
     })
 
-    it('keeps the header and red rows when there are gaps but no calls', async () => {
+    it('keeps the header when there are gaps but no calls', async () => {
       leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
       expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.50 · 1 with no source')
-      expect(card.querySelectorAll('li')).toHaveLength(1)
+      expect(card.querySelectorAll('li')).toHaveLength(0)
     })
 
     it('shows the empty state for a ready run with no calls and no gaps', async () => {
@@ -1003,14 +1015,15 @@ describe('case page', () => {
     expect(await screen.findByRole('heading', { name: '—' })).toBeInTheDocument()
     expect(screen.getAllByText(/^Closed by ada/)).toHaveLength(2)
     expect(document.body.textContent).not.toMatch(/Invalid Date/)
-    expect(screen.getByText('No findings yet.')).toBeInTheDocument()
+    expect(await screen.findByText('No findings yet.')).toBeInTheDocument()
   })
 
   it('says so while the run loads', async () => {
     closedCase(CLOSURE)
     vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
     renderCase('case-closed')
-    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+    const closed = await screen.findByRole('region', { name: 'Closed summary' }, { timeout: 5000 })
+    expect(within(closed).getByText('Loading the run…')).toBeInTheDocument()
   })
 
   it('says so when the run cannot be read', async () => {
@@ -1156,6 +1169,41 @@ describe('case page', () => {
       expect(screen.queryByText('Recalled 3 rows')).not.toBeInTheDocument()
     })
 
+    it('labels each run row with its run, and an unread run is a row, not the error state', async () => {
+      testState.recordRows = [
+        { id: 'run:root:1', at: '2026-06-15T10:20:00Z', kind: 'run', source: 'run', chained: true, text: 'Root cause started', run_id: 'root-run' },
+        { id: 'run:gone:unread', at: '2026-06-15T10:15:00Z', kind: 'unread', source: 'run', chained: false, text: 'Could not read the record of run gone-run-1234 — boom', run_id: 'gone-run-1234' },
+        { id: 'run:run/1:1', at: '2026-06-15T10:00:00Z', kind: 'run', source: 'run', chained: true, text: 'Hunt started', run_id: 'run/1' },
+        { id: 'audit:1', at: '2026-06-15T10:09:00Z', kind: 'case_audit_logs', source: 'case_audit_logs', chained: false, text: 'M. Kaur closed the task' },
+      ]
+      testState.cases = [{
+        case_id: 'case-rec',
+        title: 'Record case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [
+          { ...investigation('completed', false, 'root-run'), investigation_id: null, workflow_id: 'root-cause', primary: false, created_at: '2026-06-15T10:20:00Z' },
+          { ...investigation('completed', false, 'run/1'), created_at: '2026-06-15T09:58:00Z' },
+        ],
+      }]
+      testState.runs['run/1'] = { hunt: HUNT }
+      testState.runs['root-run'] = { hunt: HUNT }
+      renderCase('case-rec')
+      fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
+      const row = async (text: string) => (await screen.findByText(text, { exact: false })).closest('.rec-row')
+      expect(await row('Hunt started')).toHaveTextContent('Incident response · 09:58')
+      expect(await row('Root cause started')).toHaveTextContent('root-cause · 10:20')
+      // a run the case does not list falls back to a short id
+      expect(await row('Could not read the record')).toHaveTextContent('gone-run')
+      expect(await row('Could not read the record')).toHaveTextContent('System')
+      expect(await row('Could not read the record')).not.toHaveTextContent('chained')
+      expect((await row('M. Kaur closed the task'))?.querySelector('.rec-run')).toBeNull()
+      expect(screen.queryByText('Couldn’t load the record')).not.toBeInTheDocument()
+    })
+
     it('shows the empty and loading states', async () => {
       testState.recordRows = []
       await openRecord()
@@ -1167,7 +1215,7 @@ describe('case page', () => {
       testState.recordRows = rows
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit and activity rows are not.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are hash-chained. Case audit and activity rows are not.')
     })
 
     it('Replay links to the run on Workflows, and closes the drawer', async () => {
@@ -1337,6 +1385,34 @@ describe('case page', () => {
     expect(onSeedConsumed).toHaveBeenCalled()
   })
 
+  it('asks where the runs disagree only on a case with more than one run', async () => {
+    const twoRuns = (investigations: unknown[]) => [{
+      case_id: 'case-runs',
+      title: 'Runs case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations,
+    }]
+    testState.cases = twoRuns([investigation('completed', false, 'run-a')])
+    const { unmount } = renderDetail('case-runs')
+    expect(await screen.findByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Where do the runs disagree?' })).not.toBeInTheDocument()
+    unmount()
+
+    testState.cases = twoRuns([
+      investigation('completed', false, 'run-a'),
+      { ...investigation('completed', false, 'run-b'), investigation_id: 'inv-2', primary: false },
+    ])
+    renderDetail('case-runs')
+    fireEvent.click(await screen.findByRole('button', { name: 'Where do the runs disagree?' }))
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: "Where do this case's runs disagree, and what did each one say?" })
+  })
+
   it('chips a hunt evidence id and opens that row, and drops the thread when the case changes', async () => {
     testState.cases = [
       {
@@ -1413,7 +1489,7 @@ describe('case page', () => {
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
     const body = document.querySelector('.detail-body') as HTMLElement
-    expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Findings so far') ?? -1)
+    expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Agents on this case') ?? -1)
     expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Isolate host') ?? -1)
     expect(screen.getByText('beacon')).toBeInTheDocument()
     expect(screen.getByText('Reversible')).toBeInTheDocument()
@@ -1440,6 +1516,8 @@ describe('case page', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
       expect(screen.getByText('Approving: Block 1.2.3.4')).toBeInTheDocument()
       expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+      // The fuse takes the item out of needs-you, but a run-less case grows no Now card in its place.
+      expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
 
       await tick(7999)
       expect(approvalsApi.approve).not.toHaveBeenCalled()
@@ -2147,10 +2225,10 @@ describe('Memory and blind spots tab', () => {
   it('shows recalled rows with provenance, merged blind spots, and counts the rows', async () => {
     open('m-hunt', { hunt: { ...HUNT, recall, calls: [...HUNT.calls, { question: 'what is 10.0.0.7', tool: 'recall_entity', result_length: 340, cost_usd: 0 }], evidence: [{ ...HUNT.evidence[0], is_gap: true, gap_detail: 'no proxy logs' }] } })
     fireEvent.click(await memoryTab())
+    const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
     // sighting + verdict + recall_entity call + declared gap + visibility gap
     expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('5')
 
-    const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
     expect(recalled.getByText('Asked about 10.0.0.7, m.kaur')).toBeInTheDocument()
     expect(recalled.getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
     expect(recalled.getByText('Hunt hunt-9 · May 2, 2026')).toBeInTheDocument()
@@ -2164,7 +2242,9 @@ describe('Memory and blind spots tab', () => {
     const blind = within(screen.getByRole('region', { name: 'Blind spots' }))
     expect(blind.getByText('Declared')).toBeInTheDocument()
     expect(blind.getByText('no evidence gathered — MFA push logs never checked')).toBeInTheDocument()
-    expect(blind.getByText('Visibility')).toBeInTheDocument()
+    // the hunt's own account of what it could not see, under the source it lost
+    expect(blind.getByText('Telemetry')).toBeInTheDocument()
+    expect(blind.getByText('could not answer')).toBeInTheDocument()
     expect(blind.getByText('no proxy logs')).toBeInTheDocument()
   })
 
@@ -2232,6 +2312,86 @@ describe('Memory and blind spots tab', () => {
     open('m-err', { hunt: HUNT })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('The run could not be read')).toBeInTheDocument()
+  })
+})
+
+describe('a case with several runs', () => {
+  const ref = (workflow_id: string, run_id: string, created_at: string, primary = false) => ({
+    ...investigation('completed', false, run_id), workflow_id, created_at, primary,
+  })
+  const ROOT_CAUSE = { run_id: 'run-rca', run_kind: 'root_cause', status: 'terminal', outcome: 'concluded', reason: '', cost_usd: 0.4, max_cost_usd: 2, steps: [{ step_id: 's1' }], open_checkpoint: null }
+  const threeRuns = (id: string) => {
+    testState.cases = [{
+      ...openCase(id),
+      combined_state: 'executing',
+      investigations: [
+        ref('incident-response', 'run-inv', '2026-06-15T10:00:00Z'),
+        ref('root-cause-analysis', 'run-rca', '2026-06-15T11:00:00Z'),
+        { ...ref('threat-hunt', 'run-hunt', '2026-06-15T09:00:00Z', true), status: 'executing', live: true },
+      ],
+    }]
+    testState.runs['run-hunt'] = { status: 'running', hunt: { ...HUNT, status: 'running' } }
+    testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }], cost_usd: 0.1 } }
+    testState.runs['run-rca'] = { status: 'completed', projection: ROOT_CAUSE }
+  }
+  const titles = () => screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)
+  const ORDER = [/^threat-hunt · started 09:00$/, /^root-cause-analysis · started 11:00$/, /^Incident response · started 10:00$/]
+
+  it('lists each run under its own heading, the primary run first, and the honest line only under runs with no record', async () => {
+    threeRuns('case-three')
+    renderCase('case-three')
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
+    const others = screen.getByRole('region', { name: 'Other runs on this case' })
+    await waitFor(() => expect(others).toHaveTextContent('Concluded'))
+    expect(others).toHaveTextContent('$0.40 of $2.00')
+    expect(within(others).getAllByRole('listitem')).toHaveLength(2)
+
+    // the door counts what the tabs list across every run
+    expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveTextContent('2')
+
+    fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
+    await waitFor(() => expect(titles()).toEqual(ORDER.map((re) => expect.stringMatching(re))))
+    const sections = ORDER.map((_, i) => screen.getAllByRole('heading', { level: 4 })[i].closest('section') as HTMLElement)
+    expect(within(sections[0]).getByText('The host is owned')).toBeInTheDocument()
+    expect(within(sections[0]).queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+    expect(within(sections[1]).getByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+    expect(within(sections[2]).getByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    await waitFor(() => expect(titles()).toEqual(ORDER.map((re) => expect.stringMatching(re))))
+    expect(screen.getByText('no login')).toBeInTheDocument()
+    expect(screen.getByText('benign login')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
+    await waitFor(() => expect(titles()).toHaveLength(3))
+    expect(screen.getByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
+  })
+
+  it('says under its own heading when one run cannot be read, and still shows the others', async () => {
+    threeRuns('case-broken')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
+      runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
+    )
+    renderCase('case-broken')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    await waitFor(() => expect(titles()).toHaveLength(3))
+    const broken = screen.getByRole('region', { name: /^Incident response · started/ })
+    await waitFor(() => expect(broken).toHaveTextContent('The run could not be read.'))
+    expect(screen.getByRole('region', { name: /^threat-hunt · started/ })).toHaveTextContent('The host is owned')
+    expect(screen.getByRole('region', { name: /^root-cause-analysis · started/ })).toHaveTextContent('This workflow does not test explanations yet.')
+    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
+  })
+
+  it('shows no run heading and no other runs on a case with one run', async () => {
+    testState.cases = [{ ...openCase('case-one'), investigations: [investigation('executing', true, 'run-one')] }]
+    testState.runs['run-one'] = { status: 'running', hunt: { ...HUNT, status: 'running' } }
+    renderCase('case-one')
+    expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Other runs on this case' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('The host is owned')).toBeInTheDocument()
+    expect(screen.queryAllByRole('heading', { level: 4 })).toHaveLength(0)
   })
 })
 
@@ -2326,7 +2486,7 @@ describe('watching a run, its cost and its agents', () => {
   it('offers no Watch link without a run', async () => {
     testState.cases = [openCase('case-none')]
     renderDetail('case-none')
-    await screen.findByText('No run on this case yet.')
+    await screen.findByText('No live investigation.')
     expect(screen.queryByRole('link', { name: 'Watch it run' })).not.toBeInTheDocument()
   })
 
@@ -2408,7 +2568,7 @@ describe('watching a run, its cost and its agents', () => {
       ] }),
     })
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Rule out an explanation')).toBeInTheDocument()
+    expect(await within(now).findByText('Rule out an explanation')).toBeInTheDocument()
     expect(document.querySelector('.case-reason')).toHaveTextContent(/^Step \d+ · /)
     const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')
     expect(rows[1]).toHaveTextContent('who logged in')
@@ -2572,7 +2732,7 @@ describe('a kernel hunt on its case', () => {
       moves: [{ decision_id: 'r9', query_intent: 'Searched alerts for HTTPS beaconing', action: 'QUERY', worker_agent_id: 'Hunt lead', iteration: 3, created_at: '2026-06-15T09:14:00Z' }],
     }))
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing')
+    await waitFor(() => expect(now).toHaveTextContent('Searched alerts for HTTPS beaconing'))
     expect(now).not.toHaveTextContent('{')
     const agents = screen.getByRole('table', { name: 'Agents' })
     expect(agents).toHaveTextContent('Hunt lead')
@@ -2587,12 +2747,11 @@ describe('a kernel hunt on its case', () => {
     }))
     fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
     const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    const [unpriced, priced] = Array.from(card.querySelectorAll('li'))
-    expect(unpriced).toHaveTextContent('not recorded')
+    const [unpriced, priced] = Array.from(card.querySelectorAll('section.checked-turn'))
     expect(unpriced).toHaveTextContent('8 ms')
-    expect(unpriced).not.toHaveTextContent('$0.00')
+    expect(unpriced).not.toHaveTextContent('$')
     expect(priced).toHaveTextContent('$0.0015')
-    expect(priced).toHaveTextContent('not recorded') // its latency
+    expect(priced).not.toHaveTextContent('$0.00 ')
   })
 
   it('says "Coming in a later release" on every drawn but not live control, never the internal wording', async () => {

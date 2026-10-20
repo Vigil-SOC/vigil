@@ -1,6 +1,6 @@
 ---
 name: shadow-adjudication
-version: 2
+version: 3
 description: "A shadow second opinion on a finding intake has already admitted: test the stated intent against the benign account, name the workflow that should have run, and execute nothing."
 use_case: "Shadow adjudication -- given a finding intake admitted and the workflow it chose, decide independently whether the finding is what intake says it is and which catalogue workflow you would have run, so intake's choices can be scored later."
 trigger_examples:
@@ -19,7 +19,7 @@ run_kind: adjudicate
 # without one. The benign account needs no stating: the controller seeds it as the
 # base rate on every run, because it is the claim the finding has to beat.
 hypotheses: []
-# Copied from threat-hunt: the vocabulary a worker's technique citation is gated
+# Copied from threat-hunt: the vocabulary the agent's technique citation is gated
 # against, and nothing else. An adjudication may be handed a finding of any kind
 # intake admits, so the list has to span what a hunt over the data_domains below
 # could legitimately find. Add to it rather than working around it.
@@ -67,7 +67,7 @@ attack_techniques:
   - T1530       # Data from cloud storage
   - T1486       # Data encrypted for impact
   - T1496       # Resource hijacking
-# Copied from threat-hunt: a worker's source_system is constrained to this list at
+# Copied from threat-hunt: the agent's source_system is constrained to this list at
 # spec build, and corroboration is counted over distinct entries.
 data_domains:
   - net_flow
@@ -86,44 +86,13 @@ objectives:
   - "Test the stated intent against the seeded benign account with the same verbs"
   - "Name the catalogue workflow this finding warrants -- or none"
   - "State in one sentence whether intake's choice was right, and why; start nothing"
-# The roster, not an order: the lead dispatches whichever of these the question in
-# front of it needs. Their tool grants live in plugins/adjudicate/plugin.yaml,
-# so what stands here is who can be asked and what each is for.
-phases:
-  - id: threat_hunter
-    agent: threat_hunter
-    name: "Behavioural check"
-    tools: [findings_search, telemetry_search, entity_recall]
-    instructions: |
-      Characterise the admitted finding against the signal detection already scored
-      and the telemetry behind it. "Nothing matched" is a finding about visibility,
-      not a failure: say which sources you queried and which you could not.
-
-  - id: network_analyst
-    agent: network_analyst
-    name: "Traffic shape"
-    tools: [telemetry_search, findings_search, entity_recall]
-    instructions: |
-      Beaconing intervals, jitter, volume asymmetry, DNS and HTTP around the
-      finding's entities. Quantify: a regular interval with low variance is the
-      signal, a busy host is not.
-
-  - id: threat_intel
-    agent: threat_intel
-    name: "Observable enrichment"
-    tools: [indicator_lookup, entity_recall]
-    instructions: |
-      Reputation and attribution for the finding's observables, against the
-      indicator database and whatever intel integrations are connected. A miss is
-      not exoneration: say "not in the feed" and never report an unknown observable
-      as benign.
 ---
 
 # Shadow Adjudication Workflow
 
 A second, independent opinion on a finding intake has already admitted. This text is the run's narrative — the Lead reads it as standing context for every decision it makes.
 
-The finding and the workflow intake chose arrive in the run request and the stated hypothesis. The Lead does not take the admission as given: it puts intake's stated intent on the board beside the seeded benign account and tests both with the same verbs a hunt uses — dispatch a worker against an open question, expand a piece of evidence, pivot onto one of the finding's entities, deepen a line that is paying off, abandon one that is not, validate a hypothesis it believes is settled, stop and ask an operator, or conclude. What the evidence did to each belief drives the next move, which is why there is no phase order.
+The finding and the workflow intake chose arrive in the run request and the stated hypothesis. The Lead does not take the admission as given: it puts intake's stated intent on the board beside the seeded benign account and tests both the way a hunt does — it queries the estate itself, records what came back as evidence, links each record against every belief on the board, and puts a belief up for validation, where an independent critic argues the benign explanation before any verdict stands. Along the way it may expand a piece of evidence, pivot onto one of the finding's entities, deepen a line that is paying off, abandon one that is not, stop and ask an operator, or conclude. What the evidence did to each belief drives the next move, which is why there is no phase order.
 
 The run executes nothing. There is no handoff to incident response and no workflow is started. Its CONCLUDE names the workflow the Lead would have run from the catalogue — `incident-response`, `forensic-analysis`, `full-investigation`, `threat-hunt`, `root-cause-analysis`, `cloud-incident` — or `none`, and says in one sentence whether it agrees with intake and why. That proposal is journaled with the decision so intake's choices can be scored against it later.
 

@@ -64,7 +64,7 @@ function huntHarness(): HarnessFactory {
         ? { action: "CONCLUDE", rationale: "nothing to pursue", evidence_citations: [] }
         : // The hunt's own conclusion: its account and what it could not settle.
           "open_questions" in ((schema["properties"] ?? {}) as Record<string, unknown>)
-          ? { summary: "nothing to pursue", open_questions: [] }
+          ? { summary: "nothing to pursue", disposition: "inconclusive", citations: [], open_questions: [] }
           : { results: [] },
     ticks: 0,
   });

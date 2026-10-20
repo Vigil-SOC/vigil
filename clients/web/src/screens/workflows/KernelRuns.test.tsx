@@ -4,13 +4,14 @@
    kernel-view-fixtures.ts. A change on either side that the other cannot read
    fails here rather than in front of an operator. */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 import { readFold } from '../cases/caseFold'
 import huntProjection from './__fixtures__/kernel-hunt-projection.json'
 import huntReplay from './__fixtures__/kernel-hunt-replay.json'
 import investigateProjection from './__fixtures__/kernel-investigate-projection.json'
 import investigateReplay from './__fixtures__/kernel-investigate-replay.json'
+import investigateHeld from './__fixtures__/kernel-investigate-held-projection.json'
 
 vi.mock('../../services/api', () => ({
   workflowApi: {
@@ -68,6 +69,11 @@ describe('a hunt run on the kernel', () => {
     expect(screen.getAllByText(/runs an unsanctioned sync client/).length).toBeGreaterThan(0)
   })
 
+  it('opens on its account as the verdict line', () => {
+    renderHunt()
+    expect(screen.getByLabelText('Verdict')).toHaveTextContent('the host beaconed')
+  })
+
   it('reads on the case page', () => {
     const fold = readFold({ status: 'completed', hunt: huntProjection })
     expect(fold).not.toBeNull()
@@ -97,6 +103,44 @@ describe('an investigate run on the kernel', () => {
     expect(screen.getByText('CONCLUDE')).toBeInTheDocument()
     expect(screen.getAllByText('get_finding').length).toBeGreaterThan(0)
     expect(screen.getAllByText('splunk_search').length).toBeGreaterThan(0)
+  })
+
+  const renderHeld = () => render(<RunDetail d={{ run_id: 'run-1', status: 'completed', projection: investigateHeld, result_summary: 'closed' } as never} onSteered={() => {}} />)
+
+  it('lays out the explanations it weighed, each with its standing and tallies', async () => {
+    renderHeld()
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent)
+    expect(tabs).toEqual(['Explanations3', 'Evidence3', 'Open questions1'])
+    const row = screen.getByText(/part of an authorized red-team engagement/).closest('tr')!
+    expect(row).toHaveTextContent('H3')
+    expect(row).toHaveTextContent('2 for · 0 against')
+    expect(row).toHaveTextContent('active')
+    // Decisions and the summary stay below the tabs.
+    expect((await screen.findAllByText('EXAMINE')).length).toBe(4)
+    expect(screen.getByText('Result summary')).toBeInTheDocument()
+  })
+
+  it('shows what each record bears on, and what it left open', () => {
+    renderHeld()
+    tabTo(/Evidence/)
+    const row = screen.getByText(/mimikatz-style tool run by user0201/).closest('tr')!
+    expect(row).toHaveTextContent('supports H3')
+    expect(row).toHaveTextContent('weakens H1')
+    tabTo(/Open questions/)
+    expect(screen.getByText(/the registered red-team operator on ws-0901/)).toBeInTheDocument()
+  })
+
+  it('reads the held value on the verdict line of a held dismissal', () => {
+    renderHeld()
+    const verdict = within(screen.getByLabelText('Verdict'))
+    expect(verdict.getByText('Needs review')).toHaveClass('chip')
+    expect(verdict.getByText(/^EDR detected credential dumping/)).toBeInTheDocument()
+  })
+
+  it('offers no tab the run did not produce', () => {
+    render(<RunDetail d={{ run_id: 'run-1', status: 'completed', projection: investigateProjection } as never} onSteered={() => {}} />)
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Explanations3', 'Evidence3'])
+    expect(within(screen.getByLabelText('Verdict')).getByText('Benign')).toHaveClass('chip')
   })
 
   it('reads on the case page, its answer and calls included', () => {

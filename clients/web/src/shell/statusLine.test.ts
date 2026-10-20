@@ -6,6 +6,7 @@ const reads = (health: StatusReads['health']): StatusReads => ({
   federation: null,
   mcp: null,
   routability: null,
+  processes: null,
 })
 
 describe('foldStatus storage', () => {
@@ -32,12 +33,63 @@ describe('foldStatus storage', () => {
   })
 })
 
+describe('foldStatus processes', () => {
+  const healthy = (processes: StatusReads['processes']): StatusReads => ({
+    ...reads({ status: 'healthy', storage: { database_available: true } }),
+    processes,
+  })
+
+  it.each([
+    ['no_token', 'Agent layer has no internal token.'],
+    ['not_running', 'Agent layer is not running.'],
+    ['unhealthy', 'Agent layer is not ready.'],
+  ])('goes Fair when the agent layer is %s', (agent_layer, sentence) => {
+    expect(foldStatus(healthy({ agent_layer, daemon: 'running' }))).toEqual({ level: 'fair', sentence })
+  })
+
+  it('does not read a daemon that was never started as a fault', () => {
+    expect(foldStatus(healthy({ agent_layer: 'running', daemon: 'not_running' }))).toEqual({
+      level: 'good',
+      sentence: 'No problems reported.',
+    })
+  })
+
+  it('goes Fair when the daemon reports a stopped component', () => {
+    expect(foldStatus(healthy({ agent_layer: 'running', daemon: 'unhealthy' }))).toEqual({
+      level: 'fair',
+      sentence: 'SOC daemon reports a stopped component.',
+    })
+  })
+
+  it('says nothing when the read failed or the state is unknown', () => {
+    for (const processes of [null, { agent_layer: 'unknown', daemon: 'unknown' }]) {
+      expect(foldStatus(healthy(processes))).toEqual({ level: 'good', sentence: 'No problems reported.' })
+    }
+  })
+
+  it('lets a Poor fact win, and outranks a stopped MCP server', () => {
+    expect(
+      foldStatus({
+        ...reads({ status: 'degraded', storage: { database_available: false, demo_mode: false } }),
+        processes: { agent_layer: 'not_running' },
+      }),
+    ).toEqual({ level: 'poor', sentence: 'Database is unavailable.' })
+    expect(
+      foldStatus({
+        ...healthy({ agent_layer: 'not_running', daemon: 'running' }),
+        mcp: { statuses: [{ name: 'splunk', status: 'stopped', enabled: true }] },
+      }),
+    ).toEqual({ level: 'fair', sentence: 'Agent layer is not running.' })
+  })
+})
+
 describe('foldStatus tool servers', () => {
   const mcp = (statuses: NonNullable<StatusReads['mcp']>['statuses']): StatusReads => ({
     health: null,
     federation: null,
     mcp: { statuses },
     routability: null,
+    processes: null,
   })
 
   it('reads a fresh install as clear: rules not fetched and servers not used yet are not faults', () => {

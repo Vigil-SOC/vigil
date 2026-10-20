@@ -295,7 +295,14 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     const ending = (await options.hooks?.finish?.(ctx, loop.outcome)) ?? null;
     if (ending !== null && isParked(ending)) return wait(ctx, ending);
     if (loop.conclusion !== null) await harness.state.append(run_id, [event(options, "conclusion", await withGaps(ctx, loop.conclusion))]);
-    if (ending !== null) return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs);
+    if (ending !== null) {
+      // A plugin that ends the run itself still holds its guarded answer to the second look.
+      if (loop.conclusion !== null && options.plugin.guard !== undefined) {
+        const answered = await harness.state.read(run_id);
+        await harness.state.append(run_id, [event(options, "review", await reviewOf(ctx, loop.conclusion, callsIn(answered)))]);
+      }
+      return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs);
+    }
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
       return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason);
     }

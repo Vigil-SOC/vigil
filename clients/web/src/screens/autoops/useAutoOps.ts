@@ -162,9 +162,19 @@ export function useAutoOps() {
     }
   }, [load])
 
+  // Restart queues a new investigation; the old one stays on record.
   const wake = useCallback(
-    (id: string) =>
-      run(`wake:${id}`, () => orchestratorApi.wakeInvestigation(id), 'Failed to restart investigation'),
+    async (id: string) => {
+      setNotice(null)
+      return run(
+        `wake:${id}`,
+        async () => {
+          const res = await orchestratorApi.wakeInvestigation(id)
+          setNotice(res.data?.message || 'New investigation queued.')
+        },
+        'Failed to restart investigation',
+      )
+    },
     [run],
   )
 

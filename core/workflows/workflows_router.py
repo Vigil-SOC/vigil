@@ -4,15 +4,10 @@ import logging
 import re
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from core.agents.projections import (
-    read_account,
-    read_projection,
-    read_replay,
-    read_verify,
-)
+from core.agents.projections import read_call, read_projection, read_replay, read_verify
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import (
@@ -33,10 +28,10 @@ from core.memory.source_tier import (
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from core.storage.schemas.case_account import CaseAccount
 from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
+from core.workflows.handoff_cases import stamp_handoff_cases
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
@@ -612,39 +607,12 @@ async def get_workflow_run(
     folded = await read_projection(run_id, evidence_limit)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
         _stamp_source_tiers(folded)
+        origin = (row.get("trigger_context") or {}).get("case_id")
+        stamp_handoff_cases(folded, run_id, str(origin) if origin else None)
         row["hunt"] = folded
     else:
         row["projection"] = folded
     return row
-
-
-@router.get(
-    "/workflows/runs/{run_id}/account",
-    response_model=CaseAccount,
-    response_model_exclude_unset=True,
-)
-async def get_workflow_run_account(
-    run_id: str,
-    run_service: WorkflowRunService = Depends(provide_workflow_runs),
-) -> CaseAccount:
-    """What a run concluded, in the one shape every loop fills.
-
-    Folded from the ledger on each read, so it is never stale. A section the
-    run's loop does not produce is absent, never null; a run whose loop keeps
-    no account is a 404.
-    """
-    if not run_service.get_run(run_id):
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    try:
-        account = await read_account(run_id)
-    except Exception as exc:  # noqa: BLE001 — logged; the reader gets a fixed reason
-        logger.error("could not read the account of run %s: %s", run_id, exc)
-        raise HTTPException(
-            status_code=502, detail="The agent layer could not give this run's account"
-        ) from None
-    if account is None:
-        raise HTTPException(status_code=404, detail=f"No account for run: {run_id}")
-    return account
 
 
 @router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)
@@ -805,6 +773,31 @@ async def replay_workflow_run(
             status_code=404, detail=f"Nothing to replay for run: {run_id}"
         )
     return report
+
+
+@router.get("/workflows/runs/{run_id}/calls/{ref}")
+async def read_workflow_run_call(
+    run_id: str,
+    ref: str = Path(..., pattern=r"^r\d+$"),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """One call of a run, whole: the query it sent and the result it got back.
+
+    What a reader opens from the Checked tab, or from an evidence row's source,
+    to check a record against the query it came from.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        call = await read_call(run_id, ref)
+    except Exception as exc:  # noqa: BLE001 — logged; the reader gets a fixed message
+        logger.error("could not read call %s of run %s: %s", ref, run_id, exc)
+        raise HTTPException(
+            status_code=502, detail="Could not read the call from the agent layer"
+        ) from None
+    if call is None:
+        raise HTTPException(status_code=404, detail=f"No call {ref} in run {run_id}")
+    return call
 
 
 @router.get("/workflows/runs/{run_id}/verify")

@@ -12,6 +12,7 @@ import {
   type BifrostRoutability,
   type BifrostVirtualKey,
   type BifrostVirtualKeyWrite,
+  type CustomProviderWrite,
 } from '../../services/bifrostApi'
 
 type Phase = 'loading' | 'ready' | 'error'
@@ -108,10 +109,18 @@ export function useBifrostProviders() {
   )
 
   const addProvider = useCallback(
-    async (name: string) => {
-      const res = await bifrostApi.createProvider(name)
+    async (name: string, custom?: CustomProviderWrite) => {
+      const res = await (custom ? bifrostApi.createProvider(name, custom) : bifrostApi.createProvider(name))
       reload()
       return res.data
+    },
+    [reload],
+  )
+
+  const setBaseUrl = useCallback(
+    async (name: string, baseUrl: string) => {
+      await bifrostApi.setProviderBaseUrl(name, baseUrl)
+      reload()
     },
     [reload],
   )
@@ -139,6 +148,7 @@ export function useBifrostProviders() {
     saveKey,
     removeKey,
     addProvider,
+    setBaseUrl,
     removeProvider,
   }
 }

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from core.workflows.hunt_preflight import LEAD_TOOLS
+from core.workflows.hunt_preflight import LEAD_TOOLS, PLUGIN_SKILLS
 from core.workflows.playbook_resolver import CHECKPOINT_CLASSES, DEFAULT_CHECKPOINTS
 
 pytestmark = pytest.mark.unit
@@ -65,6 +65,14 @@ def test_the_lead_the_reader_names_holds_what_the_arch_grants(kind, arch):
     assert set(LEAD_TOOLS[kind]) == set(lead.get("tools") or []) | set(
         lead.get("needs") or []
     )
+
+
+@pytest.mark.parametrize(
+    ("kind", "arch"),
+    [("hunt", "hunt/plugin.yaml"), ("adjudicate", "adjudicate/plugin.yaml")],
+)
+def test_the_skills_the_reader_names_are_the_plugins(kind, arch):
+    assert list(PLUGIN_SKILLS[kind]) == yaml.safe_load((ARCH / arch).read_text())["skills"]
 
 
 def test_the_investigate_lead_is_the_arch_lead():

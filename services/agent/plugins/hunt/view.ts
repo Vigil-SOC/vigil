@@ -1,4 +1,4 @@
-import { agentProjection, agentReplay, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
+import { agentProjection, agentReplay, dispositionOf, heldOf, type AgentProjection, type AgentReplay, type Held } from "../../core/agent-view.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { RECORD_TOOLS } from "../../core/record.js";
 import { callViews } from "../../core/call-view.js";
@@ -31,7 +31,7 @@ export function huntView(
   runId: string,
   events: readonly Envelope[],
   options: ProjectionOptions = {},
-): HuntProjection & { engine: "plugin"; kernel: AgentProjection } {
+): HuntProjection & { held: Held | null; engine: "plugin"; kernel: AgentProjection } {
   const base = huntProjection(runId, events as readonly HuntEvent[], options);
   const moves = turnsOf(events)
     .map(moveOf)
@@ -50,11 +50,23 @@ export function huntView(
           iteration: turn.turn,
           query_intent: turnWords([call]).words,
           ...(costs.get(turn.turn) == null ? {} : { cost_usd: costs.get(turn.turn) as number }),
-          calls: [{ tool: call.tool, result: call.result, ...(call.duration_ms === undefined ? {} : { duration_ms: call.duration_ms }) }],
+          calls: [
+            {
+              tool: call.tool,
+              result: call.result,
+              ref: call.ref,
+              arguments: call.arguments,
+              ...(call.class === undefined ? {} : { class: call.class }),
+              ...(turn.thought ? { thought: turn.thought } : {}),
+              ...(call.duration_ms === undefined ? {} : { duration_ms: call.duration_ms }),
+            },
+          ],
         })),
     ),
   );
-  return { ...base, moves, calls, engine: "plugin", kernel: agentProjection(runId, events) };
+  const kernel = agentProjection(runId, events);
+  // The word the conclusion said, held as the reviewer guard left it, and what it was held from.
+  return { ...base, disposition: dispositionOf(kernel), held: heldOf(kernel), moves, calls, engine: "plugin", kernel };
 }
 
 // A kernel hunt's replay in the controller's shape, one decision per model turn, each

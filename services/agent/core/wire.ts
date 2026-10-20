@@ -13,12 +13,15 @@ import {
   type TurnRequest,
 } from "./provider.js";
 import type { Effort } from "./spec.js";
+import { logger } from "./log.js";
 import { capture, traced } from "./tracing.js";
 import { noVirtualKey, type VirtualKey } from "./vk.js";
 
 // Unset, the gateway's own default cuts a long emission off mid-JSON, which
 // arrives as an unparseable answer rather than as a limit that was hit.
 const MAX_OUTPUT_TOKENS = 12_000;
+
+const log = logger("agent.wire");
 
 export const EMIT_TOOL = "emit";
 
@@ -51,6 +54,60 @@ const outputCaps = new Map<string, OutputCap>();
 
 export function resetOutputCap(): void {
   outputCaps.clear();
+}
+
+// A reply with nothing in it -- no text, no call, and no output billed -- is the
+// gateway or the model failing, not the model answering. Asked again after these
+// pauses; still empty, the call fails as a ModelSilent rather than handing the role
+// an empty answer it then blames on itself.
+let silentPauses: readonly number[] = [2_000, 8_000];
+
+export function setSilentPauses(pauses: readonly number[]): void {
+  silentPauses = pauses;
+}
+
+export class ModelSilent extends ProviderError {}
+
+// Ends the pause early when the run is aborted, rather than waiting out the 8 s.
+function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    function stop(): void {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    if (signal?.aborted) return stop();
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
+
+// A forced emit with no arguments counts as nothing: "{}" at zero output tokens is the
+// gateway closing the call, not the model answering. A call to any other tool is an
+// answer even when it takes no arguments and the gateway billed it at zero.
+function silent(response: OpenAI.Chat.ChatCompletion): boolean {
+  const message = response.choices[0]?.message;
+  const called = (message?.tool_calls ?? []).some((call) => {
+    if (call.type !== "function" || call.function.name !== EMIT_TOOL) return true;
+    const args = call.function.arguments.trim();
+    return args !== "" && args !== "{}";
+  });
+  const said = (message?.content ?? "").trim() !== "" || called;
+  return !said && (response.usage?.completion_tokens ?? 0) === 0;
+}
+
+// What the empty attempts were billed, carried onto the call that answered, so a
+// retry is not spend the pool loses.
+function plus(usage: OpenAI.CompletionUsage | undefined, wasted: TokenCounts): OpenAI.CompletionUsage | undefined {
+  if (usage === undefined || wasted.input + wasted.output === 0) return usage;
+  return {
+    ...usage,
+    prompt_tokens: usage.prompt_tokens + wasted.input,
+    completion_tokens: usage.completion_tokens + wasted.output,
+    total_tokens: usage.total_tokens + wasted.input + wasted.output,
+  };
 }
 
 // The gateway relays the upstream complaint, and it names the field. Matching on that
@@ -258,6 +315,25 @@ class OpenAiSurface implements Provider {
   }
 
   private async send(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<OpenAI.Chat.ChatCompletion> {
+    let wasted: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+    for (let attempt = 0; ; attempt += 1) {
+      const { response, reported } = await this.sendOnce(body, cap, signal);
+      if (!reported || !silent(response)) return { ...response, usage: plus(response.usage, wasted) };
+      const spent = tokensOf(response.usage);
+      wasted = { input: wasted.input + spent.input, output: wasted.output + spent.output, cache_read: 0, cache_write: 0 };
+      const pause = silentPauses[attempt];
+      if (pause === undefined) {
+        throw new ModelSilent(`the model stopped answering: ${attempt + 1} empty replies in a row from ${this.wire_model}`, wasted);
+      }
+      log.warn("model returned an empty reply, asking again", { model: this.wire_model, attempt: attempt + 1, pause_ms: pause });
+      await pauseFor(pause, signal);
+    }
+  }
+
+  // One request. `reported` says the gateway sent usage: a guessed usage cannot tell
+  // an empty reply from one the stream lost.
+  private async sendOnce(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<{ response: OpenAI.Chat.ChatCompletion; reported: boolean }> {
+    let reported = false;
     const limit = cap === "max_tokens" ? { max_tokens: MAX_OUTPUT_TOKENS } : { max_completion_tokens: MAX_OUTPUT_TOKENS };
     const estimate = estimateTokens(JSON.stringify(body));
     const attributes = {
@@ -266,7 +342,7 @@ class OpenAiSurface implements Provider {
       "gen_ai.request.model": this.wire_model,
     };
     // Opened before the limiter, so time queued behind a rate limit is on the span.
-    return traced(`chat ${this.wire_model}`, attributes, async (span) => {
+    const response = await traced(`chat ${this.wire_model}`, attributes, async (span) => {
       // What this call adds since the model last spoke: earlier spans hold the rest, and
       // the whole history cut at the cap would keep the oldest turns, not the newest.
       const spoke = body.messages.findLastIndex((message) => message.role === "assistant");
@@ -286,6 +362,7 @@ class OpenAiSurface implements Provider {
           throw new ProviderError("the gateway answered a stream request with a whole completion");
         }
         const response = await assemble(stream);
+        reported = response.usage !== undefined;
         return response.usage === undefined ? { ...response, usage: guessed(estimate, response) } : response;
       });
       const tokens = tokensOf(response.usage);
@@ -298,6 +375,7 @@ class OpenAiSurface implements Provider {
       capture(span, "gen_ai.output.messages", response.choices.map((choice) => choice.message));
       return response;
     }, { kind: SpanKind.CLIENT });
+    return { response, reported };
   }
 }
 

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
@@ -12,12 +11,14 @@ from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
 from core.agents.internal_auth import authorise
-from core.deps import provide_approvals, provide_workflow_runs
+from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
+from core.integrations.mcp.registry import MCPRegistry
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
 from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
+from core.workflows.handoff_cases import handoff_case_id
 from core.workflows.workflow_run_service import WorkflowRunService
 
 router = APIRouter()
@@ -190,6 +191,7 @@ def record_terminal(
     authorization: Optional[str] = Header(default=None),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approvals: ApprovalService = Depends(provide_approvals),
+    registry: Optional[MCPRegistry] = Depends(provide_mcp_registry),
 ) -> None:
     authorise(authorization, "run outcome")
 
@@ -242,6 +244,7 @@ def record_terminal(
             _origin_case(run_id, run_service),
             start_rca,
             run_service,
+            registry,
         )
 
 
@@ -255,10 +258,13 @@ def record_handoff(
     handoff: TerminalHandoff,
     authorization: Optional[str] = Header(default=None),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
+    registry: Optional[MCPRegistry] = Depends(provide_mcp_registry),
 ) -> None:
     authorise(authorization, "run handoff")
     origin = _origin_case(run_id, run_service)
-    _process_handoff(run_id, handoff, origin, _source_is_hunt(run_id), run_service)
+    _process_handoff(
+        run_id, handoff, origin, _source_is_hunt(run_id), run_service, registry
+    )
 
 
 # Alerts the hunt's evidence cites, pushed as each iteration lands. They are linked
@@ -310,13 +316,15 @@ def _link_findings(case_id: str, run_id: str, finding_ids: List[str]) -> None:
 # itself: the case on the handoff it files (_open_case, _record_handoff), the
 # root-cause run on the handoff it traces back from (_rca_exists). One gate for both
 # would tie the case to a decision that is not about it, and would open a second case
-# for every handoff that tees up no root-cause run at all.
+# for every handoff that tees up no root-cause run at all. A root-cause run the
+# deployment cannot serve is not started: the case says why instead.
 def _process_handoff(
     run_id: str,
     handoff: TerminalHandoff,
     origin: str,
     start_rca: bool,
     run_service: WorkflowRunService,
+    registry: Optional[MCPRegistry] = None,
 ) -> None:
     # A hunt that already has a case hands off onto it: one case for the presenter
     # to follow, and the root-cause run files back onto it.
@@ -330,8 +338,24 @@ def _process_handoff(
         if opened:
             run_service.set_case(run_id, opened)
         case_id = opened or handoff.case_id
-    if start_rca and not _rca_exists(run_id, handoff, run_service):
-        _start_root_cause(run_id, handoff, case_id)
+    if not start_rca or _rca_exists(run_id, handoff, run_service):
+        return
+    unbound = _root_cause_unserved(registry)
+    if unbound:
+        _record_root_cause_not_started(case_id, run_id, handoff, unbound)
+        return
+    _start_root_cause(run_id, handoff, case_id)
+
+
+# What a root-cause run needs that this deployment does not bind, read the way a
+# hunt's preflight reads its own and against the same catalogue resolve_root_cause
+# grants from. An integration that cannot be reached binds nothing there either, so
+# the run it would have started could not have searched.
+def _root_cause_unserved(registry: Optional[MCPRegistry]) -> List[str]:
+    from core.workflows.hunt_preflight import capabilities
+    from core.workflows.playbook_resolver import ROOT_CAUSE_CAPABILITIES
+
+    return list(capabilities(registry, ROOT_CAUSE_CAPABILITIES)["unbound"])
 
 
 def _origin_case(run_id: str, run_service: WorkflowRunService) -> str:
@@ -537,21 +561,9 @@ def _raise_priority(case_id: str, run_id: str, severity: Optional[str]) -> None:
         )
 
 
-# The Vigil case a handoff opens, named for the handoff rather than for the moment
-# it arrived. Derived rather than looked up because there is nothing to look it up
-# by: create_case mints its own id, so a handoff arriving twice -- pushed the moment
-# the hunt journals it, then again on the terminal that re-carries it -- would open
-# two cases with nothing able to tell they are the same escalation. No date in the
-# key, so two arrivals either side of midnight still land on one case.
-#
-# 16 hex characters, not 8. A collision here does not merely reuse an id: the second
-# escalation finds the first one's case already open and returns, so its case file is
-# discarded with nothing said. 32 bits makes that a coin flip at seventy-odd thousand
-# escalations; 64 makes it unreachable, and cases.case_id is String(50) against the
-# 29 this spends, so the width is free.
+# The Vigil case a handoff opens (see handoff_cases), so the run page can name it too.
 def _handoff_case_id(source_run_id: str, handoff: TerminalHandoff) -> str:
-    digest = hashlib.sha256(f"{source_run_id}:{handoff.case_id}".encode()).hexdigest()
-    return f"case-handoff-{digest[:16]}"
+    return handoff_case_id(source_run_id, handoff.case_id)
 
 
 def _case_exists(data: Any, case_id: str) -> bool:
@@ -761,19 +773,27 @@ def _rca_context(handoff: TerminalHandoff) -> str:
     )
 
 
-# Once per handoff: it arrives pushed and again on the terminal, and on a hunt's own
-# case there is no new case whose existence says it was already filed.
-def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None:
+# Whether the case already carries this activity for this handoff. A handoff arrives
+# pushed and again on the terminal, and on a hunt's own case there is no new case
+# whose existence says it was already filed.
+def _filed(
+    case_id: str, activity_type: str, run_id: str, handoff: TerminalHandoff
+) -> bool:
     from core.storage.database_data_service import DatabaseDataService
 
+    case = DatabaseDataService().get_case(case_id) or {}
+    return any(
+        (a.get("details") or {}).get("handoff_id") == handoff.case_id
+        and (a.get("details") or {}).get("run_id") == run_id
+        for a in case.get("activities") or []
+        if a.get("activity_type") == activity_type
+    )
+
+
+# Once per handoff.
+def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None:
     try:
-        case = DatabaseDataService().get_case(case_id) or {}
-        if any(
-            (a.get("details") or {}).get("handoff_id") == handoff.case_id
-            and (a.get("details") or {}).get("run_id") == run_id
-            for a in case.get("activities") or []
-            if a.get("activity_type") == "agent_run_handoff"
-        ):
+        if _filed(case_id, "agent_run_handoff", run_id, handoff):
             return
         _add_activity(
             case_id,
@@ -783,6 +803,47 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
         )
     except Exception:  # noqa: BLE001 — the handoff is filed either way
         logger.exception("could not record the handoff of %s on %s", run_id, case_id)
+
+
+# What the case says when a handoff's root-cause run was not started. Only
+# telemetry_search needs an integration, so the words name a SIEM rather than a
+# capability id. The retry is the start path every run has: the Run dialog on
+# Workflows, with this case's id.
+ROOT_CAUSE_NOT_STARTED = (
+    "Root cause was not started: it needs a SIEM to search, and none is connected. "
+    "Connect one, then run Root cause analysis on this case from Workflows."
+)
+
+
+# Once per handoff, like the handoff itself: the terminal re-carries it, finds no
+# root-cause run (none was started) and asks again.
+def _record_root_cause_not_started(
+    case_id: Optional[str], run_id: str, handoff: TerminalHandoff, unbound: List[str]
+) -> None:
+    if not case_id:
+        logger.warning(
+            "root-cause run for handoff %s of %s not started (unbound: %s), and "
+            "there is no case to say so on",
+            handoff.case_id,
+            run_id,
+            ", ".join(unbound),
+        )
+        return
+    try:
+        if _filed(case_id, "agent_run_root_cause_not_started", run_id, handoff):
+            return
+        _add_activity(
+            case_id,
+            "agent_run_root_cause_not_started",
+            ROOT_CAUSE_NOT_STARTED,
+            {"run_id": run_id, "handoff_id": handoff.case_id, "unbound": unbound},
+        )
+    except Exception:  # noqa: BLE001 — the handoff is filed either way
+        logger.exception(
+            "could not record on %s why %s's root cause was not started",
+            case_id,
+            run_id,
+        )
 
 
 # What the analyst reads under a checkpoint's question. Never the class name or a

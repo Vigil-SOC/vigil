@@ -29,6 +29,9 @@ ENTITIES = AGENT / "plugins" / "hunt" / "entities.ts"
 HUNT_TYPES = AGENT / "plugins" / "hunt" / "types.ts"
 SCREENS = REPO_ROOT / "clients" / "web" / "src" / "screens"
 CONSOLE = SCREENS / "workflows" / "WorkflowsScreen.tsx"
+CASE_FOLD = SCREENS / "cases" / "caseFold.ts"
+EVENTS = AGENT / "contracts" / "events.ts"
+CASE_RECORD = REPO_ROOT / "core" / "cases" / "case_record.py"
 
 pytestmark = pytest.mark.unit
 
@@ -188,32 +191,30 @@ def test_the_role_grants_agree(ts: str):
     )
 
 
-# The plugin declares the lead and the critic; the other grant keys are the roster
-# the threat-hunt definition names, whose querying the plugin's one agent now does.
+# The plugin declares the lead and the critic as roles; "agent" is its one querying
+# agent, which exists where the plugin states top-level `needs`.
 def _hunt_roles() -> tuple[dict, frozenset]:
     import yaml
 
-    from core.workflows.workflows_service import WorkflowsService
-
     plugin = yaml.safe_load(ARCH.read_text())
-    rostered = WorkflowsService().get_workflow("threat-hunt").agents
-    return plugin, frozenset(plugin["roles"]) | frozenset(rostered)
+    agent = {"agent"} if plugin.get("needs") else set()
+    return plugin, frozenset(plugin["roles"]) | frozenset(agent)
 
 
 def test_every_granted_role_is_a_role_the_hunt_names():
     _, declared = _hunt_roles()
     missing = frozenset(py.RECALL_GRANTS) - declared
     assert not missing, (
-        "RECALL_GRANTS names roles neither plugins/hunt/plugin.yaml nor the threat-hunt "
-        "roster declares, and a grant on a role that does not exist is dropped silently:\n  "
+        "RECALL_GRANTS names roles plugins/hunt/plugin.yaml does not declare, and a "
+        "grant on a role that does not exist is dropped silently:\n  "
         + "\n  ".join(sorted(missing))
     )
 
 
 def test_the_plugin_asks_for_what_the_grants_declare():
-    # Where the grant takes effect (#732). The agent doing the rostered roles'
-    # querying holds what the plugin's `needs` asks for, and the binding drops an
-    # unasked-for capability silently -- the run goes without the tool and nothing
+    # Where the grant takes effect (#732). The plugin's one agent holds what its
+    # top-level `needs` asks for, and the binding drops an unasked-for capability
+    # silently -- the run goes without the tool and nothing
     # says why. The lead and the critic hold only what their own role asks for.
     plugin, _ = _hunt_roles()
     roles = plugin["roles"]
@@ -269,6 +270,24 @@ def test_the_console_offers_the_entity_types_the_extractor_reads():
         f"drifted from ENTITY_TYPES in {HUNT_TYPES.relative_to(REPO_ROOT)}, "
         "which owns them. " + DRIFT
     )
+
+
+def test_every_restated_hypothesis_status_is_the_contracts():
+    # A status the contract gains and a restatement lacks reads as no word at all:
+    # the case record and the console's Explanations both go quiet on that belief.
+    declared = ts_union(EVENTS.read_text(), "HYPOTHESIS_STATUSES")
+    match = re.search(r"const EXPLAINED_STATUSES = \[([^\]]*)\]", CASE_FOLD.read_text())
+    assert match, f"EXPLAINED_STATUSES not found in {CASE_FOLD.relative_to(REPO_ROOT)}"
+    console = frozenset(re.findall(r"'([^']+)'", match.group(1)))
+    match = re.search(r"^_STATUS_WORD = \{(.*?)^\}", CASE_RECORD.read_text(), re.S | re.M)
+    assert match, f"_STATUS_WORD not found in {CASE_RECORD.relative_to(REPO_ROOT)}"
+    record = frozenset(re.findall(r'^\s*"([^"]+)":', match.group(1), re.M))
+    for where, words in ((CASE_FOLD, console), (CASE_RECORD, record)):
+        assert words == frozenset(declared), (
+            f"the hypothesis statuses {where.relative_to(REPO_ROOT)} words have "
+            f"drifted from HYPOTHESIS_STATUSES in {EVENTS.relative_to(REPO_ROOT)}, "
+            "which owns them. " + DRIFT
+        )
 
 
 def test_every_declared_vocabulary_is_ratcheted(ts: str):

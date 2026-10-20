@@ -243,7 +243,7 @@ class TestEnqueue:
         assert kwargs["workflow_id"] == "threat-hunt"
         assert kwargs["workflow_name"] == "threat-hunt"
         assert kwargs["workflow_source"] == "agent"
-        assert kwargs["workflow_version"] == 2
+        assert kwargs["workflow_version"] == 3
         assert kwargs["triggered_by"] == "orchestrator"
         assert kwargs["trigger_context"] == {
             "run_kind": "hunt",
@@ -748,7 +748,11 @@ class TestParkedRun:
         orch, row = self._orchestrator(status="waiting_approval")
         # Answered, so no open checkpoint, but the worker has not resumed yet.
         await self._reconcile(
-            orch, {"status": "parked", "reason": "awaiting budget_anomaly checkpoint c1: go on?"}
+            orch,
+            {
+                "status": "parked",
+                "reason": "awaiting budget_anomaly checkpoint c1: go on?",
+            },
         )
 
         assert row["status"] == "executing"

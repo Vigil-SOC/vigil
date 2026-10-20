@@ -7,6 +7,7 @@ import { noPrices, type Prices } from "../../core/prices.js";
 import { registryOf } from "../../core/registry.js";
 import { InProcessState } from "../../core/state.js";
 import { GatewayExhausted } from "../../core/limiter.js";
+import { ModelSilent } from "../../core/wire.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import { nullMemory } from "../../core/memory.js";
 import { emptyRecall } from "../../contracts/memory.js";
@@ -535,6 +536,26 @@ describe("what the stream reports", () => {
     };
 
     await expect(outcomeOf(config(), harness)).rejects.toThrow(GatewayExhausted);
+  });
+
+  // The wire already asked again; every reply was empty. The role fails saying the
+  // model stopped answering, not that it "never emitted a valid answer".
+  it("fails a role whose model stopped answering with that reason, without asking over a folded transcript", async () => {
+    const harness = harnessOf([{ fail: "silent" }]);
+    let asked = 0;
+    harness.provider = {
+      ...harness.provider,
+      stream: () => {
+        asked += 1;
+        throw new ModelSilent("the model stopped answering: 3 empty replies in a row from m");
+      },
+    };
+
+    const outcome = await outcomeOf(config(), harness);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.reason).toContain("the model stopped answering");
+    expect(outcome.reason).not.toContain("never emitted a valid answer");
+    expect(asked).toBe(1);
   });
 
   // DEFAULT_FOLD keeps 40 messages and a role that made twenty-nine tool calls lands

@@ -21,19 +21,58 @@ record: required
 # record's, not this; this is its account, and what it could not settle.
 conclusion:
   summary_field: summary
+  citations_field: citations
   open_questions_field: open_questions
   schema:
     type: object
     additionalProperties: false
-    required: [summary, open_questions]
+    required: [summary, disposition, citations, open_questions]
     properties:
       summary:
         type: string
         description: Where the hunt stands, in a paragraph.
+      disposition:
+        type: string
+        description: What the hunt found, in one word.
+        enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
+      citations:
+        type: array
+        description: Refs of the tool results the answer rests on, such as r3. Cite the results behind the evidence you recorded.
+        items: { type: string }
       open_questions:
         type: array
         description: What the hunt could not settle, and why.
         items: { type: string }
+
+# Dismissing is cheap to say and expensive to say wrongly: a hunt that found nothing
+# reads as benign. So benign or false_positive stands only when a reviewer that holds
+# no tools upholds it over a cited result the record links to a hypothesis.
+# Otherwise the hunt is held as needs_review for a person.
+guard:
+  field: disposition
+  guarded: [benign, false_positive]
+  fallback: needs_review
+  reviewer_prompt: |
+    The hunt wants to conclude that what it looked into was benign or a false
+    positive. Concluding that a real attack was benign is the costly mistake.
+    Holding a well-grounded benign hunt for a person is a cost too, not extra
+    safety.
+
+    Uphold when the cited results positively show benign activity from at least
+    two independent sources, of different kinds among: an inventory, owner,
+    ticket or change record; telemetry attributing the activity to a known
+    process, account or job; threat intelligence on the indicators involved.
+    Two results of the same kind count once.
+
+    Do not hold for corroboration a careful analyst would not wait for. A record
+    you would like but whose absence leaves the benign reading standing is a gap
+    for the answer to name, not on its own grounds to hold.
+
+    Answer insufficient when the conclusion rests on fewer than two such sources
+    or on absence of results: a search that came back empty says the hunt could
+    not see, not that nothing happened. Overturn when a cited result points the
+    other way: it shows adversary activity, or it contradicts a fact the
+    conclusion rests on, such as the host, account, time window or process.
 
 system: |
   You run a hypothesis-driven threat hunt end to end. The board in your brief
@@ -58,12 +97,18 @@ system: |
   - open_question for a lead worth following or a thing you cannot settle.
   - ask_operator when something is wrong that no query will fix.
   - conclude_hunt when the board allows it. It is refused while a hypothesis
-    could still be moved, and says why.
+    could still be moved, and says why. Once it concludes, stop calling tools
+    and give your answer.
 
   Evidence that weakens a hypothesis is worth as much as evidence that supports
   it. A hunt that has only looked one way has not looked.
 
   A search that returns nothing is a finding about visibility, not exoneration.
+
+  When you conclude, the disposition is one word for what the hunt found:
+  malicious or suspicious when an adversary explanation is proven or still
+  standing; benign or false_positive when the benign explanation stood on cited
+  results; inconclusive when nothing was settled.
 
   A gap is not evidence. A query that failed, timed out, was unreachable or
   returned nothing is a blind spot: record it with query_failed set and say what
