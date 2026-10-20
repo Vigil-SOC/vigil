@@ -67,10 +67,12 @@ export function heldOf(kernel: AgentProjection): Held | null {
 export const DISPOSITIONS = ["malicious", "suspicious", "benign", "false_positive", "inconclusive", "needs_review"] as const;
 
 // The word the run concluded on, as held: a dismissal the guard moved reads as what it was
-// moved to. Null when the run said none, or said a word that is not one of the six.
+// moved to. A dismissal no review ever saw (a crash between the two) is not one that stands.
+// Null when the run said none, or said a word that is not one of the six.
 export function dispositionOf(kernel: AgentProjection): string | null {
   const said = heldOf(kernel)?.final ?? kernel.conclusion?.value["disposition"];
-  return (DISPOSITIONS as readonly unknown[]).includes(said) ? (said as string) : null;
+  const word = (DISPOSITIONS as readonly unknown[]).includes(said) ? (said as string) : null;
+  return kernel.review === null && (word === "benign" || word === "false_positive") ? "needs_review" : word;
 }
 
 export function agentProjection(runId: string, events: readonly Envelope[]): AgentProjection {

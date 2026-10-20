@@ -55,6 +55,12 @@ describe("a hunt's disposition on its projection head", () => {
     expect(huntView(RUN, bare as never)).toMatchObject({ disposition: "needs_review", held: { reason: "no cited result is linked to a claim on the record" } });
   });
 
+  it("does not let a dismissal stand that no review saw", async () => {
+    const events = await hunt([query, record, stop], { conclusion: { disposition: "benign", citations: ["r1"] } });
+    const unreviewed = events.filter((one) => one.kind !== "review");
+    expect(huntView(RUN, unreviewed as never)).toMatchObject({ disposition: "needs_review", held: null });
+  });
+
   it("passes a malicious conclusion through unchanged", async () => {
     const events = await hunt([query, record, stop], { conclusion: { disposition: "malicious", citations: ["r1"] } });
     expect(huntView(RUN, events as never)).toMatchObject({ disposition: "malicious", held: null });

@@ -201,7 +201,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
       if (!guarded(ctx)) return null;
       return withBook(ctx, ports, (book) => {
         const open = [...book.projection.hypotheses.values()].filter((one) => one.status === "active");
-        if (open.length === 0) return null;
+        if (open.length === 0 || book.ended()) return null;
         const list = open.map((one) => `${one.hypothesis_id} (${one.statement})`).join("; ");
         return `The hunt is not finished: ${list} ${open.length === 1 ? "is" : "are"} still active. For each, do one of: put it up for a verdict with validate_hypothesis if new evidence bears on it; abandon it with abandon_hypothesis citing the evidence that rules it out; or run the queries that would settle it. Then conclude_hunt.`;
       });
@@ -248,6 +248,10 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
     // with its report, like any other ceiling it could not lift.
     exhausted: async (ctx, reason) =>
       withBook(ctx, ports, async (book) => {
+        if (book.ended()) {
+          await book.ledger.flush();
+          return ending(ctx, book);
+        }
         book.terminate("budget_terminated", reason);
         await book.ledger.flush();
         return { ...(await ending(ctx, book)), outcome: "budget_exhausted" as const, reason };
@@ -634,7 +638,7 @@ export function servedSince(calls: readonly CallPayload[], tools: readonly ToolS
 // record written now rests on, which a conclusion cites by ref and the guard checks it against.
 export function servedRefsSince(calls: readonly CallPayload[]): string[] {
   const own = agentCalls(calls);
-  const since = own.filter((call) => call.turn >= (own.findLast((one) => one.tool === "record_evidence")?.turn ?? 0));
+  const since = own.filter((call) => call.turn >= (own.findLast((one) => one.tool === "record_evidence" && one.ok)?.turn ?? 0));
   return since.filter((call) => !OWN.has(call.tool) && call.tool !== SKILL_TOOL && classOf(call) === "served").map((call) => call.ref);
 }
 
