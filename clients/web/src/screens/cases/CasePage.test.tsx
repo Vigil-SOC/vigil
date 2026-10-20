@@ -2752,6 +2752,23 @@ describe('the case verdict', () => {
     await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-b')).toBe(true))
     expect(within(closed).queryByText('Runs say')).not.toBeInTheDocument()
   })
+
+  it('lets a benign investigation stand over an inconclusive hunt, open and closed as false positive', async () => {
+    const refs = [ref('run-h', '2026-06-15T09:00:00Z', true), ref('run-i', '2026-06-15T10:00:00Z', false, 'incident-response')]
+    const runs = { 'run-h': hunt('inconclusive'), 'run-i': lead('benign') }
+    openWith('case-handoff', refs, runs)
+    const verdict = await screen.findByRole('region', { name: 'Case verdict' })
+    expect(verdict).toHaveTextContent(/^Runs sayBenign$/)
+    cleanup()
+    openWith('case-handoff-closed', refs, runs, {
+      status: 'closed',
+      combined_state: 'closed',
+      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
+    })
+    const closed = await screen.findByRole('region', { name: 'Closed summary' })
+    await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-i')).toBe(true))
+    expect(within(closed).queryByText('Runs say')).not.toBeInTheDocument()
+  })
 })
 
 describe('following a live run', () => {

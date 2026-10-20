@@ -815,6 +815,7 @@ a.ov-src:hover {
 .ov-pill.good { background: var(--good-bg); color: var(--good); }
 .ov-pill.poor { background: var(--poor-bg); color: var(--poor); }
 .ov-pill.ac { background: var(--ac-bg); color: var(--ac); }
+.ov-pill.fair { background: var(--fair-bg); color: var(--fair); }
 
 button.ov-pill:hover {
   text-decoration: underline;

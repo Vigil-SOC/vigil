@@ -25,6 +25,9 @@ const PILL: Record<string, string> = {
   resolved_person: 'good',
   needs_you: 'poor',
   working: 'ac',
+  // The board's Dropped is the neutral pill; Scoring is fair.
+  dismissed: '',
+  scoring: 'fair',
 }
 
 /** The severity key a row filters and paints by; anything unrecognised is "none". */

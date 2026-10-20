@@ -286,6 +286,24 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "dismiss_finding",
+        "description": "Dismiss a finding as noise. This is the finding's terminal state: it reads Dropped and leaves the Overview feed. Recorded with you as the actor and the reason you give.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "finding_id": {
+                    "type": "string",
+                    "description": "The finding ID to dismiss",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this finding is noise. Required.",
+                },
+            },
+            "required": ["finding_id", "reason"],
+        },
+    },
+    {
         "name": "list_cases",
         "description": "List investigation cases with optional filters. Returns active and closed cases.",
         "input_schema": {
