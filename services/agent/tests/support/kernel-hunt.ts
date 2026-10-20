@@ -37,7 +37,9 @@ export function hypothesisIn(request: TurnRequest, status = "active"): string {
 }
 
 
-export type Step = (request: TurnRequest) => { tool: string; args: unknown } | { say: string } | { emit: unknown };
+type Call = { tool: string; args: unknown };
+// A step answers one call, or a batch of them in one response, run in order.
+export type Step = (request: TurnRequest) => Call | { calls: Call[] } | { say: string } | { emit: unknown };
 
 // A model that reads the ids off the board and results, as a real one does. Asked for an
 // emission (the critic's argument, the narrator's account) it answers by schema.
@@ -89,8 +91,11 @@ export function modelOf(steps: readonly Step[], answers: { critic?: unknown; con
       }
       if ("emit" in next) throw new Error("this model emits only when asked");
       yield { type: "usage", tokens: ZERO_TOKENS };
-      const call: ToolCall = { id: `c${at}`, tool: next.tool, args: JSON.stringify(next.args) };
-      yield { type: "tool_call", call };
+      const batch = "calls" in next ? next.calls : [next];
+      for (const [i, one] of batch.entries()) {
+        const call: ToolCall = { id: batch.length === 1 ? `c${at}` : `c${at}.${i}`, tool: one.tool, args: JSON.stringify(one.args) };
+        yield { type: "tool_call", call };
+      }
     },
   };
 }

@@ -376,3 +376,37 @@ def test_update_clear_last_of_type_blanks_bifrost_key(
     r = client.put("/api/llm/providers/openai-solo", json={"api_key": ""})
     assert r.status_code == 200
     assert ("openai", "") in bifrost_pushes
+
+
+@pytest.fixture()
+def _clean_attestation():
+    from core.llm.providers import registry
+
+    registry.clear_live_meta()
+    yield registry
+    registry.clear_live_meta()
+
+
+def test_put_attests_self_hosted_at_once_and_keeps_the_mirror_marker(
+    client, session, secrets_store, _clean_attestation
+):
+    registry = _clean_attestation
+    session._store["custom"] = LLMProviderConfig(
+        provider_id="custom",
+        provider_type="vllm",
+        name="custom",
+        default_model="m",
+        is_active=True,
+        is_default=True,
+        config={"managed_by": "bifrost"},
+    )
+    assert registry.get_registry().get_pricing_source("m", "vllm") == "unknown"
+
+    r = client.put("/api/llm/providers/custom", json={"config": {"self_hosted": True}})
+    assert r.status_code == 200, r.text
+    assert r.json()["config"] == {"managed_by": "bifrost", "self_hosted": True}
+    assert registry.get_registry().get_pricing_source("m", "vllm") == "zero"
+
+    r = client.put("/api/llm/providers/custom", json={"config": {}})
+    assert r.json()["config"] == {"managed_by": "bifrost"}
+    assert registry.get_registry().get_pricing_source("m", "vllm") == "unknown"

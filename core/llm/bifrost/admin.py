@@ -707,6 +707,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
         _LIVE_CATALOGUES,
         _MODEL_LIST_CACHE,
         _register_extras,
+        attest_self_hosted,
         get_extra_model_ids,
         record_live_meta,
     )
@@ -746,6 +747,10 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
                     "config": dict(row.config or {}),
                 }
             )
+
+    attest_self_hosted(
+        (t, r["config"]) for t, type_rows in rows_by_type.items() for r in type_rows
+    )
 
     bifrost_results: Dict[str, bool] = {}
     base_url_results: Dict[str, bool] = {}
@@ -1218,6 +1223,7 @@ async def refresh_gateway_rates() -> None:
     (the LLM worker, the daemon): that sync writes allow-lists and keys to
     Bifrost, and the API is the only process that may. Never raises.
     """
+    from core.llm.providers.registry import attest_self_hosted
     from core.storage.connection import get_db_manager
     from core.storage.models import LLMProviderConfig
 
@@ -1226,13 +1232,14 @@ async def refresh_gateway_rates() -> None:
         if db_manager._engine is None:
             db_manager.initialize()
         with db_manager.session_scope() as session:
-            types = [
-                t
-                for (t,) in session.query(LLMProviderConfig.provider_type)
-                .filter(LLMProviderConfig.is_active.is_(True))
-                .distinct()
+            rows = [
+                (t, dict(c or {}))
+                for t, c in session.query(
+                    LLMProviderConfig.provider_type, LLMProviderConfig.config
+                ).filter(LLMProviderConfig.is_active.is_(True))
             ]
-        await record_gateway_rates(types)
+        attest_self_hosted(rows)
+        await record_gateway_rates(dict.fromkeys(t for t, _ in rows))
         report_recovered(logger, _RATES_OUTAGE, "Gateway rate refresh works again")
     except Exception as exc:  # noqa: BLE001
         report_outage(

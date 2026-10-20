@@ -488,6 +488,15 @@ def merge_record(
             text = event_text(kind, event.get("payload"), context)
             if text is None:
                 continue
+            payload = event.get("payload")
+            actor = payload.get("actor") if isinstance(payload, Mapping) else None
+            # A checkpoint answered by policy is the system's, not an analyst's.
+            if (
+                kind == "resolution"
+                and isinstance(actor, str)
+                and actor.startswith("policy:")
+            ):
+                kind = "policy"
             rows.append(
                 {
                     "id": f"run:{run_id}:{seq}",
