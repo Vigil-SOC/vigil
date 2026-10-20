@@ -168,7 +168,7 @@ const mapIds = (v: unknown, f: (s: string) => string): unknown =>
 export class KernelTurns {
   // The tools hooks grant: set once the run has a source to search.
   local: readonly RegisteredTool[] = [];
-  private ctx: PluginContext;
+  private ctx: Omit<PluginContext, "turn">;
   constructor(harness: Harness<AgentKinds>, run: { run_id: string; run_kind: RunKind; spec: RunSpec; plugin: PluginManifest; tools: readonly RegisteredTool[]; started_by?: string; signal?: AbortSignal }) {
     const hooks: PluginHooks = { tools: () => this.local };
     const options: AgentOptions = { ...run, hooks };
