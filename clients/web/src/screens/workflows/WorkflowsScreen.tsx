@@ -21,7 +21,7 @@ import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
 import { KeepGoing, OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
-  IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
+  IN_FLIGHT, callLine, errMsg, fmtDuration, investigationOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
   type HuntQuestion, type HuntRecall, type HuntStanding, type HuntStrength, type HuntView,
   type InvestigateDecisionView, type RecalledFrom, type RecalledWindow,
@@ -1100,6 +1100,8 @@ interface RootCauseView {
   notices: string[]
   searches: number
   recent_searches: RootCauseSearch[]
+  /** Why it ended, in the run's words: the verdict line's headline. */
+  reason: string | null
 }
 
 function rootCauseOf(projection: unknown): RootCauseView | null {
@@ -1116,6 +1118,7 @@ function rootCauseOf(projection: unknown): RootCauseView | null {
     notices: Array.isArray(view.notices) ? view.notices : [],
     searches: typeof view.searches === 'number' ? view.searches : 0,
     recent_searches: Array.isArray(view.recent_searches) ? view.recent_searches : [],
+    reason: typeof view.reason === 'string' && view.reason ? view.reason : null,
   }
 }
 
@@ -1284,7 +1287,8 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
 }
 
 /** What the run is doing, and Stop. It sits with the status rather than among the
- *  steering directives, which are only notes the lead reads at its next turn. */
+ *  steering directives, which are only notes the lead reads at its next turn. Under
+ *  it, one line saying what the run concluded. */
 function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView | null; trace: RootCauseView | null; onSteered: () => void }) {
   // The row's total is written only when the run ends; a projection prices it as it goes.
   const cost = hunt?.cost_usd ?? trace?.cost_usd ?? d.total_cost_usd
@@ -1293,31 +1297,40 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
     ? Math.min(100, (cost / ceiling) * 100)
     : null
+  const verdict = verdictOf(d, trace?.reason ?? null)
   return (
-    <div className="run-bar">
-      <span className="pill" style={{ color: runStatusColor(d.status) }}><span className="dot" />{d.status}</span>
-      {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
-        <span className="muted text-[11.5px]" title={hunt.reason ?? undefined}>{hunt.outcome}</span>
-      )}
-      {!hunt && <OutcomeBadge outcome={d.outcome} reason={d.reason} />}
-      <span className="mono text-[11.5px] text-tx-3">{d.run_id.slice(0, 13)}</span>
-      <span className="flex-1" />
-      <div className="meta">
-        {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-        <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
-        {spent !== null && (
-          <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
-            <div className="budget-fill" style={{ width: `${spent}%` }} />
-          </div>
+    <>
+      <div className="run-bar">
+        <span className="pill" style={{ color: runStatusColor(d.status) }}><span className="dot" />{d.status}</span>
+        {hunt?.outcome && !IN_FLIGHT.includes(d.status) && (
+          <span className="muted text-[11.5px]" title={hunt.reason ?? undefined}>{hunt.outcome}</span>
+        )}
+        {!hunt && <OutcomeBadge outcome={d.outcome} reason={d.reason} />}
+        <span className="mono text-[11.5px] text-tx-3">{d.run_id.slice(0, 13)}</span>
+        <span className="flex-1" />
+        <div className="meta">
+          {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
+          <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
+          {spent !== null && (
+            <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
+              <div className="budget-fill" style={{ width: `${spent}%` }} />
+            </div>
+          )}
+        </div>
+        {IN_FLIGHT.includes(d.status) && (
+          <>
+            <span className="sep" />
+            <StopRun runId={d.run_id} onStopped={onSteered} />
+          </>
         )}
       </div>
-      {IN_FLIGHT.includes(d.status) && (
-        <>
-          <span className="sep" />
-          <StopRun runId={d.run_id} onStopped={onSteered} />
-        </>
+      {(verdict.disposition || verdict.headline) && (
+        <div className="flex items-center gap-2 min-w-0 pt-2 text-[12.5px]" aria-label="Verdict">
+          {verdict.disposition && <span className="chip shrink-0">{verdict.disposition}</span>}
+          {verdict.headline && <span className="line-clamp-1 min-w-0 text-tx-2" title={verdict.headline}>{verdict.headline}</span>}
+        </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -2126,8 +2139,10 @@ function RejectPhaseGate({
 
 function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) {
   const replay = useInvestigateReplay(d.run_id, inFlight)
+  const record = investigationOf(d.projection)
   return (
     <>
+      {record && <InvestigationTabs record={record} />}
       {replay.kind === 'investigate' && <InvestigateDecisions decisions={replay.decisions} />}
       {replay.kind === 'failed' && (
         <div className="text-[12.5px] py-2" style={{ color: 'var(--crit)' }}>
@@ -2136,6 +2151,44 @@ function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) 
       )}
       <ComposeDetail d={d} suppressEmpty={replay.kind === 'pending' || replay.kind === 'investigate'} />
     </>
+  )
+}
+
+type InvestigationTab = 'hyp' | 'evidence' | 'open'
+
+/** An investigation's record in the hunt's own tabs. A view with nothing in it is not
+ *  offered, but Explanations always is: an empty board is itself the answer. */
+function InvestigationTabs({ record }: { record: HuntView }) {
+  const open = record.open_questions ?? []
+  const tabs: [InvestigationTab, string, number][] = [
+    ['hyp', 'Explanations', record.hypotheses.length],
+    ...(record.evidence_count > 0 ? ([['evidence', 'Evidence', record.evidence_count]] as [InvestigationTab, string, number][]) : []),
+    ...(open.length > 0 ? ([['open', 'Open questions', open.length]] as [InvestigationTab, string, number][]) : []),
+  ]
+  const [tab, setTab] = useState<InvestigationTab>('hyp')
+  const shown = tabs.some(([k]) => k === tab) ? tab : 'hyp'
+  return (
+    <HypLabels.Provider value={labelsOf(record.hypotheses)}>
+      <div className="detail-tabs" role="tablist" aria-label="Investigation views">
+        {tabs.map(([k, label, count]) => (
+          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+            {label}<span className="mono text-[10.5px] text-tx-3 ml-1.5">{count}</span>
+          </button>
+        ))}
+      </div>
+      {shown === 'hyp' && <HuntStandings hunt={record} />}
+      {shown === 'evidence' && <HuntEvidenceTable found={record.evidence ?? []} total={record.evidence_count} />}
+      {shown === 'open' && (
+        <ul className="text-[12.5px] leading-[1.5] mt-3 mb-0" style={{ paddingLeft: 18 }}>
+          {open.map((q) => (
+            <li key={q.question_id} className="mb-1">
+              {q.question}
+              {q.hypothesis_id && <span className="muted text-[11.5px]"> · on <Hyp id={q.hypothesis_id} /></span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </HypLabels.Provider>
   )
 }
 
@@ -2189,7 +2242,9 @@ function ComposeDetail({ d, suppressEmpty = false }: { d: WfRunDetail; suppressE
   const agentMeta = useAgentMeta()
   if (!d.result_summary && !d.phases?.length) {
     if (d.error || suppressEmpty) return null
-    return <div className="muted" style={{ padding: '10px 4px' }}>No additional detail recorded for this run.</div>
+    // Not compose (no phases, no summary) and nothing folded to read: say so rather than imply it is empty.
+    const unreadable = !d.hunt && (typeof d.projection !== 'object' || d.projection === null) && !IN_FLIGHT.includes(d.status)
+    return <div className="muted" style={{ padding: '10px 4px' }}>{unreadable ? 'Couldn’t read this run’s record' : 'No additional detail recorded for this run.'}</div>
   }
   return (
     <>
