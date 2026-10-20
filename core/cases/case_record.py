@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
 
 from core.storage.models import CaseAuditLog
+from core.workflows.handoff_cases import filed_case
 
 
 def _at(value: Optional[datetime]) -> str:
@@ -145,24 +146,45 @@ _STANCE_WORD = {"supports": "Supports", "weakens": "Goes against"}
 _GAP_PROVENANCES = frozenset({"tool_failure", "deployment_gap", "operator_gap"})
 
 
+# Ids the hunt mints (newId in services/agent/plugins/hunt/ids.ts) and may quote in
+# its own prose: a hand-off key, an explanation, a question, a piece of evidence.
+_HUNT_ID = re.compile(r"\b(?:case-[0-9a-f]{8}|[hq]-[0-9a-f]{8}|ev-[0-9a-f]{12})\b")
+# The citations abandon() appends: "[ev-…, ev-…]".
+_CITED = re.compile(r"\s*\[\s*((?:ev-[0-9a-f]{12}\s*,?\s*)*)\]")
+# The IR plan conclude_hunt appends; the closing bracket may be lost to a cut.
+_PROPOSED = re.compile(r"\s*\[proposed_workflow:\s*(.*?)\]?\s*$", re.S)
+
+
 class RecordContext:
     """What a kernel row names by id, read once off the run's own events.
 
     A link names an evidence id and an explanation id, a patch an id, a resolution a
-    checkpoint id: the words for each are earlier on the same ledger.
+    checkpoint id: the words for each are earlier on the same ledger. A hand-off key
+    maps to the case the bridge filed it on (``filed_case``): ``case_id`` is the case
+    the run is listed on, which is the hunt's origin.
     """
 
-    def __init__(self, events: Sequence[Mapping[str, Any]] = ()) -> None:
+    def __init__(
+        self,
+        events: Sequence[Mapping[str, Any]] = (),
+        run_id: str = "",
+        case_id: Optional[str] = None,
+    ) -> None:
         self.hypotheses: dict[str, str] = {}
         self.evidence: dict[str, str] = {}
         self.checkpoints: dict[str, str] = {}
         self.questions: dict[str, str] = {}
+        self.cases: dict[str, str] = {}
+        self.case_id = case_id
         for event in events:
             body = event.get("payload")
             if not isinstance(body, Mapping):
                 continue
             kind = event.get("kind")
-            if kind == "hypothesis" and body.get("hypothesis_id"):
+            if kind == "handoff" and body.get("case_id"):
+                key = str(body["case_id"])
+                self.cases[key] = filed_case(run_id, key, case_id)
+            elif kind == "hypothesis" and body.get("hypothesis_id"):
                 self.hypotheses[str(body["hypothesis_id"])] = str(
                     body.get("statement") or ""
                 )
@@ -179,6 +201,42 @@ class RecordContext:
 
     def statement(self, hypothesis_id: Any) -> str:
         return self.hypotheses.get(str(hypothesis_id), "") or str(hypothesis_id or "")
+
+    def absorb(self, other: "RecordContext") -> None:
+        for name in ("hypotheses", "evidence", "checkpoints", "questions", "cases"):
+            getattr(self, name).update(getattr(other, name))
+
+    def _word(self, found: re.Match) -> str:
+        ident = found.group(0)
+        if ident.startswith("case-"):
+            # Any hand-off of a run listed on this case was filed on this case.
+            return self.cases.get(ident) or self.case_id or "a case it opened"
+        if ident.startswith("h-"):
+            said = self.hypotheses.get(ident)
+            return _quoted(said) if said else "an explanation"
+        if ident.startswith("q-"):
+            said = self.questions.get(ident)
+            return _quoted(said) if said else "a question"
+        said = self.evidence.get(ident)
+        return _quoted(said) if said else "a record"
+
+    def words(self, text: str) -> str:
+        """Free text the hunt wrote, with its own ids and fields read as words."""
+        plan = _PROPOSED.search(text)
+        if plan:
+            head = text[: plan.start()].rstrip()
+            step = plan.group(1).strip()
+            ending = "" if not head or head[-1] in ".!?" else "."
+            stop = "" if not step or step[-1] in ".!?”" else "."
+            text = f"{head}{ending} Proposed workflow: {step}{stop}".strip()
+
+        def cited(found: re.Match) -> str:
+            count = len(_HUNT_ID.findall(found.group(1)))
+            if not count:
+                return ""
+            return f", citing {count} record{'' if count == 1 else 's'}"
+
+        return _HUNT_ID.sub(self._word, _CITED.sub(cited, text))
 
 
 def _args(text: Any) -> Mapping[str, Any]:
@@ -327,8 +385,13 @@ def event_text(
     kind: str, payload: Any, context: Optional[RecordContext] = None
 ) -> Optional[str]:
     """One run row in words; None for a row the record does not print."""
-    body = payload if isinstance(payload, Mapping) else {}
     known = context or RecordContext()
+    text = _event_text(kind, payload, known)
+    return known.words(text) if text else text
+
+
+def _event_text(kind: str, payload: Any, known: RecordContext) -> Optional[str]:
+    body = payload if isinstance(payload, Mapping) else {}
     if kind in _QUIET_KINDS:
         return None
     if kind == "decision":
@@ -470,6 +533,7 @@ def merge_record(
     audits: Sequence[CaseAuditLog],
     activities: Sequence[Any] = (),
     unread: Sequence[Mapping[str, Any]] = (),
+    case_id: Optional[str] = None,
 ) -> list[dict]:
     """Every run's rows, case-audit rows and case-activity rows, newest first.
 
@@ -478,10 +542,14 @@ def merge_record(
     the page says so. ``unread`` rows (``unread_row``) stand in for a run whose
     ledger could not be read. The kernel's bookkeeping (frames, prices, counters,
     "neither" rulings) is left out, and the chain itself is still verified whole.
+    ``case_id`` is the case read, which a hunt hand-off key in any row resolves to.
     """
     rows: list[dict] = [{**row, "_seq": 0} for row in unread]
+    # An activity (a run's report) names no run's ids of its own: it reads against all.
+    combined = RecordContext(case_id=case_id)
     for run_id, events in runs:
-        context = RecordContext(events)
+        context = RecordContext(events, run_id, case_id)
+        combined.absorb(context)
         for event in events:
             kind = str(event.get("kind") or "")
             seq = event.get("seq")
@@ -542,7 +610,8 @@ def merge_record(
                 "kind": kind,
                 "source": "case_activities",
                 "chained": False,
-                "text": _plain(activity.get("description")) or kind,
+                "text": _plain(combined.words(str(activity.get("description") or "")))
+                or kind,
                 "_seq": 0,
             }
         )
