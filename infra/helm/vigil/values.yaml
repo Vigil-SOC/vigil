@@ -285,6 +285,7 @@ mcpRunner:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # HTTPS_PROXY/NO_PROXY etc. set here are forwarded to every server it starts.
   extraEnv: []
 
 # Detection rule repositories (Settings → security-detections). A volume spec,

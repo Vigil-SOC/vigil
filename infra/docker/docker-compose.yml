@@ -705,6 +705,16 @@ services:
       SSL_CERT_FILE:
       REQUESTS_CA_BUNDLE:
       NODE_EXTRA_CA_CERTS:
+      # Egress proxy, forwarded to every server it starts (with
+      # NODE_USE_ENV_PROXY=1 so Node's fetch honors it). Pass-through.
+      HTTP_PROXY:
+      HTTPS_PROXY:
+      ALL_PROXY:
+      NO_PROXY:
+      http_proxy:
+      https_proxy:
+      all_proxy:
+      no_proxy:
     # Root with only what setpriv and the supervisor need: SETUID/SETGID to drop
     # each child to its uid, KILL to stop a child running under another uid
     # (stdio_client kills the process group). No CHOWN: the per-server HOME dirs

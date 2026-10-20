@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from typing import Dict, List
 
 import core.integrations.mcp.service as _service
-from core.integrations.mcp.child_env import ca_bundle_env
+from core.integrations.mcp.child_env import PROXY_ENV_NAMES, ca_bundle_env, proxy_env
 from core.integrations.mcp.packaged import installed_launch
 from core.integrations.mcp.service import MCPService
 
@@ -98,13 +98,18 @@ class Catalog:
         command, args = installed_launch(
             command, [sub(str(a)) for a in entry.get("args") or []]
         )
-        env = {
+        own = {
             k: sub(str(v))
             for k, v in (entry.get("env") or {}).items()
             if not k.startswith("_")
         }
         # What the backend sent wins over the catalog's defaults.
-        env.update(request_env)
+        own.update(request_env)
+        # The runner's proxy is the floor: a proxy name the entry or request
+        # sets drops both forwarded spellings, so NO_PROXY and no_proxy agree.
+        overridden = {k.upper() for k in own if k in PROXY_ENV_NAMES}
+        env = {k: v for k, v in proxy_env().items() if k.upper() not in overridden}
+        env.update(own)
         env.update(ca_bundle_env())
         env.update(HOME=home, PYTHONPATH=root, TMPDIR=str(Path(home) / TMP_DIR))
         return Launch(command, args, cwd, env)

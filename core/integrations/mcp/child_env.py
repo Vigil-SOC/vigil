@@ -1,4 +1,4 @@
-"""CA-bundle trust for spawned MCP servers.
+"""CA-bundle trust and egress proxy for spawned MCP servers.
 
 The tool servers run on httpx, which reads ``SSL_CERT_FILE`` / ``SSL_CERT_DIR``
 and ignores ``REQUESTS_CA_BUNDLE`` / ``CURL_CA_BUNDLE`` — the names an operator
@@ -13,6 +13,11 @@ Forwarding also has to be explicit rather than inherited: ``stdio_client``
 narrows the child environment to ``HOME``, ``LOGNAME``, ``PATH``, ``SHELL``,
 ``TERM``, ``USER`` plus the server's own ``env`` block, so a bundle set in the
 backend's environment never reaches a server spawned that way.
+
+The same holds for the proxy variables: on a proxy-only network a server
+spawned without them reports running while every tool call fails to connect.
+Node's ``fetch`` ignores them even when present unless ``NODE_USE_ENV_PROXY`` is
+set (22.21+), so that flag rides along whenever a proxy does.
 """
 
 from __future__ import annotations
@@ -56,3 +61,27 @@ def ca_bundle_env() -> Dict[str, str]:
             return {"SSL_CERT_DIR": value}
         return {"SSL_CERT_FILE": value, "NODE_EXTRA_CA_CERTS": value}
     return {}
+
+
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+PROXY_ENV_NAMES = frozenset(
+    spelling for var in (*_PROXY_VARS, "NO_PROXY") for spelling in (var, var.lower())
+)
+
+
+def proxy_env() -> Dict[str, str]:
+    """The egress-proxy entries to merge into a spawned MCP server's environment.
+
+    Both spellings are forwarded as set. Empty when no proxy is configured (a
+    lone ``NO_PROXY`` bypasses nothing), so a deployment without one sees an
+    unchanged child environment.
+    """
+    env = {
+        name: value
+        for name in sorted(PROXY_ENV_NAMES)
+        if (value := os.environ.get(name))  # noqa: ENV001 - MCP child process env
+    }
+    if not any(name.upper() in _PROXY_VARS for name in env):
+        return {}
+    env["NODE_USE_ENV_PROXY"] = "1"
+    return env
