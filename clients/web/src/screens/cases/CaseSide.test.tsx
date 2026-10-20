@@ -151,6 +151,16 @@ describe('case side panel Cost over every run (#2481)', () => {
     expect(view.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Threat hunt · started 09:00—', 'incident-response · started 10:00—'])
   })
 
+  it('counts a run in flight that nothing has priced yet as unpriced, not as $0', () => {
+    const running = { ...fold, costUsd: null } as unknown as RunFold
+    renderCost([
+      { ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) },
+      { ref: ref('incident-response', 'run-b', 0, { created_at: '2026-06-15T10:00:00Z' }), fold: running },
+    ])
+    expect(cost().getByText('across 2 runs · 1 unpriced')).toBeInTheDocument()
+    expect(cost().getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Threat hunt · started 09:00$0.25', 'incident-response · started 10:00—'])
+  })
+
   it('keeps one run as it was: the cost and its bar, no lines', () => {
     renderCost([{ ref: ref('threat-hunt', 'run-a', 0.25, { primary: true }) }])
     expect(cost().getByText('$0.25 of $2.00')).toBeInTheDocument()

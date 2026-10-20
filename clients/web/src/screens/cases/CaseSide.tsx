@@ -38,7 +38,7 @@ interface Spend {
 /** What one run has spent. The refs are re-read only when a run ends, so a run in flight is read off its own fold. */
 function costOf(ref: CaseInvestigationRef | null, fold: RunFold | null): number | null {
   const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
-  return (inFlight ? fold.costUsd ?? ref?.cost_usd : ref?.cost_usd || fold?.costUsd) ?? null
+  return (inFlight ? fold.costUsd ?? (ref?.cost_usd || null) : ref?.cost_usd || fold?.costUsd) ?? null
 }
 
 /** What the newest run has spent against what it was granted. `fold` is that run's fold, or null when it is another run. */
