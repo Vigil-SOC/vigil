@@ -154,6 +154,34 @@ def get_finding(*, finding_id: str) -> Any:
     return _data().get_finding(finding_id)
 
 
+# A dismissal is the finding's terminal state. The actor is the caller and the
+# kind is agent, as with record_agent_close; the reason is what makes it a record.
+def dismiss_finding(*, finding_id: str, reason: str) -> Args:
+    from core.cases.agent_closure import actor, service_session
+    from core.cases.closure import ClosedByKind
+    from core.storage.models import Finding
+    from core.time import utcnow
+
+    reason = (reason or "").strip()
+    if not reason:
+        return {"error": "A reason is required to dismiss a finding"}
+    with service_session() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            return {"error": f"Finding {finding_id} not found"}
+        finding.noise_marked_at = utcnow()
+        finding.noise_marked_by = actor()
+        finding.noise_marked_by_kind = ClosedByKind.AGENT.value
+        finding.noise_reason = reason
+        return {
+            "success": True,
+            "finding_id": finding_id,
+            "noise_marked_by": finding.noise_marked_by,
+            "noise_marked_by_kind": finding.noise_marked_by_kind,
+            "noise_reason": reason,
+        }
+
+
 def list_cases(
     *,
     status: Optional[str] = None,
@@ -611,6 +639,7 @@ _OWNED = frozenset(
         "search_findings",
         "get_findings_stats",
         "get_finding",
+        "dismiss_finding",
         "list_cases",
         "get_case",
         "create_case",

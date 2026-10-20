@@ -1808,6 +1808,14 @@
       "data_type": "character varying(50)",
       "nullable": true
     },
+    "noise_marked_by_kind": {
+      "data_type": "character varying(20)",
+      "nullable": true
+    },
+    "noise_reason": {
+      "data_type": "text",
+      "nullable": true
+    },
     "severity": {
       "data_type": "character varying(20)",
       "nullable": true

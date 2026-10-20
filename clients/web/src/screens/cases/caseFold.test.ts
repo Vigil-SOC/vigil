@@ -203,6 +203,12 @@ describe('caseVerdict', () => {
     expect(caseVerdict([run('Rerun', 'false_positive'), run('Hunt', 'needs_review')])?.basis).toBe('Hunt says needs review.')
   })
 
+  it('lets a dismissal stand over an inconclusive run, which neither speaks nor objects', () => {
+    expect(caseVerdict([run('Investigation', 'benign'), run('Hunt', 'inconclusive')])).toMatchObject({ word: 'benign', basis: null })
+    expect(caseVerdict([run('C', 'false_positive'), run('B', 'inconclusive'), run('A', 'needs_review')])?.basis).toBe('A says needs review.')
+    expect(caseVerdict([run('B', 'malicious'), run('A', 'inconclusive')])?.word).toBe('malicious')
+  })
+
   it('does not let a dismissal stand over an unread run, and names it', () => {
     expect(caseVerdict([run('B', 'benign'), run('A', null, 'error')])).toMatchObject({ word: 'needs_review', basis: 'A could not be read.' })
     expect(caseVerdict([run('B', 'suspicious'), run('A', null, 'error')])).toMatchObject({ word: 'suspicious', basis: null })

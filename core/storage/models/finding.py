@@ -59,10 +59,15 @@ class Finding(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="new", server_default="new"
     )
-    # A noise mark hides the row from the Overview feed. It is not a disposition
-    # and does not change status or scoring.
+    # A noise mark is the finding's dismissal: its own terminal state, with who
+    # (and which ClosedByKind) dismissed it and why. It hides the row from the
+    # Overview feed and does not change status.
     noise_marked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     noise_marked_by: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    noise_marked_by_kind: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True
+    )
+    noise_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # AI-generated enrichment (cached analysis)
     ai_enrichment: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

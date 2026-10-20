@@ -8,6 +8,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.agents import tool_registry
+from core.findings.alert_outcomes import terminal_states_for
 from core.findings.overview import overview_payload
 from core.storage.models import Finding, IntakeTrigger
 from core.storage.unit_of_work import unit_of_work
@@ -78,6 +80,59 @@ def test_mark_then_clear_hides_and_restores_the_feed_row(client):
     assert cleared.json()["noise_marked_by"] is None
     assert cleared.json()["status"] == "new"
     assert "ov-act-noise" in _ids(AT)
+
+
+def _seed(finding_id: str) -> None:
+    with unit_of_work() as session:
+        session.add(
+            Finding(
+                finding_id=finding_id,
+                data_source="ov-src",
+                created_at=AT,
+                status="new",
+                severity="high",
+            )
+        )
+
+
+def test_mark_with_a_reason_reads_back_as_an_analyst_dismissal(client):
+    _seed("ov-act-reason")
+    marked = client.post(
+        "/api/findings/ov-act-reason/noise", json={"reason": "  known scanner "}
+    )
+    assert marked.status_code == 200
+    assert marked.json()["noise_marked_by_kind"] == "analyst"
+    assert marked.json()["noise_reason"] == "known scanner"
+    assert terminal_states_for(["ov-act-reason"]) == {"ov-act-reason": "dismissed"}
+
+    cleared = client.delete("/api/findings/ov-act-reason/noise")
+    assert cleared.json()["noise_marked_by_kind"] is None
+    assert cleared.json()["noise_reason"] is None
+    with unit_of_work() as session:
+        finding = session.get(Finding, "ov-act-reason")
+        assert finding.noise_marked_by_kind is None
+        assert finding.noise_reason is None
+
+
+def test_agent_tool_dismisses_as_agent_and_refuses_a_blank_reason():
+    _seed("ov-act-agent")
+    refused = tool_registry.dismiss_finding(finding_id="ov-act-agent", reason="  ")
+    assert "error" in refused
+    assert terminal_states_for(["ov-act-agent"]) == {"ov-act-agent": "waiting"}
+
+    done = tool_registry.dismiss_finding(
+        finding_id="ov-act-agent", reason="duplicate of a closed alert"
+    )
+    assert done["success"] is True
+    with unit_of_work() as session:
+        finding = session.get(Finding, "ov-act-agent")
+        assert finding.noise_marked_by == "agent"
+        assert finding.noise_marked_by_kind == "agent"
+        assert finding.noise_reason == "duplicate of a closed alert"
+    assert terminal_states_for(["ov-act-agent"]) == {"ov-act-agent": "dismissed"}
+    assert "error" in tool_registry.dismiss_finding(
+        finding_id="ov-act-missing", reason="x"
+    )
 
 
 def test_second_launch_does_not_insert_another_queued_row(client):
