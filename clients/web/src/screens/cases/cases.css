@@ -1770,7 +1770,7 @@
 .case-page .checked-calls li.open .call-detail { margin: 0 12px; width: auto; }
 .case-page .checked-call {
   display: grid;
-  grid-template-columns: 40px 120px minmax(0, 1fr) 96px 64px 14px;
+  grid-template-columns: 40px 120px minmax(0, 1fr) 108px 64px 14px;
   gap: 12px;
   align-items: center;
   padding: 8px 12px;
@@ -1787,11 +1787,11 @@
 .case-page .checked-call .ref { color: var(--tx3); font-size: 11.5px; }
 .case-page .checked-call .tool { color: var(--tx2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .case-page .checked-call .query { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case-page .checked-call .num { font-family: var(--font-mono); font-size: 12px; text-align: right; }
+.case-page .checked-call .num { font-family: var(--font-mono); font-size: 12px; text-align: right; white-space: nowrap; }
 .case-page .checked-call .num.poor { color: var(--sev-high); }
 .case-page .checked-call .chev { color: var(--tx3); }
 @media (max-width: 720px) {
-  .case-page .checked-call { grid-template-columns: 34px minmax(0, 1fr) 80px 14px; }
+  .case-page .checked-call { grid-template-columns: 34px minmax(0, 1fr) 108px 56px 14px; }
   .case-page .checked-call .tool { display: none; }
 }
 
