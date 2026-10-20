@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
@@ -2437,6 +2437,67 @@ describe('a case with several runs', () => {
     expect(await screen.findByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
   })
 
+  describe('How it started', () => {
+    const chain = (n: number) => Array.from({ length: n }, (_, i) => ({
+      step_id: `s${i}`, event: `event ${i}`, who: `host-${i}`, at: `2026-06-15T10:0${i}:00Z`, link: '', artifact: '',
+      cause_id: i === 0 ? null : `s${i - 1}`, origin: i === 0, proven: i < 3,
+    })).reverse()
+    const withChain = (id: string, steps: unknown[], proven = 3) => {
+      threeRuns(id)
+      testState.runs['run-rca'] = { status: 'completed', projection: { ...ROOT_CAUSE, steps, proven } }
+    }
+
+    it('names the origin, counts the proof, shows the first and last links and links the run', async () => {
+      withChain('case-how', chain(5))
+      renderCase('case-how')
+      const card = await screen.findByRole('region', { name: 'How it started' })
+      expect(await within(card).findByText('5 events · 3 proven')).toBeInTheDocument()
+      expect(within(card).getAllByText('event 0')).toHaveLength(2)
+      expect(within(card).getByText('event 4')).toBeInTheDocument()
+      expect(within(card).queryByText('event 2')).not.toBeInTheDocument()
+      expect(within(card).getAllByRole('listitem')).toHaveLength(2)
+      expect(within(card).getByRole('link', { name: 'Show all 5' })).toHaveAttribute('href', '/workflows?run=run-rca')
+    })
+
+    it('shows every row of a two-step chain and no Show all', async () => {
+      withChain('case-how2', chain(2), 2)
+      renderCase('case-how2')
+      const card = await screen.findByRole('region', { name: 'How it started' })
+      expect(within(card).getAllByRole('listitem')).toHaveLength(2)
+      expect(within(card).queryByText(/Show all/)).not.toBeInTheDocument()
+    })
+
+    it('is absent with no root-cause run or no steps', async () => {
+      twoRuns('case-how-none')
+      renderCase('case-how-none')
+      await screen.findByRole('region', { name: 'Other runs on this case' })
+      expect(screen.queryByRole('region', { name: 'How it started' })).not.toBeInTheDocument()
+      cleanup()
+      withChain('case-how-empty', [], 0)
+      renderCase('case-how-empty')
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Other runs on this case' })).toHaveTextContent('Concluded'))
+      expect(screen.queryByRole('region', { name: 'How it started' })).not.toBeInTheDocument()
+    })
+
+    it('says one line when the root-cause run cannot be read', async () => {
+      withChain('case-how-err', chain(3))
+      const read = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
+      vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => (runId === 'run-rca' ? Promise.reject(new Error('down')) : read(runId)))
+      onTestFinished(() => void vi.mocked(workflowApi.getRun).mockImplementation(read))
+      renderCase('case-how-err')
+      const card = await screen.findByRole('region', { name: 'How it started' })
+      expect(card).toHaveTextContent('The run could not be read.')
+    })
+
+    it('shows on the closed mood too', async () => {
+      withChain('case-how-closed', chain(5))
+      testState.cases = [{ ...testState.cases[0], status: 'closed', combined_state: 'closed', closure: { closed_by: 'ada', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' } }]
+      renderCase('case-how-closed')
+      expect(await screen.findByRole('region', { name: 'Closed summary' })).toBeInTheDocument()
+      expect(await screen.findByRole('link', { name: 'Show all 5' })).toBeInTheDocument()
+    })
+  })
+
   it('says the honest line once when no run keeps a record, and a run that cannot be read under its own tag', async () => {
     threeRuns('case-broken')
     testState.runs['run-hunt'] = { status: 'completed', projection: { findings: [], cost_usd: 0 } }
@@ -2737,6 +2798,23 @@ describe('the case verdict', () => {
     })
     const closed = await screen.findByRole('region', { name: 'Closed summary' })
     await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-b')).toBe(true))
+    expect(within(closed).queryByText('Runs say')).not.toBeInTheDocument()
+  })
+
+  it('lets a benign investigation stand over an inconclusive hunt, open and closed as false positive', async () => {
+    const refs = [ref('run-h', '2026-06-15T09:00:00Z', true), ref('run-i', '2026-06-15T10:00:00Z', false, 'incident-response')]
+    const runs = { 'run-h': hunt('inconclusive'), 'run-i': lead('benign') }
+    openWith('case-handoff', refs, runs)
+    const verdict = await screen.findByRole('region', { name: 'Case verdict' })
+    expect(verdict).toHaveTextContent(/^Runs sayBenign$/)
+    cleanup()
+    openWith('case-handoff-closed', refs, runs, {
+      status: 'closed',
+      combined_state: 'closed',
+      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
+    })
+    const closed = await screen.findByRole('region', { name: 'Closed summary' })
+    await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-i')).toBe(true))
     expect(within(closed).queryByText('Runs say')).not.toBeInTheDocument()
   })
 })

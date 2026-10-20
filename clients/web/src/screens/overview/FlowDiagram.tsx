@@ -30,6 +30,8 @@ const OUTCOME_COLOR: Record<string, string> = {
   resolved_person: 'var(--vio)',
   working: 'var(--ac)',
   needs_you: 'var(--poor)',
+  dismissed: 'var(--tx3)',
+  scoring: 'var(--fair)',
   waiting: 'var(--tx3)',
 }
 const SLOTS: { label: string; sub: string; icon: IconName }[] = [

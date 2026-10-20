@@ -780,6 +780,10 @@ export interface Subturn {
   tools: readonly string[];
   // The Vigil agent this step's skill reads are credited to (#1560).
   agent_id?: string;
+  // Tool turns this step may take, in place of the spec's runtime allowance.
+  max_turns?: number;
+  // Numbers each result as the ledger will (r12), so the answer can cite them.
+  cite?: boolean;
 }
 
 export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<Outcome<T>> {
@@ -799,11 +803,12 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     system: sub.system,
     task: sub.task,
     schema: sub.schema,
-    max_turns: options.spec.runtime.max_turns,
+    max_turns: sub.max_turns ?? options.spec.runtime.max_turns,
     approvals: new Set(options.spec.approvals),
     verbs: [],
     result_cap: options.spec.runtime.result_cap,
     recall_limit: options.spec.runtime.recall_limit,
+    ...(sub.cite === true ? { refs: { prefix: CALL_REF, offset: count } } : {}),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
   const framer = await Framer.open(harness.state, options.run_id, options.run_kind, [], []);

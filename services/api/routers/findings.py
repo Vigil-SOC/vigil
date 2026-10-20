@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
+from core.cases.closure import ClosedByKind
 from core.config import vigil_path
 from core.findings.enrichment import (
     FindingNotFound,
@@ -44,10 +45,16 @@ data_service = DatabaseDataService()
 EXPORT_FORMATS = DatabaseDataService.EXPORT_FORMATS
 
 
+class NoiseMarkRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 class NoiseMarkResponse(BaseModel):
     finding_id: str
     noise_marked_at: Optional[datetime] = None
     noise_marked_by: Optional[str] = None
+    noise_marked_by_kind: Optional[str] = None
+    noise_reason: Optional[str] = None
     status: str
 
 
@@ -149,15 +156,21 @@ def mark_finding_noise(
     finding_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
+    body: Optional[NoiseMarkRequest] = None,
 ):
-    """Store a noise mark. Does not change ``finding.status`` or scoring."""
+    """Dismiss the finding as noise. The body is optional; the console sends none."""
     finding = _finding_or_404(session, finding_id)
+    reason = ((body.reason if body else None) or "").strip()
     finding.noise_marked_at = utcnow()
     finding.noise_marked_by = current_user.user_id
+    finding.noise_marked_by_kind = ClosedByKind.ANALYST.value
+    finding.noise_reason = reason or None
     return NoiseMarkResponse(
         finding_id=finding.finding_id,
         noise_marked_at=finding.noise_marked_at,
         noise_marked_by=finding.noise_marked_by,
+        noise_marked_by_kind=finding.noise_marked_by_kind,
+        noise_reason=finding.noise_reason,
         status=finding.status,
     )
 
@@ -173,6 +186,8 @@ def clear_finding_noise(
     logger.info("cleared noise mark on %s by %s", finding_id, current_user.user_id)
     finding.noise_marked_at = None
     finding.noise_marked_by = None
+    finding.noise_marked_by_kind = None
+    finding.noise_reason = None
     return NoiseMarkResponse(
         finding_id=finding.finding_id,
         status=finding.status,

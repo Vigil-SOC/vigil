@@ -149,6 +149,12 @@ def get_finding(finding_id: str) -> str:
 
 
 @mcp.tool()
+def dismiss_finding(finding_id: str, reason: str) -> str:
+    """Dismiss a finding as noise, with the reason. The actor is the caller."""
+    return _call(tool_registry.dismiss_finding, finding_id=finding_id, reason=reason)
+
+
+@mcp.tool()
 async def list_completed_hunts(
     start: str,
     end: str,

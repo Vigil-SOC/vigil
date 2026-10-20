@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, agentRows, caseVerdict, closureFlag, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
+import { actionWords, agentRows, caseVerdict, closureFlag, chainOldestFirst, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
 import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 describe('actionWords', () => {
@@ -115,6 +115,24 @@ describe('a root-cause run', () => {
     expect(endedRun(fold)?.line).toBe('0 findings')
   })
 
+  const step = (step_id: string, cause_id: string | null, extra: object = {}) => ({ step_id, event: `event ${step_id}`, who: 'host', at: '2026-06-15T10:00:00Z', link: '', cause_id, origin: false, proven: false, ...extra })
+
+  it('reads the chain and its proven count, empty when absent', () => {
+    const fold = readFold({ status: 'completed', projection: { ...head, steps: [step('s1', null, { origin: true, proven: true }), 'junk', step('s2', 's1')], proven: 1 } })
+    expect(fold).toMatchObject({ kind: 'head', proven: 1, steps: [{ step_id: 's1', origin: true, proven: true, cause_id: null }, { step_id: 's2', cause_id: 's1', proven: false }] })
+    expect(fold && 'steps' in fold && fold.steps).toHaveLength(2)
+    const { steps: _s, proven: _p, ...bare } = head // eslint-disable-line @typescript-eslint/no-unused-vars
+    expect(readFold({ status: 'completed', projection: bare })).toMatchObject({ kind: 'head', steps: [], proven: 0 })
+  })
+
+  it('orders the chain origin first on a five-step trace recorded symptom-first, unreached steps last', () => {
+    const steps = [step('e', 'd'), step('d', 'c'), step('stray', 'gone'), step('c', 'b'), step('b', 'a'), step('a', null, { origin: true })]
+    expect(chainOldestFirst(steps).map((s) => s.step_id)).toEqual(['a', 'b', 'c', 'd', 'e', 'stray'])
+    // no origin flag: the step with no cause starts it; a cycle ends the walk
+    expect(chainOldestFirst([step('y', 'x'), step('x', null)]).map((s) => s.step_id)).toEqual(['x', 'y'])
+    expect(chainOldestFirst([step('p', 'q', { origin: true }), step('q', 'p')]).map((s) => s.step_id)).toEqual(['p', 'q'])
+  })
+
   it('still folds without run_kind, through the projection key as before', () => {
     const { run_kind: _kind, ...bare } = head // eslint-disable-line @typescript-eslint/no-unused-vars
     const fold = readFold({ status: 'completed', projection: bare })
@@ -183,6 +201,12 @@ describe('caseVerdict', () => {
   it('reads needs_review naming the run a later dismissal contradicts', () => {
     expect(caseVerdict([run('Rerun', 'benign'), run('Hunt', 'suspicious')])).toMatchObject({ word: 'needs_review', basis: 'Hunt says suspicious.' })
     expect(caseVerdict([run('Rerun', 'false_positive'), run('Hunt', 'needs_review')])?.basis).toBe('Hunt says needs review.')
+  })
+
+  it('lets a dismissal stand over an inconclusive run, which neither speaks nor objects', () => {
+    expect(caseVerdict([run('Investigation', 'benign'), run('Hunt', 'inconclusive')])).toMatchObject({ word: 'benign', basis: null })
+    expect(caseVerdict([run('C', 'false_positive'), run('B', 'inconclusive'), run('A', 'needs_review')])?.basis).toBe('A says needs review.')
+    expect(caseVerdict([run('B', 'malicious'), run('A', 'inconclusive')])?.word).toBe('malicious')
   })
 
   it('does not let a dismissal stand over an unread run, and names it', () => {
