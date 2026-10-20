@@ -6,10 +6,13 @@ import { RECENT_SEARCHES } from "../projection.js";
 import type { Proof, StepPayload } from "../proof.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphEdge, type GraphNode } from "./graph.js";
 import { fold, type V3Kinds, type V3Step } from "./ledger.js";
+import { disposition, forReport, reportRows, type AccountRow, type ChainEvent, type ReportRows, type TimelineRow } from "./report.js";
 
 // A v3 run in the shape the console already reads a root-cause run in: its chain as
-// steps, symptom first, each tied to the event before it. The account proper (timeline,
-// actors, entities, gaps) is the case account's; this is what shows until it does.
+// steps, symptom first, each tied to the event before it. Beside that, the run's own
+// account, computed on each read by the functions that write report.md (report.ts reportRows)
+// so the two never differ: who is who, the chain root first with ties and evidence, the
+// timeline with who ran and who operated, other findings, targeted searches, open questions.
 
 export interface V3Projection extends RootCauseProjection {
   engine: "rootcause-v3";
@@ -17,6 +20,22 @@ export interface V3Projection extends RootCauseProjection {
   // report.md as the run wrote it, once it has.
   report: string | null;
   moves: V3Step[];
+  account: V3Account | null;
+  // Root first. A tie runs to the next event; an evidence ref resolves through moves[].queries[].ref.
+  chain: { score: number; events: ChainEvent[]; alternatives: ReportRows["alternatives"] } | null;
+  timeline: { events: TimelineRow[]; impersonation: ReportRows["impersonation"]; exonerated: ReportRows["exonerated"] };
+  other_findings: ReportRows["others"];
+  targeted_searches: ReportRows["tested"];
+  open_questions: ReportRows["open"];
+}
+
+export interface V3Account {
+  alert: { id: string; title: string; observedAt: string } | null;
+  disposition: string;
+  exit: string | null;
+  root_cause: { id: string; label: string; justification?: string } | null;
+  conclusion: { text: string; chain: string[]; openQuestions: string[] } | null;
+  accounts: AccountRow[];
 }
 
 const proofOf = (x: { status: string } | undefined): Proof =>
@@ -80,6 +99,10 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
       terminal = event.payload as TerminalPayload;
     }
   }
+  const g = folded.graph === null ? null : forReport(folded.graph);
+  // The trace as the report reads it: by ts, then id (the journal holds it in the order it was written).
+  const rows = g === null ? null : reportRows(g, [...folded.entries].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id)));
+  const named = g === null ? undefined : g.nodes[rows?.conclusion?.rootCause?.id ?? ""] ?? Object.values(g.nodes).find((n) => n.isRoot);
   const steps = (folded.graph === null ? [] : chainOf(folded.graph)).map((step) => ({ ...step, proven: step.link_status === "proven" || (step.origin && step.origin_status === "proven") }));
   return {
     run_id: runId,
@@ -100,6 +123,19 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
     exit: folded.exit,
     report: folded.report,
     moves: folded.steps,
+    account: g === null || rows === null ? null : {
+      alert: folded.setup === null ? null : { id: folded.setup.alert.id, title: folded.setup.alert.title, observedAt: folded.setup.alert.observedAt },
+      disposition: disposition(g, folded.exit),
+      exit: folded.exit,
+      root_cause: named === undefined ? null : { id: named.id, label: named.label, ...(named.rootJustification ? { justification: named.rootJustification } : {}) },
+      conclusion: rows.conclusion && { text: rows.conclusion.text, chain: rows.conclusion.chain, openQuestions: rows.conclusion.openQuestions },
+      accounts: rows.accounts,
+    },
+    chain: rows?.chain ? { ...rows.chain, alternatives: rows.alternatives } : null,
+    timeline: { events: rows?.timeline ?? [], impersonation: rows?.impersonation ?? [], exonerated: rows?.exonerated ?? [] },
+    other_findings: rows?.others ?? [],
+    targeted_searches: rows?.tested ?? [],
+    open_questions: rows?.open ?? [],
   };
 }
 
