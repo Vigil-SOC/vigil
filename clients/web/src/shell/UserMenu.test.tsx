@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import UserMenu from './UserMenu'
 
@@ -29,12 +29,18 @@ vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => auth,
 }))
 
+function HomeProbe() {
+  const { search } = useLocation()
+  return <div>home-route{search}</div>
+}
+
 function renderMenu(path = '/cases', onShowTour = vi.fn(), setupLeft: number | null = null) {
   return render(
     <ColorSchemeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/setup" element={<div>setup-route</div>} />
+          <Route path="/home" element={<HomeProbe />} />
           <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} setupLeft={setupLeft} />} />
         </Routes>
       </MemoryRouter>
@@ -112,16 +118,19 @@ describe('UserMenu', () => {
     expect(await screen.findByRole('menu', { name: 'Account' })).toHaveTextContent('admin · MFA enabled')
   })
 
-  it('shows the setup count from the shell and none at 0 or unread', () => {
+  it('counts Home\'s setup steps on their own item, which opens them, and none at 0 or unread', () => {
     const { unmount } = renderMenu('/cases', vi.fn(), 2)
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    expect(screen.getByRole('menuitem', { name: 'Setup guide 2 left' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Setup guide' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Finish setup 2 left' }))
+    expect(screen.getByText('home-route?section=setup')).toBeInTheDocument()
     unmount()
 
     for (const left of [0, null]) {
       const view = renderMenu('/cases', vi.fn(), left)
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       expect(screen.getByRole('menuitem', { name: 'Setup guide' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: /^Finish setup/ })).not.toBeInTheDocument()
       view.unmount()
     }
   })

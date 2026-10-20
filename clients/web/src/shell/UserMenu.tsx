@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
+import { HOME_SETUP_HREF } from '../screens/home/setupHidden'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 import TwoStepDialog from './TwoStepDialog'
 import ChangePasswordDialog from './ChangePasswordDialog'
@@ -39,7 +40,7 @@ export default function UserMenu({
   setupLeft,
 }: {
   onShowTour: () => void
-  /** open setup steps from the shell's read; null hides the count */
+  /** Home's open setup steps, as the shell's chip counts them; null or 0 hides the item */
   setupLeft: number | null
 }) {
   const { user, logout } = useAuth()
@@ -150,10 +151,16 @@ export default function UserMenu({
         </div>
         <div className="user-pop-sep" />
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/setup') }}>
-          <Icon name="flow" size={15} />
-          Setup guide
-          {setupLeft ? <span className="user-pop-note">{setupLeft} left</span> : null}
+          <Icon name="flow" size={15} /> Setup guide
         </button>
+        {/* the count is Home's steps, not the wizard's, so it opens them like the chip does */}
+        {setupLeft ? (
+          <button role="menuitem" onClick={() => { setOpen(false); navigate(HOME_SETUP_HREF) }}>
+            <Icon name="check" size={15} />
+            Finish setup
+            <span className="user-pop-note">{setupLeft} left</span>
+          </button>
+        ) : null}
         <button role="menuitem" onClick={() => { setOpen(false); onShowTour() }}>
           <Icon name="play" size={15} /> Take the tour
         </button>

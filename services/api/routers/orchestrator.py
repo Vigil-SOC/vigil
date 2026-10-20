@@ -340,7 +340,12 @@ def get_investigation_file(investigation_id: str, filename: str):
 
 @router.post("/investigations/{investigation_id}/wake")
 def wake_investigation(investigation_id: str):
-    """Wake a sleeping investigation for further work."""
+    """Restart a finished investigation by queueing a new one on the same case.
+
+    A run's id is derived from its investigation id and its ledger is terminal
+    once finished, so the same investigation cannot run twice. The failure stays
+    on record; the restart is a fresh Human Ask over the same workflow and findings.
+    """
     try:
         orch = _get_orchestrator()
         if not orch:
@@ -352,22 +357,36 @@ def wake_investigation(investigation_id: str):
                 status_code=404, detail=f"Investigation not found: {investigation_id}"
             )
 
-        if inv.get("status") not in ("sleeping", "completed", "failed"):
+        if inv.get("status") not in ("completed", "failed"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot wake investigation in status '{inv.get('status')}'",
+                detail=f"Cannot restart investigation in status '{inv.get('status')}'",
             )
 
-        state = orch.workdir.read_state(investigation_id)
-        state["status"] = "executing"
-        state.pop("failure_reason", None)
-        state["error_count"] = 0
-        orch.workdir.write_state(investigation_id, state)
-        orch._update_investigation_status(investigation_id, "assigned")
+        from services.daemon.orchestrator import insert_intake_trigger
+
+        case_id = inv.get("case_id")
+        insert_intake_trigger(
+            kind="human_ask",
+            priority=inv.get("priority") or "medium",
+            payload={
+                "workflow_id": inv["workflow_id"],
+                "case_id": case_id,
+                "finding_ids": inv.get("trigger_ids") or [],
+                "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
+                or None,
+            },
+        )
 
         return {
             "success": True,
-            "message": f"Investigation {investigation_id} woken up",
+            "case_id": case_id,
+            "message": (
+                f"New investigation queued on case {case_id}; "
+                f"{investigation_id} stays on record"
+                if case_id
+                else f"New investigation queued; {investigation_id} stays on record"
+            ),
         }
     except HTTPException:
         raise

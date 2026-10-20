@@ -18,7 +18,11 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.integrations.splunk.client import SplunkService  # noqa: E402
+from core.integrations.splunk.client import (  # noqa: E402
+    SearchResult,
+    SplunkSearchError,
+    SplunkService,
+)
 
 BASE = "https://splunk.example.com:8089"
 
@@ -150,7 +154,7 @@ def test_search_runs_the_full_job_lifecycle():
 
     results = _service().search("index=notable", max_count=10)
 
-    assert results == [{"_raw": "event-1"}]
+    assert results == SearchResult([{"_raw": "event-1"}], event_count=None)
     assert delete_route.called, "completed search job should be cleaned up"
 
 
@@ -179,13 +183,14 @@ def test_search_sends_the_spl_query_as_form_data():
 
 
 @respx.mock
-def test_search_returns_none_when_job_creation_fails():
+def test_search_raises_when_job_creation_fails():
     _mock_auth()
     respx.post(f"{BASE}/services/search/jobs").mock(
         return_value=httpx.Response(500, text="boom")
     )
 
-    assert _service().search("index=notable") is None
+    with pytest.raises(SplunkSearchError, match="HTTP 500: boom"):
+        _service().search("index=notable")
 
 
 def _with_stale_key(svc: SplunkService, key: str = "stale-key") -> SplunkService:
@@ -241,7 +246,7 @@ def test_stale_key_on_job_post_logs_in_once_and_returns_results(monkeypatch):
 
     results = _with_stale_key(_service()).search("index=notable")
 
-    assert results == [{"_raw": "event-1"}]
+    assert results.results == [{"_raw": "event-1"}]
     assert login.call_count == 1
     assert "Authorization" not in login.calls[0].request.headers
     assert create.call_count == 2
@@ -270,7 +275,7 @@ def test_status_401_retries_that_get_without_a_second_job(monkeypatch):
 
     results = _with_stale_key(_service()).search("index=notable")
 
-    assert results == [{"_raw": "event-1"}]
+    assert results.results == [{"_raw": "event-1"}]
     assert create.call_count == 1
     assert status.call_count == 2
     assert login.call_count == 1
@@ -300,14 +305,14 @@ def test_results_401_retries_that_get_for_the_same_sid(monkeypatch):
 
     results = _with_stale_key(_service()).search("index=notable")
 
-    assert results == [{"_raw": "event-1"}]
+    assert results.results == [{"_raw": "event-1"}]
     assert create.call_count == 1
     assert results_route.call_count == 2
     assert login.call_count == 1
 
 
 @respx.mock
-def test_login_failure_after_401_returns_none_and_does_not_login_again(monkeypatch):
+def test_login_failure_after_401_raises_and_does_not_login_again(monkeypatch):
     _hold_poll(monkeypatch)
     login = _mock_login(status=401)
     create = respx.post(f"{BASE}/services/search/jobs").mock(
@@ -315,19 +320,21 @@ def test_login_failure_after_401_returns_none_and_does_not_login_again(monkeypat
     )
     svc = _with_stale_key(_service())
 
-    assert svc.search("index=notable") is None
+    with pytest.raises(SplunkSearchError, match="HTTP 401"):
+        svc.search("index=notable")
     assert login.call_count == 1
     assert create.call_count == 1
     # Failed login leaves the key unset, so the next call tries again.
     assert svc.session_key is None
 
-    assert svc.search("index=notable") is None
+    with pytest.raises(SplunkSearchError, match="login failed"):
+        svc.search("index=notable")
     assert login.call_count == 2
     assert create.call_count == 1
 
 
 @respx.mock
-def test_second_401_after_fresh_login_returns_none_without_another_login(monkeypatch):
+def test_second_401_after_fresh_login_raises_without_another_login(monkeypatch):
     _hold_poll(monkeypatch)
     login = _mock_login()
     create = respx.post(f"{BASE}/services/search/jobs").mock(
@@ -335,7 +342,8 @@ def test_second_401_after_fresh_login_returns_none_without_another_login(monkeyp
     )
     svc = _with_stale_key(_service())
 
-    assert svc.search("index=notable") is None
+    with pytest.raises(SplunkSearchError, match="HTTP 401"):
+        svc.search("index=notable")
     assert login.call_count == 1
     assert create.call_count == 2
     assert svc.session_key == "sk-fresh"
@@ -351,7 +359,8 @@ def test_server_error_does_not_call_login_again(monkeypatch):
         return_value=httpx.Response(500, text="boom")
     )
 
-    assert _service().search("index=notable") is None
+    with pytest.raises(SplunkSearchError, match="HTTP 500"):
+        _service().search("index=notable")
     assert login.call_count == 1
 
 
@@ -374,7 +383,165 @@ def test_delete_401_still_returns_results(monkeypatch):
 
     results = _with_stale_key(_service()).search("index=notable")
 
-    assert results == [{"_raw": "event-1"}]
+    assert results.results == [{"_raw": "event-1"}]
+
+
+# A failed search says why. Only a poll-deadline expiry may contain "timed out"
+# or "timeout": mcp_tools._failure_kind reads either as a visibility gap.
+
+
+def _assert_not_a_timeout(err: Exception) -> None:
+    assert "timed out" not in str(err).lower()
+    assert "timeout" not in str(err).lower()
+
+
+@respx.mock
+def test_login_failure_is_named():
+    respx.post(f"{BASE}/services/auth/login").mock(
+        return_value=httpx.Response(401, json={"message": "denied"})
+    )
+    with pytest.raises(SplunkSearchError, match="login failed") as exc:
+        _service().search("index=notable")
+    _assert_not_a_timeout(exc.value)
+
+
+@respx.mock
+def test_refused_job_carries_splunks_own_message():
+    _mock_auth()
+    respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(
+            400,
+            json={
+                "messages": [
+                    {"type": "FATAL", "text": "Unknown search command 'statz'."}
+                ]
+            },
+        )
+    )
+    with pytest.raises(SplunkSearchError, match="Unknown search command 'statz'") as e:
+        _service().search("index=main | statz count")
+    _assert_not_a_timeout(e.value)
+
+
+@respx.mock
+def test_missing_sid_is_named():
+    _mock_auth()
+    respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(201, json={})
+    )
+    with pytest.raises(SplunkSearchError, match="no job id") as e:
+        _service().search("index=main")
+    _assert_not_a_timeout(e.value)
+
+
+@respx.mock
+def test_failed_job_carries_the_status_messages():
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "entry": [
+                    {
+                        "content": {
+                            "isDone": True,
+                            "isFailed": True,
+                            "dispatchState": "FAILED",
+                            "messages": [
+                                {
+                                    "type": "FATAL",
+                                    "text": "Index 'nope' does not exist",
+                                },
+                                {"type": "INFO", "text": "not a reason"},
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+    )
+    with pytest.raises(SplunkSearchError, match="Index 'nope' does not exist") as e:
+        _service().search("index=nope")
+    assert "not a reason" not in str(e.value)
+    _assert_not_a_timeout(e.value)
+
+
+@respx.mock
+def test_status_and_results_errors_are_distinct():
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    status = respx.get(f"{job_url}/sid-1").mock(return_value=httpx.Response(500))
+    with pytest.raises(SplunkSearchError, match="status check failed"):
+        _service().search("index=main")
+
+    status.mock(
+        return_value=httpx.Response(
+            200, json={"entry": [{"content": {"isDone": True}}]}
+        )
+    )
+    respx.get(f"{job_url}/sid-1/results").mock(return_value=httpx.Response(500))
+    with pytest.raises(SplunkSearchError, match="results fetch failed"):
+        _service().search("index=main")
+
+
+@respx.mock
+def test_poll_deadline_says_timed_out_and_cancels_the_job(monkeypatch):
+    monkeypatch.setattr("core.integrations.splunk.client.SEARCH_DEADLINE_S", 0.05)
+    monkeypatch.setattr("core.integrations.splunk.client._POLL_INTERVAL_S", 0.01)
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200, json={"entry": [{"content": {"isDone": False}}]}
+        )
+    )
+    cancel = respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    with pytest.raises(SplunkSearchError, match="timed out"):
+        _service().search("index=main")
+    assert cancel.called
+
+
+@respx.mock
+def test_search_reports_event_count_and_warnings():
+    _mock_auth()
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "entry": [
+                    {
+                        "content": {
+                            "isDone": True,
+                            "eventCount": 42,
+                            "resultCount": 1,
+                            "messages": [
+                                {"type": "WARN", "text": "Field 'foo' not found"},
+                                {"type": "INFO", "text": "Search results truncated"},
+                                {"type": "DEBUG", "text": "ignored"},
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+    )
+    respx.get(f"{job_url}/sid-1/results").mock(
+        return_value=httpx.Response(200, json={"results": [{"n": "1"}]})
+    )
+    respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    found = _service().search("index=main | stats count")
+
+    assert found.results == [{"n": "1"}]
+    assert found.event_count == 42
+    assert found.warnings == ["Field 'foo' not found", "Search results truncated"]
 
 
 @pytest.mark.parametrize("trailing", ["", "/"])

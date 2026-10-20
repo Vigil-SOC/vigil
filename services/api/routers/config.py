@@ -644,7 +644,7 @@ def build_setup_steps(
 ) -> dict:
     """Four or five setup steps from config that already exists. No ranking, no dismissal.
 
-    The custom skill step is served only when ``VIGIL_SKILLS_PATH`` is set, so it can always be finished.
+    The custom skill step is served unless operator skills are off (``VIGIL_SKILLS_PATH`` set empty), so it can always be finished.
     """
     integrations = loaded.get("integrations") or {}
     connected = len(integrations)

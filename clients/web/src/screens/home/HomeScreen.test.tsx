@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomeScreen, { dropChips, parseCreatedAt } from './HomeScreen'
+import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -42,10 +43,10 @@ function item(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
   }
 }
 
-function renderHome(extra: Partial<ConsoleScreenProps> = {}) {
+function renderHome(extra: Partial<ConsoleScreenProps> = {}, path = '/home') {
   return render(
     <ToastProvider>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <HomeScreen {...props} {...extra} />
       </MemoryRouter>
     </ToastProvider>,
@@ -272,10 +273,48 @@ describe('Home', () => {
     expect(screen.queryByText('No alerts yet')).not.toBeInTheDocument()
     expect(screen.queryByText(/of \d+ done/)).not.toBeInTheDocument()
 
-    fireEvent.click(within(step as HTMLElement).getByRole('button', { name: 'Not now' }))
+    // the shell's Finish setup chip listens for this to recount
+    const changed = vi.fn()
+    window.addEventListener(SETUP_HIDDEN_CHANGED, changed)
+    try {
+      fireEvent.click(within(step as HTMLElement).getByRole('button', { name: 'Not now' }))
+    } finally {
+      window.removeEventListener(SETUP_HIDDEN_CHANGED, changed)
+    }
+    expect(changed).toHaveBeenCalledOnce()
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
     expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('?section=setup scrolls to Get more from Vigil once the steps load, or to Get Vigil ready on first run', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    try {
+      const plain = renderHome()
+      await screen.findByText('Nothing to suggest right now.')
+      expect(scrolled).toEqual([])
+      plain.unmount()
+
+      const more = renderHome({}, '/home?section=setup')
+      await screen.findByText('Nothing to suggest right now.')
+      expect(scrolled).toEqual([screen.getByRole('region', { name: 'Setup' })])
+      more.unmount()
+
+      scrolled.length = 0
+      vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+        data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+      } as never)
+      renderHome({}, '/home?section=setup')
+      const ready = (await screen.findByRole('heading', { name: 'Get Vigil ready' })).closest('.home-ready')
+      expect(scrolled).toEqual([ready])
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
   })
 
   it('lays the open steps out in one numbered row and Not now renumbers the rest', async () => {

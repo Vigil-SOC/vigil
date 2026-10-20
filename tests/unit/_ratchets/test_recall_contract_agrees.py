@@ -29,6 +29,9 @@ ENTITIES = AGENT / "plugins" / "hunt" / "entities.ts"
 HUNT_TYPES = AGENT / "plugins" / "hunt" / "types.ts"
 SCREENS = REPO_ROOT / "clients" / "web" / "src" / "screens"
 CONSOLE = SCREENS / "workflows" / "WorkflowsScreen.tsx"
+CASE_FOLD = SCREENS / "cases" / "caseFold.ts"
+EVENTS = AGENT / "contracts" / "events.ts"
+CASE_RECORD = REPO_ROOT / "core" / "cases" / "case_record.py"
 
 pytestmark = pytest.mark.unit
 
@@ -269,6 +272,24 @@ def test_the_console_offers_the_entity_types_the_extractor_reads():
         f"drifted from ENTITY_TYPES in {HUNT_TYPES.relative_to(REPO_ROOT)}, "
         "which owns them. " + DRIFT
     )
+
+
+def test_every_restated_hypothesis_status_is_the_contracts():
+    # A status the contract gains and a restatement lacks reads as no word at all:
+    # the case record and the console's Explanations both go quiet on that belief.
+    declared = ts_union(EVENTS.read_text(), "HYPOTHESIS_STATUSES")
+    match = re.search(r"const EXPLAINED_STATUSES = \[([^\]]*)\]", CASE_FOLD.read_text())
+    assert match, f"EXPLAINED_STATUSES not found in {CASE_FOLD.relative_to(REPO_ROOT)}"
+    console = frozenset(re.findall(r"'([^']+)'", match.group(1)))
+    match = re.search(r"^_STATUS_WORD = \{(.*?)^\}", CASE_RECORD.read_text(), re.S | re.M)
+    assert match, f"_STATUS_WORD not found in {CASE_RECORD.relative_to(REPO_ROOT)}"
+    record = frozenset(re.findall(r'^\s*"([^"]+)":', match.group(1), re.M))
+    for where, words in ((CASE_FOLD, console), (CASE_RECORD, record)):
+        assert words == frozenset(declared), (
+            f"the hypothesis statuses {where.relative_to(REPO_ROOT)} words have "
+            f"drifted from HYPOTHESIS_STATUSES in {EVENTS.relative_to(REPO_ROOT)}, "
+            "which owns them. " + DRIFT
+        )
 
 
 def test_every_declared_vocabulary_is_ratcheted(ts: str):

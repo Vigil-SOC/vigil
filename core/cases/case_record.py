@@ -1,6 +1,6 @@
 """One newest-first read of a case's record.
 
-The run's ledger comes from the agent. ``case_audit_logs`` is read here, by
+Each run's ledger comes from the agent. ``case_audit_logs`` is read here, by
 ``entity_type`` and ``entity_id``: the table has no ``case_id`` column. The
 case's own history is ``cases.activities``, appended to by runs, analysts and
 merges; it is read off the case, not written here. This view does not query
@@ -373,43 +373,60 @@ def audit_text(row: CaseAuditLog) -> str:
     return change or row.action
 
 
+def unread_row(run_id: str, at: Any, reason: str) -> dict:
+    """One row standing in for a run whose ledger could not be read."""
+    return {
+        "id": f"run:{run_id}:unread",
+        "at": _at(_parse(at)),
+        "kind": "unread",
+        "source": "run",
+        "chained": False,
+        "text": _join(f"Could not read the record of run {run_id}", reason),
+        "run_id": run_id,
+    }
+
+
 def merge_record(
-    events: Sequence[Mapping[str, Any]],
+    runs: Sequence[tuple[str, Sequence[Mapping[str, Any]]]],
     audits: Sequence[CaseAuditLog],
     activities: Sequence[Any] = (),
+    unread: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict]:
-    """Run rows, case-audit rows and case-activity rows, newest first.
+    """Every run's rows, case-audit rows and case-activity rows, newest first.
 
-    Run rows are the chained ledger. Audit and activity rows are not: the page
-    says so. A run row reads as what happened, its ids named from the same ledger;
-    the kernel's bookkeeping (frames, prices, counters, "neither" rulings) is left
-    out, and the chain itself is still verified whole.
+    ``runs`` is each run's id with its events. Run rows are the chained ledger,
+    each read against its own run's ids. Audit and activity rows are not chained:
+    the page says so. ``unread`` rows (``unread_row``) stand in for a run whose
+    ledger could not be read. The kernel's bookkeeping (frames, prices, counters,
+    "neither" rulings) is left out, and the chain itself is still verified whole.
     """
-    rows: list[dict] = []
-    context = RecordContext(events)
-    for event in events:
-        kind = str(event.get("kind") or "")
-        seq = event.get("seq")
-        text = event_text(kind, event.get("payload"), context)
-        if text is None:
-            continue
-        rows.append(
-            {
-                "id": f"run:{seq}",
-                "at": str(event.get("ts") or ""),
-                "kind": kind,
-                "source": "run",
-                "chained": True,
-                "text": text,
-                # A turn lands in one transaction, so every row shares `now()`.
-                # Seq is the order inside that instant.
-                "_seq": (
-                    seq
-                    if isinstance(seq, (int, float)) and not isinstance(seq, bool)
-                    else 0
-                ),
-            }
-        )
+    rows: list[dict] = [{**row, "_seq": 0} for row in unread]
+    for run_id, events in runs:
+        context = RecordContext(events)
+        for event in events:
+            kind = str(event.get("kind") or "")
+            seq = event.get("seq")
+            text = event_text(kind, event.get("payload"), context)
+            if text is None:
+                continue
+            rows.append(
+                {
+                    "id": f"run:{run_id}:{seq}",
+                    "at": str(event.get("ts") or ""),
+                    "kind": kind,
+                    "source": "run",
+                    "chained": True,
+                    "text": text,
+                    "run_id": run_id,
+                    # A turn lands in one transaction, so every row shares `now()`.
+                    # Seq is the order inside that instant.
+                    "_seq": (
+                        seq
+                        if isinstance(seq, (int, float)) and not isinstance(seq, bool)
+                        else 0
+                    ),
+                }
+            )
     for audit in audits:
         rows.append(
             {

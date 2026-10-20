@@ -10,6 +10,7 @@ implies coverage it does not have.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -25,14 +26,38 @@ _LABEL = {
 }
 
 
-def merge(reports: list[dict]) -> dict:
-    servers = [
-        name
+def _servers() -> dict[str, dict]:
+    return {
+        name: entry
         for name, entry in json.loads((REPO_ROOT / "mcp-config.json").read_text())[
             "mcpServers"
         ].items()
         if isinstance(entry, dict)
-    ]
+    }
+
+
+def connector_version(server: str) -> str:
+    """What ``mcp-config.json`` pins for ``server``: an upstream version, ``in-repo``,
+    ``hosted`` (a vendor's remote server, reached through mcp-remote), or ``unpinned``."""
+    entry = _servers()[server]
+    args = entry.get("args", [])
+    if any(arg.startswith("mcp-remote@") for arg in args):  # its pin is the proxy's, not the vendor's
+        return "hosted"
+    for i, arg in enumerate(args):
+        if arg.startswith("-") or (i and args[i - 1] == "--with"):  # --with: a helper, not the connector
+            continue
+        name = arg.rsplit("/", 1)[-1]
+        if "@sha256:" in name:  # an image digest: enough of it to tell two apart
+            return name[: name.index("@sha256:") + 20]
+        if re.search(r"(?:@|==)v?\d[\w.\-]*$", name):
+            return name
+    if entry.get("command") == "python3":
+        return "in-repo"
+    return "unpinned"
+
+
+def merge(reports: list[dict]) -> dict:
+    servers = list(_servers())
     probes: dict[str, list[dict]] = {}
     for report in reports:
         for result in report["results"]:
@@ -50,7 +75,7 @@ def merge(reports: list[dict]) -> dict:
             {
                 "server": server,
                 "status": status,
-                "version": results[0]["version"] if results else None,
+                "version": results[0]["version"] if results else connector_version(server),
                 "probes": results,
             }
         )

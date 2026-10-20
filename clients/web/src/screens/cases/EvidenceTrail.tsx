@@ -38,6 +38,7 @@ function bearsOnLine(row: RunRecord['evidence'][number], record: RunRecord): str
 }
 
 function rowsOf(fold: RunFold): TrailRow[] {
+  if (fold.kind === 'head') return [] // a root-cause chain is on Watch a run
   if (fold.kind === 'lead' && fold.record) {
     // An investigation tests no one explanation, so a row's stance is shown only where its links agree.
     const record = fold.record

@@ -4,7 +4,7 @@ The integration clients are synchronous by design (#461: plain `def` +
 threadpool, `asyncio.to_thread` as the exception). The bug these guard
 against is an `async def` calling one directly, which freezes every other
 task on that loop for the duration of a remote call — and
-`SplunkService.search` polls its job with `time.sleep` for up to ~60s.
+`SplunkService.search` polls its job with `time.sleep` for up to ~110s.
 
 Each test runs the async path alongside a 10ms ticker. If the blocking call
 is offloaded the ticker keeps advancing; if it is awaited on the loop the
@@ -20,6 +20,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from core.integrations.splunk.client import SearchResult
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -57,7 +59,7 @@ async def test_splunk_federation_adapter_does_not_block_the_loop():
 
     adapter = _factory()
     svc = MagicMock()
-    svc.search = _blocking([])
+    svc.search = _blocking(SearchResult([]))
 
     with patch.object(adapter, "_get_service", return_value=svc):
         _, ticks = await _tick_while(adapter.fetch(since=None, cursor={}, max_items=10))
@@ -82,7 +84,7 @@ async def test_splunk_mcp_tool_does_not_block_the_loop(tool, args, method):
     from core.integrations.splunk import tool as splunk_tool
 
     svc = MagicMock()
-    setattr(svc, method, _blocking([]))
+    setattr(svc, method, _blocking(SearchResult([])))
 
     with patch.object(splunk_tool, "get_splunk_service", return_value=svc):
         _, ticks = await _tick_while(splunk_tool.handle_call_tool(tool, args))

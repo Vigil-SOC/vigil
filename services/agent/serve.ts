@@ -36,8 +36,6 @@ const CHAT = "/chat/stream";
 const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
 const DISTIL = /^\/runs\/([0-9a-fA-F-]{36})\/distil$/;
-// GET /runs/<id>/account -- what the run concluded, in the shape the case page reads.
-const ACCOUNT = /^\/runs\/([0-9a-fA-F-]{36})\/account$/;
 const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
 // GET /runs/<id>/replay[?decision_id=...] -- what each decision was shown, rebuilt
 // from the ledger. Matched on the pathname, since this one takes a query.
@@ -172,11 +170,9 @@ function fail(res: ServerResponse, status: number, route: string, runId: string,
   refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
-type Fold = "projection" | "distil" | "account";
-
 // A run folded by the workflow that owns it. The events stay ours: a reader gets
 // what the run decided or what it saw, never how either was written down.
-async function foldedBy(state: State, runId: string, view: Fold, options?: ProjectionOptions): Promise<unknown | null> {
+async function foldedBy(state: State, runId: string, view: "projection" | "distil", options?: ProjectionOptions): Promise<unknown | null> {
   const events = await state.read(runId);
   const opened = events[0];
   if (opened === undefined || !registeredKinds().includes(opened.run_kind)) return null;
@@ -185,7 +181,7 @@ async function foldedBy(state: State, runId: string, view: Fold, options?: Proje
   return project === undefined ? null : project(runId, events, options);
 }
 
-async function readFold(state: State, runId: string, view: Fold, res: ServerResponse, options?: ProjectionOptions): Promise<void> {
+async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse, options?: ProjectionOptions): Promise<void> {
   let folded: unknown | null;
   try {
     folded = await foldedBy(state, runId, view, options);
@@ -335,9 +331,6 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
-
-      const accounted = req.method === "GET" ? ACCOUNT.exec(url) : null;
-      if (accounted !== null) return readFold(state, accounted[1] as string, "account", res);
 
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
       if (asked !== null) {
