@@ -3681,7 +3681,7 @@ export interface paths {
         put?: never;
         /**
          * Mark Finding Noise
-         * @description Store a noise mark. Does not change ``finding.status`` or scoring.
+         * @description Dismiss the finding as noise. The body is optional; the console sends none.
          */
         post: operations["post_api_findings_finding_id_noise"];
         /**
@@ -9800,6 +9800,11 @@ export interface components {
             /** Items */
             items?: components["schemas"]["NeedsYouItem"][];
         };
+        /** NoiseMarkRequest */
+        NoiseMarkRequest: {
+            /** Reason */
+            reason?: string | null;
+        };
         /** NoiseMarkResponse */
         NoiseMarkResponse: {
             /** Finding Id */
@@ -9808,6 +9813,10 @@ export interface components {
             noise_marked_at?: string | null;
             /** Noise Marked By */
             noise_marked_by?: string | null;
+            /** Noise Marked By Kind */
+            noise_marked_by_kind?: string | null;
+            /** Noise Reason */
+            noise_reason?: string | null;
             /** Status */
             status: string;
         };
@@ -17807,7 +17816,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["NoiseMarkRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
