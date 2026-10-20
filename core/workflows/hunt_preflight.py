@@ -6,18 +6,17 @@ learns a hunt will run without a SIEM, and at what rate, while it still costs
 nothing. This describes *executing* a workflow, not the definition, so it is
 console wiring served at ``GET /api/workflows/{workflow_id}/preflight`` and kept
 off the frozen catalog read. Every shape is read from the engine's own constants
-(``playbook_resolver``, the definition's phases), never restated.
+(``playbook_resolver``, a compose definition's phases), never restated.
 """
 
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.agents.enablement import disabled_message
 from core.llm.chat_layers import changes_for_tool
 from core.workflows.playbook_resolver import (
+    HUNT_CAPABILITIES,
     INVESTIGATE_CAPABILITIES,
     UnknownPlaybook,
-    disabled_phase_agents,
 )
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
@@ -83,6 +82,16 @@ LEAD_TOOLS = {
     ADJUDICATE_RUN_KIND: ("expand",),
     ROOT_CAUSE_RUN_KIND: ("telemetry_search", "record", "finish"),
 }
+# The skills each hunt-like plugin.yaml declares, offered through its skill tool (a
+# ratchet reads them).
+HUNT_SKILLS = (
+    "hunt-method",
+    "recording-evidence",
+    "findings-and-telemetry",
+    "network-shape",
+    "threat-intel",
+)
+PLUGIN_SKILLS = {HUNT_RUN_KIND: HUNT_SKILLS, ADJUDICATE_RUN_KIND: HUNT_SKILLS}
 LEAD_NAMES = {HUNT_RUN_KIND: "Hunt lead", ADJUDICATE_RUN_KIND: "Adjudication lead"}
 # A single agent is a role, not one of the Agents tab's built-ins.
 SINGLE_LEAD = "Lead analyst"
@@ -106,17 +115,15 @@ def _helper(phase: Dict[str, Any], tools: Optional[List[str]] = None) -> Dict[st
 def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str]]:
     """``{lead, helpers, reviewer}`` for this kind, and a note when it is empty."""
     kind = definition.run_kind
+    # A hunt is one agent and a critic: the plugin's, not the definition's.
     if is_hunt_like(kind):
-        roles = {
-            "lead": {"name": LEAD_NAMES[kind], "tools": list(LEAD_TOOLS[kind])},
-            "helpers": [_helper(p or {}) for p in definition.phases],
+        tools = list(HUNT_CAPABILITIES) + list(LEAD_TOOLS[kind])
+        lead = {"name": LEAD_NAMES[kind], "tools": tools}
+        return {
+            "lead": lead,
+            "helpers": [],
             "reviewer": {"name": "Critic", "tools": []},
-        }
-        off = disabled_phase_agents(definition)
-        if off:
-            note = f"Its phases cannot run as written: phase names {disabled_message(off[0])}"
-            return roles, note
-        return roles, None
+        }, None
     if kind == ROOT_CAUSE_RUN_KIND:
         lead = {"name": SINGLE_LEAD, "tools": list(LEAD_TOOLS[kind])}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
@@ -153,17 +160,17 @@ def _model() -> Tuple[Optional[str], Optional[str]]:
     return model_display_name(resolved[1]), source
 
 
-def _skills(roles: Dict[str, Any]) -> Tuple[List[str], Optional[str]]:
+def _skills(roles: Dict[str, Any], kind: str) -> Tuple[List[str], Optional[str]]:
     from core.skills.skill_library import READ_SKILL_TOOL, load_skills, skill_roots
 
+    if kind in PLUGIN_SKILLS:
+        return list(PLUGIN_SKILLS[kind]), None
     helpers = roles["helpers"]
     if any(READ_SKILL_TOOL in h["tools"] for h in helpers):
         library = [skill.name for skill in load_skills(skill_roots())]
         return library, None if library else "No skills are installed."
     if roles["lead"] is None:
         return [], "No phase can read a skill."
-    if helpers:
-        return [], "Hunt workers are bound to capabilities, not skills."
     return [], "The lead has no skill tool."
 
 
@@ -270,7 +277,7 @@ def preflight(
         report = {"bound": [], "unbound": []}
     roles, roles_note = _roles(definition)
     model, model_source = _model()
-    skills, skills_note = _skills(roles)
+    skills, skills_note = _skills(roles, definition.run_kind)
     permissions = _permissions(roles, definition.run_kind, report)
     checkpoints, checkpoints_note = _checkpoints(definition)
     return {

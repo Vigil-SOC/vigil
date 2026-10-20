@@ -29,11 +29,10 @@ def test_blocked_by_lists_off_phase_agents_where_run_would_refuse(monkeypatch):
 
     rows = {r["id"]: r for r in catalog.listing(service)["workflows"]}
 
-    assert rows["threat-hunt"]["blocked_by"] == ["threat_hunter"]
-    assert rows["shadow"]["blocked_by"] == ["threat_hunter"]
     assert rows["custom"]["blocked_by"] == ["threat_hunter"]
-    # a trace has no phases to refuse, and the rest name nothing that is off
-    for workflow_id in ("lead", "trace", "clear"):
+    # a hunt-like run is its plugin's agent and a trace has no phases, so neither
+    # is refused; the rest name nothing that is off
+    for workflow_id in ("threat-hunt", "shadow", "lead", "trace", "clear"):
         assert rows[workflow_id]["blocked_by"] == []
 
 
