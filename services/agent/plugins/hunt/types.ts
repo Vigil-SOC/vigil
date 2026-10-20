@@ -1,3 +1,4 @@
+import type { ValueCheck } from "./checks.js";
 import { DEFAULT_PARK_MS, type BudgetLimits, type Refusal } from "../../contracts/budget.js";
 import type { HypothesisStatus } from "../../contracts/events.js";
 import type { Allowance } from "../../core/spec.js";
@@ -305,6 +306,12 @@ export interface EvidenceRecord {
   // The estate calls that answered since the hunt's last record, by ref: the results this
   // record rests on, which the guard on the hunt's conclusion reads a citation against.
   call_refs?: string[];
+  // The refs the record itself cites, each one of call_refs that a telemetry tool served:
+  // the queries a reader opens to check it. Absent when it cited none, or cited a ref
+  // outside call_refs; such a record is unattested. And each value of its payload
+  // checked against them (checks.ts).
+  source_refs?: string[];
+  checks?: ValueCheck[];
 }
 
 // The note on a "neither" the controller filled in because the lead never ruled

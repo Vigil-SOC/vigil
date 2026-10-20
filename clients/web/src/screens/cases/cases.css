@@ -1791,6 +1791,8 @@
 .case-page .checked-call .num.poor { color: var(--sev-high); }
 .case-page .checked-call .chev { color: var(--tx3); }
 @media (max-width: 720px) {
+  .case-page .ev-detail { padding-left: 14px; }
+  .case-page .ev-detail-grid { grid-template-columns: 1fr; }
   .case-page .checked-call { grid-template-columns: 34px minmax(0, 1fr) 108px 56px 14px; }
   .case-page .checked-call .tool { display: none; }
 }
@@ -1900,3 +1902,52 @@
 .case-page .case-other-name:hover { text-decoration: underline; }
 .case-page .case-other-state { color: var(--tx2); font-size: 12px; }
 .case-page .case-other-runs .num { font-family: var(--mono); font-size: 12px; color: var(--tx1); }
+
+/* An evidence row opened in place: the record whole and the query it came from. */
+.case-page .ev-item { display: flex; flex-direction: column; background: var(--stack-row-bg); }
+.case-page .ev-row.ev-openable { cursor: pointer; }
+.case-page .ev-row.ev-openable:hover { background: var(--bg3); }
+.case-page .ev-item.open > .ev-row { background: var(--bg3); }
+.case-page .ev-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px 14px 58px;
+  border-top: 1px solid var(--stack-bg);
+  font-size: 13px;
+  color: var(--tx0);
+}
+.case-page .ev-trail .ev-detail p { margin: 0; color: var(--tx0); font-size: 13px; }
+.case-page .ev-detail-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; }
+.case-page .ev-detail-grid > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.case-page .ev-bears { margin: 0 0 6px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.case-page .ev-bears b { font-weight: 650; margin-right: 4px; }
+.case-page .ev-bears b.supports { color: var(--good); }
+.case-page .ev-bears b.weakens { color: var(--sev-high); }
+.case-page .ev-trail .ev-detail .ev-attest { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.case-page .ev-trail .ev-detail .ev-attest.good { color: var(--good); }
+.case-page .ev-trail .ev-detail .ev-attest.poor { color: var(--sev-high); }
+.case-page .ev-source { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+/* The receipt: each value beside what its query returned. */
+.case-page .ev-receipt-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.case-page .ev-receipt-head .call-label { margin-right: 4px; }
+.case-page .ev-ref { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg3); color: var(--tx1); }
+.case-page .ev-pill { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--bg3); color: var(--tx2); }
+.case-page .ev-pill.match { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.case-page .ev-pill.differs { background: color-mix(in srgb, var(--sev-med) 18%, transparent); color: var(--sev-med); }
+.case-page .ev-receipt-wrap { overflow-x: auto; }
+.case-page .ev-receipt { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.case-page .ev-receipt th { padding: 6px 10px; text-align: left; font-size: 11.5px; font-weight: 600; color: var(--tx2); border-bottom: 1px solid var(--ln1); white-space: nowrap; }
+.case-page .ev-receipt td { padding: 7px 10px; border-bottom: 1px solid var(--ln0); vertical-align: top; overflow-wrap: anywhere; }
+.case-page .ev-receipt td.mono { font-family: var(--font-mono); }
+.case-page .ev-receipt td.field { color: var(--tx2); }
+.case-page .ev-receipt td.found { color: var(--tx2); }
+.case-page .ev-receipt tr.differs { background: color-mix(in srgb, var(--sev-med) 9%, transparent); }
+.case-page .ev-receipt td.check { white-space: nowrap; color: var(--tx2); }
+.case-page .ev-receipt td.check.match { color: var(--good); }
+.case-page .ev-receipt td.check.differs { color: var(--sev-med); }
+.case-page .ev-receipt td.rests { color: var(--tx3); white-space: nowrap; }
+.case-page .ev-receipt td.rests.sensor { color: var(--good); }
+.case-page .ev-receipt td.rests.adversary { color: var(--sev-med); }
+.case-page .ev-source-actions { display: flex; flex-wrap: wrap; gap: 8px; }

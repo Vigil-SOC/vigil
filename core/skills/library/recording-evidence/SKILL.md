@@ -22,6 +22,15 @@ so a summary with nothing behind it cannot be checked. Keep each finding's
 `finding_id` on the rows you copy from it: that is how the alert reaches the
 case, and how the row names the product it came from.
 
+**ref** is the ref of the query result the finding was read from, such as `r7`,
+shown on every result you receive. Name it on every finding. When the finding's
+values came from more than one result, name every one of them in **refs**. Each
+value in the payload is checked against those results, by the name the result
+gives it, and a reader sees which values matched, which differ and which no cited
+result holds. Cite only results returned since your last `record_evidence`: a
+finding with no ref, a ref to a failed query, or a ref to an earlier one counts as
+unattested: it cannot clear a branch or carry a verdict alone.
+
 **supports / weakens** name the hypothesis ids a finding genuinely bears on.
 
 A query that failed, timed out, was refused or returned nothing is not a
@@ -40,7 +49,9 @@ that value:
 - `third_party`: somebody else's claim -- a feed label, a reputation verdict.
 
 Being caused by an attacker is not being authored by one. A beacon interval you
-measured is `sensor` even though the adversary chose the interval. A finding with
+measured is `sensor` even though the adversary chose the interval. Name the field
+as it appears in the result the ref points at: a `sensor` field that result does
+not carry is counted as the adversary's. A finding with
 no sensor-attested basis can neither clear a branch nor carry a verdict on its own.
 
 Set **attacker_influenceable** on any finding that rests on text from outside.

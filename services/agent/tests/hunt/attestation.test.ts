@@ -23,6 +23,7 @@ import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
 import { evidenceStrength, sensorAttested, unmetPredicates } from "../../plugins/hunt/strength.js";
 import type { EvidenceRecord } from "../../plugins/hunt/types.js";
 import { evidenceOn, newLedger } from "../support/hunt.js";
+import { estateRef } from "../support/kernel-hunt.js";
 
 const SENSOR = { field: "conn_count", authored: "sensor" as const };
 const AUTHORED = { field: "filename", authored: "adversary" as const };
@@ -86,7 +87,7 @@ function harnessOf(spec: RunSpec, provider: Provider, state: InProcessState<Hunt
   return {
     provider,
     registry: registryOf([], {}),
-    dispatch: { invoke: async (tool, args): Promise<ToolResult> => (tool.local ? tool.invoke(args) : { ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: tool.id }) },
+    dispatch: { invoke: async (tool, args): Promise<ToolResult> => (tool.local ? tool.invoke(args) : { ok: true, rows: [{ conn_count: 412, filename: "updater.exe" }], rowCount: 1, capped: false, sourceSystem: tool.id }) },
     budget: budgetOf({ ...spec.budgets, max_calls: 40 }, unmeteredQuota),
     memory: nullMemory,
     state,
@@ -169,11 +170,13 @@ describe("what an ABANDON may rest on", () => {
   const abandonCiting = async (restsOn: unknown[]) => {
     const state = new InProcessState<HuntKinds>();
     const provider = modelOf([
+      () => ({ tool: "splunk_search", args: { sql: "select conn_count from flows" } }),
       (request) => ({
         tool: "record_evidence",
         args: {
           results: [
             {
+              ref: estateRef(request),
               source_system: "network",
               summary: "the beacon's filename looks like an updater",
               salience: "notable",
@@ -210,6 +213,62 @@ describe("what an ABANDON may rest on", () => {
     expect(call.ok).toBe(true);
     expect(hypothesis.status).toBe("parked");
     expect(hypothesis.resolution_reason).toMatch(/^abandoned: looks benign/);
+  });
+});
+
+// A record cites searches only among the calls it rests on (call_refs): the ones served
+// since the hunt's last record. Its source_refs are those it cites, never a second list.
+describe("which searches a record may cite", () => {
+  const recorded = async (cite: (fresh: string | undefined, stale: string | undefined) => string[]) => {
+    const state = new InProcessState<HuntKinds>();
+    let stale: string | undefined;
+    const row = (refs: string[], request: TurnRequest) => ({
+      ...(refs.length > 0 ? { refs } : {}),
+      source_system: "network",
+      summary: "412 connections",
+      salience: "notable",
+      why_notable: "regular",
+      payload: JSON.stringify({ conn_count: 412 }),
+      attacker_influenceable: false,
+      rests_on: [SENSOR],
+      supports: [hypothesisIn(request)],
+    });
+    const provider = modelOf([
+      () => ({ tool: "splunk_search", args: { sql: "select conn_count from flows" } }),
+      (request) => {
+        stale = estateRef(request);
+        return { tool: "record_evidence", args: { results: [row(stale === undefined ? [] : [stale], request)] } };
+      },
+      () => ({ tool: "splunk_search", args: { sql: "select conn_count from flows where dst = '45.77.53.176'" } }),
+      (request) => ({ tool: "record_evidence", args: { results: [row(cite(estateRef(request), stale), request)] } }),
+      () => ({ say: "done" }),
+    ]);
+    await runHunt(harnessOf(SPEC, provider, state), { run_id: RUN, run_kind: "hunt", spec: SPEC, actions: [], queue: new InProcessDirectiveQueue() });
+    const records = [...fold((await state.read(RUN)) as readonly HuntEvent[]).evidence.values()].filter((one) => one.provenance === "worker");
+    expect(records).toHaveLength(2);
+    return { first: records[0]!, last: records[1]!, stale };
+  };
+
+  it("names the searches it cites, each one of the calls it rests on, and checks its values against them", async () => {
+    const { first, last } = await recorded((fresh) => (fresh === undefined ? [] : [fresh]));
+
+    for (const one of [first, last]) {
+      expect(one.source_refs).toHaveLength(1);
+      expect(one.call_refs).toContain(one.source_refs![0]);
+      expect(one.checks).toEqual([expect.objectContaining({ field: "conn_count", status: "match", ref: one.source_refs![0] })]);
+      expect(sensorAttested(one)).toBe(true);
+    }
+    expect(last.source_refs).not.toEqual(first.source_refs);
+  });
+
+  it("counts a record citing a search from before the hunt's last record as unattested", async () => {
+    const { last, stale } = await recorded((fresh, old) => [fresh, old].filter((one): one is string => one !== undefined));
+
+    expect(stale).toBeDefined();
+    expect(last.call_refs).not.toContain(stale);
+    expect(last.source_refs).toBeUndefined();
+    expect(last.checks).toBeUndefined();
+    expect(sensorAttested(last)).toBe(false);
   });
 });
 

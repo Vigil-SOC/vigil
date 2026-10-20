@@ -431,9 +431,52 @@ describe('case page', () => {
     expect(within(gap).getByText('no push logs (gap)')).toBeInTheDocument()
     expect(within(gap).getAllByText('—')).toHaveLength(2) // no tier, move not in the capped list
 
-    const act = within(first).getByRole('button', { name: 'Actions for this row' })
-    expect(act).toBeDisabled()
-    expect(act).toHaveAttribute('title', 'Coming in a later release')
+    // A hunt row opens in place to the record it was written as.
+    const act = within(first).getByRole('button', { name: 'Open this evidence' })
+    fireEvent.click(act)
+    expect(within(first).getByRole('button', { name: 'Close this evidence' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Not tied to a query')).toBeInTheDocument()
+  })
+
+  it('opens a hunt evidence row to its receipt: each value beside what its query returned', async () => {
+    testState.cases = [{
+      case_id: 'case-receipt',
+      title: 'Receipt case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-receipt')],
+    }]
+    testState.runs['run-receipt'] = {
+      hunt: {
+        ...HUNT,
+        evidence: [{
+          ...HUNT.evidence[0],
+          summary: 'FYODOR-L made 3885 flows to 45.77.53.176',
+          source_refs: ['r6'],
+          payload: { dest_ip: '45.77.53.176', conn_count: 3885, avg_per_min: 33.5 },
+          checks: [
+            { field: 'dest_ip', claimed: '45.77.53.176', status: 'match', ref: 'r6', found_field: 'dest_ip', found: '45.77.53.176' },
+            { field: 'conn_count', claimed: 3885, status: 'differs', ref: 'r6', found_field: 'count', found: '3884' },
+            { field: 'avg_per_min', claimed: 33.5, status: 'match', ref: 'r6', found_field: 'avg_per_min', found: '33.48', rounded: true },
+          ],
+        }],
+      },
+    }
+    renderCase('case-receipt')
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open this evidence' }))
+
+    expect(screen.getByText('Checked against its query')).toBeInTheDocument()
+    expect(screen.getByText('2 match')).toBeInTheDocument()
+    expect(screen.getByText('1 differs')).toBeInTheDocument()
+    const differs = screen.getByText('≠ differs').closest('tr') as HTMLElement
+    expect(differs).toHaveTextContent('3,885')
+    expect(differs).toHaveTextContent('count 3,884')
+    expect(screen.getByText('✓ match · rounded')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Ask why it differs/ })).toBeInTheDocument()
   })
 
   // #2287: the system the rows came from, not the hunt's domain word; the domain only when no system is known.

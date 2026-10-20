@@ -5,13 +5,14 @@ import { isStructured } from "../../contracts/plugin.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { agentCalls, callsIn, childOrdinal, runChild, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
 import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
+import { carriesField, checkValues } from "./checks.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
 import { narrowFinding, type RunSpec, type ToolSpec } from "../../core/spec.js";
 import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
-import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "./adapters.js";
+import { disconfirmationCritic, evidenceFrom, narrativeWriter, payloadOf, type AdapterOptions } from "./adapters.js";
 import { pendingCheckpoints } from "./checkpoints.js";
 import { suppressedEntities } from "./frontier.js";
 import { allowanceOf, huntSpec } from "./config.js";
@@ -486,7 +487,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         additionalProperties: false,
         required: ["results"],
         properties: {
-          results: { type: "array", items: guarded(ctx) ? withRef(resultItem(ctx.options.spec)) : resultItem(ctx.options.spec) },
+          results: { type: "array", items: withRef(resultItem(ctx.options.spec)) },
           follow_up: {
             type: "array",
             description: "New leads this opened, each a question worth asking next.",
@@ -496,10 +497,10 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
       },
       async (args) => {
         const given = Array.isArray(args["results"]) ? (args["results"] as Record<string, unknown>[]) : [];
-        const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
         const calls = callsIn(await state(ctx).read(ctx.options.run_id));
         const served = servedSince(calls, ctx.options.spec.tools);
         const call_refs = servedRefsSince(calls);
+        const results = guarded(ctx) ? await fromRefs(ctx, given, call_refs) : citedRefs(ctx, given, calls, call_refs);
         return withBook(ctx, ports, (book) => {
           const evidence = evidenceFrom({ results }).map((result) => ({ ...result, call_refs, ...(served === null ? {} : { served_by: served }) }));
           const records = book.appendEvidence(evidence);
@@ -648,12 +649,13 @@ function expandTool(ctx: PluginContext): RegisteredTool[] {
   return specs.length === 0 ? [] : toolsFrom(specs, { expand: expandFrom(state(ctx), ctx.options.run_id) });
 }
 
-// Experimental guards (core/guards.ts). A record names the result it came
-// from, and the code -- not the decider, which never read the rows -- fills in
-// what the critic argues against: the guarded view of the result, and who wrote
-// each field as the reader labelled it. Only that labelling can make a field
-// sensor-attested: a field the reader did not label, and a record naming no result,
-// count as the adversary's whatever the decider says.
+// A record names the results it came from, among the calls it rests on (call_refs).
+// Without guards its values are checked against their rows (citedRefs). Under the
+// experimental guards (core/guards.ts) the code -- not the decider, which never read
+// the rows -- fills in what the critic argues against: the guarded view of the result,
+// and who wrote each field as the reader labelled it. Only that labelling can make a
+// field sensor-attested: a field the reader did not label, and a record naming no
+// result, count as the adversary's whatever the decider says.
 function withRef(item: Record<string, unknown>): Record<string, unknown> {
   const properties = (item["properties"] ?? {}) as Record<string, unknown>;
   return {
@@ -662,7 +664,12 @@ function withRef(item: Record<string, unknown>): Record<string, unknown> {
       ...properties,
       ref: {
         type: "string",
-        description: "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested.",
+        description: "The ref of the result this finding came from, such as r4: one returned since your last record_evidence. The result is kept with the record for the critic; without a ref, or with an older one, nothing in the record counts as sensor-attested.",
+      },
+      refs: {
+        type: "array",
+        items: { type: "string" },
+        description: "Every ref this finding's values came from, when they came from more than one result. Each value is checked against them.",
       },
     },
   };
@@ -677,7 +684,7 @@ const unattested = (record: Record<string, unknown>): Record<string, unknown> =>
   };
 };
 
-async function fromRefs(ctx: PluginContext, given: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+async function fromRefs(ctx: PluginContext, given: readonly Record<string, unknown>[], call_refs: readonly string[]): Promise<Record<string, unknown>[]> {
   if (!given.some((one) => typeof one["ref"] === "string")) return given.map(unattested);
   // By the ref the decider was shown (ref="r7"), which is the one it cites, and by
   // the ledger's own as a fallback.
@@ -691,7 +698,8 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
   return given.map((one) => {
     const { ref, ...rest } = one;
     const call = typeof ref === "string" ? calls.get(ref) : undefined;
-    if (call === undefined) return unattested(rest);
+    // Only among the calls the record rests on, as without guards.
+    if (call === undefined || !call_refs.includes(call.ref)) return unattested(rest);
     const read = readOf(call.read);
     // Sensor-attested only when the reader said observed AND the value has a shape no
     // free text has (core/guards.ts typeSafe): code, not a model, decides what can
@@ -709,6 +717,7 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
         : [...labels].map(([field, authored]) => ({ field, authored }));
     return {
       ...rest,
+      source_refs: [call.ref],
       // What the critic argues against: the decider's own typed view of the rows --
       // sensor-shaped values verbatim, anything the subject could write as a handle.
       // The raw rows stay on the call event for a person; free text an attacker wrote
@@ -723,6 +732,41 @@ async function fromRefs(ctx: PluginContext, given: readonly Record<string, unkno
 function asksDisposition(ctx: PluginContext): boolean {
   const { conclusion } = ctx.options.plugin;
   return isStructured(conclusion) && "disposition" in ((conclusion.schema["properties"] ?? {}) as Record<string, unknown>);
+}
+
+// Without guards the decider read the rows itself, so its labels stand, but only
+// against the results it names, and only among the calls the record rests on
+// (call_refs): a ref outside them leaves the whole record unattested. Of those, the
+// ones a telemetry tool served are its source_refs; a field it rests on counts as the
+// sensor's only if one of their results carries it, and each value of its payload is
+// checked against their rows. A record can always be traced to the query it came
+// from, or is known not to be.
+function citedRefs(ctx: PluginContext, given: readonly Record<string, unknown>[], calls: readonly CallPayload[], call_refs: readonly string[]): Record<string, unknown>[] {
+  const restsOn = new Set(call_refs);
+  const byRef = new Map(calls.map((call) => [call.ref, call]));
+  const telemetry = (call: CallPayload): boolean => {
+    const spec = ctx.options.spec.tools.find((tool) => tool.id === call.tool);
+    return spec !== undefined && typeof spec["provides"] === "string";
+  };
+  return given.map((one) => {
+    const { ref, refs, ...rest } = one;
+    const named = [...new Set([...(typeof ref === "string" ? [ref] : []), ...strings(refs)])];
+    if (named.length === 0 || named.some((name) => !restsOn.has(name))) return unattested(rest);
+    const cited = named.map((name) => byRef.get(name)).filter((call): call is CallPayload => call !== undefined && telemetry(call));
+    if (cited.length === 0) return unattested(rest);
+    const asked = Array.isArray(rest["rests_on"]) ? (rest["rests_on"] as { field?: unknown; authored?: unknown }[]) : [];
+    const rests_on = asked.map((basis) => {
+      const field = String(basis.field ?? "");
+      const claimed = basis.authored === "sensor" || basis.authored === "adversary" || basis.authored === "third_party" ? basis.authored : "adversary";
+      return { field, authored: claimed === "sensor" && !carriesField(field, cited) ? "adversary" : claimed };
+    });
+    return {
+      ...rest,
+      source_refs: cited.map((call) => call.ref),
+      checks: checkValues(payloadOf(rest["payload"]), cited),
+      ...(rests_on.length > 0 ? { rests_on, attacker_influenceable: rests_on.every((basis) => basis.authored !== "sensor") } : {}),
+    };
+  });
 }
 
 function guarded(ctx: PluginContext): boolean {

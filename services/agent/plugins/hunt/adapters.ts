@@ -1,3 +1,4 @@
+import type { ValueCheck } from "./checks.js";
 import { setMaxListeners } from "node:events";
 import { drain, streamTurn } from "../../core/stream.js";
 import type { Attempt, Harness, Outcome, TurnConfig } from "../../core/loop.js";
@@ -217,7 +218,7 @@ export function salvaged(attempts: readonly Attempt[]): WorkerEvidence[] {
 
 // Declared to the model as a JSON string: a schema saying only "object" is one a
 // provider's function calling cannot shape. An object is still accepted.
-function payloadOf(raw: unknown): Record<string, unknown> {
+export function payloadOf(raw: unknown): Record<string, unknown> {
   if (typeof raw === "object" && raw !== null) return raw as Record<string, unknown>;
   if (typeof raw !== "string" || raw.trim() === "") return {};
   try {
@@ -271,6 +272,8 @@ export function evidenceFrom(answer: WorkerAnswer): WorkerEvidence[] {
         ? { attacker_influenceable: record["attacker_influenceable"] }
         : {}),
       ...(restsOn(record["rests_on"]).length > 0 ? { rests_on: restsOn(record["rests_on"]) } : {}),
+      ...(Array.isArray(record["source_refs"]) ? { source_refs: record["source_refs"] as string[] } : {}),
+      ...(Array.isArray(record["checks"]) ? { checks: record["checks"] as ValueCheck[] } : {}),
       ...(typeof record["attack_technique"] === "string" && record["attack_technique"] !== ""
         ? { attack_technique: record["attack_technique"] }
         : {}),

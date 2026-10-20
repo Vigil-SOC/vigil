@@ -1536,6 +1536,8 @@ export function CasePage({
                     fold={one}
                     phase={onePhase}
                     focusId={!run || run.ref === latest ? focusEvidence : null}
+                    runId={key}
+                    onAsk={(text) => setAskSeed({ id, text })}
                     onShowOlder={key ? (shown) => setEvidenceLimits((held) => ({ ...held, [key]: shown + EVIDENCE_PAGE })) : undefined}
                   />
                 )
