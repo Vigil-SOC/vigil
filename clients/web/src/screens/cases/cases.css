@@ -664,6 +664,8 @@
   color: var(--tx2);
 }
 
+.case-page .case-disagree { display: flex; }
+
 .case-page .case-assess > span:first-child { margin-right: 4px; }
 .case-page .case-assess .case-assess-later { font-size: 12px; color: var(--tx3); }
 .case-page .case-actions { display: flex; flex-wrap: wrap; gap: 8px; }

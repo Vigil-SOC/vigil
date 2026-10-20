@@ -1373,6 +1373,34 @@ describe('case page', () => {
     expect(onSeedConsumed).toHaveBeenCalled()
   })
 
+  it('asks where the runs disagree only on a case with more than one run', async () => {
+    const twoRuns = (investigations: unknown[]) => [{
+      case_id: 'case-runs',
+      title: 'Runs case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations,
+    }]
+    testState.cases = twoRuns([investigation('completed', false, 'run-a')])
+    const { unmount } = renderDetail('case-runs')
+    expect(await screen.findByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Where do the runs disagree?' })).not.toBeInTheDocument()
+    unmount()
+
+    testState.cases = twoRuns([
+      investigation('completed', false, 'run-a'),
+      { ...investigation('completed', false, 'run-b'), investigation_id: 'inv-2', primary: false },
+    ])
+    renderDetail('case-runs')
+    fireEvent.click(await screen.findByRole('button', { name: 'Where do the runs disagree?' }))
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: "Where do this case's runs disagree, and what did each one say?" })
+  })
+
   it('chips a hunt evidence id and opens that row, and drops the thread when the case changes', async () => {
     testState.cases = [
       {

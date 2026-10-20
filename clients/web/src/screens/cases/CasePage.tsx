@@ -76,6 +76,8 @@ const EXPL_TONE: Record<string, string> = {
 }
 
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
+// What the Summary's disagreement button asks the composer, on a case with several runs.
+const DISAGREE_ASK = "Where do this case's runs disagree, and what did each one say?"
 
 function Mark({ text }: { text: string }) {
   return (
@@ -1256,6 +1258,14 @@ export function CasePage({
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
     tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+  // A case with several runs can ask where they part ways; the brief carries every run.
+  const disagree = investigations.length > 1 && (
+    <div className="case-disagree">
+      <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>
+        Where do the runs disagree?
+      </button>
+    </div>
+  )
   const needsBlock = (
     <CaseNeeds
       key={id} // Show all is per case
@@ -1348,6 +1358,7 @@ export function CasePage({
                     </div>
                   </div>
                 </section>
+                {disagree}
                 {doors}
               </>
             ) : (
@@ -1361,6 +1372,7 @@ export function CasePage({
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
                 </section>
+                {disagree}
                 {running && (
                   <>
                     <LaterRow title="What it changed" line="What this phase changed in the estate." />
