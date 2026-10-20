@@ -288,6 +288,8 @@ class TestATerminalWithTwoHandoffs:
         ), patch.object(
             rbr, "_source_is_hunt", return_value=True
         ), patch.object(
+            rbr, "_root_cause_unserved", return_value=[]
+        ), patch.object(
             rbr, "withdraw_for_run"
         ), patch.object(
             rbr, "authorise"
