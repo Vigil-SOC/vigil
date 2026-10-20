@@ -210,6 +210,22 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
                     _push(file_hashes, item.get("sha1"))
                     _push(file_hashes, item.get("md5"))
 
+            # Legacy /api/alerts carries entities at the top level with evidence[] empty.
+            # Evidence-derived values stay first; _push dedupes overlaps.
+            def _push_str(bucket: List[str], value: Any) -> None:
+                if isinstance(value, str):
+                    _push(bucket, value)
+
+            _push_str(hostnames, alert.get("computerDnsName"))
+            logged_on = alert.get("loggedOnUsers")
+            for user in logged_on if isinstance(logged_on, list) else []:
+                if isinstance(user, dict):
+                    _push_str(usernames, user.get("userName"))
+                    _push_str(usernames, user.get("accountName"))
+            alert_domains = alert.get("domains")
+            for domain in alert_domains if isinstance(alert_domains, list) else []:
+                _push_str(domains, domain)
+
             title = alert.get("title") or "Microsoft Defender Alert"
             description = (alert.get("description") or "").strip() or title
 

@@ -19,7 +19,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from core.agents.builtins import blank_model
 from core.llm.providers.discovery import is_embedding_model_id
@@ -160,6 +160,12 @@ def infer_provider_type(model_id: str) -> str:
 
 _LIVE_META: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
+# Provider types an admin attested as self-hosted (``config.self_hosted``), so
+# a model the gateway has no rate for is free rather than unpriced. Replaced
+# wholesale by ``attest_self_hosted``; every process fills its own copy from
+# the active provider rows.
+_SELF_HOSTED_TYPES: set = set()
+
 # ``ModelMeta`` rate attribute → per-token key held in ``_LIVE_META``.
 _RATE_FIELDS = (
     "input_cost_per_token",
@@ -197,9 +203,27 @@ def record_live_meta(
             entry.update(rates, rates_fetched_at=fetched_at)
 
 
+def attest_self_hosted(rows: Iterable[Tuple[str, Optional[Dict[str, Any]]]]) -> None:
+    """Replace the attested set from ``(provider_type, config)`` of every active row.
+
+    Rates are keyed by provider type, not row, so a type is attested only when
+    every active row of it carries ``self_hosted: true``. A mixed type (stock
+    cloud ``openai`` beside one flagged row) stays unpriced rather than let the
+    flag zero a billed model. The flag is read strictly: ``is True``, never
+    truthiness and never inferred from a model name or host.
+    """
+    flagged: Dict[str, bool] = {}
+    for provider_type, config in rows:
+        attested = (config or {}).get("self_hosted") is True
+        flagged[provider_type] = flagged.get(provider_type, True) and attested
+    _SELF_HOSTED_TYPES.clear()
+    _SELF_HOSTED_TYPES.update(t for t, ok in flagged.items() if ok)
+
+
 def clear_live_meta(provider_type: Optional[str] = None) -> None:
     if provider_type is None:
         _LIVE_META.clear()
+        _SELF_HOSTED_TYPES.clear()
         return
     for key in list(_LIVE_META.keys()):
         if key[0] == provider_type:
@@ -279,8 +303,8 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
     """Return the catalog entry for one model, priced from live meta only.
 
     Input and output rates present → ``exact`` (``zero`` when every rate is
-    zero); no gateway rates for an ``ollama`` model → ``zero``, since it is
-    self-hosted; anything else → ``unknown``. A missing cache rate is charged
+    zero); no gateway rates for an ``ollama`` model, or one of an attested
+    self-hosted type → ``zero``; anything else → ``unknown``. A missing cache rate is charged
     at the input rate; a missing input or output rate is never read as zero.
     """
     entry = dict(_default_entry(provider_type, model_id))
@@ -310,7 +334,9 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
         }
         entry.update(rates, rates_fetched_at=live.get("rates_fetched_at"))
         entry["pricing_source"] = "zero" if not any(rates.values()) else "exact"
-    elif provider_type == "ollama" and "rates_fetched_at" not in live:
+    elif (
+        provider_type == "ollama" or provider_type in _SELF_HOSTED_TYPES
+    ) and "rates_fetched_at" not in live:
         entry["pricing_source"] = "zero"
     elif provider_type == "openrouter" and (vendor := _vendor_rates(model_id)):
         entry.update(vendor, rates_fetched_at=vendor["rates_fetched_at"])
@@ -350,7 +376,7 @@ class ModelInfo:
     supports_thinking: bool
     supports_vision: bool
     # One of: "exact" (gateway datasheet rates), "zero" (all rates zero, or
-    # self-hosted ollama), "unknown" (no data — calls recorded as unpriced).
+    # self-hosted: ollama or an attested provider), "unknown" (no data — calls recorded as unpriced).
     # Logged at discovery time; frontend can use it to badge estimates.
     pricing_source: str = "exact"
     # True when the model was pinned to a component via ai_model_configs

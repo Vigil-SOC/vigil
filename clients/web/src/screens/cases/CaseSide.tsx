@@ -254,7 +254,7 @@ function Prose({ text }: { text: string }) {
   return <p className="muted side-clamp" title={text}>{text}</p>
 }
 
-function Known({ fold }: { fold: RunFold | null }) {
+function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
   const recall = fold?.recall
   const cards = recall && !recall.unavailable
     ? [
@@ -268,7 +268,7 @@ function Known({ fold }: { fold: RunFold | null }) {
     : []
   return (
     <Block title="Known about these entities">
-      {!recall && <p className="muted">The run did not journal a recall.</p>}
+      {!recall && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
       {recall?.unavailable && <Prose text={`Recall did not happen: ${recall.unavailable}`} />}
       {recall && !recall.unavailable && cards.length === 0 && (
         <Prose text={`Nothing recorded about ${recall.keys.join(', ') || 'these entities'}.`} />
@@ -381,7 +381,7 @@ export function CaseSide({ caseId, linked, owner, latest, runs, workflowNames, s
       <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
       <Alerts items={linked} />
       {runs.length > 1 ? <CaseCost runs={runs} spend={spend} latest={latest} names={workflowNames} /> : <Cost spend={spend} />}
-      <Known fold={fold} />
+      <Known fold={fold} hasRun={latest !== null} />
       <People caseId={caseId} owner={owner} />
     </>
   )

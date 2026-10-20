@@ -499,7 +499,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         const results = guarded(ctx) ? await fromRefs(ctx, given) : given;
         const calls = callsIn(await state(ctx).read(ctx.options.run_id));
         const served = servedSince(calls, ctx.options.spec.tools);
-        const call_refs = servedRefsSince(calls);
+        const call_refs = servedRefsSince(calls, ctx.turn());
         return withBook(ctx, ports, (book) => {
           const evidence = evidenceFrom({ results }).map((result) => ({ ...result, call_refs, ...(served === null ? {} : { served_by: served }) }));
           const records = book.appendEvidence(evidence);
@@ -634,11 +634,14 @@ export function servedSince(calls: readonly CallPayload[], tools: readonly ToolS
   return servers.size === 1 && only !== undefined ? only : null;
 }
 
-// The estate calls that answered since the turn of the hunt's last record: the results a
-// record written now rests on, which a conclusion cites by ref and the guard checks it against.
-export function servedRefsSince(calls: readonly CallPayload[]): string[] {
+// The estate calls that answered from the turn of the hunt's last record up to, not including,
+// `turn`, the record's own: the results a record written now could have read (#2520), which a
+// conclusion cites by ref and the guard checks it against. A call earlier in the record's own
+// batch is left out -- its result reaches the model only on the next turn.
+export function servedRefsSince(calls: readonly CallPayload[], turn: number): string[] {
   const own = agentCalls(calls);
-  const since = own.filter((call) => call.turn >= (own.findLast((one) => one.tool === "record_evidence" && one.ok)?.turn ?? 0));
+  const from = own.findLast((one) => one.tool === "record_evidence" && one.ok)?.turn ?? 0;
+  const since = own.filter((call) => call.turn >= from && call.turn < turn);
   return since.filter((call) => !OWN.has(call.tool) && call.tool !== SKILL_TOOL && classOf(call) === "served").map((call) => call.ref);
 }
 
