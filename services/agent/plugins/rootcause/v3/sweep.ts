@@ -6,7 +6,7 @@
 import type { Graph, GraphNode } from "./graph.js";
 import type { LoopContext } from "./types.js";
 
-const KINDS = new Set(["arn", "access-key", "principal", "user", "host", "ip", "file-hash", "domain-name", "url", "k8s-resource", "image-digest", "commit-sha", "workflow-run-id"]);
+const KINDS = new Set(["arn", "access-key", "principal", "user", "host", "ip", "file-hash", "domain-name", "url", "k8s-resource", "image-digest", "commit-sha", "workflow-run-id", "email-address", "message-id"]);
 const MAX_VALUES = 6;
 
 // The values worth sweeping: the node's artifacts, the accounts it ran as, and for ARNs their role/session names.

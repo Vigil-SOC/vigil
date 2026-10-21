@@ -46,6 +46,9 @@ export function checkExit(g: Graph, cfg: AgentConfig, spent: Spent): ExitReason 
   return null;
 }
 
+// The least kept back for the closing turn, before the run has a move's cost to go by.
+const FLOOR_USD = 0.5;
+
 export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts): Promise<RunResult> {
   const log = o.log ?? (() => {});
   const graph = o.graph ?? seedFromAlert(createGraph(o.runId), alert, cfg);
@@ -66,7 +69,12 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
   // (or when the run would end anyway) one closing conclude turn writes the model's own verdict.
   let cur = o.startTurn ?? 1;
   const usdLeft = () => cfg.maxUsd - deps.budget.usd;
-  const lowOn = (share: number, min = 0) => usdLeft() <= Math.max(min, share * cfg.maxUsd);
+  // Framing and scoping are not moves: a fresh run's average starts after them.
+  const setupUsd = (o.startTurn ?? 1) <= 1 ? deps.budget.usd : 0;
+  // What the run keeps back: one more move at the average cost so far plus the closing turn (about a move's cost).
+  // The floor holds before any move has run.
+  const reserve = () => (cur > 1 ? Math.max(FLOOR_USD, (2 * (deps.budget.usd - setupUsd)) / (cur - 1)) : FLOOR_USD);
+  const lowOn = (share: number) => usdLeft() <= Math.max(reserve(), share * cfg.maxUsd);
   const budgetText = () => {
     const per = deps.budget.usd / Math.max(1, cur - 1);
     const wrap = lowOn(cfg.wrapUpAt);
@@ -101,11 +109,11 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     let decision: FrontierDecision | null = exit ? null : pending ? { ...pending, turn } : { move: "choose", targetId: symptomId, turn, reason: st.refused ?? "no next move named" };
     pending = undefined;
     st.next = undefined;
-    if (!exit && cfg.concludeAt > 0 && lowOn(cfg.concludeAt, 0.5)) exit = chainSolid(graph, cfg) ? "root-cause-found" : "budget-exhausted";
+    if (!exit && cfg.concludeAt > 0 && lowOn(cfg.concludeAt)) exit = chainSolid(graph, cfg) ? "root-cause-found" : "budget-exhausted";
     if (exit) {
       if (concluding || graph.conclusion || cfg.concludeAt <= 0) break;
       concluding = exit;
-      const why = exit === "inconclusive" ? "Nothing is left to do on the graph." : exit === "false-positive" ? "The alerted event was refuted." : usdLeft() <= 0.5 || usdLeft() <= cfg.concludeAt * cfg.maxUsd || exit === "budget-exhausted" ? "The budget is used up." : "The chain to the alert is settled.";
+      const why = exit === "inconclusive" ? "Nothing is left to do on the graph." : exit === "false-positive" ? "The alerted event was refuted." : usdLeft() <= reserve() || usdLeft() <= cfg.concludeAt * cfg.maxUsd || exit === "budget-exhausted" ? "The budget is used up." : "The chain to the alert is settled.";
       decision = { move: "conclude", targetId: symptomId, turn, reason: `the run ends (${exit}): ${why}` };
     }
     if (!decision) break;

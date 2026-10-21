@@ -462,6 +462,22 @@ describe("the emission", () => {
     expect(outcome.transcript.some((one) => one.content.includes("SHOUT"))).toBe(false);
   });
 
+  it("names the allowed values of an enum the emission missed, and hands the rejected value on", async () => {
+    const harness = harnessOf([{ calls: [] }, { emit: { verb: "SHOUT" } }, { emit: { verb: "YELL" } }]);
+    const outcome = await outcomeOf<{ verb: string }>(config(), harness);
+
+    expect((harness.provider as ScriptedProvider).requests.at(-1)!.messages.at(-1)!.content).toContain("/verb must be equal to one of the allowed values: TALLY, HALT");
+    expect(outcome.emission_rejected).toBe(true);
+    expect(outcome.rejected_value).toEqual({ verb: "YELL" });
+  });
+
+  it("hands on no rejected value when the last emission was not JSON", async () => {
+    const harness = harnessOf([{ calls: [] }, { emit: { verb: "SHOUT" } }, { emit: "not json at all" }]);
+    const outcome = await outcomeOf<{ verb: string }>(config(), harness);
+    expect(outcome.emission_rejected).toBe(true);
+    expect(outcome).not.toHaveProperty("rejected_value");
+  });
+
   it("fails rather than returning something off-schema", async () => {
     const harness = harnessOf([{ calls: [] }, { emit: "not json at all" }, { emit: { verb: "SHOUT" } }]);
     const { seen, outcome } = await watch(config(), harness);

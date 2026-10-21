@@ -15,9 +15,6 @@ What's wrapped (verified against docs.getbifrost.ai):
   * ``GET /api/logs/histogram/token-usage``
   * ``GET /api/logs/stats``            — aggregate totals (cost, tokens,
                                           requests, latency, success rate)
-  * ``GET /api/logs``                  — raw log search (limited use —
-                                          custom-metadata filtering isn't
-                                          a supported query param yet)
   * ``POST /api/logs/recalculate-cost``— batch recompute against current
                                           pricing (admin operation)
 
@@ -134,7 +131,7 @@ def histogram_cost(
 
 
 # ---------------------------------------------------------------------------
-# Aggregates / raw logs
+# Aggregates
 # ---------------------------------------------------------------------------
 
 
@@ -161,37 +158,6 @@ def stats(
             virtual_key_ids=virtual_key_ids,
         ),
     )
-
-
-def search_logs(
-    *,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    providers: Optional[List[str]] = None,
-    models: Optional[List[str]] = None,
-    content_search: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> Optional[Dict[str, Any]]:
-    """Raw log-search for ad-hoc inspection.
-
-    Custom metadata filtering (e.g. matching the
-    ``x-bf-lh-vigil-interaction-id`` header) is not currently exposed
-    as a query param — callers that need correlation by Vigil's
-    interaction_id must filter the response client-side. Watch the
-    Bifrost docs for a future ``metadata_*`` query parameter.
-    """
-    params = _filter_params(
-        start_time=start_time,
-        end_time=end_time,
-        providers=providers,
-        models=models,
-    )
-    if content_search:
-        params["content_search"] = content_search
-    params["limit"] = max(1, min(int(limit), 1000))
-    params["offset"] = max(0, int(offset))
-    return _get_json("/api/logs", params=params)
 
 
 # ---------------------------------------------------------------------------
