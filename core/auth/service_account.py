@@ -198,11 +198,9 @@ def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
         line += " (retired 9 other)"
     elif retired > 9:
         line += " (retired 10 or more other)"
-    # The text is the account name plus a fixed outcome word. `password` is a
-    # parameter of ensure, and the clear-text check follows that parameter to
-    # this write even though the password is not in the text.
-    # codeql[py/clear-text-logging-sensitive-data]
-    out.write(line + "\n")
+    # Same line as the write: a comment on the line above does not cover it.
+    # The text is the account name and a fixed outcome word, not the password.
+    out.write(line + "\n")  # codeql[py/clear-text-logging-sensitive-data]
 
 
 def main(
