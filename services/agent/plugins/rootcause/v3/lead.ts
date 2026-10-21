@@ -1,5 +1,6 @@
 // Model-led moves: each submission may name the next move (`next`); code only checks it is one of the moves
-// available on the graph now. Unavailable or missing, a choose turn asks the model again (orchestrator.ts).
+// available on the graph now. Unavailable or missing, a submission's turn is followed by one choose turn; a choose
+// turn that is refused runs a fallback move (below) instead of asking again (orchestrator.ts).
 import type { AgentConfig } from "./config.js";
 import { isStalled, pivotExhausted, toConnect, type FrontierDecision, type Move } from "./frontier.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphNode, type Prediction } from "./graph.js";
@@ -71,13 +72,33 @@ export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0,
   return `<next_move>
 ${lead}
 Moves: expand <event> = find what caused it; strengthen <event|link> = check it happened / holds; fork <event> = a competing cause; branch <event> = what else it led to; test <prediction> = run a story's prediction; theorize = write or revise competing stories of the incident; pivot <boundary> = follow into a source that holds the cause (set source to the sourcetype to search; any sourcetype); connect = link unlinked findings to the chain; probe <rare value> = read a rare record over the whole range and what came after it. source on any move says where to look first.
-Target a graph id listed below${choosing ? "." : ", or an event you report in this submission by its exact label."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}${st.failed !== undefined ? `\nYour last turn was lost to a provider error${st.failed ? ` (${st.failed})` : ""} before your choice was judged: choose again.` : ""}
+Target a graph id listed below, or an event by its exact label${choosing ? "." : " (including one you report in this submission)."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}${st.failed !== undefined ? `\nYour last turn was lost to a provider error${st.failed ? ` (${st.failed})` : ""} before your choice was judged: choose again.` : ""}
 available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.length} rare records unread)` : ""}${stories}${rareLine}
 </next_move>`;
 }
 
+// The node a label names: exact first, else one whose label starts with the first 60 characters given.
+function labelled(nodes: (GraphNode | undefined)[], text: string): GraphNode | undefined {
+  const want = text.toLowerCase();
+  if (!want) return undefined;
+  const all = nodes.filter((n): n is GraphNode => !!n);
+  return all.find((n) => n.label.toLowerCase() === want) ?? all.find((n) => n.label.toLowerCase().startsWith(want.slice(0, 60)));
+}
+
+// A refused choose turn runs an available move rather than ask again: one on the target the model named
+// (`branch N1` on the symptom becomes expand N1), else the first available, in the move-list order of options().
+export function fallback(g: Graph, cfg: AgentConfig, named: NextIn | undefined, turn: number): FrontierDecision | undefined {
+  const o = Object.entries(options(g, cfg)) as [Move, string[]][];
+  const raw = named?.target?.trim();
+  // A target named by label means the node it names, as the choice itself would read it.
+  const want = raw && !g.nodes[raw] && !g.edges[raw] ? (labelled(Object.values(g.nodes), raw)?.id ?? raw) : raw;
+  const [move, ids] = o.find(([, ids]) => want && ids.includes(want)) ?? o[0] ?? [];
+  if (!move || !ids) return undefined;
+  return { move, targetId: want && ids.includes(want) ? want : ids[0]!, turn, reason: "fallback after a refused choice", ...(named?.source?.trim() ? { source: named.source.trim() } : {}) };
+}
+
 // The model's choice, checked against the graph after this turn's patch. Labels resolve to events created this
-// turn (the model cannot know their ids yet). A probe comes back as the prediction to add, applied as a patch by
+// turn (the model cannot know their ids yet) or on an earlier one. A probe comes back as the prediction to add, applied as a patch by
 // the caller, so the graph changes only through patches and a journal of them replays it.
 export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig, turn: number, created: string[], env?: { index: string; range: [string, string] }): { decision?: FrontierDecision; refused?: string; probe?: Prediction } {
   if (!next?.move) return {};
@@ -98,14 +119,21 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
   if (!ids) return { refused: `${next.move} is not available now.` };
   let target = next.target?.trim() ?? "";
   if (move === "theorize" || move === "connect") target = ids[0]!;
-  // An event reported this turn, named by its label (the model cannot know its id yet).
+  // A pivot named by the event its boundary hangs off: that event's open boundary.
+  const boundaryOf = (id: string) => (move === "pivot" && g.nodes[id]?.kind === "action" ? ids.find((m) => g.nodes[m]!.originNodeId === id) : undefined);
+  // An event named by its label: one reported this turn (no id yet) or an earlier turn's. Of several, one the move
+  // applies to wins, then an exact label over a prefix, then this turn's.
+  let byLabel: string | undefined;
   if (!ids.includes(target) && !g.nodes[target] && !g.edges[target]) {
     const want = target.toLowerCase();
-    const hit = created.map((id) => g.nodes[id]).find((n) => n && want && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60))));
-    if (hit) target = hit.id;
+    const exact = (n: GraphNode) => n.label.toLowerCase() === want;
+    const named = (n?: GraphNode): n is GraphNode => !!n && !!want && (exact(n) || n.label.toLowerCase().startsWith(want.slice(0, 60)));
+    const hits = [...new Set([...created.map((id) => g.nodes[id]), ...Object.values(g.nodes)])].filter(named);
+    const ranked = [...hits.filter(exact), ...hits.filter((n) => !exact(n))];
+    const hit = ranked.find((n) => ids.includes(n.id) || !!boundaryOf(n.id)) ?? ranked[0];
+    if (hit) target = byLabel = hit.id;
   }
-  // A pivot named by the event its boundary hangs off: that event's open boundary.
-  if (move === "pivot" && g.nodes[target]?.kind === "action") target = ids.find((m) => g.nodes[m]!.originNodeId === target) ?? target;
+  target = boundaryOf(target) ?? target;
   // A prediction named as theorize wrote it ("P3", "H1.P3"): the latest round's prediction with that id.
   if (move === "test" && !ids.includes(target)) {
     const key = (x: string) => x.toUpperCase().replace(/[^A-Z0-9]+/g, ".");
@@ -117,6 +145,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     const latest = hits.filter((id) => id.startsWith(`R${round}.`));
     if (latest.length === 1) target = latest[0]!;
   }
+  if (byLabel && !ids.includes(target)) return { refused: `${move} ${byLabel} (named by label) is not available: ${move} does not apply to it (${move} is available on: ${ids.slice(0, 12).join(", ")}).` };
   if (!ids.includes(target)) return { refused: `${move} ${next.target ?? ""} is not available (${move} is available on: ${ids.slice(0, 12).join(", ")}).` };
   return { decision: { move, targetId: target, turn: turn + 1, reason: `model: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
 }

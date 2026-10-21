@@ -818,7 +818,8 @@ export interface paths {
          *
          *     Unauthenticated by necessity — it is the only way to obtain the account
          *     every other user-creating path requires. It closes permanently as soon as
-         *     one user exists, so it is not a signup endpoint.
+         *     one user exists, so it is not a signup endpoint. The body must include the
+         *     setup code the API logs at startup while the user table is empty.
          */
         post: operations["post_api_auth_bootstrap"];
         delete?: never;
@@ -946,11 +947,11 @@ export interface paths {
         get: operations["get_api_auth_me"];
         /**
          * Update Current User
-         * @description Update current user profile.
+         * @description Update the signed-in user's profile.
          *
          *     Args:
-         *         full_name: New full name
-         *         email: New email
+         *         request: FastAPI request (used by the rate limiter).
+         *         body: New name, email, and — when the email changes — current password.
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -7384,6 +7385,8 @@ export interface components {
             full_name?: string | null;
             /** Password */
             password: string;
+            /** Setup Code */
+            setup_code?: string | null;
             /** Username */
             username: string;
         };
@@ -8308,8 +8311,11 @@ export interface components {
             action: string;
             /** Notes */
             notes?: string | null;
-            /** User */
-            user: string;
+            /**
+             * User
+             * @description Ignored: the signed-in user is recorded as the actor.
+             */
+            user?: string | null;
         };
         /**
          * ChangePasswordRequest
@@ -8436,8 +8442,11 @@ export interface components {
          * @description Add comment to case.
          */
         CommentAdd: {
-            /** Author */
-            author: string;
+            /**
+             * Author
+             * @description Ignored: the signed-in user is recorded as the author.
+             */
+            author?: string | null;
             /** Content */
             content: string;
             /** Parent Comment Id */
@@ -8875,8 +8884,11 @@ export interface components {
          * @description Add evidence to case.
          */
         EvidenceAdd: {
-            /** Collected By */
-            collected_by: string;
+            /**
+             * Collected By
+             * @description Ignored: the signed-in user is recorded as the collector.
+             */
+            collected_by?: string | null;
             /** Description */
             description?: string | null;
             /** Evidence Type */
@@ -10137,6 +10149,21 @@ export interface components {
             /** Priority */
             priority: string;
         };
+        /**
+         * ProfileUpdateRequest
+         * @description Signed-in user's own profile.
+         *
+         *     ``current_password`` is required when ``email`` names a different mailbox.
+         *     The password is a body field so it is not written to access logs.
+         */
+        ProfileUpdateRequest: {
+            /** Current Password */
+            current_password?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Full Name */
+            full_name?: string | null;
+        };
         /** ProgressUpdate */
         ProgressUpdate: {
             /** Iteration */
@@ -10214,8 +10241,11 @@ export interface components {
          * @description Add case relationship.
          */
         RelationshipAdd: {
-            /** Created By */
-            created_by: string;
+            /**
+             * Created By
+             * @description Ignored: the signed-in user is recorded as the creator.
+             */
+            created_by?: string | null;
             /** Notes */
             notes?: string | null;
             /** Related Case Id */
@@ -13008,17 +13038,18 @@ export interface operations {
     };
     put_api_auth_me: {
         parameters: {
-            query?: {
-                full_name?: string | null;
-                email?: string | null;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
             };
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from core.auth.current_user import get_current_user
@@ -195,7 +195,10 @@ class EvidenceAdd(BaseModel):
 
     evidence_type: str
     name: str
-    collected_by: str
+    collected_by: Optional[str] = Field(
+        default=None,
+        description="Ignored: the signed-in user is recorded as the collector.",
+    )
     description: Optional[str] = None
     file_path: Optional[str] = None
     source: Optional[str] = None
@@ -617,15 +620,20 @@ def get_cases_summary():
 @router.post(
     "/{case_id}/evidence", dependencies=_CASES_WRITE, response_model=CaseEvidenceSchema
 )
-def add_evidence(case_id: str, data: EvidenceAdd):
+def add_evidence(
+    case_id: str,
+    data: EvidenceAdd,
+    current_user: User = Depends(get_current_user),
+):
     """Add evidence to case."""
     evidence_service = CaseEvidenceService()
     try:
+        # The body field stays for the frozen contract; the record names the session user.
         evidence = evidence_service.add_evidence(
             case_id=case_id,
             evidence_type=data.evidence_type,
             name=data.name,
-            collected_by=data.collected_by,
+            collected_by=current_user.username,
             description=data.description,
             file_path=data.file_path,
             source=data.source,

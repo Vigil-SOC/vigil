@@ -77,7 +77,7 @@ const Candidate = obj({
 // choose turn asks for it); a choose turn submits this shape itself.
 const NextMove = obj({
   move: { type: "string", enum: ["expand", "strengthen", "fork", "branch", "pivot", "test", "theorize", "connect", "probe"] },
-  target: str("a graph id (N.., E.., boundary id, prediction id) from the available list, or the exact label of an event in this submission; not needed for theorize/connect"),
+  target: str("a graph id (N.., E.., boundary id, prediction id) from the available list, or the exact label of an event (this submission or an earlier turn); not needed for theorize/connect"),
   source: str("the sourcetype to look in first; for pivot, the source the pivot searches (any sourcetype, not only the boundary's)"),
   why: str("the lead this follows", { maxLength: 300 }),
 }, ["move", "why"]);

@@ -11,8 +11,6 @@ import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 
-const ME = 'SOC Analyst'
-
 type Phase = 'loading' | 'ready' | 'error'
 
 function fmtDT(s?: string): string {
@@ -140,7 +138,6 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
       name: form.name,
       description: form.description || null,
       evidence_type: form.evidence_type,
-      collected_by: ME,
       file_path: form.file_path || null,
     })
     setForm({ name: '', evidence_type: 'file', description: '', file_path: '' })
@@ -371,7 +368,7 @@ export function CommentsView({ caseId, resource: { data, phase, reload }, bare }
 
   const submit = async () => {
     if (!text.trim()) return
-    await casesApi.addComment(caseId, { content: text, author: ME, ...(replyTo ? { parent_comment_id: Number(replyTo) } : {}) })
+    await casesApi.addComment(caseId, { content: text, ...(replyTo ? { parent_comment_id: Number(replyTo) } : {}) })
     setText('')
     setReplyTo(null)
     reload()

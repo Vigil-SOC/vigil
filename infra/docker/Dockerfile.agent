@@ -25,7 +25,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: install dependencies and compile TypeScript to JavaScript
 # ---------------------------------------------------------------------------
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 
 WORKDIR /build
 
@@ -41,7 +41,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: runtime image
 # ---------------------------------------------------------------------------
-FROM node:20-slim AS runtime
+FROM node:22-slim AS runtime
 
 ARG VIGIL_VERSION=
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
@@ -78,7 +78,7 @@ RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; f
 # 6990 worker: probes only.
 EXPOSE 6989 6990
 
-# node:20-slim already ships uid 1000 as `node`, so no useradd layer is needed.
+# node:22-slim already ships uid 1000 as `node`, so no useradd layer is needed.
 # Numeric to match the chart's podSecurityContext runAsUser literally.
 USER 1000:1000
 

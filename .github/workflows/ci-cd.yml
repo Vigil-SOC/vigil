@@ -9,8 +9,6 @@ on:
 
 env:
   NODE_VERSION: '20'
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # ============================================================================
@@ -168,8 +166,7 @@ jobs:
   # ============================================================================
   # Agent Image — build, scan, smoke test
   # ============================================================================
-  # Separate from build-images below, which pushes to a registry and is disabled.
-  # This one builds locally and throws the image away, so it can run on every PR
+  # Builds locally and throws the image away, so it can run on every PR
   # and answer the three questions #635 asks of the image: does it build, is it
   # clean, does it start.
   build-agent-image:
@@ -194,7 +191,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy — report HIGH and CRITICAL
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: vigil-agent:ci
           format: table
@@ -204,7 +201,7 @@ jobs:
       # base image is not something this repo can act on, and failing every PR
       # on one teaches people to ignore the job.
       - name: Trivy — fail on fixable CRITICAL
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: vigil-agent:ci
           format: table
@@ -230,6 +227,147 @@ jobs:
               if (missing.length) throw new Error('plugin files missing from image: ' + missing.join(', '));
               console.log('agent ok');
             "
+
+  # ============================================================================
+  # Backend, daemon and MCP runner images — build and scan (#2585)
+  # ============================================================================
+  # Same gate as the agent image: built locally, never pushed, fail on a
+  # fixable CRITICAL. Waivers live in .trivyignore, each with its reason; one
+  # cache scope per image so the jobs do not evict each other's layers.
+  build-backend-image:
+    name: Backend Image
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: false
+          load: true
+          tags: vigil-backend:ci
+          build-args: |
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Trivy — report HIGH and CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: vigil-backend:ci
+          format: table
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+
+      - name: Trivy — fail on fixable CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: vigil-backend:ci
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+  build-daemon-image:
+    name: Daemon Image
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build daemon image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.daemon
+          push: false
+          load: true
+          tags: vigil-daemon:ci
+          build-args: |
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          cache-from: type=gha,scope=daemon
+          cache-to: type=gha,scope=daemon,mode=max
+
+      - name: Trivy — report HIGH and CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: vigil-daemon:ci
+          format: table
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+
+      - name: Trivy — fail on fixable CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: vigil-daemon:ci
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+  build-mcp-runner-image:
+    name: MCP Runner Image
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build mcp-runner image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.mcp-runner
+          push: false
+          load: true
+          tags: vigil-mcp-runner:ci
+          build-args: |
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          cache-from: type=gha,scope=mcp-runner
+          cache-to: type=gha,scope=mcp-runner,mode=max
+
+      - name: Trivy — report HIGH and CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: vigil-mcp-runner:ci
+          format: table
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+
+      - name: Trivy — fail on fixable CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: vigil-mcp-runner:ci
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
 
   # ============================================================================
   # Unit Tests
@@ -971,71 +1109,6 @@ jobs:
           exit $status
 
   # ============================================================================
-  # Build Docker Images
-  # ============================================================================
-  build-images:
-    name: Build Docker Images
-    runs-on: ubuntu-latest
-    needs: [lint-backend, test-unit-backend, test-unit-backend-db, test-integration]
-    if: false  # Disabled - enable if you need Docker images
-    permissions:
-      contents: read
-      packages: write
-    
-    steps:
-      - uses: actions/checkout@v7
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-      
-      - name: Log in to Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Extract metadata (backend)
-        id: meta-backend
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-      
-      - name: Build and push backend image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: infra/docker/Dockerfile.backend
-          push: true
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      
-      - name: Extract metadata (daemon)
-        id: meta-daemon
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-daemon
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-      
-      - name: Build and push daemon image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: infra/docker/Dockerfile.daemon
-          push: true
-          tags: ${{ steps.meta-daemon.outputs.tags }}
-          labels: ${{ steps.meta-daemon.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ============================================================================
   # Build Frontend Assets
   # ============================================================================
   build-frontend:
@@ -1072,38 +1145,3 @@ jobs:
           name: frontend-build
           path: clients/web/build/
           retention-days: 7
-
-  # ============================================================================
-  # Scan Docker Images for Vulnerabilities
-  # ============================================================================
-  scan-images:
-    name: Scan Docker Images
-    runs-on: ubuntu-latest
-    needs: [build-images]
-    if: false  # Disabled - enable by changing to: github.event_name == 'push'
-    steps:
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:${{ github.ref_name }}-${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-        continue-on-error: true
-      
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'trivy-results.sarif'
-        continue-on-error: true
-
-  # ============================================================================
-  # Deploy to Staging (DISABLED - Only testing enabled)
-  # ============================================================================
-  # Uncomment when ready to deploy to VMs
-  # deploy-staging:
-  #   name: Deploy to Staging
-  #   runs-on: ubuntu-latest
-  #   needs: [build-images, build-frontend, scan-images]
-  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  #   ... (deployment steps removed for now)
-

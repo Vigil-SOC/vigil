@@ -1253,6 +1253,7 @@ interface BootstrapPayload {
   email: string
   password: string
   full_name?: string
+  setup_code?: string
 }
 
 // First-account creation: creating a user otherwise needs an existing admin.

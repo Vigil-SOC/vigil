@@ -4,7 +4,7 @@
 import { isDivergence } from "./attribution.js";
 import { defaultConfig } from "./config.js";
 import { ACCUSE, TAKEOVER } from "./model/client.js";
-import { allPaths, bestPathFromSymptom, getParents, islands, type Graph, type GraphNode } from "./graph.js";
+import { allPaths, bestPathFromSymptom, getParents, islands, type EdgeKind, type Graph, type GraphEdge, type GraphNode } from "./graph.js";
 import { settled } from "./scoring.js";
 import type { TraceEntry, TraceWriter } from "./trace.js";
 import type { Alert, Evidence, ExitReason, Spent } from "./types.js";
@@ -93,7 +93,27 @@ export interface ReportRows {
   others: { id: string; label: string; status: string; confidence: number; domain: string; observedAt?: string; lastEvidence?: string }[];
   alternatives: { nodeIds: string[]; score: number }[];
   tested: { id: string; sourcetype: string; found: boolean; result: string; refs: string[] }[];
-  open: { kind: "boundary" | "disputed" | "ruled-out" | "flagged" | "model"; id: string; text: string }[];
+  open: OpenRow[];
+}
+
+// An event an open question is about. alert: it is the alerted event (the symptom).
+export interface OpenRef { id: string; label: string; alert?: true }
+// One thing the run could not settle: the report's line (text) and the fields it is written from, so the console can
+// word it without parsing the line. refs: the events it is about, in the order the item names them. onChain: it sits
+// on the best path to the alert (its link, its event, or for a question an event it names), and it is listed first.
+export interface OpenRow {
+  kind: "boundary" | "disputed" | "ruled-out" | "flagged" | "model";
+  id: string;
+  text: string;
+  refs: OpenRef[];
+  onChain: boolean;
+  link?: { kind: EdgeKind; source: OpenRef; target: OpenRef; confidence: number };
+  event?: OpenRef;
+  refutations?: { summary: string; turn: number }[];
+  boundary?: { origin: OpenRef | null; domain: string; reason: string; pivotSteps: number };
+  turn?: number;
+  flagged?: string[];
+  question?: string;
 }
 
 // What in the model's conclusion the graph rejects: a ruled-out or unsettled event, a ruled-out or missing link between
@@ -231,17 +251,59 @@ export function reportRows(g: Graph, chronological: readonly TraceEntry[], raw =
   const tested = (g.theories ?? []).flatMap((t) => t.predictions).filter((p) => p.status === "found" || p.status === "absent").filter((p) => p.result && (raw || (!ACCUSE.test(p.result) && !namesLegitUser(p.result))))
     .map((p) => ({ id: p.id, sourcetype: p.sourcetype, found: p.status === "found", result: p.result!, refs: p.toolCallIds ?? [] }));
 
-  const open: ReportRows["open"] = [];
-  for (const n of Object.values(g.nodes)) if (n.kind === "boundary-marker" && !n.resolvedTo) open.push({ kind: "boundary", id: n.id, text: `Boundary ${n.id}: cause of ${n.originNodeId} believed to be in ${n.targetDomain} (${n.reason ?? ""}); ${n.pivotSteps ?? 0} pivot steps, not stitched.` });
-  for (const e of Object.values(g.edges)) if (e.disputed && !e.retired) open.push({ kind: "disputed", id: e.id, text: `Disputed ${e.kind} ${e.id}: ${g.nodes[e.source]!.label} -> ${e.target} at ${pct(e.confidence)}.` });
-  for (const n of Object.values(g.nodes)) if (n.status === "ruled-out") open.push({ kind: "ruled-out", id: n.id, text: `Ruled out ${n.id} ${n.label}: ${n.evidence.filter((e) => e.polarity === "refutes").map((e) => e.summary).join(" ") || "no support"}` });
-  for (const e of Object.values(g.edges)) if (e.status === "ruled-out" && !e.retired) open.push({ kind: "ruled-out", id: e.id, text: `Ruled out ${e.kind} ${e.id} ${g.nodes[e.source]!.label} -> ${e.target}: ${e.evidence.filter((x) => x.polarity === "refutes").map((x) => x.summary).join(" ") || "no support"}` });
-  for (const f of chronological.filter((x) => x.type === "reasoning" && (x.payload as any)?.suspiciousContent)) open.push({ kind: "flagged", id: f.id, text: `Suspicious content flagged at turn ${f.turn} (${f.id}): ${(f.payload as any).suspiciousContent.join(" | ")}` });
+  const open = openRows(g, chronological);
 
-  // The model's own open questions close the list, so the report and the projection read one list. A blank one is dropped.
-  (g.conclusion?.openQuestions ?? []).map((q) => q.replace(/\s+/g, " ").trim()).filter(Boolean).forEach((q, i) => open.push({ kind: "model", id: `Q${i + 1}`, text: q }));
 
   return { accounts, people, conclusion, chain, attribution, impersonation, exonerated, timeline, others, alternatives, tested, open };
+}
+
+// What the run could not settle, as one list for section 6 of the report and the projection's open_questions (#2476
+// decision 9): open boundaries, disputed links, ruled-out events and links, content flagged as possible prompt
+// injection, then the model's own questions. Each kind keeps its place; within one, what sits on the best path to the
+// alert comes first. Refs are events, never actors; a question's are the ids it names (N2, or E1 for both ends of that link).
+function openRows(g: Graph, chronological: readonly TraceEntry[]): OpenRow[] {
+  const path = bestPathFromSymptom(g);
+  const ref = (id: string): OpenRef => ({ id, label: g.nodes[id]?.label ?? "", ...(g.nodes[id]?.isSymptom ? { alert: true as const } : {}) });
+  const onPath = (id: string) => !!path?.nodeIds.includes(id);
+  const isEvent = (id: string) => g.nodes[id] !== undefined && g.nodes[id]!.kind !== "actor";
+  const refuting = (xs: Evidence[]) => xs.filter((x) => x.polarity === "refutes").map((x) => ({ summary: x.summary, turn: x.turn }));
+  const linkOf = (e: GraphEdge) => ({ kind: e.kind, source: ref(e.source), target: ref(e.target), confidence: e.confidence });
+  const edgeRow = (kind: "disputed" | "ruled-out", e: GraphEdge): Omit<OpenRow, "text"> => ({
+    kind, id: e.id, refs: [e.source, e.target].filter(isEvent).map(ref), onChain: !!path?.edgeIds.includes(e.id), link: linkOf(e), ...(kind === "ruled-out" ? { refutations: refuting(e.evidence) } : {}),
+  });
+  const rows: Omit<OpenRow, "text">[] = [];
+  for (const n of Object.values(g.nodes)) if (n.kind === "boundary-marker" && !n.resolvedTo) {
+    const origin = n.originNodeId ? ref(n.originNodeId) : null;
+    rows.push({ kind: "boundary", id: n.id, refs: [ref(n.id), ...(origin ? [origin] : [])], onChain: onPath(n.id), event: ref(n.id), boundary: { origin, domain: n.targetDomain ?? "", reason: n.reason ?? "", pivotSteps: n.pivotSteps ?? 0 } });
+  }
+  for (const e of Object.values(g.edges)) if (e.disputed && !e.retired) rows.push(edgeRow("disputed", e));
+  for (const n of Object.values(g.nodes)) if (n.status === "ruled-out") rows.push({ kind: "ruled-out", id: n.id, refs: [ref(n.id)], onChain: onPath(n.id), event: ref(n.id), refutations: refuting(n.evidence) });
+  for (const e of Object.values(g.edges)) if (e.status === "ruled-out" && !e.retired) rows.push(edgeRow("ruled-out", e));
+  for (const f of chronological.filter((x) => x.type === "reasoning" && (x.payload as any)?.suspiciousContent)) {
+    const about = [...new Set([f.correlationId, ...f.relatedIds])].filter(isEvent).map(ref);
+    rows.push({ kind: "flagged", id: f.id, refs: about, onChain: false, turn: f.turn, flagged: (f.payload as any).suspiciousContent });
+  }
+  // A blank question is dropped, so the report prints no empty bullet.
+  (g.conclusion?.openQuestions ?? []).map((q) => q.replace(/\s+/g, " ").trim()).filter(Boolean).forEach((q, i) => {
+    const named = [...new Set((q.match(/\b[A-Z]+\d+\b/g) ?? []).flatMap((id) => (g.edges[id] ? [g.edges[id]!.source, g.edges[id]!.target] : [id])))].filter(isEvent);
+    rows.push({ kind: "model", id: `Q${i + 1}`, refs: named.map(ref), onChain: named.some(onPath), question: q });
+  });
+  // Stable: a kind's rows keep their order among themselves, the ones on the best path moved to the front.
+  const order = ["boundary", "disputed", "ruled-out", "flagged", "model"];
+  return rows
+    .map((r, at) => ({ r, at }))
+    .sort((a, b) => order.indexOf(a.r.kind) - order.indexOf(b.r.kind) || Number(b.r.onChain) - Number(a.r.onChain) || a.at - b.at)
+    .map(({ r }) => ({ ...r, text: openLine(r) }));
+}
+
+// The report's line for one open row, written from its fields.
+function openLine(r: Omit<OpenRow, "text">): string {
+  const against = (r.refutations ?? []).map((x) => x.summary).join(" ") || "no support";
+  if (r.kind === "boundary") return `Boundary ${r.id}: cause of ${r.boundary!.origin?.id} believed to be in ${r.boundary!.domain} (${r.boundary!.reason}); ${r.boundary!.pivotSteps} pivot steps, not stitched.`;
+  if (r.kind === "disputed") return `Disputed ${r.link!.kind} ${r.id}: ${r.link!.source.label} -> ${r.link!.target.id} at ${pct(r.link!.confidence)}.`;
+  if (r.kind === "ruled-out") return r.link ? `Ruled out ${r.link.kind} ${r.id} ${r.link.source.label} -> ${r.link.target.id}: ${against}` : `Ruled out ${r.id} ${r.event!.label}: ${against}`;
+  if (r.kind === "flagged") return `Suspicious content flagged at turn ${r.turn} (${r.id}): ${r.flagged!.join(" | ")}`;
+  return r.question!;
 }
 
 export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | null, alert: Alert, budget?: Spent, opts: ReportOptions = {}): string {

@@ -16,7 +16,7 @@
 # path that ships an image (docker-compose.yml, release.yml) passes the value
 # read from that file, so the images cannot drift from the venv and CI.
 ARG PYTHON_VERSION=3.12
-FROM --platform=$BUILDPLATFORM node:20-slim AS web-builder
+FROM --platform=$BUILDPLATFORM node:22-slim AS web-builder
 
 WORKDIR /build/web
 

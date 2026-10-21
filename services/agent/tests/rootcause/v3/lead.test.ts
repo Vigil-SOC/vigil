@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyPatch, emptyPatch } from "../../../plugins/rootcause/v3/graph.js";
-import { options, optionsText, resolveNext } from "../../../plugins/rootcause/v3/lead.js";
+import { fallback, options, optionsText, resolveNext } from "../../../plugins/rootcause/v3/lead.js";
 import type { TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
 import { run } from "../../../plugins/rootcause/v3/orchestrator.js";
 import { Registry } from "../../../plugins/rootcause/v3/tools/registry.js";
@@ -17,11 +17,48 @@ describe("lead", () => {
     expect(resolveNext({ move: "pivot", target: "B9" }, g, cfg, 1, []).refused).toMatch(/not available/);
     expect(resolveNext({ move: "expand", target: "N42" }, g, cfg, 1, []).refused).toMatch(/available on: N1/);
   });
+  it("falls back to a move on the named target, else the first available", () => {
+    const g = seeded();
+    expect(fallback(g, cfg, { move: "branch", target: "N1" }, 2)).toMatchObject({ move: "expand", targetId: "N1", turn: 2 });
+    expect(fallback(g, cfg, undefined, 2)).toMatchObject({ move: "expand", targetId: "N1" });
+    g.nodes.N1!.expandAttempts = cfg.maxExpandAttempts + 1;
+    expect(fallback(g, cfg, { move: "branch", target: "N1" }, 2)).toMatchObject({ move: "strengthen", targetId: "N1" });
+  });
+  it("falls back on the node a refused choice named by its label, not the first available", () => {
+    const g = seeded();
+    const r = apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] }, 2);
+    const id = Object.values(r.idMap)[0]!;
+    // fork is not a move on this graph; the fallback keeps to the node the label names.
+    expect(fallback(g, cfg, { move: "fork", target: "curl of setup.sh on node-a" }, 3)).toMatchObject({ targetId: id });
+    expect(fallback(g, cfg, { move: "fork", target: id }, 3)).toMatchObject({ targetId: id });
+  });
   it("resolves an event reported this turn by its label", () => {
     const g = seeded();
     const r = apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] });
     const created = [...new Set(Object.values(r.idMap))];
     expect(resolveNext({ move: "branch", target: "curl of setup.sh on node-a" }, g, cfg, 1, created).decision?.targetId).toBe(created[0]);
+  });
+  it("targets an event made on an earlier turn by id or exact label, and still refuses one the move does not offer", () => {
+    const g = seeded();
+    const r = apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] }, 2);
+    const id = Object.values(r.idMap)[0]!;
+    expect(resolveNext({ move: "branch", target: id }, g, cfg, 3, []).decision?.targetId).toBe(id);
+    expect(resolveNext({ move: "branch", target: "Curl of setup.sh on node-a" }, g, cfg, 3, []).decision?.targetId).toBe(id);
+    // N1 is the symptom: branch is not offered on it, even when it is named by label.
+    expect(resolveNext({ move: "branch", target: g.nodes.N1!.label }, g, cfg, 3, []).refused).toMatch(/branch N1 \(named by label\) is not available: branch does not apply to it/);
+  });
+  it("of several events with one label, takes one the move applies to", () => {
+    const g = seeded();
+    const r = apply(g, { addNodes: [node("c", { label: g.nodes.N1!.label, domain: "proxy", evidence: [ev("direct")] })] }, 2);
+    const id = Object.values(r.idMap)[0]!;
+    // N1 comes first in the graph but is the symptom, where branch is not offered.
+    expect(resolveNext({ move: "branch", target: g.nodes.N1!.label }, g, cfg, 3, []).decision?.targetId).toBe(id);
+  });
+  it("prefers an exact label over an earlier event whose label it is a prefix of", () => {
+    const g = seeded();
+    apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a, then chmod", evidence: [ev("direct")] })] }, 1);
+    const exact = Object.values(apply(g, { addNodes: [node("d", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] }, 2).idMap)[0]!;
+    expect(resolveNext({ move: "branch", target: "curl of setup.sh on node-a" }, g, cfg, 3, []).decision?.targetId).toBe(exact);
   });
   it("lists no branch from the symptom and no expand past the attempt cap", () => {
     const g = seeded();
@@ -32,6 +69,7 @@ describe("lead", () => {
     expect(optionsText(g, cfg, { refused: "x" })).toContain("Your last choice was not used: x");
     expect(optionsText(g, cfg, {})).toContain("you will be asked to choose");
     expect(optionsText(g, cfg, {}, 0, true)).not.toContain("asked to choose");
+    expect(optionsText(g, cfg, {}, 0, true)).toContain("or an event by its exact label.");
   });
   it("maps a pivot named by its event to that event's boundary, and a bare prediction id to the latest round", () => {
     const g = seeded();
@@ -99,6 +137,24 @@ describe("the model names every move", () => {
     const decisions = trace.chronological().filter((e) => e.type === "decision").map((e) => e.payload);
     expect(decisions[0]).toMatchObject({ move: "choose", targetId: "N1" });
     expect(decisions.every((d) => !("priority" in (d as object)))).toBe(true);
+  });
+
+  it("runs an available move after a refused choice instead of asking again", async () => {
+    // branch is never offered on the symptom, so every choose answer is refused.
+    const { reqs, trace } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (n === 7) budget.usd = 1e6;
+      return req.move === "choose" ? { move: "branch", target: "N1", why: "what else it led to" } : null;
+    });
+    const moves = reqs.map((r) => r.move);
+    expect(moves.at(-1)).toBe("conclude");
+    expect(moves.some((m, i) => m === "choose" && moves[i - 1] === "choose")).toBe(false);
+    expect(moves.filter((m) => m !== "choose" && m !== "conclude").length).toBeGreaterThan(1);
+    expect(moves).not.toContain("branch");
+    const ev = trace.chronological();
+    const fell = ev.filter((e) => e.type === "decision").map((e) => e.payload as { move: string; reason: string }).filter((d) => d.move !== "choose" && d.reason.startsWith("fallback after a refused choice"));
+    expect(fell[0]).toMatchObject({ move: "expand", reason: expect.stringContaining("branch is not available") });
+    expect(ev.find((e) => e.type === "reasoning")!.payload).toMatchObject({ lead: { move: "branch" }, refused: expect.stringContaining("not available"), next: "expand N1" });
   });
 
   it("tells the model a provider error lost its choose turn, not that the choice was invalid, and asks again without a retry count", async () => {

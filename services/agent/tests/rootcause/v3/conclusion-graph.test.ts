@@ -80,7 +80,7 @@ describe("a conclusion the graph supports", () => {
     expect(md).not.toContain("nconfirmed");
     expect(view.account!.root_cause).toMatchObject({ id: "N3" });
     expect(view.account!.conclusion).toMatchObject({ text: "A mail dropped the implant.", unconfirmed: false, rejected: [] });
-    expect(view.open_questions).toEqual([{ kind: "model", id: "Q1", text: "who sent the mail" }]);
+    expect(view.open_questions).toEqual([{ kind: "model", id: "Q1", text: "who sent the mail", question: "who sent the mail", refs: [], onChain: false }]);
   });
 });
 
@@ -100,7 +100,7 @@ describe("a blank open question from the model", () => {
   const events = journal(false, { openQuestions: ["  who sent\n the mail ", " \n "] });
 
   it("is dropped, so the report prints no empty bullet", () => {
-    expect(rootCauseV3Projection("r1", events as never).open_questions).toEqual([{ kind: "model", id: "Q1", text: "who sent the mail" }]);
+    expect(rootCauseV3Projection("r1", events as never).open_questions).toEqual([{ kind: "model", id: "Q1", text: "who sent the mail", question: "who sent the mail", refs: [], onChain: false }]);
     expect(render(events)).not.toMatch(/^- *$/m);
   });
 });

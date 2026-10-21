@@ -32,7 +32,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import bindparam, create_engine, text, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -565,33 +565,52 @@ def fail_stub_isolation_actions(conn):
 # Seed data
 # ---------------------------------------------------------------------------
 
+ROLES_SEED_FILE = "06_auth_tables.sql"
+# Ids an older version of this script seeded. No code reads their permission
+# keys, and the legacy 'Viewer' name blocks the real seed (roles.name is UNIQUE).
+LEGACY_ROLE_IDS = ("admin", "analyst", "viewer")
+
+
 @migration("Seed default roles if roles table is empty")
 def seed_default_roles(conn):
-    result = conn.execute(text("SELECT COUNT(*) FROM roles"))
-    count = result.scalar()
-    if count > 0:
-        logger.info(f"  Roles table already has {count} rows, skipping seed")
-        return
+    from core.storage.reference_seed import find_seed_file, seed_empty_tables
 
-    roles = [
-        ('admin', 'Administrator', 'Full system access',
-         json.dumps({"admin": True, "manage_users": True, "manage_cases": True,
-                      "manage_findings": True, "manage_settings": True,
-                      "view_audit_logs": True}), True),
-        ('analyst', 'Security Analyst', 'Can manage cases and findings',
-         json.dumps({"manage_cases": True, "manage_findings": True,
-                      "view_audit_logs": True}), True),
-        ('viewer', 'Viewer', 'Read-only access',
-         json.dumps({"view_cases": True, "view_findings": True}), True),
-    ]
-    for role_id, name, description, permissions, is_system in roles:
-        conn.execute(text("""
-            INSERT INTO roles (role_id, name, description, permissions, is_system_role, created_at, updated_at)
-            VALUES (:role_id, :name, :desc, CAST(:perms AS jsonb), :is_sys, now(), now())
-            ON CONFLICT (role_id) DO NOTHING
-        """), {"role_id": role_id, "name": name, "desc": description,
-               "perms": permissions, "is_sys": is_system})
-    logger.info("  Seeded default roles: admin, analyst, viewer")
+    # Drop the legacy rows nobody holds; keep and name the ones a user does.
+    held = {}
+    if _table_exists(conn, "users"):
+        held = dict(conn.execute(text("""
+            SELECT role_id, COUNT(*) FROM users
+            WHERE role_id IN :ids GROUP BY role_id
+        """).bindparams(bindparam("ids", expanding=True)),
+            {"ids": list(LEGACY_ROLE_IDS)}).all())
+    removable = [r for r in LEGACY_ROLE_IDS if r not in held]
+    removed = conn.execute(text(
+        "DELETE FROM roles WHERE role_id IN :ids RETURNING role_id"
+    ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": removable}).scalars().all() if removable else []
+    if removed:
+        logger.info(f"  Removed unused legacy roles: {', '.join(sorted(removed))}")
+    for role_id, users in sorted(held.items()):
+        logger.warning(
+            "  Kept legacy role '%s': %d user(s) still hold it", role_id, users)
+
+    path = find_seed_file(filename=ROLES_SEED_FILE)
+    if path is None:
+        raise FileNotFoundError(f"{ROLES_SEED_FILE} not found under database/init")
+    inserted, failed = seed_empty_tables(conn, sql=path.read_text(encoding="utf-8"))
+    if "roles" in failed:
+        raise RuntimeError(f"Seeding roles from {ROLES_SEED_FILE} failed: {failed['roles']}")
+    if "roles" in inserted:
+        logger.info(f"  Seeded {inserted['roles']} roles from {ROLES_SEED_FILE}")
+    elif held and not conn.execute(
+            text("SELECT 1 FROM roles WHERE role_id = 'role-admin'")).first():
+        logger.warning(
+            "  Did not seed the roles in %s: roles still holds legacy rows "
+            "users are on. Move those users off them and run again.",
+            ROLES_SEED_FILE)
+    else:
+        count = conn.execute(text("SELECT COUNT(*) FROM roles")).scalar()
+        logger.info(f"  Roles table already has {count} rows, skipping seed")
 
 
 # ---------------------------------------------------------------------------

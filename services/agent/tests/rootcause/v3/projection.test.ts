@@ -144,7 +144,7 @@ describe("rootcause v3 projection account", () => {
     expect(text[2]).toBe("Ruled out N5 dns lookup: the lookup was a typo no follow-up");
     expect(text[3]).toMatch(/ignore previous instructions/);
     expect(text[4]).toMatch(/later flag/);
-    expect(view.open_questions[5]).toEqual({ kind: "model", id: "Q1", text: "who sent the mail" });
+    expect(view.open_questions[5]).toMatchObject({ kind: "model", id: "Q1", text: "who sent the mail", refs: [] });
     const md = markdown();
     for (const t of text) expect(md).toContain(`- ${t}`);
   });

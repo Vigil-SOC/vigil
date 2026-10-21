@@ -6,7 +6,7 @@ import { renderReport } from "./report.js";
 import { settled } from "./scoring.js";
 import { rareSweep } from "./rare.js";
 import { route } from "./router.js";
-import { options, optionsText, resolveNext, type LeadState, type NextIn } from "./lead.js";
+import { fallback, options, optionsText, resolveNext, type LeadState, type NextIn } from "./lead.js";
 import type { ModelClient } from "./model/client.js";
 import type { FrontierDecision } from "./frontier.js";
 import type { Alert, Deps, ExitReason, LoopContext, RunResult, Spent } from "./types.js";
@@ -142,8 +142,16 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       tt.write("graph-patch", { patch: probe, result: { idMap: applied.idMap, rejected: applied.rejected, touched: applied.touched, resolvedMarkers: applied.resolvedMarkers } });
     }
     pending = r.decision;
-    st.refused = r.refused ?? (decision.move === "choose" && !st.next && st.failed === undefined ? "that was not a valid choice." : undefined);
-    if (st.next) tt.write("reasoning", { lead: st.next, ...(r.refused ? { refused: r.refused } : { next: `${r.decision!.move} ${r.decision!.targetId}` }) });
+    const refused = r.refused ?? (decision.move === "choose" && !st.next && st.failed === undefined ? "that was not a valid choice." : undefined);
+    st.refused = refused;
+    // A refused choose turn is not asked again: an available move runs, so a refusal costs one extra turn at most.
+    const fb = decision.move === "choose" && refused ? fallback(graph, cfg, st.next, turn + 1) : undefined;
+    if (fb) {
+      pending = { ...fb, reason: `fallback after a refused choice: ${refused}` };
+      st.refused = `${refused} ${fb.move} ${fb.targetId} runs instead.`;
+      log(`  fallback: ${fb.move} ${fb.targetId}`);
+    }
+    if (st.next || fb) tt.write("reasoning", { ...(st.next ? { lead: st.next } : {}), ...(refused ? { refused } : {}), ...(pending ? { next: `${pending.move} ${pending.targetId}` } : {}) });
     if (r.refused) log(`  lead refused: ${r.refused}`);
     await o.onTurn?.(graph, turn);
   }
