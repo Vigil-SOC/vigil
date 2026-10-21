@@ -188,6 +188,20 @@ describe("a move as a kernel turn", () => {
     expect(t.trace.chronological().some((e) => e.type === "rejected-submission")).toBe(true);
   });
 
+  it("reports a provider error on the emission or the tool turn as failed, apart from an emission the model got wrong", async () => {
+    const down = () => { throw new Error("502 failed to execute HTTP request to provider API"); };
+    for (const dies of ["emit", "tool"]) {
+      const t = setup((request) => ((dies === "emit") === (request.emit !== undefined) ? down() : request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+      expect(out.submission).toBeNull();
+      expect(out.failed).toContain("502");
+      expect(t.trace.chronological().map((e) => e.type)).toContain("provider-failure");
+      expect(t.trace.chronological().map((e) => e.type)).not.toContain("rejected-submission");
+    }
+    const bad = setup((request) => (request.emit !== undefined ? { emit: { nothing: true } } : { content: "done" }));
+    expect((await bad.client.runTurn(bad.request())).failed).toBeUndefined();
+  });
+
   it("ends the run when the pool refuses another call", async () => {
     const spec = specOf({ budgets: { max_calls: 0, max_cost_usd: 10, max_wall_ms: 600_000, max_park_ms: 60_000 } });
     const t = setup(() => ({}), {}, spec);

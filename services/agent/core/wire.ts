@@ -168,6 +168,26 @@ export function effortFields(provider_type: string, effort: Effort | undefined):
   return {};
 }
 
+// Whether a model takes Anthropic's `cache_control` marker through the gateway: a Claude
+// behind the Anthropic-family providers, or OpenRouter's `anthropic/` ids. Vertex also
+// serves Gemini, so the model id decides, not the provider alone. Everyone else is sent
+// exactly what it always was.
+export function takesCacheMarker(provider_type: string, model: string): boolean {
+  if (provider_type === "openrouter") return model.startsWith("anthropic/");
+  return (provider_type === "anthropic" || provider_type === "vertex" || provider_type === "bedrock") && /claude/i.test(model);
+}
+
+// One breakpoint on the system message. Anthropic's cache key runs tools, system,
+// messages, so it caches the tools and the system prompt together. A prefix under
+// the model's minimum just does not cache.
+function cacheable(messages: Body["messages"]): Body["messages"] {
+  const at = messages.findLastIndex((message) => message.role === "system");
+  const system = messages[at];
+  if (system === undefined || typeof system.content !== "string") return messages;
+  const block = { type: "text", text: system.content, cache_control: { type: "ephemeral" } };
+  return messages.map((message, i) => (i === at ? ({ ...message, content: [block] } as typeof message) : message));
+}
+
 export function openAiSurface(
   client: OpenAI,
   model: string,
@@ -181,7 +201,7 @@ export function openAiSurface(
 }
 
 // The one surface built. The gateway routes to either provider family behind a
-// model name, so a second wire buys nothing until cache_control and thinking.
+// model name, so a second wire buys nothing until thinking.
 class OpenAiSurface implements Provider {
   // Two names for one model, and they are not interchangeable. `wire_model` is
   // what the gateway is asked for and may be namespaced ("vertex/gemini-2.5-flash")
@@ -317,6 +337,7 @@ class OpenAiSurface implements Provider {
     // Before the limiter, not only inside the request: a call still queued behind
     // a rate limit is the cheapest one to give up on.
     signal?.throwIfAborted();
+    if (takesCacheMarker(this.provider_type, this.model)) body = { ...body, messages: cacheable(body.messages) };
     const cap = outputCaps.get(this.model) ?? "max_tokens";
     try {
       return await this.send(body, cap, signal);
@@ -531,7 +552,9 @@ function tokensOf(usage: OpenAI.CompletionUsage | undefined): TokenCounts {
   const reported = usage?.prompt_tokens ?? 0;
   const native = alternate?.cache_read_input_tokens !== undefined || alternate?.cache_creation_input_tokens !== undefined;
   const cache_read = usage?.prompt_tokens_details?.cached_tokens ?? alternate?.cache_read_input_tokens ?? 0;
-  const cache_write = alternate?.cache_creation_input_tokens ?? 0;
+  // Bifrost's /v1 route reports a write inside prompt_tokens_details, already counted in prompt_tokens.
+  const details = usage?.prompt_tokens_details as { cache_write_tokens?: number } | undefined;
+  const cache_write = alternate?.cache_creation_input_tokens ?? details?.cache_write_tokens ?? 0;
   return {
     input: native ? reported + cache_read + cache_write : reported,
     output: usage?.completion_tokens ?? 0,

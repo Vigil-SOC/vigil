@@ -7,7 +7,7 @@ import type { Proof, StepPayload } from "../proof.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphEdge, type GraphNode } from "./graph.js";
 import { fold, type V3Kinds, type V3Step } from "./ledger.js";
 import { neverRan } from "./tools/registry.js";
-import { disposition, forReport, reportRows, type AccountRow, type ChainEvent, type ReportRows, type TimelineRow } from "./report.js";
+import { disposition, forReport, reportRows, unconfirmedNote, type AccountRow, type ChainEvent, type Rejected, type ReportRows, type TimelineRow } from "./report.js";
 
 // A v3 run in the shape the console already reads a root-cause run in: its chain as
 // steps, symptom first, each tied to the event before it. Beside that, the run's own
@@ -38,7 +38,8 @@ export interface V3Account {
   disposition: string;
   exit: string | null;
   root_cause: { id: string; label: string; justification?: string } | null;
-  conclusion: { text: string; chain: string[]; openQuestions: string[] } | null;
+  // Unconfirmed: the graph rejects part of it (rejected says what); text then opens with that, and root_cause is the graph's own.
+  conclusion: { text: string; chain: string[]; unconfirmed: boolean; rejected: Rejected[] } | null;
   accounts: AccountRow[];
 }
 
@@ -112,7 +113,9 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
   const verdict = disposition(g, folded.exit);
   // The trace as the report reads it: by ts, then id (the journal holds it in the order it was written).
   const rows = g === null ? null : reportRows(g, [...folded.entries].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id)));
-  const named = g === null ? undefined : g.nodes[rows?.conclusion?.rootCause?.id ?? ""] ?? Object.values(g.nodes).find((n) => n.isRoot);
+  const rejected = rows?.conclusion?.rejected ?? [];
+  // The model's root cause only when the graph holds up its conclusion; else the node the graph itself marks as root.
+  const named = g === null ? undefined : (rejected.length ? undefined : g.nodes[rows?.conclusion?.rootCause?.id ?? ""]) ?? Object.values(g.nodes).find((n) => n.isRoot && n.status !== "ruled-out");
   const steps = (folded.graph === null ? [] : chainOf(folded.graph)).map((step) => ({ ...step, proven: step.link_status === "proven" || (step.origin && step.origin_status === "proven") }));
   return {
     run_id: runId,
@@ -139,7 +142,7 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
       disposition: verdict.sentence,
       exit: folded.exit,
       root_cause: named === undefined ? null : { id: named.id, label: named.label, ...(named.rootJustification ? { justification: named.rootJustification } : {}) },
-      conclusion: rows.conclusion && { text: rows.conclusion.text, chain: rows.conclusion.chain, openQuestions: rows.conclusion.openQuestions },
+      conclusion: rows.conclusion && { text: rejected.length ? `${unconfirmedNote(rejected)}\n\n${rows.conclusion.text}` : rows.conclusion.text, chain: rows.conclusion.chain, unconfirmed: rejected.length > 0, rejected },
       accounts: rows.accounts,
     },
     chain: rows?.chain ? { ...rows.chain, alternatives: rows.alternatives } : null,

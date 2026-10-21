@@ -37,6 +37,7 @@ export interface ToolCallOut { id: string; tool: string; input: unknown; ok: boo
 export interface TurnResult {
   submission: unknown | null;
   toolCalls: ToolCallOut[];
+  failed?: string; // the provider or gateway failed this turn (its error text): the model's answer was never judged
 }
 
 export interface ModelClient {
@@ -281,8 +282,11 @@ export class KernelModelClient implements ModelClient {
     // valid submission is one attempt on its target.
     // An emission the kernel rejected twice is salvaged too, when it parsed: what in it is sound is kept.
     let submission: unknown = null;
+    // A provider failure is not an answer the model got wrong: it is told apart on the ledger and in the result.
+    const failed = outcome!.status === "failed" && outcome!.emission_rejected !== true ? outcome!.reason : undefined;
     const kept = outcome!.value ?? outcome!.rejected_value;
-    if (kept === undefined || kept === null || typeof kept !== "object") req.trace.write("rejected-submission", { reason: outcome!.reason });
+    if (failed !== undefined) req.trace.write("provider-failure", { reason: failed });
+    else if (kept === undefined || kept === null || typeof kept !== "object") req.trace.write("rejected-submission", { reason: outcome!.reason });
     else {
       const cx: CheckCtx = { inputOf: tools.inputOf?.bind(tools), range: this.d.range };
       const bad = outcome!.value === null ? schemaProblem(req.submitTool, clip(kept)) : null;
@@ -295,7 +299,7 @@ export class KernelModelClient implements ModelClient {
       }
     }
     finishTurn(req, submission);
-    return { submission, toolCalls };
+    return { submission, toolCalls, ...(failed !== undefined ? { failed } : {}) };
   }
 
   // The move's searches as the ledger holds them: citable from here on, and traced for the report.

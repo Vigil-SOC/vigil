@@ -23,7 +23,7 @@ How a run goes (`engine.ts`):
   handler is the `Registry`'s `run`. The kernel shows each result with its ref (`r12`) and
   journals the search as a `call` event with it; the model cites refs. The registry keeps
   what each ref ran and returned for the baseline checks. A search the code makes itself
-  (the rare sweep, a story's sweep) takes the next ref and is journaled the same way.
+  (the rare sweep, a story's sweep, a presence lookup) takes the next ref and is journaled the same way.
 - A move's answer is checked once, in `check()`: an accusing label with no baseline is
   tagged unverified, a link with no shared value is kept as inferred, and an item citing a
   ref the ledger never journaled is dropped. A turn with no valid answer is one attempt

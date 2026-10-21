@@ -89,7 +89,7 @@ describe("rootcause v3 projection account", () => {
       exit: "root-cause-found",
       disposition: expect.stringMatching(/^True Positive/),
       root_cause: { id: "N3", label: "phishing mail opened", justification: "first record of the intrusion" },
-      conclusion: { text: "A mail dropped the implant. The catalog went next.", chain: ["N3", "N2", "N1"], openQuestions: ["who sent the mail"] },
+      conclusion: { text: "A mail dropped the implant. The catalog went next.", chain: ["N3", "N2", "N1"], unconfirmed: false, rejected: [] },
     });
     expect(view.account!.accounts).toEqual([
       { name: "ad:mallory", role: "attacker" },
@@ -140,10 +140,11 @@ describe("rootcause v3 projection account", () => {
 
   it("carries the open questions the report lists: disputed ties, ruled-out events, flagged content in ts order", () => {
     const text = view.open_questions.map((q) => q.text);
-    expect(view.open_questions.map((q) => q.kind)).toEqual(["disputed", "disputed", "ruled-out", "flagged", "flagged"]);
+    expect(view.open_questions.map((q) => q.kind)).toEqual(["disputed", "disputed", "ruled-out", "flagged", "flagged", "model"]);
     expect(text[2]).toBe("Ruled out N5 dns lookup: the lookup was a typo no follow-up");
     expect(text[3]).toMatch(/ignore previous instructions/);
     expect(text[4]).toMatch(/later flag/);
+    expect(view.open_questions[5]).toEqual({ kind: "model", id: "Q1", text: "who sent the mail" });
     const md = markdown();
     for (const t of text) expect(md).toContain(`- ${t}`);
   });

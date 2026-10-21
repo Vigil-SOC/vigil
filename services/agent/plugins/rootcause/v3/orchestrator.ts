@@ -3,6 +3,7 @@
 import type { AgentConfig } from "./config.js";
 import { applyPatch, bestPathFromSymptom, createGraph, getParents, emptyPatch, type Graph, type GraphPatch } from "./graph.js";
 import { renderReport } from "./report.js";
+import { settled } from "./scoring.js";
 import { rareSweep } from "./rare.js";
 import { route } from "./router.js";
 import { options, optionsText, resolveNext, type LeadState, type NextIn } from "./lead.js";
@@ -26,8 +27,7 @@ export function chainSolid(g: Graph, cfg: AgentConfig): boolean {
   if (path) {
     const nodes = path.nodeIds.map((id) => g.nodes[id]!);
     const top = nodes[nodes.length - 1]!;
-    // Near-certain counts as solid: the evidence rule can leave a 0.99 link suspected.
-    const ok = (x: { status: string; confidence: number }) => x.status === "confirmed" || x.confidence >= cfg.thresholds.settled;
+    const ok = (x: { status: string; confidence: number }) => settled(x, cfg);
     const solid = nodes.every((n) => n.kind !== "boundary-marker" && ok(n)) && path.edgeIds.every((id) => ok(g.edges[id]!));
     const attributed = nodes.filter((n) => n.kind === "action").every((n) => {
       const es = getParents(g, n.id, "attributed-to").filter((e) => !e.retired).sort((a, b) => b.confidence - a.confidence);
@@ -90,6 +90,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       const nx = choosing ? (r.submission as NextIn | null) : (r.submission as { next?: NextIn } | null)?.next;
       if (nx) st.next = nx;
       // A turn with no valid submission is one attempt on its target (the handlers count it); the next prompt says so.
+      st.failed = choosing ? r.failed : undefined;
       st.silent = r.submission === null && !choosing ? `${req.move} ${req.correlationId}` : undefined;
       return r;
     },
@@ -106,7 +107,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     // Nothing open on the graph ends the run; otherwise the model's last choice runs, or it is asked to choose.
     if (!exit && !pending && !Object.keys(options(graph, cfg)).length) exit = chainSolid(graph, cfg) ? "root-cause-found" : "inconclusive";
     const symptomId = Object.values(graph.nodes).find((n) => n.isSymptom)!.id;
-    let decision: FrontierDecision | null = exit ? null : pending ? { ...pending, turn } : { move: "choose", targetId: symptomId, turn, reason: st.refused ?? "no next move named" };
+    let decision: FrontierDecision | null = exit ? null : pending ? { ...pending, turn } : { move: "choose", targetId: symptomId, turn, reason: st.refused ?? st.failed ?? "no next move named" };
     pending = undefined;
     st.next = undefined;
     if (!exit && cfg.concludeAt > 0 && lowOn(cfg.concludeAt)) exit = chainSolid(graph, cfg) ? "root-cause-found" : "budget-exhausted";
@@ -141,7 +142,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       tt.write("graph-patch", { patch: probe, result: { idMap: applied.idMap, rejected: applied.rejected, touched: applied.touched, resolvedMarkers: applied.resolvedMarkers } });
     }
     pending = r.decision;
-    st.refused = r.refused ?? (decision.move === "choose" && !st.next ? "that was not a valid choice." : undefined);
+    st.refused = r.refused ?? (decision.move === "choose" && !st.next && st.failed === undefined ? "that was not a valid choice." : undefined);
     if (st.next) tt.write("reasoning", { lead: st.next, ...(r.refused ? { refused: r.refused } : { next: `${r.decision!.move} ${r.decision!.targetId}` }) });
     if (r.refused) log(`  lead refused: ${r.refused}`);
     await o.onTurn?.(graph, turn);

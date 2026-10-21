@@ -29,6 +29,10 @@ export function confidence(prior: number, evidence: Evidence[], cfg: Pick<AgentC
   return sigmoid(x);
 }
 
+// Settled: confirmed, or near-certain (the evidence rule can leave a 0.99 item suspected). One definition for the
+// loop's "chain is solid" and the report's check of the model's conclusion.
+export const settled = (x: { status: string; confidence: number }, cfg: Pick<AgentConfig, "thresholds">) => x.status === "confirmed" || x.confidence >= cfg.thresholds.settled;
+
 // Confirmed needs the confidence and either one direct record or two corroborating items resting on different
 // searches: a causal link is often shown only by independent records agreeing, never by one record of the link.
 export function status(conf: number, evidence: Evidence[], cfg: Pick<AgentConfig, "thresholds">, isMarker = false): Status {
