@@ -119,6 +119,42 @@ def _auth_deps():
     return {get_current_active_user, get_current_user}
 
 
+def _collect_routes(app) -> list:
+    """Every route object, including ones outside ``/api/``.
+
+    ``/metrics`` is the only non-``/api/`` path this file inspects. Walking
+    the rest (``/docs``, ``/mcp``, ``/internal``) is a separate decision.
+    """
+    found = []
+
+    def visit(obj) -> None:
+        if type(obj).__name__ == "_IncludedRouter":
+            for candidate in obj.effective_candidates():
+                visit(candidate)
+            return
+        if isinstance(getattr(obj, "path", None), str):
+            found.append(obj)
+
+    for route in app.routes:
+        visit(route)
+    return found
+
+
+def test_metrics_route_requires_the_scrape_bearer():
+    """``GET /metrics`` is not a public path and not a user session.
+
+    The scrape bearer is its own dependency, so this inventory sees it
+    without treating every non-``/api/`` route as in scope.
+    """
+    from core.platform.monitoring import require_metrics_token
+    from services.api.main import PUBLIC_API_PATHS, app
+
+    assert "/metrics" not in PUBLIC_API_PATHS
+    routes = [r for r in _collect_routes(app) if r.path == "/metrics"]
+    assert len(routes) == 1
+    assert _walk_dependants(routes[0].dependant, {require_metrics_token})
+
+
 def test_every_api_route_requires_auth_or_is_explicitly_public():
     # Import lazily so a broken main.py shows as a test failure rather
     # than a collection error.

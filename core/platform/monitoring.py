@@ -8,10 +8,14 @@ The SentrySpanProcessor bridges OTEL error spans to Sentry breadcrumbs so
 both systems remain useful without creating duplicate transaction records.
 """
 
+import hmac
 import logging
+import os
+from pathlib import Path
 from typing import Any, Optional
 
 import sentry_sdk
+from fastapi import HTTPException, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from prometheus_client.core import GaugeMetricFamily
@@ -166,6 +170,35 @@ def add_breadcrumb(
     sentry_sdk.add_breadcrumb(
         message=message, category=category, level=level, data=data or {}
     )
+
+
+def metrics_token() -> str:
+    """Scrape bearer: ``METRICS_TOKEN``, else ``METRICS_TOKEN_FILE``.
+
+    Empty means ``GET /metrics`` refuses every caller. A user session does not
+    fit a scraper (it expires, and ``DEV_MODE`` bypasses it), and this is not
+    ``AGENT_INTERNAL_TOKEN`` or ``MCP_RUNNER_TOKEN``.
+    """
+    token = os.environ.get("METRICS_TOKEN", "")  # noqa: ENV001 - scrape bearer
+    path = os.environ.get("METRICS_TOKEN_FILE", "")  # noqa: ENV001 - same
+    if not token and path:
+        try:
+            token = Path(path).read_text().strip()
+        except OSError as exc:
+            logger.error("Could not read METRICS_TOKEN_FILE %s: %s", path, exc)
+    return token
+
+
+def require_metrics_token(request: Request) -> None:
+    """401 unless ``Authorization`` is ``Bearer`` plus :func:`metrics_token`.
+
+    An unset token refuses everyone, including ``DEV_MODE``.
+    """
+    token = metrics_token()
+    given = dict(request.scope["headers"]).get(b"authorization", b"")
+    expected = f"Bearer {token}".encode()
+    if not token or not hmac.compare_digest(given, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def get_metrics_response() -> Response:

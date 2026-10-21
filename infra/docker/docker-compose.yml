@@ -219,6 +219,11 @@ services:
       MCP_RUNNER_URL: http://mcp-runner:6991
       MCP_RUNNER_TOKEN: ${MCP_RUNNER_TOKEN:-}
       MCP_RUNNER_TOKEN_FILE: /run/vigil/mcp-runner/token
+      # GET /metrics bearer. The file metrics-token writes, unless METRICS_TOKEN
+      # is set (that value wins, and the init container copies it into the file
+      # so Prometheus sends the same secret). Unset and missing file: 401.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      METRICS_TOKEN_FILE: /run/vigil/metrics/token
       # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
       # on; the OTLP push needs the collector from --profile observability.
       VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
@@ -247,7 +252,10 @@ services:
       # The orchestrator and cases routers read the daemon's workdirs.
       - vigil_investigations:/app/data/investigations
       - mcp_runner_token:/run/vigil/mcp-runner:ro
+      - metrics_token:/run/vigil/metrics:ro
     depends_on:
+      metrics-token:
+        condition: service_completed_successfully
       mcp-runner:
         condition: service_started
       postgres:
@@ -840,6 +848,39 @@ services:
       - mcp_runner_token:/run/vigil/mcp-runner
     restart: "no"
 
+  # GET /metrics bearer, generated once into its own volume. METRICS_TOKEN set
+  # is written over the file so Prometheus (which can only read the file) sends
+  # the same bearer the backend accepts from the environment.
+  # prom/prometheus runs as nobody and the backend as uid 1000, so the
+  # mcp-runner mode 0440 root:1000 is not readable by both. 0444 is. The volume
+  # is mounted only on the backend and on prometheus.
+  metrics-token:
+    image: vigil-mcp-runner:local
+    pull_policy: never
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        f=/run/vigil/metrics/token
+        if [ -n "$$METRICS_TOKEN" ]; then
+          chmod u+w "$$f" 2>/dev/null || true
+          printf '%s\n' "$$METRICS_TOKEN" > "$$f"
+        elif [ ! -s "$$f" ]; then
+          python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$$f"
+        fi
+        chmod 0755 /run/vigil/metrics
+        chmod 0444 "$$f"
+    cap_drop: [ALL]
+    network_mode: none
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    volumes:
+      - metrics_token:/run/vigil/metrics
+    depends_on:
+      mcp-runner-token:
+        condition: service_completed_successfully
+    restart: "no"
+
   # MCP runner (#2303): starts catalog MCP servers, each under its own uid, and
   # serves them over MCP streamable HTTP on :6991. backend and soc-daemon start
   # and stop servers here; none runs in their containers.
@@ -965,6 +1006,11 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+      # Raw token. Prometheus adds the Bearer scheme (authorization.credentials_file).
+      - metrics_token:/run/vigil/metrics:ro
+    depends_on:
+      metrics-token:
+        condition: service_completed_successfully
     ports:
       - "9095:9090"  # Prometheus UI on host port 9095 (avoids conflict with daemon's 9090)
     networks:
@@ -1209,6 +1255,8 @@ volumes:
   detection_rules:
     driver: local
   mcp_runner_token:
+    driver: local
+  metrics_token:
     driver: local
   grafana_data:
     driver: local
