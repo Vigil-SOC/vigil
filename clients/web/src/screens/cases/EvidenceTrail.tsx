@@ -18,6 +18,8 @@ interface TrailRow {
   by: string
   /** When it was captured, ms since the epoch; null when the view carries no usable time. */
   at: number | null
+  /** Rows shown as this one: the same critic argument filed again by a later pass. */
+  also: string[]
 }
 
 const timeOf = (iso: string): number | null => {
@@ -64,6 +66,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
         stance: relations.size === 1 && (only === 'supports' || only === 'weakens') ? only : null,
         by: fold.findings[0]?.agent_id || 'agent',
         at: timeOf(row.captured_at),
+        also: [],
       }
     })
   }
@@ -79,21 +82,36 @@ function rowsOf(fold: RunFold): TrailRow[] {
       stance: null,
       by: row.agent_id || DASH,
       at: null,
+      also: [],
     }))
   }
   const against = huntHypothesis(fold)?.hypothesis_id
-  return fold.evidence.map((row) => ({
-    id: row.evidence_id,
-    step: String(row.iteration),
-    observation: row.is_gap ? `${row.summary} (gap)` : row.summary || DASH,
-    bearsOn: bearsOnLine(row, fold),
-    links: row.bears_on.map((link) => link.relation),
-    source: evidenceSource(row) || DASH,
-    tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
-    stance: stanceOn(row, against),
-    by: workerAt(fold, row.iteration) ?? DASH,
-    at: timeOf(row.captured_at),
-  }))
+  // Each validate pass files the critic's argument again; the same argument on the same
+  // explanation is shown once, the newest, and answers for the others (#2564).
+  const argued = new Map<string, TrailRow>()
+  return fold.evidence.flatMap((row): TrailRow[] => {
+    const key = row.provenance === 'null_check' ? `${row.summary}|${row.bears_on.map((link) => `${link.hypothesis_id}:${link.relation}`).join(',')}` : null
+    const same = key === null ? undefined : argued.get(key)
+    if (same) {
+      same.also.push(row.evidence_id)
+      return []
+    }
+    const shown: TrailRow = {
+      id: row.evidence_id,
+      step: String(row.iteration),
+      observation: row.is_gap ? `${row.summary} (gap)` : row.summary || DASH,
+      bearsOn: bearsOnLine(row, fold),
+      links: row.bears_on.map((link) => link.relation),
+      source: evidenceSource(row) || DASH,
+      tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
+      stance: stanceOn(row, against),
+      by: workerAt(fold, row.iteration) ?? DASH,
+      at: timeOf(row.captured_at),
+      also: [],
+    }
+    if (key !== null) argued.set(key, shown)
+    return [shown]
+  })
 }
 
 /** The row count the record holds for a run, listed or not. */
@@ -120,7 +138,13 @@ function totalsNote(fold: RunFold): string | null {
   return `Each row is counted once, by its stance on the explanation this hunt set out to test (${name.length > 70 ? `${name.slice(0, 70)}…` : name}); a row that does not bear on it counts as neither. Totals cover every row the run holds and leave out critic rows, which are listed but not counted.${slice} A row's stance on each explanation is under “bears on”.`
 }
 
-type TableRow = TrailRow & { key: string; tag?: string }
+type TableRow = TrailRow & { key: string; tag?: string; aliases: string[] }
+
+/** The row a citation lands on: its own, or the one a repeat of it is shown as. */
+const isFocus = (row: TableRow, focusKey: string | null) => focusKey !== null && (row.key === focusKey || row.aliases.includes(focusKey))
+
+/** Records a row stands for: itself and the repeats it is shown as. */
+const listedOf = (rows: readonly TrailRow[]) => rows.reduce((n, row) => n + 1 + row.also.length, 0)
 
 /** The card and table both shapes of the trail draw; `footer` is what sits under the rows. */
 function TrailCard({ title, note, rows, focusKey, focusRef, footer }: {
@@ -156,8 +180,8 @@ function TrailCard({ title, note, rows, focusKey, focusRef, footer }: {
           {rows.map((row) => (
             <div
               key={row.key}
-              ref={row.key === focusKey ? focusRef : undefined}
-              className={`ev-grid ev-row${row.key === focusKey ? ' cite-target' : ''}`}
+              ref={isFocus(row, focusKey) ? focusRef : undefined}
+              className={`ev-grid ev-row${isFocus(row, focusKey) ? ' cite-target' : ''}`}
               role="row"
               data-evidence-id={row.id}
             >
@@ -206,7 +230,7 @@ export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: Run
     <TrailCard
       title={header(fold)}
       note={totalsNote(fold)}
-      rows={rows.map((row) => ({ ...row, key: row.id }))}
+      rows={rows.map((row) => ({ ...row, key: row.id, aliases: row.also }))}
       focusKey={focusId}
       focusRef={focusRef}
       footer={
@@ -258,14 +282,14 @@ export function MergedEvidenceTrail({ runs, primaryId, focusId, onShowOlder }: {
   const focusRef = useRef<HTMLDivElement>(null)
   const folds = runs.map((run) => run.fold)
   const read = runs.filter((run) => run.phase === 'ready')
-  const found = newestFirst(read.flatMap((run) => (run.fold ? rowsOf(run.fold) : []).map((row) => ({ ...row, key: `${run.id}:${row.id}`, tag: run.label }))))
+  const found = newestFirst(read.flatMap((run) => (run.fold ? rowsOf(run.fold) : []).map((row) => ({ ...row, key: `${run.id}:${row.id}`, tag: run.label, aliases: row.also.map((id) => `${run.id}:${id}`) }))))
   const unread = read.flatMap((run) => (run.fold?.kind === 'hunt' && run.fold.evidence.length < run.fold.evidenceCount ? [{ id: run.id, listed: run.fold.evidence.length, since: Math.min(...rowsOf(run.fold).flatMap((row) => row.at ?? [])) }] : []))
   // A hunt lists only its newest rows, so what it holds past its oldest listed row is newer than anything older another run shows: list nothing past it until it is read.
   const floor = Math.max(-Infinity, ...unread.map((run) => run.since).filter(Number.isFinite))
   const focusKey = focusId && primaryId ? `${primaryId}:${focusId}` : null
-  const all = found.filter((row) => floor === -Infinity || row.key === focusKey || (row.at !== null && row.at >= floor))
+  const all = found.filter((row) => floor === -Infinity || isFocus(row, focusKey) || (row.at !== null && row.at >= floor))
   // a cited row is always listed, however old
-  const shownCount = Math.max(visible, focusKey ? all.findIndex((row) => row.key === focusKey) + 1 : 0)
+  const shownCount = Math.max(visible, focusKey ? all.findIndex((row) => isFocus(row, focusKey)) + 1 : 0)
   const rows = all.slice(0, shownCount)
   useEffect(() => {
     const node = focusRef.current
@@ -276,7 +300,8 @@ export function MergedEvidenceTrail({ runs, primaryId, focusId, onShowOlder }: {
   const total = read.reduce((n, run) => n + (run.fold ? totalOf(run.fold) : 0), 0)
   // One hunt on its own keeps its stance totals and the note that explains them; they are not added across runs.
   const solo = runs.length === 1 && read[0]?.fold?.kind === 'hunt' ? read[0].fold : null
-  const title = solo ? header(solo, rows.length) : `Evidence trail · ${total} ${total === 1 ? 'row' : 'rows'}${rows.length < total ? ` · showing ${rows.length} of ${total}` : ''}`
+  const listed = listedOf(rows)
+  const title = solo ? header(solo, listed) : `Evidence trail · ${total} ${total === 1 ? 'row' : 'rows'}${listed < total ? ` · showing ${listed} of ${total}` : ''}`
 
   return (
     <>

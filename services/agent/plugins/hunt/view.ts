@@ -11,7 +11,7 @@ import type { Digest } from "./types.js";
 import type { CallPayload } from "../../contracts/events.js";
 import type { HuntEvent } from "./ledger.js";
 import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type ProjectionOptions } from "./projection.js";
-import { HUNT_AGENT, parsedArgs, turnWords } from "./words.js";
+import { HUNT_AGENT, parsedArgs, toolWords, turnWords } from "./words.js";
 
 // A kernel hunt writes the controller's record, so the projection folds it unchanged. It
 // has no decision events, so its moves are read off the agent's calls: one move per model
@@ -63,6 +63,7 @@ export function huntView(
           ],
         })),
     ),
+    toolWords,
   );
   const kernel = agentProjection(runId, events);
   // The word the conclusion said, held as the reviewer guard left it, and what it was held from.

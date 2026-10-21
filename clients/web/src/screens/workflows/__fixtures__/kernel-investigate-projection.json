@@ -71,91 +71,145 @@
   {
    "question": "I'll start by loading the playbook, getting the finding and case records, and proposing initial hypotheses.",
    "tool": "load_skill",
+   "tool_words": "Load skill",
    "result_length": 2059,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 1
+   "iteration": 1,
+   "ref": "r1",
+   "query": "{\"name\":\"investigate-case\"}",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "I'll start by loading the playbook, getting the finding and case records, and proposing initial hypotheses.",
    "tool": "get_finding",
+   "tool_words": "Read alert",
    "result_length": 255,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 1
+   "iteration": 1,
+   "ref": "r2",
+   "query": "{\"finding_id\":\"f-4001\"}",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "I'll start by loading the playbook, getting the finding and case records, and proposing initial hypotheses.",
    "tool": "case_records",
+   "tool_words": "Case records",
    "result_length": 307,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 1
+   "iteration": 1,
+   "ref": "r3",
+   "query": "{\"case_id\":\"c-4001\"}",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "I'll start by loading the playbook, getting the finding and case records, and proposing initial hypotheses.",
    "tool": "propose_hypothesis",
+   "tool_words": "Propose hypothesis",
    "result_length": 134,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 1
+   "iteration": 1,
+   "ref": "r4",
+   "query": "{\"statement\":\"The user ws-0901\\\\reader is accessing lsass.exe to dump credentials for later use in the environment.\"}",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "I'll start by loading the playbook, getting the finding and case records, and proposing initial hypotheses.",
    "tool": "propose_hypothesis",
+   "tool_words": "Propose hypothesis",
    "result_length": 134,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 1
+   "iteration": 1,
+   "ref": "r5",
+   "query": "{\"statement\":\"The user ws-0901\\\\reader is a security admin, and is using approved tooling to audit credentials.\"}",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "The case notes show the user and host are registered for a red-team engagement, so I'll link the evidence to my hypotheses and then conclude the investigation.",
    "tool": "link_evidence",
+   "tool_words": "Link evidence",
    "result_length": 225,
    "cost_usd": 0,
    "duration_ms": 2,
-   "iteration": 2
+   "iteration": 2,
+   "ref": "r6",
+   "query": "{\"links\":[{\"evidence_id\":\"r2\",\"stance\":\"supports\",\"hypothesis_id\":\"h1\"},{\"hypothesis_id\":\"h1\",\"stance\":\"weakens\",\"evidence_id\":\"r3\"},{\"evidence_id\":\"r3\",\"statement\":\"The activity is part of an authorized red-team engagement.\",\"stance\":\"supports\"}]}",
+   "rows": 2,
+   "class": "served"
   },
   {
    "question": "The case notes show the user and host are registered for a red-team engagement, so I'll link the evidence to my hypotheses and then conclude the investigation.",
    "tool": "conclude",
+   "tool_words": "Conclude",
    "result_length": 680,
    "cost_usd": 0,
    "duration_ms": 5,
    "iteration": 2,
-   "failed": "refused"
+   "failed": "refused",
+   "ref": "r7",
+   "query": "{\"disposition\":\"benign\",\"confidence\":\"high\",\"gaps\":[],\"citations\":[\"r2\",\"r3\"],\"summary\":\"EDR detected credential dumping activity from the lsass process on host ws-0901 by user user0201. However, case records show that this host and user account are registered for an authorized red-team engagement (RT-2026-09) during the time of the alert. The activity is therefore considered benign and part of this planned security exercise.\",\"next_steps\":[\"No action is required, but security engineering may wish to correlate this finding with their red-team engagement logs for completeness.\"]}",
+   "class": "defect"
   },
   {
    "question": "I have linked the initial evidence, but I need to be more certain that the activity was benign and part of the planned red-team engagement. I'll search for other findings related to the user and host, and also search for the raw events to see the exact command that was executed.",
    "tool": "search_findings",
+   "tool_words": "Searched alerts",
    "result_length": 105,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 3
+   "iteration": 3,
+   "ref": "r8",
+   "query": "host:ws-0901 OR user:user0201",
+   "rows": 0,
+   "class": "served"
   },
   {
    "question": "I have linked the initial evidence, but I need to be more certain that the activity was benign and part of the planned red-team engagement. I'll search for other findings related to the user and host, and also search for the raw events to see the exact command that was executed.",
    "tool": "splunk_search",
+   "tool_words": "Searched Splunk",
    "result_length": 329,
    "cost_usd": 0,
    "duration_ms": 0,
-   "iteration": 3
+   "iteration": 3,
+   "ref": "r9",
+   "query": "SELECT process, command_line FROM events WHERE host = 'ws-0901' AND user = 'user0201'",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "The Splunk search confirms that a mimikatz-style tool was run, and the host is tagged as part of the red-team range. This strongly supports the conclusion that the activity is part of the authorized red-team engagement. I will now link this new evidence and conclude the investigation.",
    "tool": "link_evidence",
+   "tool_words": "Link evidence",
    "result_length": 120,
    "cost_usd": 0,
    "duration_ms": 1,
-   "iteration": 4
+   "iteration": 4,
+   "ref": "r10",
+   "query": "{\"links\":[{\"hypothesis_id\":\"h3\",\"evidence_id\":\"r9\",\"stance\":\"supports\"},{\"evidence_id\":\"r9\",\"hypothesis_id\":\"h1\",\"stance\":\"weakens\"}]}",
+   "rows": 1,
+   "class": "served"
   },
   {
    "question": "The Splunk search confirms that a mimikatz-style tool was run, and the host is tagged as part of the red-team range. This strongly supports the conclusion that the activity is part of the authorized red-team engagement. I will now link this new evidence and conclude the investigation.",
    "tool": "conclude",
+   "tool_words": "Conclude",
    "result_length": 121,
    "cost_usd": 0,
    "duration_ms": 1,
-   "iteration": 4
+   "iteration": 4,
+   "ref": "r11",
+   "query": "{\"summary\":\"EDR detected credential dumping activity from the lsass process on host ws-0901 by user user0201. A Splunk search confirmed that a mimikatz-style tool was run. However, case records and telemetry logs both show that this host and user account are registered for an authorized red-team engagement (RT-2026-09) during the time of the alert. The activity is therefore considered benign and part of this planned security exercise.\",\"citations\":[\"r2\",\"r3\",\"r9\"],\"disposition\":\"benign\",\"confidence\":\"high\",\"next_steps\":[\"No action is required, but security engineering may wish to correlate this finding with their red-team engagement logs for completeness.\"],\"gaps\":[]}",
+   "rows": 1,
+   "class": "served"
   }
  ],
  "gaps": [],

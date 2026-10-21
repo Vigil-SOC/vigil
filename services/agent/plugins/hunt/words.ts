@@ -1,4 +1,6 @@
 import type { CallPayload } from "../../contracts/events.js";
+import { nameInWords } from "../../core/call-view.js";
+import { ENTITY_TYPES } from "./types.js";
 
 // A kernel hunt's moves, in the words a person reads on the case page and in Watch a run.
 // The agent's calls are the record; these say what each one did, never its JSON.
@@ -33,8 +35,8 @@ export function actionOf(tool: string): string {
   return ACTION[tool] ?? QUERY;
 }
 
-// The deployment's tools a hunt calls today, by what they ask. A tool not listed reads
-// as its own name in words, with the value it was asked about.
+// The deployment's tools a hunt calls, by what they ask; the one map, which call views label by
+// too. A tool not listed reads as its own name in words, with the value it was asked about.
 const ASKED: Readonly<Record<string, string>> = {
   search_findings: "Searched alerts for",
   get_finding: "Read alert",
@@ -43,6 +45,11 @@ const ASKED: Readonly<Record<string, string>> = {
   lookup_indicators: "Looked up in threat intel:",
   recall_entity: "Recalled what memory holds on",
 };
+
+// A tool as a label on a call ("Looked up in threat intel"): its words without what leads into a value.
+export function toolWords(tool: string): string {
+  return ASKED[tool]?.replace(/ (?:for|on)$|:$/, "") ?? nameInWords(tool);
+}
 
 // The few values that say what a call was about, whichever argument carries them.
 const SUBJECT_KEYS = ["query", "values", "entity_keys", "finding_id", "indicator", "value", "entity", "sql", "q", "name"];
@@ -72,10 +79,13 @@ export function listed(values: readonly string[], shown = SHOWN): string {
   return `${head.slice(0, -1).join(", ")} and ${head.at(-1)}`;
 }
 
+// "user:svc_backup" is a recall key; a person reads the value, not its kind.
+const ENTITY_KIND = new RegExp(`^(?:${ENTITY_TYPES.join("|")}|account|file):(?=\\S)`);
+
 function subjects(args: Record<string, unknown>): string[] {
   for (const key of SUBJECT_KEYS) {
     const found = strings(args[key]);
-    if (found.length > 0) return found;
+    if (found.length > 0) return key === "entity_keys" ? found.map((one) => one.replace(ENTITY_KIND, "")) : found;
   }
   return [];
 }

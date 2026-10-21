@@ -8,7 +8,7 @@ import { commentCount, CommentsView, SectionCard, TasksView, useComments, useRes
 import { fmtCost } from '../../shared/cost'
 import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import { IN_FLIGHT } from '../workflows/runRead'
-import type { RunFold } from './caseFold'
+import { entityShown, type RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
@@ -101,14 +101,6 @@ const ENTITIES_SHOWN = 3
 const ENTITY_LONG = 24
 const ENTITY_TAIL = 6
 
-/** The kinds a recall key is written with ("domain:cdn-invoicesync.net"); the board shows the value alone. */
-const ENTITY_KIND = /^(?:host|user|ip|domain|hash|email|url|file|process|account):(?=\S)/
-
-/** An entity as the panel shows it: the value without its kind, which stays on hover (#2459). */
-function entityShown(key: string): string {
-  return key.replace(ENTITY_KIND, '')
-}
-
 /**
  * One entity on one line. A value that fits the column is shown whole; only one wider than it is
  * cut in the middle (#2459), by CSS, so the whole value stays in the DOM: selecting and copying it
@@ -121,9 +113,18 @@ function Entity({ entity }: { entity: string }) {
   useLayoutEffect(() => {
     const box = ref.current
     const head = box?.firstElementChild as HTMLElement | null
-    if (!box || !head || box.clientWidth === 0) return // not laid out: keep the guess
-    const tail = head.nextElementSibling as HTMLElement | null
-    setLong(head.scrollWidth + (tail?.offsetWidth ?? 0) > box.clientWidth)
+    if (!box || !head) return
+    const measure = () => {
+      if (box.clientWidth === 0) return // not laid out: keep the guess
+      const tail = head.nextElementSibling as HTMLElement | null
+      setLong(head.scrollWidth + (tail?.offsetWidth ?? 0) > box.clientWidth)
+    }
+    measure()
+    // the column narrows and widens (a scrollbar comes and goes): measure again, so a value that fits is never cut
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(box)
+    return () => observer.disconnect()
   }, [value])
   // the head gives up only the room the tail takes, so the cut is no wider than it has to be
   useLayoutEffect(() => {
@@ -255,7 +256,7 @@ function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
     ? [
         ...recall.verdicts.map((v) => ({ text: [v.outcome, v.statement].filter(Boolean).join(' — '), kind: 'Verdict' })),
         ...recall.sightings.map((s) => ({
-          text: [s.entity, s.source, s.hits == null ? '' : `${s.hits} ${s.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · '),
+          text: [entityShown(s.entity), s.source, s.hits == null ? '' : `${s.hits} ${s.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · '),
           kind: 'Sighting',
         })),
         ...recall.gaps.map((g) => ({ text: [g.disposition.replace(/_/g, ' '), g.statement].filter(Boolean).join(' — '), kind: 'Gap' })),
@@ -266,7 +267,7 @@ function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
       {!recall && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
       {recall?.unavailable && <Prose text={`Recall did not happen: ${recall.unavailable}`} />}
       {recall && !recall.unavailable && cards.length === 0 && (
-        <Prose text={`Nothing recorded about ${recall.keys.join(', ') || 'these entities'}.`} />
+        <Prose text={`Nothing recorded about ${recall.keys.map(entityShown).join(', ') || 'these entities'}.`} />
       )}
       {cards.length > 0 && (
         <div className="side-cards">

@@ -3,6 +3,7 @@ import type { CallPayload } from "../../contracts/events.js";
 import { classOf, recordOf, recordRows, type RecordQuestion, type RecordStanding } from "../../core/record.js";
 import { callViews } from "../../core/call-view.js";
 import type { EvidenceView } from "../hunt/projection.js";
+import { toolWords } from "../hunt/words.js";
 import type { LeadProjection } from "./legacy/projection.js";
 import type { InvestigateReplay } from "./legacy/replay.js";
 
@@ -73,6 +74,7 @@ export function investigateView(runId: string, events: readonly Envelope[]): Lea
           ...(one.duration_ms === undefined ? {} : { duration_ms: one.duration_ms }),
         })),
       })),
+      toolWords,
     ),
     gaps: kernel.calls
       .filter((one) => classOf(one) === "visibility_gap")

@@ -51,6 +51,8 @@ import {
   stanceTotals,
   stoppedRun,
   strongestRows,
+  toolShown,
+  entityShown,
   visibilityGaps,
   wordDisplay,
   type CaseVerdict,
@@ -1996,7 +1998,7 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
             {recall?.unavailable ? (
               <p className="muted">{tag && <RunTag label={tag} />}Recall did not happen: {recall.unavailable}{recall.keys.length ? ` (${recall.keys.join(', ')})` : ''}</p>
             ) : opened ? (
-              <p className="muted">{tag && <RunTag label={tag} />}{opened.keys.length ? `Asked about ${opened.keys.join(', ')}` : 'No entities recalled.'}</p>
+              <p className="muted">{tag && <RunTag label={tag} />}{opened.keys.length ? `Asked about ${opened.keys.map(entityShown).join(', ')}` : 'No entities recalled.'}</p>
             ) : (
               <p className="muted">{tag && <RunTag label={tag} />}The run did not journal an opening recall.</p>
             )}
@@ -2006,7 +2008,7 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
                   <MemoryRow
                     key={`s${i}`}
                     run={tag}
-                    text={[row.entity, row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
+                    text={[entityShown(row.entity), row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
                     meta={provenance(row)}
                   />
                 ))}
@@ -2020,7 +2022,7 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
                   />
                 ))}
                 {recalled.map((call, i) => (
-                  <MemoryRow key={`c${i}`} run={tag} text={`recall_entity · ${call.question || '—'}`} meta={`${call.result_length} bytes`} />
+                  <MemoryRow key={`c${i}`} run={tag} text={call.question || toolShown(call)} meta={`${call.result_length} bytes`} />
                 ))}
               </div>
             ) : null}

@@ -23,6 +23,21 @@ export interface CallRow {
   thought?: string
   /** The kind a failed call reported: timeout, unavailable, refused... */
   failed?: string
+  /** The tool in words, as the server names it ("Looked up in threat intel"). */
+  tool_words: string
+}
+
+/** A call's tool as a reader sees it: the server's words, or its name in words on a run that predates them. */
+export function toolShown(call: Pick<CallRow, 'tool' | 'tool_words'>): string {
+  return call.tool_words || call.tool.replace(/_/g, ' ')
+}
+
+/** The kinds a recall key is written with ("domain:cdn-invoicesync.net"); a reader is shown the value alone. */
+const ENTITY_KIND = /^(?:host|user|ip|domain|hash|email|url|file|process|account|arn|aws_key):(?=\S)/
+
+/** An entity as the case shows it: the value without its kind (#2459). */
+export function entityShown(key: string): string {
+  return key.replace(ENTITY_KIND, '')
 }
 
 /** One lead move, newest first in `moves`. Lead decisions carry no time or iteration. */
@@ -459,6 +474,7 @@ function callsOf(raw: unknown): CallRow[] {
     return [{
       question: str(o.question),
       tool: str(o.tool),
+      tool_words: str(o.tool_words),
       result_length: num(o.result_length) ?? 0,
       cost_usd: num(o.cost_usd),
       ...(typeof o.duration_ms === 'number' ? { duration_ms: o.duration_ms } : {}),

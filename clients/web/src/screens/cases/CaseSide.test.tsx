@@ -194,7 +194,7 @@ describe('case side panel never scrolls sideways (#2284)', () => {
     renderSide()
     const line = screen.getByText(/^Nothing recorded about /)
     expect(line).toHaveClass('side-clamp')
-    expect(line).toHaveAttribute('title', `Nothing recorded about ${KEYS.join(', ')}.`)
+    expect(line).toHaveAttribute('title', `Nothing recorded about ${KEYS.map((key) => key.replace(/^\w+:/, '')).join(', ')}.`)
   })
 
   it('wraps any long token in the panel rather than widening it, and cuts an entity with an ellipsis', () => {

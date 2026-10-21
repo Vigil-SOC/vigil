@@ -69,7 +69,7 @@ describe("argue the null", () => {
 
     const hypothesis = ledger.projection.hypotheses.get(hypothesisId)!;
     expect(hypothesis.status).toBe("proven");
-    expect(hypothesis.resolution_reason).toMatch(/survived the argue-the-null pass/);
+    expect(hypothesis.resolution_reason).toMatch(/^Survived the argue-the-null pass/);
     expect(result.said).toBe(`${hypothesisId} proven`);
 
     // The snapshot is what the numbers were at verdict time, so the verdict can
@@ -108,7 +108,7 @@ describe("evidence_strength predicates", () => {
     const result = validate(ledger, hypothesisId, true);
 
     expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
-    expect(result.said).toMatch(/1 corroborating source system\(s\), 2 required/);
+    expect(result.said).toMatch(/1 corroborating source system, 2 required/);
   });
 
   it("counts two records from the same source system as one", async () => {
@@ -225,7 +225,7 @@ describe("gap lock", () => {
 
     const hypothesis = ledger.projection.hypotheses.get(hypothesisId)!;
     expect(hypothesis.status).toBe("active");
-    expect(hypothesis.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
+    expect(hypothesis.resolution_reason).toMatch(/Could not finish: 3 sources unreachable/);
     expect(hypothesis.evidence_strength!.open_gaps).toBe(DEFAULT_VERDICTS.gap_lock_threshold);
     expect(result.said).toMatch(/gap-locked/);
   });

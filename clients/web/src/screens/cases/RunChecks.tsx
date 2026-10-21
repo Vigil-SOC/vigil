@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fmtCost } from '../../shared/cost'
 import { workflowApi } from '../../services/api'
-import type { CallRow, RunFold } from './caseFold'
+import { toolShown, type CallRow, type RunFold } from './caseFold'
 import { RunTag } from './RunTag'
 
 // What a reader checks a record against: the query a call sent and what came back,
@@ -20,12 +20,6 @@ interface CallRecord {
 }
 
 const DASH = '—'
-
-/** An MCP tool reads "<server>_<tool>"; the server is noise beside the query. */
-export function toolLabel(tool: string): string {
-  const [first, ...rest] = tool.split('_')
-  return rest.length > 0 && first.includes('-') ? rest.join('_') : tool
-}
 
 /** The result's body without the delimiter every tool result is wrapped in. */
 function bodyOf(result: string): string {
@@ -74,7 +68,8 @@ function argumentsOf(text: string): { query: string | null; rest: [string, strin
   }
 }
 
-export function CallDetail({ runId, callRef }: { runId: string; callRef: string }) {
+/** One call read whole; `label` is its tool in words, from the row that opened it. */
+export function CallDetail({ runId, callRef, label }: { runId: string; callRef: string; label: string }) {
   const [call, setCall] = useState<CallRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -100,7 +95,7 @@ export function CallDetail({ runId, callRef }: { runId: string; callRef: string 
     <div className="call-detail">
       <div className="call-meta">
         <span className="mono">{call.ref}</span>
-        <span>{toolLabel(call.tool)}</span>
+        <span>{label}</span>
         <span className={`call-class ${call.class ?? ''}`}>{call.ok ? call.class === 'visibility_gap' ? 'could not look' : 'answered' : 'failed'}</span>
         {typeof call.duration_ms === 'number' && <span>{call.duration_ms < 1000 ? `${call.duration_ms} ms` : `${(call.duration_ms / 1000).toFixed(1)} s`}</span>}
       </div>
@@ -214,13 +209,13 @@ export function CheckedList({ runId, calls, focusRef, tag }: { runId: string | n
                     onClick={() => setOpen(isOpen ? null : id)}
                   >
                     <span className="mono ref">{call.ref ?? DASH}</span>
-                    <span className="tool">{toolLabel(call.tool)}</span>
+                    <span className="tool">{toolShown(call)}</span>
                     <span className="mono query" title={call.query}>{call.query || DASH}</span>
                     <span className={`num ${call.class === 'served' || (!call.class && !call.failed) ? '' : 'poor'}`}>{outcome(call)}</span>
                     <span className="num">{latency(call.duration_ms)}</span>
                     <span className="chev" aria-hidden="true">{expandable ? (isOpen ? '▾' : '▸') : ''}</span>
                   </button>
-                  {isOpen && runId && call.ref && <CallDetail runId={runId} callRef={call.ref} />}
+                  {isOpen && runId && call.ref && <CallDetail runId={runId} callRef={call.ref} label={toolShown(call)} />}
                 </li>
               )
             })}
@@ -239,7 +234,7 @@ const FAILED_WORD: Record<string, string> = {
 }
 
 // The words a hunt files a failed call under: the call row already says it, and better.
-const GENERIC_GAP = 'a query the hunt wanted could not be run'
+const GENERIC_GAP = 'a query the hunt wanted could not be run' // compared case-blind: older runs wrote it lower-case
 
 interface GapGroup {
   key: string
@@ -257,7 +252,7 @@ export function blindSpotsOf(fold: RunFold | null): { groups: GapGroup[]; unconn
   for (const call of fold.calls) {
     if (call.class !== 'visibility_gap' && !(call.failed && FAILED_WORD[call.failed])) continue
     const why = FAILED_WORD[call.failed ?? ''] ?? FAILED_WORD.visibility_gap
-    const source = toolLabel(call.tool)
+    const source = toolShown(call)
     const key = `${source}|${why}`
     const group = groups.get(key) ?? { key, source, why, calls: [], note: null }
     group.calls.push(call)
@@ -273,7 +268,7 @@ export function blindSpotsOf(fold: RunFold | null): { groups: GapGroup[]; unconn
         unconnected.push(text)
         continue
       }
-      if (text && text !== GENERIC_GAP) notes.push(text)
+      if (text && text.toLowerCase() !== GENERIC_GAP) notes.push(text)
     }
   }
   const list = [...groups.values()].sort((a, b) => b.calls.length - a.calls.length)
@@ -316,13 +311,13 @@ export function BlindSpots({ fold, runId, tag }: { fold: RunFold | null; runId: 
                     <li key={id}>
                       <button type="button" className="checked-call" disabled={!lost.ref || !runId} onClick={() => setCall(call === id ? null : id)}>
                         <span className="mono ref">{lost.ref ?? DASH}</span>
-                        <span className="tool">{toolLabel(lost.tool)}</span>
+                        <span className="tool">{toolShown(lost)}</span>
                         <span className="mono query" title={lost.query}>{lost.query || DASH}</span>
                         <span className="num poor">{group.why}</span>
                         <span className="num">{latency(lost.duration_ms)}</span>
                         <span className="chev" aria-hidden="true">{lost.ref && runId ? (call === id ? '▾' : '▸') : ''}</span>
                       </button>
-                      {call === id && runId && lost.ref && <CallDetail runId={runId} callRef={lost.ref} />}
+                      {call === id && runId && lost.ref && <CallDetail runId={runId} callRef={lost.ref} label={toolShown(lost)} />}
                     </li>
                   )
                 })}

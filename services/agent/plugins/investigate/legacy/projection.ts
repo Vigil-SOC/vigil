@@ -2,6 +2,7 @@ import type { BudgetLimits, SpendPayload } from "../../../contracts/budget.js";
 import { openCheckpoint, type AgentEvent, type CheckpointPayload, type DispatchPayload, type OpenCheckpoint, type ResolutionPayload, type RunPayload, type TerminalPayload, type UnboundPayload } from "../../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../../contracts/memory.js";
 import { callViews, type CallView } from "../../../core/call-view.js";
+import { toolWords } from "../../hunt/words.js";
 import type { DecisionPayload, FindingPayload, LeadKinds } from "./vocabulary.js";
 
 // What a reader outside this process is told about a run -- deliberately not the
@@ -119,7 +120,7 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
     decisions,
     findings,
     open_checkpoint: open === null ? null : openCheckpoint(open),
-    calls: callViews(dispatches),
+    calls: callViews(dispatches, toolWords),
     gaps,
     unbound,
     recall: recalledPayloadOf(events),

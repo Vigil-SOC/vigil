@@ -2413,9 +2413,9 @@ function techniquesOf(h: HuntStanding): string {
 /** The corroboration a verdict rested on, in the report's own words. */
 function strengthLine(s: HuntStrength): string {
   return [
-    `${s.corroborating_sources} corroborating source system(s)`,
-    `${s.contradicting_records} contradicting record(s)`,
-    `${s.open_gaps} open gap(s)`,
+    `${s.corroborating_sources} corroborating source ${s.corroborating_sources === 1 ? 'system' : 'systems'}`,
+    `${s.contradicting_records} contradicting ${s.contradicting_records === 1 ? 'record' : 'records'}`,
+    `${s.open_gaps} open ${s.open_gaps === 1 ? 'gap' : 'gaps'}`,
     s.attacker_influenceable_only ? 'support is attacker-influenceable only' : 'support is not attacker-authored alone',
     s.survived_disconfirmation ? 'survived disconfirmation' : 'did not survive disconfirmation',
   ].join(', ')

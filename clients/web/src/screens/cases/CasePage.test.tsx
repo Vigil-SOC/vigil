@@ -2277,7 +2277,7 @@ describe('Memory and blind spots tab', () => {
     expect(recalled.getByText('Hunt hunt-9 · May 2, 2026')).toBeInTheDocument()
     expect(recalled.getByText('proven — Loader family, finance laptops')).toBeInTheDocument()
     expect(recalled.getByText('Case case-4302 · May 2, 2026')).toBeInTheDocument()
-    expect(recalled.getByText('recall_entity · what is 10.0.0.7')).toBeInTheDocument()
+    expect(recalled.getByText('what is 10.0.0.7')).toBeInTheDocument()
     expect(recalled.getByText('340 bytes')).toBeInTheDocument()
     // declared gaps live in Blind spots, not here
     expect(recalled.queryByText(/MFA push logs/)).toBeNull()
@@ -2333,7 +2333,7 @@ describe('Memory and blind spots tab', () => {
     open('m-mid', { hunt: { ...HUNT, calls: [{ question: 'who is m.kaur', tool: 'recall_entity', result_length: 9, cost_usd: 0 }] } })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('The run did not journal an opening recall.')).toBeInTheDocument()
-    expect(screen.getByText('recall_entity · who is m.kaur')).toBeInTheDocument()
+    expect(screen.getByText('who is m.kaur')).toBeInTheDocument()
   })
 
   it('is empty with no recall and no gaps, and keeps the tab', async () => {

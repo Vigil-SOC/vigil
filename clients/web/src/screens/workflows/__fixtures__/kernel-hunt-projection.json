@@ -66,6 +66,8 @@
    "captured_at": "2026-10-10T06:19:58.399Z",
    "finding_ids": [],
    "served_by": null,
+   "call_refs": [],
+   "read_ref": null,
    "bears_on": []
   },
   {
@@ -91,6 +93,8 @@
    "captured_at": "2026-10-10T06:19:58.373Z",
    "finding_ids": [],
    "served_by": null,
+   "call_refs": [],
+   "read_ref": null,
    "bears_on": [
     {
      "hypothesis_id": "h-3dcfffab",
@@ -121,6 +125,8 @@
    "captured_at": "2026-10-10T06:19:58.372Z",
    "finding_ids": [],
    "served_by": null,
+   "call_refs": [],
+   "read_ref": null,
    "bears_on": [
     {
      "hypothesis_id": "h-3dcfffab",
@@ -146,6 +152,8 @@
    "captured_at": "2026-10-10T06:19:58.369Z",
    "finding_ids": [],
    "served_by": null,
+   "call_refs": [],
+   "read_ref": null,
    "bears_on": []
   },
   {
@@ -166,6 +174,8 @@
    "captured_at": "2026-10-10T06:19:58.358Z",
    "finding_ids": [],
    "served_by": null,
+   "call_refs": [],
+   "read_ref": null,
    "bears_on": []
   }
  ],
@@ -275,7 +285,7 @@
   "suppressions": [],
   "handoffs": []
  },
- "report_markdown": "# Hunt report — beaconing on the finance segment\n\n- **Outcome:** completed\n- **Hunt:** hunt-29f86c1a1379\n- **Iterations:** 8 of 48\n- **Cost:** $0.0000 of $5.00\n- **Started:** 2026-10-10T06:19:58.358Z\n- **Ended:** 2026-10-10T06:19:58.408Z\n- **Why it ended:** the agent stopped before the hunt could conclude (refused: h-3de60798 is still active: 192.0.2.10 runs an unsanctioned sync client. Resolve it before concluding again.): the host beaconed; one claim is still open\n\n## What happened\n\nthe host beaconed\n\nregular outbound flows\n\n## What to do now\n\n1. isolate the host\n\n_Written from the ledger by scripted/model at 2026-10-10T06:19:58.412Z. The verdicts and findings below are the hunt's own record; this section is an account of them._\n\n\n1 hypothesis(es) reached a verdict of proven; each survived the argue-the-null pass.\n\n## What this hunt knew going in\n\nRead on ip:192.0.2.10, user:example\\user0001, as of 2026-03-07T00:00:00.000Z. What earlier investigations left on the record:\n\n- false_positive: 192.0.2.10 is a scheduled backup target — subjects ip:192.0.2.10 — activity 2026-02-01 to 2026-03-01 — analyst, from case case-0007, concluded 2026-03-02 — because the platform team confirmed the overnight schedule\n- unanswered: the workstation's process telemetry would settle the overnight traffic — subjects host:host0001-L — no_evidence_gathered: the endpoint tool answered nothing on either attempt — from hunt hunt-0002, concluded 2026-03-04\n- user:example\\user0001 seen 3x on okta — 2026-03-01 to 2026-03-04 — from hunt hunt-0002, concluded 2026-03-04\n- Some history was not carried: 4 sightings past one entity's share.\n\n## Verdicts\n\n### h-3dcfffab — proven\n\n192.0.2.10 is beaconing to 198.51.100.7\n\n_survived the argue-the-null pass against \"a backup job\" on 2 corroborating source system(s)_\n\nEvidence strength at verdict: 2 corroborating source system(s), 0 contradicting record(s), 2 open gap(s), support is not attacker-authored alone, survived disconfirmation.\n\n### h-3de60798 — inconclusive\n\n192.0.2.10 runs an unsanctioned sync client\n\n_hunt ended (completed) with the hypothesis unresolved_\n\n## What the hunt found (3)\n\nNewest first.\n\n- **iteration 6** (critic, notable) — strongest benign explanation: a backup job\n  - the interval is too regular for a backup\n  - bears on nothing\n- **iteration 3** (endpoint, anomalous) — every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (endpoint)\n  - the jitter is too low for a person or a poller\n  - supports h-3dcfffab\n- **iteration 3** (network, anomalous) — every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (network)\n  - the jitter is too low for a person or a poller\n  - supports h-3dcfffab\n\n## Visibility gaps (2)\n\nQuestions the hunt could not answer. Each is a blind spot, not a finding.\n\n- iteration 0 (unattributed): no tool in this deployment answers entity_recall\n- iteration 2 (unattributed): a query the hunt wanted could not be run\n\n## Parked backlog\n\n### Open questions\n\n- is the sync client on the approved list? — still on the frontier when the hunt stopped\n\n## Checkpoints\n\n- hypothesis_approval (iteration 0): Approve and start this hunt on 1 hypothesis → approve by policy:auto — checkpoint policy hypothesis_approval=auto\n- verdict_review (iteration 6): Mark h-3dcfffab proven? 192.0.2.10 is beaconing to 198.51.100.7 → approve by policy:auto — checkpoint policy verdict_review=auto\n",
+ "report_markdown": "# Hunt report — beaconing on the finance segment\n\n- **Outcome:** completed\n- **Hunt:** hunt-29f86c1a1379\n- **Iterations:** 8 of 48\n- **Cost:** $0.0000 of $5.00\n- **Started:** 2026-10-10T06:19:58.358Z\n- **Ended:** 2026-10-10T06:19:58.408Z\n- **Why it ended:** the agent stopped before the hunt could conclude (refused: h-3de60798 is still active: 192.0.2.10 runs an unsanctioned sync client. Resolve it before concluding again.): the host beaconed; one claim is still open\n\n## What happened\n\nthe host beaconed\n\nregular outbound flows\n\n## What to do now\n\n1. isolate the host\n\n_Written from the ledger by scripted/model at 2026-10-10T06:19:58.412Z. The verdicts and findings below are the hunt's own record; this section is an account of them._\n\n\n1 hypothesis reached a verdict of proven; each survived the argue-the-null pass.\n\n## What this hunt knew going in\n\nRead on ip:192.0.2.10, user:example\\user0001, as of 2026-03-07T00:00:00.000Z. What earlier investigations left on the record:\n\n- false_positive: 192.0.2.10 is a scheduled backup target — subjects ip:192.0.2.10 — activity 2026-02-01 to 2026-03-01 — analyst, from case case-0007, concluded 2026-03-02 — because the platform team confirmed the overnight schedule\n- unanswered: the workstation's process telemetry would settle the overnight traffic — subjects host:host0001-L — no_evidence_gathered: the endpoint tool answered nothing on either attempt — from hunt hunt-0002, concluded 2026-03-04\n- user:example\\user0001 seen 3x on okta — 2026-03-01 to 2026-03-04 — from hunt hunt-0002, concluded 2026-03-04\n- Some history was not carried: 4 sightings past one entity's share.\n\n## Verdicts\n\n### h-3dcfffab — proven\n\n192.0.2.10 is beaconing to 198.51.100.7\n\n_survived the argue-the-null pass against \"a backup job\" on 2 corroborating source system(s)_\n\nEvidence strength at verdict: 2 corroborating source systems, 0 contradicting records, 2 open gaps, support is not attacker-authored alone, survived disconfirmation.\n\n### h-3de60798 — inconclusive\n\n192.0.2.10 runs an unsanctioned sync client\n\n_hunt ended (completed) with the hypothesis unresolved_\n\n## What the hunt found (3)\n\nNewest first.\n\n- **iteration 6** (critic, notable) — strongest benign explanation: a backup job\n  - the interval is too regular for a backup\n  - bears on nothing\n- **iteration 3** (endpoint, anomalous) — every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (endpoint)\n  - the jitter is too low for a person or a poller\n  - supports h-3dcfffab\n- **iteration 3** (network, anomalous) — every 300s +/- 4s over 6 hours, 412 connections from 192.0.2.10 to 198.51.100.7 (network)\n  - the jitter is too low for a person or a poller\n  - supports h-3dcfffab\n\n## Visibility gaps (2)\n\nQuestions the hunt could not answer. Each is a blind spot, not a finding.\n\n- iteration 0 (unattributed): no tool in this deployment answers entity_recall\n- iteration 2 (unattributed): a query the hunt wanted could not be run\n\n## Parked backlog\n\n### Open questions\n\n- is the sync client on the approved list? — still on the frontier when the hunt stopped\n\n## Checkpoints\n\n- hypothesis_approval (iteration 0): Approve and start this hunt on 1 hypothesis → approve by policy:auto — checkpoint policy hypothesis_approval=auto\n- verdict_review (iteration 6): Mark h-3dcfffab proven? 192.0.2.10 is beaconing to 198.51.100.7 → approve by policy:auto — checkpoint policy verdict_review=auto\n",
  "narrative": {
   "summary": "the host beaconed",
   "what_happened": "regular outbound flows",
@@ -425,17 +435,26 @@
   {
    "question": "Searched Splunk for select * from flows where src = '192.0.2.10' (refused)",
    "tool": "splunk_search",
+   "tool_words": "Searched Splunk",
    "result_length": 106,
    "duration_ms": 0,
    "iteration": 2,
-   "failed": "unavailable"
+   "failed": "unavailable",
+   "ref": "r2",
+   "query": "select * from flows where src = '192.0.2.10'",
+   "class": "visibility_gap"
   },
   {
    "question": "Searched alerts for 198.51.100.7",
    "tool": "search_findings",
+   "tool_words": "Searched alerts",
    "result_length": 203,
    "duration_ms": 0,
-   "iteration": 3
+   "iteration": 3,
+   "ref": "r3",
+   "query": "198.51.100.7",
+   "rows": 1,
+   "class": "served"
   }
  ],
  "recall": {

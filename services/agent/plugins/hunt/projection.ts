@@ -7,6 +7,7 @@ import { findingsCitedBy } from "./findings.js";
 import { citedTechniques, DEPLOYMENT_GAP_PROVENANCE, isGap, NULL_CHECK_PROVENANCE, sensorAttested, unboundInWords } from "./strength.js";
 import { renderReport, type HuntReport } from "./report.js";
 import { stepsOf, type Narrative } from "./narrative.js";
+import { toolWords } from "./words.js";
 import type {
   Budgets,
   DecisionRecord,
@@ -159,6 +160,11 @@ export interface EvidenceView {
   // source_system above is the hunt's domain word, which names no system.
   finding_ids: string[];
   served_by: string | null;
+  // The calls that answered since the hunt's last record, by ref: the reads this row could
+  // rest on, which the reader names the part of Vigil by when they were Vigil's own.
+  call_refs: string[];
+  // The call the row names as the one it was read from; null when it names none.
+  read_ref: string | null;
   // Which beliefs it bears on and how. Evidence attached to nothing is worth seeing.
   bears_on: BearsOn[];
 }
@@ -222,7 +228,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
       return { question_id, question, entity_key, hypothesis_id, spawned_iteration };
     }),
     moves: [...view.decisions].reverse().slice(0, MOVES_SHOWN).map(moveView),
-    calls: callViews(view.dispatches.values()),
+    calls: callViews(view.dispatches.values(), toolWords),
     recall: recalledPayloadOf(events),
   };
 }
@@ -305,6 +311,8 @@ function evidenceView(record: EvidenceRecord, bearsOn: RecordRows["bears_on"]): 
     captured_at: record.captured_at,
     finding_ids: findingsCitedBy(record),
     served_by: record.served_by ?? null,
+    call_refs: record.call_refs ?? [],
+    read_ref: record.read_ref ?? null,
     bears_on: bearsOn.get(record.evidence_id) ?? [],
   };
 }

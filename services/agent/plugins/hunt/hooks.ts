@@ -498,7 +498,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         additionalProperties: false,
         required: ["results"],
         properties: {
-          results: { type: "array", items: guarded(ctx) ? withRef(resultItem(ctx.options.spec)) : resultItem(ctx.options.spec) },
+          results: { type: "array", items: withRef(resultItem(ctx.options.spec), guarded(ctx)) },
           follow_up: {
             type: "array",
             description: "New leads this opened, each a question worth asking next.",
@@ -512,8 +512,14 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         const calls = callsIn(await state(ctx).read(ctx.options.run_id));
         const served = servedSince(calls, ctx.options.spec.tools);
         const call_refs = servedRefsSince(calls, ctx.turn());
+        const read = readRefs(calls, given);
         return withBook(ctx, ports, (book) => {
-          const evidence = evidenceFrom({ results }).map((result) => ({ ...result, call_refs, ...(served === null ? {} : { served_by: served }) }));
+          const evidence = evidenceFrom({ results }).map((result, i) => ({
+            ...result,
+            call_refs,
+            ...(served === null ? {} : { served_by: served }),
+            ...(read[i] === undefined ? {} : { read_ref: read[i] }),
+          }));
           const records = book.appendEvidence(evidence);
           const raised = (Array.isArray(args["follow_up"]) ? args["follow_up"] : []).map((one) => {
             const lead = one as { question?: unknown; entity?: unknown; hypothesis_id?: unknown };
@@ -669,7 +675,7 @@ function expandTool(ctx: PluginContext): RegisteredTool[] {
 // each field as the reader labelled it. Only that labelling can make a field
 // sensor-attested: a field the reader did not label, and a record naming no result,
 // count as the adversary's whatever the decider says.
-function withRef(item: Record<string, unknown>): Record<string, unknown> {
+function withRef(item: Record<string, unknown>, attests: boolean): Record<string, unknown> {
   const properties = (item["properties"] ?? {}) as Record<string, unknown>;
   return {
     ...item,
@@ -677,10 +683,24 @@ function withRef(item: Record<string, unknown>): Record<string, unknown> {
       ...properties,
       ref: {
         type: "string",
-        description: "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested.",
+        // unguarded, it only names where the row was read, which a console shows as its source (#2564)
+        description: attests
+          ? "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested."
+          : "The ref of the result this finding came from, such as r4.",
       },
     },
   };
+}
+
+// The call each given row names as the one it was read from, by the ref the model was shown;
+// none where it names no call this run made.
+export function readRefs(calls: readonly CallPayload[], given: readonly Record<string, unknown>[]): (string | undefined)[] {
+  const byShown = new Map<string, string>();
+  for (const call of calls) {
+    byShown.set(call.ref, call.ref);
+    byShown.set(guardedRef(call), call.ref);
+  }
+  return given.map((one) => (typeof one["ref"] === "string" ? byShown.get(one["ref"]) : undefined));
 }
 
 const unattested = (record: Record<string, unknown>): Record<string, unknown> => {

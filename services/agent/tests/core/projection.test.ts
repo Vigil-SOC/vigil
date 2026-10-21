@@ -172,7 +172,7 @@ describe("the calls and the opening recall", () => {
     );
 
     expect(projection.calls).toEqual([
-      { question: "what locked the accounts", tool: "case_records", result_length: 4, cost_usd: 0.05, duration_ms: 12 },
+      { question: "what locked the accounts", tool: "case_records", tool_words: "Case records", result_length: 4, cost_usd: 0.05, duration_ms: 12 },
     ]);
     expect(projection.recall).toEqual(recall);
   });

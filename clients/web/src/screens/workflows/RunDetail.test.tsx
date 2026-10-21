@@ -190,7 +190,7 @@ describe('what a finished hunt shows an operator', () => {
       }),
     })
 
-    expect(screen.getByText(/4 corroborating source system\(s\)/)).toBeInTheDocument()
+    expect(screen.getByText(/4 corroborating source systems, 0 contradicting records, 0 open gaps/)).toBeInTheDocument()
     expect(screen.getByText(/survived disconfirmation/)).toBeInTheDocument()
   })
 })

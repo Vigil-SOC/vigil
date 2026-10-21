@@ -24,7 +24,7 @@ describe("a kernel hunt's turn, in words", () => {
   it("says what a search asked, never its JSON", () => {
     expect(turnWords([call("search_findings", { query: "HTTPS 60s interval", limit: 20 })])).toEqual({ action: "QUERY", words: "Searched alerts for HTTPS 60s interval" });
     const recall = turnWords([call("recall_entity", { entity_keys: ["ip:203.0.113.47", "ip:198.51.100.23"], caller_kind: "hunt_lead", caller_id: "threat-hunt-h-1" })]);
-    expect(recall.words).toBe("Recalled what memory holds on ip:203.0.113.47 and ip:198.51.100.23");
+    expect(recall.words).toBe("Recalled what memory holds on 203.0.113.47 and 198.51.100.23");
     expect(recall.words).not.toContain("caller");
   });
 
