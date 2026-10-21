@@ -148,6 +148,78 @@ describe("a move as a kernel turn", () => {
       expect((await u.client.runTurn(u.request({ submitTool: "submit_theories" }))).submission).toBeNull();
     });
 
+    describe("a key the schema does not know", () => {
+      const boundary = { targetDomain: "email", reason: "the mail gateway would record the sender", inDomainExhausted: true };
+      const emit = async (submission: unknown, submitTool: TurnRequest["submitTool"] = "submit_causes") => {
+        const t = setup((request) => (request.emit !== undefined ? { emit: submission } : { content: "done" }));
+        const out = await t.client.runTurn(t.request({ submitTool }));
+        return { t, got: out.submission as { candidates: { label: string }[]; boundary?: unknown } | null, note: t.trace.chronological().find((e) => e.type === "rejected-submission")?.payload as Record<string, string> | undefined };
+      };
+
+      it("is removed from a candidate that is kept, and a boundary in it moves up to the top level", async () => {
+        const { got, note } = await emit({ candidates: [{ ...cand("phishing email delivered", []), boundary }, cand("also good", [])], reasoning: "r" });
+        expect(got!.candidates.map((c) => c.label)).toEqual(["phishing email delivered", "also good"]);
+        expect(got!.candidates[0]).not.toHaveProperty("boundary");
+        expect(got!.boundary).toEqual(boundary);
+        expect(note!["salvaged"]).toBe("kept the rest, dropped 0 item(s)");
+        expect(note!["repaired"]).toBe("stripped 1 unknown key(s), lifted boundary to the top level");
+      });
+
+      it("is dropped, not lifted, when the top level already has that field or the value does not fit it", async () => {
+        const top = { ...boundary, reason: "set at the top" };
+        const held = await emit({ candidates: [{ ...cand("kept", []), boundary }], boundary: top, reasoning: "r" });
+        expect(held.got!.candidates[0]).not.toHaveProperty("boundary");
+        expect(held.got!.boundary).toEqual(top);
+        expect(held.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+        const misfit = await emit({ candidates: [{ ...cand("kept", []), boundary: { targetDomain: "email" } }], reasoning: "r" });
+        expect(misfit.got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(misfit.got).not.toHaveProperty("boundary");
+        expect(misfit.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+      });
+
+      it("is removed from the candidate, whatever it is called, and from the submission itself", async () => {
+        const inner = await emit({ candidates: [{ ...cand("kept", []), notes: "x" }], reasoning: "r" });
+        expect(inner.got!.candidates).toEqual([cand("kept", [])]);
+        expect(inner.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+        const root = await emit({ candidates: [cand("kept", [])], reasoning: "r", confidence: 0.9 });
+        expect(root.got).toEqual({ candidates: [cand("kept", [])], reasoning: "r" });
+        expect(root.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+      });
+
+      it("does not save a candidate with a real error: it is dropped, and what it carried is not lifted", async () => {
+        const { label: _, ...unlabelled } = cand("", []);
+        const { got, note } = await emit({ candidates: [{ ...unlabelled, boundary }, cand("kept", [])], reasoning: "r" });
+        expect(got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(got).not.toHaveProperty("boundary");
+        expect(note!["salvaged"]).toBe("kept the rest, dropped 1 item(s)");
+        expect(note).not.toHaveProperty("repaired");
+      });
+
+      it("is lifted only from a candidate the check keeps, and only the dropped candidate is counted", async () => {
+        const lost = await emit({ candidates: [{ ...cand("cites a search never run", ["r9"]), boundary }, { ...cand("kept", []), notes: "x" }], reasoning: "r" });
+        expect(lost.got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(lost.got).not.toHaveProperty("boundary");
+        expect(lost.note!["salvaged"]).toBe("kept the rest, dropped 1 item(s)");
+        expect(lost.note!["repaired"]).toBe("stripped 2 unknown key(s)");
+        const kept = await emit({ candidates: [cand("cites a search never run", ["r9"]), { ...cand("kept", []), boundary }], reasoning: "r" });
+        expect(kept.got!.candidates).toEqual([cand("kept", [])]);
+        expect(kept.got!.boundary).toEqual(boundary);
+        expect(kept.note!["salvaged"]).toBe("kept the rest, dropped 1 item(s)");
+        expect(kept.note!["repaired"]).toBe("stripped 1 unknown key(s), lifted boundary to the top level");
+      });
+
+      it("does not fill a missing required field from an item: the submission still fails", async () => {
+        const ev = [{ summary: "s", strength: "direct", polarity: "supports", toolCallIds: [] }];
+        expect((await emit({ causes: [{ ...cand("upstream", []), evidence: ev }], reasoning: "r" }, "submit_assessment")).got).toBeNull();
+      });
+
+      it("is dropped, not lifted, when the submission has no such field (entry points carry no boundary)", async () => {
+        const { got, note } = await emit({ candidates: [{ ...cand("kept", []), boundary }], reasoning: "r" }, "submit_entry_points");
+        expect(got).toEqual({ candidates: [cand("kept", [])], reasoning: "r" });
+        expect(note!["repaired"]).toBe("stripped 1 unknown key(s)");
+      });
+    });
+
     it("gets nothing from an emission that was not JSON", async () => {
       const t = setup((request) => (request.emit !== undefined ? { emit: "no json here" } : { content: "done" }));
       expect((await t.client.runTurn(t.request())).submission).toBeNull();
@@ -186,6 +258,20 @@ describe("a move as a kernel turn", () => {
     const out = await t.client.runTurn(t.request());
     expect(out.submission).toBeNull();
     expect(t.trace.chronological().some((e) => e.type === "rejected-submission")).toBe(true);
+  });
+
+  it("reports a provider error on the emission or the tool turn as failed, apart from an emission the model got wrong", async () => {
+    const down = () => { throw new Error("502 failed to execute HTTP request to provider API"); };
+    for (const dies of ["emit", "tool"]) {
+      const t = setup((request) => ((dies === "emit") === (request.emit !== undefined) ? down() : request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+      expect(out.submission).toBeNull();
+      expect(out.failed).toContain("502");
+      expect(t.trace.chronological().map((e) => e.type)).toContain("provider-failure");
+      expect(t.trace.chronological().map((e) => e.type)).not.toContain("rejected-submission");
+    }
+    const bad = setup((request) => (request.emit !== undefined ? { emit: { nothing: true } } : { content: "done" }));
+    expect((await bad.client.runTurn(bad.request())).failed).toBeUndefined();
   });
 
   it("ends the run when the pool refuses another call", async () => {

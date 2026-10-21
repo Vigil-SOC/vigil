@@ -158,14 +158,16 @@ describe("cross-source sweep", () => {
     const calls: string[] = [];
     const tools = { callCount: 0, list: () => [], call: async (_: string, input: any) => {
       calls.push(input.spl);
-      const data = input.spl.includes("ABCD1234") ? '1 events matched\n{"sourcetype":"mail","count":"1","first":"1","last":"1"}' : '90 events matched\n{"sourcetype":"auth","count":"90","first":"1","last":"2"}';
+      const data = input.spl.includes("ABCD1234") ? '4 events matched\n{"sourcetype":"edr","count":"3","first":"1","last":"1"}\n{"sourcetype":"mail","count":"1","first":"1","last":"1"}' : '90 events matched\n{"sourcetype":"auth","count":"90","first":"1","last":"2"}';
       return { toolCallId: `r${calls.length}`, tool: "splunk_query", input, result: { ok: true, data } };
     } };
     const { MemoryTrace } = await import("../../../plugins/rootcause/v3/trace.js");
     const r = await sweep(g, g.nodes.N2!, { cfg, tools, trace: new MemoryTrace("t").forTurn(1, "expand", "N2"), domains: ["edr", "mail", "auth"], range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "lab" } as any);
-    expect(calls[0]).toMatch(/^index=lab NOT sourcetype="edr" "ABCD1234"/);
+    // One presence lookup per value, shared with the coverage check: the event's own source is left out here, in code.
+    expect(calls[0]).toMatch(/^index=lab sourcetype=\* \("ABCD1234" OR host="ABCD1234"\) \| stats count .* by sourcetype$/);
     expect(r.topDomain).toBe("mail");
     expect(r.leads).toMatch(/"ABCD1234": mail 1 events .*\[r1\]/);
+    expect(r.leads).not.toMatch(/edr/);
   });
 });
 
@@ -267,6 +269,8 @@ describe("search coverage", () => {
     expect(searchedSourcetypes({ spl: `index=x sourcetype="aws:cloudtrail" foo | stats count` })).toEqual(["aws:cloudtrail"]);
     expect(searchedSourcetypes({ spl: `index=x NOT sourcetype="aws:cloudtrail" "v" | stats count by sourcetype` })).toEqual([]);
     expect(searchedSourcetypes({ spl: `index=x (sourcetype=a OR sourcetype=b)` })).toEqual(["a", "b"]);
+    expect(searchedSourcetypes({ spl: `index=x sourcetype IN ("a", b) NOT sourcetype IN (c)` })).toEqual(["a", "b"]);
+    expect(searchedSourcetypes({ spl: `index=x sourcetype=* ("v" OR host="v") | stats count by sourcetype` })).toEqual([]);
   });
   it("names small sources in the constraints", async () => {
     const { coverageLine } = await import("../../../plugins/rootcause/v3/model/prompts.js");

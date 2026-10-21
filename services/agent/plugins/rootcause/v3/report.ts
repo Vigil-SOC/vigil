@@ -2,8 +2,10 @@
 // narrative, decisions, raw layer, open questions. Plus indicators and off-path findings, which a reviewer
 // (and the grader) needs to see even when they are not on the root-cause chain.
 import { isDivergence } from "./attribution.js";
+import { defaultConfig } from "./config.js";
 import { ACCUSE, TAKEOVER } from "./model/client.js";
 import { allPaths, bestPathFromSymptom, getParents, islands, type Graph, type GraphNode } from "./graph.js";
+import { settled } from "./scoring.js";
 import type { TraceEntry, TraceWriter } from "./trace.js";
 import type { Alert, Evidence, ExitReason, Spent } from "./types.js";
 
@@ -76,11 +78,13 @@ export interface ChainEvent {
   artifacts: { kind: string; value: string }[];
 }
 export interface TimelineRow { id: string; label: string; status: string; confidence: number; domain: string; observedAt?: string; onChain: boolean; legitimate: boolean; ranAs: string[]; operatedBy: string[] }
+export interface Rejected { id: string; reason: string }
 export interface ReportRows {
   accounts: AccountRow[];
   // Legitimate users that are people (not carrier services): what the indicator filters compare against.
   people: string[];
-  conclusion: { text: string; rootCause?: { id: string; label: string }; chain: string[]; openQuestions: string[] } | null;
+  // rejected: what the graph holds against the model's conclusion; any entry makes it unconfirmed. Its open questions are in `open`.
+  conclusion: { text: string; rootCause?: { id: string; label: string }; chain: string[]; rejected: Rejected[] } | null;
   chain: { score: number; events: ChainEvent[] } | null; // root first
   attribution: { id: string; label: string; ranAs: ActorRef[]; operatedBy: ActorRef[] }[];
   impersonation: { nodeId: string; summary: string }[];
@@ -89,8 +93,36 @@ export interface ReportRows {
   others: { id: string; label: string; status: string; confidence: number; domain: string; observedAt?: string; lastEvidence?: string }[];
   alternatives: { nodeIds: string[]; score: number }[];
   tested: { id: string; sourcetype: string; found: boolean; result: string; refs: string[] }[];
-  open: { kind: "boundary" | "disputed" | "ruled-out" | "flagged"; id: string; text: string }[];
+  open: { kind: "boundary" | "disputed" | "ruled-out" | "flagged" | "model"; id: string; text: string }[];
 }
+
+// What in the model's conclusion the graph rejects: a ruled-out or unsettled event, a ruled-out or missing link between
+// two consecutive events of its chain, or a root that is not the top of the graph's best path. The alert itself
+// is the premise, so it needs no settling. Empty: the graph supports the conclusion.
+function rejections(g: Graph, c: NonNullable<Graph["conclusion"]>): Rejected[] {
+  const out: Rejected[] = [];
+  const ids = [...new Set([...c.chain, ...(c.rootCause ? [c.rootCause] : [])])];
+  for (const id of ids) {
+    const n = g.nodes[id];
+    if (!n) out.push({ id, reason: `${id} is not in the graph` });
+    else if (n.status === "ruled-out") out.push({ id, reason: `${id} ruled out at turn ${n.updatedTurn}` });
+    else if (!n.isSymptom && !(n.kind !== "boundary-marker" && settled(n, defaultConfig))) out.push({ id, reason: `${id} not settled (${n.status} ${pct(n.confidence)})` });
+  }
+  c.chain.slice(1).forEach((to, i) => {
+    const from = c.chain[i]!;
+    const ties = Object.values(g.edges).filter((e) => e.kind === "explains" && !e.retired && e.source === from && e.target === to);
+    const dead = ties.find((e) => e.status === "ruled-out");
+    if (!ties.some((e) => e.status !== "ruled-out")) out.push(dead ? { id: dead.id, reason: `${dead.id} (${from} → ${to}) ruled out at turn ${dead.updatedTurn}` } : { id: `${from}→${to}`, reason: `no link from ${from} to ${to}` });
+  });
+  const top = bestPathFromSymptom(g)?.nodeIds.at(-1);
+  // The alert is exempt from settling above, but it is never its own cause, even when the graph has no root.
+  if (c.rootCause && g.nodes[c.rootCause]?.isSymptom) out.push({ id: c.rootCause, reason: `${c.rootCause} is the alert, not a cause` });
+  else if (c.rootCause && top !== c.rootCause) out.push({ id: c.rootCause, reason: `${c.rootCause} is not the root of the graph's best path${top ? ` (${top})` : ""}` });
+  return out;
+}
+
+// The line that stands in for a verdict the graph rejects: the investigator's reading is kept, marked as unconfirmed.
+export const unconfirmedNote = (rejected: readonly Rejected[]) => `Unconfirmed: the graph rejects part of this conclusion (${rejected.map((r) => r.reason).join("; ")}). It is the investigator's reading, not the verdict.`;
 
 const evidenceRow = (e: Evidence): EvidenceRow => ({ polarity: e.polarity, strength: e.strength, source: e.source, summary: e.summary, turn: e.turn, refs: e.toolCallIds });
 
@@ -138,7 +170,7 @@ export function reportRows(g: Graph, chronological: readonly TraceEntry[], raw =
     const backed = Object.values(g.nodes).filter((n) => n.takeover).map((n) => n.id);
     const unbacked = (x: string) => TAKEOVER.test(x) && !backed.some((id) => new RegExp(`\\b${id}\\b`).test(x));
     const text = raw ? c.text : c.text.split(/(?<=[.!?])\s+/).filter((x) => !blames(x) && !unbacked(x)).join(" ");
-    conclusion = { text, ...(c.rootCause ? { rootCause: { id: c.rootCause, label: g.nodes[c.rootCause]?.label ?? "" } } : {}), chain: c.chain, openQuestions: c.openQuestions };
+    conclusion = { text, ...(c.rootCause ? { rootCause: { id: c.rootCause, label: g.nodes[c.rootCause]?.label ?? "" } } : {}), chain: c.chain, rejected: rejections(g, c) };
   }
 
   // The chain from its root to the symptom, each event with its link to the one it explains.
@@ -203,7 +235,11 @@ export function reportRows(g: Graph, chronological: readonly TraceEntry[], raw =
   for (const n of Object.values(g.nodes)) if (n.kind === "boundary-marker" && !n.resolvedTo) open.push({ kind: "boundary", id: n.id, text: `Boundary ${n.id}: cause of ${n.originNodeId} believed to be in ${n.targetDomain} (${n.reason ?? ""}); ${n.pivotSteps ?? 0} pivot steps, not stitched.` });
   for (const e of Object.values(g.edges)) if (e.disputed && !e.retired) open.push({ kind: "disputed", id: e.id, text: `Disputed ${e.kind} ${e.id}: ${g.nodes[e.source]!.label} -> ${e.target} at ${pct(e.confidence)}.` });
   for (const n of Object.values(g.nodes)) if (n.status === "ruled-out") open.push({ kind: "ruled-out", id: n.id, text: `Ruled out ${n.id} ${n.label}: ${n.evidence.filter((e) => e.polarity === "refutes").map((e) => e.summary).join(" ") || "no support"}` });
+  for (const e of Object.values(g.edges)) if (e.status === "ruled-out" && !e.retired) open.push({ kind: "ruled-out", id: e.id, text: `Ruled out ${e.kind} ${e.id} ${g.nodes[e.source]!.label} -> ${e.target}: ${e.evidence.filter((x) => x.polarity === "refutes").map((x) => x.summary).join(" ") || "no support"}` });
   for (const f of chronological.filter((x) => x.type === "reasoning" && (x.payload as any)?.suspiciousContent)) open.push({ kind: "flagged", id: f.id, text: `Suspicious content flagged at turn ${f.turn} (${f.id}): ${(f.payload as any).suspiciousContent.join(" | ")}` });
+
+  // The model's own open questions close the list, so the report and the projection read one list. A blank one is dropped.
+  (g.conclusion?.openQuestions ?? []).map((q) => q.replace(/\s+/g, " ").trim()).filter(Boolean).forEach((q, i) => open.push({ kind: "model", id: `Q${i + 1}`, text: q }));
 
   return { accounts, people, conclusion, chain, attribution, impersonation, exonerated, timeline, others, alternatives, tested, open };
 }
@@ -231,10 +267,12 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
 
   if (rows.conclusion) {
     const c = rows.conclusion;
-    out.push("## Investigator's conclusion", "", c.text, "");
-    if (c.rootCause) out.push(`Root cause named: **${c.rootCause.id}** ${c.rootCause.label}`, "");
+    const unconfirmed = c.rejected.length > 0;
+    out.push(`## Investigator's conclusion${unconfirmed ? " (unconfirmed)" : ""}`, "");
+    if (unconfirmed) out.push(unconfirmedNote(c.rejected), "");
+    out.push(c.text, "");
+    if (c.rootCause) out.push(`${unconfirmed ? "Root cause the investigator named, unconfirmed" : "Root cause named"}: **${c.rootCause.id}** ${c.rootCause.label}`, "");
     if (c.chain.length) out.push(`Chain, root first: ${c.chain.join(" → ")}`, "");
-    if (c.openQuestions.length) out.push("Still open:", "", ...c.openQuestions.map((q) => `- ${q}`), "");
   }
 
   // 1. Verdict

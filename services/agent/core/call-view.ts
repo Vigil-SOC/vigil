@@ -60,8 +60,19 @@ export function queryOf(args: unknown): string {
 // "N row(s) from <source>" opens every rendered result (core/security.ts).
 const ROWS = /^(?:<vigil:tool_result[^>]*>\s*)?(\d+) rows?\b/;
 
+// The search tool's count line, "N events matched, M results (showing ...)" (rootcause/v3/tools/search.ts
+// writes it; it lives here because core cannot import a plugin). M is the count; a purpose or window line may open
+// the text first. Undefined when the text has no such line.
+const COUNT_LINE = /^[\d,]+ events matched, ([\d,]+) results \(showing /m;
+
+export function resultCountIn(text: string): number | undefined {
+  const said = COUNT_LINE.exec(text)?.[1];
+  return said === undefined ? undefined : Number(said.replaceAll(",", ""));
+}
+
 // How many rows came back. A tool that wraps its answer ({success, query, results: [...]},
-// as the Splunk tools do) reports one row, the wrapper; the rows are its results.
+// as the Splunk tools do) reports one row, the wrapper; the rows are its results. The v3 search
+// tool wraps its text as [{output}]: the count is the one its text states, none if it does not.
 export function rowsIn(result: string): number | undefined {
   const said = ROWS.exec(result);
   if (said === null) return undefined;
@@ -72,7 +83,9 @@ export function rowsIn(result: string): number | undefined {
   try {
     const parsed: unknown = JSON.parse(body.slice(split + 1));
     const only = Array.isArray(parsed) && parsed.length === 1 ? (parsed[0] as Record<string, unknown> | null) : null;
-    return only !== null && typeof only === "object" && Array.isArray(only["results"]) ? only["results"].length : count;
+    if (only === null || typeof only !== "object") return count;
+    if (Array.isArray(only["results"])) return only["results"].length;
+    return typeof only["output"] === "string" ? resultCountIn(only["output"]) : count;
   } catch {
     // A wrapper cut short by the result cap does not parse; its "1" is the wrapper, not the rows.
     return undefined;

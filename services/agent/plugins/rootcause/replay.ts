@@ -15,7 +15,7 @@ export interface RootCauseReplay {
 
 // recorded_at is the envelope time. A step's own `at` is when its event happened.
 export type RootCauseReplayStep =
-  | { kind: "search"; recorded_at: string; tool: string; args: string; rows: number; failed: boolean; failure?: string }
+  | { kind: "search"; recorded_at: string; tool: string; args: string; rows?: number; failed: boolean; failure?: string }
   | ({ kind: "step"; recorded_at: string } & Pick<
       StepPayload,
       "step_id" | "event" | "who" | "at" | "link" | "cause_id" | "origin" | "link_status" | "origin_status"

@@ -1731,22 +1731,42 @@ describe('a v3 root-cause run', () => {
     expect(workflowApi.getReplay).not.toHaveBeenCalled()
   })
 
-  it('groups decisions into rounds that start at each theorize, in turn order', () => {
+  it('groups decisions into rounds that start at each theorize, in turn order, with no reasoning and searches on demand', () => {
     renderPanel({ projection: v3({ moves }) })
     tabTo(/Decisions/)
 
     const opening = screen.getByRole('heading', { name: 'Opening' })
     const round = screen.getByRole('heading', { name: 'Round 1' })
     expect(opening.compareDocumentPosition(round) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByText('look upstream')).toBeInTheDocument()
-    expect(screen.getByText('two stories')).toBeInTheDocument()
-    expect(screen.getByText('check the story')).toBeInTheDocument()
+    // The model's reasoning is never shown, and a turn's searches stay closed until its row opens.
+    expect(screen.queryByText('look upstream')).toBeNull()
+    expect(screen.queryByText('two stories')).toBeNull()
+    expect(screen.queryByText('index=email sourcetype=barracuda')).toBeNull()
+    // n:3 was listed before n:1; the rows still follow turn order.
+    const turns = screen.getAllByRole('row').slice(1).map((r) => within(r).queryAllByRole('cell')[0]?.textContent)
+    expect(turns.filter(Boolean)).toEqual(['1', '2', '3'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'theorize' }))
+    expect(screen.getByText('check the inbox')).toBeInTheDocument()
+    expect(screen.getByText('index=email sourcetype=barracuda')).toBeInTheDocument()
+    expect(screen.getByText('4 rows')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'test' }))
     expect(screen.getByText('follow the fetch')).toBeInTheDocument()
-    expect(screen.getByText('index=proxy N0')).toBeInTheDocument()
-    expect(screen.getByText('backend refused')).toBeInTheDocument()
-    // n:3 was listed before n:1; the round still follows turn order.
-    expect(screen.getByText(/Turn 1/).compareDocumentPosition(screen.getByText(/Turn 2/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByText(/Turn 2/).compareDocumentPosition(screen.getByText(/Turn 3/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('failed — backend refused')).toBeInTheDocument()
+  })
+
+  it('collapses a run of identical refused choose turns into one row that opens onto its turns', () => {
+    const refusal = 'branch N1 is not available'
+    const repeats = Array.from({ length: 5 }, (_, i) => ({ n: 4 + i, move: 'choose', targetId: 'N0', reason: refusal, queries: [] }))
+    renderPanel({ projection: v3({ moves: [{ n: 1, move: 'expand', targetId: 'N0', reason: 'r', queries: [] }, ...repeats] }) })
+    tabTo(/Decisions/)
+
+    expect(screen.getAllByRole('row')).toHaveLength(3)
+    expect(screen.getByText('×5')).toBeInTheDocument()
+    expect(screen.getByText(refusal)).toBeInTheDocument()
+    expect(screen.getByText('4–8')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'choose' }))
+    expect(screen.getByText('Turns 4 5 6 7 8')).toBeInTheDocument()
   })
 
   it('lays out the timeline, the other lists, and the report', () => {

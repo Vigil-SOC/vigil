@@ -2,6 +2,7 @@
 // Causes are looked for 48h back by default; a later attempt searches the whole data range. When an attempt
 // finds no cause, code sweeps the node's identifying values across every other source (sweep.ts): the hits
 // become leads for the next attempt and a boundary into the source that matched most.
+import type { GraphPatch } from "../graph.js";
 import type { SubmitCauses } from "../model/schemas.js";
 import { instructions } from "../model/prompts.js";
 import { sweep } from "../sweep.js";
@@ -23,7 +24,8 @@ const causes = (fork: boolean): Handler => async (d, g, ctx) => {
   const sub = r.submission as SubmitCauses | null;
   if (sub) noteSuspicious(sub, ctx);
   const v = new Vetter(ctx, r.toolCalls);
-  const parts = (sub?.candidates ?? []).map((c) => candidatePatch(c, v, g, ctx, id).patch);
+  const parts: Partial<GraphPatch>[] = [];
+  for (const c of sub?.candidates ?? []) parts.push((await candidatePatch(c, v, g, ctx, id)).patch);
   const boundary = boundaryPatch(sub?.boundary, id, g, ctx);
 
   // Nothing found and no boundary proposed: sweep once, in code.

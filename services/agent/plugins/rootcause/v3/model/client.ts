@@ -2,7 +2,7 @@
 // tool, then emits the move's submission against its schema. The kernel journals every search as a `call` event
 // with a ref, bills the model, delimits the results and resumes; what is left here is the move's own check, once.
 import { runSubturn, type PluginContext, type PluginHooks, type Subturn, type AgentKinds, type AgentOptions } from "../../../../core/agent.js";
-import { schemaErrors } from "../../../../core/stream.js";
+import { schemaErrors, schemaIssues } from "../../../../core/stream.js";
 import type { CallPayload, RunKind } from "../../../../contracts/events.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../../../contracts/tool.js";
 import type { Harness, Outcome } from "../../../../core/loop.js";
@@ -37,6 +37,7 @@ export interface ToolCallOut { id: string; tool: string; input: unknown; ok: boo
 export interface TurnResult {
   submission: unknown | null;
   toolCalls: ToolCallOut[];
+  failed?: string; // the provider or gateway failed this turn (its error text): the model's answer was never judged
 }
 
 export interface ModelClient {
@@ -73,11 +74,12 @@ export const clip = (v: unknown, key = ""): unknown =>
 // Why a clipped value does not meet the move's schema (what the kernel's ajv holds an emission to, plus the length
 // caps), with the list items the failure rests on, from the paths ajv reports: the deepest list item on each path
 // (`effects/0/artifacts/1`, not `effects/0`), so the rest of the answer survives. null when it does meet it.
+const itemOf = (p: string[]) => p.slice(0, p.findLastIndex((x) => /^\d+$/.test(x)) + 1);
 function schemaProblem(name: SubmitName, value: unknown): { msg: string; drop: Path[] } | null {
   const msg = schemaErrors(SUBMIT[name], value);
   if (msg === null) return null;
   const paths = msg.split("; ").map((e) => e.split(" ")[0]!.split("/").slice(1));
-  const drop = paths.map((p) => p.slice(0, p.findLastIndex((x) => /^\d+$/.test(x)) + 1)).filter((p) => p.length);
+  const drop = paths.map(itemOf).filter((p) => p.length);
   return { msg, drop: drop.length === paths.length ? drop : [] };
 }
 
@@ -157,19 +159,70 @@ const prune = (v: unknown, at: string[], gone: Set<string>): unknown =>
   Array.isArray(v) ? v.flatMap((x, j) => (gone.has([...at, j].join("/")) ? [] : [prune(x, [...at, String(j)], gone)]))
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, prune(x, [...at, k], gone)])) : v;
 
+// Where the value at path p (pre-prune) is once prune has taken out gone: null when it, or a list item holding it, went.
+const follow = (p: string[], gone: Set<string>): string[] | null => {
+  const out: string[] = [];
+  for (let n = 0; n < p.length; n++) {
+    if (!/^\d+$/.test(p[n]!)) { out.push(p[n]!); continue; }
+    if (gone.has(p.slice(0, n + 1).join("/"))) return null;
+    let i = +p[n]!;
+    for (let j = +p[n]! - 1; j >= 0; j--) if (gone.has([...p.slice(0, n), j].join("/"))) i--;
+    out.push(String(i));
+  }
+  return out;
+};
+
+// A key the schema does not know is removed, not a reason to drop the item or the submission. The deepest list item
+// holding a real error is dropped whole by the caller, so nothing is stripped from it; the item around it (a
+// candidate around a bad nodeEvidence entry) is stripped as any other. One that is a field of the submission itself
+// (a candidate's `boundary`) is returned with where it was, for the caller to lift once it knows that item is kept.
+// Mutates `cur`.
+function stripStray(name: SubmitName, cur: Record<string, unknown>): { stripped: number; lifts: { at: string[]; key: string; value: unknown }[] } {
+  const schema = SUBMIT[name] as { properties: Record<string, Record<string, unknown>> };
+  const errs = schemaIssues(schema, cur);
+  const dead = errs.filter((e) => e.keyword !== "additionalProperties").map((e) => itemOf(e.instancePath.split("/").slice(1)).join("/")).filter(Boolean);
+  const live = errs.flatMap((e) => {
+    const at = e.instancePath.split("/").slice(1);
+    return e.keyword === "additionalProperties" && !dead.some((d) => `${at.join("/")}/`.startsWith(`${d}/`)) ? [{ at, key: String((e.params as { additionalProperty: string }).additionalProperty) }] : [];
+  });
+  const lifts: { at: string[]; key: string; value: unknown }[] = [];
+  for (const { at, key } of live) {
+    const parent = at.reduce<any>((v, k) => v[k], cur);
+    const value = parent[key];
+    delete parent[key];
+    if (at.length && key in schema.properties && !schemaIssues(schema.properties[key]!, value).length) lifts.push({ at, key, value });
+  }
+  return { stripped: live.length, lifts };
+}
+
 // A failed check drops the list items it rests on and keeps the rest, so one bad event does not throw away
 // the others (a run once lost a correct finding with its whole submission).
-export function salvage(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx, first: CheckResult): { data: unknown; dropped: number } | null {
+export function salvage(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx, first: CheckResult): { data: unknown; dropped: number; repaired?: string } | null {
   let cur = clip(input) as Record<string, unknown[]>, r = first, dropped = 0;
+  let { stripped, lifts } = stripStray(name, cur);
+  if (stripped) { const bad = schemaProblem(name, cur); r = bad ? { success: false, ...bad } : check(name, cur, calls, cx); }
   for (let i = 0; i < 3 && !r.success; i++) {
     if (!r.drop.length) return null;
     const gone = new Set(r.drop.map((p) => p.join("/")));
+    lifts = lifts.flatMap((l) => { const at = follow(l.at, gone); return at ? [{ ...l, at }] : []; });
     cur = prune(cur, [], gone) as typeof cur;
     dropped += gone.size;
     const bad = schemaProblem(name, cur); // dropping can leave a list under its minimum
     r = bad ? { success: false, ...bad } : check(name, cur, calls, cx);
   }
-  return r.success ? { data: r.data, dropped } : null;
+  if (!r.success) return null;
+  // Lifted only from an item still there, into an empty slot of a submission that holds without it, and only if
+  // the submission still holds with it: a lift never fills a field the submission was refused for lacking.
+  const up = new Map<string, unknown>();
+  for (const { key, value } of lifts) if (cur[key] === undefined && !up.has(key)) up.set(key, value);
+  if (up.size) {
+    const next = { ...cur, ...Object.fromEntries(up) };
+    const lr = schemaProblem(name, next) ? null : check(name, next, calls, cx);
+    if (lr?.success) r = lr;
+    else up.clear();
+  }
+  const repaired = stripped ? `stripped ${stripped} unknown key(s)${up.size ? `, lifted ${[...up.keys()].join(", ")} to the top level` : ""}` : null;
+  return { data: r.data, dropped, ...(repaired ? { repaired } : {}) };
 }
 
 // What a recorded turn looks like: replayable by ScriptedModelClient against a cassette. Tool call ids in
@@ -281,8 +334,11 @@ export class KernelModelClient implements ModelClient {
     // valid submission is one attempt on its target.
     // An emission the kernel rejected twice is salvaged too, when it parsed: what in it is sound is kept.
     let submission: unknown = null;
+    // A provider failure is not an answer the model got wrong: it is told apart on the ledger and in the result.
+    const failed = outcome!.status === "failed" && outcome!.emission_rejected !== true ? outcome!.reason : undefined;
     const kept = outcome!.value ?? outcome!.rejected_value;
-    if (kept === undefined || kept === null || typeof kept !== "object") req.trace.write("rejected-submission", { reason: outcome!.reason });
+    if (failed !== undefined) req.trace.write("provider-failure", { reason: failed });
+    else if (kept === undefined || kept === null || typeof kept !== "object") req.trace.write("rejected-submission", { reason: outcome!.reason });
     else {
       const cx: CheckCtx = { inputOf: tools.inputOf?.bind(tools), range: this.d.range };
       const bad = outcome!.value === null ? schemaProblem(req.submitTool, clip(kept)) : null;
@@ -290,12 +346,12 @@ export class KernelModelClient implements ModelClient {
       if (v.success) submission = v.data;
       else {
         const s = salvage(req.submitTool, kept, tools, cx, v);
-        req.trace.write("rejected-submission", { input: kept, error: v.msg, ...(s ? { salvaged: `kept the rest, dropped ${s.dropped} item(s)` } : {}) });
+        req.trace.write("rejected-submission", { input: kept, error: v.msg, ...(s ? { salvaged: `kept the rest, dropped ${s.dropped} item(s)`, ...(s.repaired ? { repaired: s.repaired } : {}) } : {}) });
         submission = s?.data ?? null;
       }
     }
     finishTurn(req, submission);
-    return { submission, toolCalls };
+    return { submission, toolCalls, ...(failed !== undefined ? { failed } : {}) };
   }
 
   // The move's searches as the ledger holds them: citable from here on, and traced for the report.

@@ -9,13 +9,15 @@ import type { BoundaryT, CandidateT, EvidenceInT, IdentitySignalT } from "../mod
 import { snapshot } from "../model/snapshot.js";
 import { vetEvidence } from "../scoring.js";
 import { routineShown } from "../baseline.js";
+import { coverageGap, entitiesOf, gapNote } from "../coverage.js";
+import { sweepValues } from "../sweep.js";
 import { issued } from "../tools/registry.js";
 import type { Domain, LoopContext } from "../types.js";
 
 export type Handler = (decision: FrontierDecision, graph: Readonly<Graph>, ctx: LoopContext) => Promise<GraphPatch>;
 
 export function userContent(g: Graph, targetId: string, instructions: string, ctx: LoopContext, allowed: Domain[], extra = "", cap?: number): string {
-  return [snapshot(g), currentTarget(g, targetId), instructions, constraints(ctx.cfg, ctx.range, allowed, ctx.domains, extra, cap, ctx.tools.coverage, ctx.sizes)].join("\n\n");
+  return [snapshot(g), currentTarget(g, targetId), instructions, constraints(ctx.cfg, ctx.range, allowed, ctx.domains, [extra, gapNote(ctx)].filter(Boolean).join("\n"), cap, ctx.tools.coverage, ctx.sizes)].join("\n\n");
 }
 
 // Evidence from the model, checked against this turn's tool calls. Rejected items go to the trace.
@@ -42,7 +44,8 @@ export class Vetter {
     return ok ? observedAt : undefined;
   }
   traceIds = (callIds: string[]) => callIds.flatMap((id) => this.traceOf.get(id) ?? []);
-  evidence(list: EvidenceInT[], source: Domain): EvidenceDraft[] {
+  // Cited and well-formed items only. Supporting evidence needs nothing more.
+  vetted(list: EvidenceInT[], source: Domain): EvidenceDraft[] {
     const out: EvidenceDraft[] = [];
     for (const e of list) {
       const v = vetEvidence(e, this.ids);
@@ -50,6 +53,23 @@ export class Vetter {
       out.push({ source, summary: v.value.summary, strength: v.value.strength, polarity: v.value.polarity, toolCallIds: v.value.toolCallIds, traceIds: this.traceIds(v.value.toolCallIds), turn: this.ctx.turn });
     }
     return out;
+  }
+  // Refuting items whose cited searches all came back empty: a search in a source with no record of the entities
+  // is a coverage gap, not refutation, and is dropped from the item; an item left citing nothing is dropped. Both
+  // are traced (see coverage.ts). Sequential: each lookup takes the next ref.
+  async gated(list: EvidenceDraft[], entities: string[]): Promise<EvidenceDraft[]> {
+    const out: EvidenceDraft[] = [];
+    for (const e of list) {
+      const gap = e.polarity === "refutes" ? await coverageGap(this.ctx, e.toolCallIds, entities) : undefined;
+      if (!gap || gap.standing.length === e.toolCallIds.length) { out.push(e); continue; }
+      const reason = `coverage gap: ${gap.sourcetypes.join(", ")} holds no events on ${gap.entities.join(", ")}; empty searches there do not refute`;
+      this.ctx.trace.write("rejected-evidence", { evidence: e.summary, toolCallIds: e.toolCallIds.filter((id) => !gap.standing.includes(id)), reason, ...(gap.standing.length ? { kept: gap.standing } : {}) });
+      if (gap.standing.length) out.push({ ...e, toolCallIds: gap.standing, traceIds: this.traceIds(gap.standing) });
+    }
+    return out;
+  }
+  async evidence(list: EvidenceInT[], source: Domain, entities: string[] = []): Promise<EvidenceDraft[]> {
+    return this.gated(this.vetted(list, source), entities);
   }
   // Identity signals must cite this turn's calls too; uncited ones are dropped.
   signals(list: IdentitySignalT[] | undefined): IdentitySignalT[] {
@@ -80,12 +100,13 @@ let tempSeq = 0;
 export const tempId = (prefix: string) => `${prefix}#${++tempSeq}`;
 
 // A candidate becomes an action node; with a target it also gets an explains edge candidate -> target.
-export function candidatePatch(c: CandidateT, v: Vetter, g: Graph, ctx: LoopContext, target?: string): { patch: Partial<GraphPatch>; id: string; node: NodeIn } {
+export async function candidatePatch(c: CandidateT, v: Vetter, g: Graph, ctx: LoopContext, target?: string): Promise<{ patch: Partial<GraphPatch>; id: string; node: NodeIn }> {
   const id = tempId("cand");
   const domain = ctx.domains.includes(c.domain) ? c.domain : c.domain || "unknown";
+  const own = sweepValues(g, { id, artifacts: c.artifacts });
   const node: NodeIn = {
     tempId: id, kind: "action", label: c.label, domain, prior: c.prior,
-    evidence: v.evidence(c.nodeEvidence, domain), artifacts: c.artifacts,
+    evidence: await v.evidence(c.nodeEvidence, domain, own), artifacts: c.artifacts,
     observedAt: v.checkTime(c.observedAt, [...c.nodeEvidence, ...c.edgeEvidence].flatMap((e) => e.toolCallIds), c.label),
     ...(c.isRootCause && !rootTooEarly(c, g, ctx) ? { isRoot: true, rootJustification: c.rootJustification } : {}),
     ...(c.deadEnd ? { deadEnd: true } : {}),
@@ -98,7 +119,7 @@ export function candidatePatch(c: CandidateT, v: Vetter, g: Graph, ctx: LoopCont
   // Routine work joins the attack's chain only on a record of the join: as a cause of a non-legitimate event it
   // needs direct edge evidence (a developer's routine registration once became the cause of a stolen role's
   // first call on timing alone, and the run spent turns on the developer's CI).
-  const edgeEv = target ? v.evidence(c.edgeEvidence, domain) : [];
+  const edgeEv = target ? await v.evidence(c.edgeEvidence, domain, [...new Set([...own, ...entitiesOf(g, target)])]) : [];
   const unproven = !!target && !!node.legitimate && !g.nodes[target]?.legitimate && !edgeEv.some((e) => e.strength === "direct" && e.polarity === "supports");
   // The link is kept as inferred (circumstantial) instead of dropping the step.
   if (unproven) {
@@ -144,7 +165,7 @@ export function withBaseline<C extends CandidateT>(cands: C[], v: Vetter, ctx: L
       ctx.trace.write("reasoning", { looseKept: c.label, was: why });
     }
   }
-  return { kept: cands, evidenceFor: (c) => !c.baseline ? [] : v.evidence([{ summary: `${c.baseline!.unusual ? "differs from baseline" : "routine for its account (legitimate step)"}: ${c.baseline!.summary}`, strength: "corroborating", polarity: "supports", toolCallIds: c.baseline!.toolCallIds }], c.domain) };
+  return { kept: cands, evidenceFor: (c) => !c.baseline ? [] : v.vetted([{ summary: `${c.baseline!.unusual ? "differs from baseline" : "routine for its account (legitimate step)"}: ${c.baseline!.summary}`, strength: "corroborating", polarity: "supports", toolCallIds: c.baseline!.toolCallIds }], c.domain) };
 }
 
 // Two events about the same process or container: a shared process id or container id on the same host.
