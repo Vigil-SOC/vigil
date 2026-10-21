@@ -135,12 +135,12 @@ def stack(tmp_path_factory):
     )
     assert enable.returncode == 0, enable.stdout + enable.stderr
     s.enable_output = enable.stdout
-    # enable-compose.sh prints this host's socket group in the up command and
-    # does not export it. Compose's default is 0, which can read the socket on
-    # Docker Desktop (root:root) and cannot on Linux (root:docker). The stack
-    # has to use the printed value, or the proxy never answers /_ping.
-    gid = re.search(r"VIGIL_MEDIC_DOCKER_GID=(\d+)", enable.stdout)
-    assert gid, enable.stdout
+    # enable-compose.sh writes this host's socket group to compose.env (V1).
+    # Compose's default is 0, which can read the socket on Docker Desktop
+    # (root:root) and cannot on Linux (root:docker), so use the written value.
+    settings = (s.secrets_dir / "compose.env").read_text(encoding="utf-8")
+    gid = re.search(r"^VIGIL_MEDIC_DOCKER_GID=(\d+)$", settings, re.M)
+    assert gid, settings
     s.env["VIGIL_MEDIC_DOCKER_GID"] = gid.group(1)
     s.compose("down", "-v", "--remove-orphans", check=False)
     try:
