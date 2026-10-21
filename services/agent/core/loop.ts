@@ -124,6 +124,9 @@ export interface Outcome<T> {
   // Set only when the role answered but never in a shape the schema accepts: a defect
   // in the emission, structured so a workflow never parses the reason to see it.
   emission_rejected?: true;
+  // With emission_rejected: the last emission, parsed whole, when it was JSON that missed the schema (unset when it
+  // did not parse or was cut off), so a caller can keep the part that is sound.
+  rejected_value?: unknown;
   // True when the tool loop was stopped by the cap rather than by the model, so
   // a workflow knows the answer was reached over a truncated set of calls.
   capped: boolean;

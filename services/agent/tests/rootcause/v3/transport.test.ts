@@ -114,6 +114,49 @@ describe("a move as a kernel turn", () => {
     expect(why.endsWith("…")).toBe(true);
   });
 
+  describe("an emission the kernel rejected", () => {
+    const art = (kind: string) => ({ kind, value: "a@b.test" });
+    const withArtifacts = (label: string, artifacts: unknown[]) => ({ ...cand(label, []), artifacts });
+    const salvaged = (t: ReturnType<typeof setup>) => t.trace.chronological().some((e) => e.type === "rejected-submission" && /dropped 1 item/.test(JSON.stringify(e.payload)));
+
+    it("keeps the sound candidates and drops the artifact that missed the enum, nested inside a candidate", async () => {
+      const bad = { candidates: [withArtifacts("good", [art("email-address")]), withArtifacts("has a bad artifact", [art("host"), art("email-sender")]), cand("also good", [])], reasoning: "r" };
+      const t = setup((request) => (request.emit !== undefined ? { emit: bad } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+
+      expect(t.provider.requests.filter((r) => r.emit !== undefined)).toHaveLength(2);
+      const got = (out.submission as { candidates: { label: string; artifacts: unknown[] }[] }).candidates;
+      expect(got.map((c) => c.label)).toEqual(["good", "has a bad artifact", "also good"]);
+      expect(got[1]!.artifacts).toEqual([art("host")]);
+      expect(salvaged(t)).toBe(true);
+    });
+
+    it("drops a top-level item, and returns null when that leaves a list under its schema minimum", async () => {
+      const one = { evidence: [{ summary: "s", strength: "direct", polarity: "supports", toolCallIds: [] }], artifacts: [art("email-sender"), art("host")], reasoning: "r" };
+      const t = setup((request) => (request.emit !== undefined ? { emit: one } : { content: "done" }));
+      const out = await t.client.runTurn(t.request({ submitTool: "submit_assessment" }));
+      expect((out.submission as { artifacts: unknown[] }).artifacts).toEqual([art("host")]);
+
+      const theory = (id: string) => ({ id, story: "s", accountsFor: [], gaps: "g", predictions: [{ id: "P1", sourcetype: "edr", expect: "e", spl: "index=lab", separates: [] }] });
+      const two = { theories: [theory("H1"), { ...theory("H2"), predictions: [{ id: "P2", sourcetype: "edr", expect: 7, spl: "x", separates: [] }] }], nextTests: ["P1"], reasoning: "r" };
+      const u = setup((request) => (request.emit !== undefined ? { emit: two } : { content: "done" }));
+      expect((await u.client.runTurn(u.request({ submitTool: "submit_theories" }))).submission).toBeNull();
+    });
+
+    it("gets nothing from an emission that was not JSON", async () => {
+      const t = setup((request) => (request.emit !== undefined ? { emit: "no json here" } : { content: "done" }));
+      expect((await t.client.runTurn(t.request())).submission).toBeNull();
+    });
+
+    it("accepts an email address and a message id as artifacts", async () => {
+      const ok = { candidates: [withArtifacts("mail sent", [art("email-address"), { kind: "message-id", value: "<abc@mail.test>" }])], reasoning: "r" };
+      const t = setup((request) => (request.emit !== undefined ? { emit: ok } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+      expect(t.provider.requests.filter((r) => r.emit !== undefined)).toHaveLength(1);
+      expect((out.submission as { candidates: { artifacts: unknown[] }[] }).candidates[0]!.artifacts).toHaveLength(2);
+    });
+  });
+
   it("cites only refs as the ledger spells them", async () => {
     const { issued } = await import("../../../plugins/rootcause/v3/tools/registry.js");
     expect(["r1", "r3", "r03", "r0", "r4", "tc_1"].map((id) => issued({ callCount: 3 }, id))).toEqual([true, true, false, false, false, false]);
