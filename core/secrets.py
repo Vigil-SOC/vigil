@@ -1,13 +1,22 @@
 from typing import Optional
 
 from core import secrets_manager as _secrets_manager
-from core.secrets_manager import SecretsManager, get_secrets_manager
+from core.secrets_manager import (
+    SECRET_WRITE_REFUSED_DETAIL,
+    SecretsManager,
+    get_secrets_manager,
+    secret_write_failure_detail,
+    secret_writes_refused,
+)
 
 __all__ = [
+    "SECRET_WRITE_REFUSED_DETAIL",
     "SecretsManager",
     "delete_secret",
     "get_secret",
     "get_secrets_manager",
+    "secret_write_failure_detail",
+    "secret_writes_refused",
     "set_secret",
 ]
 

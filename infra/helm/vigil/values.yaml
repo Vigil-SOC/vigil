@@ -540,7 +540,8 @@ serviceAccount:
 # The emptyDir default is per-pod and cleared on restart, deliberately: a
 # ReadWriteOnce disk cannot be shared by backend.replicaCount > 1, and
 # ReadWriteMany is not available on every cluster. So supply credentials through
-# `secrets.existingSecret` or ExternalSecrets, not the Settings UI.
+# `secrets.existingSecret` or ExternalSecrets: with an emptyDir here, Settings
+# refuses to save a credential rather than keep it on one pod until it restarts.
 #
 # For durability on a cluster with ReadWriteMany storage:
 #   stateDirectory.volume:
@@ -710,7 +711,6 @@ config:
   ENVIRONMENT: "production"
 
   # Secrets / auth policy
-  SECRETS_BACKEND: "dotenv"
   ENABLE_KEYRING: "false"
   AUTH_LOCKOUT_THRESHOLD: "5"
   AUTH_LOCKOUT_DURATION_MINUTES: "15"
