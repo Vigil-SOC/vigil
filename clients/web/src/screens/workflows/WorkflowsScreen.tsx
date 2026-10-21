@@ -1103,6 +1103,211 @@ interface RootCauseView {
   recent_searches: RootCauseSearch[]
   /** Why it ended, in the run's words: the verdict line's headline. */
   reason: string | null
+  /** Present only for a v3 run that produced a section worth a tab. */
+  v3: RootCauseV3 | null
+}
+
+interface V3Query { ref: string; purpose: string; query: string; rows: number | null; error: string | null }
+interface V3Move { n: number; move: string; targetId: string; reason: string; queries: V3Query[] }
+interface V3Account {
+  alert: { id: string; title: string; observedAt: string } | null
+  disposition: string
+  exit: string | null
+  rootCause: { id: string; label: string; justification: string } | null
+  conclusion: string | null
+  accounts: { name: string; role: string; usedBy: string[]; seenAs: string[] }[]
+}
+interface V3Evidence { polarity: string; strength: string; source: string; summary: string; turn: number | null; refs: string[] }
+interface V3ChainEvent {
+  id: string
+  label: string
+  status: string
+  confidence: number | null
+  domain: string
+  observedAt: string
+  isRoot: boolean
+  rootJustification: string
+  legitimate: boolean
+  boundary: { origin: string; targetDomain: string; reason: string } | null
+  tie: { confidence: number | null; inferred: boolean; disputed: boolean } | null
+  together: { id: string; label: string; status: string; confidence: number | null }[]
+  evidence: V3Evidence[]
+}
+interface V3Chain { score: number | null; events: V3ChainEvent[]; alternatives: { nodeIds: string[]; score: number | null }[] }
+interface V3Timeline {
+  events: { id: string; label: string; observedAt: string; onChain: boolean; ranAs: string[]; operatedBy: string[] }[]
+  impersonation: { nodeId: string; summary: string }[]
+  exonerated: { actor: string; nodeId: string; label: string }[]
+}
+interface V3Finding { id: string; label: string; status: string; confidence: number | null; domain: string; observedAt: string; lastEvidence: string }
+interface V3Targeted { id: string; sourcetype: string; found: boolean; result: string; refs: string[] }
+interface V3Question { kind: string; id: string; text: string }
+interface RootCauseV3 {
+  account: V3Account | null
+  chain: V3Chain | null
+  timeline: V3Timeline | null
+  otherFindings: V3Finding[] | null
+  targeted: V3Targeted[] | null
+  openQuestions: V3Question[] | null
+  moves: V3Move[] | null
+  report: string | null
+}
+
+const asRec = (v: unknown): Record<string, unknown> | null =>
+  (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null)
+const asStr = (v: unknown): string => (typeof v === 'string' ? v : '')
+const asNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+const asStrs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '') : [])
+
+function accountOf(v: unknown): V3Account | null {
+  const o = asRec(v)
+  if (!o) return null
+  const alert = asRec(o.alert)
+  const root = asRec(o.root_cause)
+  const conclusion = asRec(o.conclusion)
+  const accounts = Array.isArray(o.accounts) ? o.accounts.flatMap((raw) => {
+    const a = asRec(raw)
+    if (!a || typeof a.name !== 'string' || a.name === '') return []
+    return [{ name: a.name, role: asStr(a.role), usedBy: asStrs(a.usedBy), seenAs: asStrs(a.seenAs) }]
+  }) : []
+  return {
+    alert: alert && typeof alert.title === 'string'
+      ? { id: asStr(alert.id), title: alert.title, observedAt: asStr(alert.observedAt) }
+      : null,
+    disposition: asStr(o.disposition),
+    exit: typeof o.exit === 'string' && o.exit ? o.exit : null,
+    rootCause: root && (typeof root.id === 'string' || typeof root.label === 'string')
+      ? { id: asStr(root.id), label: asStr(root.label), justification: asStr(root.justification) }
+      : null,
+    conclusion: conclusion && typeof conclusion.text === 'string' ? conclusion.text : null,
+    accounts,
+  }
+}
+
+function evidenceOf(v: unknown): V3Evidence[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e) return []
+    return [{
+      polarity: asStr(e.polarity), strength: asStr(e.strength), source: asStr(e.source),
+      summary: asStr(e.summary), turn: asNum(e.turn), refs: asStrs(e.refs),
+    }]
+  })
+}
+
+function chainOf(v: unknown): V3Chain | null {
+  const o = asRec(v)
+  if (!o || !Array.isArray(o.events)) return null
+  const events = o.events.flatMap((raw): V3ChainEvent[] => {
+    const e = asRec(raw)
+    if (!e || typeof e.id !== 'string' || e.id === '') return []
+    const boundary = asRec(e.boundary)
+    const tie = asRec(e.tie)
+    const together = Array.isArray(e.together) ? e.together.flatMap((item) => {
+      const t = asRec(item)
+      if (!t || typeof t.id !== 'string') return []
+      return [{ id: t.id, label: asStr(t.label), status: asStr(t.status), confidence: asNum(t.confidence) }]
+    }) : []
+    return [{
+      id: e.id, label: asStr(e.label), status: asStr(e.status), confidence: asNum(e.confidence),
+      domain: asStr(e.domain), observedAt: asStr(e.observedAt), isRoot: e.isRoot === true,
+      rootJustification: asStr(e.rootJustification), legitimate: e.legitimate === true,
+      boundary: boundary ? { origin: asStr(boundary.originNodeId), targetDomain: asStr(boundary.targetDomain), reason: asStr(boundary.reason) } : null,
+      tie: tie ? { confidence: asNum(tie.confidence), inferred: tie.inferred === true, disputed: tie.disputed === true } : null,
+      together, evidence: evidenceOf(e.evidence),
+    }]
+  })
+  const alternatives = Array.isArray(o.alternatives) ? o.alternatives.flatMap((raw) => {
+    const a = asRec(raw)
+    if (!a) return []
+    return [{ nodeIds: asStrs(a.nodeIds), score: asNum(a.score) }]
+  }) : []
+  return { score: asNum(o.score), events, alternatives }
+}
+
+function timelineOf(v: unknown): V3Timeline | null {
+  const o = asRec(v)
+  if (!o) return null
+  const events = Array.isArray(o.events) ? o.events.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e || typeof e.id !== 'string' || e.id === '') return []
+    return [{ id: e.id, label: asStr(e.label), observedAt: asStr(e.observedAt), onChain: e.onChain === true, ranAs: asStrs(e.ranAs), operatedBy: asStrs(e.operatedBy) }]
+  }) : []
+  const impersonation = Array.isArray(o.impersonation) ? o.impersonation.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e) return []
+    return [{ nodeId: asStr(e.nodeId), summary: asStr(e.summary) }]
+  }) : []
+  const exonerated = Array.isArray(o.exonerated) ? o.exonerated.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e) return []
+    return [{ actor: asStr(e.actor), nodeId: asStr(e.nodeId), label: asStr(e.label) }]
+  }) : []
+  return { events, impersonation, exonerated }
+}
+
+function findingsOf(v: unknown): V3Finding[] | null {
+  if (!Array.isArray(v)) return null
+  return v.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e || typeof e.id !== 'string' || e.id === '') return []
+    return [{ id: e.id, label: asStr(e.label), status: asStr(e.status), confidence: asNum(e.confidence), domain: asStr(e.domain), observedAt: asStr(e.observedAt), lastEvidence: asStr(e.lastEvidence) }]
+  })
+}
+
+function targetedOf(v: unknown): V3Targeted[] | null {
+  if (!Array.isArray(v)) return null
+  return v.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e) return []
+    return [{ id: asStr(e.id), sourcetype: asStr(e.sourcetype), found: e.found === true, result: asStr(e.result), refs: asStrs(e.refs) }]
+  })
+}
+
+function questionsOf(v: unknown): V3Question[] | null {
+  if (!Array.isArray(v)) return null
+  return v.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e || typeof e.text !== 'string' || e.text === '') return []
+    return [{ kind: asStr(e.kind), id: asStr(e.id), text: e.text }]
+  })
+}
+
+function movesOf(v: unknown): V3Move[] | null {
+  if (!Array.isArray(v)) return null
+  return v.flatMap((raw) => {
+    const e = asRec(raw)
+    if (!e || typeof e.move !== 'string' || e.move === '') return []
+    const queries = Array.isArray(e.queries) ? e.queries.flatMap((item) => {
+      const q = asRec(item)
+      if (!q) return []
+      return [{ ref: asStr(q.ref), purpose: asStr(q.purpose), query: asStr(q.query), rows: asNum(q.rows), error: typeof q.error === 'string' && q.error ? q.error : null }]
+    }) : []
+    return [{ n: asNum(e.n) ?? 0, move: e.move, targetId: asStr(e.targetId), reason: asStr(e.reason), queries }]
+  })
+}
+
+/** A v3 run's sections, or null when this is a kernel run or none of them can be read.
+ *  One section that is the wrong shape is dropped; the others still tab. */
+function v3Of(raw: Record<string, unknown>): RootCauseV3 | null {
+  if (raw.engine !== 'rootcause-v3') return null
+  const timeline = timelineOf(raw.timeline)
+  const v3: RootCauseV3 = {
+    account: accountOf(raw.account),
+    chain: chainOf(raw.chain),
+    timeline,
+    otherFindings: findingsOf(raw.other_findings),
+    targeted: targetedOf(raw.targeted_searches),
+    openQuestions: questionsOf(raw.open_questions),
+    moves: movesOf(raw.moves),
+    report: typeof raw.report === 'string' && raw.report.trim() ? raw.report : null,
+  }
+  const timelineHas = timeline !== null && (timeline.events.length > 0 || timeline.impersonation.length > 0 || timeline.exonerated.length > 0)
+  const any = v3.account !== null || v3.chain !== null || timelineHas
+    || (v3.otherFindings?.length ?? 0) > 0 || (v3.targeted?.length ?? 0) > 0
+    || (v3.openQuestions?.length ?? 0) > 0 || (v3.moves?.length ?? 0) > 0 || v3.report !== null
+  return any ? v3 : null
 }
 
 function rootCauseOf(projection: unknown): RootCauseView | null {
@@ -1120,6 +1325,7 @@ function rootCauseOf(projection: unknown): RootCauseView | null {
     searches: typeof view.searches === 'number' ? view.searches : 0,
     recent_searches: Array.isArray(view.recent_searches) ? view.recent_searches : [],
     reason: typeof view.reason === 'string' && view.reason ? view.reason : null,
+    v3: v3Of(projection as Record<string, unknown>),
   }
 }
 
@@ -1336,8 +1542,15 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
 }
 
 /** What a root-cause trace has recorded and asked so far, off the same poll as the
- *  run. The checked summary below it is still the report; this is how it got there. */
+ *  run. The checked summary below it is still the report; this is how it got there.
+ *  A v3 run that produced sections reads them in the hunt's tabs; anything else
+ *  stays the kernel table. */
 function RootCauseTrace({ trace }: { trace: RootCauseView }) {
+  if (trace.v3) return <V3Trace v3={trace.v3} />
+  return <KernelRootCause trace={trace} />
+}
+
+function KernelRootCause({ trace }: { trace: RootCauseView }) {
   const steps = trace.steps.length
   return (
     <div className="modal-section">
@@ -1393,6 +1606,461 @@ function tiedBy(s: RootCauseStep): string {
   if (s.cause_id) claims.push(`link ${s.link || '—'} to ${s.cause_id}: ${s.link_status}`)
   if (s.origin) claims.push(`origin: ${s.origin_status}`)
   return claims.join(' · ') || 'nothing yet'
+}
+
+type V3Tab = 'account' | 'chain' | 'timeline' | 'others' | 'targeted' | 'decisions' | 'open' | 'report'
+
+function v3Tabs(v3: RootCauseV3): [V3Tab, string, number | null][] {
+  // The count is the event list. Impersonation and exonerated are the lines under it,
+  // and they count only when they are the reason the tab is open.
+  const timelineCount = v3.timeline === null ? 0
+    : v3.timeline.events.length || v3.timeline.impersonation.length + v3.timeline.exonerated.length
+  return [
+    ...(v3.account ? ([['account', 'Account', null]] as [V3Tab, string, number | null][]) : []),
+    ...(v3.chain ? ([['chain', 'Chain', v3.chain.events.length]] as [V3Tab, string, number | null][]) : []),
+    ...(timelineCount > 0 ? ([['timeline', 'Timeline', timelineCount]] as [V3Tab, string, number | null][]) : []),
+    ...(v3.otherFindings && v3.otherFindings.length > 0 ? ([['others', 'Other findings', v3.otherFindings.length]] as [V3Tab, string, number | null][]) : []),
+    ...(v3.targeted && v3.targeted.length > 0 ? ([['targeted', 'Targeted searches', v3.targeted.length]] as [V3Tab, string, number | null][]) : []),
+    ...(v3.moves && v3.moves.length > 0 ? ([['decisions', 'Decisions', v3.moves.length]] as [V3Tab, string, number | null][]) : []),
+    ...(v3.openQuestions && v3.openQuestions.length > 0 ? ([['open', 'Open questions', v3.openQuestions.length]] as [V3Tab, string, number | null][]) : []),
+    ...(v3.report ? ([['report', 'Report', null]] as [V3Tab, string, number | null][]) : []),
+  ]
+}
+
+/** Account when that section exists, otherwise the first tab that does. A poll
+ *  that drops the open tab falls back the same way rather than showing nothing. */
+function V3Trace({ v3 }: { v3: RootCauseV3 }) {
+  const tabs = v3Tabs(v3)
+  const [tab, setTab] = useState<V3Tab | null>(null)
+  const first = tabs[0]
+  if (!first) return null
+  const shown = tab !== null && tabs.some(([k]) => k === tab) ? tab : first[0]
+  return (
+    <div>
+      <div className="detail-tabs" role="tablist" aria-label="Root cause views">
+        {tabs.map(([k, label, count]) => (
+          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+            {label}{count !== null && <span className="mono text-[10.5px] text-tx-3 ml-1.5">{count}</span>}
+          </button>
+        ))}
+      </div>
+      <V3Panel tab={shown} v3={v3} />
+    </div>
+  )
+}
+
+function V3Panel({ tab, v3 }: { tab: V3Tab; v3: RootCauseV3 }) {
+  switch (tab) {
+    case 'account':
+      return v3.account ? <AccountTab account={v3.account} /> : null
+    case 'chain':
+      return v3.chain ? <ChainTab chain={v3.chain} moves={v3.moves ?? []} /> : null
+    case 'timeline':
+      return v3.timeline ? <TimelineTab timeline={v3.timeline} /> : null
+    case 'others':
+      return v3.otherFindings ? <FindingsTab findings={v3.otherFindings} /> : null
+    case 'targeted':
+      return v3.targeted ? <TargetedTab rows={v3.targeted} moves={v3.moves ?? []} /> : null
+    case 'decisions':
+      return v3.moves ? <DecisionsTab moves={v3.moves} /> : null
+    case 'open':
+      return v3.openQuestions ? <QuestionsTab questions={v3.openQuestions} /> : null
+    case 'report':
+      return v3.report ? <div className="py-3"><ReportBody md={v3.report} /></div> : null
+    default: {
+      const never: never = tab
+      return never
+    }
+  }
+}
+
+function TwoLines({ text, className = '' }: { text: string; className?: string }) {
+  if (!text) return null
+  return <span className={`line-clamp-2 break-words ${className}`} title={text}>{text}</span>
+}
+
+/** Header labels are nowrap by default, which lets one word widen the table past
+ *  the modal. These wrap inside the fixed column instead. */
+function Th({ children }: { children: string }) {
+  return <th style={{ whiteSpace: 'normal', padding: '8px 8px' }}>{children}</th>
+}
+
+function pct(n: number | null): string {
+  return n === null ? '—' : n.toFixed(2)
+}
+
+/** UTC, 24-hour, short enough for a column. An unreadable stamp is left as written. */
+function fmtAt(iso: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+}
+
+function standingColor(status: string): string {
+  if (status === 'confirmed') return 'var(--ok)'
+  if (status === 'ruled-out') return 'var(--crit)'
+  return 'var(--med)'
+}
+
+function queryOutcome(q: V3Query): string {
+  if (q.error) return q.error
+  if (q.rows === null) return '—'
+  return `${q.rows} ${q.rows === 1 ? 'row' : 'rows'}`
+}
+
+function queriesByRef(moves: readonly V3Move[]): Map<string, V3Query> {
+  const byRef = new Map<string, V3Query>()
+  for (const move of moves) for (const q of move.queries) if (q.ref && !byRef.has(q.ref)) byRef.set(q.ref, q)
+  return byRef
+}
+
+function AccountTab({ account }: { account: V3Account }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      {account.alert && (
+        <div className="mb-2">
+          <div className="text-[13px]">{account.alert.title}</div>
+          <div className="muted mono text-[11.5px]">{[account.alert.id, account.alert.observedAt].filter(Boolean).join(' · ')}</div>
+        </div>
+      )}
+      {account.disposition && <div className="text-[12.5px] text-tx-2 leading-[1.5]">{account.disposition}</div>}
+      {account.exit && <div className="muted text-[12px] mt-1">Exit {account.exit}</div>}
+      {account.rootCause && (
+        <div className="text-[12.5px] mt-2">
+          <span className="muted text-[11px] uppercase tracking-[0.06em] mr-1.5">Root cause</span>
+          {account.rootCause.id && <span className="mono text-[12px] mr-1.5">{account.rootCause.id}</span>}
+          {account.rootCause.label}
+          {account.rootCause.justification && <div className="muted text-[12px] mt-0.5 whitespace-pre-wrap break-words">{account.rootCause.justification}</div>}
+        </div>
+      )}
+      {account.conclusion && <div className="text-[12.5px] text-tx-2 leading-[1.5] mt-2 whitespace-pre-wrap break-words">{account.conclusion}</div>}
+      {account.accounts.length > 0 && (
+        <div className="table-wrap">
+          <table className="tbl" style={{ tableLayout: 'fixed' }}>
+            <thead><tr><Th>Account</Th><Th>Role</Th></tr></thead>
+            <tbody>
+              {account.accounts.map((a) => {
+                const aside = [
+                  a.usedBy.length > 0 ? `used by ${a.usedBy.join(', ')}` : '',
+                  a.seenAs.length > 0 ? `seen as ${a.seenAs.join(', ')}` : '',
+                ].filter(Boolean).join(' · ')
+                const role = [a.role, aside].filter(Boolean).join(' · ')
+                return (
+                  <tr key={a.name}>
+                    <td><TwoLines text={a.name} /></td>
+                    <td><TwoLines text={role} /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The boundary sentence the report prints in place of the node's label. */
+function eventLabel(ev: V3ChainEvent): string {
+  if (!ev.boundary) return ev.label
+  const where = ev.boundary.targetDomain || '—'
+  const origin = ev.boundary.origin || '—'
+  const why = ev.boundary.reason ? `: ${ev.boundary.reason}` : ''
+  return `cause of ${origin} believed to be in ${where}${why}`
+}
+
+function tieText(tie: V3ChainEvent['tie']): string {
+  if (!tie) return '—'
+  const bits = [pct(tie.confidence)]
+  if (tie.inferred) bits.push('inferred')
+  if (tie.disputed) bits.push('disputed')
+  return bits.join(' · ')
+}
+
+function ChainTab({ chain, moves }: { chain: V3Chain; moves: V3Move[] }) {
+  const [open, setOpen] = useState<string | null>(null)
+  const byRef = queriesByRef(moves)
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="table-wrap">
+        <table className="tbl" style={{ tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '30%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '15%' }} />
+          </colgroup>
+          <thead><tr><Th>Event</Th><Th>Status</Th><Th>Confidence</Th><Th>Domain</Th><Th>Time</Th><Th>Tie</Th></tr></thead>
+          <tbody>
+            {chain.events.map((ev) => {
+              const label = eventLabel(ev)
+              const opened = open === ev.id
+              return (
+                <Fragment key={ev.id}>
+                  <tr className={`clickable${opened ? ' sel' : ''}`} onClick={() => setOpen(opened ? null : ev.id)}>
+                    <td>
+                      <button
+                        className="btn ghost mono text-[11px]"
+                        aria-expanded={opened}
+                        title="Show the evidence and the searches it cites."
+                        onClick={(e) => { e.stopPropagation(); setOpen(opened ? null : ev.id) }}
+                      >
+                        {ev.id}
+                      </button>
+                      <TwoLines text={label} />
+                      {ev.legitimate && <div className="muted text-[11px]">legitimate activity, not the attacker</div>}
+                      {ev.isRoot && ev.rootJustification && <TwoLines className="muted text-[11px]" text={`why root: ${ev.rootJustification}`} />}
+                      {ev.together.map((t) => (
+                        <TwoLines key={t.id} className="muted text-[11px]" text={`together with ${t.id} ${t.label} (${t.status} ${pct(t.confidence)})`} />
+                      ))}
+                    </td>
+                    <td><span style={{ color: standingColor(ev.status) }}>{ev.status || '—'}</span></td>
+                    <td className="mono">{pct(ev.confidence)}</td>
+                    <td><TwoLines text={ev.domain} /></td>
+                    <td className="mono" title={ev.observedAt || undefined}><span style={{ whiteSpace: 'nowrap' }}>{fmtAt(ev.observedAt)}</span></td>
+                    <td><TwoLines text={tieText(ev.tie)} /></td>
+                  </tr>
+                  {opened && (
+                    <tr>
+                      <td colSpan={6} style={{ background: 'var(--bg-2)' }}><ChainOpened ev={ev} byRef={byRef} /></td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {chain.alternatives.length > 0 && (
+        <div className="mt-3">
+          <h4>Alternative chains</h4>
+          <ul className="text-[12px] mt-1 mb-0" style={{ paddingLeft: 18 }}>
+            {chain.alternatives.map((alt, at) => (
+              <li key={at} className="break-words">
+                <span className="mono">{alt.nodeIds.join(' ')}</span>
+                <span className="muted"> score {pct(alt.score)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function stance(polarity: string): string {
+  if (polarity === 'supports') return 'for'
+  if (polarity === 'refutes') return 'against'
+  return polarity || '—'
+}
+
+function ChainOpened({ ev, byRef }: { ev: V3ChainEvent; byRef: Map<string, V3Query> }) {
+  return (
+    <div className="py-1" style={{ whiteSpace: 'normal' }}>
+      <div className="text-[12.5px] whitespace-pre-wrap break-words">{eventLabel(ev)}</div>
+      {ev.evidence.length === 0 && <div className="muted text-[12px] mt-2">No evidence recorded.</div>}
+      {ev.evidence.map((item, at) => (
+        <div key={at} className="mt-2">
+          <div className="text-[12px]">
+            <span style={{ color: item.polarity === 'refutes' ? 'var(--crit)' : 'var(--ok)' }}>{stance(item.polarity)}</span>
+            {item.strength && <span className="muted"> · {item.strength}</span>}
+            {item.source && <span className="muted"> · {item.source}</span>}
+            {item.turn !== null && <span className="muted"> · turn {item.turn}</span>}
+          </div>
+          {item.summary && <div className="text-[12.5px] whitespace-pre-wrap break-words">{item.summary}</div>}
+          {item.refs.map((ref) => {
+            const q = byRef.get(ref)
+            if (!q) return null
+            return (
+              <div key={ref} className="mt-1">
+                {q.purpose && <div className="text-[12px]">{q.purpose}</div>}
+                <div className="font-mono text-[11.5px] whitespace-pre-wrap break-words">{q.query}</div>
+                <div className="text-[11px]" style={{ color: q.error ? 'var(--high)' : 'var(--tx-3)' }}>{queryOutcome(q)}</div>
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TimelineTab({ timeline }: { timeline: V3Timeline }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      {timeline.events.length > 0 && (
+        <div className="table-wrap">
+          <table className="tbl" style={{ tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: '18%' }} />
+              <col style={{ width: '34%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '18%' }} />
+              <col style={{ width: '18%' }} />
+            </colgroup>
+            <thead><tr><Th>Time</Th><Th>Event</Th><Th>Chain</Th><Th>Ran as</Th><Th>Operated by</Th></tr></thead>
+            <tbody>
+              {timeline.events.map((ev) => (
+                <tr key={ev.id}>
+                  <td className="mono" title={ev.observedAt || undefined}><span style={{ whiteSpace: 'nowrap' }}>{fmtAt(ev.observedAt)}</span></td>
+                  <td>
+                    <span className="mono text-[11px]">{ev.id}</span>
+                    <TwoLines text={ev.label} />
+                  </td>
+                  <td>{ev.onChain ? <span style={{ color: 'var(--ok)' }}>on chain</span> : <span className="muted">—</span>}</td>
+                  <td><TwoLines text={ev.ranAs.join(', ')} /></td>
+                  <td><TwoLines text={ev.operatedBy.join(', ')} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {timeline.impersonation.length > 0 && (
+        <div className="text-[12.5px] leading-[1.5] mt-3">
+          <span className="muted text-[11px] uppercase tracking-[0.06em] mr-1.5">Impersonation</span>
+          {timeline.impersonation.map((row, at) => (
+            <TwoLines key={at} text={`${row.nodeId}: ${row.summary}`} />
+          ))}
+        </div>
+      )}
+      {timeline.exonerated.length > 0 && (
+        <div className="text-[12.5px] leading-[1.5] mt-2">
+          <span className="muted text-[11px] uppercase tracking-[0.06em] mr-1.5">Exonerated</span>
+          {timeline.exonerated.map((row, at) => (
+            <TwoLines key={at} text={`${row.actor} for ${row.nodeId} ${row.label}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FindingsTab({ findings }: { findings: V3Finding[] }) {
+  return (
+    <ul className="text-[12.5px] leading-[1.5] mt-3 mb-0" style={{ paddingLeft: 18 }}>
+      {findings.map((f) => (
+        <li key={f.id} className="mb-2">
+          <span className="mono text-[11px] mr-1.5">{f.id}</span>
+          <TwoLines text={f.label} />
+          <div className="muted text-[11.5px]">
+            <span style={{ color: standingColor(f.status) }}>{f.status || '—'}</span>
+            {' · '}{pct(f.confidence)}
+            {f.domain && ` · ${f.domain}`}
+            {f.observedAt && ` · ${fmtAt(f.observedAt)}`}
+          </div>
+          {f.lastEvidence && <TwoLines className="muted text-[11.5px]" text={f.lastEvidence} />}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function TargetedTab({ rows, moves }: { rows: V3Targeted[]; moves: V3Move[] }) {
+  const byRef = queriesByRef(moves)
+  return (
+    <div className="table-wrap" style={{ marginTop: 12 }}>
+      <table className="tbl" style={{ tableLayout: 'fixed' }}>
+        <colgroup>
+          <col style={{ width: '22%' }} />
+          <col />
+          <col style={{ width: '14%' }} />
+        </colgroup>
+        <thead><tr><Th>Sourcetype</Th><Th>Result</Th><Th>Found</Th></tr></thead>
+        <tbody>
+          {rows.map((row, at) => (
+            <tr key={row.id || at}>
+              <td><TwoLines text={row.sourcetype} /></td>
+              <td>
+                <TwoLines text={row.result} />
+                {row.refs.map((ref) => {
+                  const q = byRef.get(ref)
+                  if (!q) return null
+                  return (
+                    <div key={ref} className="mt-1">
+                      {q.purpose && <TwoLines className="muted text-[11px]" text={q.purpose} />}
+                      <TwoLines className="font-mono text-[11.5px]" text={q.query} />
+                    </div>
+                  )
+                })}
+              </td>
+              <td>{row.found ? 'found' : 'not found'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Rounds start at each theorize. Moves before the first one are the opening round. */
+function decisionRounds(moves: readonly V3Move[]): { label: string; moves: V3Move[] }[] {
+  const sorted = [...moves].sort((a, b) => a.n - b.n)
+  const rounds: { label: string; moves: V3Move[] }[] = []
+  let bucket: V3Move[] = []
+  let round = 0
+  const flush = (label: string) => {
+    if (bucket.length === 0) return
+    rounds.push({ label, moves: bucket })
+    bucket = []
+  }
+  for (const move of sorted) {
+    if (move.move === 'theorize') {
+      flush(round === 0 ? 'Opening' : `Round ${round}`)
+      round += 1
+      bucket = [move]
+    } else {
+      bucket.push(move)
+    }
+  }
+  flush(round === 0 ? 'Opening' : `Round ${round}`)
+  return rounds
+}
+
+function DecisionsTab({ moves }: { moves: V3Move[] }) {
+  const rounds = decisionRounds(moves)
+  return (
+    <div style={{ marginTop: 12 }}>
+      {rounds.map((round) => (
+        <div key={round.label} className="mb-3">
+          <h4>{round.label}</h4>
+          {round.moves.map((move, at) => (
+            <div key={`${move.n}-${at}`} className="mb-2">
+              <div className="text-[12px]">
+                <span className="muted">Turn {move.n}</span>
+                <span className="font-mono ml-1.5">{move.move}{move.targetId ? ` ${move.targetId}` : ''}</span>
+              </div>
+              {move.reason && <div className="text-[12.5px] text-tx-2 leading-[1.5] whitespace-pre-wrap break-words">{move.reason}</div>}
+              {move.queries.map((q, qi) => (
+                <div key={q.ref || qi} className="mt-1">
+                  {q.purpose && <TwoLines text={q.purpose} />}
+                  <TwoLines className="font-mono text-[11.5px]" text={q.query} />
+                  <div className="text-[11px]" style={{ color: q.error ? 'var(--high)' : 'var(--tx-3)' }}>{queryOutcome(q)}</div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function QuestionsTab({ questions }: { questions: V3Question[] }) {
+  return (
+    <ul className="text-[12.5px] leading-[1.5] mt-3 mb-0" style={{ paddingLeft: 18 }}>
+      {questions.map((q, at) => (
+        <li key={q.id || at} className="mb-1.5">
+          {q.kind && <span className="chip mr-1.5" style={{ fontSize: 10 }}>{q.kind}</span>}
+          <TwoLines text={q.text} />
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 /** Ending a run cannot be undone, so it asks first. Goes through cancel, not steer:

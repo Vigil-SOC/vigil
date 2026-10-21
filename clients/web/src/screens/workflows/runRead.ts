@@ -553,9 +553,20 @@ function answerText(answer: unknown, lead: boolean): string {
   return ''
 }
 
+/** A v3 account's disposition is already the sentence the report prints. It is not
+ *  a token, so it must not go through moveWord. The chip stays the head's. */
+function v3Headline(projection: unknown): string | null {
+  const head = rec(projection)
+  if (head.engine !== 'rootcause-v3') return null
+  if (typeof head.account !== 'object' || head.account === null || Array.isArray(head.account)) return null
+  const sentence = rec(head.account).disposition
+  return typeof sentence === 'string' && sentence.trim() ? sentence : null
+}
+
 /** What a run concluded, in one line: the head's disposition when it carries one
  *  (every projection's, #2451), and the kind's own headline: a hunt's account
- *  or report, an investigation's answer, a root cause's reason. */
+ *  or report, an investigation's answer, a v3 account's disposition sentence,
+ *  or a root cause's reason. */
 export function verdictOf(d: WfRunDetail, rootCauseReason: string | null): { disposition: string | null; headline: string } {
   const head = rec(d.hunt ?? d.projection)
   const disposition = typeof head.disposition === 'string' && head.disposition ? moveWord(head.disposition) : null
@@ -563,11 +574,14 @@ export function verdictOf(d: WfRunDetail, rootCauseReason: string | null): { dis
   if (d.hunt) {
     const firstLine = (d.hunt.report_markdown ?? '').split('\n').map((line) => line.replace(/^#+\s*/, '').trim()).find(Boolean)
     headline = d.hunt.narrative?.summary || firstLine || ''
-  } else if (rootCauseReason !== null) {
-    headline = rootCauseReason
-  } else if (Array.isArray(head.findings)) {
-    // The answer leads with its own disposition only when the head does not say it.
-    headline = answerText(rec(head.findings[0]).answer, disposition === null)
+  } else {
+    const sentence = v3Headline(d.projection)
+    if (sentence) headline = sentence
+    else if (rootCauseReason !== null) headline = rootCauseReason
+    else if (Array.isArray(head.findings)) {
+      // The answer leads with its own disposition only when the head does not say it.
+      headline = answerText(rec(head.findings[0]).answer, disposition === null)
+    }
   }
   return { disposition, headline }
 }
