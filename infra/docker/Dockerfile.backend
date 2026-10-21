@@ -3,6 +3,9 @@
 # Multi-stage build: React SPA → Python FastAPI backend
 #
 # Final image runs:  uvicorn services.api.main:app --host 0.0.0.0 --port 6987
+# Forwarded headers are not trusted unless VIGIL_TRUSTED_PROXIES names the
+# proxy. Do not add --forwarded-allow-ips=* : a direct client could then
+# choose the address anonymous rate-limit buckets use.
 # Serves static SPA at /app/clients/web/build  (via FastAPI StaticFiles mount)
 # =============================================================================
 

@@ -71,7 +71,6 @@ def _seed(prefix: str, count: int) -> List[str]:
             timestamp=utcnow(),
             data_source=prefix,
             severity="medium",
-            status="new",
         )
     return ids
 

@@ -205,6 +205,11 @@ class Settings(BaseSettings):
     jwt_refresh_expiration_days: int = 7
     auth_lockout_threshold: int = 5
     auth_lockout_duration_minutes: int = 15
+    # Comma-separated IPs and CIDRs of reverse proxies allowed to set
+    # X-Forwarded-For. Empty trusts the TCP peer only. "*" is ignored:
+    # a client who can reach the backend directly could otherwise choose
+    # the address the anonymous rate-limit buckets use.
+    vigil_trusted_proxies: str = ""
     auth_password_history_limit: int = 5
     auth_min_password_length: int = 12
     # bcrypt raises above 72 bytes rather than truncating, so a higher ceiling

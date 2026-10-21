@@ -336,7 +336,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
   )
 }
 
-const INPUT_CLS = 'w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line'
+const INPUT_CLS = 'w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-hidden focus:border-accent-line'
 
 function Field({ label, value, onChange, placeholder, textarea, mono, hint, rows = 3 }: {
   label: string

@@ -178,7 +178,6 @@ class DarktraceIngestionService(SIEMIngestionService):
             "entity_context": entity_context or None,
             "evidence_links": evidence_links or None,
             "severity": _score_to_severity(score),
-            "status": "new",
         }
 
     def transform_ai_analyst(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -231,7 +230,6 @@ class DarktraceIngestionService(SIEMIngestionService):
             "entity_context": entity_context or None,
             "evidence_links": evidence_links or None,
             "severity": _score_to_severity(score),
-            "status": "new",
         }
 
     def transform_system_status(
@@ -266,5 +264,4 @@ class DarktraceIngestionService(SIEMIngestionService):
             or "Darktrace System Status",
             "entity_context": None,
             "severity": severity,
-            "status": "new",
         }

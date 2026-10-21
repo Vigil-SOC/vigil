@@ -391,7 +391,7 @@ describe('OverviewScreen', () => {
   })
 
   it('opens the case from the popup and from the Case column, without stacking overlays', async () => {
-    const item = { ...payload().feed[0], case_id: 'case-7' }
+    const item = { ...payload().feed[0], case_id: 'case-7', terminal_state: 'working', terminal_label: 'Still working' }
     const other = { ...payload().feed[0], finding_id: 'f-2', case_id: null }
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item, other] }) } as never)
     const { openCase } = renderScreen()
@@ -428,7 +428,7 @@ describe('OverviewScreen', () => {
 
   it('rail: rows as served with severity, time, description, badge and id; tabs filter and All restores', async () => {
     const feed = [
-      item('f-new', { severity: 'critical', description: 'Newest thing', created_at: '2026-10-01T09:08:07', terminal_state: 'needs_you', terminal_label: 'Needs you' }),
+      item('f-new', { severity: 'critical', description: 'Newest thing', created_at: '2026-10-01T09:08:07', terminal_state: 'waiting', terminal_label: 'Not in a case' }),
       item('f-mid', { severity: 'Medium', description: 'Middle thing', terminal_state: 'resolved_auto', terminal_label: 'Resolved automatically', case_id: 'case-3' }),
       item('f-old', { severity: 'low', description: 'Oldest thing', data_source: 'crowdstrike' }),
     ]
@@ -443,7 +443,10 @@ describe('OverviewScreen', () => {
     expect(rows[0]).toHaveTextContent('09:08:07')
     expect(rows[0]).toHaveTextContent('Newest thing')
     expect(rows[0]).toHaveTextContent('Splunk')
-    expect(rows[0]).toHaveTextContent('Needs you')
+    // The board's words and tones; a closed case reads Resolved and is not a link.
+    expect(rows.map((r) => r.querySelector('.ov-pill')?.textContent)).toEqual(['New', 'Resolved', 'New'])
+    expect(rows.map((r) => r.querySelector('.ov-pill')?.className)).toEqual(['ov-pill poor', 'ov-pill good', 'ov-pill poor'])
+    expect(within(rail).queryByRole('button', { name: 'Case case-3' })).not.toBeInTheDocument()
     expect(rows[2]).toHaveTextContent('CrowdStrike')
     fireEvent.click(within(rail).getByRole('tab', { name: 'Low' }))
     expect(within(rail).getAllByRole('button', { name: /thing/ })).toHaveLength(1)
@@ -454,7 +457,7 @@ describe('OverviewScreen', () => {
   })
 
   it('rail: a row click and Enter set ?alert=, and the Case pill opens the case without the alert', async () => {
-    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item('f-1', { description: 'One' }), item('f-2', { description: 'Two', case_id: 'case-7' })] }) } as never)
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item('f-1', { description: 'One' }), item('f-2', { description: 'Two', case_id: 'case-7', terminal_state: 'needs_you', terminal_label: 'Needs you' })] }) } as never)
     const { openCase } = renderScreen()
     const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
     fireEvent.click(within(rail).getByRole('button', { name: /One/ }))

@@ -18,8 +18,11 @@ scrape_configs:
         labels:
           service: soc-daemon
 
-  # Backend API — FastAPI GET /metrics on the API port
+  # Backend API — FastAPI GET /metrics on the API port. The file is the raw
+  # token metrics-token writes; Prometheus sends it as Authorization: Bearer.
   - job_name: backend
+    authorization:
+      credentials_file: /run/vigil/metrics/token
     static_configs:
       - targets: ["backend:6987"]
         labels:

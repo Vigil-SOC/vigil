@@ -30,7 +30,6 @@ class FindingSchema(ORMSchema):
     external_id: Optional[str] = None
     cluster_id: Optional[str] = None
     severity: Optional[str] = None
-    status: Optional[str] = None
     ai_enrichment: Optional[Any] = None
     created_at: OptDateTime = None
     updated_at: OptDateTime = None

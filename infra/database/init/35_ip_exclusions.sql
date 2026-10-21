@@ -6,8 +6,9 @@
 -- other source keep writing findings for an excluded address, with the severity
 -- and status they would have had, so removing the exclusion restores them as
 -- they were. What reads it is the console's findings list, which hides a finding
--- when any address it names is excluded, and the agent layer, which does not
--- seed a run from such a finding.
+-- when any address it names is excluded, the agent layer, which does not
+-- seed a run from such a finding, and the daemon, which stores it but does not
+-- triage it or open a detection for it (known-answer probes excepted).
 --
 -- One address per row, and no ranges: an analyst excludes the address in front
 -- of them, and a CIDR written in a hurry hides more than they looked at.

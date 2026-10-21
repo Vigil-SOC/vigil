@@ -1820,10 +1820,6 @@
       "data_type": "character varying(20)",
       "nullable": true
     },
-    "status": {
-      "data_type": "character varying(20)",
-      "nullable": false
-    },
     "timestamp": {
       "data_type": "timestamp without time zone",
       "nullable": true

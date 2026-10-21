@@ -31,7 +31,6 @@ def _finding(service: DatabaseService, ai_enrichment: dict) -> str:
         timestamp=utcnow(),
         data_source="ownership",
         severity="medium",
-        status="new",
     )
     assert service.update_finding(finding_id, ai_enrichment=ai_enrichment)
     return finding_id

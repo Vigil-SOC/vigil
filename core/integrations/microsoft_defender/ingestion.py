@@ -250,7 +250,6 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
                 "data_source": "microsoft_defender",
                 "timestamp": alert.get("alertCreationTime", utcnow().isoformat()),
                 "severity": self.normalize_severity(alert.get("severity")),
-                "status": "new",
                 "title": title,
                 "description": description,
                 "entity_context": entity_context,

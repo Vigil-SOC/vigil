@@ -4,15 +4,15 @@
 import logging
 
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from core.config import get_settings
+from services.api.middleware.client_address import client_host
 
 logger = logging.getLogger(__name__)
 
 
 def _in_memory() -> Limiter:
-    return Limiter(key_func=get_remote_address, strategy="fixed-window")
+    return Limiter(key_func=client_host, strategy="fixed-window")
 
 
 # slowapi connects lazily, so construction succeeding proves nothing: probe the
@@ -25,7 +25,7 @@ def _build_limiter() -> Limiter:
         # A Redis that rejects writes (noeviction + full) or drops mid-run must
         # not turn every rate-limited route, login included, into a 500.
         candidate = Limiter(
-            key_func=get_remote_address,
+            key_func=client_host,
             storage_uri=url,
             strategy="fixed-window",
             in_memory_fallback_enabled=True,

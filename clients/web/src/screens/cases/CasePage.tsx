@@ -688,6 +688,7 @@ function HowStarted({ started, names, onFollow }: { started: NonNullable<ReturnT
   const origin = chain[0]
   const rows = chain.length > 2 ? [origin, chain[chain.length - 1]] : chain
   const proven = run.fold?.kind === 'head' ? run.fold.proven : 0
+  const accounts = run.fold?.kind === 'head' ? run.fold.accounts : []
   const to = `/workflows?run=${encodeURIComponent(run.ref.run_id)}`
   return (
     <section className="case-card how-started" aria-label="How it started">
@@ -706,6 +707,19 @@ function HowStarted({ started, names, onFollow }: { started: NonNullable<ReturnT
           </li>
         ))}
       </ul>
+      {accounts.length > 0 && (
+        <ul className="how-rows how-accounts">
+          {accounts.map((one, i) => {
+            const line = [
+              one.name,
+              wordDisplay(one.role),
+              one.usedBy?.length ? `used by ${one.usedBy.join(', ')}` : '',
+              one.seenAs?.length ? `seen as ${one.seenAs.join(', ')}` : '',
+            ].filter(Boolean).join(' · ')
+            return <li key={i} title={line}>{line}</li>
+          })}
+        </ul>
+      )}
       <Link className="how-all" to={to} title={runLabel(run.ref, names)} onClick={onFollow}>
         {chain.length > 2 ? `Show all ${chain.length}` : 'Open the trace'}
       </Link>

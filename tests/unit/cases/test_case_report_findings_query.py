@@ -68,7 +68,6 @@ def _seed(prefix: str, count: int) -> str:
             timestamp=utcnow(),
             data_source=prefix,
             severity="high",
-            status="new",
         )
     case_id = f"{prefix}-case"
     assert service.create_case(case_id=case_id, title=prefix, finding_ids=ids)

@@ -1,13 +1,15 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@config "../tailwind.config.cjs";
 
-/* Tailwind preflight is OFF (the scoped reset below replaces it), but the
-   border-* width utilities depend on preflight's base of
-   `border-style: solid` + a default border color. Re-add just that, scoped
-   to .soc-console and in @layer base (lowest priority) so component classes
-   and utility border-colors still win. Without this, `border`/`border-b`/…
-   set a width but border-style stays `none`, so no border renders. */
+/* Tailwind preflight is OFF (theme.css + utilities.css only; preflight.css
+   is not imported). The scoped reset below replaces it, but the border-*
+   width utilities depend on preflight's base of `border-style: solid` + a
+   default border color. Re-add just that, scoped to .soc-console and in
+   @layer base (lowest priority) so component classes and utility
+   border-colors still win. Without this, `border`/`border-b`/… set a width
+   but border-style stays `none`, so no border renders. */
 @layer base {
 
    .soc-console *,
@@ -21,8 +23,9 @@
 
 /* ============================================================
    SOC Console — Tailwind build.
-   Tokens live in tailwind.config.cjs (mapped to the CSS vars below).
-   Tailwind preflight is OFF, so the scoped root reset here is what the
+   Tokens live in tailwind.config.cjs, loaded above via @config (mapped to
+   the CSS vars below). Tailwind preflight is OFF, so the scoped root reset
+   here is what the
    console relies on; being scoped, it cannot leak out of .soc-console.
    Reusable design-system primitives live in @layer components so
    Tailwind utility classes in the screens always win over them.

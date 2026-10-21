@@ -41,7 +41,7 @@ export default function DescribeDialog({ onClose, onDrafted }: { onClose: () => 
           <textarea
             autoFocus
             rows={4}
-            className="w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line resize-y max-w-full"
+            className="w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-hidden focus:border-accent-line resize-y max-w-full"
             placeholder="e.g. Investigate and contain a ransomware incident on an endpoint"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}

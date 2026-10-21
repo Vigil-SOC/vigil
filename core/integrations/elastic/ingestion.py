@@ -302,7 +302,6 @@ class ElasticIngestion(SIEMIngestionService):
                 "data_source": "elastic",
                 "timestamp": source.get("@timestamp", utcnow().isoformat()),
                 "severity": severity,
-                "status": "new",
                 "title": title,
                 "description": description[:500] if description else "",
                 "entity_context": entity_context,
@@ -379,7 +378,6 @@ class ElasticIngestion(SIEMIngestionService):
             or source.get("timestamp")
             or utcnow().isoformat(),
             "severity": severity_for_rule_level(level),
-            "status": "new",
             "title": title,
             "description": str(description)[:500],
             "entity_context": entity_context,

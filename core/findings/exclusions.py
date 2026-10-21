@@ -1,5 +1,6 @@
-"""Analyst IP exclusions: which findings the console queue hides, and which a
-hunt or investigation may not start from.
+"""Analyst IP exclusions: which findings the console queue hides, which a
+hunt or investigation may not start from, and which the daemon stores but does
+not triage or open a detection for.
 
 An exclusion never touches a finding. Ingest does not read the table, so LogLM
 keeps scoring and storing findings for an excluded address with their original

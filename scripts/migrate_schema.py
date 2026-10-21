@@ -137,6 +137,15 @@ def add_findings_noise_reason(conn):
             ADD COLUMN IF NOT EXISTS noise_reason TEXT;
     """))
 
+# A finding's state is derived from its dismissal and its case (#2594).
+# 42_drop_finding_status.sql does the same on Compose and Helm.
+@migration("Drop findings.status and its index")
+def drop_findings_status(conn):
+    conn.execute(text("""
+        DROP INDEX IF EXISTS idx_finding_status;
+        ALTER TABLE IF EXISTS findings DROP COLUMN IF EXISTS status;
+    """))
+
 @migration("Create GIN trigram index on findings.description")
 def create_findings_description_gin_index(conn):
     conn.execute(text("""

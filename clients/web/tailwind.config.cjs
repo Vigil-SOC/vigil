@@ -1,10 +1,9 @@
 /** @type {import('tailwindcss').Config} */
-// preflight is OFF: the console's own reset lives in styles.css under
-// @layer base, so Tailwind's global reset would fight it. Color tokens point at
-// the CSS variables defined on .soc-console, which alias the design tokens.
+// Loaded from styles.css via @config. Preflight stays off there (theme.css and
+// utilities.css only) so this file does not set corePlugins — v4 ignores it.
+// Color tokens point at the CSS variables defined on .soc-console.
 module.exports = {
   content: ['./src/**/*.{ts,tsx}'],
-  corePlugins: { preflight: false },
   theme: {
     extend: {
       colors: {

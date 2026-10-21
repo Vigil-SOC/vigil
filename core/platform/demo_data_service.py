@@ -129,11 +129,6 @@ class DemoDataService:
             "data_source": random.choice(DATA_SOURCES),
             "anomaly_score": round(random.uniform(0.3, 0.99), 3),
             "severity": severity,
-            "status": (
-                random.choice(["new", "investigating", "resolved"])
-                if random.random() > 0.3
-                else "new"
-            ),
             "mitre_predictions": mitre_preds,
             "predicted_techniques": [
                 {
