@@ -156,9 +156,9 @@ limits==5.8.0
     # via slowapi
 liteparse==2.15.1
     # via -r requirements.txt
-mcp==2.1.1
+mcp==2.3.0
     # via -r requirements.txt
-mcp-types==2.1.1
+mcp-types==2.3.0
     # via mcp
 msgpack==1.2.1
     # via bullmq
