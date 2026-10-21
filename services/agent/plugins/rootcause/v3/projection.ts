@@ -6,6 +6,7 @@ import { RECENT_SEARCHES } from "../projection.js";
 import type { Proof, StepPayload } from "../proof.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphEdge, type GraphNode } from "./graph.js";
 import { fold, type V3Kinds, type V3Step } from "./ledger.js";
+import { neverRan } from "./tools/registry.js";
 import { disposition, forReport, reportRows, type AccountRow, type ChainEvent, type ReportRows, type TimelineRow } from "./report.js";
 
 // A v3 run in the shape the console already reads a root-cause run in: its chain as
@@ -20,6 +21,9 @@ export interface V3Projection extends RootCauseProjection {
   // report.md as the run wrote it, once it has.
   report: string | null;
   moves: V3Step[];
+  // Searches the code made itself (the rare sweep, a story's sweep), counted apart from `searches`, which holds
+  // the model's own that ran.
+  code_searches: number;
   account: V3Account | null;
   // Root first. A tie runs to the next event; an evidence ref resolves through moves[].queries[].ref.
   chain: { score: number; events: ChainEvent[]; alternatives: ReportRows["alternatives"] } | null;
@@ -85,6 +89,7 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
   let cost: number | null = null;
   let ceiling: number | null = null;
   const searches: SearchView[] = [];
+  let codeSearches = 0;
   for (const event of ledger) {
     if (event.kind === "run") {
       const limit = (event.payload as { budgets?: { max_cost_usd?: unknown } }).budgets?.max_cost_usd;
@@ -94,7 +99,9 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
       if (spent !== null) cost = (cost ?? 0) + spent;
     } else if (event.kind === "call") {
       const call = event.payload as CallPayload;
-      searches.push({ tool: call.tool, args: queryOf(call.arguments).slice(0, 500), rows: call.ok ? 1 : 0, failed: !call.ok });
+      // Only the model's searches that ran: not the code's own, and not a call refused before it ran.
+      if (call.role === "code") codeSearches += 1;
+      else if (!neverRan(call)) searches.push({ tool: call.tool, args: queryOf(call.arguments).slice(0, 500), rows: call.ok ? 1 : 0, failed: !call.ok });
     } else if (event.kind === "terminal") {
       terminal = event.payload as TerminalPayload;
     }
@@ -126,6 +133,7 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
     exit: folded.exit,
     report: folded.report,
     moves: folded.steps,
+    code_searches: codeSearches,
     account: g === null || rows === null ? null : {
       alert: folded.setup === null ? null : { id: folded.setup.alert.id, title: folded.setup.alert.title, observedAt: folded.setup.alert.observedAt },
       disposition: verdict.sentence,

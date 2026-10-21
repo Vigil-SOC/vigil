@@ -33,8 +33,7 @@ def _render(tmp_path: Path, *sets: str) -> dict[str, dict]:
     meta = (chart / "Chart.yaml").read_text()
     (chart / "Chart.yaml").write_text(meta[: meta.index("\ndependencies:")] + "\n")
     args = ["helm", "template", "v", str(chart), "-s", "templates/networkpolicy.yaml"]
-    # secret.yaml refuses to render with an empty password or the old published
-    # default. These assertions only read networkpolicy.yaml.
+    # -s only filters output; helm still renders secret.yaml, which requires a password.
     for s in ("networkPolicies.enabled=true", "secrets.postgresPassword=test-password", *sets):
         args += ["--set", s]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
