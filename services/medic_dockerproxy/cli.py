@@ -25,7 +25,8 @@ FORBIDDEN_ENV = (
     "VIGIL_MEDIC_API_KEY",
     "POSTGRES_PASSWORD",
 )
-WILDCARDS = ("", "*", "0.0.0.0", "::", "[::]")
+# A deny-list: load_config() refuses these hosts, so nothing binds to them.
+WILDCARDS = ("", "*", "0.0.0.0", "::", "[::]")  # nosec B104 - rejected, not bound
 USAGE = "usage: python -m services.medic_dockerproxy {run|check}"
 
 
