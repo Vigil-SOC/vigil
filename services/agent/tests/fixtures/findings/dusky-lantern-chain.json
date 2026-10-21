@@ -209,7 +209,7 @@
         "data_source": "proofpoint",
         "cluster_id": null,
         "timestamp": "2026-10-10T13:02:11Z",
-        "status": null,
+        "state": null,
         "summary": "Inbound email 'Q3 invoice reconciliation - action needed' with ISO attachment delivered to accounts payable.",
         "entities": {
           "users": [
@@ -230,7 +230,7 @@
         "data_source": "crowdstrike",
         "cluster_id": null,
         "timestamp": "2026-10-10T13:09:44Z",
-        "status": null,
+        "state": null,
         "summary": "explorer.exe launched a .lnk file from a newly mounted removable/virtual volume.",
         "entities": {
           "hosts": [
@@ -248,7 +248,7 @@
         "data_source": "crowdstrike",
         "cluster_id": null,
         "timestamp": "2026-10-10T13:09:47Z",
-        "status": null,
+        "state": null,
         "summary": "rundll32.exe spawned by explorer.exe loaded an unsigned DLL from AppData\\Local\\Temp.",
         "entities": {
           "hosts": [
@@ -275,7 +275,7 @@
         "data_source": "zscaler",
         "cluster_id": null,
         "timestamp": "2026-10-10T17:30:00Z",
-        "status": null,
+        "state": null,
         "summary": "Host made 212 HTTPS connections at ~60s intervals to a domain first seen in the estate on 10 Oct.",
         "entities": {
           "hosts": [
@@ -297,7 +297,7 @@
         "data_source": "crowdstrike",
         "cluster_id": null,
         "timestamp": "2026-10-10T19:41:05Z",
-        "status": null,
+        "state": null,
         "summary": "rundll32.exe invoked comsvcs.dll MiniDump against lsass.exe; dump written to Temp.",
         "entities": {
           "hosts": [
@@ -319,7 +319,7 @@
         "data_source": "darktrace",
         "cluster_id": null,
         "timestamp": "2026-10-11T02:14:22Z",
-        "status": null,
+        "state": null,
         "summary": "Workstation opened SMB sessions to a file server it has not contacted in the prior 30 days, using svc_backup credentials.",
         "entities": {
           "hosts": [

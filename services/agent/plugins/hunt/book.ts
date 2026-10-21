@@ -38,7 +38,7 @@ const AWAITING = "awaiting ";
 
 // Why a hypothesis could not be settled when the cause is what the hunt could not see.
 export function couldNotFinish(gaps: number): string {
-  return `could not finish: ${gaps} source${gaps === 1 ? "" : "s"} unreachable`;
+  return `Could not finish: ${gaps} source${gaps === 1 ? "" : "s"} unreachable`;
 }
 
 export class HuntBook {
@@ -130,7 +130,7 @@ export class HuntBook {
     this.appendEvidence([
       {
         source_system: "dispatcher",
-        summary: "a query the hunt wanted could not be run",
+        summary: "A query the hunt wanted could not be run",
         payload: { tool, kind, gap_key: `${tool}:${kind}:${hypothesisId ?? "-"}`, hypothesis_id: hypothesisId },
         salience: "routine",
         why_notable: "a blind spot in what this run could see, not a finding",
@@ -261,7 +261,7 @@ export class HuntBook {
     const [record] = this.appendEvidence([
       {
         source_system: CRITIC_SOURCE_SYSTEM,
-        summary: `strongest benign explanation: ${nullCheck.strongest_benign_explanation}`,
+        summary: `Strongest benign explanation: ${nullCheck.strongest_benign_explanation}`,
         payload: criticPayload({
           hypothesis_id: hypothesisId,
           survives: nullCheck.survives,
@@ -299,8 +299,8 @@ export class HuntBook {
     const patch = {
       status: "proven",
       resolution_reason:
-        `survived the argue-the-null pass against "${nullCheck.strongest_benign_explanation}" ` +
-        `on ${strength.corroborating_sources} corroborating source system(s)`,
+        `Survived the argue-the-null pass against "${nullCheck.strongest_benign_explanation}" ` +
+        `on ${strength.corroborating_sources} corroborating source ${strength.corroborating_sources === 1 ? "system" : "systems"}`,
       evidence_strength: strength,
     };
     const hypothesis = this.projection.hypotheses.get(hypothesisId);
@@ -323,7 +323,7 @@ export class HuntBook {
     if (hypothesis.status !== "active") return `${hypothesisId} is already ${hypothesis.status}`;
     this.ledger.patch("hypothesis", hypothesisId, {
       status: "parked",
-      resolution_reason: `abandoned: ${reason} [${cited.join(", ")}]`,
+      resolution_reason: `Abandoned: ${reason} [${cited.join(", ")}]`,
     });
     return `${hypothesisId} parked`;
   }
@@ -437,8 +437,8 @@ export class HuntBook {
       });
       journalNote(
         this.ledger,
-        `${actor} approved the verdict on ${hypothesisId}, but ${strength.open_gaps} open gap(s) now ` +
-          "bear on it. It is not proven and keeps the status its rulings earned — the approval stands, the evidence moved.",
+        `${actor} approved the verdict on ${hypothesisId}, but ${strength.open_gaps} open ${strength.open_gaps === 1 ? "gap now bears" : "gaps now bear"} ` +
+          "on it. It is not proven and keeps the status its rulings earned — the approval stands, the evidence moved.",
       );
       return;
     }
@@ -543,7 +543,7 @@ export class HuntBook {
     this.appendEvidence([
       {
         source_system: "operator",
-        summary: `operator-declared visibility gap: ${directive.text}`,
+        summary: `Operator-declared visibility gap: ${directive.text}`,
         payload: { hypothesis_id: hypothesisId, actor: directive.actor, directive_id: directive.directive_id },
         salience: "notable",
         why_notable: "the hunt cannot see here, and no query will tell it so",
@@ -663,7 +663,7 @@ export class HuntBook {
       }
       this.ledger.patch("hypothesis", hypothesis.hypothesis_id, {
         status: "inconclusive",
-        resolution_reason: `hunt ended (${outcome}) with the hypothesis unresolved`,
+        resolution_reason: `Hunt ended (${outcome}) with the hypothesis unresolved`,
       });
     }
     this.ledger.patch("hunt", hunt.hunt_id, {

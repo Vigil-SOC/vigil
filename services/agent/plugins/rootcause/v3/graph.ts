@@ -82,8 +82,6 @@ export interface Graph {
   rare?: string; // the rare-activity sweep (rare.ts), computed once per run and kept for resume
   conclusion?: Conclusion; // the model's closing verdict (conclude move), written when the run ends
   theorizedTurn?: number;
-  storiesSince?: number; // the turn of the first round of stories
-  branchedTurn?: number; // the turn of the last branch move
 }
 
 // Competing stories of the whole incident (theorize move) and the predictions that tell them apart (test move).
@@ -281,11 +279,10 @@ export function applyPatch(g: Graph, patch: GraphPatch, turn: number, cfg: Agent
   }
   for (const id of patch.incrementExpand ?? []) if (g.nodes[id]) { g.nodes[id].expandAttempts++; g.nodes[id].updatedTurn = turn; }
   for (const id of patch.incrementForks ?? []) if (g.nodes[id]) { g.nodes[id].forkCount++; g.nodes[id].updatedTurn = turn; }
-  for (const id of patch.incrementBranch ?? []) if (g.nodes[id]) { g.nodes[id].branchAttempts = (g.nodes[id].branchAttempts ?? 0) + 1; g.nodes[id].updatedTurn = turn; g.branchedTurn = turn; }
+  for (const id of patch.incrementBranch ?? []) if (g.nodes[id]) { g.nodes[id].branchAttempts = (g.nodes[id].branchAttempts ?? 0) + 1; g.nodes[id].updatedTurn = turn; }
   for (const id of patch.incrementConnect ?? []) if (g.nodes[id]) g.nodes[id].connectAttempts = (g.nodes[id].connectAttempts ?? 0) + 1;
   if (patch.setConclusion) g.conclusion = patch.setConclusion;
   if (patch.setTheories) {
-    g.storiesSince ??= turn;
     g.theorizeCount = (g.theorizeCount ?? 0) + 1;
     g.theorizedTurn = turn;
     if (patch.setTheories.length) {

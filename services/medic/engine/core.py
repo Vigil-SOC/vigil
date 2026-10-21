@@ -357,7 +357,7 @@ class Engine:
             m.pop("held_until", None)
         if st == "pending" and value is True and now - m["active_since"] >= hold:
             if upgrading:  # §7: delayed, never hidden; active_since is kept
-                m["held_until"] = self.upgrade.until
+                m["held_until"] = self.upgrade.end
             else:
                 st, opened = "firing", True
                 out.append(self._open(rule, group, m, evidence, now))
@@ -372,9 +372,10 @@ class Engine:
                 _record("incident_updated", now, m, change="refiring", eval="true")
             )
         if st == "resolving" and value is False and now - m["resolving_since"] >= keep:
-            out.append(
-                _record("incident_resolved", now, m, how="cleared", eval="false")
-            )
+            # §6.3: a suppressed child that never routed was only a symptom.
+            quiet = m.get("suppressed_by") and m.get("routed_at") is None
+            how = "closed_quietly" if quiet else "cleared"
+            out.append(_record("incident_resolved", now, m, how=how, eval="false"))
             last = {k: m.get(k) for k in _INCIDENT}  # a flapping reopen needs it
             kept = {k: m[k] for k in ("seen", "opens", "members") if k in m}
             m.clear()
@@ -447,6 +448,7 @@ _INCIDENT = (
     "opened_at",
     "routed_at",
     "suppressed_by",
+    "freed_at",  # §6.3's 10 min run from the parent, not from the reopen
     "reopen_count",
 )
 

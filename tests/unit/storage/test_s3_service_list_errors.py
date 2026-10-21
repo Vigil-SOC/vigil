@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import boto3
 import pytest
@@ -10,6 +11,8 @@ from botocore.stub import Stubber
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.auth.auth_service import AuthService
+from core.auth.current_user import get_current_user
 from core.storage.s3_service import S3Service
 from services.api.routers import ingestion as ingestion_api
 
@@ -92,8 +95,10 @@ def test_uninitialized_client_raises_with_cause():
 def ingest_client(monkeypatch):
     svc = _service(lambda s: _denied(s, 2))
     monkeypatch.setattr(ingestion_api, "_get_s3_service", lambda: svc)
+    monkeypatch.setattr(AuthService, "check_permission", lambda *_a, **_k: True)
     app = FastAPI()
     app.include_router(ingestion_api.router, prefix="/api/ingest")
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id="u-1")
     with TestClient(app) as client:
         yield client
 

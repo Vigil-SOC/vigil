@@ -63,7 +63,9 @@ describe('what a finished hunt shows an operator', () => {
 
     expect(screen.getByText(/An internal host is beaconing/)).toBeInTheDocument()
     expect(screen.getByText('T1071.001')).toBeInTheDocument()
-    expect(screen.getByText('handed_off')).toBeInTheDocument()
+    // the case page's word; the hand-off is what happened next, beside it
+    expect(screen.getByText('Proven')).toHaveTextContent('Proven · handed off')
+    expect(screen.queryByText('handed_off')).not.toBeInTheDocument()
   })
 
   it('lists every technique the evidence cited, not just the first', () => {
@@ -188,7 +190,7 @@ describe('what a finished hunt shows an operator', () => {
       }),
     })
 
-    expect(screen.getByText(/4 corroborating source system\(s\)/)).toBeInTheDocument()
+    expect(screen.getByText(/4 corroborating source systems, 0 contradicting records, 0 open gaps/)).toBeInTheDocument()
     expect(screen.getByText(/survived disconfirmation/)).toBeInTheDocument()
   })
 })

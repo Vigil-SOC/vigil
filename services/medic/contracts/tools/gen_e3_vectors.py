@@ -1048,7 +1048,14 @@ V["v17-suppression-basic"] = suppression_vector(
     {
         "P": inc(GW, "+10m", "+12m", "+60m", "+65m", routed_at="+12m"),
         "C": inc(
-            STALL, "+40m", "+50m", "+60m", "+90m", suppressed_by="P", routed_at=None
+            STALL,
+            "+40m",
+            "+50m",
+            "+60m",
+            "+90m",
+            reason="closed_quietly",
+            suppressed_by="P",
+            routed_at=None,
         ),
     },
 )
@@ -1077,7 +1084,14 @@ V["v18-suppression-routing-hold"] = suppression_vector(
     {
         "P": inc(GW, "+51m", "+53m", "+60m", "+65m", routed_at="+53m"),
         "C": inc(
-            STALL, "+40m", "+50m", "+60m", "+90m", suppressed_by="P", routed_at=None
+            STALL,
+            "+40m",
+            "+50m",
+            "+60m",
+            "+90m",
+            reason="closed_quietly",
+            suppressed_by="P",
+            routed_at=None,
         ),
     },
 )

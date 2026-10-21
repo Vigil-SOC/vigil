@@ -83,6 +83,9 @@ class TerminalUpdate(BaseModel):
     # How bad the run rated what it found, for the case it was started from. A free
     # string: an unrecognised rating is ignored, not grounds to refuse the terminal.
     severity: Optional[str] = None
+    # The run's verdict as its guard left it. Loose like severity: only benign and
+    # false_positive act, and anything else leaves the case as it is.
+    disposition: Optional[str] = None
 
 
 class CitedFindings(BaseModel):
@@ -227,6 +230,7 @@ def record_terminal(
         # Only a run that reached its conclusion has rated anything.
         if update.outcome == "completed":
             _raise_priority(origin, run_id, update.severity)
+            _close_dismissed(origin, run_id, update)
 
     # A threat hunt that proved a compromise tees up the backward root-cause run.
     # Computed once: an RCA's own handoff
@@ -561,6 +565,47 @@ def _raise_priority(case_id: str, run_id: str, severity: Optional[str]) -> None:
         )
 
 
+# The verdicts that dismiss a case. Both close it as a false positive: the alert that
+# opened it was not the attack it looked like.
+DISMISSALS = {"benign", "false_positive"}
+
+
+def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
+    from core.cases.agent_closure import service_session
+    from core.cases.case_workflow_service import CaseWorkflowService
+    from core.cases.closure import ClosedByKind, ClosureCategory
+    from core.storage.models import Case
+
+    disposition = (update.disposition or "").strip().lower()
+    if disposition not in DISMISSALS:
+        return
+    try:
+        with service_session() as session:
+            case = session.query(Case).filter(Case.case_id == case_id).first()
+            # close_case overwrites a standing false_positive close, an analyst's
+            # included, so a case closed already, by anyone, is left as it is.
+            if case is None or case.status == "closed":
+                return
+            CaseWorkflowService().close_case(
+                session,
+                case_id,
+                closure_category=ClosureCategory.FALSE_POSITIVE,
+                closed_by=run_id,
+                closed_by_kind=ClosedByKind.AGENT,
+                closure_notes=update.summary or None,
+            )
+        _add_activity(
+            case_id,
+            "agent_run_closed",
+            f"Closed as a false positive: the investigation concluded {disposition}",
+            {"run_id": run_id, "disposition": disposition},
+        )
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception(
+            "could not close case %s on the disposition of %s", case_id, run_id
+        )
+
+
 # The Vigil case a handoff opens (see handoff_cases), so the run page can name it too.
 def _handoff_case_id(source_run_id: str, handoff: TerminalHandoff) -> str:
     return handoff_case_id(source_run_id, handoff.case_id)
@@ -765,11 +810,9 @@ def _rca_context(handoff: TerminalHandoff) -> str:
     finding = _rca_finding(handoff)
     return (
         "This run follows a CONFIRMED compromise handed to incident response. The "
-        "confirmed finding to work backward from:\n\n"
+        "confirmed finding:\n\n"
         f"{finding}\n\n"
-        "Work BACKWARD one event at a time to where it began. Record each step and "
-        "the value that ties it to the step before. Report the origin when nothing "
-        "earlier carries that value, and name what is still unproven when you stop."
+        "The run traces backward from it to where it began."
     )
 
 

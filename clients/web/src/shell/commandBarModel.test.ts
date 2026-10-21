@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attachRefusal, commandPreview, huntTitle, proposalFrom, type HuntAttachment, type HuntProposal } from './commandBarModel'
+import { attachRefusal, buildRows, commandPreview, huntTitle, proposalFrom, type HuntAttachment, type HuntProposal } from './commandBarModel'
 
 describe('huntTitle', () => {
   it('keeps a short hypothesis whole', () => {
@@ -79,5 +79,33 @@ describe('/hunt preview with an attachment', () => {
     const none = proposalFrom({ status: 'uncovered' })
     expect(commandPreview('hunt', '', JIRA, READY(none)).disabled).toBe(true)
     expect(commandPreview('hunt', '', JIRA).line).toBe('Add a hypothesis')
+  })
+})
+
+describe('buildRows alert hits', () => {
+  it('puts entity-matched alerts after the cases and does not repeat the exact id', () => {
+    const rows = buildRows('fin-ws-114', {
+      caseExact: null,
+      findingExact: null,
+      textCases: [],
+      iocCases: [{ id: 'case-7', title: 'Finance hunt', matchType: 'alert' }],
+      alertHits: [{ id: 'f-7', title: 'Beacon' }, { id: 'f-8', title: 'Logon' }],
+    }, [], [])
+    expect(rows.map((row) => [row.section, row.hint])).toEqual([
+      ['Cases', 'case-7'],
+      ['Alerts', 'f-7'],
+      ['Alerts', 'f-8'],
+      ['Ask Vigil', ''],
+    ])
+    expect(rows[0].desc).toBe('Matched an alert')
+
+    const exact = buildRows('f-7', {
+      caseExact: null,
+      findingExact: { id: 'f-7', title: 'Beacon' },
+      textCases: [],
+      iocCases: [],
+      alertHits: [{ id: 'f-7', title: 'Beacon' }],
+    }, [], [])
+    expect(exact.filter((row) => row.findingId === 'f-7')).toHaveLength(1)
   })
 })

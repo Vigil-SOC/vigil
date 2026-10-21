@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 # Turning the orchestrator off, or wiping its records, is a settings change.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
+# Queueing an investigation is the same act as POST /api/v1/agent-runs.
+_RUN_AGENTS = [permission_gate("ai_chat.use")]
+# Stopping one investigation is a decision, like resuming or cancelling a run.
+_KILL = [permission_gate("ai_decisions.approve")]
 
 
 _cached_orchestrator = None
@@ -338,7 +342,7 @@ def get_investigation_file(investigation_id: str, filename: str):
         raise
 
 
-@router.post("/investigations/{investigation_id}/wake")
+@router.post("/investigations/{investigation_id}/wake", dependencies=_RUN_AGENTS)
 def wake_investigation(investigation_id: str):
     """Restart a finished investigation by queueing a new one on the same case.
 
@@ -392,7 +396,7 @@ def wake_investigation(investigation_id: str):
         raise
 
 
-@router.post("/investigations/{investigation_id}/kill")
+@router.post("/investigations/{investigation_id}/kill", dependencies=_KILL)
 def kill_investigation(investigation_id: str):
     """Kill a specific running investigation."""
     try:
@@ -416,7 +420,7 @@ def kill_investigation(investigation_id: str):
         raise
 
 
-@router.post("/investigations")
+@router.post("/investigations", dependencies=_RUN_AGENTS)
 def create_investigation(request: InvestigationCreateRequest):
     """Manually create a new investigation."""
     from services.daemon.orchestrator import insert_intake_trigger
@@ -451,7 +455,7 @@ class ScanFindingsRequest(BaseModel):
     severities: list = ["critical", "high"]
 
 
-@router.post("/scan-findings")
+@router.post("/scan-findings", dependencies=_RUN_AGENTS)
 def scan_existing_findings(request: ScanFindingsRequest):
     """Insert detection trigger rows for matching findings not already investigated.
 

@@ -238,7 +238,8 @@ def test_root_cause_resolves_off_the_hunt_grant():
     assert document.get("phases") in (None, [])
     assert "checkpoints" not in config
     ids = [tool["id"] for tool in config["tools"]]
-    assert ids[:2] == ["record", "finish"] or {"record", "finish"} <= set(ids)
+    assert "record" not in ids
+    assert "finish" not in ids
     assert "search_findings" not in ids
     assert "lookup_indicators" not in ids
     assert "recall_entity" not in ids

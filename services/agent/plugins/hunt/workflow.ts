@@ -9,12 +9,12 @@ import { huntSpec, recallKeysOf } from "./config.js";
 import { fold, type HuntEvent, type HuntKinds } from "./ledger.js";
 import type { HarnessFactory } from "../../harness.js";
 import type { State } from "../../core/seams.js";
+import { stopFrom } from "./directives.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport } from "./report.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { loadPlugin } from "../index.js";
 import { huntHooks } from "./hooks.js";
-import { stopFrom } from "../rootcause/workflow.js";
 
 export interface HuntOptions {
   run_id: string;

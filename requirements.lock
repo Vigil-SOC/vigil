@@ -49,7 +49,7 @@ botocore==1.43.80
     #   s3transfer
 bullmq==2.15.0
     # via -r requirements.txt
-certifi==2026.7.22
+certifi==2026.10.19
     # via
     #   httpcore
     #   httpx

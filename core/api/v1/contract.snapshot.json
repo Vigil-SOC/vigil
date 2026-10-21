@@ -2005,6 +2005,17 @@
             ],
             "title": "Anomaly Score"
           },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
           "cluster_id": {
             "anyOf": [
               {
@@ -2127,6 +2138,28 @@
               }
             ],
             "title": "Status"
+          },
+          "terminal_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal Label"
+          },
+          "terminal_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal State"
           },
           "timestamp": {
             "anyOf": [
@@ -2255,17 +2288,6 @@
               }
             ],
             "title": "Severity"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
           }
         },
         "title": "FindingUpdate",
@@ -2310,6 +2332,13 @@
               "type": "integer"
             },
             "title": "By Severity",
+            "type": "object"
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By State",
             "type": "object"
           },
           "total": {
@@ -6087,19 +6116,26 @@
             }
           },
           {
+            "description": "The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all.",
             "in": "query",
-            "name": "status",
+            "name": "state",
             "required": false,
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "open",
+                    "dismissed",
+                    "resolved"
+                  ],
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Status"
+              "description": "The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all.",
+              "title": "State"
             }
           },
           {
@@ -6244,6 +6280,29 @@
               ],
               "title": "Exclusions",
               "type": "string"
+            }
+          },
+          {
+            "description": "The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all.",
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "dismissed",
+                    "resolved"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The finding's derived state: open (not dismissed, in no closed case), dismissed, or resolved (in a closed case, not dismissed). Absent is all.",
+              "title": "State"
             }
           },
           {

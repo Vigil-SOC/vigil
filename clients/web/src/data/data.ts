@@ -1,3 +1,4 @@
+import type { TerminalState } from '../shared/findingState'
 import type { IconName } from '../shared/icons'
 
 export type ConsoleScreenKey =
@@ -51,7 +52,10 @@ export interface Finding {
   /** `time` above is display-only and not safely comparable */
   ts?: number
   score: number | null
-  status: 'open' | 'investigating' | 'closed'
+  /** the derived terminal state (shared/findingState); null when the read carried none */
+  status: TerminalState | null
+  /** the case the state reads, for "Case NNNN" */
+  caseId?: string | null
   /** entity_context keys the fixed fields don't cover. Sources disagree about
    *  these (CrowdStrike sends device_id and no dest_ips, Splunk the reverse), so
    *  they are carried through and rendered as columns derived from the rows. */

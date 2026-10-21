@@ -114,7 +114,7 @@ describe("the predicate, not the recommendation", () => {
     // its rulings earned rather than reading as if evidence had turned.
     expect(ledger.projection.hunt.outcome).toBe("data_starved");
     expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("active");
-    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.resolution_reason).toMatch(/Could not finish: 3 sources unreachable/);
     expect(finalized(ledger)[0]!.gaps).toHaveLength(DEFAULT_VERDICTS.gap_lock_threshold);
   });
 
@@ -570,7 +570,7 @@ describe("Finalize runs on every terminal path", () => {
     expect(rendered).toMatch(/## Visibility gaps \(3\)/);
     expect(rendered).toMatch(/## Parked backlog/);
     expect(rendered).toMatch(/was the key used elsewhere\?/);
-    expect(rendered).toMatch(/Evidence strength at verdict: .* 3 open gap\(s\)/);
+    expect(rendered).toMatch(/Evidence strength at verdict: .* 3 open gaps/);
   });
 
   it("reports a parked hypothesis as backlog, not as a verdict", async () => {

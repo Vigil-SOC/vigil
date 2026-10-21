@@ -27,7 +27,7 @@ import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
-import { runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -36,6 +36,7 @@ import {
   chainOldestFirst,
   endedRun,
   EVIDENCE_PAGE,
+  EXPLANATION_TONE,
   explanationWord,
   foldRecord,
   heldLine,
@@ -50,6 +51,8 @@ import {
   stanceTotals,
   stoppedRun,
   strongestRows,
+  toolShown,
+  entityShown,
   visibilityGaps,
   wordDisplay,
   type CaseVerdict,
@@ -73,15 +76,6 @@ const NEEDS_POLL_MS = 20_000
 const RECORD_CHIPS = ['agent', 'human', 'memory', 'system'] as const
 /** The tabs the run filter narrows. */
 const RUN_TABS: readonly Tab[] = ['Explanations', 'Evidence', 'Checked', 'Memory and blind spots']
-
-/** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
-const EXPL_TONE: Record<string, string> = {
-  proven: 'good',
-  standing: 'good',
-  forming: 'ac',
-  weakened: 'poor',
-  'ruled out': 'muted',
-}
 
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
 // What the Summary's disagreement button asks the composer, on a case with several runs.
@@ -170,7 +164,7 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite, tag }: { row: Hypo
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v) } }}>
         <div className="case-expl-line">
-          <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+          <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
           <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`} title={title}>{title}</span>
         </div>
         {tag && <div className="case-expl-run"><RunTag label={tag} /></div>}
@@ -186,11 +180,18 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite, tag }: { row: Hypo
           <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
         </div>
         {by && <div className="case-expl-by">Added by {by}</div>}
-        {row.status === 'handed_off' && rootCauseRunId && (
+        {/* what happened after it was proven, never a status of its own */}
+        {row.status === 'handed_off' && (
           <div className="case-expl-by">
-            <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
-              Root-cause run
-            </Link>
+            Handed off
+            {rootCauseRunId && (
+              <>
+                {' · '}
+                <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
+                  Root-cause run
+                </Link>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -571,8 +572,7 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
-  const priced = read.flatMap((one) => (one.costUsd == null ? [] : [one.costUsd]))
-  const cost = priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'
+  const cost = spentAcross(folds.map((one) => one?.costUsd ?? null), folds.length > 1)
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
@@ -581,6 +581,13 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
     'Memory and blind spots': recalls.length && recalls.every((r) => r.unavailable) ? 'Recall did not happen' : memory || (recalls.length ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
+}
+
+/** "$0.60 · 1 run unpriced": what the runs spent together, naming the runs nothing priced when there are several; never $0 for an unpriced run. */
+function spentAcross(costs: (number | null)[], several: boolean): string {
+  const { total, unpriced } = costAcross(costs)
+  const note = several && unpriced ? `${plural(unpriced, 'run')} unpriced` : ''
+  return [total ?? (note ? '' : '—'), note].filter(Boolean).join(' · ')
 }
 
 /** One run on the case, as the page has read it. */
@@ -1450,7 +1457,9 @@ export function CasePage({
   const running = runId !== null && !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+    tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : stopped ? '' : ended?.reason ?? ''
+  // Why root cause did not run, in the activity's own words (rows are newest first).
+  const rootCauseNotStarted = rows.find((row) => row.source === 'case_activities' && row.kind === 'agent_run_root_cause_not_started') ?? null
   // Newest run first, which is not `runs` order (primary first).
   const verdict = caseVerdict(
     [...runs]
@@ -1576,6 +1585,14 @@ export function CasePage({
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
                 {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, text })} />}
+                {rootCauseNotStarted && (
+                  <section className="case-stopped" aria-label="Root cause">
+                    <div className="stopped-line">
+                      <b>Root cause</b>
+                      <span className="clamp2" title={rootCauseNotStarted.text}>{rootCauseNotStarted.text}</span>
+                    </div>
+                  </section>
+                )}
                 <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} onFollow={() => onExpand && onBack()} />
                 {runId !== null && (
                   <section className="case-card" aria-label="Findings so far">
@@ -1893,13 +1910,13 @@ function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<strin
   const read = runs.filter((one) => one.phase === 'ready' && one.fold)
   const calls = read.reduce((n, one) => n + one.fold!.calls.length, 0)
   const gaps = read.reduce((n, one) => n + visibilityGaps(one.fold).length, 0)
-  const priced = read.flatMap((one) => (one.fold!.costUsd == null ? [] : [one.fold!.costUsd]))
+  const cost = spentAcross(runs.map((one) => (one.phase === 'ready' && one.fold ? one.fold.costUsd : null)), runs.length > 1)
   return (
     <>
       {calls > 0 || gaps > 0 ? (
         <section className="case-card case-checked">
           <h3>
-            What Vigil checked · {calls} {calls === 1 ? 'query' : 'queries'} · {priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : '—'}
+            What Vigil checked · {calls} {calls === 1 ? 'query' : 'queries'} · {cost}
             <InfoTip
               label="About the cost"
               source="The selected runs' total spend, added."
@@ -1981,7 +1998,7 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
             {recall?.unavailable ? (
               <p className="muted">{tag && <RunTag label={tag} />}Recall did not happen: {recall.unavailable}{recall.keys.length ? ` (${recall.keys.join(', ')})` : ''}</p>
             ) : opened ? (
-              <p className="muted">{tag && <RunTag label={tag} />}{opened.keys.length ? `Asked about ${opened.keys.join(', ')}` : 'No entities recalled.'}</p>
+              <p className="muted">{tag && <RunTag label={tag} />}{opened.keys.length ? `Asked about ${opened.keys.map(entityShown).join(', ')}` : 'No entities recalled.'}</p>
             ) : (
               <p className="muted">{tag && <RunTag label={tag} />}The run did not journal an opening recall.</p>
             )}
@@ -1991,7 +2008,7 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
                   <MemoryRow
                     key={`s${i}`}
                     run={tag}
-                    text={[row.entity, row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
+                    text={[entityShown(row.entity), row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
                     meta={provenance(row)}
                   />
                 ))}
@@ -2005,7 +2022,7 @@ function MemoryCards({ parts }: { parts: MemoryPart[] }) {
                   />
                 ))}
                 {recalled.map((call, i) => (
-                  <MemoryRow key={`c${i}`} run={tag} text={`recall_entity · ${call.question || '—'}`} meta={`${call.result_length} bytes`} />
+                  <MemoryRow key={`c${i}`} run={tag} text={call.question || toolShown(call)} meta={`${call.result_length} bytes`} />
                 ))}
               </div>
             ) : null}
@@ -2110,8 +2127,9 @@ function FindingList({ fold }: { fold: RunFold | null }) {
         const word = explanationWord(row.status, row.supports, row.weakens)
         return (
           <li key={row.hypothesis_id}>
-            <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+            <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
             <Clamped text={row.statement || row.hypothesis_id} />
+            {row.status === 'handed_off' && <span className="case-findings-next">handed off</span>}
           </li>
         )
       })}

@@ -30,6 +30,7 @@ from pydantic import (
 )
 
 from core.auth.permissions import permission_gate
+from core.findings.alert_outcomes import TERMINAL_LABELS, stored_finding_states
 from core.findings.exclusions import current_active_ips, excluded_ips_of
 from core.findings.source_evidence import (
     StoredSourceEvidence,
@@ -55,6 +56,16 @@ data_service = DatabaseDataService()
 
 
 ExclusionView = Literal["include", "hide", "only"]
+# core.storage.service.FINDING_STATES
+FindingState = Literal["open", "dismissed", "resolved"]
+
+_STATE_QUERY = Query(
+    None,
+    description=(
+        "The finding's derived state: open (not dismissed, in no closed case), "
+        "dismissed, or resolved (in a closed case, not dismissed). Absent is all."
+    ),
+)
 
 _EXCLUSIONS_QUERY = Query(
     "include",
@@ -77,13 +88,25 @@ def _annotate_exclusions(finding: Dict[str, Any], active) -> Dict[str, Any]:
     return finding
 
 
+def _annotate_states(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Each finding's terminal state, its board label and the case it reads, in one query."""
+    states = stored_finding_states(data_service, [f["finding_id"] for f in findings])
+    for finding in findings:
+        if finding["finding_id"] not in states:
+            continue
+        state, case_id = states[finding["finding_id"]]
+        finding["terminal_state"] = state
+        finding["terminal_label"] = TERMINAL_LABELS[state]
+        finding["case_id"] = case_id
+    return findings
+
+
 class FindingUpdate(BaseModel):
     """Schema for updating a finding."""
 
     mitre_predictions: Optional[Dict[str, float]] = None
     predicted_techniques: Optional[List[Dict[str, Any]]] = None
     severity: Optional[str] = None
-    status: Optional[str] = None
     anomaly_score: Optional[float] = None
     entity_context: Optional[Dict[str, Any]] = None
     cluster_id: Optional[str] = None
@@ -127,6 +150,10 @@ class FindingRecord(FindingSchema):
 
     entity_context: TolerantEntityContext = None
     excluded_ips: List[str] = Field(default_factory=list)
+    # core.findings.alert_outcomes: the one state a finding is in, and its case
+    terminal_state: Optional[str] = None
+    terminal_label: Optional[str] = None
+    case_id: Optional[str] = None
 
 
 class FindingListResponse(BaseModel):
@@ -141,6 +168,7 @@ class FindingsSummaryResponse(BaseModel):
     total: int
     by_severity: Dict[str, int] = Field(default_factory=dict)
     by_data_source: Dict[str, int] = Field(default_factory=dict)
+    by_state: Dict[str, int] = Field(default_factory=dict)
 
 
 class FindingUpdateResponse(BaseModel):
@@ -156,7 +184,7 @@ def get_findings(
     data_source: Optional[str] = Query(None),
     cluster_id: Optional[int] = Query(None),
     min_anomaly_score: Optional[float] = Query(None),
-    status: Optional[str] = Query(None),
+    state: Optional[FindingState] = _STATE_QUERY,
     search: Optional[str] = Query(
         None,
         description="Text search across finding IDs, descriptions, entity context; "
@@ -181,7 +209,7 @@ def get_findings(
         data_source=data_source,
         cluster_id=cluster_id_str,
         min_anomaly_score=min_anomaly_score,
-        status=status,
+        state=state,
         search_query=search,
         exclusions=exclusions,
     )
@@ -192,7 +220,7 @@ def get_findings(
         data_source=data_source,
         cluster_id=cluster_id_str,
         min_anomaly_score=min_anomaly_score,
-        status=status,
+        state=state,
         search_query=search,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -201,12 +229,14 @@ def get_findings(
     active = current_active_ips()
 
     return {
-        "findings": [
-            _annotate_exclusions(
-                project_finding_source_evidence_for_list(finding), active
-            )
-            for finding in findings
-        ],
+        "findings": _annotate_states(
+            [
+                _annotate_exclusions(
+                    project_finding_source_evidence_for_list(finding), active
+                )
+                for finding in findings
+            ]
+        ),
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -230,23 +260,27 @@ def get_finding(finding_id: str):
     finding = data_service.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
-    return _annotate_exclusions(
+    finding = _annotate_exclusions(
         normalize_finding_source_evidence(finding), current_active_ips()
     )
+    return _annotate_states([finding])[0]
 
 
 @router.get("/stats/summary", response_model=FindingsSummaryResponse)
-def get_findings_summary(exclusions: ExclusionView = _SUMMARY_EXCLUSIONS_QUERY):
+def get_findings_summary(
+    exclusions: ExclusionView = _SUMMARY_EXCLUSIONS_QUERY,
+    state: Optional[FindingState] = _STATE_QUERY,
+):
     """
     Get summary statistics for findings.
 
-    Counted and grouped in SQL with the same exclusion filter as the list
-    endpoint, so ``total`` matches ``GET /findings`` with no row cap (#1438).
+    Counted and grouped in SQL with the same exclusion and state filters as the
+    list endpoint, so ``total`` matches ``GET /findings`` with no row cap (#1438).
 
     Returns:
         Summary statistics
     """
-    return data_service.get_findings_summary(exclusions=exclusions)
+    return data_service.get_findings_summary(exclusions=exclusions, state=state)
 
 
 @router.patch(

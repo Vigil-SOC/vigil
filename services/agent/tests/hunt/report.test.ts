@@ -245,7 +245,7 @@ describe("the one line an operator reads first", () => {
       backlog: [{ question_id: "q-1", question: "45.77.53.176", reason: "below the priority floor" }],
     });
 
-    expect(rendered).toMatch(/1 lead\(s\) were left open/);
+    expect(rendered).toMatch(/1 lead was left open/);
     expect(rendered).not.toMatch(/reached the end of its frontier/);
   });
 

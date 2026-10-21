@@ -1,12 +1,13 @@
-// Model-led moves (v3-temp): each submission may name the next move (`next`); code only checks it is one of
-// the moves available on the graph now. Unavailable or missing, the frontier picks as before.
+// Model-led moves: each submission may name the next move (`next`); code only checks it is one of the moves
+// available on the graph now. Unavailable or missing, a choose turn asks the model again (orchestrator.ts).
 import type { AgentConfig } from "./config.js";
 import { isStalled, pivotExhausted, toConnect, type FrontierDecision, type Move } from "./frontier.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphNode, type Prediction } from "./graph.js";
 import { mentionsRare, rareValues, type RareValue } from "./rare.js";
 
 export interface NextIn { move: string; target?: string; source?: string; why?: string }
-export interface LeadState { next?: NextIn; refused?: string }
+// refused: why the last choice was not used. silent: the last move's turn gave no valid submission (one attempt spent).
+export interface LeadState { next?: NextIn; refused?: string; silent?: string }
 
 const live = (n: GraphNode) => n.kind === "action" && n.status !== "ruled-out";
 const symptomOf = (g: Graph) => Object.values(g.nodes).find((n) => n.isSymptom);
@@ -49,7 +50,8 @@ export function options(g: Graph, cfg: AgentConfig): Partial<Record<Move, string
   return o;
 }
 
-export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0): string {
+// choosing: the prompt of a choose turn, where the answer is the whole submission rather than its `next`.
+export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0, choosing = false): string {
   const o = options(g, cfg);
   const open = openTests(g);
   const since = turn - storiesTouched(g);
@@ -62,10 +64,14 @@ export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0)
     : "";
   const avail = (Object.entries(o) as [Move, string[]][]).map(([m, ids]) =>
     m === "theorize" ? "theorize" : m === "connect" ? `connect (unlinked: ${toConnect(g).map((n) => n.id).join(", ")})` : `${m} ${ids.slice(0, 25).join(", ")}${ids.length > 25 ? ` …+${ids.length - 25}` : ""}`);
+  const lead = choosing
+    ? "You lead this investigation. Name the next move (move, target, optional source, why): the strongest lead the evidence opened, not a checklist. Follow a thread while it is producing; switch when it goes cold."
+    : "You lead this investigation. In your submission, name the next move in `next` (move, target, optional source, why): the strongest lead your searches opened, not a checklist. Follow a thread while it is producing; switch when it goes cold.";
+  const tail = choosing ? "" : " Leave `next` out and you will be asked to choose before the next move.";
   return `<next_move>
-You lead this investigation. In your submission, name the next move in \`next\` (move, target, optional source, why): the strongest lead your searches opened, not a checklist. Follow a thread while it is producing; switch when it goes cold.
+${lead}
 Moves: expand <event> = find what caused it; strengthen <event|link> = check it happened / holds; fork <event> = a competing cause; branch <event> = what else it led to; test <prediction> = run a story's prediction; theorize = write or revise competing stories of the incident; pivot <boundary> = follow into a source that holds the cause (set source to the sourcetype to search; any sourcetype); connect = link unlinked findings to the chain; probe <rare value> = read a rare record over the whole range and what came after it. source on any move says where to look first.
-Target a graph id listed below, or an event you report in this submission by its exact label. Leave \`next\` out and the system picks.${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
+Target a graph id listed below${choosing ? "." : ", or an event you report in this submission by its exact label."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
 available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.length} rare records unread)` : ""}${stories}${rareLine}
 </next_move>`;
 }
@@ -84,7 +90,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     const q = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
     const n = (g.theories ?? []).flatMap((t) => t.predictions).filter((p) => p.id.startsWith("PROBE")).length + 1;
     const p: Prediction = { id: `PROBE${n}`, sourcetype: r.sourcetype, expect: `the ${r.count} record(s) where ${r.field} is ${r.value}: what they are, which host and account, what followed them in time in any source, and whether they lead to anything in the graph`, spl: `index=${env.index} sourcetype=${q(r.sourcetype)} ${q(r.value)} | table _time *`, earliest: env.range[0], latest: env.range[1], separates: [], next: false, status: "open" };
-    return { probe: p, decision: { move: "test", targetId: p.id, turn: turn + 1, priority: -1, reason: `model probe: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
+    return { probe: p, decision: { move: "test", targetId: p.id, turn: turn + 1, reason: `model probe: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
   }
   const move = next.move as Move;
   const o = options(g, cfg);
@@ -112,5 +118,5 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     if (latest.length === 1) target = latest[0]!;
   }
   if (!ids.includes(target)) return { refused: `${move} ${next.target ?? ""} is not available (${move} is available on: ${ids.slice(0, 12).join(", ")}).` };
-  return { decision: { move, targetId: target, turn: turn + 1, priority: -1, reason: `model: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
+  return { decision: { move, targetId: target, turn: turn + 1, reason: `model: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
 }

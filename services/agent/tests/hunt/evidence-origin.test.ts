@@ -6,7 +6,7 @@ import type { ToolSpec } from "../../core/spec.js";
 import { callsIn } from "../../core/agent.js";
 import { InProcessState } from "../../core/state.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
-import { servedRefsSince, servedSince } from "../../plugins/hunt/hooks.js";
+import { readRefs, servedRefsSince, servedSince } from "../../plugins/hunt/hooks.js";
 import type { HuntEvent, HuntKinds } from "../../plugins/hunt/ledger.js";
 import { huntProjection } from "../../plugins/hunt/projection.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
@@ -20,6 +20,15 @@ const TOOLS: ToolSpec[] = [
 
 let at = 0;
 const call = (tool: string, ok = true): CallPayload => ({ ref: `r${++at}`, turn: at, call_id: `c${at}`, tool, arguments: "{}", result: "", ok, failure: ok ? null : "down" });
+
+// #2564: a row read off one result names it, so a console can name that row's source
+// rather than every call since the last record.
+describe("the call a row was read from", () => {
+  it("is the one it names by ref, and none when it names a call this run did not make", () => {
+    const calls = [call("lookup_indicators"), call("search_findings")];
+    expect(readRefs(calls, [{ ref: calls[0]!.ref }, { ref: "r999" }, {}])).toEqual([calls[0]!.ref, undefined, undefined]);
+  });
+});
 
 describe("the integration a record's rows came from", () => {
   it("is the one server that answered every estate query since the last record", () => {
@@ -109,5 +118,7 @@ describe("an evidence row a console is sent", () => {
     const endpoint = rows.find((row) => row.source_system === "endpoint");
     expect(network).toMatchObject({ finding_ids: [], served_by: "splunk-selfhosted" });
     expect(endpoint).toMatchObject({ finding_ids: ["dl-003"] });
+    // The calls a row rests on, by which the console names the part of Vigil that answered it (#2564).
+    expect(network?.call_refs).toHaveLength(1);
   });
 });

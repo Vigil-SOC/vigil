@@ -3,8 +3,11 @@
 A window opens when the `version` signal changes, or when restart markers for two or
 more Vigil services fall within 5 min of each other (a counter epoch change, a
 `…started_at` change, an `…uptime_seconds` drop). It lasts 15 min after the last
-such marker. Everything here is persisted state: the last value of each marker
-series, each service's newest restart, and the window's end.
+such marker, but a chain of windows (each marker before the window it extends has
+closed) holds for at most 60 min after the chain's first marker, sensor-blind
+included (⚑ S4b2-6). Everything here is persisted state: the last value of each
+marker series, each service's newest restart, the window's end and its chain's
+start.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 from services.medic.engine.history import gkey
 
 WINDOW_S = 900  # 15 min after the last restart (§7, ⚑ 4)
+CAP_S = 3600  # a chain of windows holds no longer than this after its first marker
 TOGETHER_S = 300  # restarts of 2+ services within 5 min of each other
 NOT_VIGIL = {"medic", "medic-gateway", "host"}  # their restarts aren't an upgrade
 
@@ -19,15 +23,28 @@ NOT_VIGIL = {"medic", "medic-gateway", "host"}  # their restarts aren't an upgra
 class UpgradeWatch:
     def __init__(self, state: dict | None) -> None:
         state = state or {}
-        self.until: float | None = state.get("until")
+        self.until: float | None = state.get("until")  # the chain's uncapped end
+        self.since: float | None = state.get("since")  # the chain's first marker
+        if self.until is not None and self.since is None:  # state from before the cap
+            self.since = self.until - WINDOW_S
         self.marks: dict[str, list] = state.get("marks", {})  # series -> [t, value]
         self.restarts: dict[str, float] = state.get("restarts", {})  # service -> t
 
     def state(self) -> dict:
-        return {"until": self.until, "marks": self.marks, "restarts": self.restarts}
+        return {"until": self.until, "since": self.since} | {
+            "marks": self.marks,
+            "restarts": self.restarts,
+        }
+
+    @property
+    def end(self) -> float | None:
+        """When the hold ends: 15 min after the last marker, capped (§7)."""
+        if self.until is None:
+            return None
+        return min(self.until, self.since + CAP_S)
 
     def active(self, now: float) -> bool:
-        return self.until is not None and now < self.until
+        return self.end is not None and now < self.end
 
     def observe(self, obs: dict, t: float) -> None:
         if obs["kind"] != "sample" or obs["outcome"] != "ok":
@@ -67,6 +84,10 @@ class UpgradeWatch:
             self._open(t)
 
     def _open(self, t: float) -> None:
+        if self.until is None or t >= self.until:  # the last window closed: new chain
+            self.since = t
+        else:  # a late marker in a live chain: the cap counts from the earliest
+            self.since = min(self.since, t)
         self.until = max(self.until or t, t + WINDOW_S)
 
 

@@ -18,6 +18,7 @@ import {
 } from './appData'
 import type { IconName } from '../shared/icons'
 import { techniqueTactic } from './mitre'
+import type { TerminalState } from '../shared/findingState'
 
 const DASH = '—'
 
@@ -32,7 +33,9 @@ export interface ApiFinding {
   title?: string
   description?: string
   mitre_predictions?: Record<string, number>
-  status?: string
+  /** core.findings.alert_outcomes: the one state the finding is in, and its case */
+  terminal_state?: string | null
+  case_id?: string | null
   /** open-ended on purpose: the key set varies by data source, so anything
    *  beyond the known names is carried through to `Finding.extra` */
   entity_context?: {
@@ -240,17 +243,11 @@ export function mapApiFinding(f: ApiFinding): Finding {
     time: f.timestamp ? fmt(f.timestamp, 'MMM d, HH:mm') : MISSING_FINDING_TIME,
     ts: epochMs(f.timestamp ?? undefined),
     score: typeof f.anomaly_score === 'number' ? f.anomaly_score : null,
-    status: findingStatus(f.status),
+    status: (f.terminal_state as TerminalState | null | undefined) ?? null,
+    caseId: f.case_id ?? null,
     extra: extraEntities(ec),
     excludedIps: f.excluded_ips ?? [],
   }
-}
-
-/** backend finding statuses are new / investigating / resolved */
-function findingStatus(s?: string): Finding['status'] {
-  if (s === 'investigating') return 'investigating'
-  if (s === 'resolved' || s === 'closed') return 'closed'
-  return 'open' // new / open / anything else
 }
 
 export interface ApiDecision {

@@ -19,7 +19,7 @@ describe('caseCitations (#2285)', () => {
     const cites = caseCitations(fold, [{ finding_id: 'dl-005', title: 'LSASS MiniDump', description: 'comsvcs.dll against lsass.exe', source_link: null, entities: [] }])
     expect(cites.map(({ id, kind, label, text }) => ({ id, kind, label, text }))).toEqual([
       { id: 'ev-0b17352e22bf', kind: 'evidence', label: 'step 3 · CrowdStrike', text: 'rundll32 loaded msupdate64.dll' },
-      { id: 'ev-gap', kind: 'evidence', label: 'step 0 · blind spot', text: 'No SIEM is connected, so the hunt could not search raw telemetry' },
+      { id: 'ev-gap', kind: 'evidence', label: 'blind spot', text: 'No SIEM is connected, so the hunt could not search raw telemetry' },
       { id: 'ev-dns', kind: 'evidence', label: 'step 4 · dns', text: 'one lookup' },
       { id: 'h-fb8e2227', kind: 'explanation', label: 'explanation · DUSKY LANTERN on FIN-WS-114', text: 'DUSKY LANTERN on FIN-WS-114' },
       { id: 'dl-005', kind: 'alert', label: 'alert · LSASS MiniDump', text: 'comsvcs.dll against lsass.exe' },
@@ -27,6 +27,32 @@ describe('caseCitations (#2285)', () => {
     // an alert opens its own page in a new tab, so the case stays open
     expect(cites[4].href).toBe('/overview?alert=dl-005')
     expect(cites.slice(0, 4).every((c) => c.href === undefined)).toBe(true)
+  })
+
+  it('tells apart rows that would share a label by their own text, and leaves a unique label as it is (#2565)', () => {
+    const row = (evidence_id: string, summary: string) =>
+      ({ evidence_id, iteration: 26, source_system: 'alerts', origins: ['vigil'], summary, is_gap: false, gap_detail: null })
+    const twins = {
+      kind: 'hunt',
+      hypotheses: [],
+      evidence: [
+        row('ev-a', 'Email with ISO attachment to j.doe'),
+        row('ev-b', 'DNS query for newly registered domain'),
+        row('ev-c', 'DNS query for newly registered domain'),
+        { ...row('ev-d', 'one lookup'), iteration: 4, source_system: 'dns', origins: [] },
+        { ...row('ev-x', 'explorer.exe launched a .lnk file'), iteration: 3, origins: ['crowdstrike'] },
+        { ...row('ev-e', 'rundll32.exe spawned by explorer.exe loaded msupdate64.dll'), iteration: 3, origins: ['crowdstrike'] },
+        { ...row('ev-f', 'rundll32.exe invoked comsvcs.dll MiniDump'), iteration: 3, origins: ['crowdstrike'] },
+      ],
+    } as unknown as RunFold
+    const labels = caseCitations(twins, []).map((c) => c.label)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(labels[3]).toBe('step 4 · dns')
+    expect(labels[0]).toMatch(/^step 26 · .+ · Email with ISO…$/)
+    expect(labels[2]).toBe(`${labels[1]} (2)`)
+    // where two texts start alike, the words where they part
+    expect(labels.slice(4)).toEqual(['step 3 · CrowdStrike · explorer.exe…', 'step 3 · CrowdStrike · spawned by…', 'step 3 · CrowdStrike · invoked…'])
+    expect(labels.every((label) => label.length <= 48)).toBe(true)
   })
 
   it('offers only alerts on a run that is not a hunt', () => {

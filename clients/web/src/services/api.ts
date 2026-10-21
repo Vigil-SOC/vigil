@@ -194,6 +194,7 @@ export const findingsApi = {
     data_source?: string
     cluster_id?: number
     min_anomaly_score?: number
+    search?: string
     limit?: number
     exclusions?: ExclusionView
     sort_by?: string
@@ -1285,7 +1286,6 @@ export interface OverviewFeedItem {
   finding_id: string
   severity: string | null
   data_source: string
-  status: string
   terminal_state: string
   terminal_label: string
   title: string | null

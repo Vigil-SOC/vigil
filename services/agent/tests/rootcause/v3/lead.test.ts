@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { applyPatch, emptyPatch } from "../../../plugins/rootcause/v3/graph.js";
 import { options, optionsText, resolveNext } from "../../../plugins/rootcause/v3/lead.js";
+import type { TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
+import { run } from "../../../plugins/rootcause/v3/orchestrator.js";
+import { Registry } from "../../../plugins/rootcause/v3/tools/registry.js";
+import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { apply, cfg, ev, node, seeded } from "./helpers.js";
 
 describe("lead", () => {
   it("takes an available choice", () => {
     const g = seeded();
-    expect(resolveNext({ move: "expand", target: "N1", why: "cause unknown" }, g, cfg, 1, []).decision).toMatchObject({ move: "expand", targetId: "N1", turn: 2, priority: -1 });
+    expect(resolveNext({ move: "expand", target: "N1", why: "cause unknown" }, g, cfg, 1, []).decision).toMatchObject({ move: "expand", targetId: "N1", turn: 2 });
   });
   it("refuses a move or target that is not available", () => {
     const g = seeded();
@@ -26,6 +30,8 @@ describe("lead", () => {
     expect(o.branch).toBeUndefined();
     expect(o.expand).toBeUndefined();
     expect(optionsText(g, cfg, { refused: "x" })).toContain("Your last choice was not used: x");
+    expect(optionsText(g, cfg, {})).toContain("you will be asked to choose");
+    expect(optionsText(g, cfg, {}, 0, true)).not.toContain("asked to choose");
   });
   it("maps a pivot named by its event to that event's boundary, and a bare prediction id to the latest round", () => {
     const g = seeded();
@@ -61,5 +67,58 @@ describe("lead", () => {
     expect(pr).toMatchObject({ sourcetype: "github", earliest: "2026-03-11T00:00:00Z", status: "open" });
     expect(pr.spl).toContain('"zed"');
     expect(resolveNext({ move: "probe", target: "nope" }, g, cfg, 8, [], { index: "lab", range: ["a", "b"] }).refused).toMatch(/not available/);
+  });
+});
+
+// The loop with a stub model: who names each move, and what the next prompt says.
+describe("the model names every move", () => {
+  const alert = { id: "a", source: "edr", title: "alert", observedAt: "2026-01-01T00:00:00Z", artifacts: [], raw: {} };
+  const conclusion = { conclusion: "done", chain: [], openQuestions: [], reasoning: "" };
+  const drive = async (answer: (req: TurnRequest, n: number, budget: { usd: number }) => unknown, graph?: ReturnType<typeof seeded>) => {
+    const reqs: TurnRequest[] = [];
+    const budget = { usd: 0 };
+    const model = { runTurn: async (req: TurnRequest) => { reqs.push(req); return { submission: answer(req, reqs.length, budget) ?? null, toolCalls: [] }; } };
+    const trace = new MemoryTrace("t");
+    const r = await run(alert, { ...cfg, rareSweep: false, maxUsd: 100 }, { model, tools: new Registry(), trace, budget, domains: ["edr"], clock: () => new Date() }, { runId: "t", range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "x", graph });
+    return { reqs, r, trace };
+  };
+
+  it("asks for the first move, tells a refusal and a silent turn to the next choose turn, and runs each choice", async () => {
+    const { reqs, trace } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (req.move === "choose") { if (n === 5) budget.usd = 1e6; return { move: "strengthen", target: "N1", why: "the alert is unconfirmed" }; }
+      // The first strengthen names a move that is not open; the second gives nothing valid.
+      return n === 2 ? { evidence: [], reasoning: "r", next: { move: "pivot", target: "B9", why: "x" } } : null;
+    });
+    expect(reqs.map((r) => r.move)).toEqual(["choose", "strengthen", "choose", "strengthen", "choose", "conclude"]);
+    expect(reqs[0]!.maxSearches).toBe(0);
+    expect(reqs[0]!.userContent).not.toContain("Your last choice was not used");
+    expect(reqs[2]!.userContent).toContain("Your last choice was not used: pivot is not available now.");
+    expect(reqs[4]!.userContent).toContain("Your last turn, on strengthen N1, gave no valid submission");
+    // A choose turn is a real turn: a decision entry, with no priority.
+    const decisions = trace.chronological().filter((e) => e.type === "decision").map((e) => e.payload);
+    expect(decisions[0]).toMatchObject({ move: "choose", targetId: "N1" });
+    expect(decisions.every((d) => !("priority" in (d as object)))).toBe(true);
+  });
+
+  it("runs the move a submission names without a choose turn", async () => {
+    const { reqs } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (req.move === "choose") return { move: "strengthen", target: "N1", why: "first look" };
+      if (n === 2) return { evidence: [], reasoning: "r", next: { move: "expand", target: "N1", why: "its cause is unknown" } };
+      budget.usd = 1e6;
+      return { candidates: [], reasoning: "r" };
+    });
+    expect(reqs.map((r) => r.move)).toEqual(["choose", "strengthen", "expand", "conclude"]);
+  });
+
+  it.each([[true, "root-cause-found"], [false, "inconclusive"]])("ends when no move is open (root %s: %s), after the closing conclude turn", async (isRoot, exit) => {
+    const g = seeded();
+    apply(g, { incrementExpand: ["N1", "N1", "N1"], ...(isRoot ? { setFlags: [{ nodeId: "N1", isRoot: true }] } : {}) });
+    for (let t = 2; t <= 4; t++) apply(g, { incrementAttempts: ["N1"] }, t);
+    expect(options(g, cfg)).toEqual({});
+    const { reqs, r } = await drive((req) => (req.move === "conclude" ? conclusion : null), g);
+    expect(reqs.map((x) => x.move)).toEqual(["conclude"]);
+    expect(r.exit).toBe(exit);
   });
 });

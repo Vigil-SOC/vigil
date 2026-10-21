@@ -362,7 +362,11 @@
   border-left: 1px solid var(--ln0);
   background: var(--bg1);
   overflow-y: auto;
-  padding: 16px 18px 110px; /* clear of the floating Ask Vigil button (110px, as the Watch page pads it) */
+  /* The scrollbar's room is kept whether or not it shows, out of the right pad, so the columns are as wide
+     with a scrollbar as without and a value that fits is never cut when one appears (#2564). The bottom
+     pad clears the floating Ask Vigil button (110px, as the Watch page pads it). */
+  scrollbar-gutter: stable;
+  padding: 16px 8px 110px 18px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1069,8 +1073,8 @@
 
 .case-page .case-expl-pill.good { color: var(--good); background: var(--good-bg); }
 .case-page .case-expl-pill.ac { color: var(--ac); background: var(--ac-bg); }
-.case-page .case-expl-pill.poor { color: var(--poor); background: var(--poor-bg); }
-.case-page .case-expl-pill.muted,
+.case-page .case-expl-pill.fair { color: var(--fair); background: var(--fair-bg); }
+.case-page .case-expl-pill.muted { color: var(--tx3); background: var(--bg3); }
 .case-page .case-expl-pill.neutral { color: var(--tx2); background: var(--bg3); }
 
 .case-page .case-expl-side { text-align: right; font-size: 12px; color: var(--tx2); white-space: nowrap; }
@@ -1386,8 +1390,6 @@
 
 .case-composer .msg-actions button { width: 24px; height: 24px; }
 
-.case-composer .cite-row { gap: 6px; margin-top: 6px; }
-
 .case-composer .cite-chip {
   display: inline-block;
   box-sizing: border-box;
@@ -1408,6 +1410,9 @@
   vertical-align: middle;
   cursor: pointer;
 }
+
+/* an evidence label is short by construction; a pair that shares step and source reads apart by its last words (#2565) */
+.case-composer .cite-chip.evidence { max-width: min(100%, 52ch); }
 
 /* where the answer wrote the id: in the line, like a word */
 .case-composer .md .cite-chip { margin: 0 1px; vertical-align: 1px; }
@@ -1663,9 +1668,12 @@
 }
 
 .case-page .case-findings li > .case-expl-pill,
-.case-page .case-findings .case-findings-who {
+.case-page .case-findings .case-findings-who,
+.case-page .case-findings .case-findings-next {
   flex-shrink: 0;
 }
+
+.case-page .case-findings .case-findings-next { font-size: 12px; color: var(--tx2); }
 
 .case-page .case-findings .case-findings-who {
   font-family: var(--font-mono);
@@ -1773,7 +1781,7 @@
 .case-page .checked-calls li.open .call-detail { margin: 0 12px; width: auto; }
 .case-page .checked-call {
   display: grid;
-  grid-template-columns: 40px 120px minmax(0, 1fr) 108px 64px 14px;
+  grid-template-columns: 40px 168px minmax(0, 1fr) 108px 64px 14px; /* the tool in words: "Looked up in threat intel" whole */
   gap: 12px;
   align-items: center;
   padding: 8px 12px;

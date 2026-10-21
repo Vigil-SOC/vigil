@@ -91,7 +91,7 @@ describe("what a declared gap does to a verdict", () => {
 
     const strength = evidenceStrength(started.ledger.projection, hypothesisId!);
     expect(strength.open_gaps).toBe(DEFAULT_VERDICTS.gap_lock_threshold);
-    expect(unmetPredicates(strength, DEFAULT_VERDICTS)).toContain("3 open visibility gap(s) bear on it");
+    expect(unmetPredicates(strength, DEFAULT_VERDICTS)).toContain("3 open visibility gaps bear on it");
   });
 
   // Through the verdict itself, not only the strength it reads: the hunt agent's
@@ -107,7 +107,7 @@ describe("what a declared gap does to a verdict", () => {
     expect(validate(started.ledger, hypothesisId!, true).said).toContain("gap-locked");
     const hypothesis = started.ledger.projection.hypotheses.get(hypothesisId!)!;
     expect(hypothesis.status).toBe("active");
-    expect(hypothesis.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
+    expect(hypothesis.resolution_reason).toMatch(/Could not finish: 3 sources unreachable/);
   });
 
   it("still lets a verdict land when one capability is missing and the rest corroborate", async () => {

@@ -46,6 +46,13 @@ function citedBy(node: MdNode): string | null {
   return null
 }
 
+/** The id a node draws as its chip for the first time in the paragraph; null for a repeat or anything else. */
+function chippedBy(node: MdNode): string | null {
+  if (node.type === 'link' && node.url?.startsWith(CITE_HREF)) return decodeURIComponent(node.url.slice(CITE_HREF.length))
+  if ((node.type === 'strong' || node.type === 'emphasis') && node.children?.length === 1) return chippedBy(node.children[0])
+  return null
+}
+
 /**
  * A model writes an alert's raw source id and severity beside it: "dl-005 (crowdstrike-dl-005, critical)".
  * The chip names the alert, so the id goes: "(critical)" is kept, "(crowdstrike-dl-005)" is dropped (#2459).
@@ -60,17 +67,28 @@ function withoutTrailer(text: string, id: string): string {
   return kept.length > 0 ? `${match[1]}(${kept.join(', ')})${rest}` : rest
 }
 
+/**
+ * The chip says what it is, so the kind word the model wrote before it goes: "the alert dl-005" reads
+ * "the alert · <title>", not "the alert alert · <title>". A repeat, named in words, keeps it.
+ */
+function withoutKindWord(text: string, kind: string | undefined): string {
+  return kind ? text.replace(new RegExp(`(?<![\\w.-])${kind}s?\\s*$`, 'i'), '') : text
+}
+
+/** "Zscaler (Zscaler)": a name of up to four words repeated in brackets right after itself reads once. */
+const SAID_TWICE = /(?<![\w.-])([\w-]+(?: [\w-]+){0,3}) \(\1\)/g
+
 /** Blocks that are read as one paragraph: an id is drawn as its chip once in each (#2459). */
 const PARAGRAPHS = new Set(['paragraph', 'heading', 'tableCell'])
 
 /** A remark pass: ids in prose, or alone in an inline code span, become cite links. Code blocks and links keep their text. */
-function remarkCite(pattern: RegExp) {
+function remarkCite(pattern: RegExp, kindOf?: (id: string) => string | undefined) {
   const whole = new RegExp(`^(?:${pattern.source})$`)
   const walk = (node: MdNode, inherited: Set<string>) => {
     if (!node.children || node.type === 'link' || node.type === 'linkReference') return
     const seen = PARAGRAPHS.has(node.type) ? new Set<string>() : inherited
     const children = node.children.flatMap((child) => {
-      if (child.type === 'text' && child.value) return split(child.value, pattern, seen)
+      if (child.type === 'text' && child.value) return split(child.value.replace(SAID_TWICE, '$1'), pattern, seen)
       if (child.type === 'inlineCode' && child.value && whole.test(child.value.trim())) {
         const id = child.value.trim()
         const again = seen.has(id)
@@ -81,9 +99,11 @@ function remarkCite(pattern: RegExp) {
       return [child]
     })
     node.children = children.flatMap((child, i) => {
+      if (child.type !== 'text' || !child.value) return [child]
       const before = i > 0 ? citedBy(children[i - 1]) : null
-      if (!before || child.type !== 'text' || !child.value) return [child]
-      const value = withoutTrailer(child.value, before)
+      const after = i + 1 < children.length ? chippedBy(children[i + 1]) : null
+      let value = before ? withoutTrailer(child.value, before) : child.value
+      if (after) value = withoutKindWord(value, kindOf?.(after))
       return value ? [{ ...child, value }] : []
     })
   }
@@ -95,13 +115,16 @@ export interface MarkdownCite {
   pattern: RegExp
   /** `again` when the id was already drawn as its chip earlier in the same paragraph. */
   render: (id: string, again: boolean) => ReactNode
+  /** The word that names an id's kind ("alert", "explanation"), dropped when written just before its chip. */
+  kindWord?: (id: string) => string | undefined
 }
 
 const MarkdownBase = ({ children, cite }: { children: string; cite?: MarkdownCite }) => {
   const pattern = cite?.pattern
+  const kindWord = cite?.kindWord
   const remarkPlugins = useMemo(
-    () => (pattern ? [remarkGfm, remarkBreaks, remarkCite(pattern)] : [remarkGfm, remarkBreaks]),
-    [pattern],
+    () => (pattern ? [remarkGfm, remarkBreaks, remarkCite(pattern, kindWord)] : [remarkGfm, remarkBreaks]),
+    [pattern, kindWord],
   )
   return (
     <div className="md">

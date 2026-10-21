@@ -201,7 +201,7 @@ describe("what an ABANDON may rest on", () => {
     expect(call.ok).toBe(false);
     expect(call.result).toContain("attested");
     // Never parked by the abandon: the run ending closes it inconclusive instead.
-    expect(hypothesis.resolution_reason ?? "").not.toMatch(/^abandoned/);
+    expect(hypothesis.resolution_reason ?? "").not.toMatch(/^Abandoned/);
   });
 
   it("allows one citing something the telemetry attested", async () => {
@@ -209,7 +209,7 @@ describe("what an ABANDON may rest on", () => {
 
     expect(call.ok).toBe(true);
     expect(hypothesis.status).toBe("parked");
-    expect(hypothesis.resolution_reason).toMatch(/^abandoned: looks benign/);
+    expect(hypothesis.resolution_reason).toMatch(/^Abandoned: looks benign/);
   });
 });
 

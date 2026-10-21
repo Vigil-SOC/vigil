@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -39,6 +39,8 @@ from core.workflows.workflows_service import WorkflowsService
 router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
+# Enabling, reloading, or saving a workflow changes what every run can do.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api",
@@ -167,7 +169,7 @@ class WorkflowEnabledRequest(BaseModel):
     enabled: bool
 
 
-@router.put("/workflows/{workflow_id}/enabled")
+@router.put("/workflows/{workflow_id}/enabled", dependencies=_SETTINGS_WRITE)
 async def set_enabled(
     workflow_id: str,
     body: WorkflowEnabledRequest,
@@ -191,7 +193,7 @@ async def set_enabled(
 
 
 # Static routes MUST come before parameterized {workflow_id} routes
-@router.post("/workflows/reload")
+@router.post("/workflows/reload", dependencies=_SETTINGS_WRITE)
 async def reload_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """
     Force reload all file-based workflows from disk.
@@ -223,7 +225,7 @@ async def list_custom_workflows(
     return {"workflows": rows, "count": len(rows)}
 
 
-@router.post("/workflows/custom", status_code=201)
+@router.post("/workflows/custom", status_code=201, dependencies=_SETTINGS_WRITE)
 async def create_custom_workflow(
     payload: CustomWorkflowCreate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
@@ -251,7 +253,7 @@ async def get_custom_workflow(
     return wf
 
 
-@router.put("/workflows/custom/{workflow_id}")
+@router.put("/workflows/custom/{workflow_id}", dependencies=_SETTINGS_WRITE)
 async def update_custom_workflow(
     workflow_id: str,
     payload: CustomWorkflowUpdate,
@@ -273,7 +275,7 @@ async def update_custom_workflow(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/workflows/custom/{workflow_id}")
+@router.delete("/workflows/custom/{workflow_id}", dependencies=_SETTINGS_WRITE)
 async def delete_custom_workflow(
     workflow_id: str,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
@@ -508,8 +510,9 @@ def _finding_sources(finding_ids: List[str]) -> Dict[str, str]:
 
 
 # Vigil's own tools a hunt queries, by the part of Vigil that answers them. A row that
-# cites no alert and names no integration was read off Vigil itself when these are all
-# its turn asked; any other tool in the turn leaves the row's system unsaid.
+# cites no alert and names no integration was read off the part of Vigil that answered
+# the call it names, or, naming none, every call it could rest on. Calls to several
+# parts, or to any other tool, leave the row's system unsaid rather than guessed (#2564).
 _VIGIL_TOOL_SYSTEMS = {
     "search_findings": "vigil_alerts",
     "get_finding": "vigil_alerts",
@@ -517,7 +520,6 @@ _VIGIL_TOOL_SYSTEMS = {
     "case_records": "vigil_memory",
     "lookup_indicators": "vigil_threat_intel",
 }
-_VIGIL = "vigil"
 
 # A model sometimes writes several alert ids into one: "dl-007;dl-001".
 _ID_SEPARATORS = re.compile(r"[\s,;|]+")
@@ -528,23 +530,37 @@ def _cited_ids(item: Dict[str, Any]) -> List[str]:
     return [part for one in ids for part in _ID_SEPARATORS.split(one) if part]
 
 
-def _vigil_systems_by_turn(calls: Any) -> Dict[int, str]:
-    """The part of Vigil that answered each turn whose queries were all Vigil's own.
+def _listed(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
 
-    Several parts in one turn read as Vigil; a turn that asked anything else is left out.
+
+def _turn(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) else None
+
+
+def _vigil_part(tools: List[str]) -> Optional[str]:
+    """The one part of Vigil that answered all these tools; none when it was not one."""
+    parts = {_VIGIL_TOOL_SYSTEMS.get(tool) for tool in tools}
+    return next(iter(parts)) if len(parts) == 1 else None
+
+
+def _vigil_reads(calls: Any) -> Tuple[Dict[str, str], Dict[int, Optional[str]]]:
+    """Each call's tool by ref, and the one part of Vigil each turn read, if one.
+
+    A row that names the calls it rests on is read by those; the turn is for a ledger
+    written before rows named them.
     """
-    asked: Dict[int, set] = {}
+    by_ref: Dict[str, str] = {}
+    by_turn: Dict[int, List[str]] = {}
     for call in calls if isinstance(calls, list) else []:
-        if not isinstance(call, dict) or not isinstance(call.get("iteration"), int):
+        if not isinstance(call, dict):
             continue
-        asked.setdefault(call["iteration"], set()).add(
-            _VIGIL_TOOL_SYSTEMS.get(str(call.get("tool") or ""))
-        )
-    return {
-        turn: (next(iter(systems)) if len(systems) == 1 else _VIGIL)
-        for turn, systems in asked.items()
-        if None not in systems
-    }
+        tool = str(call.get("tool") or "")
+        if isinstance(call.get("ref"), str):
+            by_ref[call["ref"]] = tool
+        if isinstance(call.get("iteration"), int):
+            by_turn.setdefault(call["iteration"], []).append(tool)
+    return by_ref, {turn: _vigil_part(tools) for turn, tools in by_turn.items()}
 
 
 def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
@@ -552,8 +568,8 @@ def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
 
     ``origins`` is the system its rows came from (#2287): the ``data_source`` of
     the alerts it cites, or the integration that answered when it cites none, or
-    the part of Vigil its turn read when Vigil's own tools were all it asked
-    (#2458). The tier is that integration's; a row naming no integration is
+    the part of Vigil that answered the call it names, or every call it could rest
+    on (#2458, #2564). The tier is that integration's; a row naming no integration is
     graded by its domain. Display labels, as configured now and not stored: a
     gap row names no source, so it gets neither.
     """
@@ -564,7 +580,7 @@ def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
     ]
     cited = [_cited_ids(item) for item in rows]
     sources = _finding_sources(sorted({one for ids in cited for one in ids}))
-    vigil = _vigil_systems_by_turn((folded or {}).get("calls"))
+    by_ref, by_turn = _vigil_reads((folded or {}).get("calls"))
     for item, ids in zip(rows, cited):
         origins = list(dict.fromkeys(sources[one] for one in ids if one in sources))
         served = item.get("served_by")
@@ -574,9 +590,25 @@ def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
             item["source_tier"] = resolve_source_tier(
                 str(item.get("source_system") or ""), InvestigationKind.HUNT
             ).value
-            turn = item.get("iteration")
-            if item.get("provenance") == "worker" and turn in vigil:
-                item["origins"] = [vigil[turn]]
+            if item.get("provenance") != "worker":
+                continue
+            own = item.get("read_ref")
+            refs = (
+                [own]
+                if isinstance(own, str) and own
+                else [
+                    one
+                    for one in _listed(item.get("call_refs"))
+                    if isinstance(one, str)
+                ]
+            )
+            part = (
+                _vigil_part([by_ref.get(one, "") for one in refs])
+                if refs
+                else by_turn.get(_turn(item.get("iteration")))
+            )
+            if part:
+                item["origins"] = [part]
             continue
         item["origins"] = origins
         tiers = [resolve_source_tier(one, InvestigationKind.CASE) for one in origins]

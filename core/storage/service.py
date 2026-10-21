@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import String, and_
 from sqlalchemy import case as sql_case
-from sqlalchemy import cast, distinct, func, literal, or_, select, true
+from sqlalchemy import cast, distinct, exists, func, literal, or_, select, true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.exc import InterfaceError, OperationalError
@@ -27,6 +27,7 @@ from core.storage.models import (
     Case,
     Finding,
     FindingMitrePrediction,
+    case_findings,
 )
 from core.storage.schemas import FindingSchema
 from core.time import utcnow
@@ -154,12 +155,45 @@ IP_FACET_KEYS = {
 }
 
 
+# The derived state a findings read filters and groups by. A dismissal wins
+# over any case, as in core.findings.alert_outcomes._state.
+FINDING_STATES = ("open", "dismissed", "resolved")
+
+
+def _in_closed_case():
+    return exists().where(
+        case_findings.c.finding_id == Finding.finding_id,
+        case_findings.c.case_id == Case.case_id,
+        Case.status == "closed",
+    )
+
+
+def _state_predicate(state: str):
+    dismissed = Finding.noise_marked_at.isnot(None)
+    if state == "dismissed":
+        return dismissed
+    if state == "resolved":
+        return and_(~dismissed, _in_closed_case())
+    if state == "open":
+        return and_(~dismissed, ~_in_closed_case())
+    raise ValueError(f"Unknown finding state {state!r}")
+
+
+def _state_bucket():
+    """The ``FINDING_STATES`` bucket of each row, as a SQL expression."""
+    return sql_case(
+        (Finding.noise_marked_at.isnot(None), literal("dismissed")),
+        (_in_closed_case(), literal("resolved")),
+        else_=literal("open"),
+    )
+
+
 def _finding_filters(
     severity: Optional[str] = None,
     data_source: Optional[str] = None,
     cluster_id: Optional[str] = None,
     min_anomaly_score: Optional[float] = None,
-    status: Optional[str] = None,
+    state: Optional[str] = None,
     search_query: Optional[str] = None,
     exclusions: str = "include",
 ) -> list:
@@ -173,8 +207,8 @@ def _finding_filters(
         filters.append(Finding.cluster_id == cluster_id)
     if min_anomaly_score is not None:
         filters.append(Finding.anomaly_score >= min_anomaly_score)
-    if status:
-        filters.append(Finding.status == status)
+    if state:
+        filters.append(_state_predicate(state))
     # each whitespace/comma-separated term must match one of the text columns
     for term in re.split(r"[\s,]+", search_query or ""):
         if not term:
@@ -483,7 +517,7 @@ class DatabaseService:
         data_source: Optional[str] = None,
         cluster_id: Optional[str] = None,
         min_anomaly_score: Optional[float] = None,
-        status: Optional[str] = None,
+        state: Optional[str] = None,
         search_query: Optional[str] = None,
         limit: int = 1000,
         offset: int = 0,
@@ -502,7 +536,7 @@ class DatabaseService:
             data_source: Filter by data source
             cluster_id: Filter by cluster ID
             min_anomaly_score: Minimum anomaly score
-            status: Filter by status
+            state: ``open``, ``dismissed`` or ``resolved`` (FINDING_STATES); None is all
             search_query: Terms (split on whitespace/commas) that must all match
                 finding_id, description or entity_context
             limit: Maximum number of results
@@ -524,7 +558,7 @@ class DatabaseService:
                 data_source=data_source,
                 cluster_id=cluster_id,
                 min_anomaly_score=min_anomaly_score,
-                status=status,
+                state=state,
                 search_query=search_query,
                 exclusions=exclusions,
             )
@@ -544,7 +578,6 @@ class DatabaseService:
                 "anomaly_score": Finding.anomaly_score,
                 "severity": Finding.severity,
                 "data_source": Finding.data_source,
-                "status": Finding.status,
             }
             sort_col = sort_column_map.get(sort_by, Finding.timestamp)
             if sort_order == "asc":
@@ -604,7 +637,7 @@ class DatabaseService:
         data_source: Optional[str] = None,
         cluster_id: Optional[str] = None,
         min_anomaly_score: Optional[float] = None,
-        status: Optional[str] = None,
+        state: Optional[str] = None,
         search_query: Optional[str] = None,
         exclusions: str = "include",
     ) -> int:
@@ -618,7 +651,7 @@ class DatabaseService:
                 data_source=data_source,
                 cluster_id=cluster_id,
                 min_anomaly_score=min_anomaly_score,
-                status=status,
+                state=state,
                 search_query=search_query,
                 exclusions=exclusions,
             )
@@ -634,12 +667,12 @@ class DatabaseService:
         data_source: Optional[str] = None,
         cluster_id: Optional[str] = None,
         min_anomaly_score: Optional[float] = None,
-        status: Optional[str] = None,
+        state: Optional[str] = None,
         search_query: Optional[str] = None,
         exclusions: str = "include",
         top_ips: int = 0,
     ) -> Optional[Dict[str, Any]]:
-        """``{total, by_severity, by_data_source, by_status}`` over every match.
+        """``{total, by_severity, by_data_source, by_state}`` over every match.
 
         Counted and grouped in SQL under the same filters as ``count_findings``,
         so ``total`` agrees with the list total however many rows there are
@@ -652,7 +685,7 @@ class DatabaseService:
             data_source=data_source,
             cluster_id=cluster_id,
             min_anomaly_score=min_anomaly_score,
-            status=status,
+            state=state,
             search_query=search_query,
             exclusions=exclusions,
         )
@@ -660,7 +693,9 @@ class DatabaseService:
 
             def grouped(column) -> Dict[str, int]:
                 counts: Dict[str, int] = {}
-                stmt = select(column, func.count()).where(*criteria).group_by(column)
+                # grouped over a subquery, so an expression is computed once per row
+                rows = select(column.label("value")).where(*criteria).subquery()
+                stmt = select(rows.c.value, func.count()).group_by(rows.c.value)
                 for value, count in session.execute(stmt).all():
                     key = value or "unknown"
                     counts[key] = counts.get(key, 0) + int(count)
@@ -673,7 +708,7 @@ class DatabaseService:
                 "total": int(total or 0),
                 "by_severity": grouped(Finding.severity),
                 "by_data_source": grouped(Finding.data_source),
-                "by_status": grouped(Finding.status),
+                "by_state": grouped(_state_bucket()),
             }
             if top_ips:
                 for facet, keys in IP_FACET_KEYS.items():

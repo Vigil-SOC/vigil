@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth.permissions import permission_gate
 from core.federation import registry as fed_registry
 from core.federation import store as fed_store
 from core.federation.lag import source_collection_lag
@@ -30,6 +31,11 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
+
+# The on/off switch for federation as a whole is a platform setting. A single
+# source is an integration, same as the other integration write routes.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
+_INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 
 
 _VALID_SEVERITIES = {"low", "medium", "high", "critical"}
@@ -88,7 +94,7 @@ async def get_settings() -> Dict[str, Any]:
     return fed_store.get_global_settings()
 
 
-@router.put("/settings")
+@router.put("/settings", dependencies=_SETTINGS_WRITE)
 async def put_settings(
     payload: FederationGlobalSettings,
     current_user: User = Depends(get_current_active_user),
@@ -148,7 +154,7 @@ async def list_sources() -> Dict[str, Any]:
     return {"sources": out, "global": fed_store.get_global_settings()}
 
 
-@router.patch("/sources/{source_id}")
+@router.patch("/sources/{source_id}", dependencies=_INTEGRATIONS_WRITE)
 async def patch_source(
     source_id: str, payload: FederationSourcePatch
 ) -> Dict[str, Any]:
@@ -196,7 +202,7 @@ async def patch_source(
     return _enrich_with_adapter(row)
 
 
-@router.post("/sources/{source_id}/poll-now")
+@router.post("/sources/{source_id}/poll-now", dependencies=_INTEGRATIONS_WRITE)
 async def poll_now(source_id: str) -> Dict[str, Any]:
     if fed_registry.get_adapter(source_id) is None:
         raise HTTPException(status_code=404, detail=f"Unknown source: {source_id}")

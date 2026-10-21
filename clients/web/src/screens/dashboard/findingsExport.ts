@@ -1,4 +1,5 @@
 import type { Finding } from '../../data/data'
+import { stateWord } from '../../shared/findingState'
 
 const FIXED_HEADERS = [
   'finding_id',
@@ -48,7 +49,7 @@ export function buildFindingsCsv(findings: Finding[]): string {
       finding.user,
       timestamp(finding),
       finding.score,
-      finding.status,
+      finding.status ? stateWord(finding.status, finding.caseId) : '',
       ...extraKeys.map((key) => finding.extra?.[key] ?? ''),
     ]),
   ]

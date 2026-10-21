@@ -1,12 +1,11 @@
-// The loop (spec §8): frontier decides, router dispatches, the handler returns a patch, the graph applies
+// The loop (spec §8): the model names each move, router dispatches, the handler returns a patch, the graph applies
 // and rescores it, the trace records it. Handed to the caller after every turn so a run can resume.
 import type { AgentConfig } from "./config.js";
-import { selectFrontier } from "./frontier.js";
 import { applyPatch, bestPathFromSymptom, createGraph, getParents, emptyPatch, type Graph, type GraphPatch } from "./graph.js";
 import { renderReport } from "./report.js";
 import { rareSweep } from "./rare.js";
 import { route } from "./router.js";
-import { optionsText, resolveNext, type LeadState, type NextIn } from "./lead.js";
+import { options, optionsText, resolveNext, type LeadState, type NextIn } from "./lead.js";
 import type { ModelClient } from "./model/client.js";
 import type { FrontierDecision } from "./frontier.js";
 import type { Alert, Deps, ExitReason, LoopContext, RunResult, Spent } from "./types.js";
@@ -59,8 +58,8 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
   o.signal?.throwIfAborted(); // a sweep cut short by a stop or a lost lease is not kept
   await o.onTurn?.(graph, 0);
   let exit: ExitReason | null = null;
-  // Model-led: every move's prompt lists the moves available now and the submission names the next
-  // one; the frontier picks only when the model's choice is missing or not available.
+  // The model names every move: each submission's `next`, checked against the graph, is the next turn's move.
+  // With none (turn 1, a resume, a missing or refused `next`) a choose turn asks for it.
   const st: LeadState = {};
   let pending: FrontierDecision | undefined;
   // Every prompt says how much budget is left; under wrapUpAt the model is told to wrap up, and under concludeAt
@@ -76,10 +75,14 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
   const model: ModelClient = {
     runTurn: async (req) => {
       if (req.move === "scope" || req.move === "conclude") return deps.model.runTurn(req);
+      const choosing = req.move === "choose";
       const chose = curSource ? `\n\n<lead_note>You chose to look in ${curSource} first for this move.</lead_note>` : "";
-      const r = await deps.model.runTurn({ ...req, userContent: `${req.userContent}${chose}\n\n${budgetText()}\n\n${optionsText(graph, cfg, st, cur)}` });
-      const nx = (r.submission as { next?: NextIn } | null)?.next;
+      const r = await deps.model.runTurn({ ...req, userContent: `${req.userContent}${chose}\n\n${budgetText()}\n\n${optionsText(graph, cfg, st, cur, choosing)}` });
+      // A choose answer is the choice itself; any other submission carries it under `next`.
+      const nx = choosing ? (r.submission as NextIn | null) : (r.submission as { next?: NextIn } | null)?.next;
       if (nx) st.next = nx;
+      // A turn with no valid submission is one attempt on its target (the handlers count it); the next prompt says so.
+      st.silent = r.submission === null && !choosing ? `${req.move} ${req.correlationId}` : undefined;
       return r;
     },
   };
@@ -92,24 +95,25 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     if (concluding && graph.conclusion) { exit = concluding; break; }
     exit = checkExit(graph, cfg, deps.budget);
     if (exit === "budget-exhausted" && chainSolid(graph, cfg)) exit = "root-cause-found";
-    let decision = exit ? null : pending ? { ...pending, turn } : selectFrontier(graph, cfg, turn, deps.tools.coverage);
+    // Nothing open on the graph ends the run; otherwise the model's last choice runs, or it is asked to choose.
+    if (!exit && !pending && !Object.keys(options(graph, cfg)).length) exit = chainSolid(graph, cfg) ? "root-cause-found" : "inconclusive";
+    const symptomId = Object.values(graph.nodes).find((n) => n.isSymptom)!.id;
+    let decision: FrontierDecision | null = exit ? null : pending ? { ...pending, turn } : { move: "choose", targetId: symptomId, turn, reason: st.refused ?? "no next move named" };
     pending = undefined;
     st.next = undefined;
-    if (!exit && !decision) exit = chainSolid(graph, cfg) ? "root-cause-found" : "inconclusive";
     if (!exit && cfg.concludeAt > 0 && lowOn(cfg.concludeAt, 0.5)) exit = chainSolid(graph, cfg) ? "root-cause-found" : "budget-exhausted";
     if (exit) {
       if (concluding || graph.conclusion || cfg.concludeAt <= 0) break;
       concluding = exit;
-      const symptom = Object.values(graph.nodes).find((n) => n.isSymptom)!;
       const why = exit === "inconclusive" ? "Nothing is left to do on the graph." : exit === "false-positive" ? "The alerted event was refuted." : usdLeft() <= 0.5 || usdLeft() <= cfg.concludeAt * cfg.maxUsd || exit === "budget-exhausted" ? "The budget is used up." : "The chain to the alert is settled.";
-      decision = { move: "conclude", targetId: symptom.id, turn, priority: -2, reason: `the run ends (${exit}): ${why}` };
+      decision = { move: "conclude", targetId: symptomId, turn, reason: `the run ends (${exit}): ${why}` };
     }
     if (!decision) break;
     curSource = decision.source;
 
     const tt = deps.trace.forTurn(turn, decision.move, decision.targetId);
     tt.write("decision", decision);
-    log(`turn ${turn} · P${decision.priority} ${decision.move} ${decision.targetId} · $${deps.budget.usd.toFixed(2)} · ${decision.reason}`);
+    log(`turn ${turn} · ${decision.move} ${decision.targetId} · $${deps.budget.usd.toFixed(2)} · ${decision.reason}`);
     const ctx: LoopContext = { runId: graph.runId, turn, cfg, model, tools: deps.tools, trace: tt, budget: deps.budget, domains: deps.domains, sizes: deps.sizes, range: o.range, index: o.index, signal: o.signal ?? new AbortController().signal };
 
     const patch: GraphPatch = await route(decision, graph, ctx);
@@ -129,7 +133,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       tt.write("graph-patch", { patch: probe, result: { idMap: applied.idMap, rejected: applied.rejected, touched: applied.touched, resolvedMarkers: applied.resolvedMarkers } });
     }
     pending = r.decision;
-    st.refused = r.refused;
+    st.refused = r.refused ?? (decision.move === "choose" && !st.next ? "that was not a valid choice." : undefined);
     if (st.next) tt.write("reasoning", { lead: st.next, ...(r.refused ? { refused: r.refused } : { next: `${r.decision!.move} ${r.decision!.targetId}` }) });
     if (r.refused) log(`  lead refused: ${r.refused}`);
     await o.onTurn?.(graph, turn);

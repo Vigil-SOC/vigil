@@ -166,7 +166,7 @@ describe("verdict review", () => {
 
     const hypothesis = resumed.projection.hypotheses.get(hypothesisId)!;
     expect(hypothesis.status).toBe("active");
-    expect(hypothesis.resolution_reason).toBe("could not finish: 3 sources unreachable");
+    expect(hypothesis.resolution_reason).toBe("Could not finish: 3 sources unreachable");
     // The numbers on the record are the ones that stopped it, not the ones the
     // reviewer was shown — a verdict nobody can re-read is not auditable.
     expect(hypothesis.evidence_strength!.open_gaps).toBe(3);
@@ -493,7 +493,7 @@ describe("handoff to incident response", () => {
     const caseFile = record.case_markdown!;
     expect(caseFile).toMatch(/# Handoff — /);
     expect(caseFile).toMatch(/h one/);
-    expect(caseFile).toMatch(/2 corroborating source system\(s\)/);
+    expect(caseFile).toMatch(/2 corroborating source systems/);
     expect(caseFile).toContain(citations[0]!);
     expect(caseFile).toMatch(/## What the hunt could not see/);
 

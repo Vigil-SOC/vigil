@@ -49,7 +49,7 @@ function casesOf(data: unknown, matchType?: MatchType): Hit[] {
   return cases
     .map((item) => {
       const row = item as { case_id?: unknown; title?: unknown; content?: unknown; name?: unknown; priority?: unknown; status?: unknown; match_type?: unknown }
-      const type = row.match_type === 'case' || row.match_type === 'comment' || row.match_type === 'evidence' ? row.match_type : matchType
+      const type = row.match_type === 'case' || row.match_type === 'comment' || row.match_type === 'evidence' || row.match_type === 'alert' ? row.match_type : matchType
       return hitFrom(row.case_id, row.title ?? row.name ?? row.content, {
         priority: str(row.priority),
         status: str(row.status),
@@ -59,18 +59,22 @@ function casesOf(data: unknown, matchType?: MatchType): Hit[] {
     .filter((hit): hit is Hit => hit !== null)
 }
 
+function alertOf(item: unknown): Hit | null {
+  const data = item as { finding_id?: unknown; title?: unknown; data_source?: unknown; severity?: unknown } | null
+  return hitFrom(data?.finding_id, data?.title, { dataSource: str(data?.data_source), severity: str(data?.severity) })
+}
+
 async function searchAll(query: string): Promise<SearchHits> {
-  const [caseExact, findingExact, text, ioc] = await Promise.all([
+  const [caseExact, findingExact, text, ioc, alerts] = await Promise.all([
     casesApi.getById(query).then((res) => {
       const data = res.data as { priority?: unknown; status?: unknown }
       return hitFrom(res.data.case_id, res.data.title, { priority: str(data.priority), status: str(data.status) })
     }).catch(() => null),
-    findingsApi.getById(query).then((res) => {
-      const data = res.data as { finding_id?: unknown; title?: unknown; data_source?: unknown; severity?: unknown }
-      return hitFrom(data.finding_id, data.title, { dataSource: str(data.data_source), severity: str(data.severity) })
-    }).catch(() => null),
+    findingsApi.getById(query).then((res) => alertOf(res.data)).catch(() => null),
     api.get('/cases/search/full-text', { params: { query } }).then((res) => res.data).catch(() => null),
     api.get('/cases/search/by-ioc', { params: { ioc_value: query } }).then((res) => res.data).catch(() => null),
+    // Matches entity_context too, so a host, user or IP finds its alerts.
+    findingsApi.getAll({ search: query, limit: 5 }).then((res) => (res.data as { findings?: unknown })?.findings).catch(() => null),
   ])
   const textData = text as { cases?: unknown; comments?: unknown; evidence?: unknown } | null
   return {
@@ -82,6 +86,7 @@ async function searchAll(query: string): Promise<SearchHits> {
       ...casesOf({ cases: textData?.evidence }, 'evidence'),
     ],
     iocCases: casesOf(ioc),
+    alertHits: Array.isArray(alerts) ? alerts.map(alertOf).filter((hit): hit is Hit => hit !== null) : [],
   }
 }
 

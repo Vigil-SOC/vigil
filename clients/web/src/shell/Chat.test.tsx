@@ -497,26 +497,31 @@ describe('citation chips on the case composer (#2285)', () => {
     return onCite
   }
 
-  it('names the step and source a row came from, with its text on hover, never the raw id', async () => {
+  it('names the step and source a row came from, with its text on hover, never the raw id, once per answer', async () => {
     renderAnswer('The DLL loaded (ev-0b17352e22bf), then it beaconed (`ev-ceab2569df3a`).')
-    const row = await waitFor(() => {
-      const el = document.querySelector('.cite-row')
+    const body = await waitFor(() => {
+      const el = document.querySelector('.msg.vigil .body .cite-chip')
       expect(el).not.toBeNull()
-      return el as HTMLElement
+      return el?.closest('.body') as HTMLElement
     })
-    const chips = within(row).getAllByRole('button')
+    expect(body.textContent).not.toMatch(/ev-[0-9a-f]{12}/)
+    // where the answer wrote each id, prose or code span, its chip stands in the line, and nowhere else (#2565)
+    const chips = within(body).getAllByRole('button')
     expect(chips.map((chip) => chip.textContent)).toEqual(['step 3 · CrowdStrike', 'step 5 · Zscaler'])
     expect(chips[0]).toHaveAttribute('title', 'rundll32 loaded msupdate64.dll from Temp')
-    const body = document.querySelector('.msg.vigil .body') as HTMLElement
-    expect(body.textContent).not.toMatch(/ev-[0-9a-f]{12}/)
-    // where the answer wrote each id, prose or code span, its chip stands in the line
-    expect(within(body).getAllByRole('button').map((chip) => chip.textContent)).toEqual(['step 3 · CrowdStrike', 'step 5 · Zscaler'])
+    expect(document.querySelectorAll('.msg.vigil .cite-chip')).toHaveLength(2)
   })
 
-  it('collapses repeated citations of one row to one chip under the answer', async () => {
-    renderAnswer('ev-0b17352e22bf shows the load; ev-0b17352e22bf again, and ev-0b17352e22bf once more.')
-    await screen.findAllByText('step 3 · CrowdStrike')
-    expect(within(document.querySelector('.cite-row') as HTMLElement).getAllByRole('button')).toHaveLength(1)
+  it('drops the kind word written before an alert or explanation chip, and a name repeated in brackets (#2565)', async () => {
+    renderAnswer('The alert dl-005 backs the explanation **h-fb8e2227**; alerts dl-005 again. Zscaler (Zscaler) saw `\\\\fs01\\Payments$`.')
+    const body = await waitFor(() => {
+      const el = document.querySelector('.msg.vigil .body .cite-chip')
+      expect(el).not.toBeNull()
+      return el?.closest('.body') as HTMLElement
+    })
+    expect(body.textContent).toBe(
+      'The alert · LSASS MiniDump backs the explanation · DUSKY LANTERN on FIN-WS-114; alerts LSASS MiniDump again. Zscaler saw \\\\fs01\\Payments$.',
+    )
   })
 
   it('chips the alerts and explanations the answer names where it names them, and leaves an id the case does not hold as text', async () => {
@@ -526,8 +531,6 @@ describe('citation chips on the case composer (#2285)', () => {
       expect(el).not.toBeNull()
       return el?.closest('.body') as HTMLElement
     })
-    // the row under the answer lists evidence rows only (citation-chip.md); these stand in the text
-    expect(document.querySelector('.cite-row')).toBeNull()
     const alert = within(row).getByRole('link', { name: 'alert · LSASS MiniDump' })
     expect(alert).toHaveAttribute('href', '/overview?alert=dl-005')
     expect(alert).toHaveAttribute('target', '_blank')

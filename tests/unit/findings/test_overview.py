@@ -331,7 +331,7 @@ def test_terminal_states_partition_the_day():
     assert payload["empty"] is False
 
     item = next(row for row in payload["feed"] if row["finding_id"] == "ov-f-you")
-    assert item["status"] == "new"
+    assert "status" not in item
     assert item["terminal_state"] == "needs_you"
     assert item["terminal_label"] == "Needs you"
     assert item["evidence_links"] == [{"ref": "https://example.test/you"}]

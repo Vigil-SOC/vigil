@@ -25,6 +25,17 @@ export interface CallView {
   // The turn's own words before its calls, shared by every call of that turn: a reader
   // groups by it rather than repeating it on each row.
   thought?: string;
+  // The tool in words, as the plugin names it, for a reader that shows the call rather
+  // than its name.
+  tool_words: string;
+}
+
+// A tool's own name in words, less an MCP server prefix ("splunk-mcp_run_query" reads
+// "Run query"): what a call view says when its plugin has no better words for the tool.
+export function nameInWords(tool: string): string {
+  const [first, ...rest] = tool.split("_");
+  const name = (rest.length > 0 && first!.includes("-") ? rest.join("_") : tool).replace(/[_-]+/g, " ").trim();
+  return name === "" ? "" : name[0]!.toUpperCase() + name.slice(1);
 }
 
 // The argument that is the query, by the names query tools give it; otherwise the
@@ -80,7 +91,7 @@ interface DispatchCalls {
 const FAILURE_KINDS: Record<ToolFailure["kind"], true> = { invalid_args: true, refused: true, timeout: true, unavailable: true, backend_error: true };
 const FAILED_CALL = new RegExp(`^(?:<vigil:tool_result[^>]*>\\s*)?failed: (${Object.keys(FAILURE_KINDS).join("|")}) -- `);
 
-export function callViews(dispatches: Iterable<DispatchCalls>): CallView[] {
+export function callViews(dispatches: Iterable<DispatchCalls>, words: (tool: string) => string = nameInWords): CallView[] {
   const rows: CallView[] = [];
   for (const dispatch of dispatches) {
     const question = dispatch.query_intent ?? "";
@@ -95,6 +106,7 @@ export function callViews(dispatches: Iterable<DispatchCalls>): CallView[] {
       rows.push({
         question,
         tool: typeof record.tool === "string" ? record.tool : "",
+        tool_words: words(typeof record.tool === "string" ? record.tool : ""),
         result_length: result.length,
         ...(cost_usd === undefined ? {} : { cost_usd }),
         ...(duration_ms === undefined ? {} : { duration_ms }),

@@ -65,6 +65,8 @@ conclusion:
   open_questions_field: gaps
   # Raises the case's priority to it, never lowers it (run_bridge_router.py).
   severity_field: severity
+  # Sent as the guard leaves it; benign or false_positive closes the case (run_bridge_router.py).
+  disposition_field: disposition
   # A completed run's list goes to the backend on the terminal, which files each as a
   # pending approval on the case (run_bridge_router.py). The run takes none of them.
   proposals_field: proposed_actions

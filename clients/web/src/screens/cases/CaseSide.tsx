@@ -6,9 +6,9 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { useNoSideways } from '../../shared/useNoSideways'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { fmtCost } from '../../shared/cost'
-import { runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, runLabel, timeLeft, when } from './caseFormat'
 import { IN_FLIGHT } from '../workflows/runRead'
-import type { RunFold } from './caseFold'
+import { entityShown, type RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
@@ -38,7 +38,7 @@ interface Spend {
 /** What one run has spent. The refs are re-read only when a run ends, so a run in flight is read off its own fold. */
 function costOf(ref: CaseInvestigationRef | null, fold: RunFold | null): number | null {
   const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
-  return (inFlight ? fold.costUsd ?? ref?.cost_usd : ref?.cost_usd || fold?.costUsd) ?? null
+  return (inFlight ? fold.costUsd ?? (ref?.cost_usd || null) : ref?.cost_usd || fold?.costUsd) ?? null
 }
 
 /** What the newest run has spent against what it was granted. `fold` is that run's fold, or null when it is another run. */
@@ -101,14 +101,6 @@ const ENTITIES_SHOWN = 3
 const ENTITY_LONG = 24
 const ENTITY_TAIL = 6
 
-/** The kinds a recall key is written with ("domain:cdn-invoicesync.net"); the board shows the value alone. */
-const ENTITY_KIND = /^(?:host|user|ip|domain|hash|email|url|file|process|account):(?=\S)/
-
-/** An entity as the panel shows it: the value without its kind, which stays on hover (#2459). */
-function entityShown(key: string): string {
-  return key.replace(ENTITY_KIND, '')
-}
-
 /**
  * One entity on one line. A value that fits the column is shown whole; only one wider than it is
  * cut in the middle (#2459), by CSS, so the whole value stays in the DOM: selecting and copying it
@@ -121,9 +113,18 @@ function Entity({ entity }: { entity: string }) {
   useLayoutEffect(() => {
     const box = ref.current
     const head = box?.firstElementChild as HTMLElement | null
-    if (!box || !head || box.clientWidth === 0) return // not laid out: keep the guess
-    const tail = head.nextElementSibling as HTMLElement | null
-    setLong(head.scrollWidth + (tail?.offsetWidth ?? 0) > box.clientWidth)
+    if (!box || !head) return
+    const measure = () => {
+      if (box.clientWidth === 0) return // not laid out: keep the guess
+      const tail = head.nextElementSibling as HTMLElement | null
+      setLong(head.scrollWidth + (tail?.offsetWidth ?? 0) > box.clientWidth)
+    }
+    measure()
+    // the column narrows and widens (a scrollbar comes and goes): measure again, so a value that fits is never cut
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(box)
+    return () => observer.disconnect()
   }, [value])
   // the head gives up only the room the tail takes, so the cut is no wider than it has to be
   useLayoutEffect(() => {
@@ -190,41 +191,36 @@ function Alerts({ items }: { items: CaseLinkedFinding[] }) {
   )
 }
 
-/** What the case has spent over every run, then each run's own line ("—" for a run nothing priced, never $0). The bar and word read the primary run alone, and the caption says so. */
+/** What the case has spent over every run, then each run's own line ("—" for a run nothing priced, never $0); the total says how many runs it could not add. The bar and word read the primary run alone, and the caption says so. */
 function CaseCost({ runs, spend, latest, names }: { runs: SideRun[]; spend: Spend; latest: CaseInvestigationRef | null; names: Record<string, string> }) {
-  const total = runs.reduce((sum, run) => sum + (costOf(run.ref, run.fold) ?? 0), 0)
+  const costs = runs.map((run) => costOf(run.ref, run.fold))
+  const all = costAcross(costs)
   return (
     <Block title="Cost">
-      {total > 0 ? (
+      <div className="side-cost">
+        <span>{all.total ?? '—'}</span>
+        <span className="side-meta">{`across ${runs.length} runs${all.unpriced ? ` · ${all.unpriced} unpriced` : ''}`}</span>
+      </div>
+      <ul className="side-run-costs">
+        {runs.map((run, i) => {
+          const cost = costs[i]
+          const label = runLabel(run.ref, names)
+          return (
+            <li key={run.ref.run_id}>
+              <span className="side-clamp" title={label}>{label}</span>
+              <span className="mono">{cost === null ? '—' : fmtCost(cost)}</span>
+            </li>
+          )
+        })}
+      </ul>
+      {latest && spend.cap && spend.cost !== null && (
         <>
           <div className="side-cost">
-            <span>{fmtCost(total)}</span>
-            <span className="side-meta">{`across ${runs.length} runs`}</span>
+            <span className="side-meta side-clamp">{`${runLabel(latest, names)} against its limit`}</span>
+            <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />
           </div>
-          <ul className="side-run-costs">
-            {runs.map((run) => {
-              const cost = costOf(run.ref, run.fold)
-              const label = runLabel(run.ref, names)
-              return (
-                <li key={run.ref.run_id}>
-                  <span className="side-clamp" title={label}>{label}</span>
-                  <span className="mono">{cost === null ? '—' : fmtCost(cost)}</span>
-                </li>
-              )
-            })}
-          </ul>
-          {latest && spend.cap && spend.cost !== null && (
-            <>
-              <div className="side-cost">
-                <span className="side-meta side-clamp">{`${runLabel(latest, names)} against its limit`}</span>
-                <LevelBadge level={spend.level} className={`side-level ${spend.level ?? ''}`} />
-              </div>
-              <MeterBar pct={(spend.cost / spend.cap) * 100} level={spend.level} label="Cost of the primary run against its limit" />
-            </>
-          )}
+          <MeterBar pct={(spend.cost / spend.cap) * 100} level={spend.level} label="Cost of the primary run against its limit" />
         </>
-      ) : (
-        <NotMeasured />
       )}
     </Block>
   )
@@ -260,7 +256,7 @@ function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
     ? [
         ...recall.verdicts.map((v) => ({ text: [v.outcome, v.statement].filter(Boolean).join(' — '), kind: 'Verdict' })),
         ...recall.sightings.map((s) => ({
-          text: [s.entity, s.source, s.hits == null ? '' : `${s.hits} ${s.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · '),
+          text: [entityShown(s.entity), s.source, s.hits == null ? '' : `${s.hits} ${s.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · '),
           kind: 'Sighting',
         })),
         ...recall.gaps.map((g) => ({ text: [g.disposition.replace(/_/g, ' '), g.statement].filter(Boolean).join(' — '), kind: 'Gap' })),
@@ -271,7 +267,7 @@ function Known({ fold, hasRun }: { fold: RunFold | null; hasRun: boolean }) {
       {!recall && <p className="muted">{hasRun ? 'The run did not journal a recall.' : 'Nothing has looked at these entities yet.'}</p>}
       {recall?.unavailable && <Prose text={`Recall did not happen: ${recall.unavailable}`} />}
       {recall && !recall.unavailable && cards.length === 0 && (
-        <Prose text={`Nothing recorded about ${recall.keys.join(', ') || 'these entities'}.`} />
+        <Prose text={`Nothing recorded about ${recall.keys.map(entityShown).join(', ') || 'these entities'}.`} />
       )}
       {cards.length > 0 && (
         <div className="side-cards">

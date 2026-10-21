@@ -236,3 +236,65 @@ def test_cases_summary_is_not_capped_at_ten_thousand(client):
     assert seeded_closed == len(range(0, OVER_CAP, 5))
     assert summary["by_status"]["closed"] >= seeded_closed
     assert sum(summary["by_status"].values()) == summary["total"]
+
+
+def _by_state(client, state):
+    params = {"state": state}
+    listed = client.get("/api/v1/findings", params={**params, "limit": 1000})
+    assert listed.status_code == 200, listed.text
+    summary = client.get("/api/v1/findings/stats/summary", params=params)
+    assert summary.status_code == 200, summary.text
+    return listed.json(), summary.json()
+
+
+def test_findings_state_filter_list_count_and_summary_agree(client):
+    from core.storage.models import case_findings
+
+    # 0 open, 1 dismissed, 2 in a closed case, 3 dismissed in a closed case,
+    # 4 in an open and a closed case, 5 in an open case only
+    _seed_findings([{} for _ in range(6)])
+    _seed_cases(
+        [{"status": "closed"}, {"status": "in_progress"}],
+    )
+    with unit_of_work() as session:
+        for fid in ("1", "3"):
+            session.get(Finding, f"{PREFIX}{fid}").noise_marked_at = utcnow()
+        session.execute(
+            insert(case_findings),
+            [
+                {"case_id": f"{PREFIX}0", "finding_id": f"{PREFIX}2"},
+                {"case_id": f"{PREFIX}0", "finding_id": f"{PREFIX}3"},
+                {"case_id": f"{PREFIX}0", "finding_id": f"{PREFIX}4"},
+                {"case_id": f"{PREFIX}1", "finding_id": f"{PREFIX}4"},
+                {"case_id": f"{PREFIX}1", "finding_id": f"{PREFIX}5"},
+            ],
+        )
+
+    expected = {"open": {"0", "5"}, "dismissed": {"1", "3"}, "resolved": {"2", "4"}}
+    everything = _findings_summary(client)
+    for state, ids in expected.items():
+        listed, summary = _by_state(client, state)
+        seeded = {
+            f["finding_id"][len(PREFIX) :]
+            for f in listed["findings"]
+            if f["finding_id"].startswith(PREFIX)
+        }
+        assert seeded == ids, state
+        assert listed["total"] == summary["total"], state
+        # every match is in the one bucket, and the unfiltered summary agrees
+        assert summary["by_state"] == {state: summary["total"]}, state
+        assert everything["by_state"].get(state, 0) == summary["total"], state
+    assert sum(everything["by_state"].values()) == everything["total"]
+
+    # a dismissed finding reads dismissed whatever case it sits in
+    listed, _ = _by_state(client, "dismissed")
+    rows = {f["finding_id"]: f for f in listed["findings"]}
+    assert rows[f"{PREFIX}3"]["terminal_state"] == "dismissed"
+    assert rows[f"{PREFIX}3"]["terminal_label"] == "Dropped"
+    one = client.get(f"/api/v1/findings/{PREFIX}5").json()
+    assert (one["terminal_state"], one["case_id"]) == ("working", f"{PREFIX}1")
+
+
+def test_findings_unknown_state_is_rejected(client):
+    response = client.get("/api/v1/findings", params={"state": "new"})
+    assert response.status_code == 422

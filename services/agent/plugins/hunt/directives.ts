@@ -1,3 +1,4 @@
+import type { StopSource } from "../../core/agent.js";
 import type { DirectiveQueue } from "./ports.js";
 import type { Directive } from "./types.js";
 
@@ -24,4 +25,14 @@ export class InProcessDirectiveQueue implements DirectiveQueue {
     const taken = new Set(journaled);
     return structuredClone(this.queue(runId).filter((directive) => !taken.has(directive.directive_id)));
   }
+}
+
+// An operator's stop, read off the same queue every workflow reads its directives from.
+export function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
+  return async () => {
+    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
+    if (found === undefined) return null;
+    const { directive_id, actor, kind, text, created_at } = found;
+    return { directive_id, actor, kind, text, created_at };
+  };
 }

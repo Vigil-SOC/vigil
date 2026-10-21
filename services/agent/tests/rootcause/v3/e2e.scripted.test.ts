@@ -4,14 +4,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../../../plugins/rootcause/v3/config.js";
 import type { Graph } from "../../../plugins/rootcause/v3/graph.js";
-import { ScriptedModelClient, type ModelClient, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
+import { type ModelClient, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
 import { run } from "../../../plugins/rootcause/v3/orchestrator.js";
 import { domainsIn } from "../../../plugins/rootcause/v3/survey.js";
 import { Registry } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { splunkTool } from "../../../plugins/rootcause/v3/tools/splunk-tool.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import type { Alert } from "../../../plugins/rootcause/v3/types.js";
-import { Cassette, scriptFrom } from "./support.js";
+import { Cassette, SpendingScript, scriptFrom } from "./support.js";
 
 const fx = (f: string) => new URL(`./fixtures/mini/${f}`, import.meta.url).pathname;
 // The recorded moves, then the closing turn every run ends with.
@@ -25,7 +25,7 @@ describe("e2e scripted (mini)", () => {
     const tools = new Registry().register(splunkTool(new Cassette(fx("cassette.jsonl")), "lab"));
     const budget = { usd: 0 };
     const range: [string, string] = ["2026-05-05T06:00:00Z", "2026-05-05T18:00:00Z"];
-    const script = new ScriptedModelClient({ cfg, tools, domains, survey, range }, withConclusion());
+    const script = new SpendingScript({ cfg, tools, domains, survey, range }, withConclusion(), budget);
     const trace = new MemoryTrace("e2e");
     const alert: Alert = JSON.parse(readFileSync(fx("alert.json"), "utf8"));
     const lines: string[] = [];
@@ -72,7 +72,7 @@ describe("e2e scripted (mini)", () => {
     const budget = { usd: 0 };
     const range: [string, string] = ["2026-05-05T06:00:00Z", "2026-05-05T18:00:00Z"];
     const entries = withConclusion();
-    const script = new ScriptedModelClient({ cfg, tools, domains, survey, range }, entries);
+    const script = new SpendingScript({ cfg, tools, domains, survey, range }, entries, budget);
     const prompts: TurnRequest[] = [];
     const spy: ModelClient = { runTurn: (req) => { prompts.push(req); return script.runTurn(req); } };
     const trace = new MemoryTrace("e2e");

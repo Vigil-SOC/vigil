@@ -192,8 +192,8 @@ describe("what the evidence actually says", () => {
     } as never);
 
     expect((await project(started)).calls).toEqual([
-      { question: "who did it talk to", tool: "telemetry_search", result_length: 5, cost_usd: 0.2, duration_ms: 80, iteration: 1 },
-      { question: "who owns it", tool: "whois", result_length: 2, cost_usd: 0.1, iteration: 2 },
+      { question: "who did it talk to", tool: "telemetry_search", tool_words: "Searched telemetry", result_length: 5, cost_usd: 0.2, duration_ms: 80, iteration: 1 },
+      { question: "who owns it", tool: "whois", tool_words: "Whois", result_length: 2, cost_usd: 0.1, iteration: 2 },
     ]);
   });
 

@@ -2,7 +2,7 @@
 // evidence; no pivots or boundaries from legitimate steps; tests before pivots.
 import { describe, expect, it } from "vitest";
 import { buildAttributionPatch } from "../../../plugins/rootcause/v3/attribution.js";
-import { selectFrontier } from "../../../plugins/rootcause/v3/frontier.js";
+import { options } from "../../../plugins/rootcause/v3/lead.js";
 import { islands, type Theory } from "../../../plugins/rootcause/v3/graph.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { apply, cfg as base, ev, node, seeded } from "./helpers.js";
@@ -35,11 +35,11 @@ describe("connect", () => {
     apply(g, { addNodes: [node("dev", { prior: 0.5, legitimate: true, evidence: [ev("direct", "supports", ["v1"]), ev("direct", "supports", ["v2"])] })] });
     expect(islands(g).map((n) => n.id)).toEqual(["N4", "N3"]);
   });
-  it("comes before the stories' tests, once per finding", () => {
+  it("is offered on the chain top while findings are unlinked, once per finding", () => {
     const g = graph();
-    expect(selectFrontier(g, cfg, 5)).toMatchObject({ move: "connect", targetId: "N2", priority: 1 });
+    expect(options(g, cfg).connect).toEqual(["N2"]);
     apply(g, { incrementConnect: ["N3", "N4"] }, 5);
-    expect(selectFrontier(g, cfg, 6)?.move).not.toBe("connect");
+    expect(options(g, cfg).connect).toBeUndefined();
   });
   it("links findings through a new event and resolves the chain top's open boundary", async () => {
     const { connect } = await import("../../../plugins/rootcause/v3/handlers/connect.js");
@@ -56,7 +56,7 @@ describe("connect", () => {
       ],
       reasoning: "",
     };
-    const patch = await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(sub));
+    const patch = await connect({ move: "connect", targetId: "N2", turn: 5, reason: "" }, g, ctxFor(sub));
     expect(patch.incrementConnect).toEqual(["N4", "N3"]);
     expect(patch.resolveBoundary).toMatchObject({ markerId: "B1", nodeId: "N4" });
     const r = apply(g, patch, 5);
@@ -72,10 +72,10 @@ describe("connect", () => {
     const g = graph();
     apply(g, { setFlags: [{ nodeId: "N4", legitimate: true }] });
     const link = (strength: string) => ({ events: [], links: [{ from: "N4", to: "N2", prior: 0.4, evidence: [{ summary: "s", strength, polarity: "supports", toolCallIds: ["r1"] }] }], reasoning: "" });
-    const weak = (await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(link("circumstantial")))).addEdges;
+    const weak = (await connect({ move: "connect", targetId: "N2", turn: 5, reason: "" }, g, ctxFor(link("circumstantial")))).addEdges;
     expect(weak).toHaveLength(1);
     expect(weak![0]).toMatchObject({ inferred: true });
-    const strong = (await connect({ move: "connect", targetId: "N2", turn: 5, priority: 1, reason: "" }, g, ctxFor(link("direct")))).addEdges;
+    const strong = (await connect({ move: "connect", targetId: "N2", turn: 5, reason: "" }, g, ctxFor(link("direct")))).addEdges;
     expect(strong).toHaveLength(1);
     expect(strong![0]!.inferred).toBeUndefined();
   });
@@ -95,7 +95,7 @@ describe("legitimate steps", () => {
     expect(direct).toHaveLength(1);
     expect(direct![0]!.inferred).toBeUndefined();
   });
-  it("no boundary and no pivot from a legitimate step; the stories' tests go before pivots", async () => {
+  it("no boundary from a legitimate step", async () => {
     const { boundaryPatch } = await import("../../../plugins/rootcause/v3/handlers/common.js");
     const g = graph();
     apply(g, { incrementConnect: ["N3", "N4"], incrementExpand: ["N2"] });
@@ -105,11 +105,7 @@ describe("legitimate steps", () => {
     expect(boundaryPatch(b, "N2", g, ctx)).toEqual({});
     apply(g, { setFlags: [{ nodeId: "N2", legitimate: false }] });
     apply(g, boundaryPatch(b, "N2", g, ctx) as any);
-    expect(selectFrontier(g, cfg, 6)).toMatchObject({ move: "test", targetId: "R1.P1" });
-    apply(g, { predictionResult: { id: "R1.P1", status: "found", result: "x", toolCallIds: [], supports: [], weakens: [] } }, 6);
-    expect(selectFrontier(g, cfg, 7)).toMatchObject({ move: "pivot" });
-    apply(g, { setFlags: [{ nodeId: "N2", legitimate: true }] });
-    expect(selectFrontier(g, cfg, 7)?.move).not.toBe("pivot");
+    expect(options(g, cfg)).toMatchObject({ test: ["R1.P1"], pivot: ["B1"] });
   });
   it("an account that ran a step someone else operated is not listed as an indicator", async () => {
     const { renderReport } = await import("../../../plugins/rootcause/v3/report.js");
@@ -197,7 +193,7 @@ describe("contradicting tests and early roots", () => {
     const g = graph();
     const sub = { outcome: "unclear", summary: "the pod stayed Pending and never ran", toolCallIds: ["r1"], supports: [], weakens: [], events: [], contradicts: ["E1", "N1", "E99"], reasoning: "" };
     const ctx = ctxFor(sub, 1); ctx.tools.inputOf = () => ({ earliest: range[0], latest: range[1] });
-    const patch = await testHandler({ move: "test", targetId: "R1.P1", turn: 5, priority: 1, reason: "" }, g, ctx);
+    const patch = await testHandler({ move: "test", targetId: "R1.P1", turn: 5, reason: "" }, g, ctx);
     // E1 is the chain link: refuted; N1 is the symptom (never refuted this way); E99 does not exist.
     expect(patch.addEvidence).toMatchObject([{ targetId: "E1", evidence: { polarity: "refutes", strength: "corroborating" } }]);
   });
@@ -212,7 +208,7 @@ describe("contradicting tests and early roots", () => {
   });
 });
 
-describe("verdict path, interleaved branch", () => {
+describe("verdict path", () => {
   it("a longer chain of solid hops beats a short path that ends at an open boundary", async () => {
     const { allPaths } = await import("../../../plugins/rootcause/v3/graph.js");
     const g = seeded();
@@ -220,15 +216,6 @@ describe("verdict path, interleaved branch", () => {
     apply(g, { addNodes: [node("a", strong("a")), node("b", strong("b")), { tempId: "m", kind: "boundary-marker", label: "m", domain: "x", prior: 0.3, evidence: [], artifacts: [], targetDomain: "x", originNodeId: "N2" }],
       addEdges: [{ tempId: "e1", kind: "explains", source: "a", target: "N1", prior: 0.5, evidence: [ev("direct", "supports", ["l1"])] }, { tempId: "e2", kind: "explains", source: "b", target: "a", prior: 0.5, evidence: [ev("direct", "supports", ["l2"])] }, { tempId: "e3", kind: "explains", source: "m", target: "a", prior: 0.3, evidence: [] }] });
     expect(allPaths(g)[0]!.nodeIds).toEqual(["N1", "N2", "N3"]);
-  });
-  it("branches from the chain event nearest the alert every branchEvery turns once the stories run", () => {
-    const g = graph(); // S <- N2 (top), stories since turn 5
-    g.storiesSince = 5;
-    apply(g, { incrementConnect: ["N3", "N4"], incrementExpand: ["N2"] });
-    expect(selectFrontier(g, { ...cfg, branchEvery: 6 }, 8)?.move).toBe("test");
-    expect(selectFrontier(g, { ...cfg, branchEvery: 6 }, 11)).toMatchObject({ move: "branch", targetId: "N2" });
-    apply(g, { incrementBranch: ["N2"] }, 11);
-    expect(selectFrontier(g, { ...cfg, branchEvery: 6 }, 12)?.move).toBe("test");
   });
 });
 

@@ -14,6 +14,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from core.auth.auth_service import AuthService
+from core.auth.current_user import get_current_user
 from core.storage.models import Base, ConfigAuditLog, CustomAgent
 from services.api.middleware.auth import get_current_active_user
 from services.api.routers import agents as agents_router
@@ -60,13 +62,14 @@ def db(monkeypatch):
 
 
 @pytest.fixture
-def client(db):
+def client(db, monkeypatch):
     app = FastAPI()
     app.include_router(custom_agents.router, prefix="/api")
     app.include_router(agents_router.router, prefix="/api")
-    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
-        user_id="u-1"
-    )
+    user = SimpleNamespace(user_id="u-1")
+    app.dependency_overrides[get_current_active_user] = lambda: user
+    app.dependency_overrides[get_current_user] = lambda: user
+    monkeypatch.setattr(AuthService, "check_permission", lambda *_a, **_k: True)
     return TestClient(app)
 
 

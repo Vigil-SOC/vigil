@@ -468,8 +468,116 @@ def test_a_checkpoint_answered_by_policy_is_a_policy_row_not_a_resolution():
         payload = {"checkpoint_id": "cp-1", "answer": "approve", "actor": actor}
         return {"seq": seq, "ts": "", "kind": "resolution", "payload": payload}
 
-    rows = merge_record([("r1", [resolution(1, "policy:auto"), resolution(2, "ada")])], [])
+    rows = merge_record(
+        [("r1", [resolution(1, "policy:auto"), resolution(2, "ada")])], []
+    )
     by_seq = {row["id"]: row for row in rows}
     assert by_seq["run:r1:1"]["kind"] == "policy"
     assert by_seq["run:r1:2"]["kind"] == "resolution"
     assert "actor" not in by_seq["run:r1:1"]
+
+
+def test_hunt_rows_name_the_filed_case_and_no_raw_ids():
+    import re
+
+    ev1, ev2, ev3 = "ev-e8f0b47938d8", "ev-2fc6bb5181fa", "ev-0123456789ab"
+    hunt = [
+        {
+            "seq": 1,
+            "ts": "2026-10-20T00:00:01Z",
+            "kind": "hypothesis",
+            "payload": {
+                "hypothesis_id": "h-eba3cd11",
+                "statement": "FIN-WS-114 beacons",
+            },
+        },
+        {
+            "seq": 2,
+            "ts": "2026-10-20T00:00:02Z",
+            "kind": "hypothesis",
+            "payload": {"hypothesis_id": "h-686c9f91", "statement": "A backup job"},
+        },
+        {
+            "seq": 3,
+            "ts": "2026-10-20T00:00:03Z",
+            "kind": "question",
+            "payload": {"question_id": "q-56617141", "question": "Who owns the host?"},
+        },
+        {
+            "seq": 4,
+            "ts": "2026-10-20T00:00:04Z",
+            "kind": "evidence",
+            "payload": {"evidence_id": ev1, "summary": "DNS to a fresh domain"},
+        },
+        {
+            "seq": 5,
+            "ts": "2026-10-20T00:00:05Z",
+            "kind": "patch",
+            "payload": {
+                "target": "hypothesis",
+                "id": "h-686c9f91",
+                "fields": {
+                    "status": "parked",
+                    "resolution_reason": f"abandoned: no schedule [{ev1}, {ev2}]",
+                },
+            },
+        },
+        {
+            "seq": 6,
+            "ts": "2026-10-20T00:00:06Z",
+            "kind": "handoff",
+            "payload": {"case_id": "case-bbdf5773", "hypothesis_id": "h-eba3cd11"},
+        },
+        {
+            "seq": 7,
+            "ts": "2026-10-20T00:00:07Z",
+            "kind": "conclusion",
+            "payload": {
+                "value": {
+                    "summary": f"h-eba3cd11 proven on {ev3}, handed to IR as "
+                    "case-bbdf5773; q-56617141 still open"
+                }
+            },
+        },
+        {
+            "seq": 8,
+            "ts": "2026-10-20T00:00:08Z",
+            "kind": "terminal",
+            "payload": {
+                "outcome": "completed",
+                "reason": "h-eba3cd11 handed to IR as case-bbdf5773 "
+                "[proposed_workflow: IR (case-bbdf5773): isolate FIN-WS-114]",
+            },
+        },
+    ]
+    activities = [
+        {
+            "timestamp": "2026-10-20T00:00:09Z",
+            "activity_type": "agent_run_report",
+            "description": "## Report\n**h-eba3cd11** handed to IR as case-bbdf5773.",
+        }
+    ]
+    case = "case-2026-10-20-0e1430c0"
+    rows = merge_record([("r1", hunt)], [], activities, case_id=case)
+    text = {row["id"]: row["text"] for row in rows}
+    raw = re.compile(r"\b(?:case-[0-9a-f]{8}|[hq]-[0-9a-f]{8}|ev-[0-9a-f]{12})\b")
+    assert not [t for t in text.values() if raw.search(t)], text
+    assert text["run:r1:8"] == (
+        "Ended — completed — “FIN-WS-114 beacons” handed to IR as "
+        f"{case}. Proposed workflow: IR ({case}): isolate FIN-WS-114."
+    )
+    assert text["run:r1:5"].endswith("abandoned: no schedule, citing 2 records")
+    assert "“DNS to a fresh domain”" not in text["run:r1:7"]  # unknown ev reads neutral
+    assert "a record" in text["run:r1:7"] and "“Who owns the host?”" in text["run:r1:7"]
+    assert text["activity:0"] == f"Report “FIN-WS-114 beacons” handed to IR as {case}."
+
+
+def test_a_hunt_with_no_case_names_the_case_its_handoff_opened():
+    from core.workflows.handoff_cases import handoff_case_id
+
+    events = [
+        {"seq": 1, "kind": "handoff", "payload": {"case_id": "case-bbdf5773"}},
+        {"seq": 2, "kind": "terminal", "payload": {"reason": "as case-bbdf5773"}},
+    ]
+    rows = merge_record([("r1", events)], [])
+    assert rows[0]["text"] == f"Ended — as {handoff_case_id('r1', 'case-bbdf5773')}"

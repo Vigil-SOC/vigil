@@ -797,6 +797,23 @@ describe('SocConsole', () => {
       expect(within(back).getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
     })
 
+    // #2559: the shell's screen-change reset ran after the case page re-asserted full-bleed, and won
+    it('keeps the expanded case page full-height, its composer pinned, on Back from Watch it run', async () => {
+      renderWithHistory()
+      act(() => navigate('/cases?case=case-2026-0142'))
+      await screen.findByRole('tab', { name: /Summary/ })
+      act(() => navigate('/workflows?run=run-1'))
+      await waitFor(() => expect(screen.queryByRole('tab', { name: /Summary/ })).not.toBeInTheDocument())
+      act(() => navigate(-1))
+      await screen.findByRole('tab', { name: /Summary/ })
+      const view = document.querySelector('main.view') as HTMLElement
+      await waitFor(() => {
+        expect(view.style.overflowY).toBe('hidden')
+        expect((view.querySelector('.screen') as HTMLElement).style.height).toBe('100%')
+        expect(view.querySelector('.case-page > .case-composer')).not.toBeNull()
+      })
+    })
+
     it('stays closed on Back once the case was closed where it was open', async () => {
       renderWithHistory()
       const drawer = await openDrawer()

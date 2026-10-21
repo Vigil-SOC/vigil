@@ -2,7 +2,7 @@
 // without Splunk or a model.
 import { readFileSync } from "node:fs";
 import type { QueryInput, SearchBackend } from "../../../plugins/rootcause/v3/tools/search.js";
-import type { ScriptEntry } from "../../../plugins/rootcause/v3/model/client.js";
+import { ScriptedModelClient, type ScriptEntry, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
 
 // Replays results by exact input; a search not on the tape says so, as a failed search does.
 export class Cassette implements SearchBackend {
@@ -29,4 +29,15 @@ export class Cassette implements SearchBackend {
 export function scriptFrom(path: string): ScriptEntry[] {
   const text = readFileSync(path, "utf8").trim();
   return text.startsWith("[") ? JSON.parse(text) : text.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+}
+
+// A script whose model spends the whole budget on its last move: nothing ends a model-led run on its own but the
+// budget (or a graph with no move left), so the run ends the way a real one does, at the closing conclude turn.
+export class SpendingScript extends ScriptedModelClient {
+  constructor(d: ConstructorParameters<typeof ScriptedModelClient>[0], script: ScriptEntry[], private budget: { usd: number }) { super(d, script); }
+  override async runTurn(req: TurnRequest) {
+    const r = await super.runTurn(req);
+    if (this.remaining === 1) this.budget.usd = 1e6; // only the conclude entry is left
+    return r;
+  }
 }

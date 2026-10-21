@@ -192,11 +192,16 @@ const STATUS_ORDER: Record<HypothesisStatus, number> = {
   active: 5,
 };
 
+// "1 open gap", "2 open gaps".
+function count(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 function strengthLine(strength: EvidenceStrength): string {
   return [
-    `${strength.corroborating_sources} corroborating source system(s)`,
-    `${strength.contradicting_records} contradicting record(s)`,
-    `${strength.open_gaps} open gap(s)`,
+    count(strength.corroborating_sources, "corroborating source system"),
+    count(strength.contradicting_records, "contradicting record"),
+    count(strength.open_gaps, "open gap"),
     strength.attacker_influenceable_only ? "support is attacker-influenceable only" : "support is not attacker-authored alone",
     strength.survived_disconfirmation ? "survived disconfirmation" : "did not survive disconfirmation",
   ].join(", ");
@@ -212,12 +217,12 @@ function headline(report: HuntReport): string {
   );
   if (proven.length > 0) {
     const escalated = report.handoffs.length === 0 ? "" : ` ${report.handoffs.length} was escalated to incident response.`;
-    return `${proven.length} hypothesis(es) reached a verdict of proven; each survived the argue-the-null pass.${escalated}`;
+    return `${count(proven.length, "hypothesis", "hypotheses")} reached a verdict of proven; each survived the argue-the-null pass.${escalated}`;
   }
   if (report.outcome === "data_starved") {
     return (
       `Nothing was proven, and the hunt could not see well enough to say so honestly: ` +
-      `${report.gaps.length} visibility gap(s) closed hypotheses that were never cleared.`
+      `${count(report.gaps.length, "visibility gap")} closed hypotheses that were never cleared.`
     );
   }
   if (report.outcome === "completed") {
@@ -225,7 +230,7 @@ function headline(report: HuntReport): string {
     // concluded early cannot make.
     const left = report.backlog.length + report.parked_hypotheses.length;
     if (left > 0) {
-      return `Nothing was proven, and the hunt did not run out of things to try: ${left} lead(s) were left open. See the parked backlog below.`;
+      return `Nothing was proven, and the hunt did not run out of things to try: ${left === 1 ? "1 lead was" : `${left} leads were`} left open. See the parked backlog below.`;
     }
     return "Nothing was proven. The hunt reached the end of its frontier without finding support that cleared the bar.";
   }

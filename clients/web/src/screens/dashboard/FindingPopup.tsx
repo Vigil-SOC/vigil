@@ -6,7 +6,8 @@ import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
-import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, Popup } from '../../shared/ui'
+import { stateWord } from '../../shared/findingState'
 import { Icon } from '../../shared/icons'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import SourceChip from '../../shared/SourceChip'
@@ -56,12 +57,6 @@ const RISK_COLOR: Record<string, string> = {
   medium: 'var(--high)',
   low: 'var(--ok)',
 }
-
-const STATUS_OPTIONS = [
-  { value: 'open', label: 'Open' },
-  { value: 'investigating', label: 'Investigating' },
-  { value: 'closed', label: 'Closed' },
-]
 
 function EnrichmentView({ e }: { e: Enrichment }) {
   return (
@@ -182,8 +177,8 @@ export default function FindingPopup({
   const [enrichError, setEnrichError] = useState<'not_configured' | 'budget' | 'failed' | null>(null)
   const [enrichmentProgressIndex, setEnrichmentProgressIndex] = useState(0)
 
-  const [status, setStatus] = useState('')
   const [acting, setActing] = useState(false)
+  const [dismissError, setDismissError] = useState<string | null>(null)
   const [confirmDel, setConfirmDel] = useState(false)
   const [triageNote, setTriageNote] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
@@ -215,13 +210,13 @@ export default function FindingPopup({
     setExcludeReason('')
     setExcludeError(null)
     setJustExcluded(new Set())
+    setDismissError(null)
     findingsApi
       .getById(id)
       .then((res) => {
         if (cancelled) return
         const data = res.data as RawFinding
         setRaw(data)
-        setStatus((data as { status?: string }).status || '')
         // The daemon writes triage keys into ai_enrichment too; only a
         // generated analysis carries generated_at.
         if (data.ai_enrichment?.generated_at) {
@@ -303,14 +298,22 @@ export default function FindingPopup({
       .finally(() => setExcluding(false))
   }
 
-  const changeStatus = (next: string) => {
-    if (!id || next === status) return
-    setStatus(next)
+  // Dismiss is the noise mark; the finding is re-read so the Status row shows the state it lands in.
+  const dismissed = raw?.terminal_state === 'dismissed'
+  const toggleDismiss = () => {
+    if (!id || acting) return
+    const target = id
     setActing(true)
-    findingsApi
-      .update(id, { status: next })
-      .then(() => onChanged?.())
-      .catch(() => setStatus(status)) // revert on failure
+    setDismissError(null)
+    ;(dismissed ? findingsApi.clearNoise(target) : findingsApi.markNoise(target))
+      .then(() => findingsApi.getById(target))
+      .then((res) => {
+        if (triageFor.current === target) setRaw(res.data as RawFinding)
+        onChanged?.()
+      })
+      .catch(() => {
+        if (triageFor.current === target) setDismissError(dismissed ? 'Couldn’t undo the dismissal' : 'Couldn’t dismiss this finding')
+      })
       .finally(() => setActing(false))
   }
 
@@ -391,11 +394,15 @@ export default function FindingPopup({
             <span className="k">Host</span><span className="v mono">{f.host}</span>
             <span className="k">User</span><span className="v mono">{f.user}</span>
             <span className="k">Time</span><span className="v">{f.time}</span>
-            <span className="k">Status</span>
-            <span className="v" style={{ maxWidth: 220 }}>
-              <Select value={status} options={STATUS_OPTIONS} onSelect={changeStatus} />
+            <span className="k" style={{ alignSelf: 'center' }}>Status</span>
+            <span className="v flex items-center gap-2 flex-wrap">
+              <span>{stateWord(raw.terminal_state, raw.case_id)}</span>
+              <button type="button" className="btn ghost" onClick={toggleDismiss} disabled={acting}>
+                {dismissed ? 'Undo' : 'Dismiss'}
+              </button>
             </span>
           </div>
+          {dismissError && <div className="field-hint err" role="alert" style={{ marginTop: 6 }}>{dismissError}</div>}
 
           {raw.description && (
             <div className="modal-section">

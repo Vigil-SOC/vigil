@@ -728,7 +728,9 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
     return {
         "run_id": primary["run_id"] if primary else None,
         "investigation_id": primary["investigation_id"] if primary else None,
-        "rows": merge_record(runs, audits, case.get("activities") or [], unread),
+        "rows": merge_record(
+            runs, audits, case.get("activities") or [], unread, case_id=case_id
+        ),
     }
 
 

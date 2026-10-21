@@ -285,10 +285,85 @@ async def test_a_hunt_row_read_off_vigil_names_the_part_that_answered(monkeypatc
 
     alerts, mixed, memory, other, critic, joined = detail["hunt"]["evidence"]
     assert alerts["origins"] == ["vigil_alerts"]
-    assert mixed["origins"] == ["vigil"]
+    # Several parts of Vigil: which one answered is not known, so none is said (#2564).
+    assert "origins" not in mixed
     assert memory["origins"] == ["vigil_memory"]
     assert "origins" not in other
     assert "origins" not in critic
     assert joined["origins"] == ["infoblox", "proofpoint"]
     # Graded as before: by the domain it was recorded under.
     assert alerts["source_tier"] == "telemetry"
+
+
+# #2564: a row is named by the calls it rests on, not by the turn that recorded it, so a
+# threat-intel lookup is not read as the alerts search the recording turn followed.
+@pytest.mark.asyncio
+async def test_a_hunt_row_is_named_by_the_calls_it_rests_on(monkeypatch):
+    fold = {
+        "calls": [
+            {"tool": "lookup_indicators", "iteration": 5, "ref": "c5"},
+            {"tool": "search_findings", "iteration": 6, "ref": "c6"},
+            {"tool": "splunk_execute", "iteration": 6, "ref": "c7"},
+        ],
+        "evidence": [
+            {
+                "evidence_id": "e1",
+                "iteration": 6,
+                "source_system": "threat_intel",
+                "provenance": "worker",
+                "is_gap": False,
+                "call_refs": ["c5"],
+            },
+            {
+                "evidence_id": "e2",
+                "iteration": 6,
+                "source_system": "dns",
+                "provenance": "worker",
+                "is_gap": False,
+                "call_refs": ["c6"],
+            },
+            {
+                "evidence_id": "e3",
+                "iteration": 6,
+                "source_system": "dns",
+                "provenance": "worker",
+                "is_gap": False,
+                "call_refs": ["c5", "c6"],
+            },
+            {
+                "evidence_id": "e4",
+                "iteration": 6,
+                "source_system": "proxy",
+                "provenance": "worker",
+                "is_gap": False,
+                "call_refs": ["c6", "c7"],
+            },
+            # The call it names is the one it was read from, whatever else ran since.
+            {
+                "evidence_id": "e5",
+                "iteration": 6,
+                "source_system": "dns",
+                "provenance": "worker",
+                "is_gap": False,
+                "call_refs": ["c5", "c6", "c7"],
+                "read_ref": "c5",
+            },
+        ],
+    }
+
+    async def _reads(_run_id, _evidence_limit=None):
+        return fold
+
+    monkeypatch.setattr(router, "read_projection", _reads)
+    monkeypatch.setattr(router, "_finding_sources", lambda ids: {})
+
+    detail = await router.get_workflow_run(
+        "run-8", _runs_for("threat-hunt"), WorkflowsService()
+    )
+
+    intel, alerts, both, other, named = detail["hunt"]["evidence"]
+    assert intel["origins"] == ["vigil_threat_intel"]
+    assert alerts["origins"] == ["vigil_alerts"]
+    assert "origins" not in both
+    assert "origins" not in other
+    assert named["origins"] == ["vigil_threat_intel"]

@@ -1,3 +1,4 @@
+import { fmtCost } from '../../shared/cost'
 import { utcClock, utcDayClock } from '../../shared/utc'
 import type { CaseInvestigationRef } from './useCases'
 
@@ -22,4 +23,10 @@ export function runLabel(ref: CaseInvestigationRef, names: Record<string, string
   const at = ref.created_at && (/(Z|[+-]\d\d:?\d\d)$/.test(ref.created_at) ? ref.created_at : `${ref.created_at}Z`)
   const clock = utcClock(at)
   return clock ? `${name} · started ${clock}` : name
+}
+
+/** What several runs spent together, null when none is priced, and how many had no price to add: a run nothing priced is counted, never $0. */
+export function costAcross(costs: (number | null)[]): { total: string | null; unpriced: number } {
+  const priced = costs.flatMap((cost) => (cost === null ? [] : [cost]))
+  return { total: priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : null, unpriced: costs.length - priced.length }
 }

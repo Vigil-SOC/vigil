@@ -7,7 +7,7 @@ import {
 } from 'react'
 import { format } from 'date-fns'
 import { Markdown, type MarkdownCite } from '../shared/Markdown'
-import { citedIn, citePattern, type Citation } from './citations'
+import { citePattern, type Citation } from './citations'
 import { ThreadGrip } from './ThreadGrip'
 import { useThreadHeight } from './useThreadHeight'
 import { Icon } from '../shared/icons'
@@ -254,25 +254,6 @@ function CiteChip({ cite, onCite }: { cite: Citation; onCite?: (cite: Citation) 
   )
 }
 
-/** The evidence rows an answer cites, once each, under it; alerts and explanations are chipped where it names them. */
-function CiteRow({
-  text,
-  citations,
-  onCite,
-}: {
-  text: string
-  citations: readonly Citation[]
-  onCite?: (cite: Citation) => void
-}) {
-  const hits = citedIn(text, citations).filter((cite) => cite.kind === 'evidence')
-  if (hits.length === 0) return null
-  return (
-    <div className="cite-row">
-      {hits.map((cite) => <CiteChip key={cite.id} cite={cite} onCite={onCite} />)}
-    </div>
-  )
-}
-
 /** An answer's text, with the ids it cites drawn as chips where it wrote them. */
 function AnswerText({ text, citations, onCite }: { text: string; citations?: readonly Citation[]; onCite?: (cite: Citation) => void }) {
   const cite = useMemo<MarkdownCite | undefined>(() => {
@@ -286,6 +267,11 @@ function AnswerText({ text, citations, onCite }: { text: string; citations?: rea
         const hit = byId.get(id)
         if (!hit) return id
         return again ? <span className="cite-again" title={hit.text}>{citeName(hit)}</span> : <CiteChip cite={hit} onCite={onCite} />
+      },
+      // an alert or explanation chip names its kind itself
+      kindWord: (id: string) => {
+        const kind = byId.get(id)?.kind
+        return kind === 'evidence' ? undefined : kind
       },
     }
   }, [citations, onCite])
@@ -311,7 +297,6 @@ function VigilMessage({
   const content = (
     <>
       <AnswerText text={text} citations={citations} onCite={onCite} />
-      {citations && <CiteRow text={text} citations={citations} onCite={onCite} />}
       <div className="msg-actions">
         {copy}
         {onTrace ? (
@@ -1042,12 +1027,7 @@ export default function Chat({
                 …
               </span>
             </div>
-            {streamText && (
-              <>
-                <AnswerText text={streamText} citations={citations} onCite={onCite} />
-                {citations && <CiteRow text={streamText} citations={citations} onCite={onCite} />}
-              </>
-            )}
+            {streamText && <AnswerText text={streamText} citations={citations} onCite={onCite} />}
           </div>
         </div>
       )}

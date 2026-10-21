@@ -225,7 +225,7 @@ def test_findings_list_omits_payload_while_detail_retains_it(monkeypatch):
         data_source=None,
         cluster_id=None,
         min_anomaly_score=None,
-        status=None,
+        state=None,
         search=None,
         offset=0,
         limit=100,

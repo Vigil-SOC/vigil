@@ -1,13 +1,11 @@
 import type { PluginHooks } from "../core/agent.js";
 import type { PluginManifest } from "../contracts/plugin.js";
 import { pluginFor } from "./registry.js";
-import { rootCauseHooks } from "./rootcause/hooks.js";
 import { tallyHooks } from "./tally/hooks.js";
 
 // The code a plugin ships beside its manifest, by id; one missing here is files alone.
 // Static imports, so hooks that do not compile fail the build, not a run.
 const HOOKS: Readonly<Record<string, PluginHooks>> = {
-  rootcause: rootCauseHooks,
   tally: tallyHooks,
 };
 

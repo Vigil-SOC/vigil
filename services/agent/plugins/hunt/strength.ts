@@ -222,14 +222,14 @@ export function unmetPredicates(
   }
   if (strength.corroborating_sources < verdicts.min_corroborating_sources) {
     unmet.push(
-      `${strength.corroborating_sources} corroborating source system(s), ${verdicts.min_corroborating_sources} required`,
+      `${strength.corroborating_sources} corroborating source ${strength.corroborating_sources === 1 ? "system" : "systems"}, ${verdicts.min_corroborating_sources} required`,
     );
   }
   if (strength.attacker_influenceable_only) {
     unmet.push("nothing supporting it rests on an observation the telemetry attested rather than the adversary authored");
   }
   if (strength.open_gaps >= verdicts.gap_lock_threshold) {
-    unmet.push(`${strength.open_gaps} open visibility gap(s) bear on it`);
+    unmet.push(`${strength.open_gaps} open visibility ${strength.open_gaps === 1 ? "gap bears" : "gaps bear"} on it`);
   }
   return unmet;
 }

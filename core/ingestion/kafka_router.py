@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
@@ -39,6 +40,9 @@ ROUTER_META = RouterMeta(
 )
 
 logger = logging.getLogger(__name__)
+
+# The daemon applies these values. Same class of change as the S3 settings route.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
 
 SYSTEMCONFIG_KEY = "kafka.settings"
 DAEMON_STATUS_TIMEOUT_SECONDS = 2.0
@@ -116,7 +120,7 @@ async def get_kafka_config() -> Dict[str, Any]:
     return merged
 
 
-@router.put("/config")
+@router.put("/config", dependencies=_SETTINGS_WRITE)
 async def put_kafka_config(
     body: KafkaConfigBody,
     current_user: User = Depends(get_current_user),

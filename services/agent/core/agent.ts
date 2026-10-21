@@ -73,6 +73,8 @@ export interface Ending {
   summary?: string | null;
   // Work the run finished by giving away, carried out on the terminal.
   handoffs?: TerminalHandoff[];
+  // The case priority the run proved, raised to on a completed terminal (run_bridge_router.py).
+  severity?: Severity;
 }
 
 // Not an ending: the run stops here and waits, on a question it has raised or on
@@ -306,7 +308,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
         const answered = await harness.state.read(run_id);
         await harness.state.append(run_id, [event(options, "review", await reviewOf(ctx, loop.conclusion, callsIn(answered)))]);
       }
-      return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs);
+      return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs, ending.severity);
     }
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
       return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason);
@@ -331,6 +333,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     undefined,
     severityOf(options.plugin, conclusion),
     proposalsOf(options.plugin, conclusion),
+    dispositionOf(options.plugin, conclusion, review),
   );
 }
 
@@ -1200,10 +1203,18 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
 }
 
 // The rating the answer gave, when its plugin asks for one and it is a case priority.
-export function severityOf(plugin: PluginManifest, conclusion: ConclusionPayload): Severity | undefined {
+export function severityOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Severity | undefined {
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.severity_field : undefined;
   const rated = field === undefined ? undefined : conclusion.value[field];
   return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
+}
+
+// The disposition the answer gave, as the guard left it: a held benign goes out as its fallback.
+export function dispositionOf(plugin: PluginManifest, conclusion: ConclusionPayload, review: ReviewPayload): string | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.disposition_field : undefined;
+  if (field === undefined) return undefined;
+  const given = review.guarded?.field === field ? review.guarded.final : conclusion.value[field];
+  return typeof given === "string" && given !== "" ? given : undefined;
 }
 
 // The actions the answer asks a person to approve, when its plugin names a field for
@@ -1294,6 +1305,7 @@ async function end(
   handoffs?: readonly TerminalHandoff[],
   severity?: Severity,
   proposed: readonly ProposedAction[] = [],
+  disposition?: string,
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1309,6 +1321,7 @@ async function end(
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
     ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
+    ...(disposition === undefined ? {} : { disposition }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);

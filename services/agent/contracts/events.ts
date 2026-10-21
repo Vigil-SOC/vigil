@@ -182,6 +182,9 @@ export interface TerminalPayload {
   // How bad the run rated what it found, in case priorities, for the case it was
   // started from. Only a completed run whose plugin names a severity_field sets it.
   severity?: Severity;
+  // The run's verdict, after the guard, for the case it was started from. Only a
+  // completed run whose plugin names a disposition_field sets it.
+  disposition?: string;
 }
 
 // The ratings a run may conclude with: the case priorities, less unknown.

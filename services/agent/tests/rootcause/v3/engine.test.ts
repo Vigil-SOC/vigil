@@ -90,7 +90,8 @@ describe("runRootCauseV3", () => {
     const model = modelOf((request) => {
       if (properties(request).includes("observed_at")) return { emit: framed() };
       if (properties(request).includes("map")) return { emit: { map: "One source, edr.", reasoning: "mapped" } };
-      // The first move: one search, then its answer. The stop arrives while the model writes it.
+      // The first turn names the move; the move then runs one search and answers. The stop arrives while the model writes it.
+      if (properties(request).includes("why")) return { emit: { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } };
       if (request.emit !== undefined) { searched = true; return { emit: { evidence: [], reasoning: "nothing found" }, wait: 1_500 }; }
       const moving = request.messages.some((m) => m.content.includes("<graph_snapshot>"));
       const searchedAlready = request.messages.some((m) => m.role === "tool");
@@ -108,6 +109,11 @@ describe("runRootCauseV3", () => {
     const exit = events.find((e) => e.kind === "rootcause_exit")!.payload as { exit: unknown; report: string };
     expect(exit.exit).toBeNull();
     expect(exit.report).toContain("# RCA report");
+
+    // The first turn is a choose turn: journaled as a decision, its answer a call-free kernel turn.
+    const decisions = events.filter((e) => e.kind === "rootcause_turn").flatMap((e) => (e.payload as { entries: { type: string; payload: unknown }[] }).entries).filter((x) => x.type === "decision").map((x) => x.payload);
+    expect(decisions[0]).toMatchObject({ move: "choose" });
+    expect(decisions[1]).toMatchObject({ move: "strengthen", targetId: "N1" });
 
     // The model's search is a call on the run's ledger, under the move's role, with the kernel's ref.
     const calls = events.filter((e) => e.kind === "call").map((e) => e.payload as CallPayload);

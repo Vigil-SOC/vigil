@@ -1,6 +1,7 @@
 import type { FrontierDecision } from "./frontier.js";
 import type { Graph, GraphPatch } from "./graph.js";
 import { branch } from "./handlers/branch.js";
+import { choose } from "./handlers/choose.js";
 import { conclude } from "./handlers/conclude.js";
 import { connect } from "./handlers/connect.js";
 import { expand, fork } from "./handlers/expand.js";
@@ -20,6 +21,7 @@ export function route(d: FrontierDecision, g: Readonly<Graph>, ctx: LoopContext)
     case "theorize": return theorize(d, g, ctx);
     case "test": return test(d, g, ctx);
     case "connect": return connect(d, g, ctx);
+    case "choose": return choose(d, g, ctx);
     case "conclude": return conclude(d, g, ctx);
   }
 }

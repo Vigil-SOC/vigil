@@ -55,3 +55,29 @@ def test_fires_from_its_own_thread() -> None:
     finally:
         dog.stop()
     assert exits.codes[0] != 0
+
+
+def test_a_stall_is_marked_before_the_exit() -> None:
+    clock, exits, order = FakeClock(), Exits(), []
+    dog = Watchdog(
+        monotonic=clock.monotonic,
+        exit_fn=lambda code: (order.append("exit"), exits(code)),
+        on_stall=lambda: order.append("marked"),
+    )
+    clock.advance(WATCHDOG_AFTER_S + 1)
+    assert dog.check()
+    assert order == ["marked", "exit"]
+
+
+def test_a_failing_mark_still_exits(caplog) -> None:
+    clock, exits = FakeClock(), Exits()
+
+    def broken() -> None:
+        raise OSError("disk full")
+
+    dog = Watchdog(monotonic=clock.monotonic, exit_fn=exits, on_stall=broken)
+    clock.advance(WATCHDOG_AFTER_S + 1)
+    with caplog.at_level(logging.ERROR, logger="services.medic"):
+        assert dog.check()
+    assert exits.codes and exits.codes[0] != 0
+    assert "could not mark the stall" in caplog.text

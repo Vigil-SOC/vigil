@@ -1,9 +1,9 @@
-import type { CallPayload, NewEvent, TerminalHandoff } from "../../contracts/events.js";
+import type { CallPayload, NewEvent, Severity, TerminalHandoff } from "../../contracts/events.js";
 import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBehind, type RunValues } from "../../core/guards.js";
 import { recalledPayloadOf } from "../../contracts/memory.js";
 import { isStructured } from "../../contracts/plugin.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
-import { agentCalls, callsIn, childOrdinal, runChild, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
+import { agentCalls, callsIn, childOrdinal, runChild, severityOf, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
 import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
@@ -20,7 +20,7 @@ import { citedFindings } from "./findings.js";
 import { Journal, type HuntKinds } from "./journal.js";
 import type { HuntEvent, Projection } from "./ledger.js";
 import { narrativeInput, type Narrative } from "./narrative.js";
-import { startHunt } from "./opening.js";
+import { BASE_RATE_PROVENANCE, startHunt } from "./opening.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport, renderReport } from "./report.js";
 import { operatorLine } from "./render.js";
@@ -214,7 +214,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         // Concluded by its own tool, then answered: nothing left to decide.
         if (book.ended()) {
           await book.ledger.flush();
-          return ending(ctx, book);
+          return ending(ctx, book, provenSeverity(ctx, book, outcome.value));
         }
         // The harness refused a call: usually the wall clock, which stops a hunt with
         // turns and dollars still on the board. It parks on extend, conclude or abort.
@@ -241,7 +241,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
           if (!concluded.concluded) book.terminate("completed", `the agent stopped before the hunt could conclude (${concluded.said})${said === "" ? "" : `: ${said}`}`);
         }
         await book.ledger.flush();
-        return ending(ctx, book);
+        return ending(ctx, book, outcome.status === "completed" ? provenSeverity(ctx, book, outcome.value) : undefined);
       }),
 
     // The gateway's own allowance is not the hunt failing: it ends on the budget,
@@ -266,8 +266,19 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
   };
 }
 
+// The severity the answer gave, only when the record proved an adversary explanation:
+// a hunt that proved nothing leaves the case's priority alone, whatever its answer said.
+// Absent on a plugin with no severity_field (adjudicate).
+function provenSeverity(ctx: PluginContext, book: HuntBook, answer: unknown): Severity | undefined {
+  if (answer === null || typeof answer !== "object") return undefined;
+  const proven = [...book.projection.hypotheses.values()].some(
+    (one) => one.provenance !== BASE_RATE_PROVENANCE && (one.status === "proven" || one.status === "handed_off"),
+  );
+  return proven ? severityOf(ctx.options.plugin, { value: answer as Record<string, unknown> }) : undefined;
+}
+
 // What a finished hunt leaves: the report, the account of it, and its escalations.
-async function ending(ctx: PluginContext, book: HuntBook): Promise<Ending> {
+async function ending(ctx: PluginContext, book: HuntBook, severity?: Severity): Promise<Ending> {
   await book.ledger.flush();
   const projection = book.projection;
   const built = buildReport(projection);
@@ -285,6 +296,7 @@ async function ending(ctx: PluginContext, book: HuntBook): Promise<Ending> {
     reason: forPeople(hunt.termination_reason ?? `ended ${hunt.outcome ?? ""}`.trim(), values),
     summary: forPeople(renderReport(built, projection, narrative, recalledPayloadOf(events)), values),
     handoffs,
+    ...(severity === undefined ? {} : { severity }),
   };
 }
 
@@ -486,7 +498,7 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         additionalProperties: false,
         required: ["results"],
         properties: {
-          results: { type: "array", items: guarded(ctx) ? withRef(resultItem(ctx.options.spec)) : resultItem(ctx.options.spec) },
+          results: { type: "array", items: withRef(resultItem(ctx.options.spec), guarded(ctx)) },
           follow_up: {
             type: "array",
             description: "New leads this opened, each a question worth asking next.",
@@ -500,8 +512,14 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
         const calls = callsIn(await state(ctx).read(ctx.options.run_id));
         const served = servedSince(calls, ctx.options.spec.tools);
         const call_refs = servedRefsSince(calls, ctx.turn());
+        const read = readRefs(calls, given);
         return withBook(ctx, ports, (book) => {
-          const evidence = evidenceFrom({ results }).map((result) => ({ ...result, call_refs, ...(served === null ? {} : { served_by: served }) }));
+          const evidence = evidenceFrom({ results }).map((result, i) => ({
+            ...result,
+            call_refs,
+            ...(served === null ? {} : { served_by: served }),
+            ...(read[i] === undefined ? {} : { read_ref: read[i] }),
+          }));
           const records = book.appendEvidence(evidence);
           const raised = (Array.isArray(args["follow_up"]) ? args["follow_up"] : []).map((one) => {
             const lead = one as { question?: unknown; entity?: unknown; hypothesis_id?: unknown };
@@ -657,7 +675,7 @@ function expandTool(ctx: PluginContext): RegisteredTool[] {
 // each field as the reader labelled it. Only that labelling can make a field
 // sensor-attested: a field the reader did not label, and a record naming no result,
 // count as the adversary's whatever the decider says.
-function withRef(item: Record<string, unknown>): Record<string, unknown> {
+function withRef(item: Record<string, unknown>, attests: boolean): Record<string, unknown> {
   const properties = (item["properties"] ?? {}) as Record<string, unknown>;
   return {
     ...item,
@@ -665,10 +683,24 @@ function withRef(item: Record<string, unknown>): Record<string, unknown> {
       ...properties,
       ref: {
         type: "string",
-        description: "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested.",
+        // unguarded, it only names where the row was read, which a console shows as its source (#2564)
+        description: attests
+          ? "The ref of the result this finding came from, such as r4. The result is kept with the record for the critic; without a ref, nothing in the record counts as sensor-attested."
+          : "The ref of the result this finding came from, such as r4.",
       },
     },
   };
+}
+
+// The call each given row names as the one it was read from, by the ref the model was shown;
+// none where it names no call this run made.
+export function readRefs(calls: readonly CallPayload[], given: readonly Record<string, unknown>[]): (string | undefined)[] {
+  const byShown = new Map<string, string>();
+  for (const call of calls) {
+    byShown.set(call.ref, call.ref);
+    byShown.set(guardedRef(call), call.ref);
+  }
+  return given.map((one) => (typeof one["ref"] === "string" ? byShown.get(one["ref"]) : undefined));
 }
 
 const unattested = (record: Record<string, unknown>): Record<string, unknown> => {
