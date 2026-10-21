@@ -985,6 +985,8 @@ def chart_pods(tmp_path_factory) -> list[dict]:
             "pgadmin.enabled=true",
             "--set",
             "splunk.enabled=true",
+            "--set",
+            "secrets.postgresPassword=test-password",
         ],
         capture_output=True,
         text=True,

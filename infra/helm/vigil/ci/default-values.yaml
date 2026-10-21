@@ -1,0 +1,4 @@
+# Values `ct lint` renders the chart with (it reads ci/*-values.yaml). The chart
+# defaults plus the one value it refuses to render without.
+secrets:
+  postgresPassword: test-password

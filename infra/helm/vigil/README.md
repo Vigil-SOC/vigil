@@ -6,6 +6,15 @@ Postgres/Redis.
 Full install, values, and troubleshooting:
 <https://vigilsoc.org/docs/helm-chart/>
 
+## Postgres password
+
+`secrets.postgresPassword` has no default: set it (`openssl rand -hex 24`), or
+supply it through `secrets.existingSecret` or `secrets.externalSecret`. The
+chart refuses to render the old published default `change-me-before-production`.
+A release still on it must change the password inside Postgres first (the chart
+never runs `ALTER ROLE`), for `postgresql.auth.username` and `vigil_app`, then
+upgrade with the same value as `secrets.postgresPassword`.
+
 ## MCP runner
 
 `mcpRunner` (on by default) runs the catalog's MCP servers in their own pod,
