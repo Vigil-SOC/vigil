@@ -175,22 +175,18 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     id: 'ip-geolocation',
     name: 'IP Geolocation',
     category: 'Threat Intelligence',
-    description: 'Get geolocation data for IP addresses.',
+    description: 'Each looked-up address is sent to ip-api.com. Get geolocation data for IP addresses.',
     functionality_type: 'Data Enrichment',
     fields: [
       {
-        name: 'service',
-        label: 'Geolocation Service',
-        type: 'select',
+        name: 'api_key',
+        label: 'API Key',
+        type: 'password',
         required: true,
-        default: 'ipapi',
-        options: [
-          { value: 'ipapi', label: 'IP-API.com (Free)' },
-          { value: 'maxmind', label: 'MaxMind GeoIP2' },
-        ],
+        placeholder: 'Your ip-api.com Pro API key',
       },
     ],
-    docs_url: 'https://ip-api.com/docs',
+    docs_url: 'https://ip-api.com/docs/api:json',
   },
 
   {

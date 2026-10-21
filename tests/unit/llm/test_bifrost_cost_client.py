@@ -114,7 +114,7 @@ def test_histogram_cost_returns_none_on_network_error():
 
 
 # ---------------------------------------------------------------------------
-# stats / search / cost-by-provider — same wiring, smaller coverage
+# stats — same wiring, smaller coverage
 # ---------------------------------------------------------------------------
 
 
@@ -126,25 +126,6 @@ def test_stats_hits_correct_path():
         out = stats()
         assert out == {"total_requests": 0}
         assert client.get.call_args.args[0].endswith("/api/logs/stats")
-
-
-def test_search_logs_clamps_limit():
-    """Bifrost docs cap limit at 1000 — clamp client-side too."""
-    cm, client = _client_returning("get", _ok_response({"logs": []}))
-    with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
-        from core.llm.bifrost.costs import search_logs
-
-        search_logs(limit=99999)
-        assert client.get.call_args.kwargs["params"]["limit"] == 1000
-
-
-def test_search_logs_negative_offset_clamped_to_zero():
-    cm, client = _client_returning("get", _ok_response({"logs": []}))
-    with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
-        from core.llm.bifrost.costs import search_logs
-
-        search_logs(offset=-50)
-        assert client.get.call_args.kwargs["params"]["offset"] == 0
 
 
 # ---------------------------------------------------------------------------

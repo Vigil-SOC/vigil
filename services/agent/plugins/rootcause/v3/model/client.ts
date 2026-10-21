@@ -13,7 +13,7 @@ import type { Move } from "../frontier.js";
 import { issued, neverRan, type EvidenceTool, type Registry, type ToolRegistry } from "../tools/registry.js";
 import type { TurnTrace } from "../trace.js";
 import type { Domain } from "../types.js";
-import { SUBMIT, SUBMIT_DESCRIPTIONS, type SubmitName } from "./schemas.js";
+import { lengthLimits, SUBMIT, SUBMIT_DESCRIPTIONS, type SubmitName } from "./schemas.js";
 import { SYSTEM_PROMPT } from "./prompts.js";
 import { baselineProblem, type InputOf } from "../baseline.js";
 
@@ -58,24 +58,26 @@ export async function runTool(d: ClientDeps, req: TurnRequest, tool: string, inp
   return { id: rec.toolCallId, tool, input, ok: rec.result.ok, traceId, text };
 }
 
-// Over-long text is trimmed, not refused: a long note must not throw away a correct finding.
-const LIMITS: Record<string, number> = { conclusion: 2500, map: 12000, summary: 300, label: 160, reason: 300, reasoning: 800, rootJustification: 400, story: 700, expect: 300, gaps: 300, why: 300 };
+// Over-long text is trimmed, not refused: a long note must not throw away a correct finding. The caps are the schemas'.
+export const LIMITS = lengthLimits(Object.values(SUBMIT));
+const trim = (v: string, max: number | undefined) => (max && v.length > max ? v.slice(0, max - 1) + "…" : v);
 // A list or object sent as a JSON string (models do send events that way) is parsed, not refused.
 const STRUCT = new Set(["takeover", "candidates", "effects", "causes", "events", "evidence", "nodeEvidence", "edgeEvidence", "artifacts", "identitySignals", "baseline", "boundary", "theories", "predictions", "nextTests", "toolCallIds", "supports", "weakens", "links", "unrelated", "contradicts"]);
 const unstring = (v: string): unknown => { try { const x = JSON.parse(v); return x && typeof x === "object" ? x : v; } catch { return v; } };
-const clip = (v: unknown, key = ""): unknown =>
+export const clip = (v: unknown, key = ""): unknown =>
   typeof v === "string" && STRUCT.has(key) && /^\s*[[{]/.test(v) && unstring(v) !== v ? clip(unstring(v), key)
-  : typeof v === "string" ? (LIMITS[key] && v.length > LIMITS[key] ? v.slice(0, LIMITS[key] - 1) + "…" : v)
-  : Array.isArray(v) ? v.map((x) => (typeof x === "string" && (key === "suspiciousContent" || key === "openQuestions") ? x.slice(0, 300) : clip(x)))
+  : typeof v === "string" ? trim(v, LIMITS.scalar[key])
+  : Array.isArray(v) ? v.map((x) => (typeof x === "string" ? trim(x, LIMITS.items[key]) : clip(x)))
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clip(x, k)])) : v;
 
 // Why a clipped value does not meet the move's schema (what the kernel's ajv holds an emission to, plus the length
-// caps), with the list items (key, index) the failure rests on, from the paths ajv reports; null when it does.
-function schemaProblem(name: SubmitName, value: unknown): { msg: string; drop: [string, number][] } | null {
+// caps), with the list items the failure rests on, from the paths ajv reports: the deepest list item on each path
+// (`effects/0/artifacts/1`, not `effects/0`), so the rest of the answer survives. null when it does meet it.
+function schemaProblem(name: SubmitName, value: unknown): { msg: string; drop: Path[] } | null {
   const msg = schemaErrors(SUBMIT[name], value);
   if (msg === null) return null;
   const paths = msg.split("; ").map((e) => e.split(" ")[0]!.split("/").slice(1));
-  const drop = paths.filter((p) => p.length >= 2 && /^\d+$/.test(p[1]!)).map((p) => [p[0]!, Number(p[1])] as [string, number]);
+  const drop = paths.map((p) => p.slice(0, p.findLastIndex((x) => /^\d+$/.test(x)) + 1)).filter((p) => p.length);
   return { msg, drop: drop.length === paths.length ? drop : [] };
 }
 
@@ -101,8 +103,9 @@ const STORY_TAKEOVER = /\b(insider|rogue (?:employee|admin|developer|user))\b/i;
 const TAKEOVER_TEST = /\b(sign-?in|login|logon|token|key|password|mfa|credential|session (?:creat|issu)|assume-?role|federat)/i;
 export const UNSEEN = /\b(outside (?:the )?(?:captured |available |collected )?(?:telemetry|logs?|logging|data|visibility)|(?:not|never|un) ?(?:captured|logged|recorded|observed|visible) (?:in|by) (?:the )?(?:telemetry|logs?|data|any source)|unlogged|unobserved|out[- ]of[- ]band (?:mint|issu)\w*|no visible (?:mint|issu|origin|source)\w*)\b/i;
 export interface CheckCtx { inputOf?: InputOf; range?: [string, string] }
-// drop: the list items (key, index) a failure rests on, so a last salvage can keep the rest of the submission.
-export type CheckResult = { success: true; data: unknown } | { success: false; msg: string; drop: [string, number][] };
+type Path = (string | number)[];
+// drop: the paths of the list items a failure rests on (["effects", "0", "artifacts", "1"]), so a last salvage can keep the rest of the submission.
+export type CheckResult = { success: true; data: unknown } | { success: false; msg: string; drop: Path[] };
 
 type Citable = Parameters<typeof issued>[0];
 export function check(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx = {}): CheckResult {
@@ -112,10 +115,10 @@ export function check(name: SubmitName, input: unknown, calls: number | Citable,
   // citation outside any list fails the submission whole.
   const unissued = (x: unknown): string[] => Array.isArray(x) ? x.flatMap(unissued) : x && typeof x === "object" ? Object.entries(x).flatMap(([k, y]) => (k === "toolCallIds" && Array.isArray(y) ? y.map(String).filter((id) => !issued(tools, id)) : unissued(y))) : [];
   const top = Object.entries(v.data as Record<string, unknown>);
-  const dropped = top.flatMap(([k, x]) => (Array.isArray(x) ? x.flatMap((item, i) => (unissued(item).length ? [[k, i] as [string, number]] : [])) : []));
+  const dropped: Path[] = top.flatMap(([k, x]) => (Array.isArray(x) ? x.flatMap((item, i) => (unissued(item).length ? [[k, i]] : [])) : []));
   const loose = top.flatMap(([, x]) => (Array.isArray(x) ? [] : unissued(x)));
   if (dropped.length || loose.length) {
-    const ids = new Set([...loose, ...dropped.flatMap(([k, i]) => unissued((v.data as unknown as Record<string, unknown[]>)[k]![i]))]);
+    const ids = new Set([...loose, ...dropped.flatMap(([k, i]) => unissued((v.data as unknown as Record<string, unknown[]>)[k as string]![i as number]))]);
     return { success: false, msg: `toolCallIds never issued in this run: ${[...ids].join(", ")}. Cite only refs from your searches or from the snapshot.`, drop: loose.length ? [] : dropped };
   }
   // The environment map records what exists and how often, never a judgment about it.
@@ -149,14 +152,19 @@ export function check(name: SubmitName, input: unknown, calls: number | Citable,
 }
 
 
+// v without the list items at the paths in gone ("effects/0/artifacts/1"); the rest keep their place.
+const prune = (v: unknown, at: string[], gone: Set<string>): unknown =>
+  Array.isArray(v) ? v.flatMap((x, j) => (gone.has([...at, j].join("/")) ? [] : [prune(x, [...at, String(j)], gone)]))
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, prune(x, [...at, k], gone)])) : v;
+
 // A failed check drops the list items it rests on and keeps the rest, so one bad event does not throw away
 // the others (a run once lost a correct finding with its whole submission).
 export function salvage(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx, first: CheckResult): { data: unknown; dropped: number } | null {
   let cur = clip(input) as Record<string, unknown[]>, r = first, dropped = 0;
   for (let i = 0; i < 3 && !r.success; i++) {
     if (!r.drop.length) return null;
-    const gone = new Set(r.drop.map(([k, j]) => `${k}.${j}`));
-    cur = Object.fromEntries(Object.entries(cur).map(([k, x]) => [k, Array.isArray(x) ? x.filter((_, j) => !gone.has(`${k}.${j}`)) : x]));
+    const gone = new Set(r.drop.map((p) => p.join("/")));
+    cur = prune(cur, [], gone) as typeof cur;
     dropped += gone.size;
     const bad = schemaProblem(name, cur); // dropping can leave a list under its minimum
     r = bad ? { success: false, ...bad } : check(name, cur, calls, cx);
@@ -271,15 +279,18 @@ export class KernelModelClient implements ModelClient {
 
     // The emitted value is checked once: what is sound is kept, what is not is dropped, and a turn with no
     // valid submission is one attempt on its target.
+    // An emission the kernel rejected twice is salvaged too, when it parsed: what in it is sound is kept.
     let submission: unknown = null;
-    if (outcome!.value === null) req.trace.write("rejected-submission", { reason: outcome!.reason });
+    const kept = outcome!.value ?? outcome!.rejected_value;
+    if (kept === undefined || kept === null || typeof kept !== "object") req.trace.write("rejected-submission", { reason: outcome!.reason });
     else {
       const cx: CheckCtx = { inputOf: tools.inputOf?.bind(tools), range: this.d.range };
-      const v = check(req.submitTool, outcome!.value, tools, cx);
+      const bad = outcome!.value === null ? schemaProblem(req.submitTool, clip(kept)) : null;
+      const v: CheckResult = bad ? { success: false, ...bad } : check(req.submitTool, kept, tools, cx);
       if (v.success) submission = v.data;
       else {
-        const s = salvage(req.submitTool, outcome!.value, tools, cx, v);
-        req.trace.write("rejected-submission", { input: outcome!.value, error: v.msg, ...(s ? { salvaged: `kept the rest, dropped ${s.dropped} item(s)` } : {}) });
+        const s = salvage(req.submitTool, kept, tools, cx, v);
+        req.trace.write("rejected-submission", { input: kept, error: v.msg, ...(s ? { salvaged: `kept the rest, dropped ${s.dropped} item(s)` } : {}) });
         submission = s?.data ?? null;
       }
     }

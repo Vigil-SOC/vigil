@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+import core.auth.auth_service as auth_service
 from core.routing import request_unit_of_work
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.rate_limit import limiter
@@ -29,13 +30,16 @@ def user():
         mfa_enabled=False,
         mfa_secret=None,
         mfa_recovery_codes=[],
+        mfa_last_totp_step=None,
     )
 
 
 @pytest.fixture
 def client(user):
     session = MagicMock()
-    session.query.return_value.filter.return_value.first.return_value = user
+    query = session.query.return_value.filter.return_value
+    query.populate_existing.return_value.with_for_update.return_value = query
+    query.first.return_value = user
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -46,11 +50,15 @@ def client(user):
     return TestClient(app)
 
 
+def _code(secret, t):
+    return pyotp.TOTP(secret).at(int(t))
+
+
 def _enrol(client, user):
     """Setup + verify through the routes; returns (secret, recovery_codes)."""
     secret = client.post("/api/auth/mfa/setup").json()["secret"]
     resp = client.post(
-        "/api/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()}
+        "/api/auth/mfa/verify", json={"code": _code(secret, auth_service.time.time())}
     )
     assert resp.status_code == 200
     return secret, resp.json()["recovery_codes"]
@@ -90,11 +98,12 @@ def test_disable_with_wrong_code_is_refused_and_leaves_mfa_on(client, user):
     assert len(user.mfa_recovery_codes) == 10
 
 
-def test_disable_with_totp_clears_secret_and_recovery_codes(client, user):
+def test_disable_with_totp_clears_secret_and_recovery_codes(clock, client, user):
     secret, _ = _enrol(client, user)
+    clock.now = T0 + 35  # the enrolment step is spent
 
     resp = client.request(
-        "DELETE", "/api/auth/mfa", json={"code": pyotp.TOTP(secret).now()}
+        "DELETE", "/api/auth/mfa", json={"code": _code(secret, clock.now)}
     )
 
     assert resp.status_code == 200
@@ -132,3 +141,88 @@ def test_disable_is_rate_limited(client, user):
     ]
     assert statuses == [400] * 5 + [429]
 
+
+# --- TOTP replay (RFC 6238 §5.2): a code's step is accepted once ----------
+
+T0 = 1_800_000_000  # aligned to a 30 s step boundary
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Freeze the clock the verifier reads; move it with clock.now = ..."""
+    clock = SimpleNamespace(now=T0 + 5)
+    monkeypatch.setattr(auth_service.time, "time", lambda: clock.now)
+    return clock
+
+
+@pytest.fixture
+def login(monkeypatch, user):
+    """POST /api/auth/login for `user`, password check and tokens stubbed."""
+    monkeypatch.setattr(
+        auth.AuthService, "authenticate_user", staticmethod(lambda *a: user)
+    )
+    monkeypatch.setattr(
+        auth.AuthService, "generate_jwt_token", staticmethod(lambda *a, **k: "tok")
+    )
+    monkeypatch.setattr(
+        auth.AuthService, "verify_jwt_token", staticmethod(lambda t: {})
+    )
+    monkeypatch.setattr(auth, "_user_payload", lambda u, s: {})
+
+    def _login(client, code):
+        return client.post(
+            "/api/auth/login",
+            json={"username_or_email": "analyst", "password": "pw", "mfa_code": code},
+        )
+
+    return _login
+
+
+def test_login_code_is_refused_the_second_time_within_its_step(
+    clock, client, user, login
+):
+    secret, _ = _enrol(client, user)  # enrols on step T0
+    clock.now = T0 + 35
+    code = _code(secret, clock.now)
+
+    assert login(client, code).status_code == 200
+    clock.now = T0 + 50  # same step
+    assert login(client, code).status_code == 401
+    # The next step's code still works.
+    clock.now = T0 + 65
+    assert login(client, _code(secret, clock.now)).status_code == 200
+
+
+def test_code_from_an_earlier_step_is_refused(clock, client, user, login):
+    secret, _ = _enrol(client, user)
+    clock.now = T0 + 65
+    assert login(client, _code(secret, clock.now)).status_code == 200
+
+    # Still inside the ±1 window, but older than the accepted step.
+    assert login(client, _code(secret, T0 + 35)).status_code == 401
+
+
+def test_enrolment_code_cannot_disable_mfa(clock, client, user):
+    secret, _ = _enrol(client, user)
+    enrol_code = _code(secret, clock.now)
+
+    resp = client.request("DELETE", "/api/auth/mfa", json={"code": enrol_code})
+    assert resp.status_code == 400
+    assert user.mfa_enabled is True
+
+    clock.now = T0 + 35
+    resp = client.request(
+        "DELETE", "/api/auth/mfa", json={"code": _code(secret, clock.now)}
+    )
+    assert resp.status_code == 200
+    assert user.mfa_enabled is False
+
+
+def test_setup_resets_the_stored_step(clock, client, user):
+    _enrol(client, user)
+    user.mfa_enabled = False  # as after a disable
+
+    secret = client.post("/api/auth/mfa/setup").json()["secret"]
+    assert user.mfa_last_totp_step is None
+    resp = client.post("/api/auth/mfa/verify", json={"code": _code(secret, clock.now)})
+    assert resp.status_code == 200
