@@ -6,11 +6,12 @@ import { loadPlugin } from "../../../plugins/index.js";
 import { defaultConfig } from "../../../plugins/rootcause/v3/config.js";
 import type { V3Kinds } from "../../../plugins/rootcause/v3/ledger.js";
 import { KernelModelClient, KernelTurns, Refused, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
-import { SYSTEM_PROMPT } from "../../../plugins/rootcause/v3/model/prompts.js";
+import { instructions, SYSTEM_PROMPT } from "../../../plugins/rootcause/v3/model/prompts.js";
 import { Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { harnessOf, modelOf, specOf, splunk } from "../../support/v3-run.js";
+import { apply, node, seeded } from "./helpers.js";
 
 const cfg = { ...defaultConfig };
 const range: [string, string] = ["2026-01-05T00:00:00Z", "2026-01-06T00:00:00Z"];
@@ -130,5 +131,38 @@ describe("a move as a kernel turn", () => {
     const spec = specOf({ budgets: { max_calls: 0, max_cost_usd: 10, max_wall_ms: 600_000, max_park_ms: 60_000 } });
     const t = setup(() => ({}), {}, spec);
     await expect(t.client.runTurn(t.request())).rejects.toBeInstanceOf(Refused);
+  });
+});
+
+describe("what a move's prompt tells the model to call", () => {
+  // Every move's instructions, built on a graph that has the pieces each one names.
+  const moves = (): Record<string, string> => {
+    const g = seeded();
+    apply(g, { addNodes: [node("m", { kind: "boundary-marker", originNodeId: "N1", targetDomain: "edr" }), node("leaf", { label: "leaf" })], addEdges: [{ tempId: "e", kind: "explains", source: "m", target: "N1", prior: 0.3, evidence: [] }] });
+    const [leaf] = Object.keys(g.nodes).filter((id) => g.nodes[id]!.label === "leaf");
+    g.theories = [{ id: "R1.H1", round: 1, story: "s", accountsFor: [], gaps: "", status: "live", support: 0, against: 0, predictions: [{ id: "R1.P1", sourcetype: "edr", expect: "x", spl: "x", separates: [], next: false, status: "open" }] }];
+    return {
+      strengthen: instructions.strengthen(g, "N1"), expand: instructions.expand(g, "N1"), fork: instructions.fork(g, "N1"), branch: instructions.branch(g, "N1"),
+      pivotEntry: instructions.pivotEntry(g, "B1", range), pivotForward: instructions.pivotForward(g, "B1", leaf!), connect: instructions.connect(g, "N1", [leaf!]),
+      scope: instructions.scope(), test: instructions.test(g, "R1.P1"), theorize: instructions.theorize(), choose: instructions.choose(), conclude: instructions.conclude("Enough."),
+    };
+  };
+
+  it("names no submit tool: the answer is asked for in the kernel's emit step, which grants none", () => {
+    for (const [move, text] of Object.entries({ ...moves(), system: SYSTEM_PROMPT })) expect(text, move).not.toMatch(/submit_/);
+  });
+
+  it("offers every tool the model is told to use: the evidence tool on a searching move, none on a move without searches", async () => {
+    const t = setup((request) => (request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : { content: "done" }));
+    const all = moves();
+    await t.client.runTurn(t.request({ userContent: all.expand! }));
+    await t.client.runTurn(t.request({ move: "conclude", submitTool: "submit_conclusion", maxSearches: 0, userContent: all.conclude! }));
+    for (const [i, searches] of [[0, true], [2, false]] as const) {
+      const sent = t.provider.requests[i]!;
+      const text = sent.messages.map((m) => m.content).join("\n");
+      expect(text).not.toMatch(/submit_/);
+      expect(sent.tools.map((x) => x.id)).toEqual(searches ? ["splunk_query"] : []);
+    }
+    expect(all.conclude).not.toContain("splunk_query");
   });
 });
