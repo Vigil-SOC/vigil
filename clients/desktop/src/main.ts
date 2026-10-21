@@ -78,6 +78,7 @@ interface Config {
   repoRoot?: string;
   jwtSecret?: string;
   agentInternalToken?: string;
+  postgresPassword?: string;
 }
 
 function readConfig(): Config {
@@ -117,6 +118,16 @@ function agentInternalToken(): string {
   const token = crypto.randomBytes(48).toString("base64url");
   writeConfig({ agentInternalToken: token });
   return token;
+}
+
+// Postgres superuser and vigil_app password. Postgres is unreachable from the
+// host, but a published default is open to any container on the stack network.
+function postgresPassword(): string {
+  const saved = readConfig().postgresPassword;
+  if (saved) return saved;
+  const pw = crypto.randomBytes(32).toString("base64url");
+  writeConfig({ postgresPassword: pw });
+  return pw;
 }
 
 /* ---------------- locating the Vigil source tree ---------------- */
@@ -455,6 +466,7 @@ const spawnCompose = (args: string[]) =>
       VIGIL_VERSION: app.getVersion(),
       JWT_SECRET_KEY: jwtSecret(),
       AGENT_INTERNAL_TOKEN: agentInternalToken(),
+      POSTGRES_PASSWORD: postgresPassword(),
     },
   });
 
@@ -588,6 +600,23 @@ async function bringUpStandalone(): Promise<boolean> {
   if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres"))) !== 0) {
     phase("services", "fail");
     sendSplash("error", "The Vigil containers did not start. See the log above.");
+    return false;
+  }
+  // initdb set the superuser password only once, so a volume from an older
+  // install (or a lost config.json) still holds a different one. The image
+  // trusts local-socket logins, so reset it from the container's own env
+  // without knowing the old value; a no-op when it already matches.
+  if (
+    (await runCompose(
+      composeArgs(
+        "exec", "-T", "postgres", "sh", "-c",
+        `printf '%s\\n' "ALTER ROLE deeptempo PASSWORD :'pw';" | ` +
+          `psql -q -v ON_ERROR_STOP=1 -U deeptempo -d deeptempo_soc --set=pw="$POSTGRES_PASSWORD"`,
+      ),
+    )) !== 0
+  ) {
+    phase("services", "fail");
+    sendSplash("error", "Could not set the database password. See the log above.");
     return false;
   }
   if (
