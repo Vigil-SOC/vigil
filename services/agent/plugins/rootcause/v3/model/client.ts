@@ -10,7 +10,7 @@ import type { PluginManifest } from "../../../../contracts/plugin.js";
 import type { RunSpec } from "../../../../core/spec.js";
 import type { AgentConfig } from "../config.js";
 import type { Move } from "../frontier.js";
-import { issued, type EvidenceTool, type Registry, type ToolRegistry } from "../tools/registry.js";
+import { issued, neverRan, type EvidenceTool, type Registry, type ToolRegistry } from "../tools/registry.js";
 import type { TurnTrace } from "../trace.js";
 import type { Domain } from "../types.js";
 import { lengthLimits, SUBMIT, SUBMIT_DESCRIPTIONS, type SubmitName } from "./schemas.js";
@@ -107,11 +107,13 @@ type Path = (string | number)[];
 // drop: the paths of the list items a failure rests on (["effects", "0", "artifacts", "1"]), so a last salvage can keep the rest of the submission.
 export type CheckResult = { success: true; data: unknown } | { success: false; msg: string; drop: Path[] };
 
-export function check(name: SubmitName, input: unknown, callCount: number, cx: CheckCtx = {}): CheckResult {
+type Citable = Parameters<typeof issued>[0];
+export function check(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx = {}): CheckResult {
+  const tools = typeof calls === "number" ? { callCount: calls } : calls;
   const v = { data: clip(input) };
   // A list item citing a ref the run never issued fails the check and salvage drops it, the rest kept; a bad
   // citation outside any list fails the submission whole.
-  const unissued = (x: unknown): string[] => Array.isArray(x) ? x.flatMap(unissued) : x && typeof x === "object" ? Object.entries(x).flatMap(([k, y]) => (k === "toolCallIds" && Array.isArray(y) ? y.map(String).filter((id) => !issued({ callCount }, id)) : unissued(y))) : [];
+  const unissued = (x: unknown): string[] => Array.isArray(x) ? x.flatMap(unissued) : x && typeof x === "object" ? Object.entries(x).flatMap(([k, y]) => (k === "toolCallIds" && Array.isArray(y) ? y.map(String).filter((id) => !issued(tools, id)) : unissued(y))) : [];
   const top = Object.entries(v.data as Record<string, unknown>);
   const dropped: Path[] = top.flatMap(([k, x]) => (Array.isArray(x) ? x.flatMap((item, i) => (unissued(item).length ? [[k, i]] : [])) : []));
   const loose = top.flatMap(([, x]) => (Array.isArray(x) ? [] : unissued(x)));
@@ -157,7 +159,7 @@ const prune = (v: unknown, at: string[], gone: Set<string>): unknown =>
 
 // A failed check drops the list items it rests on and keeps the rest, so one bad event does not throw away
 // the others (a run once lost a correct finding with its whole submission).
-export function salvage(name: SubmitName, input: unknown, callCount: number, cx: CheckCtx, first: CheckResult): { data: unknown; dropped: number } | null {
+export function salvage(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx, first: CheckResult): { data: unknown; dropped: number } | null {
   let cur = clip(input) as Record<string, unknown[]>, r = first, dropped = 0;
   for (let i = 0; i < 3 && !r.success; i++) {
     if (!r.drop.length) return null;
@@ -165,7 +167,7 @@ export function salvage(name: SubmitName, input: unknown, callCount: number, cx:
     cur = prune(cur, [], gone) as typeof cur;
     dropped += gone.size;
     const bad = schemaProblem(name, cur); // dropping can leave a list under its minimum
-    r = bad ? { success: false, ...bad } : check(name, cur, callCount, cx);
+    r = bad ? { success: false, ...bad } : check(name, cur, calls, cx);
   }
   return r.success ? { data: r.data, dropped } : null;
 }
@@ -284,10 +286,10 @@ export class KernelModelClient implements ModelClient {
     else {
       const cx: CheckCtx = { inputOf: tools.inputOf?.bind(tools), range: this.d.range };
       const bad = outcome!.value === null ? schemaProblem(req.submitTool, clip(kept)) : null;
-      const v: CheckResult = bad ? { success: false, ...bad } : check(req.submitTool, kept, tools.callCount, cx);
+      const v: CheckResult = bad ? { success: false, ...bad } : check(req.submitTool, kept, tools, cx);
       if (v.success) submission = v.data;
       else {
-        const s = salvage(req.submitTool, kept, tools.callCount, cx, v);
+        const s = salvage(req.submitTool, kept, tools, cx, v);
         req.trace.write("rejected-submission", { input: kept, error: v.msg, ...(s ? { salvaged: `kept the rest, dropped ${s.dropped} item(s)` } : {}) });
         submission = s?.data ?? null;
       }
@@ -305,7 +307,7 @@ export class KernelModelClient implements ModelClient {
       // The kernel journals a search it refused before the tool ran too, which the tool never answered.
       const mine = this.answered[at]?.key === JSON.stringify(input) ? this.answered[at++] : undefined;
       const text = mine?.output ?? call.result;
-      this.d.tools.note(call.ref, input, mine?.ok ? mine.output : "");
+      this.d.tools.note(call.ref, input, mine?.ok ? mine.output : "", !neverRan(call));
       req.trace.write("query", { toolCallId: call.ref, tool: call.tool, input });
       const traceId = req.trace.write("tool-output", { toolCallId: call.ref, ok: call.ok, output: text });
       out.push({ id: call.ref, tool: call.tool, input, ok: call.ok, traceId, text });

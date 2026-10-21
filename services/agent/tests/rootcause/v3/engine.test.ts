@@ -123,7 +123,11 @@ describe("runRootCauseV3", () => {
     expect(new Set(calls.map((c) => c.ref)).size).toBe(calls.length);
 
     // Both readers pick v3's shape off the engine stamp.
-    expect(rootCauseV3Projection("r1", events as never)).toMatchObject({ engine: "rootcause-v3", outcome: "aborted" });
+    const view = rootCauseV3Projection("r1", events as never);
+    expect(view).toMatchObject({ engine: "rootcause-v3", outcome: "aborted" });
+    // History counts the model's searches that ran; the code's own are counted apart.
+    expect(view.searches).toBe(calls.filter((c) => c.role !== "code" && c.failure !== "refused").length);
+    expect(view.code_searches).toBe(calls.filter((c) => c.role === "code").length);
     expect(rootCauseV3Replay("r1", events as never)).toMatchObject({ engine: "rootcause-v3" });
   }, 20_000);
 });
