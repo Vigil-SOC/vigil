@@ -24,7 +24,7 @@ export interface RootCauseProjection {
   cost_usd: number | null;
   // The ceiling the run opened with, so a reader can say how much of it is gone.
   max_cost_usd: number | null;
-  // A trace concludes no disposition: always null.
+  // Null when the run has said none. The kernel trace never says one; a v3 run says the report's word once it has exited.
   disposition: string | null;
   steps: RootCauseStepView[];
   proven: number;

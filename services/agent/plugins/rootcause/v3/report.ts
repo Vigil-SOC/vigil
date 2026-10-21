@@ -15,18 +15,31 @@ const DOMAIN = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|co|test|exam
 const IOC_KINDS = new Set(["ip", "domain-name", "url", "file-hash", "image-digest", "access-key", "arn", "commit-sha", "process", "host", "user"]);
 const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n) + ` …[+${s.length - n} chars]` : s);
 
-export function disposition(g: Graph, exit: ExitReason | null): string {
-  if (exit === "root-cause-found") return "True Positive: a confirmed causal chain leads from the alert to its root cause.";
-  if (exit === "false-positive") return "False Positive: the alerted event itself was refuted by the evidence.";
+// The report's sentence and the six-word verdict are one rule. benign and needs_review are not this rule's.
+export type DispositionWord = "malicious" | "suspicious" | "false_positive" | "inconclusive";
+
+export interface Disposition { sentence: string; word: DispositionWord }
+
+const SAID: Partial<Record<ExitReason, Disposition>> = {
+  "root-cause-found": { sentence: "True Positive: a confirmed causal chain leads from the alert to its root cause.", word: "malicious" },
+  "false-positive": { sentence: "False Positive: the alerted event itself was refuted by the evidence.", word: "false_positive" },
+};
+const INCONCLUSIVE: Disposition = { sentence: "Inconclusive: no upstream cause of the alert was confirmed.", word: "inconclusive" };
+
+// g may be null once a run has exited before it journaled a setup: the two exits above need no graph.
+export function disposition(g: Graph | null, exit: ExitReason | null): Disposition {
+  const named = exit === null ? undefined : SAID[exit];
+  if (named !== undefined) return named;
+  if (g === null) return INCONCLUSIVE;
   const path = bestPathFromSymptom(g);
   const up = path?.nodeIds.map((id) => g.nodes[id]!).filter((n) => n.kind === "action" && !n.isSymptom) ?? [];
   const confirmed = up.filter((n) => n.status === "confirmed").length;
-  if (confirmed) return `True Positive (root cause not fully confirmed): ${confirmed} confirmed upstream event(s) explain the alert.`;
+  if (confirmed) return { sentence: `True Positive (root cause not fully confirmed): ${confirmed} confirmed upstream event(s) explain the alert.`, word: "malicious" };
   // Likely causes (>= 0.6) behind a confirmed alert are a real attack whose steps are not all confirmed yet.
   const likely = up.filter((n) => n.status !== "ruled-out" && n.confidence >= 0.6).length;
   const symptom = path ? g.nodes[path.nodeIds[0]!] : undefined;
-  if (likely && symptom?.status === "confirmed") return `True Positive (causes likely, not yet confirmed): the alert is confirmed and ${likely} likely upstream event(s) explain it.`;
-  return "Inconclusive: no upstream cause of the alert was confirmed.";
+  if (likely && symptom?.status === "confirmed") return { sentence: `True Positive (causes likely, not yet confirmed): the alert is confirmed and ${likely} likely upstream event(s) explain it.`, word: "suspicious" };
+  return INCONCLUSIVE;
 }
 
 function actorsFor(g: Graph, n: GraphNode, kind: "attributed-to" | "operated-by" = "attributed-to") {
@@ -203,7 +216,7 @@ export function renderReport(g0: Graph, trace: TraceWriter, exit: ExitReason | n
   const rows = reportRows(g, trace.chronological(), raw);
   const out: string[] = [];
   out.push(`# RCA report: ${alert.title}`, "", `Run ${g.runId} · alert ${alert.id} at ${alert.observedAt} · exit **${exit}**${budget ? ` · $${budget.usd.toFixed(2)}` : ""}`, "");
-  out.push(`**Disposition:** ${disposition(g, exit)}`, "");
+  out.push(`**Disposition:** ${disposition(g, exit).sentence}`, "");
   if (raw) out.push("*Unfiltered report. The disposition is computed by code and can only come out True Positive, Inconclusive, or False Positive when the alerted event itself is refuted; it cannot come out benign.*", "");
 
   if (rows.accounts.length) {

@@ -100,6 +100,9 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
     }
   }
   const g = folded.graph === null ? null : forReport(folded.graph);
+  // Null while the run is in flight. The word is the report's own rule, including when the exit
+  // arrived before a graph did: root-cause-found and false-positive need none.
+  const verdict = disposition(g, folded.exit);
   // The trace as the report reads it: by ts, then id (the journal holds it in the order it was written).
   const rows = g === null ? null : reportRows(g, [...folded.entries].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id)));
   const named = g === null ? undefined : g.nodes[rows?.conclusion?.rootCause?.id ?? ""] ?? Object.values(g.nodes).find((n) => n.isRoot);
@@ -112,7 +115,7 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
     reason: terminal?.reason ?? "",
     cost_usd: cost,
     max_cost_usd: ceiling,
-    disposition: null,
+    disposition: folded.exit === null ? null : verdict.word,
     steps,
     proven: steps.filter((step) => step.proven).length,
     notices: [],
@@ -125,7 +128,7 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
     moves: folded.steps,
     account: g === null || rows === null ? null : {
       alert: folded.setup === null ? null : { id: folded.setup.alert.id, title: folded.setup.alert.title, observedAt: folded.setup.alert.observedAt },
-      disposition: disposition(g, folded.exit),
+      disposition: verdict.sentence,
       exit: folded.exit,
       root_cause: named === undefined ? null : { id: named.id, label: named.label, ...(named.rootJustification ? { justification: named.rootJustification } : {}) },
       conclusion: rows.conclusion && { text: rows.conclusion.text, chain: rows.conclusion.chain, openQuestions: rows.conclusion.openQuestions },

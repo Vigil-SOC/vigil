@@ -109,7 +109,7 @@ describe("rootcause v3 projection account", () => {
 
   it("keeps steps symptom first with cause_id at the earlier step", () => {
     expect(view.steps.map((s) => [s.step_id, s.cause_id])).toEqual([["N1", "N2"], ["N2", "N3"], ["N3", null]]);
-    expect(view.disposition).toBeNull();
+    expect(view.disposition).toBe("malicious");
   });
 
   it("times every event not ruled out with who ran it and who operated it, and keeps the rest out of the chain", () => {
