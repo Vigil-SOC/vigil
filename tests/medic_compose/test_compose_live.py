@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import secrets
 import subprocess
 import time
@@ -135,13 +134,10 @@ def stack(tmp_path_factory):
     )
     assert enable.returncode == 0, enable.stdout + enable.stderr
     s.enable_output = enable.stdout
-    # enable-compose.sh writes this host's socket group to compose.env (V1).
-    # Compose's default is 0, which can read the socket on Docker Desktop
-    # (root:root) and cannot on Linux (root:docker), so use the written value.
-    settings = (s.secrets_dir / "compose.env").read_text(encoding="utf-8")
-    gid = re.search(r"^VIGIL_MEDIC_DOCKER_GID=(\d+)$", settings, re.M)
-    assert gid, settings
-    s.env["VIGIL_MEDIC_DOCKER_GID"] = gid.group(1)
+    # V1: enable-compose.sh writes Medic's settings to compose.env (the
+    # gateway's Viewer account, this host's socket group) and every compose
+    # command with Medic on passes it, as test_enable_live.py's stack does.
+    s.base[2:4] = ["--env-file", str(s.secrets_dir / "compose.env")]
     s.compose("down", "-v", "--remove-orphans", check=False)
     try:
         s.compose("up", "-d", "--no-build", *SERVICES)
