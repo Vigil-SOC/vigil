@@ -276,7 +276,11 @@ class AuthService:
                     logger.warning("Invalid password for user: %s", user.username)
                     return None
 
-                # Success — reset lockout state and update session tracking
+                # Success — reset lockout state and update session tracking.
+                # This joins the caller's transaction and is committed only when
+                # the request succeeds. Login rolls it back when the password
+                # was right but the MFA code was not, then counts that failure
+                # in its own transaction (see record_mfa_failure).
                 user.failed_login_count = 0
                 user.locked_until = None
                 user.last_login = now
@@ -292,18 +296,20 @@ class AuthService:
             return None
 
     @staticmethod
-    def _record_failed_attempt(user_id: str, now: datetime) -> None:
+    def _record_failed_attempt(user_id: str, now: datetime) -> Optional[datetime]:
         """Persist one failed login attempt in its own transaction.
 
         Deliberately does not join the caller's transaction: the login endpoint
         answers a failed attempt with 401, which rolls that transaction back. If
         this bookkeeping went with it the counter would never survive, the
         threshold would never trip, and the lockout would silently do nothing.
+
+        Returns the lock expiry when this attempt locks the account.
         """
         with unit_of_work() as session:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user:
-                return
+                return None
             user.failed_login_count = (user.failed_login_count or 0) + 1
             if user.failed_login_count >= LOCKOUT_THRESHOLD:
                 user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
@@ -312,6 +318,21 @@ class AuthService:
                     user.failed_login_count,
                     user.username,
                 )
+                return user.locked_until
+            return None
+
+    @staticmethod
+    def record_mfa_failure(user_id: str, username: str) -> Optional[datetime]:
+        """Count a rejected MFA code toward the same lockout as a bad password.
+
+        Returns the lock expiry if this attempt locked the account. Callers
+        must not be holding the user row: this commits on its own connection,
+        and a ``SELECT FOR UPDATE`` still open in the caller's transaction
+        deadlocks it. The code check takes that lock, so release it first.
+        """
+        locked_until = AuthService._record_failed_attempt(user_id, utcnow())
+        logger.warning("Invalid MFA code for user: %s", username)
+        return locked_until
 
     @staticmethod
     @default_on_error(None)

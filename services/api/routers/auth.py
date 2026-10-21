@@ -7,7 +7,7 @@ Handles login, logout, token refresh, password management, and MFA.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Annotated, List, Optional
+from typing import Annotated, List, NoReturn, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
@@ -299,12 +299,7 @@ def login(
             payload.username_or_email, payload.password, session
         )
     except AccountLockedError as exc:
-        retry_after = max(1, int((exc.locked_until - utcnow()).total_seconds()))
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail="Account locked due to repeated failed login attempts",
-            headers={"Retry-After": str(retry_after)},
-        )
+        raise _lockout_http(exc.locked_until)
 
     if not user:
         raise HTTPException(
@@ -313,7 +308,9 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check MFA if enabled
+    # Check MFA if enabled. A missing code is the challenge, not a failed
+    # guess: the client learns MFA is on and retries with a code. A wrong
+    # code counts toward lockout, same as a wrong password.
     if user.mfa_enabled:
         if not payload.mfa_code:
             raise HTTPException(
@@ -323,7 +320,9 @@ def login(
             )
 
         if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
-            raise HTTPException(
+            _failed_mfa(
+                session,
+                user,
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code",
             )
@@ -527,6 +526,47 @@ def get_current_user_info(
         User information with permissions
     """
     return _user_payload(current_user, session)
+
+
+def _lockout_http(locked_until: datetime) -> HTTPException:
+    retry_after = max(1, int((locked_until - utcnow()).total_seconds()))
+    return HTTPException(
+        status_code=status.HTTP_423_LOCKED,
+        detail="Account locked due to repeated failed login attempts",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _account_is_locked(user: User) -> Optional[datetime]:
+    if user.locked_until and user.locked_until > utcnow():
+        return user.locked_until
+    return None
+
+
+def _failed_mfa(
+    session: Session, user: User, *, status_code: int, detail: str
+) -> NoReturn:
+    """Count a rejected MFA code, then refuse the request.
+
+    The checker holds the user row until this request's transaction ends.
+    The counter commits on another connection, so the row lock has to be
+    released first or the two transactions deadlock. Rolling back also
+    discards the lockout reset ``authenticate_user`` stages on a correct
+    password — otherwise a wrong code would wipe the counter.
+    """
+    user_id = user.user_id
+    username = user.username
+    session.rollback()
+    locked_until = AuthService.record_mfa_failure(user_id, username)
+    if locked_until is not None:
+        raise _lockout_http(locked_until)
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
+def _refuse_while_locked(user: User) -> None:
+    locked_until = _account_is_locked(user)
+    if locked_until is not None:
+        raise _lockout_http(locked_until)
 
 
 def _apply_profile_update(
@@ -744,11 +784,20 @@ def verify_mfa(
     Returns:
         Success message and one-time recovery codes (shown only once).
     """
+    # No secret yet: nothing to brute-force, and nothing to lock the account over.
+    if not current_user.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
+        )
+    _refuse_while_locked(current_user)
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
+        _failed_mfa(
+            session,
+            current_user,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid MFA code",
         )
 
     return RecoveryCodesResponse(
@@ -800,7 +849,17 @@ def disable_mfa(
     Returns:
         Success message
     """
+    if current_user.mfa_enabled:
+        _refuse_while_locked(current_user)
     if not AuthService.disable_mfa(current_user.user_id, body.code, session):
+        # Not enabled is not a guess. A wrong code is, and counts.
+        if current_user.mfa_enabled:
+            _failed_mfa(
+                session,
+                current_user,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid MFA code or MFA is not enabled",
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid MFA code or MFA is not enabled",
