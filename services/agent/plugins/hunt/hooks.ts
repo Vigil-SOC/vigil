@@ -1,9 +1,9 @@
-import type { CallPayload, NewEvent, TerminalHandoff } from "../../contracts/events.js";
+import type { CallPayload, NewEvent, Severity, TerminalHandoff } from "../../contracts/events.js";
 import { forPeople, guardedRef, guardsOn, readOf, runValues, typeSafe, valuesBehind, type RunValues } from "../../core/guards.js";
 import { recalledPayloadOf } from "../../contracts/memory.js";
 import { isStructured } from "../../contracts/plugin.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
-import { agentCalls, callsIn, childOrdinal, runChild, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
+import { agentCalls, callsIn, childOrdinal, runChild, severityOf, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
 import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
@@ -20,7 +20,7 @@ import { citedFindings } from "./findings.js";
 import { Journal, type HuntKinds } from "./journal.js";
 import type { HuntEvent, Projection } from "./ledger.js";
 import { narrativeInput, type Narrative } from "./narrative.js";
-import { startHunt } from "./opening.js";
+import { BASE_RATE_PROVENANCE, startHunt } from "./opening.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport, renderReport } from "./report.js";
 import { operatorLine } from "./render.js";
@@ -214,7 +214,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         // Concluded by its own tool, then answered: nothing left to decide.
         if (book.ended()) {
           await book.ledger.flush();
-          return ending(ctx, book);
+          return ending(ctx, book, provenSeverity(ctx, book, outcome.value));
         }
         // The harness refused a call: usually the wall clock, which stops a hunt with
         // turns and dollars still on the board. It parks on extend, conclude or abort.
@@ -241,7 +241,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
           if (!concluded.concluded) book.terminate("completed", `the agent stopped before the hunt could conclude (${concluded.said})${said === "" ? "" : `: ${said}`}`);
         }
         await book.ledger.flush();
-        return ending(ctx, book);
+        return ending(ctx, book, outcome.status === "completed" ? provenSeverity(ctx, book, outcome.value) : undefined);
       }),
 
     // The gateway's own allowance is not the hunt failing: it ends on the budget,
@@ -266,8 +266,19 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
   };
 }
 
+// The severity the answer gave, only when the record proved an adversary explanation:
+// a hunt that proved nothing leaves the case's priority alone, whatever its answer said.
+// Absent on a plugin with no severity_field (adjudicate).
+function provenSeverity(ctx: PluginContext, book: HuntBook, answer: unknown): Severity | undefined {
+  if (answer === null || typeof answer !== "object") return undefined;
+  const proven = [...book.projection.hypotheses.values()].some(
+    (one) => one.provenance !== BASE_RATE_PROVENANCE && (one.status === "proven" || one.status === "handed_off"),
+  );
+  return proven ? severityOf(ctx.options.plugin, { value: answer as Record<string, unknown> }) : undefined;
+}
+
 // What a finished hunt leaves: the report, the account of it, and its escalations.
-async function ending(ctx: PluginContext, book: HuntBook): Promise<Ending> {
+async function ending(ctx: PluginContext, book: HuntBook, severity?: Severity): Promise<Ending> {
   await book.ledger.flush();
   const projection = book.projection;
   const built = buildReport(projection);
@@ -285,6 +296,7 @@ async function ending(ctx: PluginContext, book: HuntBook): Promise<Ending> {
     reason: forPeople(hunt.termination_reason ?? `ended ${hunt.outcome ?? ""}`.trim(), values),
     summary: forPeople(renderReport(built, projection, narrative, recalledPayloadOf(events)), values),
     handoffs,
+    ...(severity === undefined ? {} : { severity }),
   };
 }
 

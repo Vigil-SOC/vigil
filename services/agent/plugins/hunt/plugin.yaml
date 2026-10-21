@@ -23,6 +23,9 @@ conclusion:
   summary_field: summary
   citations_field: citations
   open_questions_field: open_questions
+  # Raises the case's priority to it, never lowers it (run_bridge_router.py). Sent
+  # only when the record proved an adversary explanation (hooks.ts provenSeverity).
+  severity_field: severity
   schema:
     type: object
     additionalProperties: false
@@ -35,6 +38,10 @@ conclusion:
         type: string
         description: What the hunt found, in one word.
         enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
+      severity:
+        type: string
+        description: How bad what the hunt proved is. Omit when nothing was proven.
+        enum: [low, medium, high, critical]
       citations:
         type: array
         description: Refs of the tool results the answer rests on, such as r3. Cite the results behind the evidence you recorded.
@@ -109,6 +116,9 @@ system: |
   malicious or suspicious when an adversary explanation is proven or still
   standing; benign or false_positive when the benign explanation stood on cited
   results; inconclusive when nothing was settled.
+
+  Give the severity of what the hunt proved, judged on what you found and not
+  on the priority the case was opened at. Leave it out when nothing was proven.
 
   A gap is not evidence. A query that failed, timed out, was unreachable or
   returned nothing is a blind spot: record it with query_failed set and say what
