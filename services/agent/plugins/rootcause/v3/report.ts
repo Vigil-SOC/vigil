@@ -115,7 +115,9 @@ function rejections(g: Graph, c: NonNullable<Graph["conclusion"]>): Rejected[] {
     if (!ties.some((e) => e.status !== "ruled-out")) out.push(dead ? { id: dead.id, reason: `${dead.id} (${from} → ${to}) ruled out at turn ${dead.updatedTurn}` } : { id: `${from}→${to}`, reason: `no link from ${from} to ${to}` });
   });
   const top = bestPathFromSymptom(g)?.nodeIds.at(-1);
-  if (c.rootCause && top !== c.rootCause) out.push({ id: c.rootCause, reason: `${c.rootCause} is not the root of the graph's best path${top ? ` (${top})` : ""}` });
+  // The alert is exempt from settling above, but it is never its own cause, even when the graph has no root.
+  if (c.rootCause && g.nodes[c.rootCause]?.isSymptom) out.push({ id: c.rootCause, reason: `${c.rootCause} is the alert, not a cause` });
+  else if (c.rootCause && top !== c.rootCause) out.push({ id: c.rootCause, reason: `${c.rootCause} is not the root of the graph's best path${top ? ` (${top})` : ""}` });
   return out;
 }
 
@@ -236,8 +238,8 @@ export function reportRows(g: Graph, chronological: readonly TraceEntry[], raw =
   for (const e of Object.values(g.edges)) if (e.status === "ruled-out" && !e.retired) open.push({ kind: "ruled-out", id: e.id, text: `Ruled out ${e.kind} ${e.id} ${g.nodes[e.source]!.label} -> ${e.target}: ${e.evidence.filter((x) => x.polarity === "refutes").map((x) => x.summary).join(" ") || "no support"}` });
   for (const f of chronological.filter((x) => x.type === "reasoning" && (x.payload as any)?.suspiciousContent)) open.push({ kind: "flagged", id: f.id, text: `Suspicious content flagged at turn ${f.turn} (${f.id}): ${(f.payload as any).suspiciousContent.join(" | ")}` });
 
-  // The model's own open questions close the list, so the report and the projection read one list.
-  (g.conclusion?.openQuestions ?? []).forEach((q, i) => open.push({ kind: "model", id: `Q${i + 1}`, text: q }));
+  // The model's own open questions close the list, so the report and the projection read one list. A blank one is dropped.
+  (g.conclusion?.openQuestions ?? []).map((q) => q.replace(/\s+/g, " ").trim()).filter(Boolean).forEach((q, i) => open.push({ kind: "model", id: `Q${i + 1}`, text: q }));
 
   return { accounts, people, conclusion, chain, attribution, impersonation, exonerated, timeline, others, alternatives, tested, open };
 }
