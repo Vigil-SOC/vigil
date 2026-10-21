@@ -24,6 +24,14 @@ describe("lead", () => {
     g.nodes.N1!.expandAttempts = cfg.maxExpandAttempts + 1;
     expect(fallback(g, cfg, { move: "branch", target: "N1" }, 2)).toMatchObject({ move: "strengthen", targetId: "N1" });
   });
+  it("falls back on the node a refused choice named by its label, not the first available", () => {
+    const g = seeded();
+    const r = apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] }, 2);
+    const id = Object.values(r.idMap)[0]!;
+    // fork is not a move on this graph; the fallback keeps to the node the label names.
+    expect(fallback(g, cfg, { move: "fork", target: "curl of setup.sh on node-a" }, 3)).toMatchObject({ targetId: id });
+    expect(fallback(g, cfg, { move: "fork", target: id }, 3)).toMatchObject({ targetId: id });
+  });
   it("resolves an event reported this turn by its label", () => {
     const g = seeded();
     const r = apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] });

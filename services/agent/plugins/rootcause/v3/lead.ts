@@ -77,11 +77,19 @@ available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.len
 </next_move>`;
 }
 
+// The node a label names: exact, or one whose label starts with the first 60 characters given.
+function labelled(nodes: (GraphNode | undefined)[], text: string): GraphNode | undefined {
+  const want = text.toLowerCase();
+  return want ? nodes.find((n) => !!n && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60)))) : undefined;
+}
+
 // A refused choose turn runs an available move rather than ask again: one on the target the model named
 // (`branch N1` on the symptom becomes expand N1), else the first available, in the move-list order of options().
 export function fallback(g: Graph, cfg: AgentConfig, named: NextIn | undefined, turn: number): FrontierDecision | undefined {
   const o = Object.entries(options(g, cfg)) as [Move, string[]][];
-  const want = named?.target?.trim();
+  const raw = named?.target?.trim();
+  // A target named by label means the node it names, as the choice itself would read it.
+  const want = raw && !g.nodes[raw] && !g.edges[raw] ? (labelled(Object.values(g.nodes), raw)?.id ?? raw) : raw;
   const [move, ids] = o.find(([, ids]) => want && ids.includes(want)) ?? o[0] ?? [];
   if (!move || !ids) return undefined;
   return { move, targetId: want && ids.includes(want) ? want : ids[0]!, turn, reason: "fallback after a refused choice", ...(named?.source?.trim() ? { source: named.source.trim() } : {}) };
@@ -112,9 +120,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
   // An event named by its label: one reported this turn (no id yet) or an earlier turn's; this turn's wins a duplicate.
   let byLabel: string | undefined;
   if (!ids.includes(target) && !g.nodes[target] && !g.edges[target]) {
-    const want = target.toLowerCase();
-    const named = (n?: GraphNode) => !!n && !!want && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60)));
-    const hit = created.map((id) => g.nodes[id]).find(named) ?? Object.values(g.nodes).find(named);
+    const hit = labelled(created.map((id) => g.nodes[id]), target) ?? labelled(Object.values(g.nodes), target);
     if (hit) target = byLabel = hit.id;
   }
   // A pivot named by the event its boundary hangs off: that event's open boundary.
