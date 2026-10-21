@@ -7,7 +7,7 @@ ijson>=3.5.1
 anthropic>=0.45.0
 # In-repo servers use the 2.x lowlevel Server(on_list_tools=..., on_call_tool=...)
 # surface. Cap below 3 so a 3.x drop does not repeat the 1.x→2.x break.
-mcp>=2,<3
+mcp>=2.3.0,<3
 openai>=1.40.0
 # HTTP client for every integration client and MCP tool server. Arrives
 # transitively via anthropic/openai; pinned so we don't rely on someone
