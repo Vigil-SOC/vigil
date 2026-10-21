@@ -158,10 +158,25 @@ const prune = (v: unknown, at: string[], gone: Set<string>): unknown =>
   Array.isArray(v) ? v.flatMap((x, j) => (gone.has([...at, j].join("/")) ? [] : [prune(x, [...at, String(j)], gone)]))
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, prune(x, [...at, k], gone)])) : v;
 
-// A key the schema does not know is removed, not a reason to drop the item or the submission. One that is a field
-// of the submission itself (a candidate's `boundary`) moves up when that slot is empty and its value fits. Items
-// with a real error are dropped whole by the caller, so nothing is stripped or lifted from them. Mutates `cur`.
-function stripStray(name: SubmitName, cur: Record<string, unknown>): string | null {
+// Where the value at path p (pre-prune) is once prune has taken out gone: null when it, or a list item holding it, went.
+const follow = (p: string[], gone: Set<string>): string[] | null => {
+  const out: string[] = [];
+  for (let n = 0; n < p.length; n++) {
+    if (!/^\d+$/.test(p[n]!)) { out.push(p[n]!); continue; }
+    if (gone.has(p.slice(0, n + 1).join("/"))) return null;
+    let i = +p[n]!;
+    for (let j = +p[n]! - 1; j >= 0; j--) if (gone.has([...p.slice(0, n), j].join("/"))) i--;
+    out.push(String(i));
+  }
+  return out;
+};
+
+// A key the schema does not know is removed, not a reason to drop the item or the submission. The deepest list item
+// holding a real error is dropped whole by the caller, so nothing is stripped from it; the item around it (a
+// candidate around a bad nodeEvidence entry) is stripped as any other. One that is a field of the submission itself
+// (a candidate's `boundary`) is returned with where it was, for the caller to lift once it knows that item is kept.
+// Mutates `cur`.
+function stripStray(name: SubmitName, cur: Record<string, unknown>): { stripped: number; lifts: { at: string[]; key: string; value: unknown }[] } {
   const schema = SUBMIT[name] as { properties: Record<string, Record<string, unknown>> };
   const errs = schemaIssues(schema, cur);
   const dead = errs.filter((e) => e.keyword !== "additionalProperties").map((e) => itemOf(e.instancePath.split("/").slice(1)).join("/")).filter(Boolean);
@@ -169,31 +184,44 @@ function stripStray(name: SubmitName, cur: Record<string, unknown>): string | nu
     const at = e.instancePath.split("/").slice(1);
     return e.keyword === "additionalProperties" && !dead.some((d) => `${at.join("/")}/`.startsWith(`${d}/`)) ? [{ at, key: String((e.params as { additionalProperty: string }).additionalProperty) }] : [];
   });
-  const lifted: string[] = [];
+  const lifts: { at: string[]; key: string; value: unknown }[] = [];
   for (const { at, key } of live) {
     const parent = at.reduce<any>((v, k) => v[k], cur);
     const value = parent[key];
     delete parent[key];
-    if (at.length && key in schema.properties && cur[key] === undefined && !schemaIssues(schema.properties[key]!, value).length) { cur[key] = value; lifted.push(key); }
+    if (at.length && key in schema.properties && !schemaIssues(schema.properties[key]!, value).length) lifts.push({ at, key, value });
   }
-  return live.length ? `stripped ${live.length} unknown key(s)${lifted.length ? `, lifted ${lifted.join(", ")} to the top level` : ""}` : null;
+  return { stripped: live.length, lifts };
 }
 
 // A failed check drops the list items it rests on and keeps the rest, so one bad event does not throw away
 // the others (a run once lost a correct finding with its whole submission).
 export function salvage(name: SubmitName, input: unknown, calls: number | Citable, cx: CheckCtx, first: CheckResult): { data: unknown; dropped: number; repaired?: string } | null {
   let cur = clip(input) as Record<string, unknown[]>, r = first, dropped = 0;
-  const repaired = stripStray(name, cur);
-  if (repaired) { const bad = schemaProblem(name, cur); r = bad ? { success: false, ...bad } : check(name, cur, calls, cx); }
+  let { stripped, lifts } = stripStray(name, cur);
+  if (stripped) { const bad = schemaProblem(name, cur); r = bad ? { success: false, ...bad } : check(name, cur, calls, cx); }
   for (let i = 0; i < 3 && !r.success; i++) {
     if (!r.drop.length) return null;
     const gone = new Set(r.drop.map((p) => p.join("/")));
+    lifts = lifts.flatMap((l) => { const at = follow(l.at, gone); return at ? [{ ...l, at }] : []; });
     cur = prune(cur, [], gone) as typeof cur;
     dropped += gone.size;
     const bad = schemaProblem(name, cur); // dropping can leave a list under its minimum
     r = bad ? { success: false, ...bad } : check(name, cur, calls, cx);
   }
-  return r.success ? { data: r.data, dropped, ...(repaired ? { repaired } : {}) } : null;
+  if (!r.success) return null;
+  // Lifted only from an item still there, into an empty slot of a submission that holds without it, and only if
+  // the submission still holds with it: a lift never fills a field the submission was refused for lacking.
+  const up = new Map<string, unknown>();
+  for (const { key, value } of lifts) if (cur[key] === undefined && !up.has(key)) up.set(key, value);
+  if (up.size) {
+    const next = { ...cur, ...Object.fromEntries(up) };
+    const lr = schemaProblem(name, next) ? null : check(name, next, calls, cx);
+    if (lr?.success) r = lr;
+    else up.clear();
+  }
+  const repaired = stripped ? `stripped ${stripped} unknown key(s)${up.size ? `, lifted ${[...up.keys()].join(", ")} to the top level` : ""}` : null;
+  return { data: r.data, dropped, ...(repaired ? { repaired } : {}) };
 }
 
 // What a recorded turn looks like: replayable by ScriptedModelClient against a cassette. Tool call ids in
