@@ -16,7 +16,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from core.agents.projections import read_events
 from core.auth.auth_service import AuthService
@@ -407,7 +407,10 @@ async def resume_sla(case_id: str):
 class CommentAdd(BaseModel):
     """Add comment to case."""
 
-    author: str
+    author: Optional[str] = Field(
+        default=None,
+        description="Ignored: the signed-in user is recorded as the author.",
+    )
     content: str
     parent_comment_id: Optional[int] = None
 
@@ -423,11 +426,16 @@ async def get_comments(case_id: str):
 @router.post(
     "/{case_id}/comments", dependencies=_CASES_WRITE, response_model=CaseCommentSchema
 )
-async def add_comment(case_id: str, data: CommentAdd):
+async def add_comment(
+    case_id: str,
+    data: CommentAdd,
+    current_user: User = Depends(get_current_user),
+):
     """Add comment to case."""
     collab_service = CaseCollaborationService()
+    # The body field stays for clients that still send it; the record names the session user.
     comment = collab_service.add_comment(
-        case_id, data.author, data.content, data.parent_comment_id
+        case_id, current_user.username, data.content, data.parent_comment_id
     )
     if not comment:
         raise HTTPException(status_code=500, detail="Failed to add comment")
@@ -536,7 +544,10 @@ class ChainOfCustodyAdd(BaseModel):
     """Add chain of custody entry."""
 
     action: str
-    user: str
+    user: Optional[str] = Field(
+        default=None,
+        description="Ignored: the signed-in user is recorded as the actor.",
+    )
     notes: Optional[str] = None
 
 
@@ -545,11 +556,16 @@ class ChainOfCustodyAdd(BaseModel):
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
-async def add_custody_entry(case_id: str, evidence_id: int, data: ChainOfCustodyAdd):
+async def add_custody_entry(
+    case_id: str,
+    evidence_id: int,
+    data: ChainOfCustodyAdd,
+    current_user: User = Depends(get_current_user),
+):
     """Add chain of custody entry."""
     evidence_service = CaseEvidenceService()
     success = evidence_service.add_chain_of_custody_entry(
-        evidence_id, data.action, data.user, data.notes
+        evidence_id, data.action, current_user.username, data.notes
     )
     if not success:
         raise HTTPException(status_code=500, detail="Failed to add custody entry")
@@ -632,7 +648,10 @@ class RelationshipAdd(BaseModel):
 
     related_case_id: str
     relationship_type: str
-    created_by: str
+    created_by: Optional[str] = Field(
+        default=None,
+        description="Ignored: the signed-in user is recorded as the creator.",
+    )
     notes: Optional[str] = None
 
 
@@ -642,7 +661,10 @@ class RelationshipAdd(BaseModel):
     response_model=CaseRelationshipSchema,
 )
 async def add_relationship(
-    case_id: str, data: RelationshipAdd, session: UnitOfWorkSession
+    case_id: str,
+    data: RelationshipAdd,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
 ):
     """Link related case."""
 
@@ -651,7 +673,7 @@ async def add_relationship(
         case_id,
         related_case_id=data.related_case_id,
         relationship_type=data.relationship_type,
-        created_by=data.created_by,
+        created_by=current_user.username,
         notes=data.notes,
     )
     return CaseRelationshipSchema.dump(rel)

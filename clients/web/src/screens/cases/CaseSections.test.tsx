@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { TasksView, useTasks } from './CaseSections'
+import { CommentsView, EvidenceCard, TasksView, useComments, useTasks } from './CaseSections'
 import { casesApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
@@ -8,6 +8,10 @@ vi.mock('../../services/api', () => ({
     getTasks: vi.fn(),
     updateTask: vi.fn(),
     addTask: vi.fn(),
+    getComments: vi.fn(),
+    addComment: vi.fn(),
+    getEvidence: vi.fn(),
+    addEvidence: vi.fn(),
   },
 }))
 
@@ -65,5 +69,49 @@ describe('TasksView', () => {
         completed_at: expect.any(String),
       }),
     )
+  })
+})
+
+function Comments({ caseId }: { caseId: string }) {
+  return <CommentsView caseId={caseId} resource={useComments(caseId)} />
+}
+
+describe('comment and evidence writes', () => {
+  it('posts a comment without an author', async () => {
+    vi.mocked(casesApi.getComments).mockResolvedValue({ data: { comments: [] } } as never)
+    vi.mocked(casesApi.addComment).mockResolvedValue({ data: {} } as never)
+    render(<Comments caseId="case-2026-0142" />)
+
+    fireEvent.change(await screen.findByPlaceholderText('Write a comment…'), {
+      target: { value: 'Closing as benign' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Post/ }))
+
+    await waitFor(() =>
+      expect(casesApi.addComment).toHaveBeenCalledWith('case-2026-0142', {
+        content: 'Closing as benign',
+      }),
+    )
+    expect(vi.mocked(casesApi.addComment).mock.lastCall?.[1]).not.toHaveProperty('author')
+  })
+
+  it('adds evidence without collected_by', async () => {
+    vi.mocked(casesApi.getEvidence).mockResolvedValue({ data: { evidence: [] } } as never)
+    vi.mocked(casesApi.addEvidence).mockResolvedValue({ data: {} } as never)
+    render(<EvidenceCard caseId="case-2026-0142" />)
+
+    fireEvent.click(await screen.findByTitle('Add'))
+    fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'pcap' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add evidence' }))
+
+    await waitFor(() =>
+      expect(casesApi.addEvidence).toHaveBeenCalledWith('case-2026-0142', {
+        name: 'pcap',
+        description: null,
+        evidence_type: 'file',
+        file_path: null,
+      }),
+    )
+    expect(vi.mocked(casesApi.addEvidence).mock.lastCall?.[1]).not.toHaveProperty('collected_by')
   })
 })

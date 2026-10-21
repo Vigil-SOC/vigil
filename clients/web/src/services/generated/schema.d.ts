@@ -8308,8 +8308,11 @@ export interface components {
             action: string;
             /** Notes */
             notes?: string | null;
-            /** User */
-            user: string;
+            /**
+             * User
+             * @description Ignored: the signed-in user is recorded as the actor.
+             */
+            user?: string | null;
         };
         /**
          * ChangePasswordRequest
@@ -8436,8 +8439,11 @@ export interface components {
          * @description Add comment to case.
          */
         CommentAdd: {
-            /** Author */
-            author: string;
+            /**
+             * Author
+             * @description Ignored: the signed-in user is recorded as the author.
+             */
+            author?: string | null;
             /** Content */
             content: string;
             /** Parent Comment Id */
@@ -8875,8 +8881,11 @@ export interface components {
          * @description Add evidence to case.
          */
         EvidenceAdd: {
-            /** Collected By */
-            collected_by: string;
+            /**
+             * Collected By
+             * @description Ignored: the signed-in user is recorded as the collector.
+             */
+            collected_by?: string | null;
             /** Description */
             description?: string | null;
             /** Evidence Type */
@@ -10214,8 +10223,11 @@ export interface components {
          * @description Add case relationship.
          */
         RelationshipAdd: {
-            /** Created By */
-            created_by: string;
+            /**
+             * Created By
+             * @description Ignored: the signed-in user is recorded as the creator.
+             */
+            created_by?: string | null;
             /** Notes */
             notes?: string | null;
             /** Related Case Id */

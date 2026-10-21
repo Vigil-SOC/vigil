@@ -1880,8 +1880,16 @@
         "description": "Add evidence to case.",
         "properties": {
           "collected_by": {
-            "title": "Collected By",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ignored: the signed-in user is recorded as the collector.",
+            "title": "Collected By"
           },
           "description": {
             "anyOf": [
@@ -1941,8 +1949,7 @@
         },
         "required": [
           "evidence_type",
-          "name",
-          "collected_by"
+          "name"
         ],
         "title": "EvidenceAdd",
         "type": "object"
