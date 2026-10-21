@@ -47,8 +47,17 @@ RULES = (
     "tool. Every run on the case is below, the case's run first; each run's "
     "evidence is its own and never replaces another run's. Asked where the runs "
     "disagree, say what each run found and cite it; do not rule on which run is "
-    "right. Use replay_hunt only for a specific past step, naming the step."
+    "right. Use replay_hunt only for a specific past step, naming the step. "
+    "Write for an analyst: name a run by its kind and workflow, never by its run "
+    "id; never name a tool; name a source once, not twice. Write file paths, UNC "
+    "paths, registry keys and command lines in backticks. Asked what happened "
+    "next, answer from Next below."
 )
+
+# What the run bridge records on the case when a hunt hands off
+# (core/workflows/run_bridge_router.py): read back so "what next" can be answered.
+NEXT_ACTIVITIES = ("agent_run_handoff", "agent_run_root_cause_not_started")
+MAX_NEXT = 4
 
 # What the case page's stopped card reads: a run row that failed or was cancelled.
 ENDED = ("failed", "cancelled", "canceled")
@@ -251,6 +260,18 @@ async def _read(ref: dict, workflows: Any) -> dict:
         return {"hunt": False, "view": None, "row": {}}
 
 
+def _next(case: dict) -> List[str]:
+    """The case's handoffs and root-cause runs not started, oldest first, once each."""
+    lines: List[str] = []
+    for a in case.get("activities") or []:
+        if not isinstance(a, dict) or a.get("activity_type") not in NEXT_ACTIVITIES:
+            continue
+        line = f"- {_line(a.get('description'))}"
+        if line not in lines:
+            lines.append(line)
+    return ["Next:", *lines[-MAX_NEXT:]] if lines else []
+
+
 def _size(read: dict) -> int:
     view = read["view"] or {}
     return len(view.get("evidence") or []) if read["hunt"] else MAX_FINDINGS
@@ -289,6 +310,7 @@ async def case_brief(case_id: str, workflows: Any) -> str:
             )
         state = combined_state(case.get("status"), [s for _, s in refs])
         head = f"Case {case_id}: {_line(case.get('title'))} (state: {state})"
+        next_lines = _next(case)
         listed = [ref for ref, _ in refs]
         # The run the case page and its record read (primary_ref), not the newest:
         # a hunt's handoff starts a root-cause run that is newer and holds none of
@@ -298,7 +320,7 @@ async def case_brief(case_id: str, workflows: Any) -> str:
         reads = await asyncio.gather(*(_read(ref, workflows) for ref in ordered))
 
         def compose(alert_rows: int, run_rows: int, others: int) -> str:
-            lines = [head, *_alerts(alerts, alert_rows)]
+            lines = [head, *next_lines, *_alerts(alerts, alert_rows)]
             for i, (ref, read) in enumerate(zip(ordered[: others + 1], reads)):
                 if i == 0:
                     lines += _run_state(

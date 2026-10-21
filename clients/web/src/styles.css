@@ -1573,13 +1573,6 @@
       animation: soc-fade .18s ease;
    }
 
-   .cite-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 8px;
-   }
-
    .cite-chip {
       border: 1px solid var(--line);
       background: var(--bg-2);

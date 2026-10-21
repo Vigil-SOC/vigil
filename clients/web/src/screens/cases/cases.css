@@ -1386,8 +1386,6 @@
 
 .case-composer .msg-actions button { width: 24px; height: 24px; }
 
-.case-composer .cite-row { gap: 6px; margin-top: 6px; }
-
 .case-composer .cite-chip {
   display: inline-block;
   box-sizing: border-box;
@@ -1408,6 +1406,9 @@
   vertical-align: middle;
   cursor: pointer;
 }
+
+/* an evidence label is short by construction; a pair that shares step and source reads apart by its last words (#2565) */
+.case-composer .cite-chip.evidence { max-width: min(100%, 52ch); }
 
 /* where the answer wrote the id: in the line, like a word */
 .case-composer .md .cite-chip { margin: 0 1px; vertical-align: 1px; }

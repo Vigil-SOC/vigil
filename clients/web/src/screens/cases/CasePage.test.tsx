@@ -1487,14 +1487,14 @@ describe('case page', () => {
     }]
     const { showCase } = renderDetail('case-hunt')
 
-    // the chip names the step and source the row came from (#2285), where the answer wrote the id and once under it
+    // the chip names the step and source the row came from (#2285), where the answer wrote the id and nowhere else (#2565)
     const chips = await screen.findAllByRole('button', { name: 'step 2 · elastic' })
-    expect(chips).toHaveLength(2)
+    expect(chips).toHaveLength(1)
     expect(chips[0]).toHaveAttribute('title', 'no login')
     expect(screen.queryByRole('button', { name: 'e1' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'ghost-9' })).not.toBeInTheDocument()
     expect(screen.queryByText('no login')).not.toBeInTheDocument()
-    fireEvent.click(chips[1])
+    fireEvent.click(chips[0])
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
     const row = (await screen.findByText('no login')).closest('[data-evidence-id]')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
