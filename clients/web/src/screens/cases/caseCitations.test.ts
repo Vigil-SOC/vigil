@@ -40,6 +40,9 @@ describe('caseCitations (#2285)', () => {
         row('ev-b', 'DNS query for newly registered domain'),
         row('ev-c', 'DNS query for newly registered domain'),
         { ...row('ev-d', 'one lookup'), iteration: 4, source_system: 'dns', origins: [] },
+        { ...row('ev-x', 'explorer.exe launched a .lnk file'), iteration: 3, origins: ['crowdstrike'] },
+        { ...row('ev-e', 'rundll32.exe spawned by explorer.exe loaded msupdate64.dll'), iteration: 3, origins: ['crowdstrike'] },
+        { ...row('ev-f', 'rundll32.exe invoked comsvcs.dll MiniDump'), iteration: 3, origins: ['crowdstrike'] },
       ],
     } as unknown as RunFold
     const labels = caseCitations(twins, []).map((c) => c.label)
@@ -47,6 +50,8 @@ describe('caseCitations (#2285)', () => {
     expect(labels[3]).toBe('step 4 · dns')
     expect(labels[0]).toMatch(/^step 26 · .+ · Email with ISO…$/)
     expect(labels[2]).toBe(`${labels[1]} (2)`)
+    // where two texts start alike, the words where they part
+    expect(labels.slice(4)).toEqual(['step 3 · CrowdStrike · explorer.exe…', 'step 3 · CrowdStrike · spawned by…', 'step 3 · CrowdStrike · invoked…'])
     expect(labels.every((label) => label.length <= 48)).toBe(true)
   })
 
