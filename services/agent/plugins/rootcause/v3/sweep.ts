@@ -10,7 +10,7 @@ const KINDS = new Set(["arn", "access-key", "principal", "user", "host", "ip", "
 const MAX_VALUES = 6;
 
 // The values worth sweeping: the node's artifacts, the accounts it ran as, and for ARNs their role/session names.
-export function sweepValues(g: Graph, n: GraphNode): string[] {
+export function sweepValues(g: Graph, n: Pick<GraphNode, "id" | "artifacts">): string[] {
   const vals: string[] = [];
   const add = (v: string) => { const t = v.trim(); if (t.length >= 4 && !/^\d+$/.test(t) && !vals.some((x) => x.toLowerCase() === t.toLowerCase())) vals.push(t); };
   for (const a of n.artifacts) {
@@ -25,7 +25,7 @@ export function sweepValues(g: Graph, n: GraphNode): string[] {
   return vals.slice(0, MAX_VALUES);
 }
 
-const quote = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+export const quote = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
 export interface SweepResult { leads: string; topDomain?: string; hits: number }
 

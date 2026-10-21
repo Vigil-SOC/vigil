@@ -2,6 +2,7 @@
 // entry events; each later step asks what the best lead produced. Every new node is run through the
 // stitch matcher against the marker's origin.
 import type { GraphNode, GraphPatch, NodeIn } from "../graph.js";
+import { entitiesOf } from "../coverage.js";
 import { instructions } from "../model/prompts.js";
 import type { SubmitEffects, SubmitEntryPoints } from "../model/schemas.js";
 import { matchBoundary, sameEvent } from "../stitch.js";
@@ -42,7 +43,8 @@ export const pivot: Handler = async (d, g, ctx) => {
     const v = new Vetter(ctx, r.toolCalls);
     const { kept, evidenceFor } = withBaseline(sub.candidates, v, ctx, true);
     if (!kept.length) return exhausted();
-    const made = kept.map((c) => { const x = candidatePatch(c, v, g, ctx); x.node.evidence.push(...evidenceFor(c)); return x; });
+    const made: Awaited<ReturnType<typeof candidatePatch>>[] = [];
+    for (const c of kept) { const x = await candidatePatch(c, v, g, ctx); x.node.evidence.push(...evidenceFor(c)); made.push(x); }
     return merge(...made.map((x) => x.patch), stitch(made.map((x) => x.node)), { updateMarkers: [{ markerId: m.id, pivotSteps: 1, forwardLeaves: made.map((x) => x.id) }] });
   }
 
@@ -73,7 +75,7 @@ export const pivot: Handler = async (d, g, ctx) => {
   // An effect that is the origin event itself closes the boundary: the leaf caused the origin.
   const isOrigin = sub.effects.find((c) => sameEvent({ ...c, observedAt: c.observedAt }, origin));
   if (isOrigin) {
-    const join = v.evidence([...isOrigin.edgeEvidence, { summary: `the effect of ${leaf.id} is the origin event ${origin.id} itself (same source, time and identifiers)`, strength: "direct", polarity: "supports", toolCallIds: isOrigin.nodeEvidence.flatMap((e) => e.toolCallIds) }], origin.domain);
+    const join = v.vetted([...isOrigin.edgeEvidence, { summary: `the effect of ${leaf.id} is the origin event ${origin.id} itself (same source, time and identifiers)`, strength: "direct", polarity: "supports", toolCallIds: isOrigin.nodeEvidence.flatMap((e) => e.toolCallIds) }], origin.domain);
     ctx.trace.write("stitch", { marker: m.id, candidate: isOrigin.label, kind: "same-event", reason: `effect of ${leaf.id} is ${origin.id}` });
     return merge({ resolveBoundary: { markerId: m.id, nodeId: leaf.id, joinEvidence: join }, updateMarkers: [{ markerId: m.id, pivotSteps: steps + 1, forwardLeaves: [] }] });
   }
@@ -82,11 +84,12 @@ export const pivot: Handler = async (d, g, ctx) => {
   const timely = sub.effects.filter((c) => !sameEvent(c, leaf)).filter((c) => { const ok = before(c); if (!ok) ctx.trace.write("rejected-evidence", { effect: c.label, reason: "after the origin: not a cause, not added" }); return ok; });
   const { kept, evidenceFor } = withBaseline(timely, v, ctx, true);
   // Effect: the leaf explains it (leaf -> effect).
-  const made = kept.map((c) => {
-    const x = candidatePatch(c, v, g, ctx);
+  const made: Awaited<ReturnType<typeof candidatePatch>>[] = [];
+  for (const c of kept) {
+    const x = await candidatePatch(c, v, g, ctx);
     x.node.evidence.push(...evidenceFor(c));
-    x.patch.addEdges!.unshift({ tempId: tempId("fwd"), kind: "explains", source: leaf.id, target: x.id, prior: c.prior, evidence: v.evidence(c.edgeEvidence, c.domain) });
-    return x;
-  });
+    x.patch.addEdges!.unshift({ tempId: tempId("fwd"), kind: "explains", source: leaf.id, target: x.id, prior: c.prior, evidence: await v.evidence(c.edgeEvidence, c.domain, entitiesOf(g, leaf.id)) });
+    made.push(x);
+  }
   return merge(...made.map((x) => x.patch), stitch(made.map((x) => x.node)), { updateMarkers: [{ markerId: m.id, pivotSteps: steps + 1, forwardLeaves: [...rest, ...made.map((x) => x.id)] }] });
 };

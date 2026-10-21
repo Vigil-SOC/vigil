@@ -90,8 +90,8 @@ describe("legitimate steps", () => {
     const c = (strength: "direct" | "circumstantial") => ({ label: "dev registered a runner", domain: "edr", prior: 0.3, artifacts: [], nodeEvidence: [], identitySignals: [],
       edgeEvidence: [{ summary: "s", strength, polarity: "supports" as const, toolCallIds: ["r1"] }], legitimate: true, baseline: { summary: "b", unusual: false, toolCallIds: ["r2"] } });
     const v = new Vetter(ctx, []);
-    expect(candidatePatch(c("circumstantial"), v, g, ctx, "N2").patch.addEdges).toMatchObject([{ inferred: true }]);
-    const direct = candidatePatch(c("direct"), v, g, ctx, "N2").patch.addEdges;
+    expect((await candidatePatch(c("circumstantial"), v, g, ctx, "N2")).patch.addEdges).toMatchObject([{ inferred: true }]);
+    const direct = (await candidatePatch(c("direct"), v, g, ctx, "N2")).patch.addEdges;
     expect(direct).toHaveLength(1);
     expect(direct![0]!.inferred).toBeUndefined();
   });
@@ -203,8 +203,8 @@ describe("contradicting tests and early roots", () => {
     const ctx = ctxFor(null);
     const c = (at: string) => ({ label: "pod created", domain: "edr", prior: 0.3, artifacts: [], nodeEvidence: [], edgeEvidence: [], observedAt: at, isRootCause: true });
     const v = new Vetter(ctx, []);
-    expect(candidatePatch(c("2026-03-11T17:00:00Z"), v, g, ctx, "N2").node.isRoot).toBeUndefined();
-    expect(candidatePatch(c("2026-03-11T10:00:00Z"), v, g, ctx, "N2").node.isRoot).toBe(true);
+    expect((await candidatePatch(c("2026-03-11T17:00:00Z"), v, g, ctx, "N2")).node.isRoot).toBeUndefined();
+    expect((await candidatePatch(c("2026-03-11T10:00:00Z"), v, g, ctx, "N2")).node.isRoot).toBe(true);
   });
 });
 
