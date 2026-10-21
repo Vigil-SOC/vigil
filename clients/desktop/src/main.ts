@@ -9,6 +9,9 @@ import { openAppLog, captureToFile, snapshotContainerLogs } from "./logkeep";
 import { supportCommand } from "./supportcmd";
 
 const BACKEND_URL = "http://127.0.0.1:6987";
+// core/auth/bootstrap_code.py SETUP_CODE_LOG_MARK. Copied from a log line;
+// this process does not derive the code and never puts it on a URL.
+const SETUP_CODE_LOG_MARK = "First-run setup code:";
 const HEALTH_URL = `${BACKEND_URL}/api/health`;
 const BACKEND_IMAGE = "ghcr.io/vigil-soc/vigil-backend";
 const DOCKER_INSTALL_URL = "https://www.docker.com/products/docker-desktop/";
@@ -446,19 +449,30 @@ function runScript(name: string, args: string[] = [], doneWhen?: string): Promis
       cwd: repoRoot!,
       env: augmentedEnv(),
     });
+    // The splash keeps a single log line. "Ready at" would replace the setup
+    // code, so remember that line and put it back as the script finishes.
+    let setupLine = "";
     const out = readline.createInterface({ input: proc.stdout! });
     out.on("line", (line) => {
       const m = line.match(/^STEP (\S+) (\S+)$/);
       if (m) {
         sendSplash("step", { phase: m[1], status: m[2] });
         if (m[2] === "fail") finish(1);
-        if (doneWhen && m[1] === doneWhen && m[2] === "done") finish(0);
+        if (doneWhen && m[1] === doneWhen && m[2] === "done") {
+          setImmediate(() => {
+            if (setupLine) sendSplash("log", setupLine);
+            finish(0);
+          });
+        }
       }
       const u = line.match(/^URL (\S+)$/);
-      if (u) sendSplash("log", `Ready at ${u[1]}`);
+      if (u && !setupLine) sendSplash("log", `Ready at ${u[1]}`);
     });
     const err = readline.createInterface({ input: proc.stderr! });
-    err.on("line", (line) => sendSplash("log", line));
+    err.on("line", (line) => {
+      if (line.includes(SETUP_CODE_LOG_MARK)) setupLine = line;
+      sendSplash("log", line);
+    });
     proc.on("close", (code) => finish(code ?? 1));
     proc.on("error", (e) => {
       sendSplash("log", `Failed to run ${name}: ${e.message}`);
@@ -656,7 +670,32 @@ async function bringUpStandalone(): Promise<boolean> {
     return false;
   }
   phase("schema", "ok");
+  await relayBackendSetupCode();
   return true;
+}
+
+// `up -d` does not stream the container's logs. Pull the API's own setup-code
+// line (same mark app_up.sh prints) onto the splash. No code is derived here.
+async function relayBackendSetupCode(): Promise<void> {
+  const file = path.join(app.getPath("temp"), "vigil-backend-setup.log");
+  let text = "";
+  try {
+    const r = await captureToFile(
+      spawnCompose,
+      composeArgs("logs", "--no-color", "--tail", "400", "backend"),
+      file,
+      8000,
+    );
+    if (r.error) return;
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return;
+  }
+  const line = text
+    .split(/\r?\n/)
+    .reverse()
+    .find((l) => l.includes(SETUP_CODE_LOG_MARK));
+  if (line && line.trim()) sendSplash("log", line.trim());
 }
 
 function createSplash(): void {

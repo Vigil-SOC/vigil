@@ -118,7 +118,7 @@ cd vigil
 ./start.sh
 ```
 
-Then open http://localhost:6988 and create the admin account on the bootstrap screen.
+Then open http://localhost:6988 and create the admin account on the bootstrap screen. While no account exists, the API prints a setup code in this terminal; enter it there.
 
 Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the console needs HTTPS: Chromium accepts them on `http://localhost`, but reached by IP or hostname over plain HTTP (or in Safari, even on localhost) sign-in fails. Set `VIGIL_COOKIE_SECURE=false` only for loopback or SSH-tunnel access (see `env.example`).
 
@@ -126,7 +126,7 @@ Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the con
 
 - **`AGENT_INTERNAL_TOKEN`** lets the agent layer talk to the API. `start.sh` (and `setup_dev.sh`) creates `.env` from `env.example` and fills an empty token with a random one; a value already set is kept. Without it the agent layer does not start: workflow runs stay queued and chat answers 503.
 - **The SOC daemon** (alert polling, auto-triage) runs only with `./start.sh -d`; the foreground start says so. Setup's system checks show whether the daemon and the agent layer are running.
-- **Authentication is on by default.** No account or default password ships; the first visit creates the admin. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
+- **Authentication is on by default.** No account or default password ships; the first visit creates the admin, using the setup code the API prints at startup while no account exists. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
 
 > **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`). Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
 >

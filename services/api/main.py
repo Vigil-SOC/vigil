@@ -33,6 +33,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.auth.bootstrap_code import announce_setup_code
 from core.auth.token_blacklist import warn_if_redis_evicts
 from core.platform.monitoring import get_metrics_response, init_sentry
 from core.storage.connection import MissingPostgresPasswordError
@@ -656,6 +657,10 @@ async def _startup(app: FastAPI):
         logger.warning(f"Database modules not available: {e}")
     except Exception as e:
         logger.error(f"Error during storage initialization: {e}")
+
+    # After the database is up. Query failure logs a warning and no code;
+    # startup continues, and POST /api/auth/bootstrap still requires the code.
+    announce_setup_code()
 
     if _testing:
         logger.info(

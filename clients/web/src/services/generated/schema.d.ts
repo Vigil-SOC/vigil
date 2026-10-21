@@ -818,7 +818,8 @@ export interface paths {
          *
          *     Unauthenticated by necessity — it is the only way to obtain the account
          *     every other user-creating path requires. It closes permanently as soon as
-         *     one user exists, so it is not a signup endpoint.
+         *     one user exists, so it is not a signup endpoint. The body must include the
+         *     setup code the API logs at startup while the user table is empty.
          */
         post: operations["post_api_auth_bootstrap"];
         delete?: never;
@@ -7384,6 +7385,8 @@ export interface components {
             full_name?: string | null;
             /** Password */
             password: string;
+            /** Setup Code */
+            setup_code?: string | null;
             /** Username */
             username: string;
         };

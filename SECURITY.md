@@ -217,7 +217,8 @@ Not vulnerabilities. Reports on these will be closed with a pointer back here:
   must-change-before-production in
   [production security](https://vigilsoc.org/docs/production-security/). No
   default admin login ships; the first account is created through
-  `/api/auth/bootstrap`.
+  `/api/auth/bootstrap`, which requires the setup code the API prints at
+  startup while the user table is empty.
 - **Placeholder values in `env.example`.** They are a template, not a
   configuration.
 - **Findings that require a misconfiguration we already document as unsafe** —

@@ -26,6 +26,7 @@ from core.auth.auth_service import (
     AuthService,
     password_matches_any,
 )
+from core.auth.bootstrap_code import setup_code_matches
 from core.auth.password_reset import (
     generate_reset_token,
     reset_link,
@@ -88,6 +89,8 @@ class BootstrapRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
+    # Optional so a missing code is a 403 from the handler, not a 422.
+    setup_code: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -222,7 +225,8 @@ def bootstrap_admin(
 
     Unauthenticated by necessity — it is the only way to obtain the account
     every other user-creating path requires. It closes permanently as soon as
-    one user exists, so it is not a signup endpoint.
+    one user exists, so it is not a signup endpoint. The body must include the
+    setup code the API logs at startup while the user table is empty.
     """
     # Serialize bootstrap attempts. Without this two callers both read an empty
     # table and both create an admin; there is no row yet to lock instead. The
@@ -236,6 +240,14 @@ def bootstrap_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="An account already exists. Ask an administrator to create yours.",
+        )
+
+    # Inside the advisory lock, before any user row is written. The submitted
+    # value is not logged: a wrong guess must not land in the log stream.
+    if not setup_code_matches(payload.setup_code):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Setup code is missing or incorrect.",
         )
 
     try:

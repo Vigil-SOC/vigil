@@ -6803,6 +6803,14 @@
    color: var(--tx-2);
 }
 
+.auth .field-hint {
+   margin: 8px 0 0;
+   font-size: 12px;
+   line-height: 1.45;
+   color: var(--tx-3);
+   overflow-wrap: anywhere;
+}
+
 .auth .ctrl {
    position: relative;
    display: flex;
