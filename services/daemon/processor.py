@@ -6,6 +6,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
 from core.llm.outage import report_outage, report_recovered
@@ -100,6 +101,7 @@ class FindingProcessor:
             "queued_for_investigation": 0,
             "sanitization_flagged": 0,
             "store_dropped": 0,
+            "skipped_excluded": 0,
         }
 
     def _sanitize_finding(self, finding: Dict[str, Any], source: Optional[str]) -> None:
@@ -339,6 +341,19 @@ class FindingProcessor:
         then run enrichment in the background. Bounds pending enrich tasks so a burst
         or backfill can't pile up unbounded coroutines. Single choke point shared by
         the ingest path and the backfill sweeper."""
+        # A finding naming an excluded IP stays stored but is not triaged or
+        # offered to response. Probes always run (#923): an analyst may
+        # exclude the documentation addresses they name.
+        if finding.get("data_source") != PROBE_DATA_SOURCE:
+            excluded = excluded_ips_of(finding, cached_active_ips())
+            if excluded:
+                self.stats["skipped_excluded"] += 1
+                logger.info(
+                    "Skipping triage of %s: names excluded IP(s) %s",
+                    finding.get("finding_id", "unknown"),
+                    ", ".join(excluded),
+                )
+                return
         await self._enrich_slots.acquire()
         task = asyncio.create_task(self._enrich_in_background(finding, source))
         self._enrich_tasks.add(task)
@@ -450,6 +465,7 @@ class FindingProcessor:
                 batch = self._data_service.get_findings_missing_enrichment(
                     limit=self.config.enrich_backfill_batch,
                     max_age_hours=self.config.enrich_backfill_max_age_hours,
+                    exclusions="hide",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Enrichment backfill query failed: {e}")

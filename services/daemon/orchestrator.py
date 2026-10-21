@@ -81,6 +81,7 @@ except Exception:
     ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
+from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
@@ -758,6 +759,13 @@ class Orchestrator:
         if row.get("kind") == "detection":
             finding = self._hydrate_detection_finding(row)
             row["_finding"] = finding
+            # A detection queued before its address was excluded must not open
+            # a case now; an unhydrated finding stays queued as before.
+            if finding is not None and excluded_ips_of(finding, cached_active_ips()):
+                self._decide_trigger(
+                    row.get("id"), state="expired", reason="excluded_ip"
+                )
+                return None
             if finding is not None and self._merge_if_overlaps(finding, row.get("id")):
                 return None
         return row

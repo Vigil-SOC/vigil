@@ -596,7 +596,10 @@ class DatabaseService:
 
     @default_on_error(list)
     def get_findings_missing_enrichment(
-        self, limit: int = 100, max_age_hours: Optional[int] = None
+        self,
+        limit: int = 100,
+        max_age_hours: Optional[int] = None,
+        exclusions: str = "include",
     ) -> List[Dict[str, Any]]:
         """Findings the daemon never triaged — ai_enrichment NULL, or holding
         only an on-demand analysis (none of ai_triage, ai_triage_error,
@@ -606,7 +609,9 @@ class DatabaseService:
         detached-safe data. ``max_age_hours`` bounds the working set by
         ``created_at`` (when Vigil stored the row), not the event ``timestamp``,
         so replayed or undated findings still get triaged (#2320) while
-        un-enrichable ones aren't retried forever."""
+        un-enrichable ones aren't retried forever. ``exclusions`` is an
+        :data:`EXCLUSION_VIEWS` value; ``hide`` still returns known-answer
+        probes (#923), which are triaged whatever addresses they name."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
@@ -627,6 +632,12 @@ class DatabaseService:
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
                 query = query.where(Finding.created_at >= cutoff)
+            exclusion_filter = exclusion_view_filter(exclusions)
+            if exclusion_filter is not None:
+                # services.daemon.probes.PROBE_DATA_SOURCE; storage can't import it.
+                query = query.where(
+                    or_(Finding.data_source == "probe", exclusion_filter)
+                )
             query = query.order_by(Finding.created_at.asc()).limit(limit)
             return FindingSchema.dump_many(session.execute(query).scalars().all())
 

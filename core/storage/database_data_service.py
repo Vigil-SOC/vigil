@@ -203,7 +203,10 @@ class DatabaseDataService:
         return []
 
     def get_findings_missing_enrichment(
-        self, limit: int = 100, max_age_hours: Optional[int] = None
+        self,
+        limit: int = 100,
+        max_age_hours: Optional[int] = None,
+        exclusions: str = "include",
     ) -> List[Dict]:
         """Findings the daemon never triaged (or whose triage failed); see
         ``DatabaseService.get_findings_missing_enrichment``."""
@@ -211,7 +214,7 @@ class DatabaseDataService:
             return []
         try:
             return self._db_service.get_findings_missing_enrichment(
-                limit=limit, max_age_hours=max_age_hours
+                limit=limit, max_age_hours=max_age_hours, exclusions=exclusions
             )
         except Exception as e:
             logger.error(f"Error in get_findings_missing_enrichment: {e}")
