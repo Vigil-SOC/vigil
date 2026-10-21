@@ -42,7 +42,16 @@ def chart(tmp_path_factory) -> Path:
 
 def _helm(chart: Path, *args: str) -> str:
     done = subprocess.run(
-        ["helm", *args, str(chart), "--set", "secrets.jwtSecretKey=x"],
+        [
+            "helm",
+            *args,
+            str(chart),
+            "--set",
+            "secrets.jwtSecretKey=x",
+            # The chart has no default Postgres password (#2621).
+            "--set",
+            "secrets.postgresPassword=test-password",
+        ],
         capture_output=True,
         text=True,
         check=False,
