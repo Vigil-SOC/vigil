@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../../../contracts/events.js";
+import { resultCountIn } from "../../../core/call-view.js";
 import type { AgentConfig } from "./config.js";
 import type { Move } from "./frontier.js";
 import { applyPatch, createGraph, type Graph, type GraphPatch } from "./graph.js";
@@ -73,9 +74,6 @@ export interface Folded {
   steps: V3Step[];
 }
 
-// The search tool's count line; the output may open with the search's purpose and window first.
-const MATCHED = /^([\d,]+) events matched/m;
-
 function stepOf(turn: number, entries: readonly TraceEntry[]): V3Step | null {
   const decision = entries.find((e) => e.type === "decision")?.payload as { move: Move; targetId: string; reason?: string } | undefined;
   if (decision === undefined) return null;
@@ -90,11 +88,11 @@ function stepOf(turn: number, entries: readonly TraceEntry[]): V3Step | null {
     .map((e) => {
       const p = e.payload as { toolCallId: string; input?: { spl?: string; purpose?: string } };
       const out = outputs.get(p.toolCallId);
-      const matched = out?.ok ? MATCHED.exec(out.text) : null;
+      const rows = out?.ok ? resultCountIn(out.text) : undefined;
       return {
         ref: p.toolCallId,
         query: p.input?.spl ?? "",
-        ...(matched ? { rows: Number(matched[1]!.replaceAll(",", "")) } : {}),
+        ...(rows === undefined ? {} : { rows }),
         ...(p.input?.purpose ? { purpose: p.input.purpose } : {}),
         ...(out !== undefined && !out.ok ? { failed: true as const, error: out.text.split("\n")[0]!.slice(0, 300) } : {}),
       };

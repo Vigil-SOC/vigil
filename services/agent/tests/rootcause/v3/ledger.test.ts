@@ -168,16 +168,21 @@ describe("rootcause v3 ledger", () => {
         entry("T4", "query", { toolCallId: "r2", input: { spl: "index=lab | stats count by dest_port" } }),
         entry("T5", "tool-output", { toolCallId: "r2", ok: false, output: "refused: mapping searches do not group by destination ports\nmore" }),
         entry("T6", "query", { toolCallId: "r3", input: { spl: "index=lab x" } }),
-        entry("T7", "tool-output", { toolCallId: "r3", ok: true, output: "purpose: x\n0 events matched" }),
+        entry("T7", "tool-output", { toolCallId: "r3", ok: true, output: "purpose: x\n192 events matched, 0 results (showing 0 of 0)\nNOTE: userName is missing" }),
+        entry("T8", "query", { toolCallId: "r4", input: { spl: "index=lab y" } }),
+        entry("T9", "tool-output", { toolCallId: "r4", ok: true, output: "something else entirely" }),
       ],
     });
     const [step] = fold(events).steps;
     expect(step!.queries).toEqual([
-      { ref: "r1", query: "index=lab | stats count by host", rows: 1204, purpose: "map hosts" },
+      { ref: "r1", query: "index=lab | stats count by host", rows: 3, purpose: "map hosts" },
       { ref: "r2", query: "index=lab | stats count by dest_port", failed: true, error: "refused: mapping searches do not group by destination ports" },
       { ref: "r3", query: "index=lab x", rows: 0 },
+      { ref: "r4", query: "index=lab y" },
     ]);
     const searches = rootCauseV3Replay("r1", events as never).steps.filter((x) => x.kind === "search");
-    expect(searches.map((x) => (x as { failed: boolean }).failed)).toEqual([false, true, false]);
+    expect(searches.map((x) => (x as { failed: boolean }).failed)).toEqual([false, true, false, false]);
+    // the count is the results, not the events matched; a text without a count line has none
+    expect(searches.map((x) => (x as { rows?: number }).rows)).toEqual([3, undefined, 0, undefined]);
   });
 });

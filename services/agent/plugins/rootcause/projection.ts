@@ -40,7 +40,8 @@ export type RootCauseStepView = StepPayload & { proven: boolean };
 export interface SearchView {
   tool: string;
   args: string;
-  rows: number;
+  // Absent when the tool's output states no count.
+  rows?: number;
   failed: boolean;
 }
 

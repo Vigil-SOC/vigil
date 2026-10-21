@@ -335,7 +335,7 @@ export interface InvestigateDecisionView {
 /** One entry of a root-cause replay, in ledger order. `recorded_at` is when the
  *  ledger wrote it; a step's own `at` is when its event happened. */
 export type RootCauseEntry =
-  | { kind: 'search'; recorded_at: string; tool: string; args: string; rows: number; failed: boolean; failure?: CallFailure }
+  | { kind: 'search'; recorded_at: string; tool: string; args: string; rows?: number; failed: boolean; failure?: CallFailure }
   | {
       kind: 'step'; recorded_at: string; step_id: string; event: string; who: string; at: string; link: string
       cause_id: string | null; origin: boolean; link_status: string; origin_status: string
@@ -384,7 +384,7 @@ export function entriesOf(raw: unknown[]): RootCauseEntry[] {
       const failure = FAILURES.includes(str(row.failure)) ? (row.failure as CallFailure) : undefined
       return [{
         kind: 'search', recorded_at, tool: str(row.tool) || 'search', args: str(row.args),
-        rows: typeof row.rows === 'number' ? row.rows : 0, failed: row.failed === true, ...(failure ? { failure } : {}),
+        ...(typeof row.rows === 'number' ? { rows: row.rows } : {}), failed: row.failed === true, ...(failure ? { failure } : {}),
       }]
     }
     if (row.kind === 'step') {
