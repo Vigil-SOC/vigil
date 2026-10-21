@@ -14,7 +14,7 @@
     "electron": "^41.10.6",
     "electron-builder": "^26.15.0",
     "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^26.6.5"
   },
   "overrides": {
     "@electron/get": "^5.1.0"
