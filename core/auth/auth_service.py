@@ -276,13 +276,12 @@ class AuthService:
                     logger.warning("Invalid password for user: %s", user.username)
                     return None
 
-                # Success — reset lockout state and update session tracking
-                user.failed_login_count = 0
-                user.locked_until = None
-                user.last_login = now
-                user.login_count += 1
-
-                logger.info(f"User authenticated successfully: {username_or_email}")
+                # Password matched. Do not clear the failure counter or stamp
+                # last_login yet: MFA may still reject this attempt, and that
+                # rejection has to count. note_login_success does both once
+                # the second factor, if any, has passed. Clearing here would
+                # also dirty this row, and the separate transaction that
+                # records a wrong code would wait on that uncommitted write.
                 return user
 
         except AccountLockedError:
@@ -295,8 +294,8 @@ class AuthService:
     def _record_failed_attempt(user_id: str, now: datetime) -> None:
         """Persist one failed login attempt in its own transaction.
 
-        Deliberately does not join the caller's transaction: the login endpoint
-        answers a failed attempt with 401, which rolls that transaction back. If
+        Deliberately does not join the caller's transaction: a failed password
+        or MFA code is answered with 4xx, which rolls that transaction back. If
         this bookkeeping went with it the counter would never survive, the
         threshold would never trip, and the lockout would silently do nothing.
         """
@@ -312,6 +311,30 @@ class AuthService:
                     user.failed_login_count,
                     user.username,
                 )
+
+    @staticmethod
+    def record_failed_mfa(user_id: str, username: str) -> None:
+        """Count a wrong TOTP or recovery code toward the login lockout.
+
+        Same separate transaction as a bad password: the caller answers 4xx
+        and rolls the request back, which would drop an increment joined to it.
+        The code itself is not logged.
+        """
+        logger.warning("Invalid MFA code for user: %s", username)
+        AuthService._record_failed_attempt(user_id, utcnow())
+
+    @staticmethod
+    def note_login_success(user: User) -> None:
+        """Clear lockout and stamp the login. The request transaction commits it.
+
+        Call only after the password and, when enabled, the second factor have
+        both been accepted.
+        """
+        user.failed_login_count = 0
+        user.locked_until = None
+        user.last_login = utcnow()
+        user.login_count += 1
+        logger.info("User authenticated successfully: %s", user.username)
 
     @staticmethod
     @default_on_error(None)

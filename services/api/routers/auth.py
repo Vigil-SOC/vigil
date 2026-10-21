@@ -158,6 +158,28 @@ class PasswordResetConfirm(BaseModel):
     new_password: str
 
 
+def _account_locked(locked_until: datetime) -> HTTPException:
+    """423 for an account the lockout counter has already closed."""
+    retry_after = max(1, int((locked_until - utcnow()).total_seconds()))
+    return HTTPException(
+        status_code=status.HTTP_423_LOCKED,
+        detail="Account locked due to repeated failed login attempts",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _refuse_if_locked(user: User) -> None:
+    """Stop a session that already exists from guessing a second factor.
+
+    Login checks the lock before the password. These routes are past that
+    check, so a stolen session could keep trying codes after the account
+    should be closed.
+    """
+    locked_until = user.locked_until
+    if locked_until is not None and locked_until > utcnow():
+        raise _account_locked(locked_until)
+
+
 def _apply_new_password(user: User, plaintext: str) -> None:
     """Enforce history, hash, set, update history + changed_at in one place.
     The request's unit of work owns the commit."""
@@ -299,12 +321,7 @@ def login(
             payload.username_or_email, payload.password, session
         )
     except AccountLockedError as exc:
-        retry_after = max(1, int((exc.locked_until - utcnow()).total_seconds()))
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail="Account locked due to repeated failed login attempts",
-            headers={"Retry-After": str(retry_after)},
-        )
+        raise _account_locked(exc.locked_until)
 
     if not user:
         raise HTTPException(
@@ -316,6 +333,9 @@ def login(
     # Check MFA if enabled
     if user.mfa_enabled:
         if not payload.mfa_code:
+            # Not a guess. The console submits the password once to learn that
+            # a code is required, then submits again with the code. Counting
+            # the first request would lock a normal sign-in.
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="MFA code required",
@@ -323,10 +343,15 @@ def login(
             )
 
         if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
+            AuthService.record_failed_mfa(user.user_id, user.username)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code",
             )
+
+    # Password and second factor both accepted. Clearing the counter any
+    # earlier would erase the failures a wrong code has to add.
+    AuthService.note_login_success(user)
 
     # Generate tokens
     _ua = request.headers.get("user-agent")
@@ -744,9 +769,14 @@ def verify_mfa(
     Returns:
         Success message and one-time recovery codes (shown only once).
     """
+    _refuse_if_locked(current_user)
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
+        # No secret yet is a setup miss, not a guess. Counting it would let
+        # a session lock the account without ever having an authenticator.
+        if current_user.mfa_secret:
+            AuthService.record_failed_mfa(current_user.user_id, current_user.username)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
@@ -800,7 +830,10 @@ def disable_mfa(
     Returns:
         Success message
     """
+    _refuse_if_locked(current_user)
     if not AuthService.disable_mfa(current_user.user_id, body.code, session):
+        if current_user.mfa_enabled:
+            AuthService.record_failed_mfa(current_user.user_id, current_user.username)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid MFA code or MFA is not enabled",

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+import core.storage.unit_of_work as uow_module
 from core.routing import request_unit_of_work
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.rate_limit import limiter
@@ -29,13 +30,25 @@ def user():
         mfa_enabled=False,
         mfa_secret=None,
         mfa_recovery_codes=[],
+        locked_until=None,
     )
 
 
 @pytest.fixture
-def client(user):
+def client(user, monkeypatch):
     session = MagicMock()
     session.query.return_value.filter.return_value.first.return_value = user
+    # A wrong code counts toward lockout in its own transaction. This fixture
+    # has no database; give that transaction a stand-in so the route still runs.
+    persisted = SimpleNamespace(
+        user_id=user.user_id,
+        username=user.username,
+        failed_login_count=0,
+        locked_until=None,
+    )
+    own = MagicMock()
+    own.query.return_value.filter.return_value.first.return_value = persisted
+    monkeypatch.setattr(uow_module, "get_db_session", lambda: own)
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -49,9 +62,7 @@ def client(user):
 def _enrol(client, user):
     """Setup + verify through the routes; returns (secret, recovery_codes)."""
     secret = client.post("/api/auth/mfa/setup").json()["secret"]
-    resp = client.post(
-        "/api/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()}
-    )
+    resp = client.post("/api/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()})
     assert resp.status_code == 200
     return secret, resp.json()["recovery_codes"]
 
@@ -131,4 +142,3 @@ def test_disable_is_rate_limited(client, user):
         for _ in range(6)
     ]
     assert statuses == [400] * 5 + [429]
-

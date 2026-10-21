@@ -91,20 +91,68 @@ def test_threshold_locks_the_account_durably(own_session, caller_session, monkey
     own_session.commit.assert_called_once()
 
 
-def test_successful_login_still_joins_the_caller_transaction(
+def test_correct_password_does_not_clear_lockout(
     own_session, caller_session, monkeypatch
 ):
-    """The happy path must NOT open its own transaction — the request commits it."""
+    """A correct password is not a finished login. MFA can still fail, and
+    that failure has to see the counter still sitting where the last attempt
+    left it. Clearing it here would also dirty the caller's row."""
     monkeypatch.setattr(
         AuthService, "verify_password", staticmethod(lambda *a, **k: True)
     )
     user = _user(failed_login_count=2)
+    user.login_count = 4
     _wire(caller_session, user)
 
     result = AuthService.authenticate_user("victim", "right", caller_session)
 
     assert result is user
-    assert user.failed_login_count == 0
+    assert user.failed_login_count == 2
     assert user.locked_until is None
+    assert user.login_count == 4
     caller_session.commit.assert_not_called()
     own_session.commit.assert_not_called()
+
+
+def test_finished_login_clears_lockout_on_the_caller_transaction():
+    """The request commits this. It must not open a transaction of its own."""
+    user = _user(failed_login_count=2)
+    user.locked_until = utcnow()
+    user.login_count = 4
+
+    AuthService.note_login_success(user)
+
+    assert user.failed_login_count == 0
+    assert user.locked_until is None
+    assert user.login_count == 5
+    assert user.last_login is not None
+
+
+def test_wrong_mfa_code_is_committed_outside_the_caller_transaction(
+    own_session, caplog
+):
+    own_user = _user(failed_login_count=0)
+    _wire(own_session, own_user)
+
+    with caplog.at_level("WARNING", logger=auth_module.logger.name):
+        AuthService.record_failed_mfa("user-1", "victim")
+
+    assert own_user.failed_login_count == 1
+    own_session.commit.assert_called_once()
+    assert "Invalid MFA code for user: victim" in caplog.text
+
+
+def test_wrong_mfa_codes_lock_the_account_durably(own_session, monkeypatch):
+    monkeypatch.setattr(auth_module, "LOCKOUT_THRESHOLD", 3)
+    own_user = _user(failed_login_count=2)
+    _wire(own_session, own_user)
+
+    AuthService.record_failed_mfa("user-1", "victim")
+
+    assert own_user.failed_login_count == 3
+    assert own_user.locked_until is not None
+    assert own_user.locked_until > utcnow()
+    assert own_user.locked_until <= utcnow() + timedelta(
+        minutes=auth_module.LOCKOUT_DURATION_MINUTES
+    )
+    own_session.commit.assert_called_once()
