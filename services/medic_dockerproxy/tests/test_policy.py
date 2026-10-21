@@ -196,6 +196,14 @@ def test_events_type_forced_to_container(h, filters):
     }  # fmt: skip
 
 
+def test_empty_event_filter_is_refused(h):
+    """Docker treats event:[] as unset, so it must not be forwarded."""
+    target = "/events?filters=" + quote(json.dumps({"event": []}))
+    status, resp = h.get(target)
+    assert status == 403 and b"event_not_allowed" in resp
+    assert h.docker.heads == []
+
+
 def test_events_may_narrow_the_lifecycle_set(h):
     f = quote(json.dumps({"event": ["die", "start"]}))
     assert h.get(f"/events?filters={f}")[0] == 200

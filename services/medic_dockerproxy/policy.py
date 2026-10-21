@@ -138,8 +138,13 @@ def check_target(target: str) -> Request:
         f = _filters(seen.get("filters", "{}"))
         if route == "events":
             f["type"] = EVENT_TYPES  # forced: container events only (SP2 §3)
+            # An empty list is not "no events". Docker's ExactMatch treats an
+            # empty value set as unset and returns every action, including
+            # exec_create/exec_start, whose text is the full command line.
             asked = f.get("event", EVENT_ACTIONS)
             if not isinstance(asked, list) or not set(asked) <= set(EVENT_ACTIONS):
+                raise Refuse(403, "event_not_allowed")
+            if not asked:
                 raise Refuse(403, "event_not_allowed")
             f["event"] = asked
         seen["filters"] = json.dumps(f, separators=(",", ":"), sort_keys=True)
