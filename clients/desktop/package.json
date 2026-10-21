@@ -11,7 +11,7 @@
     "dist": "npm run build && node scripts/prepare-standalone.js && electron-builder --config electron-builder.yml"
   },
   "devDependencies": {
-    "electron": "^41.10.6",
+    "electron": "^44.9.0",
     "electron-builder": "^26.15.0",
     "typescript": "^5.4.0",
     "@types/node": "^20.11.0"
