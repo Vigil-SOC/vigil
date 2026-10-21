@@ -194,6 +194,7 @@ export const findingsApi = {
     data_source?: string
     cluster_id?: number
     min_anomaly_score?: number
+    search?: string
     limit?: number
     exclusions?: ExclusionView
     sort_by?: string

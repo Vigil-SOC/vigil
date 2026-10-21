@@ -19,7 +19,8 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
-import { KeepGoing, OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
+import { explanationColor, explanationWord } from '../cases/caseFold'
+import { HypothesisWord, KeepGoing, OpenCheckpoint, bearings, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, investigationOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -1476,7 +1477,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
       {shown === 'memory' && memory !== null && <HuntMemory recall={memory} />}
       {shown === 'hyp' && <HuntStandings hunt={hunt} />}
       {shown === 'evidence' && <HuntEvidenceTable found={found} total={hunt.evidence_count} />}
-      {shown === 'moves' && <HuntMoves runId={d.run_id} moves={moves} />}
+      {shown === 'moves' && <HuntMoves runId={d.run_id} moves={moves} evidence={hunt.evidence ?? []} evidenceCount={hunt.evidence_count} />}
       {shown === 'frontier' && <HuntFrontier runId={d.run_id} frontier={frontier} inFlight={IN_FLIGHT.includes(d.status)} />}
       {shown === 'gaps' && <HuntGaps gaps={gaps} />}
       {shown === 'esc' && (
@@ -1605,16 +1606,20 @@ function VerdictStrip({ hunt, onGo }: { hunt: HuntView; onGo: (tab: HuntTab) => 
   if (hunt.hypotheses.length === 0) return null
   const asked = hunt.hypotheses.filter((h) => h.provenance !== 'base_rate') // the loop's own claim, not the operator's
   if (asked.length === 0) return null
-  const byStatus = new Map<string, number>()
-  for (const h of asked) byStatus.set(h.status, (byStatus.get(h.status) ?? 0) + 1)
+  const tallies = bearings(hunt.evidence ?? [])
+  const byWord = new Map<string, number>()
+  for (const h of asked) {
+    const word = explanationWord(h.status, h.supports ?? tallies.get(h.hypothesis_id)?.supports ?? 0, h.weakens ?? tallies.get(h.hypothesis_id)?.weakens ?? 0)
+    byWord.set(word, (byWord.get(word) ?? 0) + 1)
+  }
 
   return (
     <div className="verdict-strip">
-      {[...byStatus].map(([status, n]) => (
-        <span key={status} className="verdict-chip">
-          <span className="dot" style={{ background: hypothesisColor(status) }} />
+      {[...byWord].map(([word, n]) => (
+        <span key={word} className="verdict-chip">
+          <span className="dot" style={{ background: explanationColor(word) }} />
           <b>{n}</b>
-          <span style={{ color: hypothesisColor(status) }}>{status}</span>
+          <span style={{ color: explanationColor(word) }}>{word}</span>
         </span>
       ))}
       <button className="btn ghost text-[11px]" onClick={() => onGo('hyp')}>
@@ -1728,7 +1733,7 @@ interface OpenedMove { id: string; report: ReplayReport | null; failed: string |
 /** Every move the lead made and why — the only account of what a turn decided, and
  *  of a turn that stalled. Choosing one shows what the lead was looking at when it
  *  decided. */
-function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
+function HuntMoves({ runId, moves, evidence, evidenceCount }: { runId: string; moves: HuntMove[]; evidence: HuntEvidence[]; evidenceCount: number }) {
   const [opened, setOpened] = useState<OpenedMove | null>(null)
   const pick = (decisionId: string) => {
     if (opened?.id === decisionId) { setOpened(null); return }
@@ -1782,7 +1787,7 @@ function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
                 </tr>
                 {opened?.id === m.decision_id && (
                   <tr>
-                    <td colSpan={4} style={{ background: 'var(--bg-2)' }}><MoveDigest opened={opened} /></td>
+                    <td colSpan={4} style={{ background: 'var(--bg-2)' }}><MoveDigest opened={opened} evidence={evidence} evidenceCount={evidenceCount} /></td>
                   </tr>
                 )}
               </Fragment>
@@ -1797,7 +1802,7 @@ function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
 /** The digest one decision was shown, as the record has it, and whether folding the
  *  ledger again reproduces it. The recorded half is rendered — that is what the lead
  *  read — and the rebuilt half is what the mismatch line speaks for. */
-function MoveDigest({ opened }: { opened: OpenedMove }) {
+function MoveDigest({ opened, evidence, evidenceCount }: { opened: OpenedMove; evidence: HuntEvidence[]; evidenceCount: number }) {
   if (opened.failed !== null) {
     return <div className="text-[12px] py-1" style={{ color: 'var(--high)' }}>Could not read what this move was shown — {opened.failed}</div>
   }
@@ -1807,6 +1812,9 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
 
   const seen = decision.recorded
   const recalled = opened.report.recalled
+  // the bearings as the lead saw them: what earlier turns gathered; the capped list drops the oldest
+  const tallies = bearings(evidence.filter((e) => e.iteration < seen.iteration))
+  const partial = evidence.length < evidenceCount
   return (
     <div className="py-1" style={{ whiteSpace: 'normal' }}>
       <div className="flex gap-1.5 items-center flex-wrap mb-2">
@@ -1837,12 +1845,13 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
                   <tr key={h.hypothesis_id}>
                     <td className="tight"><Hyp id={h.hypothesis_id} /></td>
                     <td>{h.statement}</td>
-                    <td className="tight" style={{ color: hypothesisColor(h.status) }}>{h.status}</td>
+                    <td className="tight"><HypothesisWord status={h.status} supports={tallies.get(h.hypothesis_id)?.supports} weakens={tallies.get(h.hypothesis_id)?.weakens} /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {partial && <div className="muted text-[11px] mt-1">Standing counted over the {evidence.length} most recent records.</div>}
         </div>
       )}
 
@@ -2470,7 +2479,7 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
                     </td>
                     <td className="tight"><BearingCell tally={tallies.get(h.hypothesis_id)} /></td>
                     <td className="muted">{techniquesOf(h) || '—'}</td>
-                    <td className="tight"><span style={{ color: hypothesisColor(h.status) }}>{h.status}</span></td>
+                    <td className="tight"><HypothesisWord status={h.status} supports={h.supports ?? tallies.get(h.hypothesis_id)?.supports} weakens={h.weakens ?? tallies.get(h.hypothesis_id)?.weakens} /></td>
                   </tr>
                 )
               })}

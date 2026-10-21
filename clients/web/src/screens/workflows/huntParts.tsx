@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { TextInput } from '../../shared/ui'
 import { workflowApi } from '../../services/api'
+import { explanationColor, explanationWord, wordDisplay } from '../cases/caseFold'
 import { GRANTS, errMsg, type Grant, type HuntEvidence, type HuntGap, type HuntView } from './runRead'
 
 /** A gap the projection reports live. query_intent belongs to the dispatch, which
@@ -152,9 +153,14 @@ export function KeepGoing({ busy, onGrant, className = 'btn ghost' }: { busy: bo
   )
 }
 
-export function hypothesisColor(s: string): string {
-  if (s === 'proven' || s === 'handed_off') return 'var(--crit)'
-  if (s === 'disproven') return 'var(--ok)'
-  if (s === 'parked' || s === 'inconclusive') return 'var(--tx-2)'
-  return 'var(--med)' // active
+/** A hypothesis in the case page's word and colour. A hand-off is what happened after it was proven,
+ *  said beside the word, never as a status or colour of its own. */
+export function HypothesisWord({ status, supports = 0, weakens = 0 }: { status: string; supports?: number; weakens?: number }) {
+  const word = explanationWord(status, supports, weakens)
+  return (
+    <span className="whitespace-nowrap" style={{ color: explanationColor(word) }}>
+      {wordDisplay(word)}
+      {status === 'handed_off' && <span className="font-normal text-[var(--tx2)]"> · handed off</span>}
+    </span>
+  )
 }

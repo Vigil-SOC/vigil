@@ -51,7 +51,7 @@ export interface BoardLink {
   desc: string
 }
 
-export type MatchType = 'case' | 'comment' | 'evidence'
+export type MatchType = 'case' | 'comment' | 'evidence' | 'alert'
 
 export interface Hit {
   id: string
@@ -69,6 +69,8 @@ export interface SearchHits {
   findingExact: Hit | null
   textCases: Hit[]
   iocCases: Hit[]
+  /** Alerts whose id, description or entities (host, user, IP...) match. */
+  alertHits: Hit[]
 }
 
 export interface PaletteRow {
@@ -248,6 +250,7 @@ const MATCH_DESC: Record<MatchType, string> = {
   case: 'Matched title or description',
   comment: 'Matched a comment',
   evidence: 'Matched evidence',
+  alert: 'Matched an alert',
 }
 
 function joinParts(parts: (string | undefined)[]): string {
@@ -255,6 +258,8 @@ function joinParts(parts: (string | undefined)[]): string {
 }
 
 function caseDesc(hit: Hit): string {
+  // A title that does not name the query needs its reason: it matched an alert.
+  if (hit.matchType === 'alert') return joinParts([hit.priority, hit.status, MATCH_DESC.alert])
   const state = joinParts([hit.priority, hit.status])
   return state || (hit.matchType ? MATCH_DESC[hit.matchType] : '')
 }
@@ -434,8 +439,10 @@ export function buildRows(
   const seen = new Set<string>()
   if (hits?.caseExact) pushCase(cases, seen, hits.caseExact)
   const alerts: PaletteRow[] = []
-  if (hits?.findingExact?.id) {
-    const hit = hits.findingExact
+  const seenAlerts = new Set<string>()
+  for (const hit of [hits?.findingExact, ...(hits?.alertHits ?? [])]) {
+    if (!hit?.id || seenAlerts.has(hit.id)) continue
+    seenAlerts.add(hit.id)
     alerts.push({
       key: `finding:${hit.id}`,
       label: hit.title || hit.id,

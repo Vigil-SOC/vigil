@@ -259,16 +259,30 @@ export function honestLine(): string {
 // contracts/events.ts, held to it by tests/unit/_ratchets/test_recall_contract_agrees.py.
 export const EXPLAINED_STATUSES = ['active', 'proven', 'disproven', 'inconclusive', 'parked', 'handed_off'] as const
 
+/** The design's word for a hypothesis: forming, standing, weakened, ruled out or proven, never a ledger status.
+ *  A hand-off is proven with a next step; an abandoned explanation is ruled out; one the hunt ended on
+ *  unresolved (inconclusive) still reads off its bearing, since unresolved is not cleared. */
 export function explanationWord(status: string, supports: number, weakens: number): string {
-  if (status === 'proven') return 'proven'
-  if (status === 'disproven') return 'ruled out'
-  if (status === 'active') {
-    if (weakens > 0) return 'weakened'
-    if (supports > 0) return 'standing'
-    return 'forming'
-  }
-  if (status === 'inconclusive' || status === 'parked' || status === 'handed_off') return status
-  return status
+  if (status === 'proven' || status === 'handed_off') return 'proven'
+  if (status === 'disproven' || status === 'parked') return 'ruled out'
+  if (weakens > 0) return 'weakened'
+  if (supports > 0) return 'standing'
+  return 'forming'
+}
+
+// Tone per explanationWord(), from the WorkflowRun and CaseDetail boards; a hypothesis is never poor or crit.
+export const EXPLANATION_TONE: Record<string, 'good' | 'fair' | 'ac' | 'muted'> = {
+  proven: 'good',
+  standing: 'good',
+  weakened: 'fair',
+  forming: 'ac',
+  'ruled out': 'muted',
+}
+
+/** The colour an explanationWord() is drawn in. */
+export function explanationColor(word: string): string {
+  const tone = EXPLANATION_TONE[word] ?? 'muted'
+  return tone === 'muted' ? 'var(--tx3)' : `var(--${tone})`
 }
 
 /** "handed_off" → "Handed off". */
@@ -771,8 +785,10 @@ export function stoppedRun(fold: RunFold | null): StoppedRun | null {
 /** A run that ended for good without failing: what it found, in one statement read off the ledger's own
  *  verdicts, and the open question it could not conclude past, when its reason names one. */
 export interface EndedRun {
-  /** "1 proven · 1 inconclusive"; for a run that tests no explanations, its findings. */
+  /** "1 proven · 1 ruled out"; for a run that tests no explanations, its findings. */
   line: string
+  /** What follows the Idle pill: "hunt concluded, handed to IR", or "hunt concluded · " and the line. */
+  reason: string
   /** The reason as the server wrote it, model prose included; '' when none was recorded. */
   raw: string
   question: OpenQuestionRow | null
@@ -781,24 +797,31 @@ export interface EndedRun {
 // The termination predicate's refusal names the question it would not conclude past.
 const BLOCKED_BY = /\bopen question (q-[\w-]+)/
 
-const ENDED_ORDER = ['proven', 'handed_off', 'standing', 'weakened', 'forming', 'inconclusive', 'parked', 'ruled out']
+const ENDED_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 
 export function endedRun(fold: RunFold | null): EndedRun | null {
   if (!fold || ENDED.includes(fold.run.status)) return null
   if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return null
+  const concluded = `${fold.kind === 'hunt' ? 'hunt' : 'run'} concluded`
   const record = foldRecord(fold)
-  if (!record) return { line: plural(fold.kind === 'lead' ? fold.findings.length : 0, 'finding'), raw: fold.reason, question: null }
+  if (!record) {
+    const line = plural(fold.kind === 'lead' ? fold.findings.length : 0, 'finding')
+    return { line, reason: `${concluded} · ${line}`, raw: fold.reason, question: null }
+  }
   const tally = new Map<string, number>()
   for (const row of record.hypotheses) {
     const word = explanationWord(row.status, row.supports, row.weakens)
     tally.set(word, (tally.get(word) ?? 0) + 1)
   }
   const rank = (word: string) => (ENDED_ORDER.indexOf(word) < 0 ? ENDED_ORDER.length : ENDED_ORDER.indexOf(word))
-  const line = [...tally.keys()].sort((a, b) => rank(a) - rank(b)).map((word) => `${tally.get(word)} ${word.replace(/_/g, ' ')}`).join(' · ')
+  const words = [...tally.keys()].sort((a, b) => rank(a) - rank(b)).map((word) => `${tally.get(word)} ${word}`).join(' · ')
   const cited = BLOCKED_BY.exec(fold.reason)?.[1]
   const held = fold.kind === 'lead' && fold.held ? heldLine(fold.held) : ''
+  const line = [held, words || 'No explanation was tested'].filter(Boolean).join(' · ')
+  const handedOff = record.hypotheses.some((row) => row.status === 'handed_off')
   return {
-    line: [held, line || 'No explanation was tested'].filter(Boolean).join(' · '),
+    line,
+    reason: handedOff ? `${concluded}, handed to IR` : `${concluded} · ${line}`,
     raw: fold.reason,
     question: cited ? record.openQuestions.find((q) => q.question_id === cited) ?? null : null,
   }

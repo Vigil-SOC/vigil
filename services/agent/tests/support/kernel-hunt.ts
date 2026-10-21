@@ -45,7 +45,7 @@ export type Step = (request: TurnRequest) => Call | { calls: Call[] } | { say: s
 // emission (the critic's argument, the narrator's account) it answers by schema.
 // `conclusion` is what a hunt that carries a disposition adds to its answer, and `review` what the
 // guard's reviewer says to a dismissal.
-export function modelOf(steps: readonly Step[], answers: { critic?: unknown; conclusion?: { disposition: string; citations: string[] }; review?: { stance: string; reasons: string; missing: string[] } } = {}): Provider & { requests: TurnRequest[] } {
+export function modelOf(steps: readonly Step[], answers: { critic?: unknown; conclusion?: { disposition: string; citations: string[]; severity?: string }; review?: { stance: string; reasons: string; missing: string[] } } = {}): Provider & { requests: TurnRequest[] } {
   const requests: TurnRequest[] = [];
   let at = 0;
   return {

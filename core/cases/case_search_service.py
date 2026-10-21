@@ -8,11 +8,18 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_, select
 from sqlalchemy.orm import Session
 
 from core.storage.case_repository import CaseRepository
-from core.storage.models import Case, CaseComment, CaseEvidence, CaseIOC
+from core.storage.models import (
+    Case,
+    CaseComment,
+    CaseEvidence,
+    CaseIOC,
+    Finding,
+    case_findings,
+)
 from core.storage.schemas import CaseSchema
 from core.storage.unit_of_work import unit_of_work
 
@@ -191,7 +198,7 @@ class CaseSearchService:
         session: Optional[Session] = None,
     ) -> List[Dict]:
         """
-        Find cases containing a specific IOC.
+        Find cases containing a specific IOC, or linked to an alert naming it.
 
         Args:
             ioc_value: IOC value to search for
@@ -199,20 +206,33 @@ class CaseSearchService:
             session: Database session (optional)
 
         Returns:
-            List of cases containing the IOC
+            List of cases containing the IOC, each once
         """
+        pattern = f"%{ioc_value}%"
         with unit_of_work(session) as session:
-            query = session.query(CaseIOC).filter(CaseIOC.value.ilike(f"%{ioc_value}%"))
+            query = session.query(CaseIOC.case_id).filter(CaseIOC.value.ilike(pattern))
 
             if ioc_type:
                 query = query.filter(CaseIOC.ioc_type == ioc_type)
 
-            iocs = query.all()
+            ioc_ids = {row.case_id for row in query.all()}
+            case_ids = set(ioc_ids)
 
-            # Get unique case IDs
-            case_ids = list(set(ioc.case_id for ioc in iocs))
+            # Hosts, users and IPs mostly live on the linked findings, not in
+            # CaseIOC rows; match them as the findings list search does.
+            if not ioc_type:
+                linked = session.execute(
+                    select(case_findings.c.case_id)
+                    .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+                    .where(cast(Finding.entity_context, String).ilike(pattern))
+                    .distinct()
+                )
+                case_ids.update(linked.scalars())
 
-            # Get cases
             cases = session.query(Case).filter(Case.case_id.in_(case_ids)).all()
 
-            return CaseSchema.dump_many(cases)
+            results = CaseSchema.dump_many(cases)
+            for row in results:
+                if row["case_id"] not in ioc_ids:
+                    row["match_type"] = "alert"
+            return results

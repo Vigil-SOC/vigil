@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, agentRows, caseVerdict, closureFlag, chainOldestFirst, endedRun, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
+import { EXPLAINED_STATUSES, actionWords, agentRows, caseVerdict, closureFlag, chainOldestFirst, endedRun, explanationColor, explanationWord, foldRecord, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, stoppedRun, strongestRows, visibilityGaps, type RunFold } from './caseFold'
 import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
+import huntProjection from '../workflows/__fixtures__/kernel-hunt-projection.json'
 
 describe('actionWords', () => {
   it('has plain words for every hunt action', () => {
@@ -13,6 +14,34 @@ describe('actionWords', () => {
   it('reads an unknown token as a sentence, never the raw enum', () => {
     expect(actionWords('SOME_NEW_MOVE')).toBe('Some new move')
     expect(actionWords('')).toBe('')
+  })
+})
+
+describe('explanationWord', () => {
+  const DESIGN = ['forming', 'standing', 'weakened', 'ruled out', 'proven']
+
+  it('maps every ledger status to one of the design\'s five words, never the status itself', () => {
+    for (const status of EXPLAINED_STATUSES) {
+      for (const [supports, weakens] of [[0, 0], [2, 0], [1, 3]]) expect(DESIGN).toContain(explanationWord(status, supports, weakens))
+    }
+  })
+
+  it('reads a hand-off as proven, an abandoned one as ruled out, and an unresolved one off its bearing', () => {
+    expect(explanationWord('handed_off', 0, 0)).toBe('proven')
+    expect(explanationWord('parked', 0, 8)).toBe('ruled out')
+    expect(explanationWord('disproven', 0, 0)).toBe('ruled out')
+    expect(explanationWord('inconclusive', 0, 0)).toBe('forming')
+    expect(explanationWord('inconclusive', 4, 0)).toBe('standing')
+    expect(explanationWord('inconclusive', 4, 1)).toBe('weakened')
+  })
+
+  it('tallies a finished kernel hunt in the design\'s words', () => {
+    const fold = readFold({ status: 'completed', hunt: huntProjection })
+    expect(endedRun(fold)).toMatchObject({ line: '1 proven · 1 forming', reason: 'hunt concluded · 1 proven · 1 forming' })
+  })
+
+  it('draws each word in the board\'s colour, never poor or crit', () => {
+    expect(DESIGN.map(explanationColor)).toEqual(['var(--ac)', 'var(--good)', 'var(--fair)', 'var(--tx3)', 'var(--good)'])
   })
 })
 

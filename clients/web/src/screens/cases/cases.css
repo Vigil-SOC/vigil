@@ -1069,8 +1069,8 @@
 
 .case-page .case-expl-pill.good { color: var(--good); background: var(--good-bg); }
 .case-page .case-expl-pill.ac { color: var(--ac); background: var(--ac-bg); }
-.case-page .case-expl-pill.poor { color: var(--poor); background: var(--poor-bg); }
-.case-page .case-expl-pill.muted,
+.case-page .case-expl-pill.fair { color: var(--fair); background: var(--fair-bg); }
+.case-page .case-expl-pill.muted { color: var(--tx3); background: var(--bg3); }
 .case-page .case-expl-pill.neutral { color: var(--tx2); background: var(--bg3); }
 
 .case-page .case-expl-side { text-align: right; font-size: 12px; color: var(--tx2); white-space: nowrap; }
@@ -1663,9 +1663,12 @@
 }
 
 .case-page .case-findings li > .case-expl-pill,
-.case-page .case-findings .case-findings-who {
+.case-page .case-findings .case-findings-who,
+.case-page .case-findings .case-findings-next {
   flex-shrink: 0;
 }
+
+.case-page .case-findings .case-findings-next { font-size: 12px; color: var(--tx2); }
 
 .case-page .case-findings .case-findings-who {
   font-family: var(--font-mono);

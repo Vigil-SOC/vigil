@@ -114,7 +114,7 @@ describe('an investigate run on the kernel', () => {
     const row = screen.getByText(/part of an authorized red-team engagement/).closest('tr')!
     expect(row).toHaveTextContent('H3')
     expect(row).toHaveTextContent('2 for · 0 against')
-    expect(row).toHaveTextContent('active')
+    expect(row).toHaveTextContent('Standing')
     // Decisions and the summary stay below the tabs.
     expect((await screen.findAllByText('EXAMINE')).length).toBe(4)
     expect(screen.getByText('Result summary')).toBeInTheDocument()

@@ -272,3 +272,58 @@ def test_a_blind_period_restarts_the_24_hours() -> None:
         ("ingest.source-erroring", 0, 36 * 3600 + 30 * 60, "group_retired"),
         ("watcher.sensor-blind", 12 * 3600 + 3 * 60, 12 * 3600 + 30 * 60, "cleared"),
     ]
+
+
+def _flip(w: UpgradeWatch, t: int) -> None:
+    value = str(t)  # a new value at every read: a flip each time
+    w.observe(_sample("backend", 0, signal="version", values=[_value("v", value)]), t)
+
+
+def test_a_chain_of_windows_is_capped_and_a_new_chain_gets_its_own_cap() -> None:
+    """§7 as amended (⚑ S4b2-6): 60 min after the chain's first marker, however
+    often it flips; after 15 min with no marker a new chain starts."""
+    w = UpgradeWatch(None)
+    _flip(w, 0)  # the first read sets the value; not a flip
+    for t in range(600, 6000, 600):  # a flip every 10 min from +10m to +90m
+        _flip(w, t)
+    assert w.active(600 + 3600 - 1) and not w.active(600 + 3600)
+    assert w.end == 4200 and w.until == 5400 + 900
+    assert not w.active(5000)  # a flip inside the capped chain extends nothing
+    _flip(w, 6300)  # 15 min after the last flip: the chain had closed
+    assert w.active(6300) and w.end == 6300 + 900
+
+
+def test_upgrade_state_from_before_the_cap_still_loads() -> None:
+    w = UpgradeWatch({"until": 2000.0, "marks": {}, "restarts": {}})
+    assert w.since == 1100.0 and w.active(1999) and not w.active(2000)
+    assert UpgradeWatch(json.loads(json.dumps(w.state()))).end == 2000.0
+
+
+def test_a_flapping_reopen_keeps_when_its_parent_freed_it() -> None:
+    # Review S10 #2: §6.3 counts the 10 min from the last parent's resolution. A
+    # reopened, still-unrouted child must not start that wait again.
+    engine = Engine([], instance_id=INSTANCE, install_shape="compose")
+    last = {"incident_id": "inc_child000", "evidenced": [], "opened_at": 0}
+    last |= {"routed_at": None, "suppressed_by": "inc_parent00", "reopen_count": 0}
+    last |= {"freed_at": 600}
+    m = {"state": "pending", "active_since": 2400, "opens": [0, 1200], "last": last}
+    record = engine._open(None, {"sensor": "s"}, m, {}, 2520)
+    assert record["body"]["change"] == "reopened"
+    assert m["freed_at"] == 600
+    m["state"] = "firing"
+    child = suppress.Open("child", None, {"sensor": "s"}, m, True)
+    fields = [f for _, f in suppress.route(2520, [child], [], False, "blind")]
+    assert fields == [{"change": "unsuppressed"}, {"change": "routed"}]
+
+
+def test_a_late_marker_moves_the_chains_start_back() -> None:
+    # Review S10 #3: the cap counts from the chain's earliest marker, whatever
+    # order the reads arrive in.
+    w = UpgradeWatch(None)
+    _flip(w, 0)
+    _flip(w, 600)
+    w.observe(_sample("backend", 0, epoch="e1", signal="a"), 0)
+    w.observe(_sample("soc-daemon", 0, epoch="e1", signal="b"), 0)
+    w.observe(_sample("backend", 0, epoch="e2", signal="a"), 300)
+    w.observe(_sample("soc-daemon", 0, epoch="e2", signal="b"), 300)  # late
+    assert w.since == 300 and w.end == 600 + 900  # the cap is now 300 + 3600

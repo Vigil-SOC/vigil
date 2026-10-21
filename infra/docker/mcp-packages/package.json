@@ -13,6 +13,7 @@
   },
   "overrides": {
     "axios": "^1.20.0",
+    "follow-redirects": "1.16.1",
     "@modelcontextprotocol/server-github": {
       "@modelcontextprotocol/sdk": "^1.30.1"
     }
