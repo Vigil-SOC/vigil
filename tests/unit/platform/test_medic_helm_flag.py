@@ -96,6 +96,9 @@ def _notes(chart: Path, *sets: str) -> str:
             "--dry-run=client",
             "--namespace",
             "ns",
+            # The chart has no default Postgres password (#2621).
+            "--set",
+            "secrets.postgresPassword=test-password",
             *[a for s in sets for a in ("--set", s)],
         ],
         capture_output=True,
