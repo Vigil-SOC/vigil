@@ -26,14 +26,21 @@ def _set_cookie_headers(headers) -> list[str]:
     return getter("set-cookie")
 
 
-def _cookie_paths(response: Response) -> dict[str, str]:
-    found: dict[str, str] = {}
+def _cookie_paths(response: Response) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Live cookies (name → path) and cookies cleared with Max-Age=0."""
+    live: dict[str, str] = {}
+    cleared: list[tuple[str, str]] = []
     for header in _set_cookie_headers(response.headers):
         name = header.split("=", 1)[0]
         match = re.search(r";\s*Path=([^;]*)", header, re.I)
-        if match:
-            found[name] = match.group(1)
-    return found
+        if not match:
+            continue
+        path = match.group(1)
+        if re.search(r"(?:Max-Age=0|expires=Thu, 01 Jan 1970)", header, re.I):
+            cleared.append((name, path))
+        else:
+            live[name] = path
+    return live, cleared
 
 
 def _mounted_paths(app: FastAPI) -> list[str]:
@@ -54,15 +61,17 @@ def _mounted_paths(app: FastAPI) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "prefix, access, refresh",
+    "prefix, access, refresh, legacy_refresh",
     [
-        ("", "/", "/api/auth/refresh"),
-        ("/", "/", "/api/auth/refresh"),
-        ("/vigil", "/vigil/", "/vigil/api/auth/refresh"),
-        ("/vigil/", "/vigil/", "/vigil/api/auth/refresh"),
+        ("", "/", "/api/auth/", "/api/auth/refresh"),
+        ("/", "/", "/api/auth/", "/api/auth/refresh"),
+        ("/vigil", "/vigil/", "/vigil/api/auth/", "/vigil/api/auth/refresh"),
+        ("/vigil/", "/vigil/", "/vigil/api/auth/", "/vigil/api/auth/refresh"),
     ],
 )
-def test_auth_cookie_paths_follow_context_path(monkeypatch, prefix, access, refresh):
+def test_auth_cookie_paths_follow_context_path(
+    monkeypatch, prefix, access, refresh, legacy_refresh
+):
     from core.auth.auth_cookies import (
         ACCESS_COOKIE_NAME,
         REFRESH_COOKIE_NAME,
@@ -76,17 +85,23 @@ def test_auth_cookie_paths_follow_context_path(monkeypatch, prefix, access, refr
 
     set_response = Response()
     set_auth_cookies(set_response, "access-token", "refresh-token")
-    assert _cookie_paths(set_response) == {
+    live, cleared = _cookie_paths(set_response)
+    assert live == {
         ACCESS_COOKIE_NAME: access,
         REFRESH_COOKIE_NAME: refresh,
     }
+    # Setting the new path does not replace a cookie stored at the old one.
+    assert cleared == [(REFRESH_COOKIE_NAME, legacy_refresh)]
 
     clear_response = Response()
     clear_auth_cookies(clear_response)
-    assert _cookie_paths(clear_response) == {
-        ACCESS_COOKIE_NAME: access,
-        REFRESH_COOKIE_NAME: refresh,
-    }
+    live, cleared = _cookie_paths(clear_response)
+    assert live == {}
+    assert cleared == [
+        (ACCESS_COOKIE_NAME, access),
+        (REFRESH_COOKIE_NAME, refresh),
+        (REFRESH_COOKIE_NAME, legacy_refresh),
+    ]
 
 
 @pytest.mark.parametrize(

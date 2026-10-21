@@ -17,7 +17,8 @@ from sqlalchemy.pool import StaticPool
 
 from core.auth import current_user as current_user_module
 from core.auth import token_blacklist
-from core.auth.auth_cookies import ACCESS_COOKIE_NAME
+from core.auth.auth_cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
+from core.config import get_settings
 from core.auth.auth_service import JWT_ALGORITHM, JWT_SECRET_KEY, AuthService
 from core.routing import request_unit_of_work
 from core.storage.models import Role, User
@@ -62,6 +63,9 @@ class FakeRedis:
 
     async def get(self, key):
         return self.data.get(key)
+
+    async def exists(self, key):
+        return 1 if key in self.data else 0
 
 
 @pytest.fixture
@@ -239,6 +243,65 @@ def test_logout_without_a_body_revokes_the_access_token_only(client, user, black
 
     assert response.status_code == 200, response.text
     assert blacklisted == [_jti(tokens["access"])]
+
+
+def _cookie_header(request) -> str:
+    return request.headers.get("cookie") or ""
+
+
+def test_browser_logout_revokes_the_path_scoped_refresh_cookie(
+    client, user, monkeypatch
+):
+    """Login stores the refresh cookie through the jar; logout must receive it.
+
+    The jar honours Path, which a test that passes ``cookies=`` into the
+    logout call does not. A copy of the refresh token taken before logout
+    must then be refused.
+    """
+    monkeypatch.setenv("VIGIL_COOKIE_SECURE", "false")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "services.api.routers.auth.is_token_revoked", token_blacklist.is_token_revoked
+    )
+
+    sent = []
+
+    def _record(request):
+        sent.append((request.url.path, _cookie_header(request)))
+
+    client.event_hooks["request"].append(_record)
+    try:
+        client.cookies.clear()
+        issued = client.post(REFRESH, json={"refresh_token": _tokens(user)["refresh"]})
+        assert issued.status_code == 200, issued.text
+        refresh_paths = {
+            cookie.path
+            for cookie in client.cookies.jar
+            if cookie.name == REFRESH_COOKIE_NAME
+        }
+        assert refresh_paths == {"/api/auth/"}
+        stolen = client.cookies.get(REFRESH_COOKIE_NAME)
+
+        # Outside the auth routes the refresh cookie must not be attached.
+        client.get("/api/health")
+        health_cookie = sent[-1][1]
+        assert sent[-1][0] == "/api/health"
+        assert "access_token=" in health_cookie
+        assert "refresh_token=" not in health_cookie
+
+        logged_out = client.post(LOGOUT)
+        assert logged_out.status_code == 200, logged_out.text
+        assert sent[-1][0] == LOGOUT
+        assert f"{REFRESH_COOKIE_NAME}={stolen}" in sent[-1][1]
+
+        client.cookies.clear()
+        replay = client.post(
+            REFRESH, headers={"Cookie": f"{REFRESH_COOKIE_NAME}={stolen}"}
+        )
+        assert replay.status_code == 401, replay.text
+        assert replay.json()["detail"] == "Refresh token has been revoked"
+    finally:
+        get_settings.cache_clear()
 
 
 def test_logout_leaves_another_users_refresh_token_alone(client, user, blacklisted):
