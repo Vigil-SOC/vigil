@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { schemaErrors } from "../../../core/stream.js";
-import { salvage } from "../../../plugins/rootcause/v3/model/client.js";
-import { SUBMIT, type SubmitName } from "../../../plugins/rootcause/v3/model/schemas.js";
+import { clip, salvage } from "../../../plugins/rootcause/v3/model/client.js";
+import { lengthLimits, SUBMIT, type SubmitName } from "../../../plugins/rootcause/v3/model/schemas.js";
 import { splunkTool } from "../../../plugins/rootcause/v3/tools/splunk-tool.js";
 
 // The schemas are written by hand as JSON Schema; they have to compile under the agent's ajv (core/stream.ts),
@@ -42,5 +42,34 @@ describe("v3 tool schemas", () => {
     const input = { theories: [theory("H1"), theory("H2")], nextTests: ["P1"], reasoning: "r" };
     expect(salvage("submit_theories", input, 0, {}, { success: false, msg: "m", drop: [["theories", 0]] })).toBeNull();
     expect(salvage("submit_theories", { ...input, theories: [theory("H1"), theory("H2"), theory("H3")] }, 0, {}, { success: false, msg: "m", drop: [["theories", 0]] })?.dropped).toBe(1);
+  });
+});
+
+// Every length cap in a schema is one `clip` trims to: found here by a walk of its own, not by clip's own table.
+describe("the schemas' length caps", () => {
+  type Cap = { name: string; key: string; max: number; list: boolean };
+  const caps: Cap[] = [];
+  const walk = (node: unknown, name: string, key: string): void => {
+    if (!node || typeof node !== "object") return;
+    const s = node as Record<string, any>;
+    if (s.type === "string" && typeof s.maxLength === "number") caps.push({ name, key, max: s.maxLength, list: false });
+    if (s.items?.type === "string" && typeof s.items.maxLength === "number") caps.push({ name, key, max: s.items.maxLength, list: true });
+    else walk(s.items, name, key);
+    for (const [k, v] of Object.entries(s.properties ?? {})) walk(v, name, k);
+  };
+  for (const name of names) walk(SUBMIT[name], name, "");
+
+  it("no field name is capped differently in two places, or capped in one and not another", () => {
+    expect(lengthLimits(Object.values(SUBMIT)).clashes).toEqual([]);
+  });
+  it.each(caps.map((c) => [`${c.name}.${c.key}${c.list ? "[]" : ""}`, c] as const))("%s is trimmed to its cap", (_, c) => {
+    const long = "x".repeat(c.max + 50);
+    const got = clip({ [c.key]: c.list ? [long] : long }) as Record<string, string | string[]>;
+    const text = (c.list ? (got[c.key] as string[])[0] : got[c.key]) as string;
+    expect(text).toHaveLength(c.max);
+  });
+  it("a clash is reported", () => {
+    const a = { type: "object", properties: { note: { type: "string", maxLength: 10 }, b: { type: "object", properties: { note: { type: "string" } } } } };
+    expect(lengthLimits([a]).clashes).toEqual(["note"]);
   });
 });

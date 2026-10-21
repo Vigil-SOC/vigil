@@ -2,6 +2,7 @@
 // A ref is the kernel's own (r1, r2, ... by position on the run's ledger): the kernel mints it for a search a
 // model makes, and this registry for one the code makes, and both are journaled as `call` events.
 import { CALL_REF } from "../../../../core/agent.js";
+import type { CallPayload } from "../../../../contracts/events.js";
 import { schemaErrors } from "../../../../core/stream.js";
 import type { Domain } from "../types.js";
 
@@ -28,6 +29,7 @@ export interface ToolCallRecord { toolCallId: string; tool: string; input: unkno
 
 export interface ToolRegistry {
   readonly callCount: number;
+  readonly uncitable?: ReadonlySet<string>; // refs of calls that never ran (refused): numbered, but not evidence
   readonly coverage?: Record<string, number>; // searches so far per sourcetype, run-wide
   list(): EvidenceTool[];
   call(name: string, input: unknown, ctx: ToolContext): Promise<ToolCallRecord>;
@@ -37,10 +39,16 @@ export interface ToolRegistry {
 
 const REF = new RegExp(`^${CALL_REF}(\\d+)$`);
 
-// A ref is citable when the run has issued it: positions 1..callCount.
-export function issued(tools: Pick<ToolRegistry, "callCount">, ref: string): boolean {
+// A call that never ran: the kernel refused it (a tool never granted), or the tool did before running (the SPL guard).
+// Both are on the ledger as failed calls; this is the one reading of them, live, on resume and in the projection.
+export function neverRan(call: Pick<CallPayload, "failure" | "result">): boolean {
+  return call.failure === "refused" || /^<vigil:tool_result[^>]*>\nfailed: \w+ -- refused:/.test(call.result);
+}
+
+// A ref is citable when the run has issued it (positions 1..callCount) and the call ran.
+export function issued(tools: Pick<ToolRegistry, "callCount" | "uncitable">, ref: string): boolean {
   const m = REF.exec(ref);
-  return m !== null && ref === `${CALL_REF}${Number(m[1])}` && Number(m[1]) >= 1 && Number(m[1]) <= tools.callCount;
+  return m !== null && ref === `${CALL_REF}${Number(m[1])}` && Number(m[1]) >= 1 && Number(m[1]) <= tools.callCount && !tools.uncitable?.has(ref);
 }
 
 // The sourcetypes a search reads (not the ones it excludes with NOT), counted for coverage.
@@ -69,12 +77,16 @@ export class Registry implements ToolRegistry {
   list() { return [...this.tools.values()]; }
   get callCount() { return this.seq; }
 
-  // A call the ledger holds, as the kernel or the code journaled it: citable from here on.
-  note(ref: string, input: unknown, output: string): void {
+  readonly uncitable = new Set<string>();
+
+  // A call the ledger holds, as the kernel or the code journaled it: citable from here on, unless it never ran
+  // (it still takes its number, so refs are never renumbered, but it is no evidence and not coverage).
+  note(ref: string, input: unknown, output: string, ran = true): void {
+    this.seq = Math.max(this.seq, Number(REF.exec(ref)?.[1] ?? 0));
     this.inputs.set(ref, input);
     this.outputs.set(ref, output);
+    if (!ran) { this.uncitable.add(ref); return; }
     for (const st of searchedSourcetypes(input)) this.coverage[st] = (this.coverage[st] ?? 0) + 1;
-    this.seq = Math.max(this.seq, Number(REF.exec(ref)?.[1] ?? 0));
   }
 
   // Runs one search: validated, guarded by the tool's timeout. Takes no ref; whoever journaled the call has it.

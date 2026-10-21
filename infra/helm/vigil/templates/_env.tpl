@@ -33,6 +33,11 @@ write. Include all three together, or none.
 {{- define "vigil.stateEnv" -}}
 - name: VIGIL_DIR
   value: {{ .Values.stateDirectory.mountPath | quote }}
+{{- /* A per-pod emptyDir cannot hold a credential: Settings refuses to save one. */}}
+{{- if hasKey .Values.stateDirectory.volume "emptyDir" }}
+- name: VIGIL_DIR_EPHEMERAL
+  value: "true"
+{{- end }}
 {{- end -}}
 
 {{- define "vigil.stateVolumeMount" -}}

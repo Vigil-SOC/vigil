@@ -110,6 +110,27 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -f kubeconform.tar.gz \
     && kubeconform -v
 
+# ci-cd.yml's Helm Install Schema job and medic-helm.yml both run
+# `yq -i 'del(.dependencies)'` before `helm template`, and the schema job
+# then reads the rendered Job with `yq -0`. Neither workflow installs yq:
+# ubuntu-latest ships mikefarah yq 4.54.1 (image 20261012.334.1). This base
+# does not, so that command cannot be run here. Same version. The SHA256 is
+# field 19 of the release `checksums` file, which is the field the runner
+# image checks.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+         amd64) YSUM=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f ;; \
+         arm64) YSUM=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b ;; \
+         *) echo "unsupported arch $ARCH" && exit 1 ;; \
+       esac \
+    && YQ_VERSION=v4.54.1 \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /tmp/yq \
+       "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" \
+    && echo "${YSUM}  /tmp/yq" | sha256sum -c - \
+    && install -m 0755 /tmp/yq /usr/local/bin/yq \
+    && rm -f /tmp/yq \
+    && yq --version
+
 ########################################################
 # ACTIONLINT + HADOLINT (CI lint gates)
 ########################################################

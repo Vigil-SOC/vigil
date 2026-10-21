@@ -2,7 +2,7 @@
   "$schema": "https://www.getbifrost.ai/schema",
   "client": {
     "enable_logging": true,
-    "disable_content_logging": false
+    "disable_content_logging": true
   },
   "logs_store": {
     "enabled": true,

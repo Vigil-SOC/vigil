@@ -52,5 +52,3 @@ COMMENT ON COLUMN custom_agents.methodology IS 'Injected into BASE_PROMPT {metho
 COMMENT ON COLUMN custom_agents.system_prompt_override IS 'When set, bypasses BASE_PROMPT and uses this text verbatim';
 COMMENT ON COLUMN custom_agents.recommended_tools IS 'Array of MCP tool names (full {server}_{tool} format)';
 COMMENT ON COLUMN custom_agents.model IS 'Reserved for per-agent model override (issue #89); null = use caller default';
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON custom_agents TO deeptempo;
