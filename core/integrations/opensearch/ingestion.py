@@ -285,7 +285,6 @@ class OpenSearchIngestion(SIEMIngestionService):
                     created.isoformat() + "Z" if created else utcnow().isoformat()
                 ),
                 "severity": severity,
-                "status": "new",
                 "title": title,
                 "description": description[:500],
                 "entity_context": entity_context,

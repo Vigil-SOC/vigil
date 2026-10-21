@@ -477,7 +477,6 @@ class DataPoller:
             "data_source": "splunk",
             "timestamp": event.get("_time") or utcnow().isoformat(),
             "severity": severity,
-            "status": "new",
             "title": event.get("search_name")
             or event.get("rule_name")
             or "Splunk Alert",
@@ -612,7 +611,6 @@ class DataPoller:
             "data_source": "crowdstrike",
             "timestamp": detection.get("created_timestamp") or utcnow().isoformat(),
             "severity": severity,
-            "status": "new",
             "title": detection.get("scenario") or "CrowdStrike Detection",
             "description": detection.get("description", ""),
             "entity_context": entity_context,

@@ -71,7 +71,6 @@ def _seed_findings(rows):
                 {
                     "finding_id": f"{PREFIX}{i}",
                     "data_source": "loglm",
-                    "status": "new",
                     "timestamp": now,
                     **row,
                 }

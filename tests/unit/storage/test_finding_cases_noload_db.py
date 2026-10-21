@@ -57,7 +57,6 @@ def _seed(service: DatabaseService, prefix: str) -> List[str]:
             timestamp=utcnow(),
             data_source=prefix,
             severity="high",
-            status="new",
         )
     big = [{"note": "x" * 2048} for _ in range(5)]
     assert service.create_case(

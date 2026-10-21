@@ -360,7 +360,6 @@ class DatabaseDataService:
                     evidence_links=finding_data.get("evidence_links"),
                     cluster_id=finding_data.get("cluster_id"),
                     severity=finding_data.get("severity"),
-                    status=finding_data.get("status", "new"),
                 )
                 return FindingSchema.dump(finding) if finding else None
             except Exception as e:

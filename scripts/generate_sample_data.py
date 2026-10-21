@@ -52,11 +52,6 @@ def generate_finding(days_back: int = 30) -> Dict[str, Any]:
         "data_source": random.choice(DATA_SOURCES),
         "anomaly_score": round(random.uniform(0.3, 0.99), 3),
         "severity": severity,
-        "status": (
-            random.choice(["new", "investigating", "resolved"])
-            if random.random() > 0.3
-            else "new"
-        ),
         "mitre_predictions": generate_mitre_predictions(),
         "entity_context": generate_entity_context(),
         "cluster_id": random.choice(CLUSTERS) if random.random() < 0.7 else None,

@@ -51,7 +51,6 @@ def _finding(ts):
         finding_id="f-1",
         data_source="test",
         severity="high",
-        status="new",
         anomaly_score=0.9,
         entity_context=None,
         cluster_id=None,

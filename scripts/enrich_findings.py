@@ -245,7 +245,6 @@ def export_enrichment_template(output_file: Path, data_source: str = None):
                        f"Score: {finding.get('anomaly_score', 0):.2f}",
             "mitre_predictions": {},
             "severity": finding.get('severity', 'medium'),
-            "status": finding.get('status', 'new')
         }
     
     with open(output_file, 'w') as f:

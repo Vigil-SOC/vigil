@@ -2135,17 +2135,6 @@
             ],
             "title": "Severity"
           },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          },
           "terminal_label": {
             "anyOf": [
               {

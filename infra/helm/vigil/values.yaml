@@ -490,6 +490,7 @@ dbInit:
     - 40_drop_custom_workflow_graph_layout.sql
     - 40_skill_reads.sql
     - 41_workflow_runs_progress.sql
+    - 42_drop_finding_status.sql
   resources:
     requests:
       cpu: 50m

@@ -160,7 +160,6 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "external_id": external_id,
         "timestamp": detection.get("created_timestamp") or utcnow().isoformat(),
         "severity": severity,
-        "status": "new",
         "title": detection.get("scenario") or "CrowdStrike Detection",
         "description": detection.get("description", ""),
         "entity_context": entity_context,

@@ -62,7 +62,6 @@ def test_mark_then_clear_hides_and_restores_the_feed_row(client):
                 finding_id="ov-act-noise",
                 data_source="ov-src",
                 created_at=AT,
-                status="new",
                 severity="high",
             )
         )
@@ -89,7 +88,6 @@ def _seed(finding_id: str) -> None:
                 finding_id=finding_id,
                 data_source="ov-src",
                 created_at=AT,
-                status="new",
                 severity="high",
             )
         )
@@ -142,7 +140,6 @@ def test_second_launch_does_not_insert_another_queued_row(client):
                 finding_id="ov-act-launch",
                 data_source="ov-src",
                 created_at=AT,
-                status="new",
                 severity="high",
             )
         )
@@ -168,9 +165,6 @@ def test_second_launch_does_not_insert_another_queued_row(client):
         assert rows[0].kind == "detection"
         assert rows[0].state == "queued"
         assert rows[0].priority == "high"
-        finding = session.get(Finding, "ov-act-launch")
-        assert finding is not None
-        assert finding.status == "new"
 
 
 def test_missing_finding_is_not_marked_or_launched(client):

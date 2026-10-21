@@ -26,7 +26,6 @@ def _finding(service: DatabaseService, timestamp, created_days_ago: int = 0) -> 
         timestamp=timestamp,
         data_source="backfill-age",
         severity="medium",
-        status="new",
     )
     if created_days_ago:
         with get_db_manager().session_scope() as session:

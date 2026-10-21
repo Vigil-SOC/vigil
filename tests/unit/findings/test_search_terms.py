@@ -38,7 +38,6 @@ def _create(suffix: str, description: str, entity_context=None):
         timestamp=datetime(2026, 6, 1),
         data_source="test",
         severity="low",
-        status="new",
         description=description,
         entity_context=entity_context,
     )

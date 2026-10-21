@@ -37,7 +37,6 @@ def _create(finding_id: str, timestamp: datetime, created_at: datetime):
         timestamp=timestamp,
         data_source="test",
         severity="low",
-        status="new",
     )
     with unit_of_work() as session:
         row = session.get(Finding, finding_id)

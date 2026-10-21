@@ -293,7 +293,7 @@ class DatabaseService:
             anomaly_score: Anomaly score (0-1), or None when the source omitted it
             timestamp: Finding timestamp, or None when the source omitted it
             data_source: Data source type
-            **kwargs: Additional fields (title, entity_context, evidence_links, cluster_id, severity, status)
+            **kwargs: Additional fields (title, entity_context, evidence_links, cluster_id, severity)
 
         Returns:
             Created Finding object or None if failed
@@ -311,7 +311,6 @@ class DatabaseService:
                 evidence_links=kwargs.get("evidence_links"),
                 cluster_id=kwargs.get("cluster_id"),
                 severity=kwargs.get("severity"),
-                status=kwargs.get("status", "new"),
             )
             _set_mitre_prediction_rows(finding, mitre_predictions)
             session.add(finding)
@@ -455,7 +454,6 @@ class DatabaseService:
                     evidence_links=r.get("evidence_links"),
                     cluster_id=r.get("cluster_id"),
                     severity=r.get("severity"),
-                    status=r.get("status", "new"),
                 )
                 _set_mitre_prediction_rows(finding, r.get("mitre_predictions") or {})
                 session.add(finding)
@@ -784,7 +782,7 @@ class DatabaseService:
         AI analysis owns the rest. Merges against the row locked ``FOR UPDATE``,
         not the caller's (possibly stale) copy, so a concurrent triage and
         Generate don't lose each other's write. ``updates`` are plain column
-        sets applied in the same transaction (the daemon's severity/status).
+        sets applied in the same transaction (the daemon's severity).
         """
         with self.db_manager.session_scope() as session:
             finding = session.execute(

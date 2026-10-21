@@ -214,7 +214,6 @@ async def test_list_findings_filters_cluster_in_sql(monkeypatch):
                     "data_source": "sysmon",
                     "cluster_id": "clu-1",
                     "timestamp": "t",
-                    "status": "new",
                 }
             ]
 

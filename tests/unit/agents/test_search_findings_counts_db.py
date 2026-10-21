@@ -47,7 +47,6 @@ def _seed():
         {
             "finding_id": f"{PREFIX}{i}",
             "severity": severity,
-            "status": "new" if i % 2 else "triaged",
             "data_source": "zeek" if i < 10 else "darktrace",
             "entity_context": contexts[i % 3],
         }
@@ -60,10 +59,7 @@ def _seed():
     with unit_of_work() as session:
         session.execute(
             insert(Finding),
-            [
-                {"data_source": "zeek", "status": "new", "timestamp": utcnow(), **row}
-                for row in rows
-            ],
+            [{"data_source": "zeek", "timestamp": utcnow(), **row} for row in rows],
         )
 
 

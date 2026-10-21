@@ -44,7 +44,6 @@ def _seed(**findings):
             data_source="loglm",
             entity_context=context,
             severity="high",
-            status="new",
             timestamp=utcnow(),
             anomaly_score=0.9,
         )
@@ -135,13 +134,15 @@ def test_removal_restores_findings_unchanged():
     _standard_findings()
     row = _exclude()
     before = {
-        f.finding_id: (f.severity, f.status) for f in DatabaseService().get_findings()
+        f.finding_id: (f.severity, f.noise_marked_at)
+        for f in DatabaseService().get_findings()
     }
     with unit_of_work() as session:
         ex.remove_exclusion(session, row["exclusion_id"], removed_by="analyst-2")
     assert _ids("hide") == _ids("include")
     after = {
-        f.finding_id: (f.severity, f.status) for f in DatabaseService().get_findings()
+        f.finding_id: (f.severity, f.noise_marked_at)
+        for f in DatabaseService().get_findings()
     }
     assert after == before
 

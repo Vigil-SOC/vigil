@@ -9044,8 +9044,6 @@ export interface components {
             mitre_predictions?: unknown | null;
             /** Severity */
             severity?: string | null;
-            /** Status */
-            status?: string | null;
             /** Terminal Label */
             terminal_label?: string | null;
             /** Terminal State */
