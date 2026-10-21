@@ -785,7 +785,7 @@ export interface Subturn {
   tools: readonly string[];
   // The Vigil agent this step's skill reads are credited to (#1560).
   agent_id?: string;
-  // Tool turns this step may take, in place of the spec's runtime allowance.
+  // Model rounds this step may take, its answer's among them, in place of the spec's runtime allowance.
   max_turns?: number;
   // Numbers each result as the ledger will (r12), so the answer can cite them.
   cite?: boolean;
@@ -809,6 +809,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     task: sub.task,
     schema: sub.schema,
     max_turns: sub.max_turns ?? options.spec.runtime.max_turns,
+    answer_within_cap: true,
     approvals: new Set(options.spec.approvals),
     verbs: [],
     result_cap: options.spec.runtime.result_cap,

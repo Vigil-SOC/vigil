@@ -184,7 +184,7 @@ describe("the turn cap", () => {
   it("stops calling tools and still asks for an answer", async () => {
     const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
     const harness = harnessOf([calling, calling, HALT], { max_cost_usd: 100 });
-    const outcome = await outcomeOf(config({ max_turns: 2, submit: false }), harness);
+    const outcome = await outcomeOf(config({ max_turns: 2 }), harness);
 
     expect(outcome.turns).toBe(2);
     expect(outcome.capped).toBe(true);
@@ -506,12 +506,24 @@ describe("the answer as a tool call", () => {
     expect(outcome.calls.map((call) => call.tool)).toEqual(["bump"]);
   });
 
-  // A capped role made max_turns calls and then one more for the emission; the answer now takes
-  // the cap's last round, so the capped role makes one call fewer.
-  it("forces the submit on the round the cap makes the last, with no further call", async () => {
+  it("forces the submit on the round past the search cap, which keeps every search round", async () => {
     const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
     const harness = harnessOf([calling, calling, submit("TALLY")]);
-    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 3 }), harness);
+    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 2 }), harness);
+
+    expect(outcome.value).toEqual({ verb: "TALLY" });
+    expect(outcome.calls).toHaveLength(2);
+    expect(outcome.capped).toBe(true);
+    expect(requests(harness).map((request) => request.force)).toEqual([undefined, undefined, SUBMIT_TOOL]);
+    expect(requests(harness).some((request) => request.emit !== undefined)).toBe(false);
+  });
+
+  // A capped subturn made max_turns calls and then one more for the emission; its answer takes
+  // the cap's last round, so it makes one call fewer.
+  it("forces the submit on the round the cap makes the last when the answer is within the cap, with no further call", async () => {
+    const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
+    const harness = harnessOf([calling, calling, submit("TALLY")]);
+    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 3, answer_within_cap: true }), harness);
 
     expect(outcome.value).toEqual({ verb: "TALLY" });
     expect(outcome.calls).toHaveLength(2);
@@ -523,7 +535,7 @@ describe("the answer as a tool call", () => {
   it("answers with the same value by submit as by the emission it replaces", async () => {
     const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
     const emitted = await outcomeOf<{ verb: string }>(config({ max_turns: 2, submit: false }), harnessOf([calling, calling, HALT]));
-    const submitted = await outcomeOf<{ verb: string }>(config({ max_turns: 2 }), harnessOf([calling, HALT]));
+    const submitted = await outcomeOf<{ verb: string }>(config({ max_turns: 2, answer_within_cap: true }), harnessOf([calling, HALT]));
 
     expect(submitted.status).toBe("completed");
     expect(submitted.value).toEqual(emitted.value);
@@ -531,7 +543,7 @@ describe("the answer as a tool call", () => {
 
   it("leaves a persist nudge only the search rounds the answer round does not take", async () => {
     const harness = harnessOf([{ content: "nothing yet" }, { calls: [] }, HALT]);
-    await outcomeOf(config({ max_turns: 3, persist: { min_results: 1 } }), harness);
+    await outcomeOf(config({ max_turns: 3, answer_within_cap: true, persist: { min_results: 1 } }), harness);
 
     expect(requests(harness)[1]!.messages.at(-1)!.content).toContain("1 turn(s) left");
   });
@@ -549,7 +561,7 @@ describe("the answer as a tool call", () => {
 
   it("asks for the emission when the model ignores the forced submit", async () => {
     const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { content: "nothing more to say" }, HALT]);
-    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 2 }), harness);
+    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 1 }), harness);
 
     expect(outcome.value).toEqual({ verb: "HALT" });
     expect(requests(harness).map((request) => request.emit !== undefined)).toEqual([false, false, true]);

@@ -109,7 +109,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private tightened: FoldPolicy | null = null;
   private folds = 0;
   private turns = 0;
-  // The rounds the role may search in: all of max_turns, less the one the answer takes when it is a call.
+  // The rounds the role may search in: all of max_turns, less the one the answer takes when it comes inside the cap.
   private searches = 0;
   private capped = false;
   private spent = 0;
@@ -158,7 +158,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       await this.recalled(),
     );
 
-    this.searches = submit ? Math.max(0, this.cfg.max_turns - 1) : this.cfg.max_turns;
+    this.searches = submit && this.cfg.answer_within_cap === true ? Math.max(0, this.cfg.max_turns - 1) : this.cfg.max_turns;
     const ended = yield* this.toolLoop(submit);
     if (ended !== null) return yield* announce(ended);
     // Prose was already streamed as it arrived, so asking for it again would bill
@@ -225,8 +225,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Returns an outcome only when the run ends here; otherwise the loop stops
   // because the model asked for no tools or because the cap stopped it.
   private async *toolLoop(submit: boolean): AsyncGenerator<StreamEvent<T>, Outcome<T> | null> {
-    // When the answer can be a tool call it comes on the round the cap makes the last, forced
-    // to the submit tool where the wire allows: a capped role pays for no round past its cap.
+    // When the answer can be a tool call, the round after the search rounds is forced to the
+    // submit tool where the wire allows. Inside the cap, a capped role pays for no round past it.
     while (this.turns < this.searches + (submit ? 1 : 0)) {
       const closing = this.turns >= this.searches;
       if (closing) this.capped = true;
