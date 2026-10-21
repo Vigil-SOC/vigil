@@ -18,7 +18,7 @@ we do not backport to earlier minors.
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| Latest `0.x` minor (currently `0.5.x`) | ✅ | Fixes ship here. Upgrade before reporting a bug you can only reproduce on an older tag. |
+| Latest released `0.x` minor ([latest release](https://github.com/Vigil-SOC/vigil/releases/latest)) | ✅ | Fixes ship here. Upgrade before reporting a bug you can only reproduce on an older tag. |
 | Older `0.x` minors | ❌ | No backports. What may change between releases is in [VERSIONING.md](VERSIONING.md). |
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
