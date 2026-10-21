@@ -7,8 +7,8 @@ import { bestPathFromSymptom, getParents, type Graph, type GraphNode, type Predi
 import { mentionsRare, rareValues, type RareValue } from "./rare.js";
 
 export interface NextIn { move: string; target?: string; source?: string; why?: string }
-// refused: why the last choice was not used. silent: the last move's turn gave no valid submission (one attempt spent).
-export interface LeadState { next?: NextIn; refused?: string; silent?: string }
+// refused: why the last choice was not used. failed: the provider error that lost the last choose turn (the choice was never judged). silent: the last move's turn gave no valid submission (one attempt spent).
+export interface LeadState { next?: NextIn; refused?: string; failed?: string; silent?: string }
 
 const live = (n: GraphNode) => n.kind === "action" && n.status !== "ruled-out";
 const symptomOf = (g: Graph) => Object.values(g.nodes).find((n) => n.isSymptom);
@@ -72,15 +72,17 @@ export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0,
   return `<next_move>
 ${lead}
 Moves: expand <event> = find what caused it; strengthen <event|link> = check it happened / holds; fork <event> = a competing cause; branch <event> = what else it led to; test <prediction> = run a story's prediction; theorize = write or revise competing stories of the incident; pivot <boundary> = follow into a source that holds the cause (set source to the sourcetype to search; any sourcetype); connect = link unlinked findings to the chain; probe <rare value> = read a rare record over the whole range and what came after it. source on any move says where to look first.
-Target a graph id listed below, or an event by its exact label${choosing ? "." : " (including one you report in this submission)."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
+Target a graph id listed below, or an event by its exact label${choosing ? "." : " (including one you report in this submission)."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}${st.failed !== undefined ? `\nYour last turn was lost to a provider error${st.failed ? ` (${st.failed})` : ""} before your choice was judged: choose again.` : ""}
 available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.length} rare records unread)` : ""}${stories}${rareLine}
 </next_move>`;
 }
 
-// The node a label names: exact, or one whose label starts with the first 60 characters given.
+// The node a label names: exact first, else one whose label starts with the first 60 characters given.
 function labelled(nodes: (GraphNode | undefined)[], text: string): GraphNode | undefined {
   const want = text.toLowerCase();
-  return want ? nodes.find((n) => !!n && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60)))) : undefined;
+  if (!want) return undefined;
+  const all = nodes.filter((n): n is GraphNode => !!n);
+  return all.find((n) => n.label.toLowerCase() === want) ?? all.find((n) => n.label.toLowerCase().startsWith(want.slice(0, 60)));
 }
 
 // A refused choose turn runs an available move rather than ask again: one on the target the model named
@@ -117,14 +119,21 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
   if (!ids) return { refused: `${next.move} is not available now.` };
   let target = next.target?.trim() ?? "";
   if (move === "theorize" || move === "connect") target = ids[0]!;
-  // An event named by its label: one reported this turn (no id yet) or an earlier turn's; this turn's wins a duplicate.
+  // A pivot named by the event its boundary hangs off: that event's open boundary.
+  const boundaryOf = (id: string) => (move === "pivot" && g.nodes[id]?.kind === "action" ? ids.find((m) => g.nodes[m]!.originNodeId === id) : undefined);
+  // An event named by its label: one reported this turn (no id yet) or an earlier turn's. Of several, one the move
+  // applies to wins, then an exact label over a prefix, then this turn's.
   let byLabel: string | undefined;
   if (!ids.includes(target) && !g.nodes[target] && !g.edges[target]) {
-    const hit = labelled(created.map((id) => g.nodes[id]), target) ?? labelled(Object.values(g.nodes), target);
+    const want = target.toLowerCase();
+    const exact = (n: GraphNode) => n.label.toLowerCase() === want;
+    const named = (n?: GraphNode): n is GraphNode => !!n && !!want && (exact(n) || n.label.toLowerCase().startsWith(want.slice(0, 60)));
+    const hits = [...new Set([...created.map((id) => g.nodes[id]), ...Object.values(g.nodes)])].filter(named);
+    const ranked = [...hits.filter(exact), ...hits.filter((n) => !exact(n))];
+    const hit = ranked.find((n) => ids.includes(n.id) || !!boundaryOf(n.id)) ?? ranked[0];
     if (hit) target = byLabel = hit.id;
   }
-  // A pivot named by the event its boundary hangs off: that event's open boundary.
-  if (move === "pivot" && g.nodes[target]?.kind === "action") target = ids.find((m) => g.nodes[m]!.originNodeId === target) ?? target;
+  target = boundaryOf(target) ?? target;
   // A prediction named as theorize wrote it ("P3", "H1.P3"): the latest round's prediction with that id.
   if (move === "test" && !ids.includes(target)) {
     const key = (x: string) => x.toUpperCase().replace(/[^A-Z0-9]+/g, ".");

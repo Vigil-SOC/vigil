@@ -42,6 +42,7 @@ from urllib.parse import urlparse
 import httpx
 
 from core.config import get_settings
+from core.llm.bifrost.auth import management_auth
 from core.llm.outage import report_outage, report_recovered
 from core.llm.providers.base_url import normalize_openai_compat_base_url
 from core.llm.providers.discovery import is_embedding_model_id
@@ -338,7 +339,7 @@ def push_provider_key(provider_name: str, key_value: str) -> bool:
     if provider_name in _UNMANAGED_PROVIDER_TYPES:
         logger.debug("Bifrost: provider %s manages its own key", provider_name)
         return True
-    with httpx.Client() as client:
+    with httpx.Client(auth=management_auth()) as client:
         if not key_value:
             return _delete_provider_keys(provider_name, client)
         if not _ensure_provider(provider_name, client):
@@ -382,7 +383,7 @@ def _sync_env_provider_keys_once() -> Dict[str, str]:
     from core.secrets_manager import get_secret
 
     results: Dict[str, str] = {}
-    with httpx.Client() as client:
+    with httpx.Client(auth=management_auth()) as client:
         for provider in dict.fromkeys((*_SEEDED_PROVIDERS, *_ENV_PROVIDER_KEYS)):
             keys = _get_provider_keys(provider, client)
             if keys is None:
@@ -506,7 +507,7 @@ def sync_provider_models(
         )
         return False
 
-    with httpx.Client() as client:
+    with httpx.Client(auth=management_auth()) as client:
         ok = _upsert_provider_key(
             provider_type, client, key_value=key_value, models=normalized
         )
@@ -531,7 +532,7 @@ def open_allow_list(provider_type: str, *, key_value: Optional[str]) -> bool:
     """
     if provider_type in _UNMANAGED_PROVIDER_TYPES:
         return True
-    with httpx.Client() as client:
+    with httpx.Client(auth=management_auth()) as client:
         keys = _get_provider_keys(provider_type, client)
         if keys is None:
             return False
@@ -602,7 +603,7 @@ def sync_provider_base_url(provider_type: str, base_url: Optional[str]) -> bool:
         return True
     target = _custom_openai_base_url(base_url)
 
-    with httpx.Client() as client:
+    with httpx.Client(auth=management_auth()) as client:
         doc = _get_provider_document(provider_type, client)
         if doc is None:
             # Stock/empty has nothing to write; a custom host cannot land if
@@ -1082,7 +1083,9 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
 
     url = f"{_bifrost_base_url()}/api/models/details"
     try:
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+        async with httpx.AsyncClient(
+            timeout=_DEFAULT_TIMEOUT, auth=management_auth()
+        ) as client:
             resp = await client.get(
                 url, params={"provider": provider_type, "limit": 1000}
             )
@@ -1131,7 +1134,7 @@ async def bifrost_custom_openai_host() -> Optional[str]:
     """
 
     def read() -> Optional[Dict[str, Any]]:
-        with httpx.Client() as client:
+        with httpx.Client(auth=management_auth()) as client:
             return _get_provider_document("openai", client)
 
     doc = await asyncio.to_thread(read)
@@ -1148,7 +1151,7 @@ async def bifrost_custom_providers() -> frozenset:
 
     def read() -> frozenset:
         try:
-            with httpx.Client() as client:
+            with httpx.Client(auth=management_auth()) as client:
                 r = client.get(
                     f"{_bifrost_base_url()}/api/providers", timeout=_DEFAULT_TIMEOUT
                 )

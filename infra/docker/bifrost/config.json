@@ -2,7 +2,15 @@
   "$schema": "https://www.getbifrost.ai/schema",
   "client": {
     "enable_logging": true,
-    "disable_content_logging": true
+    "disable_content_logging": true,
+    "enforce_auth_on_inference": false
+  },
+  "governance": {
+    "auth_config": {
+      "is_enabled": true,
+      "admin_username": "vigil",
+      "admin_password": "env.BIFROST_ADMIN_PASSWORD"
+    }
   },
   "logs_store": {
     "enabled": true,

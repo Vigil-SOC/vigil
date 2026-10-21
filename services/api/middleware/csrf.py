@@ -1,8 +1,8 @@
 """
 Double-submit cookie CSRF middleware.
 
-On by default (`VIGIL_CSRF_ENABLED=true`), in report-only mode unless
-`VIGIL_CSRF_REPORT_ONLY=false` (as `env.example` sets it). The frontend echoes
+On and enforcing by default (`VIGIL_CSRF_ENABLED=true`,
+`VIGIL_CSRF_REPORT_ONLY=false`). The frontend echoes
 the `csrf_token` cookie back as the `X-CSRF-Token` header.
 
 How it works:
@@ -26,8 +26,8 @@ Exempt paths:
 
 Report-only mode:
 - `VIGIL_CSRF_REPORT_ONLY=true` logs violations at WARNING but lets the
-  request through. Useful for the rollout window — flip enforcement on
-  after a few days of clean logs.
+  request through. An opt-out for diagnosing a client that breaks under
+  enforcement; unset, violations are rejected with 403.
 """
 
 import logging

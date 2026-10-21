@@ -1,3 +1,4 @@
+import { answerEvents, schemaAsked } from "./forced.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import type { ToolResult } from "../../contracts/tool.js";
 import { budgetOf, FRESH, unmeteredQuota, type Seed } from "../../core/budget.js";
@@ -59,15 +60,18 @@ export function modelOf(answer: (request: TurnRequest, n: number) => Answer, mod
       requests.push(request);
       const said = answer(request, requests.length);
       if (said.wait !== undefined) await new Promise((done) => setTimeout(done, said.wait));
-      if (request.emit !== undefined) yield { type: "text_delta", text: typeof said.emit === "string" ? said.emit : JSON.stringify(said.emit ?? {}) };
+      const asked = schemaAsked(request) !== undefined;
+      const [given] = asked ? answerEvents(request, said.emit ?? {}) : [];
+      if (given?.type === "text_delta") yield given;
       else if (said.content !== undefined) yield { type: "text_delta", text: said.content };
       yield { type: "usage", tokens: ZERO_TOKENS };
-      if (request.emit === undefined) for (const [i, call] of (said.calls ?? []).entries()) yield { type: "tool_call", call: { id: `c${requests.length}-${i}`, tool: call.tool, args: JSON.stringify(call.args) } };
+      if (given?.type === "tool_call") yield given;
+      if (!asked) for (const [i, call] of (said.calls ?? []).entries()) yield { type: "tool_call", call: { id: `c${requests.length}-${i}`, tool: call.tool, args: JSON.stringify(call.args) } };
     },
   };
 }
 
-export const properties = (request: TurnRequest): string[] => Object.keys((request.emit?.["properties"] ?? {}) as Record<string, unknown>);
+export const properties = (request: TurnRequest): string[] => Object.keys((schemaAsked(request)?.["properties"] ?? {}) as Record<string, unknown>);
 
 export function harnessOf(spec: RunSpec, provider: Provider, dispatch: ToolDispatch = splunk(), state = new InProcessState<V3Kinds>(), seed: Seed = FRESH): Harness<V3Kinds> {
   return { provider, registry: registryOf([], {}), dispatch, budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed), memory: nullMemory, state };

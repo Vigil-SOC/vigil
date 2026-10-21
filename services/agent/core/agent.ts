@@ -605,6 +605,8 @@ function turnFor(
     system: [systemOf(plugin), directivesOf(spec)].filter((part) => part !== "").join("\n\n"),
     task,
     schema: structured?.schema ?? null,
+    // The plugin's own conclude tool is the answer's tool, so the kernel offers no second one.
+    ...(plugin.finish_with === "tool" && options.conversation === undefined ? { submit: false } : {}),
     history: options.conversation === undefined ? historyOf(agentCalls(calls)) : conversationHistory(options.conversation.history, agentCalls(calls)),
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),
@@ -783,7 +785,7 @@ export interface Subturn {
   tools: readonly string[];
   // The Vigil agent this step's skill reads are credited to (#1560).
   agent_id?: string;
-  // Tool turns this step may take, in place of the spec's runtime allowance.
+  // Model rounds this step may take, its answer's among them, in place of the spec's runtime allowance.
   max_turns?: number;
   // Numbers each result as the ledger will (r12), so the answer can cite them.
   cite?: boolean;
@@ -807,6 +809,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     task: sub.task,
     schema: sub.schema,
     max_turns: sub.max_turns ?? options.spec.runtime.max_turns,
+    answer_within_cap: true,
     approvals: new Set(options.spec.approvals),
     verbs: [],
     result_cap: options.spec.runtime.result_cap,

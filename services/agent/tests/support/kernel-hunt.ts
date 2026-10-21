@@ -1,3 +1,4 @@
+import { answerEvents, callable, schemaAsked } from "./forced.js";
 import { join } from "node:path";
 import { archFor } from "../../plugins/kinds.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
@@ -54,8 +55,9 @@ export function modelOf(steps: readonly Step[], answers: { critic?: unknown; con
     requests,
     stream: async function* (request: TurnRequest): AsyncGenerator<ProviderEvent> {
       requests.push(request);
-      if (request.emit !== undefined) {
-        const properties = (request.emit["properties"] ?? {}) as Record<string, unknown>;
+      const asked = schemaAsked(request);
+      if (asked !== undefined) {
+        const properties = (asked["properties"] ?? {}) as Record<string, unknown>;
         const answer = "stance" in properties
           ? (answers.review ?? { stance: "uphold", reasons: "the cited results show it", missing: [] })
           : "benign_explanation_stands" in properties
@@ -67,13 +69,15 @@ export function modelOf(steps: readonly Step[], answers: { critic?: unknown; con
                 open_questions: ["is the sync client sanctioned?"],
               }
             : { summary: "the host beaconed", what_happened: "regular outbound flows", next_steps: ["isolate the host"] };
-        yield { type: "text_delta", text: JSON.stringify(answer) };
+        const [said] = answerEvents(request, answer);
+        if (said?.type === "text_delta") yield said;
         yield { type: "usage", tokens: ZERO_TOKENS };
+        if (said?.type === "tool_call") yield said;
         return;
       }
       // Offered nothing to call -- the critic's or the narrator's turn before it is
       // asked for its answer -- it has nothing to do but stop.
-      if (request.tools.length === 0) {
+      if (callable(request).length === 0) {
         yield { type: "usage", tokens: ZERO_TOKENS };
         return;
       }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type OpenAI from "openai";
 import { Limiter } from "../../core/limiter.js";
+import { costOf } from "../../core/prices.js";
 import { EMIT_TOOL, ModelSilent, OutputCapReached, openAiSurface, resetEmitMode, resetOutputCap, setSilentPauses } from "../../core/wire.js";
 import { ZERO_TOKENS, type TokenCounts } from "../../contracts/budget.js";
 import type { Message, Provider, ToolCall, Turn, TurnRequest } from "../../core/provider.js";
@@ -181,6 +182,65 @@ describe("the OpenAI surface", () => {
     expect(emitted.content).toBe('{"verb":"HALT"}');
     // Asked for by name, so the wire was not remembered as unusable.
     expect(bodies.at(-1)!.tool_choice).toEqual({ type: "function", function: { name: EMIT_TOOL } });
+  });
+
+  it("forces the named tool when asked, and offers only that tool once the gateway has refused that", async () => {
+    const bodies: Body[] = [];
+    const surface = surfaceOf(async (body) => {
+      bodies.push(body);
+      if (body.tool_choice !== undefined) throw Object.assign(new Error("tool_choice is not supported"), { status: 400 });
+      return completion({ role: "assistant", content: "", tool_calls: [{ id: "1", function: { name: "submit_answer", arguments: '{"verb":"HALT"}' } }] });
+    });
+    const request: TurnRequest = {
+      messages: [{ role: "user", content: "go" }],
+      tools: [{ id: "search", description: "search", parameters: {} }, { id: "submit_answer", description: "answer", parameters: SCHEMA }],
+      force: "submit_answer",
+    };
+
+    expect((await turn(surface, request)).tool_calls.map((call) => call.tool)).toEqual(["submit_answer"]);
+    expect(bodies.map((body) => body.tool_choice)).toEqual([{ type: "function", function: { name: "submit_answer" } }, undefined]);
+
+    expect(bodies.map((body) => body.tools?.length)).toEqual([2, 1]);
+
+    // Remembered: the next forced call does not spend a refusal to find that out again.
+    await turn(surface, request);
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]!.tool_choice).toBeUndefined();
+    expect(bodies[2]!.tools).toHaveLength(1);
+  });
+
+  // A gateway that takes no tools still answers a zero-search turn in one call, as the emission did.
+  it("asks a gateway that refuses tools at all for the forced tool's arguments as an emission, once found out", async () => {
+    const bodies: Body[] = [];
+    const surface = surfaceOf(async (body) => {
+      bodies.push(body);
+      if (body.tools !== undefined) throw Object.assign(new Error("tools are not supported"), { status: 400 });
+      return completion({ role: "assistant", content: '{"verb":"HALT"}' });
+    });
+    const request: TurnRequest = {
+      messages: [{ role: "user", content: "go" }],
+      tools: [{ id: "submit_answer", description: "answer", parameters: SCHEMA }],
+      force: "submit_answer",
+    };
+
+    const first = await turn(surface, request);
+    expect(first.tool_calls).toEqual([expect.objectContaining({ tool: "submit_answer", args: '{"verb":"HALT"}' })]);
+    expect(first.content).toBe("");
+    expect(bodies.map((body) => body.response_format !== undefined)).toEqual([false, false, true]);
+
+    // Remembered: the next forced call spends no refusals finding that out again.
+    await turn(surface, request);
+    expect(bodies).toHaveLength(4);
+    expect(bodies[3]!.tools).toBeUndefined();
+    expect(bodies[3]!.response_format).toBeDefined();
+  });
+
+  it("does not read a gateway's ceiling as a refusal of the forced tool", async () => {
+    const surface = surfaceOf(async () => {
+      throw Object.assign(new Error("request timed out"), { status: 504 });
+    });
+    const request: TurnRequest = { messages: [{ role: "user", content: "go" }], tools: [{ id: "t", description: "t", parameters: {} }], force: "t" };
+    await expect(turn(surface, request)).rejects.toThrow("request timed out");
   });
 
   // The reasoning families 400 on max_tokens and take max_completion_tokens. The tool
@@ -412,6 +472,67 @@ describe("the emission turn", () => {
   });
 });
 
+describe("prompt caching", () => {
+  const messages: Message[] = [
+    { role: "system", content: "the stable prefix" },
+    { role: "user", content: "go" },
+  ];
+  const tools = [{ id: "bump", description: "increment", parameters: {} }];
+
+  async function bodiesSent(provider: string, model: string, emit?: typeof SCHEMA): Promise<Body[]> {
+    const sent: Body[] = [];
+    const create = async (body: Body) => {
+      sent.push(body);
+      return completion({ role: "assistant", content: '{"verb":"HALT"}' });
+    };
+    const client = { chat: { completions: { create } } } as unknown as OpenAI;
+    await turn(openAiSurface(client, model, limiter(), provider, `${provider}/${model}`), { messages, tools, ...(emit ? { emit } : {}) });
+    return sent;
+  }
+
+  it.each([
+    ["anthropic", "claude-opus-4-8"],
+    ["vertex", "claude-opus-4-8"],
+    ["bedrock", "us.anthropic.claude-sonnet-4-5"],
+    ["openrouter", "anthropic/claude-haiku-5.5"],
+  ])("marks the system message for %s / %s, and nothing else", async (provider, model) => {
+    const [body] = await bodiesSent(provider, model);
+    expect(body!.messages[0]).toEqual({
+      role: "system",
+      content: [{ type: "text", text: "the stable prefix", cache_control: { type: "ephemeral" } }],
+    });
+    expect(body!.messages[1]).toEqual({ role: "user", content: "go" });
+    expect(JSON.stringify(body!.tools)).not.toContain("cache_control");
+  });
+
+  it("marks the schema-constrained emission too", async () => {
+    const [body] = await bodiesSent("anthropic", "claude-opus-4-8", SCHEMA);
+    expect(JSON.stringify(body!.messages[0])).toContain("cache_control");
+  });
+
+  it.each([
+    ["openai", "gpt-4o"],
+    ["vertex", "gemini-2.5-flash"],
+    ["openrouter", "openai/gpt-4o"],
+    ["bifrost", "claude-opus-4-8"],
+  ])("leaves %s / %s byte-identical to a plain call", async (provider, model) => {
+    const [body] = await bodiesSent(provider, model);
+    expect(JSON.stringify(body)).not.toContain("cache_control");
+    expect(body!.messages[0]).toEqual({ role: "system", content: "the stable prefix" });
+  });
+
+  it("carries a cache read from the stream to the usage event and the cost", async () => {
+    const surface = openAiSurface(
+      { chat: { completions: { create: async () => completion({ role: "assistant", content: "ok" }, { prompt_tokens: 100, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 90 } }) } } } as unknown as OpenAI,
+      "claude-opus-4-8", limiter(), "anthropic",
+    );
+    const { tokens } = await turn(surface, { messages, tools: [] });
+    expect(tokens.cache_read).toBe(90);
+    const card = { input: 1e-5, output: 1e-4, cache_read: 1e-6, cache_write: 1.25e-5, source: "exact" as const, fetched_at: null };
+    expect(costOf(card, tokens)).toBeCloseTo(10 * 1e-5 + 90 * 1e-6 + 10 * 1e-4, 12);
+  });
+});
+
 describe("token accounting", () => {
   it("reads the cached share from whichever surface reported it", async () => {
     const openai = await usage({
@@ -430,6 +551,15 @@ describe("token accounting", () => {
     // input is the total, so Anthropic's two cache counters are added back;
     // natively input_tokens excludes both and the call would price two ways.
     expect(alternate).toEqual({ input: 80, output: 8, cache_read: 10, cache_write: 30 });
+  });
+
+  it("reads a cache write Bifrost reports inside prompt_tokens_details, without adding it back", async () => {
+    const bifrost = await usage({
+      prompt_tokens: 100,
+      completion_tokens: 4,
+      prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 90 },
+    });
+    expect(bifrost).toEqual({ input: 100, output: 4, cache_read: 0, cache_write: 90 });
   });
 
   // The OpenAI route already counts the cached share inside prompt_tokens, so

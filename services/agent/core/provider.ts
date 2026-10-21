@@ -25,6 +25,10 @@ export interface TurnRequest {
   // Set on the emission turn: answer against this schema, offer no tools. Combining
   // tools with a strict output format degrades unpredictably across providers.
   emit?: Record<string, unknown>;
+  // Call this tool, and no other: tool_choice forced to it. A surface whose gateway refuses a
+  // forced choice offers only that tool instead; one that refuses tools at all asks for the
+  // tool's arguments as an emission. The run's emission turn covers a miss.
+  force?: string;
   signal?: AbortSignal;
 }
 

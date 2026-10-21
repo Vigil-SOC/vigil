@@ -2,8 +2,8 @@
 
 Bifrost's own config store is the source of truth for providers, keys, model
 allow-lists, pricing and governance. This router is the console's only door to
-it: Bifrost itself runs with admin auth disabled on a private network, so the
-gate has to live here.
+it. Bifrost's management API requires its own password as well; this
+router presents that credential. The gate for the console still lives here.
 
 Four things it does beyond forwarding. The first two are because Bifrost's key
 API cannot be driven honestly without them (see ``core.llm.bifrost.admin`` for
@@ -48,6 +48,7 @@ from core.auth.auth_service import AuthService
 from core.config import get_settings
 from core.llm.bifrost import mirror
 from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
+from core.llm.bifrost.auth import management_auth
 from core.llm.providers.base_url import (
     normalize_openai_compat_base_url,
     validate_base_url_shape,
@@ -486,7 +487,9 @@ async def _with_base_url(
     if method == "PUT" and provider:
         url = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, auth=management_auth()
+            ) as client:
                 current = await client.get(url)
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
@@ -594,7 +597,9 @@ async def proxy(
 
     url = f"{get_settings().bifrost_url.rstrip('/')}/api/{path}"
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(
+            timeout=_TIMEOUT, auth=management_auth()
+        ) as client:
             upstream = await client.request(
                 request.method,
                 url,

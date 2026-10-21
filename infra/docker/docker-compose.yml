@@ -196,6 +196,8 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      # Management API only. Inference does not use it.
+      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       REDIS_URL: redis://redis:6379/0
       # Shared secret the agent worker presents on /internal. Unset means every
       # such call answers 503, so no workflow can run.
@@ -372,6 +374,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       # Redis (LLM queue)
       REDIS_URL: redis://redis:6379/0
       # Same seam as backend. localhost:6989 is the host-run default; without
@@ -498,6 +501,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
+      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
       - REDIS_URL=redis://redis:6379/0
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
@@ -746,8 +750,11 @@ services:
   # as a first-boot seed. Providers, keys, models and virtual keys are managed
   # from Vigil's own Settings -> AI Config, which reaches this config store
   # through the authenticated passthrough in
-  # services/api/routers/bifrost_config.py. Bifrost's own UI at
-  # http://localhost:8080 remains the place for what that passthrough
+  # services/api/routers/bifrost_config.py. The management API (/api/*) and
+  # Bifrost's own UI require BIFROST_ADMIN_PASSWORD (HTTP Basic, user vigil).
+  # Inference (/v1, /anthropic) and /health do not: client.enforce_auth_on_inference
+  # is false, and v2.2.1's auth config has no other inference switch. The UI
+  # at http://localhost:8080 remains the place for what that passthrough
   # deliberately does not expose: cache and plugin config.
   #
   # Pinned, not :latest: Vigil reads this image's management API, so the tag
@@ -766,18 +773,22 @@ services:
     image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     container_name: deeptempo-bifrost
     ports:
-      # Loopback-only, for the same reason as postgres and redis above, and
-      # with the least standing of the three: Bifrost serves an unauthenticated
-      # config API on its inference port, so anything that reaches this can read
-      # and rewrite provider credentials via PUT /api/providers/{name}/keys/
-      # {key_id}. Sibling containers dial bifrost:8080 over deeptempo-network;
-      # the UI at http://localhost:8080 is unaffected from the host.
+      # Loopback-only, for the same reason as postgres and redis above.
+      # /api/* requires the minted password, so a sibling container can no
+      # longer rewrite providers. Inference on this same port does not, so
+      # one can still place a model call; that stays a separate choice. The
+      # UI at http://localhost:8080 takes the same password.
       - "127.0.0.1:8080:8080"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      # config.json references env.BIFROST_ADMIN_PASSWORD. No `:?`: Medic's
+      # gate and `docker compose config` render this file with a clean
+      # environment. An empty value does not open the API — Bifrost enables
+      # auth and then answers 401. start.sh and dc() mint one before a boot.
+      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. Without it every UI change lasted until the next recreate.

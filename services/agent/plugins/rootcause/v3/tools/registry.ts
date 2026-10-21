@@ -51,10 +51,14 @@ export function issued(tools: Pick<ToolRegistry, "callCount" | "uncitable">, ref
   return m !== null && ref === `${CALL_REF}${Number(m[1])}` && Number(m[1]) >= 1 && Number(m[1]) <= tools.callCount && !tools.uncitable?.has(ref);
 }
 
-// The sourcetypes a search reads (not the ones it excludes with NOT), counted for coverage.
+// The sourcetypes a search reads (not the ones it excludes with NOT), counted for coverage: sourcetype=x and
+// sourcetype IN (x, y). A wildcard names no source: the code's presence lookups (sweep.ts) search sourcetype=* and
+// are not counted, live or on resume.
 export function searchedSourcetypes(input: unknown): string[] {
   const spl = String((input as { spl?: unknown })?.spl ?? "");
-  return [...new Set([...spl.matchAll(/(NOT\s+)?sourcetype\s*=\s*"?([^"\s|)]+)"?/gi)].filter((m) => !m[1]).map((m) => m[2]!))];
+  const one = [...spl.matchAll(/(NOT\s+)?sourcetype\s*=\s*"?([^"\s|)]+)"?/gi)].filter((m) => !m[1]).map((m) => m[2]!);
+  const listed = [...spl.matchAll(/(NOT\s+)?sourcetype\s+IN\s*\(([^)]*)\)/gi)].filter((m) => !m[1]).flatMap((m) => m[2]!.split(",").map((x) => x.trim().replace(/^"|"$/g, "")));
+  return [...new Set([...one, ...listed])].filter((st) => st && !st.includes("*"));
 }
 
 // Journals a search the code made itself (the kernel journals the ones a model makes).

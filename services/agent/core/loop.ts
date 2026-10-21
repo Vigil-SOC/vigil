@@ -56,6 +56,14 @@ export interface TurnConfig {
   // null for a conversational role, whose answer is prose: the last text turn is
   // the answer, and there is no second call asking for it again as JSON.
   schema: Record<string, unknown> | null;
+  // Whether the schema is also offered as a submit tool beside the granted ones, so the
+  // answer can come with the last round instead of an extra call. False for a caller that
+  // registers its own answering tool.
+  submit?: boolean;
+  // Whether that submit takes the cap's last round rather than one past it. A subturn's cap
+  // is what its step may spend, so the answer comes inside it, a call fewer at the cap. An
+  // agent's cap counts its working turns, which a plugin budgets by, so its answer comes after.
+  answer_within_cap?: boolean;
   // Turns the caller already holds, seeded before the loop. A stateless client
   // posts the whole conversation each time and the run is one turn of it.
   history?: readonly Message[];

@@ -43,7 +43,8 @@ def _stub(root: Path, name: str, body: str) -> None:
 
 def _bash(root: Path, body: str, **env: str) -> subprocess.CompletedProcess[str]:
     """Run ``body`` after sourcing lib.sh, so under its `set -euo pipefail`."""
-    full_env = {k: v for k, v in os.environ.items() if k != "AGENT_INTERNAL_TOKEN"}
+    drop = {"AGENT_INTERNAL_TOKEN", "BIFROST_ADMIN_PASSWORD"}
+    full_env = {k: v for k, v in os.environ.items() if k not in drop}
     full_env.update({"PATH": f"{root / 'bin'}:{os.environ['PATH']}", **env})
     return subprocess.run(
         ["bash", "-c", f'source "{root}/scripts/lib.sh"\n{body}'],
@@ -289,7 +290,38 @@ def test_setup_and_start_both_call_it() -> None:
     """setup_dev.sh for a fresh setup; start.sh for an install that skipped it,
     before anything that starts the agent layer."""
     assert "\nensure_agent_token\n" in (REPO / "setup_dev.sh").read_text()
+    assert "\nensure_bifrost_admin_password\n" in (REPO / "setup_dev.sh").read_text()
     start = (REPO / "start.sh").read_text()
     call = start.index("\nensure_agent_token\n")
-    assert call < start.index("\nstart_autostart_services\n")
+    bifrost = start.index("\nensure_bifrost_admin_password\n")
+    assert call < bifrost < start.index("\nstart_autostart_services\n")
     assert call < start.index("    start_agent_layer\n")
+    app_up = (REPO / "scripts" / "app_up.sh").read_text()
+    app_setup = (REPO / "scripts" / "app_setup.sh").read_text()
+    assert app_up.index("ensure_bifrost_admin_password") < app_up.index(
+        "start_autostart_services"
+    )
+    assert "ensure_bifrost_admin_password" in app_setup
+
+
+def test_fills_an_empty_bifrost_admin_password(sandbox: Path) -> None:
+    env_file = sandbox / ".env"
+    env_file.write_text('BIFROST_ADMIN_PASSWORD=""\n')
+    result = _bash(
+        sandbox,
+        'ensure_bifrost_admin_password\nprintf "exported=%s" "$BIFROST_ADMIN_PASSWORD"',
+    )
+    assert result.returncode == 0, result.stderr
+    match = re.fullmatch(
+        r'BIFROST_ADMIN_PASSWORD="([0-9a-f]{64})"', env_file.read_text().strip()
+    )
+    assert match, env_file.read_text()
+    assert f"exported={match.group(1)}" in result.stdout
+
+
+def test_keeps_a_set_bifrost_admin_password(sandbox: Path) -> None:
+    env_file = sandbox / ".env"
+    env_file.write_text('BIFROST_ADMIN_PASSWORD="kept"\n')
+    result = _bash(sandbox, "ensure_bifrost_admin_password")
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text() == 'BIFROST_ADMIN_PASSWORD="kept"\n'

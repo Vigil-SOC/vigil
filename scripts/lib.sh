@@ -66,6 +66,10 @@ _container_ollama_url() {
 # read .python-version itself, so the pin is injected at the one boundary where
 # compose is invoked, rather than copied into the compose file.
 dc() {
+    # Fill it here so every caller (backup, app_up, start.sh) interpolates a
+    # real password. An empty one does not open the API, but nothing in Vigil
+    # could call it.
+    ensure_bifrost_admin_password
     OLLAMA_URL="$(_container_ollama_url)" \
     PYTHON_VERSION="$(python_pin 2>/dev/null || true)" \
         "${_DC_CMD[@]}" -f "$REPO_ROOT/infra/docker/docker-compose.yml" "$@"
@@ -364,44 +368,44 @@ env_file_value() {
     printf '%s' "$v"
 }
 
-# --- Agent layer token ---
-# The backend and the agent layer share AGENT_INTERNAL_TOKEN. env.example ships
-# it empty, and empty means scripts/agent_up.sh refuses to start, so no chat turn
-# or workflow run gets through. Unlike the JWT secret it goes in .env: agent_up.sh
-# and `docker compose --env-file .env` read it there. Fills an empty value once
-# (a value the caller exported, else a new one) and never replaces a set one.
-# Never fails: start.sh runs under set -e, and agent_up.sh says what is missing.
-ensure_agent_token() {
-    local env="$REPO_ROOT/.env" re="${_ENV_LINE_RE}AGENT_INTERNAL_TOKEN=" lines token
+# --- Minted secrets in .env ---
+# Fill an empty KEY once (a value the caller exported, else a new one) and
+# never replace a set one. Two lines are left alone: which one to fill is a
+# guess, and a wrong guess splits two processes onto different values. Never
+# fails: start.sh runs under set -e, and the caller that needs the value says
+# what is missing. Rewritten in place (cat, not mv) so .env keeps its owner
+# and mode; the line keeps its `export` and its CR, if any.
+_fill_env_secret() {
+    local key="$1" blurb="$2"
+    # A later ${key} on the same `local` line is still unset under `set -u`.
+    local env="$REPO_ROOT/.env" re="${_ENV_LINE_RE}${key}=" lines token
     [ -f "$env" ] || return 0
     lines="$(grep -cE "$re" "$env" || true)"
-    # Which line to fill is a guess with two, and a wrong guess splits the
-    # backend and the agent layer onto different tokens.
     if [ "$lines" -gt 1 ]; then
-        echo "Warning: .env sets AGENT_INTERNAL_TOKEN $lines times; left as is (the last one counts)." >&2
+        echo "Warning: .env sets ${key} $lines times; left as is (the last one counts)." >&2
         return 0
     fi
-    [ -n "$(env_file_value AGENT_INTERNAL_TOKEN "$env")" ] && return 0
-    token="${AGENT_INTERNAL_TOKEN:-}"
+    [ -n "$(env_file_value "$key" "$env")" ] && return 0
+    # printenv, not ${!key}: an unset name under set -u is a fatal unbound
+    # variable, and an empty one must still fall through to a new value.
+    token="$(printenv "$key" 2>/dev/null || true)"
     [ -n "$token" ] || token="$(openssl rand -hex 32 2>/dev/null)" || token=""
     [ -n "$token" ] || token="$(od -An -tx1 -N32 /dev/urandom 2>/dev/null | tr -d ' \n')" || token=""
     if [ -z "$token" ]; then
-        echo "Warning: could not generate AGENT_INTERNAL_TOKEN; set it in .env." >&2
+        echo "Warning: could not generate ${key}; set it in .env." >&2
         return 0
     fi
-    # Private while it holds the token. Rewritten in place (cat, not mv) so .env
-    # keeps its owner and mode; the line keeps its `export` and its CR, if any.
-    if ! (umask 077; T="$token" awk -v re="$re" '
+    if ! (umask 077; T="$token" awk -v re="$re" -v key="$key" '
         !done && $0 ~ re {
-            print substr($0, 1, index($0, "AGENT_INTERNAL_TOKEN=") - 1) \
-                "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" (/\r$/ ? "\r" : "")
+            print substr($0, 1, index($0, key "=") - 1) \
+                key "=\"" ENVIRON["T"] "\"" (/\r$/ ? "\r" : "")
             done = 1; next
         }
         { print }
-        END { if (!done) print "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" }
+        END { if (!done) print key "=\"" ENVIRON["T"] "\"" }
     ' "$env" > "$env.tmp.$$"); then
         rm -f "$env.tmp.$$"
-        echo "Warning: could not write AGENT_INTERNAL_TOKEN to .env" >&2
+        echo "Warning: could not write ${key} to .env" >&2
         return 0
     fi
     if ! cat "$env.tmp.$$" > "$env"; then
@@ -409,8 +413,33 @@ ensure_agent_token() {
         return 0
     fi
     rm -f "$env.tmp.$$"
-    export AGENT_INTERNAL_TOKEN="$token"
-    echo "Set AGENT_INTERNAL_TOKEN in .env (the agent layer's key to the API)"
+    export "${key}=${token}"
+    echo "Set ${key} in .env (${blurb})"
+}
+
+# The backend and the agent layer share AGENT_INTERNAL_TOKEN. env.example ships
+# it empty, and empty means scripts/agent_up.sh refuses to start, so no chat turn
+# or workflow run gets through. Unlike the JWT secret it goes in .env: agent_up.sh
+# and compose (via the environment start.sh exported) read it there.
+ensure_agent_token() {
+    _fill_env_secret AGENT_INTERNAL_TOKEN "the agent layer's key to the API"
+}
+
+# Bifrost's management API password. An empty value is not "auth off": the
+# gateway stores it as enabled and then answers 401, and compose refuses to
+# start that service while the variable is empty. Same mint as the agent token.
+ensure_bifrost_admin_password() {
+    _fill_env_secret BIFROST_ADMIN_PASSWORD "Bifrost's management API password"
+}
+
+# The password .env or the environment holds, for host scripts that call
+# /api/* themselves. Empty when neither has one.
+bifrost_admin_password() {
+    if [ -n "${BIFROST_ADMIN_PASSWORD:-}" ]; then
+        printf '%s' "$BIFROST_ADMIN_PASSWORD"
+        return 0
+    fi
+    env_file_value BIFROST_ADMIN_PASSWORD
 }
 
 # Is this venv the one .python-version asks for, on this machine's architecture?

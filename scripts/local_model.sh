@@ -155,7 +155,13 @@ ensure_routable() {
   export BIFROST_URL="$base"
 
   key_status() {
-    curl -sf --max-time 5 "${BIFROST_URL}/api/providers/ollama/keys" \
+    local pw
+    pw="$(bifrost_admin_password)"
+    if [ -z "$pw" ]; then
+      echo "BIFROST_ADMIN_PASSWORD is empty; Bifrost's management API will refuse this." >&2
+      return 1
+    fi
+    curl -sf --max-time 5 -u "vigil:${pw}" "${BIFROST_URL}/api/providers/ollama/keys" \
       | python3 -c 'import json,sys
 d=json.load(sys.stdin)
 ks=d.get("keys") or []

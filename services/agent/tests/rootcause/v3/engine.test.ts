@@ -6,6 +6,7 @@ import { InProcessState } from "../../../core/state.js";
 import { conclusionOf, runRootCauseV3 } from "../../../plugins/rootcause/v3/engine.js";
 import { engineOf, type V3Kinds } from "../../../plugins/rootcause/v3/ledger.js";
 import { rootCauseV3Projection, rootCauseV3Replay } from "../../../plugins/rootcause/v3/projection.js";
+import { SUBMIT_TOOL } from "../../../core/stream.js";
 import { framed, harnessOf, modelOf, properties, specOf, splunk, telemetry } from "../../support/v3-run.js";
 
 // The ledger without the model's streamed text, which is journaled as it arrives.
@@ -38,7 +39,7 @@ describe("runRootCauseV3", () => {
     expect(done.status).toBe("failed");
     expect((await state.terminal("r1"))!.reason).toMatch(/no point in time/);
     expect(model.requests).toHaveLength(1);
-    expect(model.requests[0]!.tools).toEqual([]);
+    expect(model.requests[0]!.tools.map((tool) => tool.id)).toEqual([SUBMIT_TOOL]);
     expect(properties(model.requests[0]!)).toContain("observed_at");
     expect(model.requests[0]!.messages.map((m) => m.content).join("\n")).toContain("lab");
     expect(kinds(await state.read("r1"))).toEqual(["run", "frame", "spend", "terminal"]);

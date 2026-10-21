@@ -79,6 +79,7 @@ interface Config {
   jwtSecret?: string;
   agentInternalToken?: string;
   postgresPassword?: string;
+  bifrostAdminPassword?: string;
 }
 
 function readConfig(): Config {
@@ -127,6 +128,16 @@ function postgresPassword(): string {
   if (saved) return saved;
   const pw = crypto.randomBytes(32).toString("base64url");
   writeConfig({ postgresPassword: pw });
+  return pw;
+}
+
+// Bifrost's management API password. 48 bytes of base64url is 64 characters,
+// under bcrypt's 72-byte limit, which is what the gateway hashes this with.
+function bifrostAdminPassword(): string {
+  const saved = readConfig().bifrostAdminPassword;
+  if (saved) return saved;
+  const pw = crypto.randomBytes(48).toString("base64url");
+  writeConfig({ bifrostAdminPassword: pw });
   return pw;
 }
 
@@ -467,6 +478,7 @@ const spawnCompose = (args: string[]) =>
       JWT_SECRET_KEY: jwtSecret(),
       AGENT_INTERNAL_TOKEN: agentInternalToken(),
       POSTGRES_PASSWORD: postgresPassword(),
+      BIFROST_ADMIN_PASSWORD: bifrostAdminPassword(),
     },
   });
 

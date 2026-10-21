@@ -7,8 +7,9 @@ and Docker reads a two-part mapping as ``0.0.0.0:<host>:<container>`` — so all
 three were reachable from any host on the operator's network. Postgres holds
 ``findings``, ``cases`` and ``llm_provider_configs`` behind a password whose
 default is committed to this repo; Redis runs with no ``requirepass`` at all;
-Bifrost serves an unauthenticated config API that can rewrite provider
-credentials.
+Bifrost's management API requires the minted admin password (#2573).
+Inference on the same port does not, so a container that can reach it can
+still place a model call. The host mapping stays loopback-only.
 
 None of them has a consumer outside the host: the backend, daemon and workers
 reach them by service name over the ``deeptempo-network`` bridge, and a

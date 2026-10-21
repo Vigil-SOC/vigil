@@ -168,6 +168,26 @@ export function effortFields(provider_type: string, effort: Effort | undefined):
   return {};
 }
 
+// Whether a model takes Anthropic's `cache_control` marker through the gateway: a Claude
+// behind the Anthropic-family providers, or OpenRouter's `anthropic/` ids. Vertex also
+// serves Gemini, so the model id decides, not the provider alone. Everyone else is sent
+// exactly what it always was.
+export function takesCacheMarker(provider_type: string, model: string): boolean {
+  if (provider_type === "openrouter") return model.startsWith("anthropic/");
+  return (provider_type === "anthropic" || provider_type === "vertex" || provider_type === "bedrock") && /claude/i.test(model);
+}
+
+// One breakpoint on the system message. Anthropic's cache key runs tools, system,
+// messages, so it caches the tools and the system prompt together. A prefix under
+// the model's minimum just does not cache.
+function cacheable(messages: Body["messages"]): Body["messages"] {
+  const at = messages.findLastIndex((message) => message.role === "system");
+  const system = messages[at];
+  if (system === undefined || typeof system.content !== "string") return messages;
+  const block = { type: "text", text: system.content, cache_control: { type: "ephemeral" } };
+  return messages.map((message, i) => (i === at ? ({ ...message, content: [block] } as typeof message) : message));
+}
+
 export function openAiSurface(
   client: OpenAI,
   model: string,
@@ -181,7 +201,7 @@ export function openAiSurface(
 }
 
 // The one surface built. The gateway routes to either provider family behind a
-// model name, so a second wire buys nothing until cache_control and thinking.
+// model name, so a second wire buys nothing until thinking.
 class OpenAiSurface implements Provider {
   // Two names for one model, and they are not interchangeable. `wire_model` is
   // what the gateway is asked for and may be namespaced ("vertex/gemini-2.5-flash")
@@ -219,8 +239,38 @@ class OpenAiSurface implements Provider {
   }
 
   private async ask(request: TurnRequest): Promise<Turn> {
-    const tools = request.tools.length === 0 ? {} : { tools: wireTools(request.tools) };
-    return turnOf(await this.call({ model: this.wire_model, messages: wire(request.messages), ...tools }, request.signal));
+    const body = (tools: readonly ToolSchema[]) => ({ model: this.wire_model, messages: wire(request.messages), ...(tools.length === 0 ? {} : { tools: wireTools(tools) }) });
+    const forced = request.tools.find((tool) => tool.id === request.force);
+    if (forced === undefined) return turnOf(await this.call(body(request.tools), request.signal));
+    // Remembered per model like emitModes: "tool" means the gateway refuses a forced choice,
+    // "prompt" that it refuses tools at all. Each is remembered once the next rung has gone
+    // through: a 400 about something else is not a refusal.
+    const mode = `force\n${this.model}`;
+    const known = emitModes.get(mode);
+    const refusal = (error: unknown) => request.signal?.aborted !== true && REFUSED.has(statusOf(error) ?? 0);
+    if (known === undefined) {
+      try {
+        const tool_choice = { type: "function" as const, function: { name: forced.id } };
+        return turnOf(await this.call({ ...body(request.tools), tool_choice }, request.signal));
+      } catch (error) {
+        if (!refusal(error)) throw error;
+      }
+    }
+    // Where the choice cannot be forced, offering only the named tool is the next best thing to it.
+    if (known !== "prompt") {
+      try {
+        const turn = turnOf(await this.call(body([forced]), request.signal));
+        rememberMode(mode, "tool");
+        return turn;
+      } catch (error) {
+        if (!refusal(error)) throw error;
+      }
+    }
+    // No tool goes through here, so the answer is asked for as an emission is, and handed back
+    // as the call it stands in for. Every later forced round goes straight here.
+    const emitted = await this.emit(request, forced.parameters);
+    rememberMode(mode, "prompt");
+    return { ...emitted, content: "", tool_calls: [{ id: "emitted", tool: forced.id, args: emitted.content }] };
   }
 
   private async emit(request: TurnRequest, schema: Record<string, unknown>): Promise<Turn> {
@@ -317,6 +367,7 @@ class OpenAiSurface implements Provider {
     // Before the limiter, not only inside the request: a call still queued behind
     // a rate limit is the cheapest one to give up on.
     signal?.throwIfAborted();
+    if (takesCacheMarker(this.provider_type, this.model)) body = { ...body, messages: cacheable(body.messages) };
     const cap = outputCaps.get(this.model) ?? "max_tokens";
     try {
       return await this.send(body, cap, signal);
@@ -531,7 +582,9 @@ function tokensOf(usage: OpenAI.CompletionUsage | undefined): TokenCounts {
   const reported = usage?.prompt_tokens ?? 0;
   const native = alternate?.cache_read_input_tokens !== undefined || alternate?.cache_creation_input_tokens !== undefined;
   const cache_read = usage?.prompt_tokens_details?.cached_tokens ?? alternate?.cache_read_input_tokens ?? 0;
-  const cache_write = alternate?.cache_creation_input_tokens ?? 0;
+  // Bifrost's /v1 route reports a write inside prompt_tokens_details, already counted in prompt_tokens.
+  const details = usage?.prompt_tokens_details as { cache_write_tokens?: number } | undefined;
+  const cache_write = alternate?.cache_creation_input_tokens ?? details?.cache_write_tokens ?? 0;
   return {
     input: native ? reported + cache_read + cache_write : reported,
     output: usage?.completion_tokens ?? 0,

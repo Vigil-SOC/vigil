@@ -1,3 +1,4 @@
+import { answerEvents, callable, schemaAsked } from "../support/forced.js";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../plugins/kinds.js";
@@ -62,17 +63,20 @@ function modelOf(steps: readonly Step[]): Provider & { requests: TurnRequest[] }
     requests,
     stream: async function* (request: TurnRequest): AsyncGenerator<ProviderEvent> {
       requests.push(request);
-      if (request.emit !== undefined) {
-        const properties = (request.emit["properties"] ?? {}) as Record<string, unknown>;
+      const asked = schemaAsked(request);
+      if (asked !== undefined) {
+        const properties = (asked["properties"] ?? {}) as Record<string, unknown>;
         const answer =
           "benign_explanation_stands" in properties
             ? { benign_explanation: "a backup job", benign_explanation_stands: false, rationale: "the interval is too regular for a backup" }
             : { summary: "the host beaconed", what_happened: "regular outbound flows", next_steps: ["contain 10.128.0.5"] };
-        yield { type: "text_delta", text: JSON.stringify(answer) };
+        const [said] = answerEvents(request, answer);
+        if (said?.type === "text_delta") yield said;
         yield { type: "usage", tokens: ZERO_TOKENS };
+        if (said?.type === "tool_call") yield said;
         return;
       }
-      const step = request.tools.length === 0 ? undefined : steps[at++];
+      const step = callable(request).length === 0 ? undefined : steps[at++];
       yield { type: "usage", tokens: ZERO_TOKENS };
       if (step === undefined) return;
       const next = step(request);

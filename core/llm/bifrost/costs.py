@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from core.config import get_settings
+from core.llm.bifrost.auth import management_auth
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +206,9 @@ def recalculate_cost(
 def get_vk_quota(vk: str) -> Optional[Dict[str, Any]]:
     """Return the budget + rate-limit quota for a virtual key.
 
-    Path: ``GET /api/governance/virtual-keys/quota``. Bifrost authenticates
-    this endpoint using the ``x-bf-vk`` header (the same header dispatch
-    attaches on every upstream call). Response shape:
+    Path: ``GET /api/governance/virtual-keys/quota``. The management API
+    requires the admin password; ``x-bf-vk`` still names the key (the same
+    header dispatch attaches on every upstream call). Response shape:
 
     .. code-block:: json
 
@@ -243,7 +244,7 @@ def _get_json(
 ) -> Optional[Dict[str, Any]]:
     url = f"{_bifrost_base_url()}{path}"
     try:
-        with httpx.Client(timeout=_DEFAULT_TIMEOUT) as client:
+        with httpx.Client(timeout=_DEFAULT_TIMEOUT, auth=management_auth()) as client:
             r = client.get(url, params=params or {}, headers=headers or {})
             if r.status_code >= 400:
                 logger.warning(
@@ -262,7 +263,7 @@ def _get_json(
 def _post_json(path: str, *, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     url = f"{_bifrost_base_url()}{path}"
     try:
-        with httpx.Client(timeout=_DEFAULT_TIMEOUT) as client:
+        with httpx.Client(timeout=_DEFAULT_TIMEOUT, auth=management_auth()) as client:
             r = client.post(url, json=body)
             if r.status_code >= 400:
                 logger.warning(

@@ -10,6 +10,7 @@ import { constraints, instructions, SYSTEM_PROMPT } from "../../../plugins/rootc
 import { issued, neverRan, Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { toolsFrom } from "../../../tools/remote.js";
+import { SUBMIT_TOOL } from "../../../core/stream.js";
 import { harnessOf, modelOf, specOf, splunk } from "../../support/v3-run.js";
 import { apply, node, seeded } from "./helpers.js";
 
@@ -60,7 +61,7 @@ describe("a move as a kernel turn", () => {
     expect(first!.messages[0]!.content).toContain("- edr: 10 events");
     expect(first!.messages[0]!.content).toContain("## Environment");
     expect(first!.messages.some((m) => m.content.includes("Find the cause."))).toBe(true);
-    expect(first!.tools.map((x) => x.id)).toEqual(["splunk_query"]);
+    expect(first!.tools.map((x) => x.id)).toEqual(["splunk_query", SUBMIT_TOOL]);
     expect(Object.keys((emission!.emit!["properties"] ?? {}) as object)).toContain("candidates");
     expect(JSON.stringify(emission!.emit)).not.toContain("maxLength");
 
@@ -80,6 +81,20 @@ describe("a move as a kernel turn", () => {
     // The emitted value is checked once: the item citing a ref the kernel never journaled is dropped, the rest kept.
     expect((out.submission as { candidates: { label: string }[] }).candidates.map((c) => c.label)).toEqual(["curl wrote /tmp/x"]);
     expect(t.trace.chronological().some((e) => e.type === "rejected-submission" && JSON.stringify(e.payload).includes("r9"))).toBe(true);
+  });
+
+  // A move that searches to its cap made one call per round and then one more for the emission.
+  it("takes a move's answer on the round its search cap makes the last, with no further call", async () => {
+    const t = setup(
+      (request) => (request.force === SUBMIT_TOOL ? { emit: { candidates: [cand("curl wrote /tmp/x", ["r1"])], reasoning: "r" } } : { calls: [{ tool: "splunk_query", args: SEARCH }] }),
+      { [SEARCH.spl]: "3 events matched\ncurl wrote /tmp/x" },
+    );
+    const out = await t.client.runTurn(t.request({ maxSearches: 2 }));
+
+    expect(t.provider.requests.map((r) => r.force)).toEqual([undefined, SUBMIT_TOOL]);
+    expect(t.provider.requests.some((r) => r.emit !== undefined)).toBe(false);
+    expect(out.toolCalls).toMatchObject([{ id: "r1", ok: true }]);
+    expect((out.submission as { candidates: { label: string }[] }).candidates.map((c) => c.label)).toEqual(["curl wrote /tmp/x"]);
   });
 
   it("a move with no searches asks nothing of the tool, and a failed search comes back as a failed call", async () => {
@@ -148,6 +163,78 @@ describe("a move as a kernel turn", () => {
       expect((await u.client.runTurn(u.request({ submitTool: "submit_theories" }))).submission).toBeNull();
     });
 
+    describe("a key the schema does not know", () => {
+      const boundary = { targetDomain: "email", reason: "the mail gateway would record the sender", inDomainExhausted: true };
+      const emit = async (submission: unknown, submitTool: TurnRequest["submitTool"] = "submit_causes") => {
+        const t = setup((request) => (request.emit !== undefined ? { emit: submission } : { content: "done" }));
+        const out = await t.client.runTurn(t.request({ submitTool }));
+        return { t, got: out.submission as { candidates: { label: string }[]; boundary?: unknown } | null, note: t.trace.chronological().find((e) => e.type === "rejected-submission")?.payload as Record<string, string> | undefined };
+      };
+
+      it("is removed from a candidate that is kept, and a boundary in it moves up to the top level", async () => {
+        const { got, note } = await emit({ candidates: [{ ...cand("phishing email delivered", []), boundary }, cand("also good", [])], reasoning: "r" });
+        expect(got!.candidates.map((c) => c.label)).toEqual(["phishing email delivered", "also good"]);
+        expect(got!.candidates[0]).not.toHaveProperty("boundary");
+        expect(got!.boundary).toEqual(boundary);
+        expect(note!["salvaged"]).toBe("kept the rest, dropped 0 item(s)");
+        expect(note!["repaired"]).toBe("stripped 1 unknown key(s), lifted boundary to the top level");
+      });
+
+      it("is dropped, not lifted, when the top level already has that field or the value does not fit it", async () => {
+        const top = { ...boundary, reason: "set at the top" };
+        const held = await emit({ candidates: [{ ...cand("kept", []), boundary }], boundary: top, reasoning: "r" });
+        expect(held.got!.candidates[0]).not.toHaveProperty("boundary");
+        expect(held.got!.boundary).toEqual(top);
+        expect(held.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+        const misfit = await emit({ candidates: [{ ...cand("kept", []), boundary: { targetDomain: "email" } }], reasoning: "r" });
+        expect(misfit.got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(misfit.got).not.toHaveProperty("boundary");
+        expect(misfit.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+      });
+
+      it("is removed from the candidate, whatever it is called, and from the submission itself", async () => {
+        const inner = await emit({ candidates: [{ ...cand("kept", []), notes: "x" }], reasoning: "r" });
+        expect(inner.got!.candidates).toEqual([cand("kept", [])]);
+        expect(inner.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+        const root = await emit({ candidates: [cand("kept", [])], reasoning: "r", confidence: 0.9 });
+        expect(root.got).toEqual({ candidates: [cand("kept", [])], reasoning: "r" });
+        expect(root.note!["repaired"]).toBe("stripped 1 unknown key(s)");
+      });
+
+      it("does not save a candidate with a real error: it is dropped, and what it carried is not lifted", async () => {
+        const { label: _, ...unlabelled } = cand("", []);
+        const { got, note } = await emit({ candidates: [{ ...unlabelled, boundary }, cand("kept", [])], reasoning: "r" });
+        expect(got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(got).not.toHaveProperty("boundary");
+        expect(note!["salvaged"]).toBe("kept the rest, dropped 1 item(s)");
+        expect(note).not.toHaveProperty("repaired");
+      });
+
+      it("is lifted only from a candidate the check keeps, and only the dropped candidate is counted", async () => {
+        const lost = await emit({ candidates: [{ ...cand("cites a search never run", ["r9"]), boundary }, { ...cand("kept", []), notes: "x" }], reasoning: "r" });
+        expect(lost.got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(lost.got).not.toHaveProperty("boundary");
+        expect(lost.note!["salvaged"]).toBe("kept the rest, dropped 1 item(s)");
+        expect(lost.note!["repaired"]).toBe("stripped 2 unknown key(s)");
+        const kept = await emit({ candidates: [cand("cites a search never run", ["r9"]), { ...cand("kept", []), boundary }], reasoning: "r" });
+        expect(kept.got!.candidates).toEqual([cand("kept", [])]);
+        expect(kept.got!.boundary).toEqual(boundary);
+        expect(kept.note!["salvaged"]).toBe("kept the rest, dropped 1 item(s)");
+        expect(kept.note!["repaired"]).toBe("stripped 1 unknown key(s), lifted boundary to the top level");
+      });
+
+      it("does not fill a missing required field from an item: the submission still fails", async () => {
+        const ev = [{ summary: "s", strength: "direct", polarity: "supports", toolCallIds: [] }];
+        expect((await emit({ causes: [{ ...cand("upstream", []), evidence: ev }], reasoning: "r" }, "submit_assessment")).got).toBeNull();
+      });
+
+      it("is dropped, not lifted, when the submission has no such field (entry points carry no boundary)", async () => {
+        const { got, note } = await emit({ candidates: [{ ...cand("kept", []), boundary }], reasoning: "r" }, "submit_entry_points");
+        expect(got).toEqual({ candidates: [cand("kept", [])], reasoning: "r" });
+        expect(note!["repaired"]).toBe("stripped 1 unknown key(s)");
+      });
+    });
+
     it("gets nothing from an emission that was not JSON", async () => {
       const t = setup((request) => (request.emit !== undefined ? { emit: "no json here" } : { content: "done" }));
       expect((await t.client.runTurn(t.request())).submission).toBeNull();
@@ -188,6 +275,20 @@ describe("a move as a kernel turn", () => {
     expect(t.trace.chronological().some((e) => e.type === "rejected-submission")).toBe(true);
   });
 
+  it("reports a provider error on the emission or the tool turn as failed, apart from an emission the model got wrong", async () => {
+    const down = () => { throw new Error("502 failed to execute HTTP request to provider API"); };
+    for (const dies of ["emit", "tool"]) {
+      const t = setup((request) => ((dies === "emit") === (request.emit !== undefined) ? down() : request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+      expect(out.submission).toBeNull();
+      expect(out.failed).toContain("502");
+      expect(t.trace.chronological().map((e) => e.type)).toContain("provider-failure");
+      expect(t.trace.chronological().map((e) => e.type)).not.toContain("rejected-submission");
+    }
+    const bad = setup((request) => (request.emit !== undefined ? { emit: { nothing: true } } : { content: "done" }));
+    expect((await bad.client.runTurn(bad.request())).failed).toBeUndefined();
+  });
+
   it("ends the run when the pool refuses another call", async () => {
     const spec = specOf({ budgets: { max_calls: 0, max_cost_usd: 10, max_wall_ms: 600_000, max_park_ms: 60_000 } });
     const t = setup(() => ({}), {}, spec);
@@ -222,7 +323,7 @@ describe("what a move's prompt tells the model to call", () => {
       const sent = t.provider.requests[i]!;
       const text = sent.messages.map((m) => m.content).join("\n");
       expect(text).not.toMatch(/submit_/);
-      expect(sent.tools.map((x) => x.id)).toEqual(searches ? ["splunk_query"] : []);
+      expect(sent.tools.map((x) => x.id)).toEqual(searches ? ["splunk_query", SUBMIT_TOOL] : [SUBMIT_TOOL]);
     }
     expect(all.conclude).not.toContain("splunk_query");
   });

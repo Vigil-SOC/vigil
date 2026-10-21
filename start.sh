@@ -248,6 +248,9 @@ ensure_jwt_secret || exit 1
 # And the agent layer needs its token, or agent_up.sh refuses to start. Covers
 # an install that skipped setup_dev.sh.
 ensure_agent_token
+# Bifrost's management API refuses /api/* without this. Before compose starts
+# the gateway: an empty value makes `up` fail rather than boot it open.
+ensure_bifrost_admin_password
 
 # `bifrost` only resolves inside the compose network. Rewrite before starting
 # services: bringing Ollama up syncs its catalog into Bifrost, and that runs

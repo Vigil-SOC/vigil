@@ -195,7 +195,7 @@ class Settings(BaseSettings):
     # sets before boot; the Settings toggle overrides it at runtime.
     vigil_mcp_enabled: bool = False
     vigil_csrf_enabled: bool = True
-    vigil_csrf_report_only: bool = True
+    vigil_csrf_report_only: bool = False
     vigil_csrf_exempt_paths: Optional[str] = None
     vigil_cookie_secure: bool = True
     vigil_cookie_samesite: str = "strict"
@@ -218,6 +218,11 @@ class Settings(BaseSettings):
     # Host-run default: `bifrost` resolves only inside the compose network, and
     # compose, Helm and start.sh all inject the right hostname explicitly.
     bifrost_url: str = "http://localhost:8080"
+    # HTTP Basic password for Bifrost's management API (/api/*). The username
+    # is the fixed "vigil" in infra/docker/bifrost/config.json. Inference stays
+    # open. Empty does not turn auth off: the gateway answers 401. start.sh
+    # and dc() mint one before a normal boot.
+    bifrost_admin_password: str = ""
     # Where the agent worker listens. Two calls go this way rather than through
     # the queue: a chat turn, which is synchronous, and a run's projection.
     agent_url: str = "http://localhost:6989"

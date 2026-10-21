@@ -148,6 +148,7 @@ export class LiveSearch implements SearchBackend {
     try {
       const job = await this.client.runJob(spl, { earliest: e / 1000, latest: l / 1000, limit: FETCH, timeoutMs });
       const shown = job.rows.slice(0, REPORTING.test(spl) ? ROWS : RAW_ROWS);
+      // The count line below is read back by resultCountIn (core/call-view.ts): keep its wording.
       const lines = [`${job.events.toLocaleString("en-US")} events matched, ${job.results.toLocaleString("en-US")} results (showing ${shown.length} of ${job.results.toLocaleString("en-US")})${job.finalized ? " — timed out, counts partial" : ""}`];
       for (const m of job.errors) lines.push(`ERROR: ${m}`);
       for (const m of job.warnings) lines.push(`WARNING: ${m}`);

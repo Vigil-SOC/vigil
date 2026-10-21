@@ -742,7 +742,6 @@ config:
 
   # CSRF
   VIGIL_CSRF_ENABLED: "true"
-  VIGIL_CSRF_REPORT_ONLY: "true"
   # Added to the always-exempt set (webhooks, ingestion, the /mcp surface,
   # the agent layer's /internal endpoints) rather than replacing it.
   # App-root relative; the API prefixes each entry with VIGIL_CONTEXT_PATH.

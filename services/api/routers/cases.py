@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -32,8 +32,9 @@ from core.cases.case_state import case_run_refs, primary_ref
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import User
+from core.storage.models import Case, User
 from core.storage.schemas import (
     CaseCommentSchema,
     CaseEscalationSchema,
@@ -130,6 +131,16 @@ async def clear_all_cases(
 
     result = case_records_service.purge_all_cases(session)
     killed = len(result.killed_investigation_ids)
+    # Counts come back from the purge. record_audit commits on its own
+    # session, so this row is durable before the request commits.
+    get_config_service(user_id=str(current_user.user_id)).record_audit(
+        config_type="cases",
+        config_key="cases",
+        action="delete_all",
+        old_value={"count": result.cases, "killed_investigations": killed},
+        new_value=None,
+        change_reason="All cases deleted via API",
+    )
     background_tasks.add_task(
         _mark_workdirs_failed,
         result.killed_investigation_ids,
@@ -267,7 +278,11 @@ async def generate_case_report(case_id: str):
     response_model=CaseSuccessResponse,
     dependencies=[permission_gate("cases.delete")],
 )
-async def delete_case(case_id: str, session: UnitOfWorkSession):
+async def delete_case(
+    case_id: str,
+    session: UnitOfWorkSession,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
     """Delete a case that has no live Investigation (#1001)."""
     # Demo cases live in memory, not in the session, and nothing investigates
     # them, so there is no live run to guard against.
@@ -276,6 +291,8 @@ async def delete_case(case_id: str, session: UnitOfWorkSession):
             raise HTTPException(status_code=404, detail="Case not found")
         return {"success": True}
 
+    case = session.get(Case, case_id)
+    title = case.title if case is not None else None
     live = case_records_service.delete_case(session, case_id)
 
     if live is None:
@@ -290,6 +307,14 @@ async def delete_case(case_id: str, session: UnitOfWorkSession):
             ),
         )
 
+    get_config_service(user_id=str(current_user.user_id)).record_audit(
+        config_type="cases",
+        config_key=case_id,
+        action="delete",
+        old_value={"case_id": case_id, "title": title},
+        new_value=None,
+        change_reason="Case deleted via API",
+    )
     return {"success": True}
 
 
