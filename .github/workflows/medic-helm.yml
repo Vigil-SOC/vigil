@@ -39,6 +39,8 @@ env:
     --set medic.kubeApi.cidrs[0]=10.0.0.1/32
     --set medic.gateway.viewer.username=medic-viewer
     --set medic.gateway.viewer.passwordSecret.name=medic-viewer
+  # secrets.postgresPassword has no default.
+  PG: --set secrets.postgresPassword=test-password
 
 jobs:
   medic-helm-render:
@@ -67,15 +69,15 @@ jobs:
 
       - name: helm lint (Medic off, Medic on)
         run: |
-          helm lint "$RUNNER_TEMP/vigil"
-          helm lint "$RUNNER_TEMP/vigil" $MEDIC_ON
+          helm lint "$RUNNER_TEMP/vigil" $PG
+          helm lint "$RUNNER_TEMP/vigil" $PG $MEDIC_ON
           helm lint "$RUNNER_TEMP/vigil" -f infra/helm/vigil/values-dev.yaml $MEDIC_ON
 
       - name: helm template (off renders no Medic object; on is schema-valid)
         run: |
-          helm template rc "$RUNNER_TEMP/vigil" > off.yaml
+          helm template rc "$RUNNER_TEMP/vigil" $PG > off.yaml
           if grep -n -- '-medic' off.yaml; then echo "Medic objects rendered while off"; exit 1; fi
-          helm template rc "$RUNNER_TEMP/vigil" $MEDIC_ON --set networkPolicies.enabled=true > on.yaml
+          helm template rc "$RUNNER_TEMP/vigil" $PG $MEDIC_ON --set networkPolicies.enabled=true > on.yaml
           echo "Rendered $(grep -c '^kind:' on.yaml) resources with Medic on."
           curl -sSLo kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz

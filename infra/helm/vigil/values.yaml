@@ -642,8 +642,10 @@ secrets:
   anthropicApiKey: ""
 
   # DB password. Materialized as POSTGRES_PASSWORD; db-init and app pods
-  # consume the discrete POSTGRES_* parts, not an assembled DSN.
-  postgresPassword: "change-me-before-production"
+  # consume the discrete POSTGRES_* parts, not an assembled DSN. Required unless
+  # existingSecret or externalSecret is set. Generate with:
+  #   openssl rand -hex 24
+  postgresPassword: ""
 
   # Required when DEV_MODE=false (see env.example). Generate with:
   #   python -c "import secrets; print(secrets.token_urlsafe(64))"
