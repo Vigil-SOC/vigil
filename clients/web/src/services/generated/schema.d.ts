@@ -5579,6 +5579,10 @@ export interface paths {
          * Update User
          * @description Update user information (requires users.write permission).
          *
+         *     The caller's permissions must also cover the target account's current
+         *     role. Holding users.write is not enough to edit an account whose role
+         *     grants something the caller does not have.
+         *
          *     Args:
          *         user_id: User ID to update
          *         request: Update details

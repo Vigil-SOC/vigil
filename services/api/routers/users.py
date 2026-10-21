@@ -55,13 +55,38 @@ def _can_assign_role(current_user: User, target_role: Role, session: Session) ->
     """Return True only if current_user holds every permission granted by target_role.
 
     Prevents a user with users.write from assigning a role that grants
-    more privileges than they themselves have.
+    more privileges than they themselves have. The same comparison covers the
+    account being edited: its current role is a privilege the caller must
+    already hold before they may change or delete that account.
     """
     current_perms = AuthService.get_user_permissions(current_user.user_id, session)
     for perm, granted in (target_role.permissions or {}).items():
         if granted and not current_perms.get(perm, False):
             return False
     return True
+
+
+def _require_privileges_cover_target(
+    current_user: User,
+    target: User,
+    session: Session,
+    *,
+    action: str,
+) -> None:
+    """Refuse ``action`` when ``target``'s role grants anything the caller lacks.
+
+    A missing role grants nothing, so it does not block. Callers may act on
+    their own account: they hold every permission their role grants.
+    """
+    role = session.query(Role).filter(Role.role_id == target.role_id).first()
+    if role is not None and not _can_assign_role(current_user, role, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Cannot {action} a user whose role grants "
+                "privileges you do not have"
+            ),
+        )
 
 
 @router.get("/")
@@ -267,6 +292,8 @@ def _apply_user_update(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
+    _require_privileges_cover_target(current_user, user, session, action="update")
+
     stale_reason = None
     if request.full_name is not None:
         user.full_name = request.full_name
@@ -320,6 +347,10 @@ async def update_user(
 ):
     """
     Update user information (requires users.write permission).
+
+    The caller's permissions must also cover the target account's current
+    role. Holding users.write is not enough to edit an account whose role
+    grants something the caller does not have.
 
     Args:
         user_id: User ID to update
@@ -398,6 +429,8 @@ def delete_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
+
+    _require_privileges_cover_target(current_user, user, session, action="delete")
 
     try:
         username = user.username
