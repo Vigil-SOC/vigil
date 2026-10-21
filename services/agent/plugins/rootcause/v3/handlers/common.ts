@@ -54,14 +54,17 @@ export class Vetter {
     }
     return out;
   }
-  // Refuting items whose cited searches all came back empty in a source with no record of the entities are a
-  // coverage gap, not refutation: dropped, and traced (see coverage.ts). Sequential: each probe takes the next ref.
+  // Refuting items whose cited searches all came back empty: a search in a source with no record of the entities
+  // is a coverage gap, not refutation, and is dropped from the item; an item left citing nothing is dropped. Both
+  // are traced (see coverage.ts). Sequential: each lookup takes the next ref.
   async gated(list: EvidenceDraft[], entities: string[]): Promise<EvidenceDraft[]> {
     const out: EvidenceDraft[] = [];
     for (const e of list) {
       const gap = e.polarity === "refutes" ? await coverageGap(this.ctx, e.toolCallIds, entities) : undefined;
-      if (gap) this.ctx.trace.write("rejected-evidence", { evidence: e.summary, toolCallIds: e.toolCallIds, reason: `coverage gap: ${gap.sourcetypes.join(", ")} holds no events on ${gap.entities.join(", ")}; empty searches there do not refute` });
-      else out.push(e);
+      if (!gap || gap.standing.length === e.toolCallIds.length) { out.push(e); continue; }
+      const reason = `coverage gap: ${gap.sourcetypes.join(", ")} holds no events on ${gap.entities.join(", ")}; empty searches there do not refute`;
+      this.ctx.trace.write("rejected-evidence", { evidence: e.summary, toolCallIds: e.toolCallIds.filter((id) => !gap.standing.includes(id)), reason, ...(gap.standing.length ? { kept: gap.standing } : {}) });
+      if (gap.standing.length) out.push({ ...e, toolCallIds: gap.standing, traceIds: this.traceIds(gap.standing) });
     }
     return out;
   }
