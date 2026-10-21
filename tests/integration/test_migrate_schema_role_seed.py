@@ -1,34 +1,24 @@
-"""``seed_default_roles`` against an empty ``roles`` table — issue #567.
+"""``seed_default_roles`` seeds ``roles`` from ``06_auth_tables.sql`` — #2587.
 
-``scripts/migrate_schema.py`` binds the permissions payload as ``:perms::jsonb``.
-SQLAlchemy's ``text()`` parser does not recognise a bind parameter immediately
-followed by the ``::`` cast operator, so it converts the *other* parameters to
-psycopg2's ``%(name)s`` style, leaves ``:perms::jsonb`` in the statement
-verbatim, and omits ``perms`` from the bound parameters entirely. PostgreSQL
-then receives a literal ``:`` and raises a syntax error.
+An older version of the migration seeded its own ``admin``/``analyst``/``viewer``
+rows. Nothing reads their permission keys, and the legacy ``Viewer`` name
+collides with the real seed on ``roles.name``, so ``role-admin`` never landed
+and bootstrap could not create the first account. The migration now seeds the
+five roles from the SQL file and removes the legacy rows no user holds.
 
-The migration only runs its ``INSERT`` when ``roles`` is empty, which is why no
-compose- or Helm-provisioned database hits it: ``database/init/06_auth_tables.sql``
-seeds that table. Databases built by ``create_all`` alone — dev/test
-databases, for example — do hit it.
-
-These tests use a scratch database containing *only* the ``roles`` table, taken
-verbatim from ``database/init/06_auth_tables.sql``. ``create_all`` is
-deliberately not used: it needs ``pg_trgm`` for the findings GIN index, and
-none of that is relevant to this statement.
-
-These tests call the migration function directly, which is also why the
-exception surfaces at all — ``run_migrations`` catches per migration.
+These tests use a scratch database holding only ``roles`` and a minimal
+``users``. ``create_all`` is deliberately not used: it needs ``pg_trgm`` for
+the findings GIN index, and none of that is relevant here.
 ``test_migrate_schema_ownership.py`` covers the runner.
 """
 
 import importlib.util
 import os
+import re
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import DBAPIError
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
 
@@ -37,8 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRATCH_DB = "vigil_test_role_seed"
 
 # Taken verbatim from database/init/06_auth_tables.sql so the test exercises the
-# real column types — in particular `permissions JSONB`, which is what the cast
-# in the migration exists for.
+# real constraints — in particular the UNIQUE name the legacy rows collide on.
 ROLES_DDL = """
 CREATE TABLE IF NOT EXISTS roles (
     role_id VARCHAR(50) PRIMARY KEY,
@@ -51,7 +40,26 @@ CREATE TABLE IF NOT EXISTS roles (
 );
 """
 
-EXPECTED_ROLE_IDS = {"admin", "analyst", "viewer"}
+# Just enough of users for its role_id FK.
+USERS_DDL = """
+CREATE TABLE IF NOT EXISTS users (
+    user_id VARCHAR(50) PRIMARY KEY,
+    role_id VARCHAR(50) NOT NULL REFERENCES roles(role_id)
+);
+"""
+
+AUTH_SQL = REPO_ROOT / "infra" / "database" / "init" / "06_auth_tables.sql"
+EXPECTED_ROLE_IDS = set(
+    re.findall(r"^\('(role-[\w-]+)'", AUTH_SQL.read_text(), re.MULTILINE)
+)
+
+# What the old migration seeded, names included: 'Viewer' is the collision.
+LEGACY_ROWS = """
+INSERT INTO roles (role_id, name, description, is_system_role) VALUES
+('admin', 'Administrator', 'Full system access', true),
+('analyst', 'Security Analyst', 'Can manage cases and findings', true),
+('viewer', 'Viewer', 'Read-only access', true)
+"""
 
 
 def _url(database: str) -> str:
@@ -107,11 +115,7 @@ def _load_migrate_schema():
 
 @pytest.fixture
 def empty_roles_db():
-    """A scratch database with an empty ``roles`` table and nothing else.
-
-    Empty is the whole point: ``seed_default_roles`` returns early when the
-    table has rows, so a seeded database never reaches the broken statement.
-    """
+    """A scratch database with empty ``roles`` and ``users`` tables."""
     admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
     with admin.connect() as c:
         c.execute(text(f"DROP DATABASE IF EXISTS {SCRATCH_DB} WITH (FORCE)"))
@@ -120,6 +124,7 @@ def empty_roles_db():
     scratch = create_engine(SCRATCH_URL)
     with scratch.connect() as c:
         c.execute(text(ROLES_DDL))
+        c.execute(text(USERS_DDL))
         c.commit()
 
     yield scratch
@@ -130,123 +135,41 @@ def empty_roles_db():
     admin.dispose()
 
 
-def test_seed_default_roles_inserts_the_three_default_roles(empty_roles_db):
-    """The migration runs to completion and the rows land.
-
-    Before the fix this fails at the first INSERT with
-    'syntax error at or near ":"' — the payload is never bound.
-    """
+def _migrate(engine, setup=()):
     migrate_schema = _load_migrate_schema()
-
-    with empty_roles_db.connect() as conn:
+    with engine.connect() as conn:
+        for statement in setup:
+            conn.execute(text(statement))
+        conn.commit()
         migrate_schema.seed_default_roles(conn)
         conn.commit()
-
-        rows = conn.execute(text("SELECT role_id FROM roles")).scalars().all()
-
-    assert set(rows) == EXPECTED_ROLE_IDS
+        return set(conn.execute(text("SELECT role_id FROM roles")).scalars())
 
 
-def test_seed_default_roles_stores_permissions_as_jsonb(empty_roles_db):
-    """The permissions payload arrives as queryable JSONB, not a string.
+def test_expected_ids_read_from_the_sql_file():
+    assert len(EXPECTED_ROLE_IDS) == 5 and "role-admin" in EXPECTED_ROLE_IDS
 
-    Asserting the row count alone would not catch a cast that binds but stores
-    the wrong type, so this reads a key back out through the JSONB operator.
-    """
-    migrate_schema = _load_migrate_schema()
 
+def test_empty_table_gets_the_five_roles(empty_roles_db):
+    assert _migrate(empty_roles_db) == EXPECTED_ROLE_IDS
+
+
+def test_unheld_legacy_rows_are_replaced_by_the_five(empty_roles_db):
+    assert _migrate(empty_roles_db, [LEGACY_ROWS]) == EXPECTED_ROLE_IDS
+
+
+def test_held_legacy_row_stays_and_nothing_is_seeded(empty_roles_db):
+    rows = _migrate(
+        empty_roles_db,
+        [LEGACY_ROWS, "INSERT INTO users VALUES ('u1', 'viewer')"],
+    )
+    assert rows == {"viewer"}
+
+
+def test_second_run_changes_nothing(empty_roles_db):
+    _migrate(empty_roles_db)
     with empty_roles_db.connect() as conn:
-        migrate_schema.seed_default_roles(conn)
+        conn.execute(text("DELETE FROM roles WHERE role_id = 'role-viewer'"))
         conn.commit()
-
-        admin_perms = conn.execute(
-            text("SELECT permissions FROM roles WHERE role_id = 'admin'")
-        ).scalar()
-
-        # Through the JSONB operator, so this fails if the column holds a
-        # JSON-encoded string rather than a JSONB object.
-        via_operator = conn.execute(
-            text(
-                "SELECT permissions ->> 'manage_users' FROM roles WHERE role_id = 'admin'"
-            )
-        ).scalar()
-
-    assert isinstance(admin_perms, dict)
-    assert admin_perms["admin"] is True
-    assert via_operator == "true"
-
-
-def test_seed_default_roles_marks_defaults_as_system_roles(empty_roles_db):
-    """`is_system_role` is bound too, and must not fall through to the default.
-
-    The column defaults to FALSE, so an unbound parameter here would be
-    invisible in a row-count assertion.
-    """
-    migrate_schema = _load_migrate_schema()
-
-    with empty_roles_db.connect() as conn:
-        migrate_schema.seed_default_roles(conn)
-        conn.commit()
-
-        flags = conn.execute(text("SELECT is_system_role FROM roles")).scalars().all()
-
-    assert flags == [True, True, True]
-
-
-def test_seed_default_roles_skips_a_populated_table(empty_roles_db):
-    """Characterisation: a seeded table is left alone.
-
-    This is why compose- and Helm-provisioned databases never hit the bug, and
-    it must keep holding after the fix.
-    """
-    migrate_schema = _load_migrate_schema()
-
-    with empty_roles_db.connect() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO roles (role_id, name, description) "
-                "VALUES ('role-admin', 'Administrator', 'pre-existing')"
-            )
-        )
-        conn.commit()
-
-        migrate_schema.seed_default_roles(conn)
-        conn.commit()
-
-        rows = conn.execute(text("SELECT role_id FROM roles")).scalars().all()
-
-    assert rows == ["role-admin"]
-
-
-def test_unfixed_paramstyle_would_leave_the_parameter_unbound(empty_roles_db):
-    """Pin the mechanism, so a regression is diagnosable rather than just red.
-
-    Re-creates the original statement inline. It must fail *and* the failure
-    must be the unbound-parameter one, not some unrelated SQL error — the
-    message names the stray ``:`` and psycopg2 reports only the parameters it
-    did bind.
-    """
-    original = text("""
-        INSERT INTO roles (role_id, name, description, permissions,
-                           is_system_role, created_at, updated_at)
-        VALUES (:role_id, :name, :desc, :perms::jsonb, :is_sys, now(), now())
-        ON CONFLICT (role_id) DO NOTHING
-        """)
-
-    # perms is absent on purpose: text() never recognised it as a parameter, so
-    # passing it raises a different error and hides the point.
-    assert "perms" not in original._bindparams
-
-    with empty_roles_db.connect() as conn:
-        with pytest.raises(DBAPIError) as excinfo:
-            conn.execute(
-                original,
-                {
-                    "role_id": "admin",
-                    "name": "Administrator",
-                    "desc": "Full system access",
-                    "is_sys": True,
-                },
-            )
-
-    assert 'syntax error at or near ":"' in str(excinfo.value)
+    # A populated table is left alone, so a role an operator deleted stays gone.
+    assert _migrate(empty_roles_db) == EXPECTED_ROLE_IDS - {"role-viewer"}
