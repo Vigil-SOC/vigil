@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -307,12 +308,14 @@ def test_rerun_is_idempotent(stack, enabled) -> None:
 
 
 def test_canary_no_secret_in_output_config_or_logs(stack, enabled) -> None:
-    values = [stack.secret("viewer_password"), stack.secret("api_key")]
+    password, api_key = stack.secret("viewer_password"), stack.secret("api_key")
+    # V2: the API key is X2's X-Medic-Key (32 bytes, base64url), not hex.
+    assert re.fullmatch(r"[0-9a-f]{64}", password)
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", api_key)
     config = stack.compose("config", medic=True).stdout
     logs = stack.compose("logs", "--no-color", medic=True).stdout
     settings = (stack.secrets_dir / "compose.env").read_text()
-    for value in values:
-        assert len(value) == 64
+    for value in (password, api_key):
         for where, text in [
             ("script stdout", enabled.stdout),
             ("script stderr", enabled.stderr),
