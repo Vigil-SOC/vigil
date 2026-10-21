@@ -447,11 +447,11 @@ dbInit:
   # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
   # Update this list when new init SQL lands, in filename order (the order
   # compose applies them); tests/unit/_ratchets/test_helm_db_init_sql_files.py
-  # fails until you do.
+  # fails until you do. Every file here must apply cleanly in one transaction:
+  # the Job fails on any error. The ratchet names the few files left out.
   sqlFiles:
     - 01_init_schema.sql
     - 04_config_tables.sql
-    - 05_case_management_extended.sql
     - 06_auth_tables.sql
     - 07_custom_agents.sql
     - 07_skills.sql
@@ -475,7 +475,6 @@ dbInit:
     - 25_nullable_finding_score_timestamp.sql
     - 26_episodic_memory.sql
     - 27_episodic_read_log.sql
-    - 28_case_closure_actor.sql
     - 29_episodic_distil_failures.sql
     - 30_approval_action_reversibility.sql
     - 30_vigil_app_role.sql
@@ -488,7 +487,6 @@ dbInit:
     - 36_workflow_runs_triggered_by_index.sql
     - 37_workflow_runs_outcome.sql
     - 38_custom_agent_fallback_model.sql
-    - 39_case_findings_finding_index.sql
     - 40_drop_custom_workflow_graph_layout.sql
     - 40_skill_reads.sql
     - 41_workflow_runs_progress.sql
