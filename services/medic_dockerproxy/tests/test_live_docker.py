@@ -45,6 +45,15 @@ def _docker_up() -> bool:
 if not _docker_up():
     pytest.skip("no live Docker Engine", allow_module_level=True)
 
+# The version the engine actually speaks. A newer prefix (the fixtures use
+# 1.54) is a 400 from the daemon, which is Docker's answer, not a proxy refusal.
+_API = subprocess.run(
+    ["docker", "version", "--format", "{{.Server.APIVersion}}"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.strip()
+
 
 def raw_docker(path: str) -> bytes:
     with socket.socket(socket.AF_UNIX) as s:
@@ -109,7 +118,7 @@ def body(resp: bytes) -> bytes:
     [
         "/_ping",
         "/containers/json",
-        "/v1.54/containers/json",
+        f"/v{_API}/containers/json",
         "/containers/json?all=1&filters=%7B%7D",
     ],
 )
@@ -156,8 +165,11 @@ def test_logs_non_follow(live):
 def test_events_type_forced_to_container(live):
     now = int(time.time())
     window = f"since={now - 600}&until={now}"
-    # Negative control: the fixture's `docker run` raised network events.
-    assert b'"Type":"network"' in raw_docker(f"/events?{window}")
+    # Negative control: `docker run` emits a non-container event, so the
+    # assertion below is not vacuous. API 1.48 (the CI runner) records the
+    # image pull and no network event; a newer engine records the network too.
+    raw = raw_docker(f"/events?{window}")
+    assert b'"Type":"image"' in raw or b'"Type":"network"' in raw
     st, resp = get(live, f"/events?{window}")
     assert st == 200
     assert b'"Type":"image"' not in body(resp) and b'"Type":"network"' not in body(resp)
