@@ -8,7 +8,7 @@ const login = vi.fn()
 const navigate = vi.fn()
 const requestPasswordReset = vi.fn()
 const bootstrapStatus = vi.fn(() => Promise.resolve({ data: { required: false } }))
-const bootstrapCreate = vi.fn(() => Promise.resolve({ data: {} }))
+const bootstrapCreate = vi.fn((_payload?: unknown) => Promise.resolve({ data: {} }))
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ login }),
