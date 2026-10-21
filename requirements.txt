@@ -81,7 +81,7 @@ respx>=0.21.0  # httpx mocking — required by tests/unit/test_elastic_service.p
 
 # Job Queue (ARQ + Redis)
 arq>=0.28.0
-redis>=5.0.0
+redis>=8.1.0
 
 # Agent-layer queue, on one wire format with the agent package's npm bullmq.
 # Capped below 2.16, which needs redis>=6 while arq needs redis<6.
