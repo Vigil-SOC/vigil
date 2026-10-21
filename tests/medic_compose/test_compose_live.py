@@ -68,6 +68,11 @@ class Stack:
         self.secrets_dir = home / "medic-secrets"
         self.env = clean_env(
             home,
+            # enable-compose.sh runs compose itself (V1): without these it acts
+            # on the default project, a developer's own stack, not this one.
+            COMPOSE_PROJECT_NAME=PROJECT,
+            VIGIL_MEDIC_COMPOSE_OVERRIDE=str(HERE / "compose.test.yml"),
+            POSTGRES_PASSWORD="S6PG" + secrets.token_hex(12),
             VIGIL_MEDIC_SECRETS_DIR=str(self.secrets_dir),
             MEDIC_S6_STUB_DIR=str(HERE),
             MEDIC_S6_CANARY=self.canary,
