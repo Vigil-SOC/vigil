@@ -441,7 +441,7 @@ services:
       KAFKA_SESSION_TIMEOUT_MS: ${KAFKA_SESSION_TIMEOUT_MS:-30000}
     ports:
       - "8081:8081"  # Webhook ingestion
-      - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
+      - "127.0.0.1:9090:9090"  # /metrics (unauthenticated; host-local only). Scraping from another host? Widen to "9090:9090"
       - "127.0.0.1:9091:9091"  # Health /health + /status (unauthenticated; host-local only)
     volumes:
       # Same State Directory, workdirs and detection rules as backend (see there).
