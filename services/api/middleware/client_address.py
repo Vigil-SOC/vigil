@@ -37,7 +37,7 @@ class _Trusted:
 @lru_cache(maxsize=8)
 def _compile(raw: str) -> _Trusted:
     trusted = _Trusted()
-    for item in raw.split(","):
+    for index, item in enumerate(raw.split(","), start=1):
         text = item.strip()
         if not text:
             continue
@@ -50,7 +50,8 @@ def _compile(raw: str) -> _Trusted:
             else:
                 trusted.ips.add(ipaddress.ip_address(text))
         except ValueError:
-            logger.error("VIGIL_TRUSTED_PROXIES ignores unparseable entry %r", text)
+            # The entry itself stays out of the log: it is operator config.
+            logger.error("VIGIL_TRUSTED_PROXIES ignores unparseable entry %d", index)
     return trusted
 
 
