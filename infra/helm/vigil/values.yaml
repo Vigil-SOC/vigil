@@ -703,6 +703,9 @@ secrets:
 config:
   # Development Mode — MUST be false in production.
   DEV_MODE: "false"
+  # The backend refuses to start with DEV_MODE=true when this is "production".
+  # Also labels telemetry and Sentry (deployment.environment).
+  ENVIRONMENT: "production"
 
   # Secrets / auth policy
   SECRETS_BACKEND: "dotenv"

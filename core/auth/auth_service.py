@@ -64,6 +64,20 @@ def _load_jwt_secret() -> str:
     )
 
 
+def _refuse_dev_mode_in_production() -> None:
+    # The auth bypass is never right on an install declared production; refuse
+    # at import so every process that loads auth fails closed.
+    settings = get_settings()
+    if settings.dev_mode and settings.environment.strip().lower() == "production":
+        raise RuntimeError(
+            "DEV_MODE=true bypasses authentication and is refused when "
+            "ENVIRONMENT=production. Unset DEV_MODE (or set it to false), or "
+            "unset ENVIRONMENT if this is not a production install."
+        )
+
+
+_refuse_dev_mode_in_production()
+
 # JWT Configuration
 JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
