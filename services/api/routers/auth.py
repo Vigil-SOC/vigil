@@ -114,6 +114,18 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class ProfileUpdateRequest(BaseModel):
+    """Signed-in user's own profile.
+
+    ``current_password`` is required when ``email`` names a different mailbox.
+    The password is a body field so it is not written to access logs.
+    """
+
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    current_password: Optional[str] = None
+
+
 class RefreshTokenRequest(BaseModel):
     """Refresh token request.
 
@@ -530,14 +542,39 @@ def get_current_user_info(
 
 
 def _apply_profile_update(
-    session: Session, user: User, full_name: Optional[str], email: Optional[str]
+    session: Session,
+    user: User,
+    full_name: Optional[str],
+    email: Optional[str],
+    current_password: Optional[str],
 ) -> tuple[bool, dict]:
-    """Apply a profile edit; return whether the email changed and the new payload."""
-    email_changed = False
-    if full_name:
-        user.full_name = full_name
+    """Apply a profile edit; return whether the email changed and the new payload.
 
-    if email:
+    The mailbox is checked before any column is written. A rejected email
+    change must not depend on the request transaction rolling the name back.
+    """
+    changing_email = bool(email) and email.casefold() != user.email.casefold()
+    if changing_email:
+        # Password reset is mailed to the address on the account, so a live
+        # session is not enough to point that address somewhere else.
+        # 400, not 401: the session is valid and a body field is wrong. A 401
+        # would make the web client refresh and retry, spending two rate-limit slots.
+        if not current_password or not AuthService.verify_password(
+            current_password, user.password_hash
+        ):
+            logger.warning(
+                "Rejected email change for %s: current password %s",
+                user.username,
+                "missing" if not current_password else "incorrect",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Current password is incorrect"
+                    if current_password
+                    else "Current password is required to change the email address"
+                ),
+            )
         existing = (
             session.query(User)
             .filter(User.email == email, User.user_id != user.user_id)
@@ -548,40 +585,56 @@ def _apply_profile_update(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already in use",
             )
+
+    if full_name:
+        user.full_name = full_name
+    if changing_email:
         user.email = email
         user.is_verified = False
-        email_changed = True
 
     # Flush so the read-back sees server defaults; the request's unit
     # of work commits.
     session.flush()
     session.refresh(user)
-    return email_changed, UserSchema.dump(user)
+    return changing_email, UserSchema.dump(user)
 
 
 @router.put("/me")
+@limiter.limit("5/minute")
 async def update_current_user(
-    full_name: Optional[str] = None,
-    email: Optional[EmailStr] = None,
-    *,
+    request: Request,
+    body: ProfileUpdateRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
     """
-    Update current user profile.
+    Update the signed-in user's profile.
 
     Args:
-        full_name: New full name
-        email: New email
+        request: FastAPI request (used by the rate limiter).
+        body: New name, email, and — when the email changes — current password.
         current_user: Current authenticated user
         session: Database session
 
     Returns:
         Updated user information
     """
+    # The old shape took these as query parameters. A password must not travel
+    # in the URL, and a query-string email would skip the body check below.
+    if "email" in request.query_params or "full_name" in request.query_params:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Send profile fields in the JSON body",
+        )
+
     try:
         email_changed, payload = await asyncio.to_thread(
-            _apply_profile_update, session, current_user, full_name, email
+            _apply_profile_update,
+            session,
+            current_user,
+            body.full_name,
+            body.email,
+            body.current_password,
         )
 
         if email_changed:

@@ -946,11 +946,11 @@ export interface paths {
         get: operations["get_api_auth_me"];
         /**
          * Update Current User
-         * @description Update current user profile.
+         * @description Update the signed-in user's profile.
          *
          *     Args:
-         *         full_name: New full name
-         *         email: New email
+         *         request: FastAPI request (used by the rate limiter).
+         *         body: New name, email, and — when the email changes — current password.
          *         current_user: Current authenticated user
          *         session: Database session
          *
@@ -10137,6 +10137,21 @@ export interface components {
             /** Priority */
             priority: string;
         };
+        /**
+         * ProfileUpdateRequest
+         * @description Signed-in user's own profile.
+         *
+         *     ``current_password`` is required when ``email`` names a different mailbox.
+         *     The password is a body field so it is not written to access logs.
+         */
+        ProfileUpdateRequest: {
+            /** Current Password */
+            current_password?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Full Name */
+            full_name?: string | null;
+        };
         /** ProgressUpdate */
         ProgressUpdate: {
             /** Iteration */
@@ -13008,17 +13023,18 @@ export interface operations {
     };
     put_api_auth_me: {
         parameters: {
-            query?: {
-                full_name?: string | null;
-                email?: string | null;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
             };
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
