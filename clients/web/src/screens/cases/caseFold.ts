@@ -239,6 +239,14 @@ export interface ChainStep {
   proven: boolean
 }
 
+/** One account the root-cause report named (`AccountRow` in services/agent plugins/rootcause/v3/report.ts). */
+export interface AccountRow {
+  name: string
+  role: 'attacker' | 'victim' | 'legitimate'
+  usedBy?: string[]
+  seenAs?: string[]
+}
+
 /** A run whose chain stays on Watch a run (root cause): its head and chain. The row fields stay empty so every reader shows nothing for it. */
 interface HeadFold {
   kind: 'head'
@@ -253,6 +261,8 @@ interface HeadFold {
   /** The recorded chain in projection order; empty when absent. */
   steps: ChainStep[]
   proven: number
+  /** The accounts the report named, in projection order; empty when absent. */
+  accounts: AccountRow[]
   doing: ''
   worker: ''
   moves: MoveRow[]
@@ -660,6 +670,28 @@ function stepsOf(raw: unknown): ChainStep[] {
   })
 }
 
+const ROLES = ['attacker', 'victim', 'legitimate'] as const
+
+function strings(raw: unknown): string[] | null {
+  return Array.isArray(raw) && raw.every((v) => typeof v === 'string') ? raw : null
+}
+
+// Only `account.accounts`: `account.disposition` is the report's sentence, not the head's word.
+function accountsOf(raw: unknown): AccountRow[] {
+  if (!raw || typeof raw !== 'object') return []
+  const rows = (raw as Record<string, unknown>).accounts
+  if (!Array.isArray(rows)) return []
+  return rows.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    const role = ROLES.find((r) => r === o.role)
+    if (typeof o.name !== 'string' || !role) return []
+    const usedBy = strings(o.usedBy)
+    const seenAs = strings(o.seenAs)
+    return [{ name: o.name, role, ...(usedBy ? { usedBy } : {}), ...(seenAs ? { seenAs } : {}) }]
+  })
+}
+
 /** The chain oldest first. `cause_id` points at the earlier step, so the walk goes forward from the origin; steps it does not reach keep projection order at the end. */
 export function chainOldestFirst(steps: ChainStep[]): ChainStep[] {
   const start = steps.find((s) => s.origin) ?? steps.find((s) => s.cause_id === null)
@@ -686,6 +718,7 @@ function asHead(raw: Record<string, unknown>, run: RunMeta): HeadFold {
     disposition: dispositionOf(raw),
     steps,
     proven: num(raw.proven) ?? steps.filter((s) => s.proven).length,
+    accounts: accountsOf(raw.account),
     doing: '',
     worker: '',
     moves: [],
