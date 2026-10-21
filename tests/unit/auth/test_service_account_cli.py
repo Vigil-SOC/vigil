@@ -213,6 +213,24 @@ def test_waits_for_the_viewer_role():
     assert "role-viewer" in err
 
 
+def test_status_line_keeps_the_name_and_caps_a_long_retired_count():
+    """The line names the account. A count past 9 does not interpolate the int."""
+    out = io.StringIO()
+    sa._write_status(out, NAME, "created", 0)
+    assert out.getvalue() == f"service account {NAME}: created\n"
+
+    out = io.StringIO()
+    sa._write_status(out, NAME, "rotated", 1)
+    assert out.getvalue() == f"service account {NAME}: rotated (retired 1 other)\n"
+
+    out = io.StringIO()
+    sa._write_status(out, NAME, "unchanged", 10)
+    assert (
+        out.getvalue()
+        == f"service account {NAME}: unchanged (retired 10 or more other)\n"
+    )
+
+
 def test_output_never_holds_the_password(caplog):
     caplog.set_level("DEBUG")
     for stdin in (PASSWORD + "\n", "c" * 64 + "\n"):
