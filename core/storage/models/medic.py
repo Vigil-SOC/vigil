@@ -13,7 +13,7 @@ from core.storage.models.base import Base
 class MedicLastSeen(Base):
     """One row, written only by the backend's poller (core/platform/medic_last_seen.py).
 
-    Every time is the backend's clock. ``infra/database/init/43_medic_last_seen.sql``
+    Every time is the backend's clock. ``infra/database/init/44_medic_last_seen.sql``
     and ``scripts/migrate_schema.py`` build the same table for existing databases.
     """
 
