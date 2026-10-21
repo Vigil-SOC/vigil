@@ -98,16 +98,21 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
   if (!ids) return { refused: `${next.move} is not available now.` };
   let target = next.target?.trim() ?? "";
   if (move === "theorize" || move === "connect") target = ids[0]!;
-  // An event named by its label: one reported this turn (no id yet) or an earlier turn's; this turn's wins a duplicate.
+  // A pivot named by the event its boundary hangs off: that event's open boundary.
+  const boundaryOf = (id: string) => (move === "pivot" && g.nodes[id]?.kind === "action" ? ids.find((m) => g.nodes[m]!.originNodeId === id) : undefined);
+  // An event named by its label: one reported this turn (no id yet) or an earlier turn's. Of several, one the move
+  // applies to wins, then an exact label over a prefix, then this turn's.
   let byLabel: string | undefined;
   if (!ids.includes(target) && !g.nodes[target] && !g.edges[target]) {
     const want = target.toLowerCase();
-    const named = (n?: GraphNode) => !!n && !!want && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60)));
-    const hit = created.map((id) => g.nodes[id]).find(named) ?? Object.values(g.nodes).find(named);
+    const exact = (n: GraphNode) => n.label.toLowerCase() === want;
+    const named = (n?: GraphNode): n is GraphNode => !!n && !!want && (exact(n) || n.label.toLowerCase().startsWith(want.slice(0, 60)));
+    const hits = [...new Set([...created.map((id) => g.nodes[id]), ...Object.values(g.nodes)])].filter(named);
+    const ranked = [...hits.filter(exact), ...hits.filter((n) => !exact(n))];
+    const hit = ranked.find((n) => ids.includes(n.id) || !!boundaryOf(n.id)) ?? ranked[0];
     if (hit) target = byLabel = hit.id;
   }
-  // A pivot named by the event its boundary hangs off: that event's open boundary.
-  if (move === "pivot" && g.nodes[target]?.kind === "action") target = ids.find((m) => g.nodes[m]!.originNodeId === target) ?? target;
+  target = boundaryOf(target) ?? target;
   // A prediction named as theorize wrote it ("P3", "H1.P3"): the latest round's prediction with that id.
   if (move === "test" && !ids.includes(target)) {
     const key = (x: string) => x.toUpperCase().replace(/[^A-Z0-9]+/g, ".");

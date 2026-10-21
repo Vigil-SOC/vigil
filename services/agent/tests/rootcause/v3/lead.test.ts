@@ -32,6 +32,19 @@ describe("lead", () => {
     // N1 is the symptom: branch is not offered on it, even when it is named by label.
     expect(resolveNext({ move: "branch", target: g.nodes.N1!.label }, g, cfg, 3, []).refused).toMatch(/branch N1 \(named by label\) is not available: branch does not apply to it/);
   });
+  it("of several events with one label, takes one the move applies to", () => {
+    const g = seeded();
+    const r = apply(g, { addNodes: [node("c", { label: g.nodes.N1!.label, domain: "proxy", evidence: [ev("direct")] })] }, 2);
+    const id = Object.values(r.idMap)[0]!;
+    // N1 comes first in the graph but is the symptom, where branch is not offered.
+    expect(resolveNext({ move: "branch", target: g.nodes.N1!.label }, g, cfg, 3, []).decision?.targetId).toBe(id);
+  });
+  it("prefers an exact label over an earlier event whose label it is a prefix of", () => {
+    const g = seeded();
+    apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a, then chmod", evidence: [ev("direct")] })] }, 1);
+    const exact = Object.values(apply(g, { addNodes: [node("d", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] }, 2).idMap)[0]!;
+    expect(resolveNext({ move: "branch", target: "curl of setup.sh on node-a" }, g, cfg, 3, []).decision?.targetId).toBe(exact);
+  });
   it("lists no branch from the symptom and no expand past the attempt cap", () => {
     const g = seeded();
     g.nodes.N1!.expandAttempts = cfg.maxExpandAttempts + 1;
