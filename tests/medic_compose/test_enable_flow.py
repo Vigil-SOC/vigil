@@ -95,7 +95,13 @@ class Run:
         return [c for c in self.calls() if c[:1] == ["compose"] and "version" not in c]
 
     def stdins(self) -> list[str]:
-        return [p.read_text() for p in sorted(self.fake.glob("stdin.*"))]
+        # The fake names each pipe stdin.<call index>. Lexical order puts
+        # stdin.15 before stdin.6, so the newest pipe would not come last.
+        files = sorted(
+            self.fake.glob("stdin.*"),
+            key=lambda path: int(path.name.split(".", 1)[1]),
+        )
+        return [path.read_text() for path in files]
 
     def secret(self, name: str) -> str:
         return (self.secrets / name).read_text().strip()

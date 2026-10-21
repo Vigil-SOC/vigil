@@ -33,10 +33,26 @@ MEDIC_ON = (
 def chart(tmp_path_factory) -> Path:
     dest = tmp_path_factory.mktemp("chart") / "vigil"
     shutil.copytree(CHART, dest, ignore=shutil.ignore_patterns("medic-tests"))
+    # A local `helm dependency build` leaves charts/ here. CI does not, and
+    # those subcharts fail to render. The test only needs this chart.
+    shutil.rmtree(dest / "charts", ignore_errors=True)
     meta = yaml.safe_load((dest / "Chart.yaml").read_text())
     meta.pop("dependencies", None)
     (dest / "Chart.yaml").write_text(yaml.safe_dump(meta))
     (dest / "Chart.lock").unlink(missing_ok=True)
+    # helm template does not print NOTES.txt, and helm install --dry-run=client
+    # still calls the cluster (Helm 3.15 IsReachable). .Files cannot read
+    # templates/, so render a copy through tpl.
+    (dest / "notes-src.txt").write_text((dest / "templates" / "NOTES.txt").read_text())
+    (dest / "templates" / "zz-notes-capture.yaml").write_text(
+        "apiVersion: v1\n"
+        "kind: ConfigMap\n"
+        "metadata:\n"
+        "  name: notes-capture\n"
+        "data:\n"
+        "  notes: |\n"
+        '{{ tpl (.Files.Get "notes-src.txt") . | nindent 4 }}\n'
+    )
     return dest
 
 
@@ -87,26 +103,15 @@ def test_backend_flag_follows_medic_enabled(chart, sets, expected) -> None:
 
 
 def _notes(chart: Path, *sets: str) -> str:
-    out = subprocess.run(
-        [
-            "helm",
-            "install",
-            "t",
-            str(chart),
-            "--dry-run=client",
-            "--namespace",
-            "ns",
-            # The chart has no default Postgres password (#2621).
-            "--set",
-            "secrets.postgresPassword=test-password",
-            *[a for s in sets for a in ("--set", s)],
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+    out = _helm(
+        chart,
+        "template",
+        "t",
+        "--show-only",
+        "templates/zz-notes-capture.yaml",
+        *[a for s in sets for a in ("--set", s)],
     )
-    assert out.returncode == 0, out.stderr
-    return out.stdout.split("NOTES:", 1)[1]
+    return yaml.safe_load(out)["data"]["notes"]
 
 
 def test_notes_give_the_account_step_only_when_medic_is_on(chart) -> None:
