@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -55,6 +56,9 @@ class User(Base):
     mfa_recovery_codes: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list
     )
+    # Last accepted TOTP time step (unix_time // 30); that step and earlier
+    # ones are refused so a code works once (RFC 6238 §5.2).
+    mfa_last_totp_step: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     # Session tracking
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

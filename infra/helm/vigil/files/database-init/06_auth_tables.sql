@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
     mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_secret VARCHAR(255),
     mfa_recovery_codes JSONB NOT NULL DEFAULT '[]',
+    mfa_last_totp_step BIGINT,
     last_login TIMESTAMP,
     login_count INTEGER NOT NULL DEFAULT 0,
     failed_login_count INTEGER NOT NULL DEFAULT 0,
@@ -49,6 +50,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_last_totp_step BIGINT;
 
 CREATE INDEX IF NOT EXISTS idx_user_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_user_email ON users(email);
