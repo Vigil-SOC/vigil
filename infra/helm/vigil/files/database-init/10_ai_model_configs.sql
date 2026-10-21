@@ -34,5 +34,3 @@ COMMENT ON COLUMN ai_model_configs.component IS
     'chat_default | triage | investigation | summarization | reporting';
 COMMENT ON COLUMN ai_model_configs.settings IS
     'Component-specific overrides (max_tokens, thinking_budget, temperature)';
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON ai_model_configs TO deeptempo;

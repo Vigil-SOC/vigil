@@ -37,7 +37,13 @@ from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
 from core.response.approval_service import APPROVAL_CONFIG_KEY
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.secrets import get_secret, set_secret
+from core.secrets import (
+    SECRET_WRITE_REFUSED_DETAIL,
+    get_secret,
+    secret_write_failure_detail,
+    secret_writes_refused,
+    set_secret,
+)
 from core.secrets_manager import get_secrets_manager
 from core.skills.skill_library import (
     is_bundled,
@@ -283,7 +289,10 @@ def set_claude_config(config: ClaudeConfig):
     # Use standard environment variable name
     success = set_secret("CLAUDE_API_KEY", config.api_key)
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to save API key")
+        raise HTTPException(
+            status_code=500,
+            detail=secret_write_failure_detail("Failed to save API key"),
+        )
 
     # GH #88: keep the new llm_provider_configs table in sync so the
     # Settings "AI Config" tab and the legacy endpoint agree on the
@@ -402,6 +411,20 @@ def set_s3_config(
         "aws_profile": config.aws_profile,
     }
 
+    # Only overwrite credentials if new values were provided. Written before the
+    # config so a refused write does not leave S3 half-configured.
+    creds = {}
+    if config.access_key_id:
+        creds["AWS_ACCESS_KEY_ID"] = config.access_key_id
+    if config.secret_access_key:
+        creds["AWS_SECRET_ACCESS_KEY"] = config.secret_access_key
+    if config.session_token:
+        creds["AWS_SESSION_TOKEN"] = config.session_token
+    elif config.access_key_id:
+        # Clear session token when new non-STS credentials are provided
+        creds["AWS_SESSION_TOKEN"] = ""
+    _set_secrets_or_raise(creds, "S3 credentials")
+
     # Save to database
     config_service = _for_user(current_user)
     success = config_service.set_integration_config(
@@ -421,18 +444,17 @@ def set_s3_config(
 
     _mirror_to_file("s3_config.json", config_data)
 
-    # Only overwrite credentials if new values were provided
-    if config.access_key_id:
-        set_secret("AWS_ACCESS_KEY_ID", config.access_key_id)
-    if config.secret_access_key:
-        set_secret("AWS_SECRET_ACCESS_KEY", config.secret_access_key)
-    if config.session_token:
-        set_secret("AWS_SESSION_TOKEN", config.session_token)
-    elif config.access_key_id:
-        # Clear session token when new non-STS credentials are provided
-        set_secret("AWS_SESSION_TOKEN", "")
-
     return {"success": True, "message": "S3 configuration saved"}
+
+
+def _set_secrets_or_raise(values: dict[str, str], what: str) -> None:
+    """Write each secret, failing the request on the first that is not stored."""
+    for key, value in values.items():
+        if not set_secret(key, value):
+            raise HTTPException(
+                status_code=500,
+                detail=secret_write_failure_detail(f"Failed to save {what} ({key})"),
+            )
 
 
 # Maps the form field names exposed in the UI to the secrets-store keys
@@ -509,31 +531,24 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
 
     # Non-secret fields — always overwrite so disabling a setting
     # actually clears the stored value.
-    set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_type"], proxy_type)
-    set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_host"], config.proxy_host or "")
-    set_secret(
-        _PLATFORM_DB_PROXY_KEYS["proxy_port"],
-        str(config.proxy_port) if config.proxy_port else "",
-    )
-    set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_username"], config.proxy_username or "")
-    set_secret(
-        _PLATFORM_DB_PROXY_KEYS["ssh_private_key_path"],
-        config.ssh_private_key_path or "",
-    )
-    set_secret(
-        _PLATFORM_DB_PROXY_KEYS["verify_proxy_tls"],
-        "true" if config.verify_proxy_tls else "false",
-    )
-
+    values = {
+        "proxy_type": proxy_type,
+        "proxy_host": config.proxy_host or "",
+        "proxy_port": str(config.proxy_port) if config.proxy_port else "",
+        "proxy_username": config.proxy_username or "",
+        "ssh_private_key_path": config.ssh_private_key_path or "",
+        "verify_proxy_tls": "true" if config.verify_proxy_tls else "false",
+    }
     # Secret fields — only overwrite when caller supplied a non-empty
     # value, matching the integrations-config convention.
     if config.proxy_password:
-        set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_password"], config.proxy_password)
+        values["proxy_password"] = config.proxy_password
     if config.ssh_key_passphrase:
-        set_secret(
-            _PLATFORM_DB_PROXY_KEYS["ssh_key_passphrase"],
-            config.ssh_key_passphrase,
-        )
+        values["ssh_key_passphrase"] = config.ssh_key_passphrase
+    _set_secrets_or_raise(
+        {_PLATFORM_DB_PROXY_KEYS[k]: v for k, v in values.items()},
+        "platform DB proxy configuration",
+    )
 
     return {
         "success": True,
@@ -851,6 +866,15 @@ def set_integrations_config(
                     f"enter its credential again ({', '.join(missing)}) to save."
                 ),
             )
+
+    # A per-pod state directory would keep the credential on one pod until it
+    # restarts; refuse before anything is written.
+    if secret_writes_refused() and any(
+        value
+        for integration_id, raw_config in config.integrations.items()
+        for value in split_secrets(integration_id, raw_config)[0].values()
+    ):
+        raise HTTPException(status_code=500, detail=SECRET_WRITE_REFUSED_DETAIL)
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
@@ -1268,7 +1292,10 @@ def set_postgresql_config(config: PostgreSQLConfig):
         }
     else:
         raise HTTPException(
-            status_code=500, detail="Failed to save PostgreSQL connection string"
+            status_code=500,
+            detail=secret_write_failure_detail(
+                "Failed to save PostgreSQL connection string"
+            ),
         )
 
 
@@ -1768,7 +1795,10 @@ def set_darktrace_config(
     if config.webhook_secret is not None and config.webhook_secret != "":
         if not set_secret("DARKTRACE_WEBHOOK_SECRET", config.webhook_secret):
             raise HTTPException(
-                status_code=500, detail="Failed to save Darktrace webhook secret"
+                status_code=500,
+                detail=secret_write_failure_detail(
+                    "Failed to save Darktrace webhook secret"
+                ),
             )
     return {"success": True, "message": "Darktrace config saved"}
 

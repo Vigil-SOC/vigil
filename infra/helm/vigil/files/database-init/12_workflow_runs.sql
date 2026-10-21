@@ -65,7 +65,3 @@ COMMENT ON COLUMN workflow_runs.workflow_source IS 'file = workflows/*/WORKFLOW.
 COMMENT ON COLUMN workflow_runs.skill_tools_available IS 'Snapshot of active skill_* tool names at run-start so rerun results are reproducible when the skill set changes.';
 
 COMMENT ON TABLE  workflow_run_phases IS 'Reserved for phase-by-phase workflow execution (#128). Rows are only written once phase-level execution lands; until then, runs surface at the workflow_runs level only.';
-
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON workflow_runs        TO deeptempo;
-GRANT SELECT, INSERT, UPDATE, DELETE ON workflow_run_phases  TO deeptempo;
