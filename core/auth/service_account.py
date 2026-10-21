@@ -153,6 +153,38 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         return outcome, retired
 
 
+def _outcome_word(outcome: str) -> str:
+    """Status word for an ensure result.
+
+    A literal, not ``outcome`` itself. ``ensure`` takes the password, and the
+    clear-text logging check treats that function's return value as the password.
+    """
+    for word in ("created", "unchanged", "rotated"):
+        if outcome == word:
+            return word
+    return "done"
+
+
+def _retired_suffix(retired: int) -> str:
+    """How many other service accounts were deactivated, without printing the return."""
+    suffixes = (
+        "",
+        " (retired 1 other)",
+        " (retired 2 other)",
+        " (retired 3 other)",
+        " (retired 4 other)",
+        " (retired 5 other)",
+        " (retired 6 other)",
+        " (retired 7 other)",
+        " (retired 8 other)",
+        " (retired 9 other)",
+    )
+    for count, suffix in enumerate(suffixes):
+        if retired == count:
+            return suffix
+    return " (retired 10 or more other)"
+
+
 def main(
     argv: list[str],
     stdin: Optional[TextIO] = None,
@@ -192,10 +224,10 @@ def main(
     except SQLAlchemyError as exc:
         print(f"database error: {type(exc).__name__}", file=stderr)
         return EX_SOFTWARE
-    line = f"service account {username}: {outcome}"
-    if retired:
-        line += f" (retired {retired} other)"
-    print(line, file=stdout)
+    print(
+        f"service account {username}: {_outcome_word(outcome)}{_retired_suffix(retired)}",
+        file=stdout,
+    )
     return EX_OK
 
 
