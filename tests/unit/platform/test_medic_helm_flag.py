@@ -87,26 +87,29 @@ def test_backend_flag_follows_medic_enabled(chart, sets, expected) -> None:
 
 
 def _notes(chart: Path, *sets: str) -> str:
-    out = subprocess.run(
-        [
-            "helm",
-            "install",
-            "t",
-            str(chart),
-            "--dry-run=client",
-            "--namespace",
-            "ns",
-            # The chart has no default Postgres password (#2621).
-            "--set",
-            "secrets.postgresPassword=test-password",
-            *[a for s in sets for a in ("--set", s)],
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+    # `helm install --dry-run` asks a cluster for its version on Helm 3 (CI
+    # pins v3), and `helm template` never prints NOTES.txt. So the copy wraps
+    # NOTES.txt in a named template and renders it into a ConfigMap.
+    templates = chart / "templates"
+    source = (templates / "NOTES.txt").read_text()
+    (templates / "_notes_under_test.tpl").write_text(
+        '{{- define "notes-under-test" -}}' + source + "{{- end -}}"
     )
-    assert out.returncode == 0, out.stderr
-    return out.stdout.split("NOTES:", 1)[1]
+    (templates / "notes-under-test.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-under-test\n"
+        'data:\n  notes: {{ include "notes-under-test" . | toJson }}\n'
+    )
+    out = _helm(
+        chart,
+        "template",
+        "t",
+        "--namespace",
+        "ns",
+        "--show-only",
+        "templates/notes-under-test.yaml",
+        *[a for s in sets for a in ("--set", s)],
+    )
+    return yaml.safe_load(out)["data"]["notes"]
 
 
 def test_notes_give_the_account_step_only_when_medic_is_on(chart) -> None:

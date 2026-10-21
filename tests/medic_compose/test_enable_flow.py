@@ -95,7 +95,10 @@ class Run:
         return [c for c in self.calls() if c[:1] == ["compose"] and "version" not in c]
 
     def stdins(self) -> list[str]:
-        return [p.read_text() for p in sorted(self.fake.glob("stdin.*"))]
+        # By call number: GNU wc pads nothing, so "stdin.12" sorts before
+        # "stdin.9" as text (BSD wc's padding hid that on macOS).
+        files = self.fake.glob("stdin.*")
+        return [p.read_text() for p in sorted(files, key=lambda p: int(p.suffix[1:]))]
 
     def secret(self, name: str) -> str:
         return (self.secrets / name).read_text().strip()
