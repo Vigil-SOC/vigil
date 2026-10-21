@@ -92,6 +92,11 @@ LOCKOUT_DURATION_MINUTES = get_settings().auth_lockout_duration_minutes
 PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
 
 
+def _account_is_locked(user) -> bool:
+    until = getattr(user, "locked_until", None)
+    return until is not None and until > utcnow()
+
+
 class AccountLockedError(Exception):
     """Raised when authentication is refused because the account is locked."""
 
@@ -314,6 +319,31 @@ class AuthService:
                 )
 
     @staticmethod
+    def _lock_savepoint(session: Session):
+        """Savepoint around a row lock, or None for a session that is not real.
+
+        A wrong MFA code is counted in its own transaction, the same way a
+        wrong password is. That transaction cannot take the row while this
+        one holds FOR UPDATE, and a savepoint rollback is what releases the
+        lock. Unit tests pass a fake session; there is no second connection
+        to commit on, and the caller is not about to roll a real 401 back.
+        """
+        if not isinstance(session, Session):
+            return None
+        return session.begin_nested()
+
+    @staticmethod
+    def _close_savepoint(nested) -> None:
+        if nested is not None and getattr(nested, "is_active", False):
+            nested.commit()
+
+    @staticmethod
+    def _count_mfa_failure(user_id: str, username: str) -> None:
+        """Record a wrong code after the row lock has been released."""
+        AuthService._record_failed_attempt(user_id, utcnow())
+        logger.warning("Invalid MFA code for user: %s", username)
+
+    @staticmethod
     @default_on_error(None)
     def setup_mfa(user_id: str, session: Optional[Session] = None) -> Optional[str]:
         with unit_of_work(session) as session:
@@ -347,27 +377,45 @@ class AuthService:
             - [] if the code is valid but MFA was already enabled (no reissue)
             - None if there is no pending secret or the code is invalid
         """
+        failed: Optional[tuple[str, str]] = None
+        result: Optional[List[str]] = None
         with unit_of_work(session) as session:
-            user = AuthService._lock_user(session, user_id)
-            if not user or not user.mfa_secret:
-                return None
-
+            nested = AuthService._lock_savepoint(session)
             try:
-                valid = AuthService._accept_totp(user, code)
-            except MFASecretDecryptionError:
-                return None  # already logged at ERROR with the cause
-            if not valid:
-                return None
-
-            if user.mfa_enabled:
-                # Already enabled — codes were issued at enable time, don't
-                # silently reissue. Use the regenerate endpoint to rotate.
-                return []
-
-            user.mfa_enabled = True
-            codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
-            logger.info(f"MFA enabled for user: {user.username}")
-            return codes
+                user = AuthService._lock_user(session, user_id)
+                if not user or not user.mfa_secret or _account_is_locked(user):
+                    pass
+                else:
+                    try:
+                        valid = AuthService._accept_totp(user, code)
+                    except MFASecretDecryptionError:
+                        valid = None  # already logged at ERROR with the cause
+                    if valid is None:
+                        pass
+                    elif not valid:
+                        if nested is not None:
+                            failed = (user.user_id, user.username)
+                    elif user.mfa_enabled:
+                        # Already enabled — codes were issued at enable time,
+                        # don't silently reissue. Use regenerate to rotate.
+                        result = []
+                    else:
+                        user.mfa_enabled = True
+                        user.failed_login_count = 0
+                        user.locked_until = None
+                        codes, user.mfa_recovery_codes = (
+                            AuthService._generate_recovery_codes()
+                        )
+                        logger.info(f"MFA enabled for user: {user.username}")
+                        result = codes
+            finally:
+                if failed is not None and nested is not None:
+                    nested.rollback()
+                else:
+                    AuthService._close_savepoint(nested)
+        if failed:
+            AuthService._count_mfa_failure(failed[0], failed[1])
+        return result
 
     @staticmethod
     @default_on_error(None)
@@ -397,39 +445,53 @@ class AuthService:
         Enabling MFA is handled by enable_mfa(); this method assumes MFA is
         already enabled and only validates the supplied code.
         """
+        failed: Optional[tuple[str, str]] = None
+        accepted = False
         with unit_of_work(session) as session:
-            # Locked so two requests carrying the same code are serialised:
-            # the second sees the consumed recovery code / stored TOTP step.
-            user = AuthService._lock_user(session, user_id)
-            if not user or not user.mfa_secret:
-                return False
-
-            # Try TOTP first. An undecryptable secret must not block recovery
-            # codes: they are bcrypt hashes and do not depend on the key.
+            nested = AuthService._lock_savepoint(session)
             try:
-                if AuthService._accept_totp(user, code):
-                    return True
-            except MFASecretDecryptionError:
-                pass  # already logged at ERROR with the cause
+                # Locked so two requests carrying the same code are serialised:
+                # the second sees the consumed recovery code / stored TOTP step.
+                user = AuthService._lock_user(session, user_id)
+                if not user or not user.mfa_secret or _account_is_locked(user):
+                    return False
 
-            # Try recovery codes (one-time use)
-            recovery_codes = list(user.mfa_recovery_codes or [])
-            code_bytes = code.strip().upper().encode()
-            for i, hashed in enumerate(recovery_codes):
+                # Try TOTP first. An undecryptable secret must not block recovery
+                # codes: they are bcrypt hashes and do not depend on the key.
                 try:
-                    if bcrypt.checkpw(code_bytes, hashed.encode()):
-                        recovery_codes.pop(i)
-                        user.mfa_recovery_codes = recovery_codes
-                        logger.info(
-                            "Recovery code used for user: %s (%d remaining)",
-                            user.username,
-                            len(recovery_codes),
-                        )
-                        return True
-                except Exception:
-                    continue
-
-            return False
+                    totp_ok = AuthService._accept_totp(user, code)
+                except MFASecretDecryptionError:
+                    totp_ok = False  # already logged at ERROR with the cause
+                if totp_ok:
+                    accepted = True
+                else:
+                    recovery_codes = list(user.mfa_recovery_codes or [])
+                    code_bytes = code.strip().upper().encode()
+                    for i, hashed in enumerate(recovery_codes):
+                        try:
+                            if bcrypt.checkpw(code_bytes, hashed.encode()):
+                                recovery_codes.pop(i)
+                                user.mfa_recovery_codes = recovery_codes
+                                logger.info(
+                                    "Recovery code used for user: %s (%d remaining)",
+                                    user.username,
+                                    len(recovery_codes),
+                                )
+                                accepted = True
+                                break
+                        except Exception:
+                            continue
+                    if not accepted and nested is not None:
+                        failed = (user.user_id, user.username)
+            finally:
+                if failed is not None and nested is not None:
+                    nested.rollback()
+                else:
+                    AuthService._close_savepoint(nested)
+        if failed:
+            # The savepoint is already closed; count on a fresh transaction.
+            AuthService._count_mfa_failure(failed[0], failed[1])
+        return accepted
 
     @staticmethod
     @default_on_error(False)
@@ -449,6 +511,8 @@ class AuthService:
             user.mfa_enabled = False
             user.mfa_secret = None
             user.mfa_recovery_codes = []
+            user.failed_login_count = 0
+            user.locked_until = None
             logger.info(f"MFA disabled for user: {user.username}")
             return True
 
