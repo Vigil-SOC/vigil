@@ -388,7 +388,10 @@ class Run<T, Kinds extends Record<string, unknown>> {
     // attempt, so they are re-rendered rather than written into the transcript.
     let tail = "Emit your answer now as JSON matching the schema.";
 
+    // The last attempt's emission when it parsed but missed the schema: a caller may keep what in it is sound.
+    let rejectedValue: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      rejectedValue = undefined;
       const refusal = await this.harness.budget.beginCall();
       if (refusal !== null) return this.exhausted(refusal);
 
@@ -438,6 +441,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       }
 
       const reason = parsed === undefined ? "the response was not valid JSON" : errorsOf(validate);
+      rejectedValue = parsed;
       this.rejected.push(`${reason}: ${turn.content.slice(0, 400)}`);
       // The rejected emission goes back as the assistant turn it was, or the model
       // is asked to correct something it cannot see.
@@ -449,7 +453,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     }
 
     const outcome = this.done("failed", null, `the role never emitted a valid answer: ${this.rejected.join(" | ")}`);
-    return { ...outcome, emission_rejected: true };
+    return { ...outcome, emission_rejected: true, ...(rejectedValue === undefined ? {} : { rejected_value: rejectedValue }) };
   }
 
   // Prefix, then the folded history, then a tail that is never persisted. What
@@ -812,6 +816,10 @@ export function schemaErrors(schema: Record<string, unknown>, value: unknown): s
   return validate(value) ? null : errorsOf(validate);
 }
 
+// An enum error names the values it would take, or the model is asked to correct a field blind.
 function errorsOf(validate: ValidateFunction): string {
-  return (validate.errors ?? []).map((error) => `${error.instancePath || "/"} ${error.message ?? ""}`).join("; ");
+  return (validate.errors ?? []).map((error) => {
+    const allowed = error.keyword === "enum" ? (error.params as { allowedValues?: unknown[] }).allowedValues : undefined;
+    return `${error.instancePath || "/"} ${error.message ?? ""}${allowed ? `: ${allowed.join(", ")}` : ""}`;
+  }).join("; ");
 }

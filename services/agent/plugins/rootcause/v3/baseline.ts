@@ -7,7 +7,7 @@ import type { CandidateT } from "./model/schemas.js";
 export type InputOf = (toolCallId: string) => unknown;
 export type OutputOf = (toolCallId: string) => string | undefined;
 
-const WHO_KINDS = new Set(["user", "ip", "host", "arn", "access-key", "principal"]);
+const WHO_KINDS = new Set(["user", "ip", "host", "arn", "access-key", "principal", "email-address"]);
 const WIDE = 0.9; // the search must cover this share of the data range
 
 // The values a baseline search must name: identities on the event, and its user/ip/host-like artifacts.

@@ -97,7 +97,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   'hybrid-analysis': 'Submit samples to CrowdStrike Hybrid Analysis for free automated malware analysis and IOC extraction.',
   anyrun: 'Interactive malware sandbox for real-time analysis with process monitoring and network capture.',
   'url-analysis': 'Analyze suspicious URLs for phishing indicators, redirects, and malicious content.',
-  'ip-geolocation': 'Look up geographic location, ISP, and organization info for IP addresses during investigations.',
+  'ip-geolocation': 'Each looked-up address is sent to ip-api.com. Look up geographic location, ISP, and organization info for IP addresses during investigations.',
   'atomic-red-team': 'Invoke one Atomic Red Team technique against a named range. Disabled until toggled; saving config does not run the runner.',
 }))
 

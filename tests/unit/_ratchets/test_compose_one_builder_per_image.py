@@ -27,7 +27,9 @@ COMPOSE_FILES = sorted(
         "compose*.yaml",
     )
     for p in REPO.glob(f"**/{pattern}")
-    if "node_modules" not in p.parts
+    # Test overlays are not projects: they merge onto a file above and may
+    # use Compose tags (!reset, !override) this check does not load.
+    if "node_modules" not in p.parts and "tests" not in p.parts
 )
 
 
