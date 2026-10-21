@@ -72,7 +72,7 @@ export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0,
   return `<next_move>
 ${lead}
 Moves: expand <event> = find what caused it; strengthen <event|link> = check it happened / holds; fork <event> = a competing cause; branch <event> = what else it led to; test <prediction> = run a story's prediction; theorize = write or revise competing stories of the incident; pivot <boundary> = follow into a source that holds the cause (set source to the sourcetype to search; any sourcetype); connect = link unlinked findings to the chain; probe <rare value> = read a rare record over the whole range and what came after it. source on any move says where to look first.
-Target a graph id listed below${choosing ? "." : ", or an event you report in this submission by its exact label."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
+Target a graph id listed below, or an event by its exact label${choosing ? "." : " (including one you report in this submission)."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
 available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.length} rare records unread)` : ""}${stories}${rareLine}
 </next_move>`;
 }
@@ -88,7 +88,7 @@ export function fallback(g: Graph, cfg: AgentConfig, named: NextIn | undefined, 
 }
 
 // The model's choice, checked against the graph after this turn's patch. Labels resolve to events created this
-// turn (the model cannot know their ids yet). A probe comes back as the prediction to add, applied as a patch by
+// turn (the model cannot know their ids yet) or on an earlier one. A probe comes back as the prediction to add, applied as a patch by
 // the caller, so the graph changes only through patches and a journal of them replays it.
 export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig, turn: number, created: string[], env?: { index: string; range: [string, string] }): { decision?: FrontierDecision; refused?: string; probe?: Prediction } {
   if (!next?.move) return {};
@@ -109,11 +109,13 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
   if (!ids) return { refused: `${next.move} is not available now.` };
   let target = next.target?.trim() ?? "";
   if (move === "theorize" || move === "connect") target = ids[0]!;
-  // An event reported this turn, named by its label (the model cannot know its id yet).
+  // An event named by its label: one reported this turn (no id yet) or an earlier turn's; this turn's wins a duplicate.
+  let byLabel: string | undefined;
   if (!ids.includes(target) && !g.nodes[target] && !g.edges[target]) {
     const want = target.toLowerCase();
-    const hit = created.map((id) => g.nodes[id]).find((n) => n && want && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60))));
-    if (hit) target = hit.id;
+    const named = (n?: GraphNode) => !!n && !!want && (n.label.toLowerCase() === want || n.label.toLowerCase().startsWith(want.slice(0, 60)));
+    const hit = created.map((id) => g.nodes[id]).find(named) ?? Object.values(g.nodes).find(named);
+    if (hit) target = byLabel = hit.id;
   }
   // A pivot named by the event its boundary hangs off: that event's open boundary.
   if (move === "pivot" && g.nodes[target]?.kind === "action") target = ids.find((m) => g.nodes[m]!.originNodeId === target) ?? target;
@@ -128,6 +130,7 @@ export function resolveNext(next: NextIn | undefined, g: Graph, cfg: AgentConfig
     const latest = hits.filter((id) => id.startsWith(`R${round}.`));
     if (latest.length === 1) target = latest[0]!;
   }
+  if (byLabel && !ids.includes(target)) return { refused: `${move} ${byLabel} (named by label) is not available: ${move} does not apply to it (${move} is available on: ${ids.slice(0, 12).join(", ")}).` };
   if (!ids.includes(target)) return { refused: `${move} ${next.target ?? ""} is not available (${move} is available on: ${ids.slice(0, 12).join(", ")}).` };
   return { decision: { move, targetId: target, turn: turn + 1, reason: `model: ${(next.why ?? "").slice(0, 200)}`, ...(source ? { source } : {}) } };
 }

@@ -30,6 +30,15 @@ describe("lead", () => {
     const created = [...new Set(Object.values(r.idMap))];
     expect(resolveNext({ move: "branch", target: "curl of setup.sh on node-a" }, g, cfg, 1, created).decision?.targetId).toBe(created[0]);
   });
+  it("targets an event made on an earlier turn by id or exact label, and still refuses one the move does not offer", () => {
+    const g = seeded();
+    const r = apply(g, { addNodes: [node("c", { label: "curl of setup.sh on node-a", evidence: [ev("direct")] })] }, 2);
+    const id = Object.values(r.idMap)[0]!;
+    expect(resolveNext({ move: "branch", target: id }, g, cfg, 3, []).decision?.targetId).toBe(id);
+    expect(resolveNext({ move: "branch", target: "Curl of setup.sh on node-a" }, g, cfg, 3, []).decision?.targetId).toBe(id);
+    // N1 is the symptom: branch is not offered on it, even when it is named by label.
+    expect(resolveNext({ move: "branch", target: g.nodes.N1!.label }, g, cfg, 3, []).refused).toMatch(/branch N1 \(named by label\) is not available: branch does not apply to it/);
+  });
   it("lists no branch from the symptom and no expand past the attempt cap", () => {
     const g = seeded();
     g.nodes.N1!.expandAttempts = cfg.maxExpandAttempts + 1;
@@ -39,6 +48,7 @@ describe("lead", () => {
     expect(optionsText(g, cfg, { refused: "x" })).toContain("Your last choice was not used: x");
     expect(optionsText(g, cfg, {})).toContain("you will be asked to choose");
     expect(optionsText(g, cfg, {}, 0, true)).not.toContain("asked to choose");
+    expect(optionsText(g, cfg, {}, 0, true)).toContain("or an event by its exact label.");
   });
   it("maps a pivot named by its event to that event's boundary, and a bare prediction id to the latest round", () => {
     const g = seeded();
