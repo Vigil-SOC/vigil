@@ -24,7 +24,11 @@ REFRESH_COOKIE_NAME = "refresh_token"
 # Unprefixed Path values. Prefixed at set/clear time from vigil_context_path
 # so a subdirectory deploy (example.com/vigil) still sends cookies.
 _ACCESS_COOKIE_PATH = "/"
-_REFRESH_COOKIE_PATH = "/api/auth/refresh"
+# Covers every auth route, including logout, and nothing under the rest of
+# /api. The previous path was /api/auth/refresh, so a browser never attached
+# the cookie to logout and the refresh token stayed valid after sign-out.
+_REFRESH_COOKIE_PATH = "/api/auth/"
+_LEGACY_REFRESH_COOKIE_PATH = "/api/auth/refresh"
 
 
 def context_path_prefix() -> str:
@@ -39,8 +43,13 @@ def cookie_root_path() -> str:
 
 
 def refresh_cookie_path() -> str:
-    """Path for the refresh cookie: `{prefix}/api/auth/refresh`."""
+    """Path for the refresh cookie: `{prefix}/api/auth/`."""
     return f"{context_path_prefix()}{_REFRESH_COOKIE_PATH}"
+
+
+def legacy_refresh_cookie_path() -> str:
+    """Path of refresh cookies issued before logout was inside the path."""
+    return f"{context_path_prefix()}{_LEGACY_REFRESH_COOKIE_PATH}"
 
 
 def _cookie_secure() -> bool:
@@ -96,11 +105,26 @@ def set_auth_cookies(
         samesite=samesite,
         path=refresh_cookie_path(),
     )
+    # A different path is a different cookie. Setting the new one leaves a
+    # pre-upgrade cookie in the browser; drop that path too.
+    _delete_refresh_cookie(response, legacy_refresh_cookie_path(), secure, samesite)
+
+
+def _delete_refresh_cookie(
+    response: Response, path: str, secure: bool, samesite: str
+) -> None:
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME,
+        path=path,
+        secure=secure,
+        samesite=samesite,
+    )
 
 
 def clear_auth_cookies(response: Response) -> None:
     """Clear both auth cookies. Matching attributes required or browsers
-    won't recognize the clear."""
+    won't recognize the clear. The legacy refresh path is cleared as well
+    so a browser that signed in before the path widened drops that cookie."""
     secure = _cookie_secure()
     samesite = _cookie_samesite()
     response.delete_cookie(
@@ -109,9 +133,5 @@ def clear_auth_cookies(response: Response) -> None:
         secure=secure,
         samesite=samesite,
     )
-    response.delete_cookie(
-        REFRESH_COOKIE_NAME,
-        path=refresh_cookie_path(),
-        secure=secure,
-        samesite=samesite,
-    )
+    for path in (refresh_cookie_path(), legacy_refresh_cookie_path()):
+        _delete_refresh_cookie(response, path, secure, samesite)

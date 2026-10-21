@@ -11,6 +11,8 @@
 
 config:
   DEV_MODE: "true"
+  # Must override values.yaml's "production", which refuses DEV_MODE.
+  ENVIRONMENT: "development"
   VIGIL_COOKIE_SECURE: "false"
 
 backend:

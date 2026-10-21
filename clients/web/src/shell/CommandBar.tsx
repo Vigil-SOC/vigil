@@ -110,6 +110,7 @@ export default function CommandBar({
   onGo,
   caseOpen = false,
   fill,
+  placement = 'header',
 }: {
   boards: BoardLink[]
   onOpenChat: (prompt?: string) => void
@@ -119,6 +120,8 @@ export default function CommandBar({
   caseOpen?: boolean
   /** A new `seq` puts `text` in the bar and opens it. Nothing runs; the person still presses Run. */
   fill?: { text: string; seq: number } | null
+  /** Home draws the bar full width under the headline. Everywhere else it stays in the header. */
+  placement?: 'header' | 'hero'
 }) {
   const { user } = useAuth()
   const { notify } = useToast()
@@ -485,7 +488,7 @@ export default function CommandBar({
 
   return (
     <div
-      className="vg-command-slot"
+      className={`vg-command-slot${placement === 'hero' ? ' is-hero' : ''}`}
       data-command-slot=""
       ref={slotRef}
       onKeyDown={(event) => {
@@ -544,7 +547,7 @@ export default function CommandBar({
             setPreview(null)
           }}
         >
-          <Icon name="sparkle" size={13} />
+          <Icon name="sparkle" size={placement === 'hero' ? 15 : 13} />
           Ask Vigil
         </button>
       </div>

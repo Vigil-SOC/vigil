@@ -210,7 +210,8 @@ Not vulnerabilities. Reports on these will be closed with a pointer back here:
 - **`DEV_MODE=true` bypassing authentication.** That is its documented purpose.
   It defaults to `false` in `core/config.py` and in `env.example`; a developer
   opts into it for a local instance, and the backend announces the bypass on
-  every startup. See [DEV_MODE](https://vigilsoc.org/docs/dev-mode/).
+  every startup. The backend refuses to start with it when
+  `ENVIRONMENT=production`, which the Helm chart sets by default. See [DEV_MODE](https://vigilsoc.org/docs/dev-mode/).
 - **Default credentials in development material** — the default PostgreSQL
   password in `infra/docker/docker-compose.yml`, documented as
   must-change-before-production in

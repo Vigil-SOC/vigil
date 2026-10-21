@@ -19,6 +19,14 @@
   gap: 10px;
 }
 
+.home-screen .home-command-host {
+  width: 100%;
+}
+
+.home-screen .home-command-host:empty {
+  display: none;
+}
+
 .home-screen .home-headline {
   margin: 0;
   color: var(--tx0);
@@ -30,13 +38,15 @@
   margin: 0;
   color: var(--tx2);
   font-size: 12px;
+  white-space: nowrap;
 }
 
-/* suggestion chips, then the pickup line: one left-aligned wrapping row */
+/* live-command chips, then the pickup line: one centered row that wraps */
 .home-screen .home-chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 8px;
 }
 

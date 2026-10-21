@@ -298,7 +298,7 @@ describe("disposition", () => {
     apply(g, { addNodes: [node("cause", { prior: 0.5, evidence: [ev("corroborating", "supports", ["c1"])] })], addEdges: [{ tempId: "e", kind: "explains", source: "cause", target: "N1", prior: 0.5, evidence: [ev("corroborating", "supports", ["c2"])] }] });
     g.nodes.N1!.status = "confirmed";
     expect(g.nodes.N2!.status).toBe("suspected");
-    expect(disposition(g, "budget-exhausted")).toMatch(/^True Positive \(causes likely/);
+    expect(disposition(g, "budget-exhausted").sentence).toMatch(/^True Positive \(causes likely/);
   });
 });
 

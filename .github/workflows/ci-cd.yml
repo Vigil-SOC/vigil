@@ -817,6 +817,7 @@ jobs:
           cp -R infra/helm/vigil "$RUNNER_TEMP/chart"
           yq -i 'del(.dependencies)' "$RUNNER_TEMP/chart/Chart.yaml"
           helm template ci "$RUNNER_TEMP/chart" \
+            --set secrets.postgresPassword=test-password \
             --show-only templates/db-init-job.yaml > "$RUNNER_TEMP/db-init-job.yaml"
 
       - name: Run the db-init Job as the chart user

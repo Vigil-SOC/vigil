@@ -1575,3 +1575,282 @@ describe('a root-cause trace while it runs', () => {
     expect(screen.queryByRole('heading', { name: /Trace/ })).toBeNull()
   })
 })
+
+describe('a v3 root-cause run', () => {
+  beforeEach(async () => {
+    const { workflowApi } = await import('../../services/api')
+    // The investigate block leaves replay rejecting; a root-cause panel still asks
+    // and a settled rejection updates it after the assertion.
+    vi.mocked(workflowApi.replayRun).mockReset()
+    vi.mocked(workflowApi.replayRun).mockImplementation(() => new Promise(() => undefined) as never)
+    vi.mocked(workflowApi.getReplay).mockClear()
+  })
+
+  const base = {
+    run_id: 'run-1',
+    run_kind: 'root_cause',
+    status: 'terminal',
+    outcome: 'completed',
+    reason: 'the terminal reason',
+    cost_usd: 1.2,
+    max_cost_usd: 15,
+    disposition: null,
+    steps: [{
+      step_id: 'step-1', event: 'KERNEL STEP SHOULD NOT SHOW', who: '', at: '', link: '', artifact: '',
+      cause_id: null, origin: false, link_status: 'none', origin_status: 'none', proven: false,
+    }],
+    proven: 0,
+    notices: ['A link or an origin cannot be proved on this deployment.'],
+    searches: 2,
+    recent_searches: [{ tool: 'splunk', args: 'KERNEL SEARCH SHOULD NOT SHOW', rows: 1, failed: false }],
+    open_checkpoint: null,
+    engine: 'rootcause-v3',
+    exit: 'root-cause-found',
+    report: '',
+    moves: [],
+    account: null,
+    chain: null,
+    timeline: { events: [], impersonation: [], exonerated: [] },
+    other_findings: [],
+    targeted_searches: [],
+    open_questions: [],
+  }
+
+  const v3 = (over: Record<string, unknown> = {}) => ({ ...base, ...over })
+
+  const chain = {
+    score: 0.81,
+    events: [
+      {
+        id: 'N0', label: 'phish delivered the link', status: 'confirmed', confidence: 0.91, domain: 'email',
+        observedAt: '2018-08-20T09:00:00Z', isRoot: true, rootJustification: 'nothing earlier explains it',
+        legitimate: false, tie: { edgeId: 'E1', status: 'confirmed', confidence: 0.8, inferred: true, disputed: true },
+        together: [{ id: 'N9', label: 'the same wave', status: 'confirmed', confidence: 0.7 }],
+        evidence: [{
+          polarity: 'supports', strength: 'strong', source: 'gateway', summary: 'the link was in the inbox',
+          turn: 2, refs: ['q1', 'missing'],
+        }],
+        artifacts: [],
+      },
+      {
+        id: 'N1', label: 'bare boundary label', kind: 'boundary-marker', status: 'suspected', confidence: 0.4,
+        domain: 'proxy', observedAt: '2018-08-20T10:00:00Z', isRoot: false, legitimate: true,
+        boundary: { originNodeId: 'N0', targetDomain: 'proxy', reason: 'the fetch left this index' },
+        tie: null, together: [], evidence: [], artifacts: [],
+      },
+    ],
+    alternatives: [{ nodeIds: ['N4', 'N1'], score: 0.2 }],
+  }
+
+  const moves = [
+    { n: 3, move: 'test', targetId: 'P1', reason: 'check the story', queries: [{ ref: 'q2', query: 'index=proxy N0', purpose: 'follow the fetch', rows: 0, error: 'backend refused' }] },
+    { n: 1, move: 'expand', targetId: 'N1', reason: 'look upstream', queries: [] },
+    {
+      n: 2, move: 'theorize', targetId: 'N1', reason: 'two stories',
+      queries: [{ ref: 'q1', query: 'index=email sourcetype=barracuda', purpose: 'check the inbox', rows: 4 }],
+    },
+  ]
+
+  it('offers a tab only for a section the run produced, and opens on Account', () => {
+    renderPanel({
+      status: 'completed',
+      result_summary: 'Still unproven: step-1',
+      projection: v3({
+        account: {
+          alert: { id: 'A-9', title: 'Suspicious inbox rule', observedAt: '2018-08-20T09:00:00Z' },
+          disposition: 'True Positive: a confirmed causal chain leads from the alert to its root cause.',
+          exit: 'root-cause-found',
+          root_cause: { id: 'N0', label: 'phish delivered the link', justification: 'nothing earlier explains it' },
+          conclusion: { text: 'The link was the start.', chain: ['N0', 'N1'], openQuestions: [] },
+          accounts: [
+            { name: 'the attacker (an operator the logs do not name)', role: 'attacker', seenAs: ['evil.example'] },
+            { name: 'alice', role: 'victim', usedBy: ['the attacker (an operator the logs do not name)'] },
+          ],
+        },
+        chain,
+        report: '# What the run wrote\n\nThe link was the start.',
+      }),
+    })
+
+    expect(screen.getByRole('tab', { name: 'Account', selected: true })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Chain/ })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Report' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /Timeline/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Other findings/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Targeted searches/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Decisions/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Open questions/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Trace' })).toBeNull()
+    expect(screen.queryByText('KERNEL STEP SHOULD NOT SHOW')).toBeNull()
+    expect(screen.queryByText('KERNEL SEARCH SHOULD NOT SHOW')).toBeNull()
+    expect(screen.queryByText('A link or an origin cannot be proved on this deployment.')).toBeNull()
+    expect(screen.getByText('Suspicious inbox rule')).toBeInTheDocument()
+    expect(screen.getByText(/A-9/)).toBeInTheDocument()
+    expect(screen.getByText(/Exit root-cause-found/)).toBeInTheDocument()
+    expect(screen.getByText(/nothing earlier explains it/)).toBeInTheDocument()
+    expect(screen.getByText('The link was the start.')).toBeInTheDocument()
+    expect(screen.getByText(/seen as evil.example/)).toBeInTheDocument()
+    expect(screen.getByText(/used by the attacker/)).toBeInTheDocument()
+    // The checked summary stays where a kernel run shows it.
+    expect(screen.getByRole('heading', { name: 'Result summary' })).toBeInTheDocument()
+  })
+
+  it('opens the first tab that exists when there is no account', () => {
+    renderPanel({ projection: v3({ chain }) })
+
+    expect(screen.queryByRole('tab', { name: 'Account' })).toBeNull()
+    expect(screen.getByRole('tab', { name: /Chain/, selected: true })).toBeInTheDocument()
+  })
+
+  it('expands a chain row onto its evidence and the search that ref names', async () => {
+    const { workflowApi } = await import('../../services/api')
+    renderPanel({ projection: v3({ chain, moves }) })
+    tabTo(/Chain/)
+
+    const rows = screen.getAllByRole('row').filter((row) => within(row).queryByRole('button', { name: /^N\d$/ }))
+    expect(within(rows[0]!).getByRole('button', { name: 'N0' })).toBeInTheDocument()
+    expect(within(rows[1]!).getByRole('button', { name: 'N1' })).toBeInTheDocument()
+    expect(within(rows[0]!).getByText(/inferred/)).toBeInTheDocument()
+    expect(within(rows[0]!).getByText(/disputed/)).toBeInTheDocument()
+    expect(within(rows[0]!).getByText(/why root: nothing earlier explains it/)).toBeInTheDocument()
+    expect(within(rows[0]!).getByText(/together with N9/)).toBeInTheDocument()
+    expect(within(rows[1]!).getByText('—')).toBeInTheDocument()
+    expect(within(rows[1]!).getByText(/legitimate activity, not the attacker/)).toBeInTheDocument()
+    expect(within(rows[1]!).getByText(/believed to be in proxy/)).toBeInTheDocument()
+    expect(within(rows[1]!).queryByText('bare boundary label')).toBeNull()
+    expect(screen.getByText(/N4 N1/)).toBeInTheDocument()
+    expect(screen.getByText(/score 0\.20/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'N0' }))
+    expect(screen.getByText('the link was in the inbox')).toBeInTheDocument()
+    expect(screen.getByText('for')).toBeInTheDocument()
+    expect(screen.getByText(/turn 2/)).toBeInTheDocument()
+    expect(screen.getByText('check the inbox')).toBeInTheDocument()
+    expect(screen.getByText('index=email sourcetype=barracuda')).toBeInTheDocument()
+    expect(screen.getByText('4 rows')).toBeInTheDocument()
+    expect(workflowApi.getReplay).not.toHaveBeenCalled()
+  })
+
+  it('groups decisions into rounds that start at each theorize, in turn order', () => {
+    renderPanel({ projection: v3({ moves }) })
+    tabTo(/Decisions/)
+
+    const opening = screen.getByRole('heading', { name: 'Opening' })
+    const round = screen.getByRole('heading', { name: 'Round 1' })
+    expect(opening.compareDocumentPosition(round) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('look upstream')).toBeInTheDocument()
+    expect(screen.getByText('two stories')).toBeInTheDocument()
+    expect(screen.getByText('check the story')).toBeInTheDocument()
+    expect(screen.getByText('follow the fetch')).toBeInTheDocument()
+    expect(screen.getByText('index=proxy N0')).toBeInTheDocument()
+    expect(screen.getByText('backend refused')).toBeInTheDocument()
+    // n:3 was listed before n:1; the round still follows turn order.
+    expect(screen.getByText(/Turn 1/).compareDocumentPosition(screen.getByText(/Turn 2/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText(/Turn 2/).compareDocumentPosition(screen.getByText(/Turn 3/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('lays out the timeline, the other lists, and the report', () => {
+    renderPanel({
+      projection: v3({
+        account: { alert: null, disposition: '', exit: null, root_cause: null, conclusion: null, accounts: [] },
+        timeline: {
+          events: [{ id: 'N1', label: 'the link was opened', observedAt: '2018-08-20T10:01:00Z', onChain: true, ranAs: ['alice'], operatedBy: ['mallory'] }],
+          impersonation: [{ nodeId: 'N1', summary: 'the logon came from a new host' }],
+          exonerated: [{ actor: 'alice', nodeId: 'N2', label: 'a routine backup' }],
+        },
+        other_findings: [{ id: 'N8', label: 'an unrelated scan', status: 'suspected', confidence: 0.3, domain: 'endpoint', observedAt: '2018-08-20T11:00:00Z', lastEvidence: 'one noisy port' }],
+        targeted_searches: [{ id: 'P1', sourcetype: 'proxy', found: false, result: 'no fetch of the stager', refs: ['q1'] }],
+        open_questions: [{ kind: 'disputed', id: 'E3', text: 'the link from the scan is disputed' }],
+        moves,
+        report: '# What the run wrote\n\nKept for the analyst.',
+      }),
+    })
+
+    tabTo(/Timeline/)
+    const timeline = screen.getByRole('row', { name: /the link was opened/ })
+    expect(within(timeline).getByText('on chain')).toBeInTheDocument()
+    expect(within(timeline).getByText('alice')).toBeInTheDocument()
+    expect(within(timeline).getByText('mallory')).toBeInTheDocument()
+    expect(screen.getByText(/the logon came from a new host/)).toBeInTheDocument()
+    expect(screen.getByText(/alice for N2/)).toBeInTheDocument()
+
+    tabTo(/Other findings/)
+    expect(screen.getByText('an unrelated scan')).toBeInTheDocument()
+    expect(screen.getByText('one noisy port')).toBeInTheDocument()
+
+    tabTo(/Targeted searches/)
+    const search = screen.getByRole('row', { name: /no fetch of the stager/ })
+    expect(within(search).getByText('not found')).toBeInTheDocument()
+    expect(within(search).getByText('index=email sourcetype=barracuda')).toBeInTheDocument()
+
+    tabTo(/Open questions/)
+    expect(screen.getByText('disputed')).toBeInTheDocument()
+    expect(screen.getByText('the link from the scan is disputed')).toBeInTheDocument()
+
+    tabTo(/^Report$/)
+    expect(screen.getByRole('heading', { name: 'What the run wrote' })).toBeInTheDocument()
+    expect(screen.getByText('Kept for the analyst.')).toBeInTheDocument()
+  })
+
+  it('keeps the kernel table when a v3 run has no readable section', () => {
+    renderPanel({
+      status: 'running',
+      projection: v3({
+        account: null,
+        chain: 'unreadable',
+        timeline: [],
+        other_findings: {},
+        targeted_searches: 'nope',
+        open_questions: null,
+        moves: {},
+        report: '   ',
+        notices: ['A link or an origin cannot be proved on this deployment.'],
+        recent_searches: [{ tool: 'splunk', args: 'index=botsv3 earliest', rows: 2, failed: false }],
+      }),
+    })
+
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Trace' })).toBeInTheDocument()
+    expect(screen.getByText('KERNEL STEP SHOULD NOT SHOW')).toBeInTheDocument()
+    expect(screen.getByText('A link or an origin cannot be proved on this deployment.')).toBeInTheDocument()
+    expect(screen.getByText('index=botsv3 earliest')).toBeInTheDocument()
+  })
+
+  it('drops one unreadable section and keeps the others', () => {
+    renderPanel({
+      projection: v3({
+        account: { alert: { id: 'A-9', title: 'Suspicious inbox rule', observedAt: '' }, disposition: '', exit: null, root_cause: null, conclusion: null, accounts: [] },
+        chain: { score: 0.4 },
+      }),
+    })
+
+    expect(screen.getByRole('tab', { name: 'Account', selected: true })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /Chain/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Trace' })).toBeNull()
+  })
+
+  it('reads the verdict from the account disposition, and the chip from the head', () => {
+    const { unmount } = renderPanel({
+      projection: v3({
+        disposition: 'true_positive',
+        reason: 'the terminal reason',
+        account: { disposition: 'True Positive: a confirmed causal chain leads from the alert to its root cause.' },
+      }),
+    })
+    const verdict = screen.getByLabelText('Verdict')
+    expect(verdict).toHaveTextContent('True Positive: a confirmed causal chain leads from the alert to its root cause.')
+    expect(within(verdict).getByText('True positive')).toHaveClass('chip')
+    unmount()
+
+    renderPanel({
+      projection: v3({
+        disposition: null,
+        reason: 'the terminal reason',
+        account: { disposition: '   ' },
+      }),
+    })
+    const fallback = screen.getByLabelText('Verdict')
+    expect(fallback).toHaveTextContent('the terminal reason')
+    expect(fallback.querySelector('.chip')).toBeNull()
+  })
+})

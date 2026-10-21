@@ -102,3 +102,26 @@ def test_bifrost_request_log_lands_in_a_named_volume(path: Path) -> None:
             f"{name} in {path.name} writes its request log to {resolved}, "
             "outside any named volume, so it is lost when the container is removed"
         )
+
+
+def test_postgres_password_is_minted_by_the_app() -> None:
+    """Every Postgres password is the app's per-install secret (#2570).
+
+    A literal here is the published default: any container on the network could
+    log in as the superuser, and the backend logs an ERROR the user cannot fix.
+    """
+    raw = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8")) or {}
+    envs = {"x-agent-env": raw["x-agent-env"]}
+    envs.update({n: s.get("environment") or {} for n, s in raw["services"].items()})
+    found = 0
+    for name, env in envs.items():
+        pairs = (
+            env.items() if isinstance(env, dict) else (e.split("=", 1) for e in env)
+        )
+        for key, value in pairs:
+            if key in ("POSTGRES_PASSWORD", "PGPASSWORD"):
+                found += 1
+                assert value == "${POSTGRES_PASSWORD:?set by the desktop app}", (
+                    f"{name} sets {key} to {value!r}, not the app-minted secret"
+                )
+    assert found >= 5, "expected agent, postgres, backend and db-seed passwords"

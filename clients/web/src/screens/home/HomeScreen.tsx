@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, triageApi, type NeedsYouItem, type TriageRow } from '../../services/api'
+import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { briefText } from '../../shared/brief'
-import { useSourceBadge } from '../../shared/useSourceBadge'
+import { LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { HOME_SETUP_ID, hideSetupStep, openSetupSteps, readSetupHidden } from './setupHidden'
@@ -40,29 +40,6 @@ const STEP_ACTION: Record<string, string> = {
 const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint', parked: 'Stopped at a limit' }
 
 type Pickup = { share: number; launched: number; today: number }
-
-type Chip = { label: string; text: string }
-
-/** Chips for the newest detection that timed out of the queue unworked today (UTC). None without one. */
-export function dropChips(rows: TriageRow[], sourceLabel: (source: string) => string, now = Date.now()): Chip[] {
-  const dayStart = now - (now % 86_400_000)
-  let newest: { row: TriageRow; at: number } | null = null
-  for (const row of rows) {
-    if (row.kind !== 'detection' || row.state !== 'expired' || !row.finding_id || !row.decided_at) continue
-    const at = parseCreatedAt(row.decided_at)
-    if (Number.isNaN(at) || at < dayStart || at >= dayStart + 86_400_000) continue
-    if (!newest || at > newest.at) newest = { row, at }
-  }
-  if (!newest) return []
-  const { finding_id: id, source } = newest.row
-  const name = source ? sourceLabel(source) : ''
-  return [
-    { label: `/investigate ${id}`, text: `/investigate ${id}` },
-    name
-      ? { label: `Why was the ${name} alert dropped?`, text: `/ask Why was the ${name} alert dropped? Finding ${id}` }
-      : { label: `Why was alert ${id} dropped?`, text: `/ask Why was alert ${id} dropped? Finding ${id}` },
-  ]
-}
 
 const SETUP_TIP = {
   source: 'Setup steps (B8)',
@@ -209,11 +186,10 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen({ openCase, startTour, fillCommand }: ConsoleScreenProps) {
+export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost }: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [count, setCount] = useState<number | null>(null)
   const [share, setShare] = useState<Pickup | null>(null)
-  const [dropRows, setDropRows] = useState<TriageRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -225,7 +201,6 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
   const { notify, pending, settled } = useToast()
-  const sourceBadge = useSourceBadge()
 
   const load = useCallback(async () => {
     const ticket = ++loadTicket.current
@@ -236,17 +211,13 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
     const shareRead = triageApi.get().then(
       (res) => {
         const { share: value, launched_or_merged: launched, created_today: today } = res.data.strip.picked_up
-        return {
-          pickup: typeof value === 'number' ? { share: value, launched, today } : null,
-          rows: res.data.rows ?? [],
-        }
+        return typeof value === 'number' ? { share: value, launched, today } : null
       },
-      () => ({ pickup: null, rows: [] as TriageRow[] }),
+      () => null,
     )
-    const [needsResult, triage] = await Promise.all([needs, shareRead])
+    const [needsResult, pickup] = await Promise.all([needs, shareRead])
     if (ticket !== loadTicket.current) return
-    setShare(triage.pickup)
-    setDropRows(triage.rows)
+    setShare(pickup)
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
       return
@@ -356,7 +327,8 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
     ...(setup?.steps ?? []).filter((step) => step.done),
   ]
   const nextStepId = checklist.find((step) => !step.done)?.id
-  const shownChips = fillCommand ? dropChips(dropRows, (source) => sourceBadge(source).label) : []
+  // Later commands stay in the palette. A trailing space is the bar's signal to open that command's preview.
+  const shownChips = fillCommand ? LIVE_COMMANDS : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
   const sectionHead = (title: string, sub: string | null, tip: ReactNode, link: ReactNode) => (
@@ -373,16 +345,22 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   return (
     <div className="home-screen">
       <div className="home-page">
-        {(shownCount !== null || share !== null || shownChips.length > 0) && (
+        {(shownCount !== null || share !== null || shownChips.length > 0 || onCommandHost) && (
           <div className="home-top">
             {shownCount !== null && (setup !== null || setupError !== null) && (
               <p className="home-headline">{noAlerts ? FIRST_RUN_HEADLINE : headline(shownCount)}</p>
             )}
+            {onCommandHost && <div ref={onCommandHost} className="home-command-host" />}
             {(share !== null || shownChips.length > 0) && (
               <div className="home-chips">
-                {shownChips.map((chip) => (
-                  <button key={chip.text} type="button" className="home-chip" onClick={() => fillCommand?.(chip.text)}>
-                    {chip.label}
+                {shownChips.map((command) => (
+                  <button
+                    key={command.id}
+                    type="button"
+                    className="home-chip"
+                    onClick={() => fillCommand?.(`${command.name} `)}
+                  >
+                    {command.name}
                   </button>
                 ))}
                 {share !== null && (

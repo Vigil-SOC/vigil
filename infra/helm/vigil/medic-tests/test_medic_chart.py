@@ -26,6 +26,8 @@ MEDIC_ON = {
     "medic.gateway.viewer.username": "medic-viewer",
     "medic.gateway.viewer.passwordSecret.name": "medic-viewer",
 }
+# secrets.postgresPassword has no default; every render here sets one.
+PG = {"secrets.postgresPassword": "test-password"}
 
 
 @pytest.fixture(scope="session")
@@ -47,7 +49,7 @@ class RenderError(Exception):
 
 def helm_template(chart: Path, values: dict[str, str]) -> list[dict]:
     args = ["helm", "template", RELEASE, str(chart), "--namespace", NAMESPACE]
-    for key, value in values.items():
+    for key, value in {**PG, **values}.items():
         args += ["--set", f"{key}={value}"]
     proc = subprocess.run(args, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
@@ -659,7 +661,7 @@ def test_values_that_would_widen_or_break_a_policy_fail(
 def test_long_release_names_fit_63(chart) -> None:
     long = "r" * 53  # helm's own release-name limit
     args = ["helm", "template", long, str(chart), "--namespace", NAMESPACE]
-    for key, value in MEDIC_ON.items():
+    for key, value in {**PG, **MEDIC_ON}.items():
         args += ["--set", f"{key}={value}"]
     proc = subprocess.run(args, capture_output=True, text=True, check=True)
     docs = [d for d in yaml.safe_load_all(proc.stdout) if d]

@@ -10,6 +10,11 @@ namespace.
 
 Component label selectors reuse the chart's standard labels, so these
 policies break cleanly if a pod isn't labeled — no silent misrouting.
+
+No rule admits `namespaceSelector: {}`: that selects every pod in the cluster,
+not the kubelet. Calico and Cilium let node-sourced probes through on their own;
+elsewhere, `networkPolicies.probeAllowFrom` adds node CIDRs to the httpGet probe
+ports only (backend, daemon health, agent-worker, agent-serve).
 */ -}}
 ---
 apiVersion: networking.k8s.io/v1
@@ -59,12 +64,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.backend.service.port }}
-    # Kubelet probes
-    - from:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.backend.service.port }}
+    {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" .Values.backend.service.port) | nindent 4 }}
 ---
 {{- if .Values.daemon.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -80,7 +80,7 @@ spec:
       {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "daemon") | nindent 6 }}
   policyTypes: [Ingress]
   ingress:
-    # Webhook: allow only from configured CIDRs (empty = cluster-internal only)
+    # Webhook: external senders by CIDR (empty = in-namespace pods only)
     {{- with .Values.networkPolicies.daemon.webhookAllowFrom }}
     - from:
         {{- range . }}
@@ -91,9 +91,9 @@ spec:
         - protocol: TCP
           port: {{ $.Values.daemon.ports.webhook }}
     {{- end }}
-    # Cluster-internal to all daemon ports (probes, in-cluster calls)
+    # In-namespace pods (backend health check, helm test)
     - from:
-        - namespaceSelector: {}
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: {{ .Values.daemon.ports.webhook }}
@@ -101,6 +101,7 @@ spec:
           port: {{ .Values.daemon.ports.metrics }}
         - protocol: TCP
           port: {{ .Values.daemon.ports.health }}
+    {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" .Values.daemon.ports.health) | nindent 4 }}
 ---
 {{- end }}
 {{- if .Values.llmWorker.enabled }}
@@ -134,15 +135,23 @@ spec:
     matchLabels:
       {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-worker") | nindent 6 }}
   policyTypes: [Ingress]
+  # Its work arrives over Redis, so nothing routes to it. Only the probe port
+  # 6990 is reached: by the kubelet, and by Medic, whose one sensor is /readyz.
+  {{- if or .Values.networkPolicies.probeAllowFrom .Values.medic.enabled }}
   ingress:
-    # Its work arrives over Redis, so nothing routes to it. The one exception is
-    # the kubelet, which has to reach the probe port -- a probe blocked by policy
-    # reads as a failing container.
+    {{- if .Values.medic.enabled }}
     - from:
-        - namespaceSelector: {}
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.medic.selectorLabels" (dict "context" . "component" "medic") | nindent 14 }}
       ports:
         - protocol: TCP
           port: 6990
+    {{- end }}
+    {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" 6990) | nindent 4 }}
+  {{- else }}
+  ingress: []
+  {{- end }}
 ---
 {{- end }}
 {{- if .Values.agentServe.enabled }}
@@ -175,24 +184,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.agentServe.service.port }}
-    {{- if .Values.networkPolicies.agentServe.allowProbesFromAnyNamespace }}
-    {{- /* Health rides the traffic port, and ingress rules are OR'd -- so this
-           rule does not merely add probes, it opens the port to every pod in the
-           cluster and leaves the bearer token as the only gate. It is on by
-           default because a kubelet probe originates from the node rather than a
-           pod, and whether a CNI lets that past a pod-selector rule is
-           implementation-specific; a probe blocked by policy reads as a failing
-           container and takes the Deployment down.
-
-           Set false on a cluster whose CNI is known to permit node-sourced
-           health checks (Calico and Cilium both do). Then the rule above is the
-           whole story and only the backend can reach this. */}}
-    - from:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.agentServe.service.port }}
-    {{- end }}
+    {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" .Values.agentServe.service.port) | nindent 4 }}
 ---
 {{- end }}
 {{- if .Values.mcpRunner.enabled }}

@@ -5,7 +5,8 @@
 # Its own project name and unnamed containers keep it isolated from a dev stack
 # (project "docker", containers deeptempo-*) so both can coexist on one machine.
 # Only the backend publishes a port; everything else stays on the internal
-# network, which is what keeps the default postgres password unreachable.
+# network. The postgres password is minted per install by the app, which also
+# resets it in the database on every start, so older volumes pick it up too.
 name: vigil
 
 # Both agent processes take the same environment (see x-agent-env in
@@ -16,7 +17,7 @@ x-agent-env: &agent-env
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
   - POSTGRES_USER=vigil_app
-  - POSTGRES_PASSWORD=deeptempo_secure_password_change_me
+  - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set by the desktop app}
   - REDIS_URL=redis://redis:6379/0
   # Each defaults to localhost:6987, which is the agent container itself here.
   - VIGIL_PLAYBOOKS_URL=http://backend:6987/internal/playbooks
@@ -33,7 +34,7 @@ services:
     environment:
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
-      POSTGRES_PASSWORD: deeptempo_secure_password_change_me
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -102,7 +103,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
       - POSTGRES_USER=vigil_app
-      - POSTGRES_PASSWORD=deeptempo_secure_password_change_me
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set by the desktop app}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=http://bifrost:8080
       - REDIS_URL=redis://redis:6379/0
@@ -198,7 +199,7 @@ services:
       PGHOST: postgres
       PGUSER: deeptempo
       PGDATABASE: deeptempo_soc
-      PGPASSWORD: deeptempo_secure_password_change_me
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
     volumes:
       - ./db-init:/db-init:ro
       - ./initdb/00_apply.sh:/apply.sh:ro
