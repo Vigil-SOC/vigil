@@ -66,9 +66,12 @@ def test_no_request_model_accepts_the_flag():
     for path in (REPO / "services" / "api").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if node.target.id == "service_account":
-                    offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
+            if (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == "service_account"
+            ):
+                offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
     assert offenders == []
 
     body = {
@@ -130,8 +133,10 @@ def test_role_change_above_viewer_is_refused_for_a_service_account(admin, role_i
     user = _target(service_account=True)
     session = _session_with(user, role_id)
 
+    request = users_router.UpdateUserRequest(role_id=role_id)
+
     with pytest.raises(HTTPException) as exc:
-        users_router._apply_role_change(session, admin, "user-1", role_id)
+        users_router._apply_user_update(session, admin, "user-1", request)
 
     assert exc.value.status_code == 403
     assert user.role_id == "role-viewer"
@@ -154,7 +159,8 @@ def test_a_normal_user_can_still_be_promoted(admin):
     user = _target(service_account=False)
     session = _session_with(user, "role-analyst")
 
-    users_router._apply_role_change(session, admin, "user-1", "role-analyst")
+    request = users_router.UpdateUserRequest(role_id="role-analyst")
+    users_router._apply_user_update(session, admin, "user-1", request)
 
     assert user.role_id == "role-analyst"
 

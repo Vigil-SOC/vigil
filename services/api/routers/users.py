@@ -56,8 +56,16 @@ class UpdateUserRequest(BaseModel):
 SERVICE_ACCOUNT_ROLE_ID = "role-viewer"
 
 
+def _is_service_account(user: User) -> bool:
+    # Only an explicit True is one; a user object without the field is not.
+    try:
+        return user.service_account is True
+    except AttributeError:
+        return False
+
+
 def _refuse_service_account_role(user: User, role_id: str) -> None:
-    if user.service_account is True and role_id != SERVICE_ACCOUNT_ROLE_ID:
+    if _is_service_account(user) and role_id != SERVICE_ACCOUNT_ROLE_ID:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="A service account can only hold the Viewer role",
@@ -312,7 +320,7 @@ def _apply_user_update(
         user.full_name = request.full_name
 
     if request.email is not None:
-        if user.service_account is True:
+        if _is_service_account(user):
             # A reachable address is the first step to a password reset.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
