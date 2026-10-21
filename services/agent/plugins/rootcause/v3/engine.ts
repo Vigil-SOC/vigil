@@ -228,9 +228,11 @@ async function drive(
     report = result.report;
   } catch (error) {
     // What the run found so far is the report, however it stopped.
-    const written = renderReport(graph, trace, null, alert, budget);
+    // A run the pool cut off ends budget-exhausted; a stop or a failure has no exit.
+    const cut = !signal.aborted && spentOut(error) ? "budget-exhausted" : null;
+    const written = renderReport(graph, trace, cut, alert, budget);
     if (signal.aborted && !(signal.reason instanceof Stopped)) return { status: "lost", reason: String(signal.reason) };
-    await state.append(run_id, [event("rootcause_exit", { exit: null, report: written, entries: trace.drain() })]);
+    await state.append(run_id, [event("rootcause_exit", { exit: cut, report: written, entries: trace.drain() })]);
     if (signal.aborted) return halted(signal, end, state, run_id, event, conclusionOf(written));
     if (spentOut(error)) return end("budget_exhausted", error.message, conclusionOf(written));
     return end("failed", error instanceof Error ? error.message : String(error), conclusionOf(written));

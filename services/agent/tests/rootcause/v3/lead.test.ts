@@ -112,6 +112,19 @@ describe("the model names every move", () => {
     expect(reqs.map((r) => r.move)).toEqual(["choose", "strengthen", "expand", "conclude"]);
   });
 
+  it("keeps back one more move at the average cost plus the closing turn, and concludes rather than start a move it cannot pay for", async () => {
+    // Each turn costs $30 of $100: after two the average is 30, the reserve 60 and 40 is left.
+    const { reqs, r } = await drive((req, _n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      budget.usd += 30;
+      return req.move === "choose" ? { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } : null;
+    });
+    expect(reqs.map((x) => x.move)).toEqual(["choose", "strengthen", "conclude"]);
+    expect(r.exit).toBe("budget-exhausted");
+    expect(r.report).toContain("exit **budget-exhausted**");
+    expect(r.report).toContain("done");
+  });
+
   it.each([[true, "root-cause-found"], [false, "inconclusive"]])("ends when no move is open (root %s: %s), after the closing conclude turn", async (isRoot, exit) => {
     const g = seeded();
     apply(g, { incrementExpand: ["N1", "N1", "N1"], ...(isRoot ? { setFlags: [{ nodeId: "N1", isRoot: true }] } : {}) });
