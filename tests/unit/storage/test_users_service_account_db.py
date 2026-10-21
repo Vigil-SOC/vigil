@@ -1,7 +1,7 @@
 """``users.service_account`` in a real Postgres: create_all, the init SQL, the migration.
 
 A fresh install gets the column from create_all; a database built before it gets
-it from ``40_users_service_account.sql`` (Compose db-seed, Helm db-init) or from
+it from ``42_users_service_account.sql`` (Compose db-seed, Helm db-init) or from
 ``scripts/migrate_schema.py``. Every existing row must read False: only the enable
 flow makes a service account. Each change runs in a transaction that is rolled
 back, so the shared test database is left as found.
@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.databa
 
 REPO = Path(__file__).resolve().parents[3]
 MIGRATE_SCHEMA = REPO / "scripts" / "migrate_schema.py"
-INIT_SQL = REPO / "infra" / "database" / "init" / "40_users_service_account.sql"
+INIT_SQL = REPO / "infra" / "database" / "init" / "42_users_service_account.sql"
 
 
 def _column(conn):
