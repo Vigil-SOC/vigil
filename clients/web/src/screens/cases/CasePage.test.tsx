@@ -276,7 +276,7 @@ describe('case page', () => {
           hyp('c', 'active', 0, 0, 'base_rate'),
           hyp('d', 'active', 1, 1, 'deployment_gap'),
           hyp('e', 'disproven', 0, 2, 'mystery_token'),
-          hyp('f', 'inconclusive', 0, 0, ''),
+          hyp('f', 'inconclusive', 0, 1, ''),
           hyp('g', 'parked', 0, 0, '', 'waiting on logs'),
           hyp('h', 'handed_off', 0, 0, '', 'sent to the reviewer'),
         ],
@@ -285,10 +285,21 @@ describe('case page', () => {
     renderCase('case-words')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim a')).toBeInTheDocument()
-    for (const word of ['Proven', 'Standing', 'Forming', 'Weakened', 'Ruled out', 'Inconclusive', 'Parked', 'Handed off']) {
-      expect(screen.getByText(word)).toBeInTheDocument()
+    // the design's five words in the board's tones; a ledger status never shows as a word
+    const pill = (id: string) => screen.getByText(`claim ${id}`).closest('li')!.querySelector('.case-expl-pill')!
+    const words: [string, string, string][] = [
+      ['a', 'Proven', 'good'], ['b', 'Standing', 'good'], ['c', 'Forming', 'ac'], ['d', 'Weakened', 'fair'],
+      ['e', 'Ruled out', 'muted'], ['f', 'Weakened', 'fair'], ['g', 'Ruled out', 'muted'], ['h', 'Proven', 'good'],
+    ]
+    for (const [id, word, tone] of words) {
+      expect(pill(id)).toHaveTextContent(word)
+      expect(pill(id)).toHaveClass(tone)
     }
+    expect(screen.queryByText(/^(Inconclusive|Parked)$/)).not.toBeInTheDocument()
+    // a hand-off is what happened next, beside its word
+    expect(screen.getByText('claim h').closest('li')).toHaveTextContent('Handed off')
     expect(screen.getByText('claim e')).toHaveClass('struck')
+    expect(screen.getByText('claim g')).toHaveClass('struck')
     expect(screen.getByText('claim a')).not.toHaveClass('struck')
     for (const by of ['the hunt definition', 'you', 'the base rate', 'the deployment-gap check', 'mystery_token']) {
       expect(screen.getByText(`Added by ${by}`)).toBeInTheDocument()
@@ -342,7 +353,9 @@ describe('case page', () => {
     const filter = screen.getByRole('group', { name: 'Run' })
     expect(within(filter).getAllByRole('button').map((b) => b.textContent)).toEqual(['All runs', 'threat-hunt', 'root-cause-analysis'])
     expect(screen.getByRole('link', { name: 'Open run run-rca' })).toHaveAttribute('href', '/workflows?run=run-rca')
-    expect(screen.getAllByText('Handed off').length).toBeGreaterThan(0)
+    const row = screen.getByText('claim h').closest('li')!
+    expect(row.querySelector('.case-expl-pill')).toHaveTextContent('Proven')
+    expect(row).toHaveTextContent('Handed off · Root-cause run')
     expect(screen.queryByText(/handed_off/)).not.toBeInTheDocument()
   })
 
@@ -2880,7 +2893,8 @@ describe('following a live run', () => {
     open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
     const row = (await screen.findByText('Still forming')).closest('li') as HTMLElement
     expect(row.closest('ul')).toHaveClass('case-findings')
-    expect(within(row).getByText('Handed off')).toHaveClass('case-expl-pill')
+    expect(within(row).getByText('Proven')).toHaveClass('case-expl-pill')
+    expect(within(row).getByText('handed off')).not.toHaveClass('case-expl-pill')
   })
 })
 
@@ -3138,7 +3152,9 @@ describe('a kernel hunt on its case', () => {
 
     const outcome = await screen.findByRole('region', { name: 'Run outcome' })
     expect(outcome).toHaveTextContent('Ended')
-    expect(outcome).toHaveTextContent('1 proven · 1 inconclusive')
+    // an unresolved explanation reads off its bearing, never as ruled out
+    expect(outcome).toHaveTextContent('1 proven · 1 forming')
+    expect(document.querySelector('.case-reason')).toHaveTextContent('hunt concluded · 1 proven · 1 forming')
     expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Stop to ask you/)).not.toBeInTheDocument()
     expect(screen.queryByText(prose, { exact: false })).not.toBeInTheDocument()
@@ -3149,6 +3165,32 @@ describe('a kernel hunt on its case', () => {
     expect(within(left).getByRole('button', { name: 'Ask about this' })).toBeInTheDocument()
     // Findings so far says the same verdicts the outcome does.
     expect(screen.getByText('A finance workstation is beaconing').closest('li')).toHaveTextContent('Proven')
+  })
+
+  it('says a handed-off hunt concluded after the Idle pill, tallies its words, and says why root cause did not run', async () => {
+    testState.recordRows = [
+      { id: 'activity:0', at: '2026-06-15T10:00:00Z', kind: 'agent_run_root_cause_not_started', source: 'case_activities', chained: false, text: 'Root cause was not started: it needs a SIEM.' },
+    ]
+    open('case-handed', run({
+      status: 'terminal',
+      outcome: 'completed',
+      reason: 'concluded',
+      hypotheses: [
+        { ...HUNT.hypotheses[0], status: 'handed_off', supports: 5, weakens: 0 },
+        { ...HUNT.hypotheses[1], status: 'parked', supports: 0, weakens: 8 },
+      ],
+    }, { status: 'completed' }), 'open')
+    const outcome = await screen.findByRole('region', { name: 'Run outcome' })
+    expect(outcome).toHaveTextContent('1 proven · 1 ruled out')
+    expect(document.querySelector('.state-pill')).toHaveTextContent('Idle')
+    expect(document.querySelector('.case-reason')).toHaveTextContent('hunt concluded, handed to IR')
+    expect(await screen.findByRole('region', { name: 'Root cause' })).toHaveTextContent('Root cause was not started: it needs a SIEM.')
+  })
+
+  it('shows no root-cause line when the record has none', async () => {
+    open('case-no-line', run({ status: 'terminal', outcome: 'completed', reason: 'concluded' }, { status: 'completed' }), 'open')
+    expect(await screen.findByRole('region', { name: 'Run outcome' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Root cause' })).not.toBeInTheDocument()
   })
 
   it('names the hunt lead as the agent on the case and shows the move in words', async () => {

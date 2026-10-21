@@ -36,6 +36,7 @@ import {
   chainOldestFirst,
   endedRun,
   EVIDENCE_PAGE,
+  EXPLANATION_TONE,
   explanationWord,
   foldRecord,
   heldLine,
@@ -73,15 +74,6 @@ const NEEDS_POLL_MS = 20_000
 const RECORD_CHIPS = ['agent', 'human', 'memory', 'system'] as const
 /** The tabs the run filter narrows. */
 const RUN_TABS: readonly Tab[] = ['Explanations', 'Evidence', 'Checked', 'Memory and blind spots']
-
-/** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
-const EXPL_TONE: Record<string, string> = {
-  proven: 'good',
-  standing: 'good',
-  forming: 'ac',
-  weakened: 'poor',
-  'ruled out': 'muted',
-}
 
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
 // What the Summary's disagreement button asks the composer, on a case with several runs.
@@ -170,7 +162,7 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite, tag }: { row: Hypo
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v) } }}>
         <div className="case-expl-line">
-          <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+          <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
           <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`} title={title}>{title}</span>
         </div>
         {tag && <div className="case-expl-run"><RunTag label={tag} /></div>}
@@ -186,11 +178,18 @@ function ExplanationRow({ row, rootCauseRunId, cites, onCite, tag }: { row: Hypo
           <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
         </div>
         {by && <div className="case-expl-by">Added by {by}</div>}
-        {row.status === 'handed_off' && rootCauseRunId && (
+        {/* what happened after it was proven, never a status of its own */}
+        {row.status === 'handed_off' && (
           <div className="case-expl-by">
-            <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
-              Root-cause run
-            </Link>
+            Handed off
+            {rootCauseRunId && (
+              <>
+                {' · '}
+                <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
+                  Root-cause run
+                </Link>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -1456,7 +1455,9 @@ export function CasePage({
   const running = runId !== null && !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+    tone === 'needs' ? needsAsk(shownNeeds) : answeredHere ? '' : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : stopped ? '' : ended?.reason ?? ''
+  // Why root cause did not run, in the activity's own words (rows are newest first).
+  const rootCauseNotStarted = rows.find((row) => row.source === 'case_activities' && row.kind === 'agent_run_root_cause_not_started') ?? null
   // Newest run first, which is not `runs` order (primary first).
   const verdict = caseVerdict(
     [...runs]
@@ -1582,6 +1583,14 @@ export function CasePage({
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
                 {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, text })} />}
+                {rootCauseNotStarted && (
+                  <section className="case-stopped" aria-label="Root cause">
+                    <div className="stopped-line">
+                      <b>Root cause</b>
+                      <span className="clamp2" title={rootCauseNotStarted.text}>{rootCauseNotStarted.text}</span>
+                    </div>
+                  </section>
+                )}
                 <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} onFollow={() => onExpand && onBack()} />
                 {runId !== null && (
                   <section className="case-card" aria-label="Findings so far">
@@ -2116,8 +2125,9 @@ function FindingList({ fold }: { fold: RunFold | null }) {
         const word = explanationWord(row.status, row.supports, row.weakens)
         return (
           <li key={row.hypothesis_id}>
-            <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+            <span className={`case-expl-pill ${EXPLANATION_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
             <Clamped text={row.statement || row.hypothesis_id} />
+            {row.status === 'handed_off' && <span className="case-findings-next">handed off</span>}
           </li>
         )
       })}

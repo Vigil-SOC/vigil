@@ -74,10 +74,11 @@ describe('a hunt, as of the selected step', () => {
     expect(screen.getByText('Not asked yet.')).toBeInTheDocument()
     expect(screen.getByText('None so far.')).toBeInTheDocument()
 
-    // step 2: a second record, the status moved with the digest, the critic has spoken
+    // step 2: a second record; the digest's inconclusive reads off its bearing, never a status word
     step(2)
-    expect(await screen.findByText('Inconclusive')).toBeInTheDocument()
-    expect(screen.getByText('2 for · 0 against')).toBeInTheDocument()
+    expect(await screen.findByText('2 for · 0 against')).toBeInTheDocument()
+    expect(screen.getByText('Standing')).toBeInTheDocument()
+    expect(screen.queryByText('Inconclusive')).not.toBeInTheDocument()
     expect(screen.queryByText('Not asked yet.')).not.toBeInTheDocument()
     expect(screen.getByText(/A nightly backup job/)).toBeInTheDocument()
     expect(screen.getByText('Did not stand')).toBeInTheDocument()
@@ -96,6 +97,24 @@ describe('a hunt, as of the selected step', () => {
     expect(screen.getByText('VirusTotal timed out')).toBeInTheDocument()
     expect(limit('Budget')).toBe('Budget$4.40 of $15.00')
     expect(limit('Steps')).toBe('Steps3 of 8')
+  })
+
+  it('reads a handed-off belief as proven in the board\'s green with the hand-off beside it, and a parked one as ruled out', async () => {
+    const ended = hunt({
+      status: 'terminal',
+      hypotheses: [
+        { hypothesis_id: 'h2', statement: 'A vendor scanner', status: 'parked', provenance: 'base_rate', supports: 0, weakens: 8 },
+        { hypothesis_id: 'h1', statement: 'The same operator moved', status: 'handed_off', provenance: 'operator', supports: 2, weakens: 1 },
+      ],
+    })
+    render(<WatchRun d={ended} onBack={vi.fn()} />)
+    step(3)
+    const proven = await screen.findByText('Proven')
+    expect(proven).toHaveStyle({ color: 'var(--good)' })
+    expect(proven).toHaveTextContent('Proven · handed off')
+    expect(screen.getByText('Ruled out')).toHaveStyle({ color: 'var(--tx3)' })
+    expect(screen.getByText('A vendor scanner')).toHaveClass('line-through')
+    expect(screen.queryByText(/Handed off|Parked/)).not.toBeInTheDocument()
   })
 
   it('holds a long Reviewer verdict to two lines, with Show all only when it overflows', async () => {

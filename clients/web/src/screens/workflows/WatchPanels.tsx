@@ -5,8 +5,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'
-import { explanationWord, wordDisplay } from '../cases/caseFold'
-import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag } from './huntParts'
+import { explanationColor, explanationWord, wordDisplay } from '../cases/caseFold'
+import { OpenCheckpoint, bearings, liveGap, provenanceTag } from './huntParts'
 import type { HuntEvidence, HuntStanding, HuntView, RootCauseBudgets, RootCauseEntry, WfRunDetail } from './runRead'
 
 export function Heading({ children }: { children: ReactNode }) {
@@ -160,20 +160,20 @@ function HuntExplanations({ hunt, iteration, at, last, recorded }: { hunt: HuntV
         const seen = tallies.get(h.hypothesis_id)
         const forN = last && h.row?.supports !== undefined ? h.row.supports : (seen?.supports ?? 0)
         const against = last && h.row?.weakens !== undefined ? h.row.weakens : (seen?.weakens ?? 0)
-        const color = hypothesisColor(h.status)
-        // the case page's words, so a belief reads the same here and there
-        const word = wordDisplay(explanationWord(h.status, forN, against))
+        // the case page's words and colours, so a belief reads the same here and there
+        const word = explanationWord(h.status, forN, against)
+        const color = explanationColor(word)
         const tag = provenanceTag(h.row?.provenance)
         return (
           <div key={h.hypothesis_id} className="flex flex-col gap-2 px-3.5 py-3 rounded-[12px] bg-[var(--bg2)] border border-[var(--ln0)]">
             <span className="flex items-start justify-between gap-2.5">
               <span
-                className={`min-w-0 text-[13px] font-[650] leading-[1.35] text-[var(--tx0)] line-clamp-2 break-words ${h.status === 'disproven' ? 'line-through' : ''}`}
+                className={`min-w-0 text-[13px] font-[650] leading-[1.35] text-[var(--tx0)] line-clamp-2 break-words ${word === 'ruled out' ? 'line-through' : ''}`}
                 title={h.statement}
               >
                 {h.statement}
               </span>
-              <span className="text-[12px] font-bold whitespace-nowrap" style={{ color }}>{word}{blind > 0 && <span className="font-normal text-[var(--tx2)]"> · {blind} blind spot{blind === 1 ? '' : 's'}</span>}</span>
+              <span className="text-[12px] font-bold whitespace-nowrap" style={{ color }}>{wordDisplay(word)}{h.status === 'handed_off' && <span className="font-normal text-[var(--tx2)]"> · handed off</span>}{blind > 0 && <span className="font-normal text-[var(--tx2)]"> · {blind} blind spot{blind === 1 ? '' : 's'}</span>}</span>
             </span>
             <Bar pct={forN + against === 0 ? 0 : Math.max(4, share(forN, forN + against))} color={color} size={6} />
             <span className="flex justify-between gap-2 text-[11px] text-[var(--tx2)]">
