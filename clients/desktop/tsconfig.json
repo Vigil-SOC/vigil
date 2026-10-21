@@ -1,8 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2021",
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    // TypeScript 7 removed moduleResolution "node" (node10). Node16 still
+    // emits CommonJS here: package.json has no "type": "module".
+    "module": "Node16",
+    "moduleResolution": "node16",
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,

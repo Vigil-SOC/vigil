@@ -494,7 +494,7 @@ function honours(content: string, schema: Record<string, unknown>): boolean {
 // One completion out of its chunks. A tool call arrives split across them, so held ids
 // and names are kept rather than overwritten by the nulls that follow.
 async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>): Promise<OpenAI.Chat.ChatCompletion> {
-  const calls = new Map<number, OpenAI.Chat.ChatCompletionMessageToolCall>();
+  const calls = new Map<number, OpenAI.Chat.ChatCompletionMessageFunctionToolCall>();
   let content = "";
   let usage: OpenAI.CompletionUsage | undefined;
   let finish: OpenAI.Chat.ChatCompletion.Choice["finish_reason"] = "stop";
@@ -545,7 +545,9 @@ async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>):
 // some margin; $0 is wrong by the whole amount and looks deliberate.
 function guessed(promptTokens: number, response: OpenAI.Chat.ChatCompletion): OpenAI.CompletionUsage {
   const message = response.choices[0]?.message;
-  const written = (message?.content ?? "") + (message?.tool_calls ?? []).map((call) => call.function.arguments).join("");
+  const written =
+    (message?.content ?? "") +
+    (message?.tool_calls ?? []).map((call) => (call.type === "function" ? call.function.arguments : "")).join("");
   const completion_tokens = estimateTokens(written);
   return { prompt_tokens: promptTokens, completion_tokens, total_tokens: promptTokens + completion_tokens };
 }
