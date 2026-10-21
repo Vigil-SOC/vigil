@@ -18,6 +18,8 @@ step python ok
 
 step env start
 load_env
+# Same mint as setup_dev.sh. app_up.sh fills it again if this step was skipped.
+ensure_bifrost_admin_password >&2
 step env ok
 
 step venv start

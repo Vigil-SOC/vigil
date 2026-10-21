@@ -23,12 +23,15 @@ pytestmark = pytest.mark.unit
 from core.integrations.integration_secrets import (  # noqa: E402
     ENV_CREDENTIAL_NAMES,
     INTEGRATION_SECRET_FIELDS,
+    SETTINGS_SECRET_NAMES,
 )
 from scripts.generate_support_secret_names import SNAPSHOT, build_names  # noqa: E402
 
 
 def test_secret_names_match_committed_list():
-    assert build_names(INTEGRATION_SECRET_FIELDS, ENV_CREDENTIAL_NAMES) == (
+    assert build_names(
+        INTEGRATION_SECRET_FIELDS, ENV_CREDENTIAL_NAMES, SETTINGS_SECRET_NAMES
+    ) == (
         SNAPSHOT.read_text()
     ), (
         f"The secret registry drifted from {SNAPSHOT.relative_to(REPO)}.\n"
@@ -40,4 +43,7 @@ def test_secret_names_match_committed_list():
 
 def test_a_new_registry_field_fails_the_check():
     grown = {**INTEGRATION_SECRET_FIELDS, "newvendor": {"api_key": "NEWVENDOR_API_KEY"}}
-    assert build_names(grown, ENV_CREDENTIAL_NAMES) != SNAPSHOT.read_text()
+    assert (
+        build_names(grown, ENV_CREDENTIAL_NAMES, SETTINGS_SECRET_NAMES)
+        != SNAPSHOT.read_text()
+    )

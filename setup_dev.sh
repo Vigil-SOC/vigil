@@ -19,7 +19,7 @@ fi
 
 # Environment. Create-only: an existing .env is never replaced, so an install
 # already configured for the DEV_MODE bypass keeps it. The one edit is filling an
-# empty AGENT_INTERNAL_TOKEN, below.
+# empty AGENT_INTERNAL_TOKEN and BIFROST_ADMIN_PASSWORD, below.
 if [ ! -f "$REPO_ROOT/.env" ]; then
     # Owner-only: it is about to hold the agent layer's token.
     (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
@@ -31,6 +31,8 @@ fi
 ensure_jwt_secret
 # Without this token the agent layer refuses to start: no chat, no workflow runs.
 ensure_agent_token
+# Bifrost's management API password. Same rule: fill an empty one, keep a set one.
+ensure_bifrost_admin_password
 
 # Python
 ensure_venv

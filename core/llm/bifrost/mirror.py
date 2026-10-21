@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from core.config import get_settings
+from core.llm.bifrost.auth import management_auth
 from core.llm.outage import report_outage, report_recovered
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ def _deactivate_row(provider: str) -> None:
 
 async def _get(path: str) -> Any:
     url = f"{get_settings().bifrost_url.rstrip('/')}/api/{path}"
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT, auth=management_auth()) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.json()

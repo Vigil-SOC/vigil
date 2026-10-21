@@ -133,7 +133,7 @@ def _provider_doc(base_url=None, extra_network=None, **extra):
 
 def test_sync_provider_models_skips_empty_list():
     # Must not even hit the admin API — refuses to wipe the allow-list.
-    with patch.object(bifrost_admin.httpx, "Client", lambda: _RecordingClient()):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: _RecordingClient()):
         assert (
             bifrost_admin.sync_provider_models("anthropic", [], key_value=_SECRET)
             is False
@@ -143,7 +143,7 @@ def test_sync_provider_models_skips_empty_list():
 def test_sync_provider_models_dedupes_and_preserves_order():
     rec = _RecordingClient(get_payload=_key_doc())
 
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_models(
             "anthropic",
             [
@@ -173,7 +173,7 @@ def test_keys_are_read_from_the_keys_subresource():
     all, which silently disabled every sync path in this module.
     """
     rec = _RecordingClient(get_payload=_key_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         bifrost_admin.sync_provider_models(
             "anthropic", ["claude-opus-4-7"], key_value=_SECRET
         )
@@ -192,7 +192,7 @@ def test_write_never_echoes_the_masked_value_back():
     masked = "sk-ant-****-masked"
     rec = _RecordingClient(get_payload=_key_doc(value=masked))
 
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         bifrost_admin.sync_provider_models(
             "anthropic", ["claude-opus-4-7"], key_value=_SECRET
         )
@@ -207,7 +207,7 @@ def test_write_never_echoes_the_masked_value_back():
 
 def test_write_strips_readback_only_fields():
     rec = _RecordingClient(get_payload=_key_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         bifrost_admin.sync_provider_models(
             "anthropic", ["claude-opus-4-7"], key_value=_SECRET
         )
@@ -219,7 +219,7 @@ def test_write_strips_readback_only_fields():
 
 def test_sync_provider_models_returns_false_when_provider_missing():
     rec = _RecordingClient(get_status=404, get_payload=None)
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_models(
             "anthropic", ["claude-opus-4-7"], key_value=_SECRET
         )
@@ -229,7 +229,7 @@ def test_sync_provider_models_returns_false_when_provider_missing():
 
 def test_sync_provider_models_returns_false_on_put_error():
     rec = _RecordingClient(get_payload=_key_doc(), put_status=500)
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_models("openai", ["gpt-4o"], key_value=_SECRET)
     assert ok is False
 
@@ -238,7 +238,7 @@ def test_sync_provider_models_creates_key_when_none_exists():
     # Bifrost accepts key creation at runtime, so an unconfigured provider is
     # not a dead end — no placeholder slot has to be seeded up front.
     rec = _RecordingClient(get_payload={"keys": [], "total": 0})
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_models(
             "anthropic", ["claude-opus-4-7"], key_value=_SECRET
         )
@@ -252,7 +252,7 @@ def test_sync_provider_models_creates_key_when_none_exists():
 def test_sync_provider_models_skips_when_no_secret_configured():
     # Every write must carry the credential, so there is nothing to sync.
     rec = _RecordingClient(get_payload=_key_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_models(
             "anthropic", ["claude-opus-4-7"], key_value=None
         )
@@ -264,7 +264,7 @@ def test_sync_provider_models_leaves_ollama_alone():
     # Ollama's key holds a masked URL, not a secret we own, and its allow-list
     # is the static wildcard.
     rec = _RecordingClient(get_payload=_key_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_models(
             "ollama", ["llama3.2:1b"], key_value=None
         )
@@ -274,7 +274,7 @@ def test_sync_provider_models_leaves_ollama_alone():
 
 def test_push_provider_key_updates_existing_key_in_place():
     rec = _RecordingClient(get_payload=_key_doc(models=["claude-opus-4-7"]))
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.push_provider_key("anthropic", "sk-ant-new") is True
 
     put = [c for c in rec.calls if c["method"] == "PUT"][0]
@@ -289,7 +289,7 @@ def test_push_provider_key_updates_existing_key_in_place():
 
 def test_push_provider_key_creates_key_when_absent():
     rec = _RecordingClient(get_payload={"keys": [], "total": 0})
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.push_provider_key("anthropic", "sk-ant-new") is True
 
     post = [c for c in rec.calls if c["method"] == "POST"][0]
@@ -300,7 +300,7 @@ def test_push_provider_key_creates_key_when_absent():
 def test_push_provider_key_deletes_on_empty_value():
     # Bifrost rejects a key with an empty value, so "cleared" is a deletion.
     rec = _RecordingClient(get_payload=_key_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.push_provider_key("anthropic", "") is True
 
     delete = [c for c in rec.calls if c["method"] == "DELETE"][0]
@@ -312,7 +312,7 @@ def test_push_provider_key_reports_false_on_write_error():
     # llm_providers surfaces this to the user, so a failed push must not
     # report success.
     rec = _RecordingClient(get_payload=_key_doc(), put_status=500)
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.push_provider_key("anthropic", "sk-ant-new") is False
 
 
@@ -396,7 +396,7 @@ def test_env_sync_removes_placeholders_and_keeps_real_keys():
             "ollama": [{"id": "url", "value": {"value": ""}}],
         }
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env({}):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env({}):
         result = bifrost_admin.sync_env_provider_keys()
 
     assert result == {"anthropic": "removed", "vertex": "removed"}
@@ -408,7 +408,7 @@ def test_env_sync_removes_placeholders_and_keeps_real_keys():
 
 def test_env_sync_pushes_an_env_key_in_the_placeholder_s_place():
     gw = _GatewayClient({"gemini": [_seed("gemini", "GEMINI_API_KEY")]})
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env(
         {"GEMINI_API_KEY": "gm-real"}
     ):
         result = bifrost_admin.sync_env_provider_keys()
@@ -422,7 +422,7 @@ def test_env_sync_pushes_an_env_key_in_the_placeholder_s_place():
 def test_env_sync_leaves_a_provider_that_already_has_a_key():
     real = {"id": "ui", "value": {"value": "sk-a****1234", "type": "plain_text"}}
     gw = _GatewayClient({"anthropic": [real]})
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env(
         {"ANTHROPIC_API_KEY": "sk-ant-env"}
     ):
         assert bifrost_admin.sync_env_provider_keys() == {}
@@ -433,7 +433,7 @@ def test_env_sync_leaves_a_provider_that_already_has_a_key():
 
 def test_env_sync_reads_claude_api_key_for_anthropic():
     gw = _GatewayClient({"anthropic": []})
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env(
         {"CLAUDE_API_KEY": "sk-ant-claude"}
     ):
         assert bifrost_admin.sync_env_provider_keys() == {"anthropic": "pushed"}
@@ -445,7 +445,7 @@ def test_env_sync_does_not_push_beside_a_placeholder_it_could_not_delete():
     gw = _GatewayClient(
         {"openai": [_seed("openai", "OPENAI_API_KEY")]}, delete_status=500
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env(
         {"OPENAI_API_KEY": "sk-openai"}
     ):
         result = bifrost_admin.sync_env_provider_keys(attempts=3, wait_s=0)
@@ -468,7 +468,7 @@ def test_env_sync_retries_while_bifrost_is_busy():
         return resp
 
     gw.delete = delete_then_recover
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env(
         {"OPENAI_API_KEY": "sk-openai"}
     ):
         result = bifrost_admin.sync_env_provider_keys(attempts=3, wait_s=0)
@@ -479,7 +479,7 @@ def test_env_sync_retries_while_bifrost_is_busy():
 
 def test_env_sync_skips_providers_bifrost_does_not_have():
     gw = _GatewayClient({})
-    with patch.object(bifrost_admin.httpx, "Client", lambda: gw), _env(
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: gw), _env(
         {"OPENAI_API_KEY": "sk-openai"}
     ):
         assert bifrost_admin.sync_env_provider_keys() == {}
@@ -1010,7 +1010,7 @@ def test_recording_client_distinguishes_provider_document_from_keys():
 
 def test_sync_provider_base_url_trims_trailing_v1():
     rec = _RecordingClient(provider_payload=_provider_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_base_url(
             "openai", "https://openrouter.ai/api/v1"
         )
@@ -1025,7 +1025,7 @@ def test_sync_provider_base_url_trims_trailing_v1():
 
 def test_sync_provider_base_url_keeps_path_prefix_without_v1_suffix():
     rec = _RecordingClient(provider_payload=_provider_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_base_url(
             "openai", "https://litellm.example/openai"
         )
@@ -1040,7 +1040,7 @@ def test_sync_provider_base_url_preserves_unrelated_network_config():
             extra_network={"retry_backoff_initial": 500, "insecure_skip_verify": False}
         )
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         bifrost_admin.sync_provider_base_url("openai", "https://together.xyz/v1")
     network = _provider_puts(rec)[0]["kwargs"]["json"]["network_config"]
     assert network["base_url"] == "https://together.xyz"
@@ -1056,7 +1056,7 @@ def test_sync_provider_base_url_is_idempotent_for_v1_and_bare_forms():
         ("https://openrouter.ai/api", "https://openrouter.ai/api"),
     ):
         rec = _RecordingClient(provider_payload=_provider_doc(base_url=existing))
-        with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
             ok = bifrost_admin.sync_provider_base_url("openai", stored)
         assert ok is True
         assert _provider_puts(rec) == []
@@ -1065,7 +1065,7 @@ def test_sync_provider_base_url_is_idempotent_for_v1_and_bare_forms():
 
 def test_sync_provider_base_url_skips_anthropic_and_ollama():
     rec = _RecordingClient(provider_payload=_provider_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert (
             bifrost_admin.sync_provider_base_url(
                 "anthropic", "https://proxy.example/anthropic/v1"
@@ -1081,7 +1081,7 @@ def test_sync_provider_base_url_skips_anthropic_and_ollama():
 
 def test_sync_provider_base_url_skips_empty_and_stock_openai():
     rec = _RecordingClient(provider_payload=_provider_doc())
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.sync_provider_base_url("openai", None) is True
         assert bifrost_admin.sync_provider_base_url("openai", "") is True
         assert (
@@ -1098,7 +1098,7 @@ def test_sync_provider_base_url_leaves_a_host_set_in_bifrost_when_row_is_blank()
     rec = _RecordingClient(
         provider_payload=_provider_doc(base_url="http://10.0.0.5:8000")
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.sync_provider_base_url("openai", None) is True
         assert bifrost_admin.sync_provider_base_url("openai", "  ") is True
     assert _provider_puts(rec) == []
@@ -1106,7 +1106,7 @@ def test_sync_provider_base_url_leaves_a_host_set_in_bifrost_when_row_is_blank()
 
 def test_sync_provider_base_url_returns_false_when_provider_missing():
     rec = _RecordingClient(provider_status=404, provider_payload=None)
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_base_url(
             "openai", "https://openrouter.ai/api/v1"
         )
@@ -1116,7 +1116,7 @@ def test_sync_provider_base_url_returns_false_when_provider_missing():
 
 def test_sync_provider_base_url_returns_false_on_put_error():
     rec = _RecordingClient(provider_payload=_provider_doc(), put_status=500)
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_base_url(
             "openai", "https://openrouter.ai/api/v1"
         )
@@ -1127,7 +1127,7 @@ def test_sync_provider_base_url_clears_stale_custom_host_when_reverting_to_stock
     rec = _RecordingClient(
         provider_payload=_provider_doc(base_url="https://openrouter.ai/api")
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         ok = bifrost_admin.sync_provider_base_url("openai", "https://api.openai.com/v1")
     assert ok is True
     network = _provider_puts(rec)[0]["kwargs"]["json"]["network_config"]
@@ -1143,7 +1143,7 @@ def test_base_url_put_omits_readback_only_fields():
             keys=[{"id": "should-not-be-echoed", "models": ["gpt-4o"]}],
         )
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         bifrost_admin.sync_provider_base_url("openai", "https://openrouter.ai/api/v1")
     body = _provider_puts(rec)[0]["kwargs"]["json"]
     assert "keys" not in body
@@ -1159,7 +1159,7 @@ def test_base_url_refresh_keeps_namespaced_model_on_key_allow_list():
         get_payload=_key_doc(models=["anthropic/claude-sonnet-5", "gpt-4o"]),
         provider_payload=_provider_doc(),
     )
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         assert bifrost_admin.sync_provider_base_url(
             "openai", "https://openrouter.ai/api/v1"
         )
@@ -1200,7 +1200,7 @@ def test_connection_test_success_leaves_bifrost_on_stock_host():
 
     import asyncio
 
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         asyncio.run(
             bifrost_admin._fetch_meta_for_row(row, _FakeDiscovery, key="sk-or-test")
         )
@@ -1209,7 +1209,7 @@ def test_connection_test_success_leaves_bifrost_on_stock_host():
     assert rec.calls == []
     assert "base_url" not in rec._provider_payload["network_config"]
 
-    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+    with patch.object(bifrost_admin.httpx, "Client", lambda *a, **k: rec):
         bifrost_admin.sync_provider_base_url("openai", row["base_url"])
 
     assert (
@@ -1245,7 +1245,7 @@ def test_sync_all_pushes_default_openai_row_base_url(monkeypatch):
     )
     monkeypatch.setattr(ba, "_fetch_meta_for_row", fake_fetch_row)
     monkeypatch.setattr(ba, "_resolve_row_key", lambda row: _SECRET)
-    monkeypatch.setattr(ba.httpx, "Client", lambda: rec)
+    monkeypatch.setattr(ba.httpx, "Client", lambda *a, **k: rec)
     monkeypatch.setenv("ANTHROPIC_EXTRA_MODELS", "")
 
     import asyncio

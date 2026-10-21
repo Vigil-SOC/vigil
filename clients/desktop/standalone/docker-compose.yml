@@ -73,6 +73,9 @@ services:
     image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Same file as the server stack (prepare-standalone.js copies it).
+      # Empty is rejected: an unset password would enable auth and lock /api/*.
+      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set by the desktop app}
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. The app runs `compose down` on quit, so without it every
@@ -106,6 +109,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set by the desktop app}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=http://bifrost:8080
+      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set by the desktop app}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
       # Auth stays on (DEV_MODE defaults to false in the image). The app mints

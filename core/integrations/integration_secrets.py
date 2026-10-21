@@ -175,6 +175,11 @@ INTEGRATION_SECRET_FIELDS: Mapping[str, Mapping[str, str]] = _build_registry()
 # encrypted store owns them, read via get_secret so a value saved in the UI wins
 # over the environment. Usernames and client IDs ride along; over-redacting them
 # in a support bundle is harmless. Feeds scripts/vigil-support/secret-names.txt.
+# Settings fields whose values are secrets. Not part of ENV_CREDENTIAL_NAMES:
+# that set is "documented in env.example and not a Settings field".
+SETTINGS_SECRET_NAMES: frozenset[str] = frozenset({"BIFROST_ADMIN_PASSWORD"})
+
+
 ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
     {
         "AGENT_INTERNAL_TOKEN",

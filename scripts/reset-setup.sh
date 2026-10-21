@@ -141,13 +141,21 @@ PY
 # gate open) and the write side (how to disable one without corrupting its
 # credential) have to agree.
 bifrost_py() {
-  VIGIL_API="$B" BF_ADMIN="$BF_ADMIN" AUTH_TOKEN="${VIGIL_TOKEN:-}" BF_MODE="$1" "$PYTHON" - <<'PY'
-import json, os, urllib.error, urllib.request
+  VIGIL_API="$B" BF_ADMIN="$BF_ADMIN" AUTH_TOKEN="${VIGIL_TOKEN:-}" BF_MODE="$1" \
+    REPO_ROOT="$REPO_ROOT" "$PYTHON" - <<'PY'
+import base64, json, os, urllib.error, urllib.request
 
 API = os.environ["VIGIL_API"].rstrip("/")
 BF = os.environ["BF_ADMIN"].rstrip("/")
 TOKEN = os.environ.get("AUTH_TOKEN", "")
 MODE = os.environ["BF_MODE"]
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.environ["REPO_ROOT"], ".env"))
+except Exception:
+    pass
+BF_PASS = os.environ.get("BIFROST_ADMIN_PASSWORD", "")
 
 GREEN = "\033[0;32m"; YELLOW = "\033[1;33m"; DIM = "\033[2m"; NC = "\033[0m"
 
@@ -157,7 +165,16 @@ def req(url, method="GET", body=None):
     r = urllib.request.Request(url, data=data, method=method)
     if data:
         r.add_header("Content-Type", "application/json")
-    if TOKEN:
+    # The console proxy takes the Vigil session. A direct gateway call takes
+    # the management password; a bearer there is not an admin credential.
+    if url.startswith(BF + "/") or url == BF:
+        if not BF_PASS:
+            raise RuntimeError(
+                "BIFROST_ADMIN_PASSWORD is empty; Bifrost's management API will refuse this"
+            )
+        basic = base64.b64encode(f"vigil:{BF_PASS}".encode()).decode()
+        r.add_header("Authorization", "Basic " + basic)
+    elif TOKEN:
         r.add_header("Authorization", "Bearer " + TOKEN)
     with urllib.request.urlopen(r, timeout=15) as resp:
         raw = resp.read()

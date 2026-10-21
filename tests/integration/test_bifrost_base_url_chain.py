@@ -70,6 +70,14 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _mgmt() -> dict:
+    """Admin Basic for /api/*. Inference calls do not use it."""
+    password = os.getenv("BIFROST_ADMIN_PASSWORD", "")
+    if not password:
+        return {}
+    return {"auth": ("vigil", password)}
+
+
 def _chat(bifrost: str) -> httpx.Response:
     return httpx.post(
         f"{bifrost}/v1/chat/completions",
@@ -87,7 +95,7 @@ def test_saved_base_url_routes_the_request_to_the_stub(monkeypatch):
     app.dependency_overrides[proxy.get_current_active_user] = lambda: object()
     console = TestClient(app)
 
-    before = httpx.get(f"{bifrost}/api/providers/openai", timeout=10).json()
+    before = httpx.get(f"{bifrost}/api/providers/openai", timeout=10, **_mgmt()).json()
     key = httpx.post(
         f"{bifrost}/api/providers/openai/keys",
         json={
@@ -98,6 +106,7 @@ def test_saved_base_url_routes_the_request_to_the_stub(monkeypatch):
             "enabled": True,
         },
         timeout=10,
+        **_mgmt(),
     ).json()
     stub = _Stub()
     host = os.getenv("BIFROST_STUB_HOST", "host.docker.internal")
@@ -108,7 +117,7 @@ def test_saved_base_url_routes_the_request_to_the_stub(monkeypatch):
         )
         assert saved.status_code == 200, saved.text
 
-        doc = httpx.get(f"{bifrost}/api/providers/openai", timeout=10).json()
+        doc = httpx.get(f"{bifrost}/api/providers/openai", timeout=10, **_mgmt()).json()
         assert doc["network_config"]["base_url"] == f"http://{host}:{stub.server_port}"
         assert doc["network_config"]["allow_private_network"] is True
 
@@ -121,8 +130,10 @@ def test_saved_base_url_routes_the_request_to_the_stub(monkeypatch):
         console.put(
             "/api/bifrost/providers/openai", json={"network_config": {"base_url": ""}}
         )
-        httpx.delete(f"{bifrost}/api/providers/openai/keys/{key['id']}", timeout=10)
-        after = httpx.get(f"{bifrost}/api/providers/openai", timeout=10).json()
+        httpx.delete(
+            f"{bifrost}/api/providers/openai/keys/{key['id']}", timeout=10, **_mgmt()
+        )
+        after = httpx.get(f"{bifrost}/api/providers/openai", timeout=10, **_mgmt()).json()
         assert after["network_config"].get("base_url") == before["network_config"].get(
             "base_url"
         )

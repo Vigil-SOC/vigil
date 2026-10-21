@@ -32,6 +32,9 @@ export VITE_DEV_MODE=false
 # Shared with start.sh / setup_dev.sh; respects a JWT_SECRET_KEY the desktop app
 # already set.
 ensure_jwt_secret >&2 || { step env fail; exit 1; }
+# Compose will not start while this is empty, and the host backend needs the
+# same value on /api/*. A set .env value is kept.
+ensure_bifrost_admin_password >&2
 step env ok
 
 step docker start
