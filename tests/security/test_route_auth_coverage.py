@@ -140,19 +140,35 @@ def _collect_routes(app) -> list:
     return found
 
 
+def _dependency_calls(dependant):
+    """Every ``call`` on ``dependant`` and the dependencies mounted above it."""
+    if dependant is None:
+        return
+    if dependant.call is not None:
+        yield dependant.call
+    for dep in dependant.dependencies:
+        yield from _dependency_calls(dep)
+
+
 def test_metrics_route_requires_the_scrape_bearer():
     """``GET /metrics`` is not a public path and not a user session.
 
     The scrape bearer is its own dependency, so this inventory sees it
-    without treating every non-``/api/`` route as in scope.
+    without treating every non-``/api/`` route as in scope. Matched by
+    module and name: ``test_monitoring`` reloads ``core.platform.monitoring``
+    after the app has bound the function it imported, so identity fails
+    once that test has already run.
     """
-    from core.platform.monitoring import require_metrics_token
     from services.api.main import PUBLIC_API_PATHS, app
 
     assert "/metrics" not in PUBLIC_API_PATHS
     routes = [r for r in _collect_routes(app) if r.path == "/metrics"]
     assert len(routes) == 1
-    assert _walk_dependants(routes[0].dependant, {require_metrics_token})
+    assert any(
+        getattr(call, "__module__", None) == "core.platform.monitoring"
+        and getattr(call, "__name__", None) == "require_metrics_token"
+        for call in _dependency_calls(routes[0].dependant)
+    )
 
 
 def test_every_api_route_requires_auth_or_is_explicitly_public():
