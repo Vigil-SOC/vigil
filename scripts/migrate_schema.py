@@ -592,7 +592,7 @@ def seed_default_roles(conn):
         logger.info(f"  Removed unused legacy roles: {', '.join(sorted(removed))}")
     for role_id, users in sorted(held.items()):
         logger.warning(
-            f"  Kept legacy role '{role_id}': {users} user(s) still hold it")
+            "  Kept legacy role '%s': %d user(s) still hold it", role_id, users)
 
     path = find_seed_file(filename=ROLES_SEED_FILE)
     if path is None:
@@ -605,8 +605,9 @@ def seed_default_roles(conn):
     elif held and not conn.execute(
             text("SELECT 1 FROM roles WHERE role_id = 'role-admin'")).first():
         logger.warning(
-            f"  Did not seed the roles in {ROLES_SEED_FILE}: roles still holds "
-            "legacy rows users are on. Move those users off them and run again.")
+            "  Did not seed the roles in %s: roles still holds legacy rows "
+            "users are on. Move those users off them and run again.",
+            ROLES_SEED_FILE)
     else:
         count = conn.execute(text("SELECT COUNT(*) FROM roles")).scalar()
         logger.info(f"  Roles table already has {count} rows, skipping seed")
