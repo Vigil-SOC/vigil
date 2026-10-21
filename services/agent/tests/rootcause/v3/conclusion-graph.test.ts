@@ -17,8 +17,8 @@ const refuted = (call: string) => [ev("direct", "refutes", [call], "no such link
 const edge = (tempId: string, source: string, target: string, evidence: ReturnType<typeof solid>) => ({ tempId, kind: "explains" as const, source, target, prior: 0.3, evidence });
 const conclude: GraphPatch = { ...emptyPatch(), setConclusion: { text: "A mail dropped the implant.", rootCause: "N3", chain: ["N3", "N2", "N1"], openQuestions: ["who sent the mail"], turn: 2 } };
 
-// N3 -> N2 -> N1 (the alert). The link N2 -> N1 is E1; it is refuted when `rejectE1`.
-function journal(rejectE1: boolean) {
+// N3 -> N2 -> N1 (the alert). The link N2 -> N1 is E1; it is refuted when `rejectE1`. `concluded` patches the conclusion.
+function journal(rejectE1: boolean, concluded: Partial<NonNullable<GraphPatch["setConclusion"]>> = {}) {
   const patch: GraphPatch = {
     ...emptyPatch(),
     addNodes: [node("implant", { evidence: solid("r1") }), node("mail", { isRoot: !rejectE1, evidence: solid("r2") })],
@@ -32,7 +32,7 @@ function journal(rejectE1: boolean) {
   push("run", { run_kind: "root_cause", spec: { sections: { engine: "rootcause-v3" } } });
   push("rootcause_setup", { cfg, alert, index: "lab", range: ["2026-05-05T00:00:00Z", "2026-05-05T12:00:00Z"], survey: { text: "", domains: [], sizes: {} }, environment: null });
   push("rootcause_turn", { turn: 1, entries: [entry(1, patch)] });
-  push("rootcause_turn", { turn: 2, entries: [entry(2, conclude)] });
+  push("rootcause_turn", { turn: 2, entries: [entry(2, { ...conclude, setConclusion: { ...conclude.setConclusion!, ...concluded } })] });
   push("rootcause_exit", { exit: "inconclusive", report: "r", entries: [] });
   return events;
 }
@@ -81,5 +81,26 @@ describe("a conclusion the graph supports", () => {
     expect(view.account!.root_cause).toMatchObject({ id: "N3" });
     expect(view.account!.conclusion).toMatchObject({ text: "A mail dropped the implant.", unconfirmed: false, rejected: [] });
     expect(view.open_questions).toEqual([{ kind: "model", id: "Q1", text: "who sent the mail", question: "who sent the mail", refs: [], onChain: false }]);
+  });
+});
+
+describe("a conclusion naming the alert as its root", () => {
+  // E1 refuted, so the graph marks no root; the chain is the alert alone, which needs no settling.
+  const events = journal(true, { rootCause: "N1", chain: ["N1"] });
+  const view = rootCauseV3Projection("r1", events as never);
+
+  it("is unconfirmed: the alert is not a cause", () => {
+    expect(render(events)).toContain("## Investigator's conclusion (unconfirmed)");
+    expect(view.account!.conclusion).toMatchObject({ unconfirmed: true, rejected: [{ id: "N1", reason: "N1 is the alert, not a cause" }] });
+    expect(view.account!.root_cause).toBeNull();
+  });
+});
+
+describe("a blank open question from the model", () => {
+  const events = journal(false, { openQuestions: ["  who sent\n the mail ", " \n "] });
+
+  it("is dropped, so the report prints no empty bullet", () => {
+    expect(rootCauseV3Projection("r1", events as never).open_questions).toEqual([{ kind: "model", id: "Q1", text: "who sent the mail", question: "who sent the mail", refs: [], onChain: false }]);
+    expect(render(events)).not.toMatch(/^- *$/m);
   });
 });

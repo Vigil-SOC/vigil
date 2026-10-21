@@ -171,4 +171,14 @@ describe("rootcause v3 projection account", () => {
     expect(v.recent_searches.map((s) => [s.args, s.failed])).toEqual([["index=lab q1", false], ["index=lab q2", true]]);
     expect(v.code_searches).toBe(2);
   });
+
+  it("shows a search's own result count, none when the output states none", () => {
+    const wrap = (output: string) => `<vigil:tool_result tool="splunk_query" ref="r1">\n1 row(s) from splunk_query\n${JSON.stringify([{ output }], null, 2)}\n</vigil:tool_result>`;
+    const call = (n: number, result: string): AgentEvent<V3Kinds> => ({
+      run_id: "r1", run_kind: "root_cause", seq: n, ts: at(1), kind: "call", schema_version: 1,
+      payload: { ref: `r${n}`, turn: 1, call_id: `c${n}`, tool: "splunk_query", arguments: JSON.stringify({ spl: `index=lab q${n}` }), result, ok: true, failure: null, role: "expand" },
+    } as AgentEvent<V3Kinds>);
+    const v = rootCauseV3Projection("r1", [events[0]!, call(1, wrap("192 events matched, 0 results (showing 0 of 0)")), call(2, wrap("5,000 events matched, 1,234 results (showing 50 of 1,234)")), call(3, wrap("no count line here"))] as never);
+    expect(v.recent_searches.map((s) => s.rows)).toEqual([0, 1234, undefined]);
+  });
 });

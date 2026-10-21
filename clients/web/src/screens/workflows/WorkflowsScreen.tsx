@@ -1089,7 +1089,7 @@ interface RootCauseStep {
 interface RootCauseSearch {
   tool: string
   args: string
-  rows: number
+  rows?: number
   failed: boolean
 }
 /** A root-cause run's projection. `recent_searches` is capped; `searches` is the total. */
@@ -1630,7 +1630,7 @@ function KernelRootCause({ trace }: { trace: RootCauseView }) {
             {trace.recent_searches.map((q, at) => (
               <li key={at}>
                 <span className="font-mono">{q.args || q.tool}</span>{' '}
-                <span className="muted">{q.failed ? 'failed' : `${q.rows} ${q.rows === 1 ? 'row' : 'rows'}`}</span>
+                <span className="muted">{q.failed ? 'failed' : q.rows === undefined ? '—' : `${q.rows} ${q.rows === 1 ? 'row' : 'rows'}`}</span>
               </li>
             ))}
           </ul>

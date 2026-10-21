@@ -49,6 +49,16 @@ describe("how many rows a call got back", () => {
     expect(rowsIn(wrapped)).toBe(30);
   });
 
+  it("reads the result count of a search tool's wrapped text, not the wrapper or the events", () => {
+    const wrap = (output: string) => `<vigil:tool_result tool="search" ref="r25">\n1 row(s) from search\n${JSON.stringify([{ output }], null, 2)}\n</vigil:tool_result>`;
+    expect(rowsIn(wrap("192 events matched, 0 results (showing 0 of 0)\nNOTE: userName is missing"))).toBe(0);
+    expect(rowsIn(wrap("purpose: x\n900 events matched, 12 results (showing 12 of 12)"))).toBe(12);
+    expect(rowsIn(wrap("5,000 events matched, 1,234 results (showing 50 of 1,234)"))).toBe(1234);
+    expect(rowsIn(wrap("ERROR: bad search"))).toBeUndefined();
+    // cut by the result cap, the wrapper does not parse
+    expect(rowsIn(wrap("1 events matched, 1 results (showing 1 of 1)").slice(0, -40))).toBeUndefined();
+  });
+
   it("takes the count as said when the rows are the rows", () => {
     expect(rowsIn("1 row(s) from okta\n[{\"user\":\"ada\"}]")).toBe(1);
     expect(rowsIn("25 row(s) from splunk\n[]")).toBe(25);

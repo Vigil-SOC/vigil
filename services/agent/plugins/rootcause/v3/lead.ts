@@ -6,8 +6,8 @@ import { bestPathFromSymptom, getParents, type Graph, type GraphNode, type Predi
 import { mentionsRare, rareValues, type RareValue } from "./rare.js";
 
 export interface NextIn { move: string; target?: string; source?: string; why?: string }
-// refused: why the last choice was not used. silent: the last move's turn gave no valid submission (one attempt spent).
-export interface LeadState { next?: NextIn; refused?: string; silent?: string }
+// refused: why the last choice was not used. failed: the provider error that lost the last choose turn (the choice was never judged). silent: the last move's turn gave no valid submission (one attempt spent).
+export interface LeadState { next?: NextIn; refused?: string; failed?: string; silent?: string }
 
 const live = (n: GraphNode) => n.kind === "action" && n.status !== "ruled-out";
 const symptomOf = (g: Graph) => Object.values(g.nodes).find((n) => n.isSymptom);
@@ -71,7 +71,7 @@ export function optionsText(g: Graph, cfg: AgentConfig, st: LeadState, turn = 0,
   return `<next_move>
 ${lead}
 Moves: expand <event> = find what caused it; strengthen <event|link> = check it happened / holds; fork <event> = a competing cause; branch <event> = what else it led to; test <prediction> = run a story's prediction; theorize = write or revise competing stories of the incident; pivot <boundary> = follow into a source that holds the cause (set source to the sourcetype to search; any sourcetype); connect = link unlinked findings to the chain; probe <rare value> = read a rare record over the whole range and what came after it. source on any move says where to look first.
-Target a graph id listed below${choosing ? "." : ", or an event you report in this submission by its exact label."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
+Target a graph id listed below${choosing ? "." : ", or an event you report in this submission by its exact label."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}${st.failed !== undefined ? `\nYour last turn was lost to a provider error${st.failed ? ` (${st.failed})` : ""} before your choice was judged: choose again.` : ""}
 available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.length} rare records unread)` : ""}${stories}${rareLine}
 </next_move>`;
 }

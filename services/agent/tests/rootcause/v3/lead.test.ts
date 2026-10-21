@@ -74,10 +74,10 @@ describe("lead", () => {
 describe("the model names every move", () => {
   const alert = { id: "a", source: "edr", title: "alert", observedAt: "2026-01-01T00:00:00Z", artifacts: [], raw: {} };
   const conclusion = { conclusion: "done", chain: [], openQuestions: [], reasoning: "" };
-  const drive = async (answer: (req: TurnRequest, n: number, budget: { usd: number }) => unknown, graph?: ReturnType<typeof seeded>) => {
+  const drive = async (answer: (req: TurnRequest, n: number, budget: { usd: number }) => unknown, graph?: ReturnType<typeof seeded>, failing: (n: number) => string | undefined = () => undefined) => {
     const reqs: TurnRequest[] = [];
     const budget = { usd: 0 };
-    const model = { runTurn: async (req: TurnRequest) => { reqs.push(req); return { submission: answer(req, reqs.length, budget) ?? null, toolCalls: [] }; } };
+    const model = { runTurn: async (req: TurnRequest) => { reqs.push(req); const failed = failing(reqs.length); return failed !== undefined ? { submission: null, toolCalls: [], failed } : { submission: answer(req, reqs.length, budget) ?? null, toolCalls: [] }; } };
     const trace = new MemoryTrace("t");
     const r = await run(alert, { ...cfg, rareSweep: false, maxUsd: 100 }, { model, tools: new Registry(), trace, budget, domains: ["edr"], clock: () => new Date() }, { runId: "t", range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "x", graph });
     return { reqs, r, trace };
@@ -101,6 +101,32 @@ describe("the model names every move", () => {
     expect(decisions.every((d) => !("priority" in (d as object)))).toBe(true);
   });
 
+  it("tells the model a provider error lost its choose turn, not that the choice was invalid, and asks again without a retry count", async () => {
+    const { reqs, trace } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (n === 3) budget.usd = 1e6;
+      return req.move === "choose" ? { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } : null;
+    }, undefined, (n) => (n === 1 ? "502 failed to execute HTTP request to provider API" : undefined));
+    expect(reqs.map((r) => r.move)).toEqual(["choose", "choose", "strengthen", "conclude"]);
+    expect(reqs[1]!.userContent).not.toContain("not a valid choice");
+    expect(reqs[1]!.userContent).not.toContain("Your last choice was not used");
+    expect(reqs[1]!.userContent).toContain("lost to a provider error (502 failed to execute HTTP request to provider API)");
+    expect(reqs[2]!.userContent).not.toContain("provider error");
+    const decisions = trace.chronological().filter((e) => e.type === "decision").map((e) => e.payload as { move: string; reason: string });
+    expect(decisions[1]).toMatchObject({ move: "choose", reason: "502 failed to execute HTTP request to provider API" });
+  });
+
+  it("treats a provider error with no message as a lost choose turn too", async () => {
+    const { reqs } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (n === 3) budget.usd = 1e6;
+      return req.move === "choose" ? { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } : null;
+    }, undefined, (n) => (n === 1 ? "" : undefined));
+    expect(reqs.map((r) => r.move)).toEqual(["choose", "choose", "strengthen", "conclude"]);
+    expect(reqs[1]!.userContent).not.toContain("not a valid choice");
+    expect(reqs[1]!.userContent).toContain("Your last turn was lost to a provider error before your choice was judged");
+  });
+
   it("runs the move a submission names without a choose turn", async () => {
     const { reqs } = await drive((req, n, budget) => {
       if (req.move === "conclude") return conclusion;
@@ -110,6 +136,19 @@ describe("the model names every move", () => {
       return { candidates: [], reasoning: "r" };
     });
     expect(reqs.map((r) => r.move)).toEqual(["choose", "strengthen", "expand", "conclude"]);
+  });
+
+  it("keeps back one more move at the average cost plus the closing turn, and concludes rather than start a move it cannot pay for", async () => {
+    // Each turn costs $30 of $100: after two the average is 30, the reserve 60 and 40 is left.
+    const { reqs, r } = await drive((req, _n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      budget.usd += 30;
+      return req.move === "choose" ? { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } : null;
+    });
+    expect(reqs.map((x) => x.move)).toEqual(["choose", "strengthen", "conclude"]);
+    expect(r.exit).toBe("budget-exhausted");
+    expect(r.report).toContain("exit **budget-exhausted**");
+    expect(r.report).toContain("done");
   });
 
   it.each([[true, "root-cause-found"], [false, "inconclusive"]])("ends when no move is open (root %s: %s), after the closing conclude turn", async (isRoot, exit) => {

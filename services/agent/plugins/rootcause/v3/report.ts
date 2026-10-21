@@ -135,7 +135,9 @@ function rejections(g: Graph, c: NonNullable<Graph["conclusion"]>): Rejected[] {
     if (!ties.some((e) => e.status !== "ruled-out")) out.push(dead ? { id: dead.id, reason: `${dead.id} (${from} → ${to}) ruled out at turn ${dead.updatedTurn}` } : { id: `${from}→${to}`, reason: `no link from ${from} to ${to}` });
   });
   const top = bestPathFromSymptom(g)?.nodeIds.at(-1);
-  if (c.rootCause && top !== c.rootCause) out.push({ id: c.rootCause, reason: `${c.rootCause} is not the root of the graph's best path${top ? ` (${top})` : ""}` });
+  // The alert is exempt from settling above, but it is never its own cause, even when the graph has no root.
+  if (c.rootCause && g.nodes[c.rootCause]?.isSymptom) out.push({ id: c.rootCause, reason: `${c.rootCause} is the alert, not a cause` });
+  else if (c.rootCause && top !== c.rootCause) out.push({ id: c.rootCause, reason: `${c.rootCause} is not the root of the graph's best path${top ? ` (${top})` : ""}` });
   return out;
 }
 
@@ -251,6 +253,7 @@ export function reportRows(g: Graph, chronological: readonly TraceEntry[], raw =
 
   const open = openRows(g, chronological);
 
+
   return { accounts, people, conclusion, chain, attribution, impersonation, exonerated, timeline, others, alternatives, tested, open };
 }
 
@@ -280,7 +283,8 @@ function openRows(g: Graph, chronological: readonly TraceEntry[]): OpenRow[] {
     const about = [...new Set([f.correlationId, ...f.relatedIds])].filter(isEvent).map(ref);
     rows.push({ kind: "flagged", id: f.id, refs: about, onChain: false, turn: f.turn, flagged: (f.payload as any).suspiciousContent });
   }
-  (g.conclusion?.openQuestions ?? []).forEach((q, i) => {
+  // A blank question is dropped, so the report prints no empty bullet.
+  (g.conclusion?.openQuestions ?? []).map((q) => q.replace(/\s+/g, " ").trim()).filter(Boolean).forEach((q, i) => {
     const named = [...new Set((q.match(/\b[A-Z]+\d+\b/g) ?? []).flatMap((id) => (g.edges[id] ? [g.edges[id]!.source, g.edges[id]!.target] : [id])))].filter(isEvent);
     rows.push({ kind: "model", id: `Q${i + 1}`, refs: named.map(ref), onChain: named.some(onPath), question: q });
   });

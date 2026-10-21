@@ -20,7 +20,7 @@ export interface SplunkInputT { purpose: string; spl: string; earliest?: string;
 const SplunkInput: Record<string, unknown> = {
   type: "object",
   properties: {
-    purpose: { type: "string", minLength: 10, description: "what this search should show and the result you expect, e.g. 'confirm process X on host Y wrote the file; expect 1 event'. An empty or different result then counts against that expectation." },
+    purpose: { type: "string", minLength: 10, description: "what this search should show and the result you expect, e.g. 'confirm process X on host Y wrote the file; expect 1 event'. An empty or different result then counts against that expectation, but only if the source records that host or entity at all: nothing from a source that never sees it is a coverage gap, not refutation." },
     spl: { type: "string", minLength: 1, description: "SPL with index=, a sourcetype filter and field filters; aggregate with stats/tstats (count, values(), min/max(_time) by the identity or resource) before pulling raw events. No earliest=/latest= in the SPL." },
     earliest: { type: "string", description: "ISO 8601 window start. Default: 6 hours before the target's time (48 hours when looking for a cause; the whole data range when the target has no time)." },
     latest: { type: "string", description: "ISO 8601 window end. Default: 1 hour after the target's time (or the end of the data)." },
@@ -113,7 +113,7 @@ export function splunkTool(backend: SearchBackend, index: string): EvidenceTool<
       const wild = [...scoped.spl.split("|")[0]!.matchAll(/\b([\w.{}@-]+)\s*=\s*"?\*([^\s"*)]+)\*?"?/g)].map((m) => m[2]!);
       const hint = wild.length ? `\nNOTE: leading-wildcard field filters (${wild.slice(0, 3).map((w) => `*${w}*`).join(", ")}) make Splunk parse every event in the window. A plain keyword ("${wild[0]}") uses the index and is much faster.` : "";
       if (text.startsWith("ERROR:") || text.startsWith("refused:")) return { ok: false, error: `${text.replace(/^ERROR:\s*/, "")}\n${head}` };
-      const empty = /^0 events matched, 0 results/.test(text) ? "\nNOTE: nothing matched. Against your stated expectation this is evidence, if the search names the right fields and window." : "";
+      const empty = /^0 events matched, 0 results/.test(text) ? "\nNOTE: nothing matched. Against your stated expectation this is evidence, if the search names the right fields and window and the source records this host or entity at all; otherwise it is a coverage gap." : "";
       return { ok: true, data: `${head}\n${text}${empty}${hint}` };
     },
   };

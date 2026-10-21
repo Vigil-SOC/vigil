@@ -1,7 +1,7 @@
 // Named rather than default: ajv is CJS, so under the image build's NodeNext
 // resolution a default import lands on module.exports.default. The named export
 // exists in both, so this one line satisfies `bundler` and NodeNext alike.
-import { Ajv, type ValidateFunction } from "ajv";
+import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import { GatewayExhausted } from "./limiter.js";
 import { ModelSilent, OutputCapReached } from "./wire.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
@@ -814,6 +814,12 @@ function compile(schema: Record<string, unknown>): ValidateFunction {
 export function schemaErrors(schema: Record<string, unknown>, value: unknown): string | null {
   const validate = compile(schema);
   return validate(value) ? null : errorsOf(validate);
+}
+
+// The same check, with ajv's own errors (instancePath, keyword, params) for a caller that repairs by them.
+export function schemaIssues(schema: Record<string, unknown>, value: unknown): ErrorObject[] {
+  const validate = compile(schema);
+  return validate(value) ? [] : [...(validate.errors ?? [])];
 }
 
 // An enum error names the values it would take, or the model is asked to correct a field blind.

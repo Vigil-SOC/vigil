@@ -1,4 +1,5 @@
 import type { AgentEvent, CallPayload, TerminalPayload } from "../../../contracts/events.js";
+import { rowsIn } from "../../../core/call-view.js";
 import type { SpendPayload } from "../../../core/seams.js";
 import type { RootCauseProjection, SearchView } from "../projection.js";
 import type { RootCauseReplay, RootCauseReplayStep } from "../replay.js";
@@ -102,7 +103,10 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
       const call = event.payload as CallPayload;
       // Only the model's searches that ran: not the code's own, and not a call refused before it ran.
       if (call.role === "code") codeSearches += 1;
-      else if (!neverRan(call)) searches.push({ tool: call.tool, args: queryOf(call.arguments).slice(0, 500), rows: call.ok ? 1 : 0, failed: !call.ok });
+      else if (!neverRan(call)) {
+        const rows = call.ok ? rowsIn(call.result) : undefined;
+        searches.push({ tool: call.tool, args: queryOf(call.arguments).slice(0, 500), ...(rows === undefined ? {} : { rows }), failed: !call.ok });
+      }
     } else if (event.kind === "terminal") {
       terminal = event.payload as TerminalPayload;
     }
@@ -169,7 +173,7 @@ export function rootCauseV3Replay(runId: string, events: readonly AgentEvent<Rec
     const step = byTurn.get(event.payload.turn);
     if (step === undefined) continue;
     steps.push({ kind: "notice", recorded_at: event.ts, text: `Turn ${step.n}: ${step.move} ${step.targetId}. ${step.reason}` });
-    for (const q of step.queries) steps.push({ kind: "search", recorded_at: event.ts, tool: "splunk", args: q.query.slice(0, 500), rows: q.rows ?? 0, failed: q.failed === true, ...(q.error === undefined ? {} : { failure: q.error }) });
+    for (const q of step.queries) steps.push({ kind: "search", recorded_at: event.ts, tool: "splunk", args: q.query.slice(0, 500), ...(q.rows === undefined ? {} : { rows: q.rows }), failed: q.failed === true, ...(q.error === undefined ? {} : { failure: q.error }) });
   }
   if (folded.graph !== null) for (const link of chainOf(folded.graph)) steps.push({ kind: "step", recorded_at: last, ...link });
   return { run_id: runId, run_kind: "root_cause", ...(budgets === undefined ? {} : { budgets }), steps, engine: "rootcause-v3", moves: folded.steps };
