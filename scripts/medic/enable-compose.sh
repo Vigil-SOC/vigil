@@ -255,9 +255,12 @@ ensure_account() {
     # 1 an image without this code (rebuild the backend).
     for _ in $(seq 1 60); do
         rc=0
+        # ensure's stdout names the account. The name is not a credential, but
+        # it is the thing a password guess needs, so the script keeps it in the
+        # secrets file and prints only the outcomes below.
         read_secret viewer_password \
             | dcm exec -T backend python -m core.auth.service_account ensure "$viewer_user" \
-            2> "$err" || rc=$?
+            >/dev/null 2> "$err" || rc=$?
         case "$rc" in
             0) rm -f "$err"; return 0 ;;
             75) ;;

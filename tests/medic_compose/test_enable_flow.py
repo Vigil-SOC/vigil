@@ -41,7 +41,9 @@ case " $* " in
             tail -n +2 "$FAKE_DIR/exec_codes" > "$FAKE_DIR/exec_codes.tmp"
             mv "$FAKE_DIR/exec_codes.tmp" "$FAKE_DIR/exec_codes"
         fi
-        [ "$code" = 0 ] && echo "service account x: created"
+        # The real command prints the account name. A stand-in would let the
+        # "name is not printed" check pass while the script echoed it.
+        [ "$code" = 0 ] && echo "service account ${*: -1}: created"
         [ "$code" != 0 ] && echo "error $code" >&2
         exit "$code" ;;
     *" ps "*)

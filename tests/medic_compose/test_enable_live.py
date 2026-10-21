@@ -317,6 +317,10 @@ def test_canary_no_secret_in_output_config_or_logs(stack, enabled) -> None:
             ("compose.env", settings),
         ]:
             assert value not in text, where
+    # The name is in compose.env and the rendered gateway env on purpose.
+    # It must not be in what the script prints.
+    name = stack.secret("viewer_username")
+    assert name not in enabled.stdout and name not in enabled.stderr
 
 
 def test_first_admin_bootstrap_is_still_open(stack, enabled) -> None:
