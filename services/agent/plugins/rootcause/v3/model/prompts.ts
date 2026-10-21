@@ -59,7 +59,7 @@ export const SMALL_SOURCE = 1000;
 export function constraints(cfg: AgentConfig, range: [string, string], allowed: string[], all: string[], extra = "", cap = cfg.maxToolCallsPerTurn, coverage?: Record<string, number>, sizes?: Record<string, number>): string {
   const scope = allowed.length === all.length ? "all sourcetypes" : `only ${allowed.join(", ")}`;
   const cov = coverage ? `\n${coverageLine(all, coverage, sizes)}` : "";
-  return `<constraints>\ndata range: ${range[0]} to ${range[1]}\nyou may search: ${scope}\nsearches this turn: at most ${cap}${cov}${extra ? `\n${extra}` : ""}\n</constraints>`;
+  return `<constraints>\ndata range: ${range[0]} to ${range[1]}\nyou may search: ${scope}\nsearch rounds this turn: at most ${cap} (a round may hold several searches)${cov}${extra ? `\n${extra}` : ""}\n</constraints>`;
 }
 
 export const instructions = {

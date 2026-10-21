@@ -6,8 +6,8 @@ import { loadPlugin } from "../../../plugins/index.js";
 import { defaultConfig } from "../../../plugins/rootcause/v3/config.js";
 import type { V3Kinds } from "../../../plugins/rootcause/v3/ledger.js";
 import { KernelModelClient, KernelTurns, Refused, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
-import { SYSTEM_PROMPT } from "../../../plugins/rootcause/v3/model/prompts.js";
-import { Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
+import { constraints, SYSTEM_PROMPT } from "../../../plugins/rootcause/v3/model/prompts.js";
+import { issued, neverRan, Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { harnessOf, modelOf, specOf, splunk } from "../../support/v3-run.js";
@@ -89,6 +89,10 @@ describe("a move as a kernel turn", () => {
     expect(searched.toolCalls).toMatchObject([{ id: "r1", ok: false }]);
     expect((await t.calls())[0]).toMatchObject({ ok: false, failure: "backend_error" });
     expect(t.tools.outputOf("r1")).toBe("");
+    // It never ran: it keeps its number but is no evidence, and the next search is r2.
+    expect(t.tools.callCount).toBe(1);
+    expect(issued(t.tools, "r1")).toBe(false);
+    expect(t.tools.coverage).toEqual({});
 
     const none = await t.client.runTurn(t.request({ move: "conclude", submitTool: "submit_conclusion", maxSearches: 0 }));
     expect(t.provider.requests.at(-1)!.tools).toEqual([]);
@@ -112,6 +116,21 @@ describe("a move as a kernel turn", () => {
     const why = (out.submission as { next: { why: string } }).next.why;
     expect(why).toHaveLength(300);
     expect(why.endsWith("…")).toBe(true);
+  });
+
+  it("tells the model the cap is rounds of searches, which may hold several", () => {
+    expect(constraints(cfg, range, ["edr"], ["edr"])).toContain(`search rounds this turn: at most ${cfg.maxToolCallsPerTurn} (a round may hold several searches)`);
+  });
+
+  it("drops a citation of a refused call, live and as a resume rebuilds it", () => {
+    const refused = { failure: "refused", result: "" };
+    const guarded = { failure: "backend_error", result: '<vigil:tool_result tool="splunk_query" ref="r2">\nfailed: backend_error -- refused: name the index\n</vigil:tool_result>' };
+    const ran = { failure: null, result: "<vigil:tool_result>\n1 row(s)\n</vigil:tool_result>" };
+    const reg = new Registry();
+    [refused, guarded, ran].forEach((c, i) => reg.note(`r${i + 1}`, { spl: "sourcetype=a" }, "", !neverRan(c)));
+    expect(["r1", "r2", "r3"].map((id) => issued(reg, id))).toEqual([false, false, true]);
+    expect(reg.callCount).toBe(3);
+    expect(reg.coverage).toEqual({ a: 1 });
   });
 
   it("cites only refs as the ledger spells them", async () => {
