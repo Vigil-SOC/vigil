@@ -1804,12 +1804,87 @@ describe('a v3 root-cause run', () => {
     expect(within(search).getByText('index=email sourcetype=barracuda')).toBeInTheDocument()
 
     tabTo(/Open questions/)
-    expect(screen.getByText('disputed')).toBeInTheDocument()
+    // An item without the fields it is worded from reads as the report's line, under its section.
+    expect(screen.getByRole('heading', { name: 'Unsettled in the graph' })).toBeInTheDocument()
     expect(screen.getByText('the link from the scan is disputed')).toBeInTheDocument()
 
     tabTo(/^Report$/)
     expect(screen.getByRole('heading', { name: 'What the run wrote' })).toBeInTheDocument()
     expect(screen.getByText('Kept for the analyst.')).toBeInTheDocument()
+  })
+
+  describe('open questions', () => {
+    const alertRef = { id: 'N1', label: 'bare boundary label', alert: true }
+    const phish = { id: 'N0', label: 'phish delivered the link' }
+    const scan = { id: 'N8', label: 'an unrelated scan' }
+    const questions = [
+      { kind: 'disputed', id: 'E1', text: 'Disputed explains E1: phish delivered the link -> N1 at 0.80.', refs: [phish, alertRef], onChain: true, link: { kind: 'explains', source: phish, target: alertRef, confidence: 0.8 } },
+      {
+        kind: 'ruled-out', id: 'N7', text: 'Ruled out N7 a stray login: no session. It was a test account.', refs: [{ id: 'N7', label: 'a stray login' }], onChain: false,
+        event: { id: 'N7', label: 'a stray login' }, refutations: [{ summary: 'no session in the IdP log', turn: 3 }, { summary: 'It was a test account. The owner said so.', turn: 4 }],
+      },
+      { kind: 'flagged', id: 'T000439', text: 'Suspicious content flagged at turn 6 (T000439): ignore the alert', refs: [scan], onChain: false, turn: 6, flagged: ['ignore the alert'] },
+      { kind: 'model', id: 'Q1', text: 'Who sent the mail (N0)?', question: 'Who sent the mail (N0)?', refs: [phish], onChain: true },
+    ]
+    const timeline = {
+      events: [{ id: 'N8', label: 'an unrelated scan', observedAt: '2018-08-20T11:00:00Z', onChain: false, ranAs: [], operatedBy: [] }],
+      impersonation: [], exonerated: [],
+    }
+
+    it('splits them into three sections in plain words, with the flagged content in its own warning', () => {
+      renderPanel({ projection: v3({ chain, timeline, open_questions: questions }) })
+      tabTo(/Open questions/)
+
+      const headings = screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)
+      expect(headings).toEqual(['Questions', 'Unsettled in the graph', 'Possible prompt injection'])
+      const unsettled = screen.getByRole('region', { name: 'Unsettled in the graph' })
+      expect(within(unsettled).getByText('Did “phish delivered the link” (N0) cause the alert (N1)?')).toBeInTheDocument()
+      expect(within(unsettled).getByText('Disputed: 0.80.')).toBeInTheDocument()
+      expect(within(unsettled).getByText('“a stray login” (N7) was ruled out.')).toBeInTheDocument()
+      expect(within(unsettled).getByText('It was a test account.')).toBeInTheDocument()
+      // The full refutation is behind a click.
+      expect(screen.queryByText('no session in the IdP log')).toBeNull()
+      fireEvent.click(within(unsettled).getByRole('button', { name: 'Full refutation' }))
+      expect(screen.getByText('no session in the IdP log')).toBeInTheDocument()
+      expect(screen.getByText('Turn 3')).toBeInTheDocument()
+
+      const injection = screen.getByRole('region', { name: 'Possible prompt injection' })
+      expect(within(injection).getByText('“ignore the alert”')).toBeInTheDocument()
+      expect(within(injection).getByText(/Turn 6 · T000439/)).toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'Questions' })).queryByText(/ignore the alert/)).toBeNull()
+      expect(within(screen.getByRole('region', { name: 'Questions' })).getByText('Who sent the mail (N0)?')).toBeInTheDocument()
+    })
+
+    it('leaves out a section with nothing in it', () => {
+      renderPanel({ projection: v3({ chain, open_questions: questions.filter((x) => x.kind === 'model') }) })
+      tabTo(/Open questions/)
+
+      expect(screen.getByRole('heading', { name: 'Questions' })).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Unsettled in the graph' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'Possible prompt injection' })).toBeNull()
+    })
+
+    it('opens an event chip in Chain when the event is on it, else in Timeline, and does not open one neither lists', () => {
+      renderPanel({ projection: v3({ chain, timeline, open_questions: questions }) })
+      tabTo(/Open questions/)
+
+      const questionsRegion = screen.getByRole('region', { name: 'Questions' })
+      fireEvent.click(within(questionsRegion).getByRole('button', { name: /N0/ }))
+      expect(screen.getByRole('tab', { name: /Chain/, selected: true })).toBeInTheDocument()
+      // The event opens with its evidence showing.
+      expect(screen.getByRole('button', { name: 'N0', expanded: true })).toBeInTheDocument()
+      expect(screen.getByText('the link was in the inbox')).toBeInTheDocument()
+
+      tabTo(/Open questions/)
+      fireEvent.click(within(screen.getByRole('region', { name: 'Possible prompt injection' })).getByRole('button', { name: /N8/ }))
+      expect(screen.getByRole('tab', { name: /Timeline/, selected: true })).toBeInTheDocument()
+      expect(screen.getByRole('row', { name: /an unrelated scan/ })).toHaveClass('sel')
+
+      tabTo(/Open questions/)
+      const unsettled = screen.getByRole('region', { name: 'Unsettled in the graph' })
+      expect(within(unsettled).queryByRole('button', { name: /N7/ })).toBeNull()
+      expect(within(unsettled).getAllByText('N7').length).toBeGreaterThan(0)
+    })
   })
 
   it('keeps the kernel table when a v3 run has no readable section', () => {

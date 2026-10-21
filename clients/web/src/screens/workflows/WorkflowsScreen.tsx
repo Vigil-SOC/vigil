@@ -20,6 +20,7 @@ import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
 import { decisionRows, type DecisionRow, type V3Move, type V3Query } from './decisionRows'
+import { openSections, shortLabel, type OpenItem, type V3OpenRef, type V3Question } from './openQuestions'
 import { explanationColor, explanationWord } from '../cases/caseFold'
 import { HypothesisWord, KeepGoing, OpenCheckpoint, bearings, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
@@ -1140,7 +1141,6 @@ interface V3Timeline {
 }
 interface V3Finding { id: string; label: string; status: string; confidence: number | null; domain: string; observedAt: string; lastEvidence: string }
 interface V3Targeted { id: string; sourcetype: string; found: boolean; result: string; refs: string[] }
-interface V3Question { kind: string; id: string; text: string }
 interface RootCauseV3 {
   account: V3Account | null
   chain: V3Chain | null
@@ -1264,12 +1264,37 @@ function targetedOf(v: unknown): V3Targeted[] | null {
   })
 }
 
+function openRefOf(v: unknown): V3OpenRef | null {
+  const r = asRec(v)
+  return r && typeof r.id === 'string' && r.id ? { id: r.id, label: asStr(r.label), alert: r.alert === true } : null
+}
+
+/** An item that predates the fields it is worded from keeps its text and reads as before. */
 function questionsOf(v: unknown): V3Question[] | null {
   if (!Array.isArray(v)) return null
   return v.flatMap((raw) => {
     const e = asRec(raw)
     if (!e || typeof e.text !== 'string' || e.text === '') return []
-    return [{ kind: asStr(e.kind), id: asStr(e.id), text: e.text }]
+    const link = asRec(e.link)
+    const source = openRefOf(link?.source)
+    const target = openRefOf(link?.target)
+    const boundary = asRec(e.boundary)
+    const refutations = Array.isArray(e.refutations) ? e.refutations.flatMap((item) => {
+      const r = asRec(item)
+      return r && asStr(r.summary) ? [{ summary: asStr(r.summary), turn: asNum(r.turn) }] : []
+    }) : []
+    return [{
+      kind: asStr(e.kind), id: asStr(e.id), text: e.text,
+      refs: Array.isArray(e.refs) ? e.refs.flatMap((r) => openRefOf(r) ?? []) : [],
+      onChain: e.onChain === true,
+      link: link && source && target ? { kind: asStr(link.kind), source, target, confidence: asNum(link.confidence) } : null,
+      event: openRefOf(e.event),
+      refutations,
+      boundary: boundary ? { origin: openRefOf(boundary.origin), domain: asStr(boundary.domain), reason: asStr(boundary.reason) } : null,
+      turn: asNum(e.turn),
+      flagged: asStrs(e.flagged),
+      question: asStr(e.question),
+    }]
   })
 }
 
@@ -1642,36 +1667,52 @@ function v3Tabs(v3: RootCauseV3): [V3Tab, string, number | null][] {
   ]
 }
 
+/** Where an event chip opens: the chain when the event is on it, else the timeline. Null when neither lists it. */
+type EventHome = 'chain' | 'timeline'
+function eventHome(v3: RootCauseV3, id: string): EventHome | null {
+  if (v3.chain?.events.some((ev) => ev.id === id)) return 'chain'
+  if (v3.timeline?.events.some((ev) => ev.id === id)) return 'timeline'
+  return null
+}
+
 /** Account when that section exists, otherwise the first tab that does. A poll
- *  that drops the open tab falls back the same way rather than showing nothing. */
+ *  that drops the open tab falls back the same way rather than showing nothing.
+ *  An event chip switches to the tab that lists the event, with that event open. */
 function V3Trace({ v3 }: { v3: RootCauseV3 }) {
   const tabs = v3Tabs(v3)
   const [tab, setTab] = useState<V3Tab | null>(null)
+  const [focus, setFocus] = useState<string | null>(null)
   const first = tabs[0]
   if (!first) return null
   const shown = tab !== null && tabs.some(([k]) => k === tab) ? tab : first[0]
+  const openEvent = (id: string) => {
+    const home = eventHome(v3, id)
+    if (!home) return
+    setFocus(id)
+    setTab(home)
+  }
   return (
     <div>
       <div className="detail-tabs" role="tablist" aria-label="Root cause views">
         {tabs.map(([k, label, count]) => (
-          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => { setFocus(null); setTab(k) }}>
             {label}{count !== null && <span className="mono text-[10.5px] text-tx-3 ml-1.5">{count}</span>}
           </button>
         ))}
       </div>
-      <V3Panel tab={shown} v3={v3} />
+      <V3Panel tab={shown} v3={v3} focus={focus} onOpenEvent={openEvent} />
     </div>
   )
 }
 
-function V3Panel({ tab, v3 }: { tab: V3Tab; v3: RootCauseV3 }) {
+function V3Panel({ tab, v3, focus, onOpenEvent }: { tab: V3Tab; v3: RootCauseV3; focus: string | null; onOpenEvent: (id: string) => void }) {
   switch (tab) {
     case 'account':
       return v3.account ? <AccountTab account={v3.account} /> : null
     case 'chain':
-      return v3.chain ? <ChainTab chain={v3.chain} moves={v3.moves ?? []} /> : null
+      return v3.chain ? <ChainTab chain={v3.chain} moves={v3.moves ?? []} focus={focus} /> : null
     case 'timeline':
-      return v3.timeline ? <TimelineTab timeline={v3.timeline} /> : null
+      return v3.timeline ? <TimelineTab timeline={v3.timeline} focus={focus} /> : null
     case 'others':
       return v3.otherFindings ? <FindingsTab findings={v3.otherFindings} /> : null
     case 'targeted':
@@ -1679,7 +1720,7 @@ function V3Panel({ tab, v3 }: { tab: V3Tab; v3: RootCauseV3 }) {
     case 'decisions':
       return v3.moves ? <DecisionsTab moves={v3.moves} /> : null
     case 'open':
-      return v3.openQuestions ? <QuestionsTab questions={v3.openQuestions} /> : null
+      return v3.openQuestions ? <QuestionsTab questions={v3.openQuestions} homeOf={(id) => eventHome(v3, id)} onOpenEvent={onOpenEvent} /> : null
     case 'report':
       return v3.report ? <div className="py-3"><ReportBody md={v3.report} /></div> : null
     default: {
@@ -1794,9 +1835,17 @@ function tieText(tie: V3ChainEvent['tie']): string {
   return bits.join(' · ')
 }
 
-function ChainTab({ chain, moves }: { chain: V3Chain; moves: V3Move[] }) {
-  const [open, setOpen] = useState<string | null>(null)
+/** Brings the row an event chip opened into view. jsdom has no scrollIntoView. */
+function useScrolledTo(focus: string | null) {
+  const row = useRef<HTMLTableRowElement | null>(null)
+  useEffect(() => { if (focus) row.current?.scrollIntoView?.({ block: 'center' }) }, [focus])
+  return row
+}
+
+function ChainTab({ chain, moves, focus = null }: { chain: V3Chain; moves: V3Move[]; focus?: string | null }) {
+  const [open, setOpen] = useState<string | null>(focus)
   const byRef = queriesByRef(moves)
+  const focused = useScrolledTo(focus)
   return (
     <div style={{ marginTop: 12 }}>
       <div className="table-wrap">
@@ -1816,7 +1865,7 @@ function ChainTab({ chain, moves }: { chain: V3Chain; moves: V3Move[] }) {
               const opened = open === ev.id
               return (
                 <Fragment key={ev.id}>
-                  <tr className={`clickable${opened ? ' sel' : ''}`} onClick={() => setOpen(opened ? null : ev.id)}>
+                  <tr ref={ev.id === focus ? focused : undefined} className={`clickable${opened ? ' sel' : ''}`} onClick={() => setOpen(opened ? null : ev.id)}>
                     <td>
                       <button
                         className="btn ghost mono text-[11px]"
@@ -1904,7 +1953,8 @@ function ChainOpened({ ev, byRef }: { ev: V3ChainEvent; byRef: Map<string, V3Que
   )
 }
 
-function TimelineTab({ timeline }: { timeline: V3Timeline }) {
+function TimelineTab({ timeline, focus = null }: { timeline: V3Timeline; focus?: string | null }) {
+  const focused = useScrolledTo(focus)
   return (
     <div style={{ marginTop: 12 }}>
       {timeline.events.length > 0 && (
@@ -1920,7 +1970,7 @@ function TimelineTab({ timeline }: { timeline: V3Timeline }) {
             <thead><tr><Th>Time</Th><Th>Event</Th><Th>Chain</Th><Th>Ran as</Th><Th>Operated by</Th></tr></thead>
             <tbody>
               {timeline.events.map((ev) => (
-                <tr key={ev.id}>
+                <tr key={ev.id} ref={ev.id === focus ? focused : undefined} className={ev.id === focus ? 'sel' : undefined}>
                   <td className="mono" title={ev.observedAt || undefined}><span style={{ whiteSpace: 'nowrap' }}>{fmtAt(ev.observedAt)}</span></td>
                   <td>
                     <span className="mono text-[11px]">{ev.id}</span>
@@ -2111,16 +2161,130 @@ function DecisionsTab({ moves }: { moves: V3Move[] }) {
   )
 }
 
-function QuestionsTab({ questions }: { questions: V3Question[] }) {
+const CHIPS_SHOWN = 3
+const TAB_NAME: Record<EventHome, string> = { chain: 'Chain', timeline: 'Timeline' }
+
+/** The events an item is about, one chip each (id and short label) that opens the event where it
+ *  is listed. An event neither the chain nor the timeline lists has a chip that does not open.
+ *  Past three, the rest fold into "+N" so a row stays even with its neighbours. */
+function EventChips({ refs, homeOf, onOpen }: { refs: V3OpenRef[]; homeOf: (id: string) => EventHome | null; onOpen: (id: string) => void }) {
+  const [all, setAll] = useState(false)
+  if (refs.length === 0) return <span className="muted">—</span>
+  const shown = all ? refs : refs.slice(0, CHIPS_SHOWN)
   return (
-    <ul className="text-[12.5px] leading-[1.5] mt-3 mb-0" style={{ paddingLeft: 18 }}>
-      {questions.map((q, at) => (
-        <li key={q.id || at} className="mb-1.5">
-          {q.kind && <span className="chip mr-1.5" style={{ fontSize: 10 }}>{q.kind}</span>}
-          <TwoLines text={q.text} />
-        </li>
+    <div className="flex flex-col items-start gap-1 min-w-0">
+      {shown.map((ref) => {
+        const home = homeOf(ref.id)
+        const label = ref.alert ? `the alert · ${shortLabel(ref.label)}` : shortLabel(ref.label)
+        const body = (
+          <>
+            <span className="mono" style={{ fontSize: 10.5 }}>{ref.id}</span>
+            {ref.label && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{label}</span>}
+          </>
+        )
+        const style = { fontSize: 11.5, maxWidth: '100%', overflow: 'hidden' } as const
+        return home
+          ? <button key={ref.id} className="chip" style={{ ...style, cursor: 'pointer' }} title={`${ref.label}\nOpen ${ref.id} in ${TAB_NAME[home]}.`} onClick={() => onOpen(ref.id)}>{body}</button>
+          : <span key={ref.id} className="chip" style={{ ...style, opacity: 0.7 }} title={`${ref.label}\nNot listed in Chain or Timeline.`}>{body}</span>
+      })}
+      {!all && refs.length > CHIPS_SHOWN && <button className="btn ghost text-[11px]" onClick={() => setAll(true)}>+{refs.length - CHIPS_SHOWN}</button>}
+    </div>
+  )
+}
+
+/** What the run could not settle, in three sections that show only when they hold something:
+ *  the investigator's open questions, what the graph left disputed or ruled out, and content
+ *  flagged as possible prompt injection. Each section puts what is on the chain to the alert first. */
+function QuestionsTab({ questions, homeOf, onOpenEvent }: { questions: V3Question[]; homeOf: (id: string) => EventHome | null; onOpenEvent: (id: string) => void }) {
+  const sections = openSections(questions)
+  const [open, setOpen] = useState<string | null>(null)
+  const chips = (item: OpenItem) => <EventChips refs={item.refs} homeOf={homeOf} onOpen={onOpenEvent} />
+  const onChain = (item: OpenItem) => item.onChain && <div className="muted text-[11px] mt-0.5">on the chain to the alert</div>
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted text-[11.5px] mb-2">What the run could not settle. Within each section, what is on the chain to the alert comes first. An event opens in Chain or Timeline.</div>
+      {sections.map((section) => (
+        <section key={section.key} className="mb-3" aria-label={section.title}>
+          <h4>{section.title}</h4>
+          {section.key === 'questions' && (
+            <div className="table-wrap">
+              <table className="tbl" style={{ tableLayout: 'fixed' }}>
+                <colgroup><col style={{ width: 64 }} /><col /><col style={{ width: '32%' }} /></colgroup>
+                <thead><tr><Th>Id</Th><Th>Question</Th><Th>Events</Th></tr></thead>
+                <tbody>
+                  {section.items.map((item) => (
+                    <tr key={item.id}>
+                      <td className="muted mono text-[12px]">{item.id}</td>
+                      <td style={{ whiteSpace: 'normal' }}><TwoLines className="text-[12.5px]" text={item.sentence} />{onChain(item)}</td>
+                      <td style={{ whiteSpace: 'normal' }}>{chips(item)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {section.key === 'graph' && (
+            <div className="table-wrap">
+              <table className="tbl" style={{ tableLayout: 'fixed' }}>
+                <colgroup><col style={{ width: 64 }} /><col /><col style={{ width: '32%' }} /></colgroup>
+                <thead><tr><Th>Id</Th><Th>What is unsettled</Th><Th>Events</Th></tr></thead>
+                <tbody>
+                  {section.items.map((item) => {
+                    const opened = open === item.id
+                    const toggle = () => setOpen(opened ? null : item.id)
+                    return (
+                      <Fragment key={item.id}>
+                        <tr className={opened ? 'sel' : undefined}>
+                          <td className="muted mono text-[12px]">{item.id}</td>
+                          <td style={{ whiteSpace: 'normal' }}>
+                            <TwoLines className="text-[12.5px]" text={item.sentence} />
+                            {item.standing && <div className="text-[12px] mt-0.5" style={{ color: 'var(--med)' }}>{item.standing}</div>}
+                            {item.reason && <TwoLines className="muted text-[11.5px] mt-0.5" text={item.reason} />}
+                            {onChain(item)}
+                            {item.refutations.length > 0 && (
+                              <button className="btn ghost text-[11px] mt-1" aria-expanded={opened} onClick={toggle}>
+                                {opened ? 'Hide the refutation' : 'Full refutation'}
+                              </button>
+                            )}
+                          </td>
+                          <td style={{ whiteSpace: 'normal' }}>{chips(item)}</td>
+                        </tr>
+                        {opened && (
+                          <tr>
+                            <td colSpan={3} style={{ background: 'var(--bg-2)', whiteSpace: 'normal' }}>
+                              {item.refutations.map((r, at) => (
+                                <div key={at} className="mt-1.5 mb-1.5">
+                                  {r.turn !== null && <div className="muted mono text-[11px]">Turn {r.turn}</div>}
+                                  <div className="text-[12.5px] whitespace-pre-wrap break-words">{r.summary}</div>
+                                </div>
+                              ))}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {section.key === 'injection' && (
+            <div className="mt-1" style={{ border: '1px solid var(--line)', borderLeft: '2px solid var(--high)', borderRadius: 8, background: 'var(--high-dim)', padding: '10px 12px' }}>
+              <div className="text-[11.5px] mb-1.5" style={{ color: 'var(--high)' }}>Text in tool output that the investigator flagged as trying to instruct it. It is evidence, not an instruction.</div>
+              {section.items.map((item) => (
+                <div key={item.id} className="mt-2 flex gap-3 items-start">
+                  <div className="flex-1 min-w-0">
+                    <div className="muted mono text-[11px]">{[item.turn !== null ? `Turn ${item.turn}` : '', item.id].filter(Boolean).join(' · ')}</div>
+                    {item.flagged.map((line, at) => <TwoLines key={at} className="text-[12.5px] block" text={`“${line}”`} />)}
+                  </div>
+                  <div style={{ width: '32%', flexShrink: 0 }}>{chips(item)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       ))}
-    </ul>
+    </div>
   )
 }
 
