@@ -19,6 +19,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
+import { decisionRows, type DecisionRow, type V3Move, type V3Query } from './decisionRows'
 import { explanationColor, explanationWord } from '../cases/caseFold'
 import { HypothesisWord, KeepGoing, OpenCheckpoint, bearings, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
@@ -1107,8 +1108,6 @@ interface RootCauseView {
   v3: RootCauseV3 | null
 }
 
-interface V3Query { ref: string; purpose: string; query: string; rows: number | null; error: string | null }
-interface V3Move { n: number; move: string; targetId: string; reason: string; queries: V3Query[] }
 interface V3Account {
   alert: { id: string; title: string; observedAt: string } | null
   disposition: string
@@ -1284,7 +1283,23 @@ function movesOf(v: unknown): V3Move[] | null {
       if (!q) return []
       return [{ ref: asStr(q.ref), purpose: asStr(q.purpose), query: asStr(q.query), rows: asNum(q.rows), error: typeof q.error === 'string' && q.error ? q.error : null }]
     }) : []
-    return [{ n: asNum(e.n) ?? 0, move: e.move, targetId: asStr(e.targetId), reason: asStr(e.reason), queries }]
+    const created = Array.isArray(e.created) ? e.created.flatMap((item) => {
+      const c = asRec(item)
+      return c && asStr(c.id) ? [{ id: asStr(c.id), kind: asStr(c.kind), label: asStr(c.label) }] : []
+    }) : []
+    const changed = Array.isArray(e.changed) ? e.changed.flatMap((item) => {
+      const c = asRec(item)
+      const confidence = c ? asNum(c.confidence) : null
+      return c && asStr(c.id) && confidence !== null
+        ? [{ id: asStr(c.id), status: asStr(c.status), confidence, from: asNum(c.from) ?? confidence, fromStatus: asStr(c.from_status) }]
+        : []
+    }) : []
+    const prediction = asRec(e.prediction)
+    return [{
+      n: asNum(e.n) ?? 0, move: e.move, targetId: asStr(e.targetId), target: asStr(e.target), reason: asStr(e.reason), queries, created, changed,
+      prediction: prediction && asStr(prediction.id) ? { id: asStr(prediction.id), status: asStr(prediction.status) } : null,
+      theories: asNum(e.theories), concluded: e.concluded === true,
+    }]
   })
 }
 
@@ -1997,53 +2012,99 @@ function TargetedTab({ rows, moves }: { rows: V3Targeted[]; moves: V3Move[] }) {
   )
 }
 
-/** Rounds start at each theorize. Moves before the first one are the opening round. */
-function decisionRounds(moves: readonly V3Move[]): { label: string; moves: V3Move[] }[] {
-  const sorted = [...moves].sort((a, b) => a.n - b.n)
-  const rounds: { label: string; moves: V3Move[] }[] = []
-  let bucket: V3Move[] = []
-  let round = 0
-  const flush = (label: string) => {
-    if (bucket.length === 0) return
-    rounds.push({ label, moves: bucket })
-    bucket = []
+/** A search the turn ran: its purpose, its SPL to copy, and what came back. A search that
+ *  found nothing is dimmed; one the backend refused or that failed is marked in the alert colour. */
+function SearchBlock({ q }: { q: V3Query }) {
+  const [said, setSaid] = useState(false)
+  const copy = () => {
+    void navigator.clipboard?.writeText(q.query).then(() => {
+      setSaid(true)
+      setTimeout(() => setSaid(false), 1600)
+    })
   }
-  for (const move of sorted) {
-    if (move.move === 'theorize') {
-      flush(round === 0 ? 'Opening' : `Round ${round}`)
-      round += 1
-      bucket = [move]
-    } else {
-      bucket.push(move)
-    }
-  }
-  flush(round === 0 ? 'Opening' : `Round ${round}`)
-  return rounds
+  return (
+    <div className="mt-2" style={{ opacity: q.rows === 0 && !q.error ? 0.6 : 1 }}>
+      {q.purpose && <div className="text-[12px] break-words">{q.purpose}</div>}
+      <div className="flex items-start gap-1.5 mt-1">
+        <pre className="font-mono text-[11.5px] m-0 px-2 py-1.5 flex-1 min-w-0" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto', background: 'var(--bg-1)', border: '1px solid var(--line-soft)', borderRadius: 6 }}>{q.query}</pre>
+        <button className="btn ghost text-[11px]" aria-label="Copy search" onClick={copy}>{said ? 'copied' : 'copy'}</button>
+      </div>
+      <div className="text-[11px] mt-0.5 break-words" style={{ color: q.error ? 'var(--high)' : 'var(--tx-3)' }}>
+        {q.error ? `failed — ${q.error}` : queryOutcome(q)}
+      </div>
+    </div>
+  )
+}
+
+function turnSpan(row: DecisionRow): string {
+  const first = row.turns[0]!.n
+  const last = row.turns[row.turns.length - 1]!.n
+  return first === last ? String(first) : `${first}–${last}`
 }
 
 function DecisionsTab({ moves }: { moves: V3Move[] }) {
-  const rounds = decisionRounds(moves)
+  const rounds = decisionRows(moves)
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <div style={{ marginTop: 12 }}>
+      <div className="muted text-[11.5px] mb-2">One row per turn, in turn order. Identical turns in a row collapse into one. Open a row to see its searches.</div>
       {rounds.map((round) => (
         <div key={round.label} className="mb-3">
           <h4>{round.label}</h4>
-          {round.moves.map((move, at) => (
-            <div key={`${move.n}-${at}`} className="mb-2">
-              <div className="text-[12px]">
-                <span className="muted">Turn {move.n}</span>
-                <span className="font-mono ml-1.5">{move.move}{move.targetId ? ` ${move.targetId}` : ''}</span>
-              </div>
-              {move.reason && <div className="text-[12.5px] text-tx-2 leading-[1.5] whitespace-pre-wrap break-words">{move.reason}</div>}
-              {move.queries.map((q, qi) => (
-                <div key={q.ref || qi} className="mt-1">
-                  {q.purpose && <TwoLines text={q.purpose} />}
-                  <TwoLines className="font-mono text-[11.5px]" text={q.query} />
-                  <div className="text-[11px]" style={{ color: q.error ? 'var(--high)' : 'var(--tx-3)' }}>{queryOutcome(q)}</div>
-                </div>
-              ))}
-            </div>
-          ))}
+          <div className="table-wrap">
+            <table className="tbl" style={{ tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: 84 }} />
+                <col style={{ width: 112 }} />
+                <col style={{ width: '30%' }} />
+                <col />
+                <col style={{ width: 84 }} />
+              </colgroup>
+              <thead><tr><Th>Turn</Th><Th>Move</Th><Th>Target</Th><Th>Outcome</Th><Th>Searches</Th></tr></thead>
+              <tbody>
+                {round.rows.map((row) => {
+                  const key = `${round.label}-${row.turns[0]!.n}`
+                  const expandable = row.searches > 0 || row.turns.length > 1
+                  const opened = open === key
+                  const toggle = () => setOpen(opened ? null : key)
+                  return (
+                    <Fragment key={key}>
+                      <tr className={`${expandable ? 'clickable' : ''}${opened ? ' sel' : ''}`} onClick={expandable ? toggle : undefined}>
+                        <td className="muted mono text-[12px]" style={{ whiteSpace: 'nowrap' }}>{turnSpan(row)}</td>
+                        <td>
+                          {expandable
+                            ? <button className="chip mono" style={{ fontSize: 10.5, cursor: 'pointer' }} aria-expanded={opened} title="Show this turn's searches." onClick={(e) => { e.stopPropagation(); toggle() }}>{row.move}</button>
+                            : <span className="chip mono" style={{ fontSize: 10.5 }}>{row.move}</span>}
+                        </td>
+                        <td>
+                          {row.targetId && <span className="mono text-[12px]">{row.targetId}</span>}
+                          <TwoLines className="muted text-[11.5px]" text={row.target} />
+                        </td>
+                        <td style={{ whiteSpace: 'normal' }}>
+                          <TwoLines className={`text-[12.5px]${row.refused ? ' text-[color:var(--high)]' : ''}`} text={row.outcome} />
+                          {row.turns.length > 1 && <span className="chip mono mt-1" style={{ fontSize: 10.5 }}>×{row.turns.length}</span>}
+                        </td>
+                        <td className="mono text-[12px]">{row.searches || <span className="muted">—</span>}</td>
+                      </tr>
+                      {opened && (
+                        <tr>
+                          <td colSpan={5} style={{ background: 'var(--bg-2)', whiteSpace: 'normal' }}>
+                            {row.turns.length > 1 && <div className="muted mono text-[11px] mt-2 break-words">Turns {row.turns.map((m) => m.n).join(' ')}</div>}
+                            {row.turns.filter((m) => m.queries.length > 0).map((m) => (
+                              <div key={m.n}>
+                                {row.turns.length > 1 && <div className="muted mono text-[11px] mt-2">Turn {m.n}</div>}
+                                {m.queries.map((q, qi) => <SearchBlock key={q.ref || qi} q={q} />)}
+                              </div>
+                            ))}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       ))}
     </div>

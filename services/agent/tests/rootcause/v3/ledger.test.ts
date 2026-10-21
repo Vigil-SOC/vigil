@@ -71,6 +71,11 @@ describe("rootcause v3 ledger", () => {
     const searched = folded.steps.find((s) => s.queries.length > 0)!;
     expect(searched.queries[0]!.query).toMatch(/index=lab/);
     expect(folded.steps.some((s) => s.added.length > 0 && s.changed.length > 0)).toBe(true);
+    // What each turn did, for the console's row: the target's label, what it created, a story count, the conclusion.
+    const made = folded.steps.find((s) => s.created.length > 0)!;
+    expect(made.created.every((c) => made.added.includes(c.id) && (folded.graph!.nodes[c.id]?.createdTurn ?? folded.graph!.edges[c.id]?.createdTurn) === made.n)).toBe(true);
+    expect(folded.steps.find((s) => folded.graph!.nodes[s.targetId] !== undefined)!.target).not.toBe("");
+    expect(folded.steps.at(-1)!.concluded).toBe(true);
 
     // The console's view: the chain symptom first, ending at the root, and the report.
     push("terminal", { outcome: "completed", reason: "the trace ended: root-cause-found" });
@@ -179,5 +184,17 @@ describe("rootcause v3 ledger", () => {
     ]);
     const searches = rootCauseV3Replay("r1", events as never).steps.filter((x) => x.kind === "search");
     expect(searches.map((x) => (x as { failed: boolean }).failed)).toEqual([false, true, false]);
+  });
+
+  it("carries a settled prediction and a story count on the step", () => {
+    const { events, push } = journal(cfg);
+    const entry = (id: string, type: string, payload: unknown) => ({ id, ts: "", runId: "r1", turn: 1, correlationId: "N1", relatedIds: [], type, payload });
+    const patch = (p: object) => entry("P", "graph-patch", { patch: { addNodes: [], addEdges: [], addEvidence: [], ...p }, result: { idMap: {}, rejected: [], touched: [], resolvedMarkers: [] } });
+    push("rootcause_turn", { turn: 1, entries: [entry("T1", "decision", { move: "theorize", targetId: "N1", reason: "why" }), patch({ setTheories: [] })] });
+    push("rootcause_turn", { turn: 2, entries: [entry("T2", "decision", { move: "test", targetId: "R1.P1", reason: "why" }), patch({ predictionResult: { id: "R1.P1", status: "absent", result: "", toolCallIds: [], supports: [], weakens: [] } })] });
+    const [theorized, tested] = fold(events).steps;
+    expect(theorized).toMatchObject({ theories: 0, created: [] });
+    expect(tested).toMatchObject({ prediction: { id: "R1.P1", status: "absent" } });
+    expect(tested!.theories).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import type { AgentEvent } from "../../../contracts/events.js";
 import type { AgentConfig } from "./config.js";
 import type { Move } from "./frontier.js";
-import { applyPatch, createGraph, type Graph, type GraphPatch } from "./graph.js";
+import { applyPatch, createGraph, getChildren, type Graph, type GraphPatch } from "./graph.js";
 import { seedFromAlert } from "./orchestrator.js";
 import type { Survey } from "./survey.js";
 import type { TraceEntry } from "./trace.js";
@@ -60,6 +60,12 @@ export interface V3Step {
   queries: { ref: string; query: string; rows?: number; purpose?: string; failed?: true; error?: string }[];
   added: string[];
   changed: { id: string; status: string; confidence: number; from: number; from_status: string }[];
+  // What the turn did, for a reader scanning moves; all of it read from the patch and the graph the turn left.
+  target: string; // the target's label, "" when none is known
+  created: { id: string; kind: "cause" | "event" | "actor" | "boundary" | "link"; label: string }[];
+  prediction?: { id: string; status: string }; // a prediction this turn settled
+  theories?: number; // stories a theorize turn proposed
+  concluded?: true;
 }
 
 export interface Folded {
@@ -99,7 +105,9 @@ function stepOf(turn: number, entries: readonly TraceEntry[]): V3Step | null {
         ...(out !== undefined && !out.ok ? { failed: true as const, error: out.text.split("\n")[0]!.slice(0, 300) } : {}),
       };
     });
-  const patches = entries.filter((e) => e.type === "graph-patch").map((e) => e.payload as { result?: { idMap?: Record<string, string> } });
+  const patches = entries.filter((e) => e.type === "graph-patch").map((e) => e.payload as { patch?: GraphPatch; result?: { idMap?: Record<string, string> } });
+  const settled = patches.find((p) => p.patch?.predictionResult)?.patch?.predictionResult;
+  const theories = patches.find((p) => p.patch?.setTheories)?.patch?.setTheories?.length;
   const changed = entries
     .filter((e) => e.type === "confidence-change")
     .map((e) => {
@@ -114,7 +122,32 @@ function stepOf(turn: number, entries: readonly TraceEntry[]): V3Step | null {
     queries,
     added: [...new Set(patches.flatMap((p) => Object.values(p.result?.idMap ?? {})))],
     changed,
+    target: "",
+    created: [],
+    ...(settled === undefined ? {} : { prediction: { id: settled.id, status: settled.status } }),
+    ...(theories === undefined ? {} : { theories }),
+    ...(patches.some((p) => p.patch?.setConclusion) ? { concluded: true as const } : {}),
   };
+}
+
+const LABEL_MAX = 120;
+const clip = (s: string) => (s.length > LABEL_MAX ? `${s.slice(0, LABEL_MAX - 1)}…` : s);
+
+// The target's label and the nodes and links this turn created, read off the graph it left.
+function describe(step: V3Step, g: Graph): V3Step {
+  const edge = g.edges[step.targetId];
+  const prediction = (g.theories ?? []).flatMap((t) => t.predictions).find((p) => p.id === step.targetId);
+  const target = g.nodes[step.targetId]?.label ?? (edge ? `${edge.source} → ${edge.target}` : prediction?.expect ?? "");
+  const created: V3Step["created"] = [];
+  for (const id of step.added) {
+    const node = g.nodes[id];
+    const link = g.edges[id];
+    if (node?.createdTurn === step.n) {
+      const kind = node.kind === "actor" ? "actor" : node.kind === "boundary-marker" ? "boundary" : getChildren(g, id).some((e) => e.target === step.targetId) ? "cause" : "event";
+      created.push({ id, kind, label: clip(node.label) });
+    } else if (link?.createdTurn === step.n) created.push({ id, kind: "link", label: "" });
+  }
+  return { ...step, target: clip(target), created };
 }
 
 // The run as its ledger holds it: what a resume continues from and every reader shows.
@@ -132,7 +165,7 @@ export function fold(events: readonly AgentEvent<V3Kinds>[]): Folded {
       out.entries.push(...entries);
       out.lastTurn = turn;
       const step = stepOf(turn, entries);
-      if (step !== null) out.steps.push(step);
+      if (step !== null) out.steps.push(describe(step, out.graph));
     } else if (event.kind === "rootcause_exit") {
       out.exit = event.payload.exit;
       out.report = event.payload.report;
