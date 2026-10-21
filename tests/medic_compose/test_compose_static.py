@@ -184,7 +184,14 @@ def test_only_the_proxy_mounts_the_docker_socket_read_only(on) -> None:
                 assert m["type"] == "bind" and m.get("read_only") is True
                 assert m["target"] == "/var/run/docker.sock"
                 # A missing socket must fail, not become an empty directory.
-                assert m["bind"]["create_host_path"] is False
+                # Compose 2.38 (the GitHub runner) omits create_host_path from
+                # `config` JSON when it is false; a present value must be false.
+                rendered = (m.get("bind") or {}).get("create_host_path", False)
+                assert rendered is False
+    raw_mounts = yaml.safe_load(BASE.read_text(encoding="utf-8"))["services"][
+        "medic-dockerproxy"
+    ]["volumes"]
+    assert raw_mounts[0]["bind"]["create_host_path"] is False
     sock = [m for m in on["services"]["medic-dockerproxy"].get("volumes") or []]
     assert len(sock) == 1 and "docker.sock" in sock[0]["source"]
     assert on["services"]["medic-gateway"].get("volumes") in (None, [])
