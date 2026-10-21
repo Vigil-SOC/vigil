@@ -82,6 +82,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       const nx = choosing ? (r.submission as NextIn | null) : (r.submission as { next?: NextIn } | null)?.next;
       if (nx) st.next = nx;
       // A turn with no valid submission is one attempt on its target (the handlers count it); the next prompt says so.
+      st.failed = choosing ? r.failed : undefined;
       st.silent = r.submission === null && !choosing ? `${req.move} ${req.correlationId}` : undefined;
       return r;
     },
@@ -98,7 +99,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
     // Nothing open on the graph ends the run; otherwise the model's last choice runs, or it is asked to choose.
     if (!exit && !pending && !Object.keys(options(graph, cfg)).length) exit = chainSolid(graph, cfg) ? "root-cause-found" : "inconclusive";
     const symptomId = Object.values(graph.nodes).find((n) => n.isSymptom)!.id;
-    let decision: FrontierDecision | null = exit ? null : pending ? { ...pending, turn } : { move: "choose", targetId: symptomId, turn, reason: st.refused ?? "no next move named" };
+    let decision: FrontierDecision | null = exit ? null : pending ? { ...pending, turn } : { move: "choose", targetId: symptomId, turn, reason: st.refused ?? st.failed ?? "no next move named" };
     pending = undefined;
     st.next = undefined;
     if (!exit && cfg.concludeAt > 0 && lowOn(cfg.concludeAt, 0.5)) exit = chainSolid(graph, cfg) ? "root-cause-found" : "budget-exhausted";
@@ -133,7 +134,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       tt.write("graph-patch", { patch: probe, result: { idMap: applied.idMap, rejected: applied.rejected, touched: applied.touched, resolvedMarkers: applied.resolvedMarkers } });
     }
     pending = r.decision;
-    st.refused = r.refused ?? (decision.move === "choose" && !st.next ? "that was not a valid choice." : undefined);
+    st.refused = r.refused ?? (decision.move === "choose" && !st.next && !st.failed ? "that was not a valid choice." : undefined);
     if (st.next) tt.write("reasoning", { lead: st.next, ...(r.refused ? { refused: r.refused } : { next: `${r.decision!.move} ${r.decision!.targetId}` }) });
     if (r.refused) log(`  lead refused: ${r.refused}`);
     await o.onTurn?.(graph, turn);

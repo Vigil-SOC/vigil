@@ -37,6 +37,7 @@ export interface ToolCallOut { id: string; tool: string; input: unknown; ok: boo
 export interface TurnResult {
   submission: unknown | null;
   toolCalls: ToolCallOut[];
+  failed?: string; // the provider or gateway failed this turn (its error text): the model's answer was never judged
 }
 
 export interface ModelClient {
@@ -270,7 +271,10 @@ export class KernelModelClient implements ModelClient {
     // The emitted value is checked once: what is sound is kept, what is not is dropped, and a turn with no
     // valid submission is one attempt on its target.
     let submission: unknown = null;
-    if (outcome!.value === null) req.trace.write("rejected-submission", { reason: outcome!.reason });
+    // A provider failure is not an answer the model got wrong: it is told apart on the ledger and in the result.
+    const failed = outcome!.status === "failed" && outcome!.emission_rejected !== true ? outcome!.reason : undefined;
+    if (failed !== undefined) req.trace.write("provider-failure", { reason: failed });
+    else if (outcome!.value === null) req.trace.write("rejected-submission", { reason: outcome!.reason });
     else {
       const cx: CheckCtx = { inputOf: tools.inputOf?.bind(tools), range: this.d.range };
       const v = check(req.submitTool, outcome!.value, tools.callCount, cx);
@@ -282,7 +286,7 @@ export class KernelModelClient implements ModelClient {
       }
     }
     finishTurn(req, submission);
-    return { submission, toolCalls };
+    return { submission, toolCalls, ...(failed !== undefined ? { failed } : {}) };
   }
 
   // The move's searches as the ledger holds them: citable from here on, and traced for the report.

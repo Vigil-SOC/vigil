@@ -4,7 +4,7 @@ import type { Move } from "./frontier.js";
 
 export type TraceType =
   | "decision" | "query" | "tool-output" | "reasoning" | "graph-patch"
-  | "confidence-change" | "rejected-evidence" | "rejected-submission" | "refusal" | "stitch" | "exit" | "usage" | "submission";
+  | "confidence-change" | "rejected-evidence" | "rejected-submission" | "provider-failure" | "refusal" | "stitch" | "exit" | "usage" | "submission";
 
 export interface TraceEntry {
   id: string;
