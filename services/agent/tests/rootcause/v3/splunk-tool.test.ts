@@ -19,6 +19,16 @@ describe("validateSpl", () => {
     expect(validateSpl('index=lab sourcetype="a" [search index=lab sourcetype="b" x=1]', "lab")).toMatch(/bounded/);
     expect(validateSpl('index=lab sourcetype="a" [search index=lab sourcetype="b" | head 5 | fields u]', "lab")).toBeNull();
   });
+  it("reads brackets in a quoted string as text, not as a subsearch", () => {
+    const head = 'index=lab sourcetype="a"';
+    expect(validateSpl(`${head} | rex field=_raw "(?<x>[^\\r\\n]+)" | stats count by x`, "lab")).toBeNull();
+    expect(validateSpl(`${head} | rex "(?<f>[\\w.]+)@"`, "lab")).toBeNull();
+    expect(validateSpl(`${head} [search index=lab sourcetype="b" x=1]`, "lab")).toMatch(/bounded/);
+    // A quoted bracket beside a real unbounded subsearch on the same line.
+    expect(validateSpl(`${head} | rex "(?<x>[^\\r\\n]+)" [search index=lab sourcetype="b" x=1]`, "lab")).toMatch(/bounded/);
+    expect(validateSpl(`${head} x="a[" [search index=lab sourcetype="b" x=1]`, "lab")).toMatch(/bounded/);
+    expect(validateSpl(`${head} x="a[" [search index=lab sourcetype="b" | head 5 | fields u]`, "lab")).toBeNull();
+  });
 });
 
 describe("searchWindow", () => {

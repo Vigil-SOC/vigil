@@ -26,7 +26,7 @@ from core.llm.providers.registry import (
     invalidate_model_cache,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.secrets import delete_secret, set_secret
+from core.secrets import delete_secret, secret_write_failure_detail, set_secret
 from core.storage.models import LLMProviderConfig, User
 from core.storage.schemas import LLMProviderConfigSchema
 from services.api.middleware.auth import get_current_active_user, require_settings_admin
@@ -170,7 +170,10 @@ async def create_provider(
     if payload.api_key:
         api_key_ref = _secret_ref_for(provider_id)
         if not set_secret(api_key_ref, payload.api_key):
-            raise HTTPException(status_code=500, detail="Failed to persist API key")
+            raise HTTPException(
+                status_code=500,
+                detail=secret_write_failure_detail("Failed to persist API key"),
+            )
         # Push live to Bifrost so subsequent LLM calls use the new key
         # without waiting for a container restart.
         push_provider_key(payload.provider_type, payload.api_key)
@@ -233,7 +236,10 @@ async def update_provider(
             )
         else:
             if not set_secret(ref, payload.api_key):
-                raise HTTPException(status_code=500, detail="Failed to persist API key")
+                raise HTTPException(
+                    status_code=500,
+                    detail=secret_write_failure_detail("Failed to persist API key"),
+                )
             row.api_key_ref = ref
             push_provider_key(row.provider_type, payload.api_key)
 

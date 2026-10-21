@@ -57,7 +57,8 @@ export function validateSpl(spl: string, index: string): string | null {
   if (!stMentions(spl).length) return "filter on a sourcetype (sourcetype=... or sourcetype IN (...))";
   if (/\b(earliest|latest)\s*=/i.test(spl.replace(/\b(earliest|latest)\(/gi, ""))) return "set the time window with the earliest/latest parameters, not in the SPL";
   if (/\|\s*(transaction|map|localize|gentimes|loadjob)\b/i.test(spl)) return "transaction, map and similar commands are too expensive; use stats ... by <id field> instead";
-  for (const sub of spl.match(/\[[^\]]*\]/g) ?? []) {
+  // Brackets inside double quotes (a rex pattern's [^\r\n]) are text, not a subsearch.
+  for (const sub of spl.replace(/"(?:[^"\\]|\\.)*"/g, '""').match(/\[[^\]]*\]/g) ?? []) {
     if (/^\[\s*\]$|^\[\d/.test(sub) || /\{\}/.test(sub)) continue; // not a subsearch (mvindex, field{})
     if (!/\|\s*(head|return|top|stats|dedup|tstats)\b/i.test(sub)) return "a subsearch must be bounded (end it with | head N, | return, | stats or | top)";
   }

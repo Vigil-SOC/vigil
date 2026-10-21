@@ -21,6 +21,7 @@ USER_SECRETS = (
     "password_changed_at",
     "mfa_secret",
     "mfa_recovery_codes",
+    "mfa_last_totp_step",
     "failed_login_count",
     "locked_until",
 )

@@ -8,6 +8,9 @@ bundle, but nothing compared the list: 34_drop_skills.sql (#1066) and
 34_mcp_credentials.sql (#979) shipped in 0.6.0 bundled and never run. Helm
 installs kept the retired skills table and left mcp_credentials for the
 backend's create_all to build as vigil_app.
+
+The Job fails on any file that does not apply, so files that can only succeed
+after create_all are left out, each named in EXEMPT with the reason.
 """
 
 from __future__ import annotations
@@ -23,6 +26,14 @@ REPO = Path(__file__).resolve().parents[3]
 INIT_SQL = REPO / "infra" / "database" / "init"
 HELM_VALUES = REPO / "infra" / "helm" / "vigil" / "values.yaml"
 
+# Compose still applies these; under Helm they target tables only create_all
+# builds (as vigil_app, so the Job's user does not own them).
+EXEMPT = {
+    "05_case_management_extended.sql": "rows seeded by core/storage/reference_seed.py",
+    "28_case_closure_actor.sql": "column is on the ORM model; scripts/migrate_schema.py backfills it",
+    "39_case_findings_finding_index.sql": "index is on the ORM model; scripts/migrate_schema.py backfills it",
+}
+
 
 def _sql_files() -> list[str]:
     values = yaml.safe_load(HELM_VALUES.read_text(encoding="utf-8"))
@@ -35,7 +46,7 @@ def _init_sql() -> list[str]:
 
 def test_every_init_sql_file_is_in_sql_files() -> None:
     listed = set(_sql_files())
-    missing = [name for name in _init_sql() if name not in listed]
+    missing = [name for name in _init_sql() if name not in listed | EXEMPT.keys()]
     assert not missing, (
         f"Helm installs never run {missing}: add them to dbInit.sqlFiles in "
         "infra/helm/vigil/values.yaml"
@@ -47,6 +58,12 @@ def test_every_sql_files_entry_exists() -> None:
     present = set(_init_sql())
     unknown = [name for name in _sql_files() if name not in present]
     assert not unknown, f"dbInit.sqlFiles names files that do not exist: {unknown}"
+
+
+def test_exempt_files_are_not_listed_and_exist() -> None:
+    present = set(_init_sql())
+    assert not EXEMPT.keys() & set(_sql_files()), "an EXEMPT file is back in dbInit.sqlFiles"
+    assert EXEMPT.keys() <= present, f"EXEMPT names missing files: {EXEMPT.keys() - present}"
 
 
 def test_sql_files_are_in_the_order_compose_applies_them() -> None:

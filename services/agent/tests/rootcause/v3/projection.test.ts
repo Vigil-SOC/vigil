@@ -8,6 +8,7 @@ import { renderReport } from "../../../plugins/rootcause/v3/report.js";
 import { MemoryTrace, type TraceEntry } from "../../../plugins/rootcause/v3/trace.js";
 import type { Alert } from "../../../plugins/rootcause/v3/types.js";
 import { cfg, ev, node } from "./helpers.js";
+import type { CallPayload } from "../../../contracts/events.js";
 
 const alert: Alert = { id: "a1", source: "edr", title: "Backup catalog deleted", observedAt: "2026-05-05T10:00:00Z", artifacts: [], raw: {} };
 const at = (h: number) => `2026-05-05T0${h}:00:00Z`;
@@ -150,5 +151,23 @@ describe("rootcause v3 projection account", () => {
   it("has nothing to show before the run has a setup", () => {
     const bare = rootCauseV3Projection("r1", events.slice(0, 1) as never);
     expect(bare).toMatchObject({ account: null, chain: null, timeline: { events: [] }, other_findings: [], targeted_searches: [], open_questions: [] });
+  });
+
+  it("counts only the searches the model made and that ran, and the code's own apart", () => {
+    const call = (n: number, over: Partial<CallPayload>): AgentEvent<V3Kinds> => ({
+      run_id: "r1", run_kind: "root_cause", seq: n, ts: at(1), kind: "call", schema_version: 1,
+      payload: { ref: `r${n}`, turn: 1, call_id: `c${n}`, tool: "splunk_query", arguments: JSON.stringify({ spl: `index=lab q${n}` }), result: "1 row", ok: true, failure: null, role: "expand", ...over },
+    } as AgentEvent<V3Kinds>);
+    const guarded = '<vigil:tool_result tool="splunk_query" ref="r5">\nfailed: backend_error -- refused: name the index\n</vigil:tool_result>';
+    const calls = [
+      call(1, {}), call(2, { ok: false, failure: "backend_error", result: "failed: timeout" }),
+      call(3, { role: "code" }), call(4, { role: "code" }),
+      call(5, { ok: false, failure: "refused", tool: "other_tool", result: "" }),
+      call(6, { ok: false, failure: "backend_error", result: guarded }),
+    ];
+    const v = rootCauseV3Projection("r1", [...events.slice(0, 1), ...calls] as never);
+    expect(v.searches).toBe(2);
+    expect(v.recent_searches.map((s) => [s.args, s.failed])).toEqual([["index=lab q1", false], ["index=lab q2", true]]);
+    expect(v.code_searches).toBe(2);
   });
 });
