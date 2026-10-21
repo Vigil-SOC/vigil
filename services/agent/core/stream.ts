@@ -109,6 +109,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private tightened: FoldPolicy | null = null;
   private folds = 0;
   private turns = 0;
+  // The rounds the role may search in: all of max_turns, less the one the answer takes when it is a call.
+  private searches = 0;
   private capped = false;
   private spent = 0;
   private prose = "";
@@ -156,6 +158,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       await this.recalled(),
     );
 
+    this.searches = submit ? Math.max(0, this.cfg.max_turns - 1) : this.cfg.max_turns;
     const ended = yield* this.toolLoop(submit);
     if (ended !== null) return yield* announce(ended);
     // Prose was already streamed as it arrived, so asking for it again would bill
@@ -222,10 +225,10 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Returns an outcome only when the run ends here; otherwise the loop stops
   // because the model asked for no tools or because the cap stopped it.
   private async *toolLoop(submit: boolean): AsyncGenerator<StreamEvent<T>, Outcome<T> | null> {
-    // One round past the cap when the answer can be a tool call: the search rounds are
-    // the role's, and the answer round is forced to the submit tool where the wire allows.
-    while (this.turns < this.cfg.max_turns + (submit ? 1 : 0)) {
-      const closing = this.turns >= this.cfg.max_turns;
+    // When the answer can be a tool call it comes on the round the cap makes the last, forced
+    // to the submit tool where the wire allows: a capped role pays for no round past its cap.
+    while (this.turns < this.searches + (submit ? 1 : 0)) {
+      const closing = this.turns >= this.searches;
       if (closing) this.capped = true;
       const fold = await this.folder.advance();
       // The answer round is the emission's stand-in, which never looked at the store.
@@ -263,12 +266,12 @@ class Run<T, Kinds extends Record<string, unknown>> {
       if (asked.length === 0) {
         if (this.stoppedEarly()) {
           this.nudged = true;
-          this.nudge = persistAsk(turn.content, this.gathered(), this.cfg.max_turns - this.turns, submitted && SUBMIT_TOOL);
+          this.nudge = persistAsk(turn.content, this.gathered(), this.searches - this.turns, submitted && SUBMIT_TOOL);
           continue;
         }
         // The plugin's own word on whether the work is settled: asked once, and only
         // with turns left. A plugin with nothing open says nothing and the loop stops.
-        if (!this.nudged && this.cfg.unsettled !== undefined && this.turns < this.cfg.max_turns) {
+        if (!this.nudged && this.cfg.unsettled !== undefined && this.turns < this.searches) {
           const ask = await this.cfg.unsettled();
           if (ask !== null) {
             this.nudged = true;
@@ -325,7 +328,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Stopped with turns in hand and next to nothing gathered, and not yet asked.
   private stoppedEarly(): boolean {
     const persist = this.cfg.persist;
-    if (persist === undefined || this.nudged || this.turns >= this.cfg.max_turns) return false;
+    if (persist === undefined || this.nudged || this.turns >= this.searches) return false;
     return this.gathered() < persist.min_results;
   }
 

@@ -184,7 +184,7 @@ describe("the turn cap", () => {
   it("stops calling tools and still asks for an answer", async () => {
     const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
     const harness = harnessOf([calling, calling, HALT], { max_cost_usd: 100 });
-    const outcome = await outcomeOf(config({ max_turns: 2 }), harness);
+    const outcome = await outcomeOf(config({ max_turns: 2, submit: false }), harness);
 
     expect(outcome.turns).toBe(2);
     expect(outcome.capped).toBe(true);
@@ -506,16 +506,34 @@ describe("the answer as a tool call", () => {
     expect(outcome.calls.map((call) => call.tool)).toEqual(["bump"]);
   });
 
-  it("forces the submit on the round past the search cap, which keeps every search round", async () => {
+  // A capped role made max_turns calls and then one more for the emission; the answer now takes
+  // the cap's last round, so the capped role makes one call fewer.
+  it("forces the submit on the round the cap makes the last, with no further call", async () => {
     const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
     const harness = harnessOf([calling, calling, submit("TALLY")]);
-    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 2 }), harness);
+    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 3 }), harness);
 
     expect(outcome.value).toEqual({ verb: "TALLY" });
     expect(outcome.calls).toHaveLength(2);
     expect(outcome.capped).toBe(true);
     expect(requests(harness).map((request) => request.force)).toEqual([undefined, undefined, SUBMIT_TOOL]);
     expect(requests(harness).some((request) => request.emit !== undefined)).toBe(false);
+  });
+
+  it("answers with the same value by submit as by the emission it replaces", async () => {
+    const calling: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }] };
+    const emitted = await outcomeOf<{ verb: string }>(config({ max_turns: 2, submit: false }), harnessOf([calling, calling, HALT]));
+    const submitted = await outcomeOf<{ verb: string }>(config({ max_turns: 2 }), harnessOf([calling, HALT]));
+
+    expect(submitted.status).toBe("completed");
+    expect(submitted.value).toEqual(emitted.value);
+  });
+
+  it("leaves a persist nudge only the search rounds the answer round does not take", async () => {
+    const harness = harnessOf([{ content: "nothing yet" }, { calls: [] }, HALT]);
+    await outcomeOf(config({ max_turns: 3, persist: { min_results: 1 } }), harness);
+
+    expect(requests(harness)[1]!.messages.at(-1)!.content).toContain("1 turn(s) left");
   });
 
   it("asks for the emission when the submit does not match the schema", async () => {
@@ -531,7 +549,7 @@ describe("the answer as a tool call", () => {
 
   it("asks for the emission when the model ignores the forced submit", async () => {
     const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { content: "nothing more to say" }, HALT]);
-    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 1 }), harness);
+    const outcome = await outcomeOf<{ verb: string }>(config({ max_turns: 2 }), harness);
 
     expect(outcome.value).toEqual({ verb: "HALT" });
     expect(requests(harness).map((request) => request.emit !== undefined)).toEqual([false, false, true]);
@@ -545,7 +563,7 @@ describe("the answer as a tool call", () => {
     expect(requests(harness).at(-1)!.emit).toBeDefined();
   });
 
-  it("does not run a search asked for beside the submit, and leaves the answer for the next round", async () => {
+  it("runs a search asked for beside the submit, and takes the answer from the next round", async () => {
     const both: ScriptedTurn = { calls: [{ tool: "bump", args: "{}" }, ...submit("TALLY").calls!] };
     const harness = harnessOf([both, submit("HALT")]);
     const outcome = await outcomeOf<{ verb: string }>(config(), harness);
@@ -557,9 +575,9 @@ describe("the answer as a tool call", () => {
   });
 
   it("offers no submit tool to a caller that registered its own, or to a prose role", async () => {
-    const own = harnessOf([HALT]);
-    await outcomeOf(config({ max_turns: 0, submit: false }), own);
-    expect(requests(own).every((request) => request.tools.every((tool) => tool.id !== SUBMIT_TOOL))).toBe(true);
+    const own = harnessOf([{ calls: [] }, HALT]);
+    await outcomeOf(config({ submit: false }), own);
+    expect(requests(own)[0]!.tools.map((tool) => tool.id)).toEqual(["bump"]);
 
     const prose = harnessOf([{ content: "all done" }]);
     await outcomeOf(config({ schema: null }), prose);

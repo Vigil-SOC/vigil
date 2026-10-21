@@ -83,6 +83,20 @@ describe("a move as a kernel turn", () => {
     expect(t.trace.chronological().some((e) => e.type === "rejected-submission" && JSON.stringify(e.payload).includes("r9"))).toBe(true);
   });
 
+  // A move that searches to its cap made one call per round and then one more for the emission.
+  it("takes a move's answer on the round its search cap makes the last, with no further call", async () => {
+    const t = setup(
+      (request) => (request.force === SUBMIT_TOOL ? { emit: { candidates: [cand("curl wrote /tmp/x", ["r1"])], reasoning: "r" } } : { calls: [{ tool: "splunk_query", args: SEARCH }] }),
+      { [SEARCH.spl]: "3 events matched\ncurl wrote /tmp/x" },
+    );
+    const out = await t.client.runTurn(t.request({ maxSearches: 2 }));
+
+    expect(t.provider.requests.map((r) => r.force)).toEqual([undefined, SUBMIT_TOOL]);
+    expect(t.provider.requests.some((r) => r.emit !== undefined)).toBe(false);
+    expect(out.toolCalls).toMatchObject([{ id: "r1", ok: true }]);
+    expect((out.submission as { candidates: { label: string }[] }).candidates.map((c) => c.label)).toEqual(["curl wrote /tmp/x"]);
+  });
+
   it("a move with no searches asks nothing of the tool, and a failed search comes back as a failed call", async () => {
     const t = setup(
       (request) => (request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : request.messages.some((m) => m.role === "tool") ? { content: "done" } : { calls: [{ tool: "splunk_query", args: { ...SEARCH, spl: "index=lab nope" } }] }),
