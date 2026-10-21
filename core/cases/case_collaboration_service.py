@@ -12,10 +12,41 @@ from sqlalchemy.orm import Session
 
 from core.cases.case_notification_service import CaseNotificationService
 from core.exceptions import default_on_error
-from core.storage.models import CaseComment, CaseWatcher
+from core.storage.models import CaseAuditLog, CaseComment, CaseWatcher
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
+
+
+def _comment_audit(
+    session: Session,
+    case_id: str,
+    comment_id: int,
+    action: str,
+    actor: str,
+    previous: str,
+    current: str,
+) -> None:
+    """Name who changed a comment, and keep the wording they replaced.
+
+    The case record reads ``entity_type == case`` rows, and its text is the
+    summary, so the previous wording has to be in that sentence.
+    """
+    verb = "edited" if action == "update" else "deleted"
+    session.add(
+        CaseAuditLog(
+            entity_type="case",
+            entity_id=case_id,
+            action=action,
+            field_name="content",
+            old_value=previous,
+            new_value=current,
+            change_summary=(
+                f"{actor} {verb} comment {comment_id}. Previous text: {previous}"
+            ),
+            changed_by=actor,
+        )
+    )
 
 
 class CaseCollaborationService:
@@ -86,75 +117,103 @@ class CaseCollaborationService:
             logger.info(f"Added comment to case {case_id} by {author}")
             return comment
 
-    @default_on_error(False)
     def update_comment(
-        self, comment_id: int, new_content: str, session: Optional[Session] = None
+        self,
+        case_id: str,
+        comment_id: int,
+        new_content: str,
+        edited_by: str,
+        session: Optional[Session] = None,
     ) -> bool:
         """
-        Update a comment.
+        Update a comment on this case.
 
         Args:
+            case_id: Case the comment must belong to
             comment_id: Comment ID
             new_content: New comment content
+            edited_by: Signed-in user making the edit
             session: Database session (optional)
 
         Returns:
-            True if successful
+            True if the comment was on this case and was updated
         """
         with unit_of_work(session) as session:
-            comment = (
-                session.query(CaseComment)
-                .filter(CaseComment.comment_id == comment_id)
-                .first()
-            )
-
-            if not comment:
+            comment = self._comment_on_case(session, case_id, comment_id)
+            if comment is None:
                 return False
 
+            previous = comment.content
             comment.content = new_content
             comment.is_edited = True
-
-            # Update mentions
-            mentions = self.notification_service.extract_mentions(new_content)
-            comment.mentions = mentions
-
+            comment.mentions = self.notification_service.extract_mentions(new_content)
+            _comment_audit(
+                session,
+                case_id,
+                comment_id,
+                "update",
+                edited_by,
+                previous,
+                new_content,
+            )
             return True
 
-    @default_on_error(False)
     def delete_comment(
         self,
+        case_id: str,
         comment_id: int,
+        deleted_by: str,
         soft_delete: bool = True,
         session: Optional[Session] = None,
     ) -> bool:
         """
-        Delete a comment.
+        Delete a comment on this case.
 
         Args:
+            case_id: Case the comment must belong to
             comment_id: Comment ID
+            deleted_by: Signed-in user deleting it
             soft_delete: If True, mark as deleted; if False, hard delete
             session: Database session (optional)
 
         Returns:
-            True if successful
+            True if the comment was on this case and was deleted
         """
         with unit_of_work(session) as session:
-            comment = (
-                session.query(CaseComment)
-                .filter(CaseComment.comment_id == comment_id)
-                .first()
-            )
-
-            if not comment:
+            comment = self._comment_on_case(session, case_id, comment_id)
+            if comment is None:
                 return False
 
+            previous = comment.content
             if soft_delete:
                 comment.is_deleted = True
                 comment.content = "[deleted]"
+                current = comment.content
             else:
                 session.delete(comment)
-
+                current = "[deleted]"
+            _comment_audit(
+                session,
+                case_id,
+                comment_id,
+                "delete",
+                deleted_by,
+                previous,
+                current,
+            )
             return True
+
+    def _comment_on_case(
+        self, session: Session, case_id: str, comment_id: int
+    ) -> Optional[CaseComment]:
+        return (
+            session.query(CaseComment)
+            .filter(
+                CaseComment.comment_id == comment_id,
+                CaseComment.case_id == case_id,
+            )
+            .first()
+        )
 
     def get_case_comments(
         self,

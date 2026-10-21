@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.exceptions import NotFoundError, default_on_error
-from core.storage.models import Case, CaseTask, CaseTemplate
+from core.storage.models import (
+    Case,
+    CaseAuditLog,
+    CaseEscalation,
+    CaseTask,
+    CaseTemplate,
+)
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -312,8 +318,6 @@ class CaseWorkflowService:
             True if successful
         """
         with unit_of_work(session) as session:
-            from core.storage.models import CaseEscalation
-
             case = session.query(Case).filter(Case.case_id == case_id).first()
             if not case:
                 logger.info(f"Case {case_id} not found")
@@ -329,13 +333,30 @@ class CaseWorkflowService:
                 status="pending",
             )
             session.add(escalation)
+            # The case record only shows case-audit rows, so the name has to
+            # land here as well as on the escalation.
+            session.add(
+                CaseAuditLog(
+                    entity_type="case",
+                    entity_id=case_id,
+                    action="update",
+                    field_name="escalation",
+                    change_summary=(
+                        f"{escalated_from} escalated this case to {escalated_to}: "
+                        f"{reason}"
+                    ),
+                    changed_by=escalated_from,
+                )
+            )
 
             # Update case
             case.assignee = escalated_to
             case.timeline.append(
                 {
                     "timestamp": utcnow().isoformat(),
-                    "event": f"Escalated to {escalated_to}: {reason}",
+                    "event": (
+                        f"{escalated_from} escalated to {escalated_to}: {reason}"
+                    ),
                 }
             )
 

@@ -29,6 +29,7 @@ from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_record import merge_record, unread_row
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.cases.case_state import case_run_refs, primary_ref
+from core.cases.case_workflow_service import CaseWorkflowService
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -453,12 +454,19 @@ class CommentUpdate(BaseModel):
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
-async def update_comment(case_id: str, comment_id: int, data: CommentUpdate):
-    """Update comment."""
+async def update_comment(
+    case_id: str,
+    comment_id: int,
+    data: CommentUpdate,
+    current_user: User = Depends(get_current_user),
+):
+    """Update a comment on this case. The editor is the signed-in user."""
     collab_service = CaseCollaborationService()
-    success = collab_service.update_comment(comment_id, data.content)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to update comment")
+    updated = collab_service.update_comment(
+        case_id, comment_id, data.content, current_user.username
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Comment not found")
     return {"success": True}
 
 
@@ -467,12 +475,16 @@ async def update_comment(case_id: str, comment_id: int, data: CommentUpdate):
     dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
-async def delete_comment(case_id: str, comment_id: int):
-    """Delete comment."""
+async def delete_comment(
+    case_id: str,
+    comment_id: int,
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a comment on this case. Who deleted it is the signed-in user."""
     collab_service = CaseCollaborationService()
-    success = collab_service.delete_comment(comment_id)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to delete comment")
+    deleted = collab_service.delete_comment(case_id, comment_id, current_user.username)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Comment not found")
     return {"success": True}
 
 
@@ -694,7 +706,10 @@ async def get_relationships(case_id: str, session: UnitOfWorkSession):
 class EscalationAdd(BaseModel):
     """Escalate case."""
 
-    escalated_from: str
+    escalated_from: Optional[str] = Field(
+        default=None,
+        description="Ignored: the signed-in user is recorded as who escalated.",
+    )
     escalated_to: str
     reason: str
     urgency_level: str = "high"
@@ -703,13 +718,19 @@ class EscalationAdd(BaseModel):
 @router.post(
     "/{case_id}/escalate", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
 )
-async def escalate_case(case_id: str, data: EscalationAdd):
-    """Escalate case."""
-    from core.cases.case_workflow_service import CaseWorkflowService
-
+async def escalate_case(
+    case_id: str,
+    data: EscalationAdd,
+    current_user: User = Depends(get_current_user),
+):
+    """Escalate case. Who escalated it is the signed-in user."""
     workflow_service = CaseWorkflowService()
     success = workflow_service.escalate_case(
-        case_id, data.escalated_from, data.escalated_to, data.reason, data.urgency_level
+        case_id,
+        escalated_from=current_user.username,
+        escalated_to=data.escalated_to,
+        reason=data.reason,
+        urgency_level=data.urgency_level,
     )
     if not success:
         raise HTTPException(status_code=500, detail="Failed to escalate case")

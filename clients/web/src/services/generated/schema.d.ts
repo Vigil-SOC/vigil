@@ -1860,13 +1860,13 @@ export interface paths {
         get?: never;
         /**
          * Update Comment
-         * @description Update comment.
+         * @description Update a comment on this case. The editor is the signed-in user.
          */
         put: operations["put_api_cases_case_id_comments_comment_id"];
         post?: never;
         /**
          * Delete Comment
-         * @description Delete comment.
+         * @description Delete a comment on this case. Who deleted it is the signed-in user.
          */
         delete: operations["delete_api_cases_case_id_comments_comment_id"];
         options?: never;
@@ -1885,7 +1885,7 @@ export interface paths {
         put?: never;
         /**
          * Escalate Case
-         * @description Escalate case.
+         * @description Escalate case. Who escalated it is the signed-in user.
          */
         post: operations["post_api_cases_case_id_escalate"];
         delete?: never;
@@ -8833,8 +8833,11 @@ export interface components {
          * @description Escalate case.
          */
         EscalationAdd: {
-            /** Escalated From */
-            escalated_from: string;
+            /**
+             * Escalated From
+             * @description Ignored: the signed-in user is recorded as who escalated.
+             */
+            escalated_from?: string | null;
             /** Escalated To */
             escalated_to: string;
             /** Reason */
