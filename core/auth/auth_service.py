@@ -327,6 +327,7 @@ class AuthService:
             # Clear any stale codes from a prior setup attempt; fresh codes
             # are issued at enable time.
             user.mfa_recovery_codes = []
+            user.mfa_last_totp_step = None  # the old secret's steps don't apply
 
             logger.info(f"MFA setup initiated for user: {user.username}")
             return secret
@@ -347,12 +348,12 @@ class AuthService:
             - None if there is no pending secret or the code is invalid
         """
         with unit_of_work(session) as session:
-            user = session.query(User).filter(User.user_id == user_id).first()
+            user = AuthService._lock_user(session, user_id)
             if not user or not user.mfa_secret:
                 return None
 
             try:
-                valid = AuthService._verify_totp(user.mfa_secret, code)
+                valid = AuthService._accept_totp(user, code)
             except MFASecretDecryptionError:
                 return None  # already logged at ERROR with the cause
             if not valid:
@@ -397,14 +398,16 @@ class AuthService:
         already enabled and only validates the supplied code.
         """
         with unit_of_work(session) as session:
-            user = session.query(User).filter(User.user_id == user_id).first()
+            # Locked so two requests carrying the same code are serialised:
+            # the second sees the consumed recovery code / stored TOTP step.
+            user = AuthService._lock_user(session, user_id)
             if not user or not user.mfa_secret:
                 return False
 
             # Try TOTP first. An undecryptable secret must not block recovery
             # codes: they are bcrypt hashes and do not depend on the key.
             try:
-                if AuthService._verify_totp(user.mfa_secret, code):
+                if AuthService._accept_totp(user, code):
                     return True
             except MFASecretDecryptionError:
                 pass  # already logged at ERROR with the cause
@@ -500,10 +503,44 @@ class AuthService:
         )
 
     @staticmethod
-    def _verify_totp(encrypted_secret: str, code: str) -> bool:
-        """Verify a TOTP code against a stored (encrypted) MFA secret."""
-        decrypted = AuthService._decrypt_mfa_secret(encrypted_secret)
-        return pyotp.TOTP(decrypted).verify(code, valid_window=1)
+    def _lock_user(session: Session, user_id: str) -> Optional[User]:
+        """Load a user row FOR UPDATE, held until the unit of work commits.
+
+        populate_existing() refreshes a User already in the session (login
+        loads it in authenticate_user); otherwise the lock is taken but the
+        stale recovery codes and TOTP step from the earlier read are kept.
+        """
+        return (
+            session.query(User)
+            .filter(User.user_id == user_id)
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+
+    @staticmethod
+    def _accept_totp(user: User, code: str) -> bool:
+        """Accept a TOTP code once: its step must be later than the last accepted."""
+        step = AuthService._verify_totp(user.mfa_secret, code)
+        if step is None:
+            return False
+        if user.mfa_last_totp_step is not None and step <= user.mfa_last_totp_step:
+            logger.warning("Replayed TOTP code refused for user: %s", user.username)
+            return False
+        user.mfa_last_totp_step = step
+        return True
+
+    @staticmethod
+    def _verify_totp(encrypted_secret: str, code: str) -> Optional[int]:
+        """Return the time step (±1) a TOTP code matches, or None."""
+        totp = pyotp.TOTP(AuthService._decrypt_mfa_secret(encrypted_secret))
+        current = int(time.time()) // totp.interval
+        # Newest first, so a code valid in two steps records the later one.
+        for step in (current + 1, current, current - 1):
+            # strings_equal is constant-time (hmac.compare_digest underneath)
+            if pyotp.utils.strings_equal(str(code), totp.generate_otp(step)):
+                return step
+        return None
 
     @staticmethod
     def get_mfa_qr_uri(
