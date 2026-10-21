@@ -8,7 +8,7 @@
 -- scripts/migrate_schema.py (grant_medic_permissions) runs the same statement.
 --
 -- Admin gets both, Manager medic.read. Viewer, Analyst and Senior Analyst get
--- neither, so Medic's gateway login (a Viewer, 40_users_service_account.sql)
+-- neither, so Medic's gateway login (a Viewer, 42_users_service_account.sql)
 -- can't read Medic back through the backend.
 --
 -- Existing keys win (grants || permissions), so a grant an operator has turned
