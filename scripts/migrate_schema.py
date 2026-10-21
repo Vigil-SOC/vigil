@@ -532,7 +532,7 @@ def add_users_service_account(conn):
 
 
 # When the backend last reached Medic: one row, written by its poller (D2-18).
-# The same statement as infra/database/init/41_medic_last_seen.sql.
+# The same statement as infra/database/init/43_medic_last_seen.sql.
 @migration("Add medic_last_seen")
 def add_medic_last_seen(conn):
     conn.execute(text("""

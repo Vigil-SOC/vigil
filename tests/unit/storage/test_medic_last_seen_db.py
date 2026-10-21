@@ -1,7 +1,7 @@
 """``medic_last_seen`` in a real Postgres: create_all, the init SQL, the migration.
 
 A fresh install gets the table from create_all; a database built before it gets
-it from ``41_medic_last_seen.sql`` (Compose db-seed, Helm db-init) or from
+it from ``43_medic_last_seen.sql`` (Compose db-seed, Helm db-init) or from
 ``scripts/migrate_schema.py``. All three must build the same table, with the
 same limits: one row, a closed ``failure_kind``, a size-capped snapshot. Each
 change runs in a transaction that is rolled back, so the shared test database
@@ -21,7 +21,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.databa
 
 REPO = Path(__file__).resolve().parents[3]
 MIGRATE_SCHEMA = REPO / "scripts" / "migrate_schema.py"
-INIT_SQL = REPO / "infra" / "database" / "init" / "41_medic_last_seen.sql"
+INIT_SQL = REPO / "infra" / "database" / "init" / "43_medic_last_seen.sql"
 HELM_SQL = REPO / "infra" / "helm" / "vigil" / "files" / "database-init" / INIT_SQL.name
 
 COLUMNS = {
