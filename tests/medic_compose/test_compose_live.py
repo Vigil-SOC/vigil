@@ -76,6 +76,8 @@ class Stack:
             # C8: the flag is the master switch and defaults to off.
             VIGIL_MEDIC_ENABLED="true",
             VIGIL_MEDIC_DOCKER_GID=os.environ.get("VIGIL_MEDIC_DOCKER_GID", ""),
+            # enable-compose.sh refuses to give the backend an empty one (V1).
+            JWT_SECRET_KEY="S6JWT" + secrets.token_hex(24),
         )
         if not self.env["VIGIL_MEDIC_DOCKER_GID"]:
             del self.env["VIGIL_MEDIC_DOCKER_GID"]
