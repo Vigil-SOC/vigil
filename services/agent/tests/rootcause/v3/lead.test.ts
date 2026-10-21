@@ -77,7 +77,7 @@ describe("the model names every move", () => {
   const drive = async (answer: (req: TurnRequest, n: number, budget: { usd: number }) => unknown, graph?: ReturnType<typeof seeded>, failing: (n: number) => string | undefined = () => undefined) => {
     const reqs: TurnRequest[] = [];
     const budget = { usd: 0 };
-    const model = { runTurn: async (req: TurnRequest) => { reqs.push(req); const failed = failing(reqs.length); return failed ? { submission: null, toolCalls: [], failed } : { submission: answer(req, reqs.length, budget) ?? null, toolCalls: [] }; } };
+    const model = { runTurn: async (req: TurnRequest) => { reqs.push(req); const failed = failing(reqs.length); return failed !== undefined ? { submission: null, toolCalls: [], failed } : { submission: answer(req, reqs.length, budget) ?? null, toolCalls: [] }; } };
     const trace = new MemoryTrace("t");
     const r = await run(alert, { ...cfg, rareSweep: false, maxUsd: 100 }, { model, tools: new Registry(), trace, budget, domains: ["edr"], clock: () => new Date() }, { runId: "t", range: ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], index: "x", graph });
     return { reqs, r, trace };
@@ -114,6 +114,17 @@ describe("the model names every move", () => {
     expect(reqs[2]!.userContent).not.toContain("provider error");
     const decisions = trace.chronological().filter((e) => e.type === "decision").map((e) => e.payload as { move: string; reason: string });
     expect(decisions[1]).toMatchObject({ move: "choose", reason: "502 failed to execute HTTP request to provider API" });
+  });
+
+  it("treats a provider error with no message as a lost choose turn too", async () => {
+    const { reqs } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (n === 3) budget.usd = 1e6;
+      return req.move === "choose" ? { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } : null;
+    }, undefined, (n) => (n === 1 ? "" : undefined));
+    expect(reqs.map((r) => r.move)).toEqual(["choose", "choose", "strengthen", "conclude"]);
+    expect(reqs[1]!.userContent).not.toContain("not a valid choice");
+    expect(reqs[1]!.userContent).toContain("Your last turn was lost to a provider error before your choice was judged");
   });
 
   it("runs the move a submission names without a choose turn", async () => {

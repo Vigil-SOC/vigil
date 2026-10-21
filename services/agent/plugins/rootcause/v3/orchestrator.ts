@@ -134,7 +134,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
       tt.write("graph-patch", { patch: probe, result: { idMap: applied.idMap, rejected: applied.rejected, touched: applied.touched, resolvedMarkers: applied.resolvedMarkers } });
     }
     pending = r.decision;
-    st.refused = r.refused ?? (decision.move === "choose" && !st.next && !st.failed ? "that was not a valid choice." : undefined);
+    st.refused = r.refused ?? (decision.move === "choose" && !st.next && st.failed === undefined ? "that was not a valid choice." : undefined);
     if (st.next) tt.write("reasoning", { lead: st.next, ...(r.refused ? { refused: r.refused } : { next: `${r.decision!.move} ${r.decision!.targetId}` }) });
     if (r.refused) log(`  lead refused: ${r.refused}`);
     await o.onTurn?.(graph, turn);
