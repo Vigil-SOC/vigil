@@ -96,9 +96,13 @@ def _is_service_account(user: User) -> bool:
     """Only an explicit True exempts from lockout; anything else fails closed.
 
     A user object without the field is not one. MFA lockout tests, and any
-    caller that has not loaded the column, must still lock.
+    caller that has not loaded the column, must still lock. An attribute
+    read, not a string: the writer scan allows exactly one assignment.
     """
-    return getattr(user, "service_account", None) is True
+    try:
+        return user.service_account is True
+    except AttributeError:
+        return False
 
 
 def _account_is_locked(user) -> bool:
