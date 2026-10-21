@@ -8,7 +8,7 @@ import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 import shellCss from './shell.css?inline'
 
-const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, getIntegrations, apiGet, apiPost } = vi.hoisted(() => ({
+const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, findFindings, getIntegrations, apiGet, apiPost } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
   deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
@@ -17,6 +17,7 @@ const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument,
   attachDocument: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   getCase: vi.fn(),
   getFinding: vi.fn(),
+  findFindings: vi.fn(),
   getIntegrations: vi.fn(),
   apiGet: vi.fn(),
   apiPost: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock('../services/api', () => ({
   },
   findingsApi: {
     getById: (id: string) => getFinding(id),
+    getAll: (params: unknown) => findFindings(params),
   },
   configApi: {
     getIntegrations: () => getIntegrations(),
@@ -158,6 +160,7 @@ beforeEach(() => {
     }
     return Promise.reject(new Error('missing case'))
   })
+  findFindings.mockResolvedValue({ data: { findings: [] } })
   getFinding.mockImplementation((id: string) => (
     id === 'f-1'
       ? Promise.resolve({ data: { finding_id: 'f-1', title: 'LSASS', data_source: 'CrowdStrike', severity: 'high' } })
@@ -375,6 +378,24 @@ describe('CommandBar', () => {
     expect(sections().slice(0, 2)).toEqual(['Alerts', 'Cases'])
     fireEvent.click(row)
     expect(onGo).toHaveBeenCalledWith('overview', { search: '?alert=f-1' })
+  })
+
+  it('finds a case and its alert by a host the alert names', async () => {
+    const { onOpenCase } = renderBar()
+    apiGet.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/cases/search/by-ioc'
+        ? { cases: [{ case_id: 'case-7', title: 'Finance hunt', priority: 'high', status: 'open', match_type: 'alert' }] }
+        : { cases: [], comments: [], evidence: [] },
+    }))
+    findFindings.mockResolvedValueOnce({ data: { findings: [{ finding_id: 'f-7', title: 'Beacon from host', data_source: 'zeek', severity: 'high' }] } })
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'FIN-WS-114' } })
+    const caseRow = await screen.findByRole('option', { name: /Finance hunt/ })
+    expect(findFindings).toHaveBeenCalledWith({ search: 'FIN-WS-114', limit: 5 })
+    expect(caseRow.querySelector('.vg-command-desc')).toHaveTextContent('high · open · Matched an alert')
+    expect(sections().slice(0, 2)).toEqual(['Cases', 'Alerts'])
+    expect(screen.getByRole('option', { name: /Beacon from host/ })).toHaveTextContent('zeek · high')
+    fireEvent.click(caseRow)
+    expect(onOpenCase).toHaveBeenCalledWith('case-7')
   })
 
   it('explains Later rows on hover and skips them with the arrow keys', () => {
