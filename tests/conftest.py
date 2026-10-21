@@ -16,14 +16,14 @@ os.environ["JWT_SECRET_KEY"] = (
 )
 os.environ["VIGIL_DISABLE_DOTENV"] = "1"
 
-# The CSRF settings an unconfigured install has -- `core/config.py` defaults
-# them to exactly this. Stated here rather than left to the defaults because a
-# developer's shell can carry either one, and stated once rather than by
-# whichever test module happens to be collected first: three modules used to set
+# The CSRF settings the suite runs under. Not the product default: an
+# unconfigured install enforces (`core/config.py`), but most tests POST without
+# a csrf_token pair, so the suite pins report-only -- a violation is logged and
+# the request proceeds. Stated once rather than by whichever test module
+# happens to be collected first: three modules used to set
 # `VIGIL_CSRF_ENABLED=false` at import, process-wide and without cleanup, so
-# what the suite ran under depended on the order pytest walked it in. Enabled
-# and report-only means a violation is logged and the request proceeds, which
-# is why a clean checkout has never needed the flag.
+# what the suite ran under depended on the order pytest walked it in. A test
+# of the product default unsets the pin itself (tests/unit/api/test_csrf_default.py).
 os.environ["VIGIL_CSRF_ENABLED"] = "true"
 os.environ["VIGIL_CSRF_REPORT_ONLY"] = "true"
 

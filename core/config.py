@@ -195,7 +195,7 @@ class Settings(BaseSettings):
     # sets before boot; the Settings toggle overrides it at runtime.
     vigil_mcp_enabled: bool = False
     vigil_csrf_enabled: bool = True
-    vigil_csrf_report_only: bool = True
+    vigil_csrf_report_only: bool = False
     vigil_csrf_exempt_paths: Optional[str] = None
     vigil_cookie_secure: bool = True
     vigil_cookie_samesite: str = "strict"
