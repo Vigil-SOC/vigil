@@ -232,7 +232,8 @@ jobs:
       - name: Pytest (live Docker, check 4)
         run: |
           uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker -rs
-          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker --collect-only -q | grep -q "^43/"
+          # pytest 9 prints "43 tests collected", not "43/".
+          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker --collect-only -q | grep -q "^43 tests collected"
 
       - name: Pytest
         run: uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy
@@ -287,8 +288,7 @@ jobs:
             if docker exec dp python -m services.medic_dockerproxy check; then
               docker exec dp id -u | grep -qx 10003
               if docker exec dp touch /tmp/x; then exit 1; fi
-              docker exec dp python -c '
-          import http.client as h
+              docker exec dp python -c 'import http.client as h
           def get(p):
               c = h.HTTPConnection("127.0.0.1", 8472, timeout=5)
               c.request("GET", p)
@@ -297,8 +297,7 @@ jobs:
           assert get("/containers/dp/export")[0] == 403
           assert get("/containers/dp/archive?path=/")[0] == 403
           st, body = get("/containers/dp/json")
-          assert st == 200 and b"Env" not in body and b"Cmd" not in body, body
-          '
+          assert st == 200 and b"Env" not in body and b"Cmd" not in body, body'
               exit 0
             fi
             sleep 1
