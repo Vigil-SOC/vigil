@@ -1,3 +1,4 @@
+import { answerEvents, schemaAsked } from "./forced.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import type { Provider, ProviderEvent, TurnRequest } from "../../core/provider.js";
 
@@ -42,10 +43,11 @@ export function respondingProvider(options: RespondingOptions): Responding {
       peak = Math.max(peak, inFlight);
       try {
         await rest(options.ticks ?? 2);
-        if (request.emit !== undefined) {
-          yield { type: "text_delta", text: JSON.stringify(options.emit(request.emit)) };
-        }
+        const asked = schemaAsked(request);
+        const [said] = asked === undefined ? [] : answerEvents(request, options.emit(asked));
+        if (said?.type === "text_delta") yield said;
         yield { type: "usage", tokens: ZERO_TOKENS };
+        if (said?.type === "tool_call") yield said;
       } finally {
         inFlight -= 1;
       }

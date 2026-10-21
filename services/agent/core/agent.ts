@@ -605,6 +605,8 @@ function turnFor(
     system: [systemOf(plugin), directivesOf(spec)].filter((part) => part !== "").join("\n\n"),
     task,
     schema: structured?.schema ?? null,
+    // The plugin's own conclude tool is the answer's tool, so the kernel offers no second one.
+    ...(plugin.finish_with === "tool" && options.conversation === undefined ? { submit: false } : {}),
     history: options.conversation === undefined ? historyOf(agentCalls(calls)) : conversationHistory(options.conversation.history, agentCalls(calls)),
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),

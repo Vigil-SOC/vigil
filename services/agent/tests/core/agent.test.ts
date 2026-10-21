@@ -15,6 +15,7 @@ import { buildSpec, SpecError, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { investigateKernelReplay, investigateView } from "../../plugins/investigate/view.js";
 import { parsePlugin, parseSkill, pluginFor } from "../../plugins/registry.js";
+import { SUBMIT_TOOL } from "../../core/stream.js";
 import { quiet } from "../support/plugins.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -167,9 +168,10 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const review = (await state.read(RUN)).find((one) => one.kind === "review")?.payload as ReviewPayload;
     expect(review).toMatchObject({ stance: "uphold", cited: ["r1"], unknown_refs: [], grounded: true, guarded: { field: "disposition", asked: "benign", final: "benign" } });
     expect(await state.terminal(RUN)).toMatchObject({ summary: "the lockouts are benign", disposition: "benign" });
-    // The reviewer holds no tools and is shown the step it was asked about.
+    // The reviewer holds no tools but the kernel's submit, forced, and is shown the step it was asked about.
     const asked = provider.requests.at(-1);
-    expect(asked?.tools).toEqual([]);
+    expect(asked?.tools.map((tool) => tool.id)).toEqual([SUBMIT_TOOL]);
+    expect(asked?.force).toBe(SUBMIT_TOOL);
     expect(asked?.messages.map((one) => one.content).join("\n")).toContain('<vigil:record id="r1" cited="true">');
   });
 

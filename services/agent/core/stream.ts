@@ -28,6 +28,10 @@ import type { State } from "./seams.js";
 // the run before the check runs; the dispatch id is the call's, not an approval id.
 const CANDIDATE_CHECK = "check_detection_candidate";
 
+// The schema as a tool the kernel owns: never granted, never dispatched, and not a result
+// the run gathered. A valid call is the answer; anything else falls back to the emission turn.
+export const SUBMIT_TOOL = "submit_answer";
+
 // What a run reports as it happens. The first three are the provider's, relayed;
 // the rest are the harness's, and a run ends on exactly one of the last three.
 export type StreamEvent<T = unknown> =
@@ -112,6 +116,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Set once the model has been asked to keep going, and the ask it is carrying.
   private nudged = false;
   private nudge: string | null = null;
+  // A submit call that did not match the schema: the emission turn starts from its correction.
+  private refusedSubmit: { content: string; parsed: unknown; reason: string } | null = null;
   private readonly folder: Folder<Kinds>;
 
   constructor(
@@ -141,10 +147,16 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
     // Recalled once and rendered into the opening turn, never re-recalled per
     // tool turn: a prefix that changes mid-loop is a prefix that cannot cache.
-    this.prefix = prefixOf(this.cfg.system, this.tools.map(schemaOf), await this.recalled());
-
     const schema = this.cfg.schema;
-    const ended = yield* this.toolLoop();
+    const submit = schema !== null && this.cfg.submit !== false;
+    const offered = this.tools.map(schemaOf);
+    this.prefix = prefixOf(
+      this.cfg.system,
+      submit ? [...offered, { id: SUBMIT_TOOL, description: "Give your final answer, in the shape its parameters describe. Call it alone, once you can answer.", parameters: schema }] : offered,
+      await this.recalled(),
+    );
+
+    const ended = yield* this.toolLoop(submit);
     if (ended !== null) return yield* announce(ended);
     // Prose was already streamed as it arrived, so asking for it again would bill
     // a second call to be told the same thing.
@@ -209,10 +221,15 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
   // Returns an outcome only when the run ends here; otherwise the loop stops
   // because the model asked for no tools or because the cap stopped it.
-  private async *toolLoop(): AsyncGenerator<StreamEvent<T>, Outcome<T> | null> {
-    while (this.turns < this.cfg.max_turns) {
+  private async *toolLoop(submit: boolean): AsyncGenerator<StreamEvent<T>, Outcome<T> | null> {
+    // One round past the cap when the answer can be a tool call: the search rounds are
+    // the role's, and the answer round is forced to the submit tool where the wire allows.
+    while (this.turns < this.cfg.max_turns + (submit ? 1 : 0)) {
+      const closing = this.turns >= this.cfg.max_turns;
+      if (closing) this.capped = true;
       const fold = await this.folder.advance();
-      const settled = this.settled(fold);
+      // The answer round is the emission's stand-in, which never looked at the store.
+      const settled = closing ? null : this.settled(fold);
       if (settled !== null) return settled;
 
       const refusal = await this.harness.budget.beginCall();
@@ -223,13 +240,30 @@ class Run<T, Kinds extends Record<string, unknown>> {
       const messages = this.assembled(tail ?? "");
       if (this.lastFold > 0) yield { type: "folded", folded: this.lastFold, remaining: messages.length };
 
-      const turn = yield* this.burn({ messages, tools: this.prefix.tools }, tail);
-      this.turns += 1;
+      let turn;
+      try {
+        turn = yield* this.burn({ messages, tools: this.prefix.tools, ...(closing ? { force: SUBMIT_TOOL } : {}) }, tail);
+      } catch (error) {
+        // The answer round stands in for the emission, so it gets the emission's recourse:
+        // a failed one is asked again by emit() over a folded transcript.
+        const tighter = FOLD_LADDER[this.folds];
+        if (!closing || error instanceof ModelSilent || error instanceof OutputCapReached || tighter === undefined || this.cfg.signal?.aborted === true || hardStop(error)) throw error;
+        this.tightened = tighter;
+        this.folds += 1;
+        this.rejected.push(`the answer call failed (${error instanceof Error ? error.message : String(error)}); asked again over a folded transcript`);
+        return null;
+      }
       this.prose = turn.content;
-      if (turn.tool_calls.length === 0) {
+      const submitted = submit ? turn.tool_calls.find((call) => call.tool === SUBMIT_TOOL) : undefined;
+      // A search asked for beside the answer is what the answer waits on; one asked for
+      // past the cap is not run. Any further submit is an answer too, not a search.
+      const asked = turn.tool_calls.filter((call) => !submit || call.tool !== SUBMIT_TOOL);
+      if (closing) return submitted === undefined ? null : this.accepted(submitted);
+      this.turns += 1;
+      if (asked.length === 0) {
         if (this.stoppedEarly()) {
           this.nudged = true;
-          this.nudge = persistAsk(turn.content, this.gathered(), this.cfg.max_turns - this.turns);
+          this.nudge = persistAsk(turn.content, this.gathered(), this.cfg.max_turns - this.turns, submitted && SUBMIT_TOOL);
           continue;
         }
         // The plugin's own word on whether the work is settled: asked once, and only
@@ -242,11 +276,11 @@ class Run<T, Kinds extends Record<string, unknown>> {
             continue;
           }
         }
-        return null;
+        return submitted === undefined ? null : this.accepted(submitted);
       }
 
-      this.transcript.push({ role: "assistant", content: turn.content, tool_calls: turn.tool_calls });
-      for (const call of turn.tool_calls) {
+      this.transcript.push({ role: "assistant", content: turn.content, tool_calls: asked });
+      for (const call of asked) {
         const tool = this.tools.find((granted) => granted.id === call.tool);
         if (tool === undefined) {
           yield* this.record(call, refused(`${call.tool} is not granted to ${this.cfg.role}`));
@@ -272,6 +306,19 @@ class Run<T, Kinds extends Record<string, unknown>> {
     // The cap stops the tool loop, not the run: a role that gathered something
     // still answers over what it gathered, and says the set was truncated.
     this.capped = true;
+    return null;
+  }
+
+  // The submit call as the answer when it holds to the schema. When it does not, the
+  // emission turn is asked with what was wrong, as it would be of an emission.
+  private accepted(call: ToolCall): Outcome<T> | null {
+    const schema = this.cfg.schema!;
+    const validate = compile(schema);
+    const parsed = tryParse(call.args === "" ? "{}" : call.args);
+    if (parsed !== undefined && validate(parsed)) return this.done("completed", parsed as T, "the role answered");
+    const reason = parsed === undefined ? "the response was not valid JSON" : errorsOf(validate);
+    this.rejected.push(`${reason}: ${call.args.slice(0, 400)}`);
+    this.refusedSubmit = { content: call.args, parsed, reason };
     return null;
   }
 
@@ -386,7 +433,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const validate = compile(schema);
     // The ask and any correction are the transient tail: they belong to this
     // attempt, so they are re-rendered rather than written into the transcript.
-    let tail = "Emit your answer now as JSON matching the schema.";
+    const refused = this.refusedSubmit;
+    let tail = refused === null ? EMIT_ASK : corrected(refused.content, refused.reason, refused.parsed === undefined && cutOff(refused.content));
 
     // The last attempt's emission when it parsed but missed the schema: a caller may keep what in it is sound.
     let rejectedValue: unknown;
@@ -427,11 +475,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       if (parsed === undefined && cutOff(turn.content)) {
         const tighter = FOLD_LADDER[this.folds];
         this.rejected.push("the emission ran past the output ceiling and was cut off mid-JSON; asked again for a shorter answer");
-        tail = [
-          "Emit your answer now as JSON matching the schema.",
-          "Your previous emission was cut off mid-JSON because it ran past the output ceiling.",
-          "Keep every string field short. State a conclusion and cite ids rather than restating what they hold.",
-        ].join("\n\n");
+        tail = corrected("", "", true);
         if (tighter !== undefined) {
           this.tightened = tighter;
           this.folds += 1;
@@ -445,11 +489,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       this.rejected.push(`${reason}: ${turn.content.slice(0, 400)}`);
       // The rejected emission goes back as the assistant turn it was, or the model
       // is asked to correct something it cannot see.
-      tail = [
-        "Emit your answer now as JSON matching the schema.",
-        turn.content,
-        `That emission was rejected -- ${reason}. Emit a valid answer.`,
-      ].join("\n\n");
+      tail = corrected(turn.content, reason, false);
     }
 
     const outcome = this.done("failed", null, `the role never emitted a valid answer: ${this.rejected.join(" | ")}`);
@@ -620,6 +660,22 @@ class Run<T, Kinds extends Record<string, unknown>> {
       cost_usd: Number(this.spent.toFixed(6)),
     };
   }
+}
+
+const EMIT_ASK = "Emit your answer now as JSON matching the schema.";
+
+// What an emission is told when it follows a failed one. The rejected body goes back as the
+// assistant turn it was, or the model is asked to correct something it cannot see. A cut-off
+// one is not pasted: that makes the retry's input larger and asks for an answer just as long.
+function corrected(body: string, reason: string, cut: boolean): string {
+  if (cut) {
+    return [
+      EMIT_ASK,
+      "Your previous emission was cut off mid-JSON because it ran past the output ceiling.",
+      "Keep every string field short. State a conclusion and cite ids rather than restating what they hold.",
+    ].join("\n\n");
+  }
+  return [EMIT_ASK, body, `That emission was rejected -- ${reason}. Emit a valid answer.`].join("\n\n");
 }
 
 // Not every throw is a turn that failed: an exhausted gateway cannot serve the next

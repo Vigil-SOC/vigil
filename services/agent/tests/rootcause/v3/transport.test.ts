@@ -10,6 +10,7 @@ import { constraints, instructions, SYSTEM_PROMPT } from "../../../plugins/rootc
 import { issued, neverRan, Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { toolsFrom } from "../../../tools/remote.js";
+import { SUBMIT_TOOL } from "../../../core/stream.js";
 import { harnessOf, modelOf, specOf, splunk } from "../../support/v3-run.js";
 import { apply, node, seeded } from "./helpers.js";
 
@@ -60,7 +61,7 @@ describe("a move as a kernel turn", () => {
     expect(first!.messages[0]!.content).toContain("- edr: 10 events");
     expect(first!.messages[0]!.content).toContain("## Environment");
     expect(first!.messages.some((m) => m.content.includes("Find the cause."))).toBe(true);
-    expect(first!.tools.map((x) => x.id)).toEqual(["splunk_query"]);
+    expect(first!.tools.map((x) => x.id)).toEqual(["splunk_query", SUBMIT_TOOL]);
     expect(Object.keys((emission!.emit!["properties"] ?? {}) as object)).toContain("candidates");
     expect(JSON.stringify(emission!.emit)).not.toContain("maxLength");
 
@@ -222,7 +223,7 @@ describe("what a move's prompt tells the model to call", () => {
       const sent = t.provider.requests[i]!;
       const text = sent.messages.map((m) => m.content).join("\n");
       expect(text).not.toMatch(/submit_/);
-      expect(sent.tools.map((x) => x.id)).toEqual(searches ? ["splunk_query"] : []);
+      expect(sent.tools.map((x) => x.id)).toEqual(searches ? ["splunk_query", SUBMIT_TOOL] : [SUBMIT_TOOL]);
     }
     expect(all.conclude).not.toContain("splunk_query");
   });

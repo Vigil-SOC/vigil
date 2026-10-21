@@ -47,6 +47,13 @@ export function scriptedProvider(script: readonly ScriptedTurn[], model = "scrip
         return;
       }
 
+      // A forced answer round takes the turn scripted as the emission: the same answer, as a call.
+      if (request.force !== undefined && next.emit !== undefined && next.calls === undefined) {
+        yield { type: "usage", tokens };
+        yield { type: "tool_call", call: { id: `c${step}-0`, tool: request.force, args: typeof next.emit === "string" ? next.emit : JSON.stringify(next.emit) } };
+        return;
+      }
+
       for (const text of next.deltas ?? (next.content === undefined ? [] : [next.content])) {
         yield { type: "text_delta", text };
       }

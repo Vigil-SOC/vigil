@@ -183,6 +183,39 @@ describe("the OpenAI surface", () => {
     expect(bodies.at(-1)!.tool_choice).toEqual({ type: "function", function: { name: EMIT_TOOL } });
   });
 
+  it("forces the named tool when asked, and offers only that tool once the gateway has refused that", async () => {
+    const bodies: Body[] = [];
+    const surface = surfaceOf(async (body) => {
+      bodies.push(body);
+      if (body.tool_choice !== undefined) throw Object.assign(new Error("tool_choice is not supported"), { status: 400 });
+      return completion({ role: "assistant", content: "", tool_calls: [{ id: "1", function: { name: "submit_answer", arguments: '{"verb":"HALT"}' } }] });
+    });
+    const request: TurnRequest = {
+      messages: [{ role: "user", content: "go" }],
+      tools: [{ id: "search", description: "search", parameters: {} }, { id: "submit_answer", description: "answer", parameters: SCHEMA }],
+      force: "submit_answer",
+    };
+
+    expect((await turn(surface, request)).tool_calls.map((call) => call.tool)).toEqual(["submit_answer"]);
+    expect(bodies.map((body) => body.tool_choice)).toEqual([{ type: "function", function: { name: "submit_answer" } }, undefined]);
+
+    expect(bodies.map((body) => body.tools?.length)).toEqual([2, 1]);
+
+    // Remembered: the next forced call does not spend a refusal to find that out again.
+    await turn(surface, request);
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]!.tool_choice).toBeUndefined();
+    expect(bodies[2]!.tools).toHaveLength(1);
+  });
+
+  it("does not read a gateway's ceiling as a refusal of the forced tool", async () => {
+    const surface = surfaceOf(async () => {
+      throw Object.assign(new Error("request timed out"), { status: 504 });
+    });
+    const request: TurnRequest = { messages: [{ role: "user", content: "go" }], tools: [{ id: "t", description: "t", parameters: {} }], force: "t" };
+    await expect(turn(surface, request)).rejects.toThrow("request timed out");
+  });
+
   // The reasoning families 400 on max_tokens and take max_completion_tokens. The tool
   // loop has no 400 handler, so every turn failed on a field the caller never chose.
   it("moves the output ceiling to the field the model takes it under, once", async () => {

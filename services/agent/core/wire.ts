@@ -219,8 +219,23 @@ class OpenAiSurface implements Provider {
   }
 
   private async ask(request: TurnRequest): Promise<Turn> {
-    const tools = request.tools.length === 0 ? {} : { tools: wireTools(request.tools) };
-    return turnOf(await this.call({ model: this.wire_model, messages: wire(request.messages), ...tools }, request.signal));
+    const body = (tools: readonly ToolSchema[]) => ({ model: this.wire_model, messages: wire(request.messages), ...(tools.length === 0 ? {} : { tools: wireTools(tools) }) });
+    if (request.force === undefined) return turnOf(await this.call(body(request.tools), request.signal));
+    // Remembered per model like emitModes: "prompt" here means the gateway refuses a forced choice.
+    const mode = `force\n${this.model}`;
+    // Where the choice cannot be forced, offering only the named tool is the next best thing to it.
+    const only = request.tools.filter((tool) => tool.id === request.force);
+    if (emitModes.get(mode) === "prompt") return turnOf(await this.call(body(only), request.signal));
+    try {
+      const tool_choice = { type: "function" as const, function: { name: request.force } };
+      return turnOf(await this.call({ ...body(request.tools), tool_choice }, request.signal));
+    } catch (error) {
+      if (request.signal?.aborted === true || !REFUSED.has(statusOf(error) ?? 0)) throw error;
+      // Remembered once the unforced call has gone through: a 400 about something else is not a refusal.
+      const turn = turnOf(await this.call(body(only), request.signal));
+      rememberMode(mode, "prompt");
+      return turn;
+    }
   }
 
   private async emit(request: TurnRequest, schema: Record<string, unknown>): Promise<Turn> {
