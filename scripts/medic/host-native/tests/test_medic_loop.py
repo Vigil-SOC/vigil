@@ -154,6 +154,10 @@ def test_term_stops_medic_and_does_not_restart(box: Path) -> None:
     time.sleep(0.5)
     assert len(_starts(box)) == 1
     assert "stopped" in (box / "loop.log").read_text()
+    # The stub never writes a heartbeat. A stop must still leave `check` red,
+    # including when the previous beat was a kill -9's leftover "running".
+    record = json.loads((box / "data" / "run" / "heartbeat").read_text())
+    assert record["state"] == "stopped"
 
 
 def test_exit_restarts_with_doubling_backoff(box: Path) -> None:

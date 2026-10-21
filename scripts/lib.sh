@@ -66,8 +66,9 @@ _container_ollama_url() {
 # read .python-version itself, so the pin is injected at the one boundary where
 # compose is invoked, rather than copied into the compose file.
 dc() {
-    # The compose file refuses to start while this is empty. Fill it here so
-    # every caller (backup, app_up, start.sh) has one before interpolation.
+    # Fill it here so every caller (backup, app_up, start.sh) interpolates a
+    # real password. An empty one does not open the API, but nothing in Vigil
+    # could call it.
     ensure_bifrost_admin_password
     OLLAMA_URL="$(_container_ollama_url)" \
     PYTHON_VERSION="$(python_pin 2>/dev/null || true)" \

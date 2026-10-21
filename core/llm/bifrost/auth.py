@@ -17,8 +17,8 @@ BIFROST_ADMIN_USERNAME = "vigil"
 def management_auth() -> tuple[str, str]:
     """Username and password for an ``/api/*`` request.
 
-    An empty password is still sent. Compose rejects an empty value before
-    the gateway starts, and a blank password on Bifrost answers 401 rather
-    than leaving the API open.
+    An empty password is still sent. A blank password on Bifrost answers 401
+    rather than leaving the API open. start.sh and dc() mint one before a
+    normal boot.
     """
     return (BIFROST_ADMIN_USERNAME, get_settings().bifrost_admin_password)

@@ -220,8 +220,8 @@ class Settings(BaseSettings):
     bifrost_url: str = "http://localhost:8080"
     # HTTP Basic password for Bifrost's management API (/api/*). The username
     # is the fixed "vigil" in infra/docker/bifrost/config.json. Inference stays
-    # open. Empty does not turn auth off: compose refuses to start without it,
-    # and an empty password on the gateway answers 401.
+    # open. Empty does not turn auth off: the gateway answers 401. start.sh
+    # and dc() mint one before a normal boot.
     bifrost_admin_password: str = ""
     # Where the agent worker listens. Two calls go this way rather than through
     # the queue: a chat turn, which is synchronous, and a run's projection.

@@ -78,6 +78,15 @@ mark_crash_looping() {
         "$$" > "$tmp" && mv -f "$tmp" "$dir/heartbeat"
 }
 
+# `stopped` is a known-unhealthy heartbeat state, so `check` goes red at once.
+mark_stopped() {
+    local dir="$DATA/run" tmp
+    mkdir -p "$dir" && chmod 700 "$dir" || return 0
+    tmp="$dir/.heartbeat.loop.$$"
+    printf '{"v": 1, "cycle": 0, "ts": 0, "started_at": 0, "pid": %d, "state": "stopped"}\n' \
+        "$$" > "$tmp" && mv -f "$tmp" "$dir/heartbeat"
+}
+
 child="" stopping=0
 on_stop() {
     stopping=1
@@ -103,6 +112,10 @@ while :; do
     done
     child=""
     if [ "$stopping" -eq 1 ]; then
+        # A kill -9 leaves the last beat "running". If this stop lands before
+        # the replacement Medic can write "stopped" itself, `check` would stay
+        # green for the stale window. The loop can write the data dir.
+        mark_stopped
         say "stopped"
         exit 0
     fi

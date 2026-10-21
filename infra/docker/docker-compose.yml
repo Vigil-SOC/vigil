@@ -197,7 +197,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       # Management API only. Inference does not use it.
-      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:?set in .env}
+      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       REDIS_URL: redis://redis:6379/0
       # Shared secret the agent worker presents on /internal. Unset means every
       # such call answers 503, so no workflow can run.
@@ -374,7 +374,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
-      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:?set in .env}
+      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       # Redis (LLM queue)
       REDIS_URL: redis://redis:6379/0
       # Same seam as backend. localhost:6989 is the host-run default; without
@@ -501,7 +501,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
-      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set in .env}
+      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
       - REDIS_URL=redis://redis:6379/0
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
@@ -642,11 +642,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      # config.json references env.BIFROST_ADMIN_PASSWORD. Empty is rejected
-      # here: Bifrost would enable auth and then store a blank password,
-      # which locks the API (401) rather than leaving it open, and nothing
-      # in Vigil could call it.
-      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set in .env}
+      # config.json references env.BIFROST_ADMIN_PASSWORD. No `:?`: Medic's
+      # gate and `docker compose config` render this file with a clean
+      # environment. An empty value does not open the API — Bifrost enables
+      # auth and then answers 401. start.sh and dc() mint one before a boot.
+      - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. Without it every UI change lasted until the next recreate.
