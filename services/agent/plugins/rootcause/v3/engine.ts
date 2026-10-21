@@ -14,7 +14,7 @@ import { KernelModelClient, KernelTurns, Refused } from "./model/client.js";
 import { run, seedFromAlert } from "./orchestrator.js";
 import { renderReport } from "./report.js";
 import { scope } from "./scope.js";
-import { Registry, type Journal } from "./tools/registry.js";
+import { neverRan, Registry, type Journal } from "./tools/registry.js";
 import { sourceFor, UnsupportedSource, type Invoke, type SourceAdapter } from "./tools/source.js";
 import { splunkAdapter } from "./tools/splunk-source.js";
 import { MemoryTrace } from "./trace.js";
@@ -181,7 +181,7 @@ async function drive(
   const source = bound.adapter.open(invoke, { index, range });
   registry.register(source.evidenceTool());
   // The calls a resumed run already made stay citable, and a new one never reuses a ref.
-  for (const call of prior.filter((e) => e.kind === "call").map((e) => e.payload as CallPayload)) registry.note(call.ref, argsOf(call.arguments), call.ok ? call.result : "");
+  for (const call of prior.filter((e) => e.kind === "call").map((e) => e.payload as CallPayload)) registry.note(call.ref, argsOf(call.arguments), call.ok ? call.result : "", !neverRan(call));
   const trace = new MemoryTrace(run_id, () => new Date(), folded.entries);
   // The pool's own spend, which a resume was seeded with off the ledger.
   const budget = { get usd() { return harness.budget.spent.cost_usd; } };

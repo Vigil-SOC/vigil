@@ -6,11 +6,12 @@ import { loadPlugin } from "../../../plugins/index.js";
 import { defaultConfig } from "../../../plugins/rootcause/v3/config.js";
 import type { V3Kinds } from "../../../plugins/rootcause/v3/ledger.js";
 import { KernelModelClient, KernelTurns, Refused, type TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
-import { SYSTEM_PROMPT } from "../../../plugins/rootcause/v3/model/prompts.js";
-import { Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
+import { constraints, instructions, SYSTEM_PROMPT } from "../../../plugins/rootcause/v3/model/prompts.js";
+import { issued, neverRan, Registry, type EvidenceTool } from "../../../plugins/rootcause/v3/tools/registry.js";
 import { MemoryTrace } from "../../../plugins/rootcause/v3/trace.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { harnessOf, modelOf, specOf, splunk } from "../../support/v3-run.js";
+import { apply, node, seeded } from "./helpers.js";
 
 const cfg = { ...defaultConfig };
 const range: [string, string] = ["2026-01-05T00:00:00Z", "2026-01-06T00:00:00Z"];
@@ -89,6 +90,10 @@ describe("a move as a kernel turn", () => {
     expect(searched.toolCalls).toMatchObject([{ id: "r1", ok: false }]);
     expect((await t.calls())[0]).toMatchObject({ ok: false, failure: "backend_error" });
     expect(t.tools.outputOf("r1")).toBe("");
+    // It never ran: it keeps its number but is no evidence, and the next search is r2.
+    expect(t.tools.callCount).toBe(1);
+    expect(issued(t.tools, "r1")).toBe(false);
+    expect(t.tools.coverage).toEqual({});
 
     const none = await t.client.runTurn(t.request({ move: "conclude", submitTool: "submit_conclusion", maxSearches: 0 }));
     expect(t.provider.requests.at(-1)!.tools).toEqual([]);
@@ -114,8 +119,65 @@ describe("a move as a kernel turn", () => {
     expect(why.endsWith("…")).toBe(true);
   });
 
-  it("cites only refs as the ledger spells them", async () => {
-    const { issued } = await import("../../../plugins/rootcause/v3/tools/registry.js");
+  describe("an emission the kernel rejected", () => {
+    const art = (kind: string) => ({ kind, value: "a@b.test" });
+    const withArtifacts = (label: string, artifacts: unknown[]) => ({ ...cand(label, []), artifacts });
+    const salvaged = (t: ReturnType<typeof setup>) => t.trace.chronological().some((e) => e.type === "rejected-submission" && /dropped 1 item/.test(JSON.stringify(e.payload)));
+
+    it("keeps the sound candidates and drops the artifact that missed the enum, nested inside a candidate", async () => {
+      const bad = { candidates: [withArtifacts("good", [art("email-address")]), withArtifacts("has a bad artifact", [art("host"), art("email-sender")]), cand("also good", [])], reasoning: "r" };
+      const t = setup((request) => (request.emit !== undefined ? { emit: bad } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+
+      expect(t.provider.requests.filter((r) => r.emit !== undefined)).toHaveLength(2);
+      const got = (out.submission as { candidates: { label: string; artifacts: unknown[] }[] }).candidates;
+      expect(got.map((c) => c.label)).toEqual(["good", "has a bad artifact", "also good"]);
+      expect(got[1]!.artifacts).toEqual([art("host")]);
+      expect(salvaged(t)).toBe(true);
+    });
+
+    it("drops a top-level item, and returns null when that leaves a list under its schema minimum", async () => {
+      const one = { evidence: [{ summary: "s", strength: "direct", polarity: "supports", toolCallIds: [] }], artifacts: [art("email-sender"), art("host")], reasoning: "r" };
+      const t = setup((request) => (request.emit !== undefined ? { emit: one } : { content: "done" }));
+      const out = await t.client.runTurn(t.request({ submitTool: "submit_assessment" }));
+      expect((out.submission as { artifacts: unknown[] }).artifacts).toEqual([art("host")]);
+
+      const theory = (id: string) => ({ id, story: "s", accountsFor: [], gaps: "g", predictions: [{ id: "P1", sourcetype: "edr", expect: "e", spl: "index=lab", separates: [] }] });
+      const two = { theories: [theory("H1"), { ...theory("H2"), predictions: [{ id: "P2", sourcetype: "edr", expect: 7, spl: "x", separates: [] }] }], nextTests: ["P1"], reasoning: "r" };
+      const u = setup((request) => (request.emit !== undefined ? { emit: two } : { content: "done" }));
+      expect((await u.client.runTurn(u.request({ submitTool: "submit_theories" }))).submission).toBeNull();
+    });
+
+    it("gets nothing from an emission that was not JSON", async () => {
+      const t = setup((request) => (request.emit !== undefined ? { emit: "no json here" } : { content: "done" }));
+      expect((await t.client.runTurn(t.request())).submission).toBeNull();
+    });
+
+    it("accepts an email address and a message id as artifacts", async () => {
+      const ok = { candidates: [withArtifacts("mail sent", [art("email-address"), { kind: "message-id", value: "<abc@mail.test>" }])], reasoning: "r" };
+      const t = setup((request) => (request.emit !== undefined ? { emit: ok } : { content: "done" }));
+      const out = await t.client.runTurn(t.request());
+      expect(t.provider.requests.filter((r) => r.emit !== undefined)).toHaveLength(1);
+      expect((out.submission as { candidates: { artifacts: unknown[] }[] }).candidates[0]!.artifacts).toHaveLength(2);
+    });
+  });
+
+  it("tells the model the cap is rounds of searches, which may hold several", () => {
+    expect(constraints(cfg, range, ["edr"], ["edr"])).toContain(`search rounds this turn: at most ${cfg.maxToolCallsPerTurn} (a round may hold several searches)`);
+  });
+
+  it("drops a citation of a refused call, live and as a resume rebuilds it", () => {
+    const refused = { failure: "refused", result: "" };
+    const guarded = { failure: "backend_error", result: '<vigil:tool_result tool="splunk_query" ref="r2">\nfailed: backend_error -- refused: name the index\n</vigil:tool_result>' };
+    const ran = { failure: null, result: "<vigil:tool_result>\n1 row(s)\n</vigil:tool_result>" };
+    const reg = new Registry();
+    [refused, guarded, ran].forEach((c, i) => reg.note(`r${i + 1}`, { spl: "sourcetype=a" }, "", !neverRan(c)));
+    expect(["r1", "r2", "r3"].map((id) => issued(reg, id))).toEqual([false, false, true]);
+    expect(reg.callCount).toBe(3);
+    expect(reg.coverage).toEqual({ a: 1 });
+  });
+
+  it("cites only refs as the ledger spells them", () => {
     expect(["r1", "r3", "r03", "r0", "r4", "tc_1"].map((id) => issued({ callCount: 3 }, id))).toEqual([true, true, false, false, false, false]);
   });
 
@@ -144,5 +206,38 @@ describe("a move as a kernel turn", () => {
     const spec = specOf({ budgets: { max_calls: 0, max_cost_usd: 10, max_wall_ms: 600_000, max_park_ms: 60_000 } });
     const t = setup(() => ({}), {}, spec);
     await expect(t.client.runTurn(t.request())).rejects.toBeInstanceOf(Refused);
+  });
+});
+
+describe("what a move's prompt tells the model to call", () => {
+  // Every move's instructions, built on a graph that has the pieces each one names.
+  const moves = (): Record<string, string> => {
+    const g = seeded();
+    apply(g, { addNodes: [node("m", { kind: "boundary-marker", originNodeId: "N1", targetDomain: "edr" }), node("leaf", { label: "leaf" })], addEdges: [{ tempId: "e", kind: "explains", source: "m", target: "N1", prior: 0.3, evidence: [] }] });
+    const [leaf] = Object.keys(g.nodes).filter((id) => g.nodes[id]!.label === "leaf");
+    g.theories = [{ id: "R1.H1", round: 1, story: "s", accountsFor: [], gaps: "", status: "live", support: 0, against: 0, predictions: [{ id: "R1.P1", sourcetype: "edr", expect: "x", spl: "x", separates: [], next: false, status: "open" }] }];
+    return {
+      strengthen: instructions.strengthen(g, "N1"), expand: instructions.expand(g, "N1"), fork: instructions.fork(g, "N1"), branch: instructions.branch(g, "N1"),
+      pivotEntry: instructions.pivotEntry(g, "B1", range), pivotForward: instructions.pivotForward(g, "B1", leaf!), connect: instructions.connect(g, "N1", [leaf!]),
+      scope: instructions.scope(), test: instructions.test(g, "R1.P1"), theorize: instructions.theorize(), choose: instructions.choose(), conclude: instructions.conclude("Enough."),
+    };
+  };
+
+  it("names no submit tool: the answer is asked for in the kernel's emit step, which grants none", () => {
+    for (const [move, text] of Object.entries({ ...moves(), system: SYSTEM_PROMPT })) expect(text, move).not.toMatch(/submit_/);
+  });
+
+  it("offers every tool the model is told to use: the evidence tool on a searching move, none on a move without searches", async () => {
+    const t = setup((request) => (request.emit !== undefined ? { emit: { candidates: [], reasoning: "r" } } : { content: "done" }));
+    const all = moves();
+    await t.client.runTurn(t.request({ userContent: all.expand! }));
+    await t.client.runTurn(t.request({ move: "conclude", submitTool: "submit_conclusion", maxSearches: 0, userContent: all.conclude! }));
+    for (const [i, searches] of [[0, true], [2, false]] as const) {
+      const sent = t.provider.requests[i]!;
+      const text = sent.messages.map((m) => m.content).join("\n");
+      expect(text).not.toMatch(/submit_/);
+      expect(sent.tools.map((x) => x.id)).toEqual(searches ? ["splunk_query"] : []);
+    }
+    expect(all.conclude).not.toContain("splunk_query");
   });
 });

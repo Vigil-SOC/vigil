@@ -58,8 +58,3 @@ COMMENT ON COLUMN llm_provider_configs.config IS 'Provider-specific extras (e.g.
 -- onto Anthropic with a hardcoded, no-key model. Existing deployments are
 -- unaffected: they already ran the old seed, and this file's INSERTs used
 -- ON CONFLICT DO NOTHING, so their row persists.
-
--- ============================================================================
--- Grant Permissions
--- ============================================================================
-GRANT SELECT, INSERT, UPDATE, DELETE ON llm_provider_configs TO deeptempo;

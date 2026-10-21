@@ -2634,6 +2634,10 @@
       "data_type": "boolean",
       "nullable": false
     },
+    "mfa_last_totp_step": {
+      "data_type": "bigint",
+      "nullable": true
+    },
     "mfa_recovery_codes": {
       "data_type": "jsonb",
       "nullable": false
