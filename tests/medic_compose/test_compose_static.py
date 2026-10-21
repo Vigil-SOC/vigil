@@ -147,8 +147,13 @@ def test_medic_networks_hold_exactly_the_listed_members(on, net, expected) -> No
 
 
 def test_members_keep_their_own_network(on) -> None:
+    # Whatever the main file gives them (deeptempo-network, and the daemon's
+    # mcp-network), plus medic-net from the overlay and nothing else.
+    base = yaml.safe_load(BASE.read_text())["services"]
     for name in ("soc-daemon", "agent-worker", "agent-serve"):
-        assert networks_of(on["services"][name]) == {"deeptempo-network", "medic-net"}
+        own = networks_of(base[name])
+        assert "deeptempo-network" in own
+        assert networks_of(on["services"][name]) == own | {"medic-net"}
 
 
 def test_medic_side_networks(on) -> None:

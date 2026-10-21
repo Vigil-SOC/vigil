@@ -105,7 +105,7 @@ def test_prints_the_manual_step_and_the_up_command(tmp_path) -> None:
 def test_unknown_argument_is_refused(tmp_path) -> None:
     env = clean_env(tmp_path, VIGIL_MEDIC_SECRETS_DIR=str(tmp_path / "s"))
     done = subprocess.run(
-        [str(ENABLE), "--bogus"], env=env, capture_output=True, text=True
+        [str(ENABLE), "--bogus"], check=False, env=env, capture_output=True, text=True
     )
     assert done.returncode == 2
     assert not (tmp_path / "s").exists()
@@ -123,6 +123,7 @@ def test_relative_secrets_dir_is_refused(tmp_path) -> None:
     env = clean_env(tmp_path, VIGIL_MEDIC_SECRETS_DIR="relative/secrets")
     done = subprocess.run(
         [str(ENABLE), "--secrets-only"],
+        check=False,
         env=env,
         capture_output=True,
         text=True,
@@ -145,7 +146,11 @@ def test_a_damaged_secret_is_not_kept(tmp_path) -> None:
 def test_default_dir_is_outside_vigils_state_dir(tmp_path) -> None:
     env = clean_env(tmp_path)
     done = subprocess.run(
-        [str(ENABLE), "--secrets-only"], env=env, capture_output=True, text=True
+        [str(ENABLE), "--secrets-only"],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     assert done.returncode == 0, done.stderr
     assert (tmp_path / ".vigil-medic" / "secrets" / "viewer_password").is_file()

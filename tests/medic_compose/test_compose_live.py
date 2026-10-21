@@ -123,7 +123,12 @@ class Stack:
 def stack(tmp_path_factory):
     s = Stack(tmp_path_factory.mktemp("home"))
     enable = subprocess.run(
-        [str(ENABLE)], env=s.env, capture_output=True, text=True, timeout=1200
+        [str(ENABLE)],
+        check=False,
+        env=s.env,
+        capture_output=True,
+        text=True,
+        timeout=1200,
     )
     assert enable.returncode == 0, enable.stdout + enable.stderr
     s.enable_output = enable.stdout
