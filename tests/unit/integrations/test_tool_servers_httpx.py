@@ -607,9 +607,18 @@ async def test_slack_reports_the_api_level_error(monkeypatch):
     assert body == {"error": "channel_not_found"}
 
 
+_PRO = "https://pro.ip-api.com/json/8.8.8.8"
+
+
+def _assert_no_cleartext():
+    for call in respx.calls:
+        assert call.request.url.scheme == "https", call.request.url
+
+
 @respx.mock
 async def test_ip_geolocation_maps_a_successful_lookup(monkeypatch):
-    respx.get("http://ip-api.com/json/8.8.8.8").mock(
+    _stub_config(monkeypatch, geo, {"api_key": "pro-key"})
+    route = respx.get(_PRO).mock(
         return_value=httpx.Response(
             200,
             json={"status": "success", "country": "United States", "isp": "Google"},
@@ -619,6 +628,116 @@ async def test_ip_geolocation_maps_a_successful_lookup(monkeypatch):
     body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": "8.8.8.8"}))
     assert body["country"] == "United States"
     assert body["isp"] == "Google"
+    assert route.calls.last.request.url.params["key"] == "pro-key"
+    _assert_no_cleartext()
+
+
+@respx.mock
+async def test_ip_geolocation_without_a_key_makes_no_request(monkeypatch):
+    _stub_config(monkeypatch, geo, {"api_key": None})
+
+    body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": "8.8.8.8"}))
+    assert body == {"error": "IP Geolocation not configured"}
+    assert len(respx.calls) == 0
+
+
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "10.0.0.5",
+        "127.0.0.1",
+        "169.254.1.1",
+        "224.0.0.1",
+        "240.0.0.1",
+        "100.64.0.1",
+        "::2",
+        "fec0::1",
+        "::ffff:224.0.0.1",
+        "::ffff:100.64.0.1",
+    ],
+)
+@respx.mock
+async def test_ip_geolocation_refuses_non_public_addresses(monkeypatch, ip):
+    _stub_config(monkeypatch, geo, {"api_key": "pro-key"})
+
+    body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": ip}))
+    assert body == {"ip": ip, "error": "non-public address"}
+    assert len(respx.calls) == 0
+
+
+@respx.mock
+async def test_ip_geolocation_refuses_unparsed_input(monkeypatch):
+    _stub_config(monkeypatch, geo, {"api_key": "pro-key"})
+
+    body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": "8.8.8.8/../x"}))
+    assert body == {"ip": "8.8.8.8/../x", "error": "invalid IP address"}
+    assert len(respx.calls) == 0
+
+
+@respx.mock
+async def test_ip_geolocation_strips_the_key_from_transport_errors(monkeypatch):
+    _stub_config(monkeypatch, geo, {"api_key": "pro-key"})
+
+    def fail(request):
+        raise httpx.ConnectError(f"connect failed for {request.url}")
+
+    respx.get(_PRO).mock(side_effect=fail)
+
+    body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": "8.8.8.8"}))
+    assert "pro-key" not in body["error"]
+    assert "redacted" in body["error"]
+
+
+@respx.mock
+async def test_ip_geolocation_strips_a_percent_encoded_key(monkeypatch):
+    _stub_config(monkeypatch, geo, {"api_key": "pro+key"})
+
+    def fail(request):
+        raise httpx.ConnectError(f"connect failed for {request.url}")
+
+    respx.get(_PRO).mock(side_effect=fail)
+
+    body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": "8.8.8.8"}))
+    assert "pro+key" not in body["error"]
+    assert "pro%2Bkey" not in body["error"]
+
+
+@respx.mock
+async def test_ip_geolocation_strips_a_key_whose_space_is_encoded_as_plus(monkeypatch):
+    _stub_config(monkeypatch, geo, {"api_key": "pro key"})
+
+    def fail(request):
+        raise httpx.ConnectError(f"connect failed for {request.url}")
+
+    respx.get(_PRO).mock(side_effect=fail)
+
+    body = _body(await geo.handle_call_tool("geolocate_ip", {"ip": "8.8.8.8"}))
+    assert "pro key" not in body["error"]
+    assert "pro+key" not in body["error"]
+    assert "pro%20key" not in body["error"]
+
+
+@respx.mock
+async def test_ip_geolocation_batch_keeps_private_addresses_local(monkeypatch):
+    """A private address in the batch must not fall through to cleartext."""
+    _stub_config(monkeypatch, geo, {"api_key": "pro-key"})
+    respx.get(_PRO).mock(
+        return_value=httpx.Response(
+            200,
+            json={"status": "success", "country": "United States", "isp": "Google"},
+        )
+    )
+
+    body = _body(
+        await geo.handle_call_tool(
+            "geolocate_batch", {"ips": ["8.8.8.8", "10.0.0.5"]}
+        )
+    )
+    assert body["count"] == 2
+    assert body["results"][0]["country"] == "United States"
+    assert body["results"][1] == {"ip": "10.0.0.5", "error": "non-public address"}
+    assert len(respx.calls) == 1
+    _assert_no_cleartext()
 
 
 @respx.mock
