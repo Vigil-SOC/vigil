@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -14,9 +15,11 @@ for p in (str(_REPO_ROOT),):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from services.api.routers import ingestion as ingestion_api  # noqa: E402
+from core.auth.auth_service import AuthService  # noqa: E402
+from core.auth.current_user import get_current_user  # noqa: E402
 from core.ingestion import ingestion_service  # noqa: E402
 from core.ingestion.ingestion_jobs import IngestionJobRegistry  # noqa: E402
+from services.api.routers import ingestion as ingestion_api  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -59,6 +62,8 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(ingestion_api.router, prefix="/api/ingest")
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id="u-1")
+    monkeypatch.setattr(AuthService, "check_permission", lambda *_a, **_k: True)
     with TestClient(app) as test_client:
         yield test_client
 
@@ -168,6 +173,24 @@ def test_polling_an_unknown_job_is_a_404(client):
     response = client.get("/api/ingest/jobs/ing-missing")
 
     assert response.status_code == 404
+
+
+def test_a_payload_that_can_create_cases_needs_cases_write(client, monkeypatch):
+    """JSON imports a cases array even when data_type is finding."""
+
+    def _allow(user_id, permission, session=None):
+        return permission != "cases.write"
+
+    monkeypatch.setattr(AuthService, "check_permission", _allow)
+
+    json_findings = _upload(client, name="export.json", data_type="finding")
+    case_rows = _upload(client, name="cases.csv", data_type="case")
+    findings = _upload(client, name="export.csv", data_type="finding")
+
+    assert json_findings.status_code == 403
+    assert case_rows.status_code == 403
+    assert "cases.write" in json_findings.json()["detail"]
+    assert findings.status_code == 202
 
 
 def test_the_declared_data_type_reaches_the_service(client):

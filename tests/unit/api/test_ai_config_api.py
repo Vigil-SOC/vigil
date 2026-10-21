@@ -14,20 +14,25 @@ from typing import Dict, List
 from unittest.mock import patch
 
 import pytest
-
-from core.time import utcnow
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from core.time import utcnow
 
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from services.api.routers.ai_config import router as ai_config_router  # noqa: E402
-from core.storage.models import AIModelConfig, ConfigAuditLog, LLMProviderConfig  # noqa: E402
-from services.api.middleware.auth import get_current_active_user  # noqa: E402
+from core.auth.auth_service import AuthService  # noqa: E402
+from core.auth.current_user import get_current_user  # noqa: E402
 from core.llm.providers.registry import ModelInfo  # noqa: E402
 from core.routing import request_unit_of_work  # noqa: E402
+from core.storage.models import (  # noqa: E402
+    AIModelConfig,
+    ConfigAuditLog,
+    LLMProviderConfig,
+)
+from services.api.middleware.auth import get_current_active_user  # noqa: E402
+from services.api.routers.ai_config import router as ai_config_router  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -106,15 +111,18 @@ def session() -> _FakeSession:
 
 
 @pytest.fixture()
-def client(session):
+def client(session, monkeypatch):
     app = FastAPI()
     app.include_router(ai_config_router, prefix="/api/ai")
 
     def _get_session():
         return session
 
+    user = SimpleNamespace(user_id="u-42")
     app.dependency_overrides[request_unit_of_work] = _get_session
-    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(user_id="u-42")
+    app.dependency_overrides[get_current_active_user] = lambda: user
+    app.dependency_overrides[get_current_user] = lambda: user
+    monkeypatch.setattr(AuthService, "check_permission", lambda *_a, **_k: True)
     return TestClient(app)
 
 
@@ -238,8 +246,14 @@ def test_put_update_audits_old_and_new(client, session):
     _put(client, "triage", "anthropic-default", "a")
     _put(client, "triage", "ollama-local", "b")
     assert [x.action for x in session.audits] == ["create", "update"]
-    assert session.audits[1].old_value == {"provider_id": "anthropic-default", "model_id": "a"}
-    assert session.audits[1].new_value == {"provider_id": "ollama-local", "model_id": "b"}
+    assert session.audits[1].old_value == {
+        "provider_id": "anthropic-default",
+        "model_id": "a",
+    }
+    assert session.audits[1].new_value == {
+        "provider_id": "ollama-local",
+        "model_id": "b",
+    }
 
 
 def test_put_unchanged_writes_no_audit(client, session):
@@ -337,7 +351,9 @@ def _put_fb(client, component="triage", provider="ollama-local", model="a", **se
 def test_fallback_set_change_clear_each_write_one_audit_row(client, session):
     _put_fb(client)
     r = _put_fb(client, fallback_model_id=" b ")
-    assert r.json()["settings"] == {"fallback_model_id": "b"}  # stripped, served by GET too
+    assert r.json()["settings"] == {
+        "fallback_model_id": "b"
+    }  # stripped, served by GET too
     assert client.get("/api/ai/config").json()["assignments"]["triage"]["settings"] == {
         "fallback_model_id": "b"
     }
@@ -345,7 +361,10 @@ def test_fallback_set_change_clear_each_write_one_audit_row(client, session):
     _put_fb(client, fallback_model_id=None)
     assert [x.action for x in session.audits] == ["create"] + ["update"] * 3
     assert [x.new_value.get("fallback_model_id") for x in session.audits] == [
-        None, "b", "c", None,
+        None,
+        "b",
+        "c",
+        None,
     ]
     assert session.audits[2].old_value["fallback_model_id"] == "b"
     assert session.assignments["triage"].settings == {}
@@ -367,7 +386,10 @@ def test_provider_change_drops_the_fallback(client, session):
     _put_fb(client, fallback_model_id="b")
     r = _put_fb(client, provider="anthropic-default", model="c")
     assert r.json()["settings"] == {}
-    assert session.audits[-1].new_value == {"provider_id": "anthropic-default", "model_id": "c"}
+    assert session.audits[-1].new_value == {
+        "provider_id": "anthropic-default",
+        "model_id": "c",
+    }
 
 
 def test_fallback_equal_to_model_is_rejected(client, session):

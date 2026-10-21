@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX, AgentManager
+from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
@@ -19,6 +20,9 @@ ROUTER_META = RouterMeta(
 
 # Global agent manager instance
 agent_manager = AgentManager()
+
+# A workflow phase that names a disabled agent fails to resolve.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
 
 
 def _resolve_agent(agent_id: str):
@@ -79,7 +83,7 @@ class AgentEnabledRequest(BaseModel):
     enabled: bool
 
 
-@router.put("/agents/{agent_id}/enabled")
+@router.put("/agents/{agent_id}/enabled", dependencies=_SETTINGS_WRITE)
 async def set_enabled(
     agent_id: str,
     body: AgentEnabledRequest,

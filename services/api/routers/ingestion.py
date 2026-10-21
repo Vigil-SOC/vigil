@@ -17,10 +17,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from core.auth.auth_service import AuthService
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.config import get_settings
 from core.ingestion.ingestion_jobs import (
     IngestionJob,
@@ -31,6 +34,7 @@ from core.ingestion.ingestion_jobs import (
 )
 from core.ingestion.ingestion_service import IngestionService
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
 from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
 
 logger = logging.getLogger(__name__)
@@ -43,6 +47,15 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 
+# Importing findings is findings.write. A folder sync can also import cases
+# from JSON, so it needs cases.write as well. Upload, string, and single-file
+# routes ask for cases.write only when the payload can create cases.
+_FINDINGS_WRITE = [permission_gate("findings.write")]
+_FINDINGS_AND_CASES = [
+    permission_gate("findings.write"),
+    permission_gate("cases.write"),
+]
+
 MAX_UPLOAD_SIZE_BYTES = get_settings().max_upload_size_mb * 1024 * 1024
 
 EXTENSION_FORMATS = {
@@ -54,6 +67,19 @@ EXTENSION_FORMATS = {
 }
 
 _running_tasks: set = set()  # asyncio only weak-refs tasks; unheld ones get GC'd
+
+
+def _can_create_cases(data_type: str, fmt: Optional[str]) -> bool:
+    """JSON ingestion imports a ``cases`` array whatever ``data_type`` says."""
+    return data_type == "case" or fmt == "json"
+
+
+def _require_cases_write(user: User) -> None:
+    if AuthService.check_permission(str(user.user_id), "cases.write"):
+        return
+    raise HTTPException(
+        status_code=403, detail="Permission denied: cases.write required"
+    )
 
 
 class IngestionStats(BaseModel):
@@ -113,11 +139,17 @@ async def _spool_upload(file: UploadFile, suffix: str) -> Path:
     return temp_path
 
 
-@router.post("/upload", response_model=IngestionJobStatus, status_code=202)
+@router.post(
+    "/upload",
+    response_model=IngestionJobStatus,
+    status_code=202,
+    dependencies=_FINDINGS_WRITE,
+)
 async def upload_and_ingest_file(
     file: UploadFile = File(...),
     data_type: str = Form("finding"),
     format: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
 ):
     """Accept a file and ingest it as a background job; poll /ingest/jobs/{id}."""
     if data_type not in ["finding", "case"]:
@@ -139,6 +171,9 @@ async def upload_and_ingest_file(
             status_code=400,
             detail="format must be 'json', 'csv', 'jsonl', or 'parquet'",
         )
+
+    if _can_create_cases(data_type, format):
+        _require_cases_write(current_user)
 
     temp_path = await _spool_upload(file, f".{format}")
 
@@ -174,9 +209,14 @@ async def get_ingestion_job(job_id: str):
     return IngestionJobStatus(**job.snapshot())
 
 
-@router.post("/ingest-string", response_model=IngestionStats)
+@router.post(
+    "/ingest-string", response_model=IngestionStats, dependencies=_FINDINGS_WRITE
+)
 async def ingest_from_string(
-    data: str = Form(...), format: str = Form("json"), data_type: str = Form("finding")
+    data: str = Form(...),
+    format: str = Form("json"),
+    data_type: str = Form("finding"),
+    current_user: User = Depends(get_current_user),
 ):
     """Ingest data from a string; format is 'json', 'csv', or 'jsonl'."""
     if data_type not in ["finding", "case"]:
@@ -189,6 +229,9 @@ async def ingest_from_string(
             status_code=400, detail="format must be 'json', 'csv', or 'jsonl'"
         )
 
+    if _can_create_cases(data_type, format):
+        _require_cases_write(current_user)
+
     ingestion_service = IngestionService()
     stats = ingestion_service.ingest_from_string(
         data, format=format, data_type=data_type
@@ -197,7 +240,9 @@ async def ingest_from_string(
     return IngestionStats(**stats, success=success, message=message)
 
 
-@router.post("/sync-s3-folder", response_model=IngestionStats)
+@router.post(
+    "/sync-s3-folder", response_model=IngestionStats, dependencies=_FINDINGS_AND_CASES
+)
 def sync_s3_folder(prefix: Optional[str] = Query(None)):
     """
     Discover and ingest all supported files from an S3 prefix.
@@ -364,8 +409,11 @@ class S3FileIngestRequest(BaseModel):
     key: str
 
 
-@router.post("/s3-file", response_model=IngestionStats)
-def ingest_s3_file(request: S3FileIngestRequest):
+@router.post("/s3-file", response_model=IngestionStats, dependencies=_FINDINGS_WRITE)
+def ingest_s3_file(
+    request: S3FileIngestRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Download and ingest a single file from S3 by key.
 
@@ -387,6 +435,9 @@ def ingest_s3_file(request: S3FileIngestRequest):
             status_code=400,
             detail=f"Unsupported file extension '{requested_ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}",
         )
+
+    if _can_create_cases("finding", fmt):
+        _require_cases_write(current_user)
 
     s3 = _get_s3_service()
     if s3 is None:
