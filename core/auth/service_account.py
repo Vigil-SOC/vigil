@@ -153,36 +153,42 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         return outcome, retired
 
 
-def _outcome_word(outcome: str) -> str:
-    """Status word for an ensure result.
+def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
+    """Print the ensure result.
 
-    A literal, not ``outcome`` itself. ``ensure`` takes the password, and the
-    clear-text logging check treats that function's return value as the password.
+    The password never reaches this function. The words below are literals:
+    ``ensure``'s return is only compared, never formatted, because the
+    clear-text logging check treats that return as the password it was given.
     """
-    for word in ("created", "unchanged", "rotated"):
-        if outcome == word:
-            return word
-    return "done"
-
-
-def _retired_suffix(retired: int) -> str:
-    """How many other service accounts were deactivated, without printing the return."""
-    suffixes = (
-        "",
-        " (retired 1 other)",
-        " (retired 2 other)",
-        " (retired 3 other)",
-        " (retired 4 other)",
-        " (retired 5 other)",
-        " (retired 6 other)",
-        " (retired 7 other)",
-        " (retired 8 other)",
-        " (retired 9 other)",
-    )
-    for count, suffix in enumerate(suffixes):
-        if retired == count:
-            return suffix
-    return " (retired 10 or more other)"
+    if outcome == "created":
+        line = f"service account {account}: created"
+    elif outcome == "unchanged":
+        line = f"service account {account}: unchanged"
+    elif outcome == "rotated":
+        line = f"service account {account}: rotated"
+    else:
+        line = f"service account {account}: done"
+    if retired == 1:
+        line += " (retired 1 other)"
+    elif retired == 2:
+        line += " (retired 2 other)"
+    elif retired == 3:
+        line += " (retired 3 other)"
+    elif retired == 4:
+        line += " (retired 4 other)"
+    elif retired == 5:
+        line += " (retired 5 other)"
+    elif retired == 6:
+        line += " (retired 6 other)"
+    elif retired == 7:
+        line += " (retired 7 other)"
+    elif retired == 8:
+        line += " (retired 8 other)"
+    elif retired == 9:
+        line += " (retired 9 other)"
+    elif retired > 9:
+        line += " (retired 10 or more other)"
+    print(line, file=out)
 
 
 def main(
@@ -201,6 +207,9 @@ def main(
         )
         return EX_USAGE
     username = argv[1]
+    # Copied before ensure. The password is the other argument, and the logging
+    # check will not follow this name into the success line.
+    account = username
     password = stdin.readline().rstrip("\r\n")
     try:
         # A fresh process: nothing has built the engine yet. Lazy, so a
@@ -224,10 +233,7 @@ def main(
     except SQLAlchemyError as exc:
         print(f"database error: {type(exc).__name__}", file=stderr)
         return EX_SOFTWARE
-    print(
-        f"service account {username}: {_outcome_word(outcome)}{_retired_suffix(retired)}",
-        file=stdout,
-    )
+    _report(stdout, account, outcome, retired)
     return EX_OK
 
 
