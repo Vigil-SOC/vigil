@@ -63,6 +63,3 @@ ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_status_check
 COMMENT ON TABLE  approval_actions IS 'Pending human-in-the-loop approvals. Workflow phase approvals link back via workflow_run_id + workflow_phase_id (#128).';
 COMMENT ON COLUMN approval_actions.workflow_run_id IS 'FK to workflow_runs — null for non-workflow approvals (e.g. daemon containment actions).';
 COMMENT ON COLUMN approval_actions.workflow_phase_id IS 'The phase_id inside the paused workflow run this approval gates.';
-
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON approval_actions TO deeptempo;

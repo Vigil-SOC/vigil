@@ -78,7 +78,7 @@ def _value_for(model, model_name, column):
 
     if type_name in ("String", "Text"):
         return f"{column.key}-value"
-    if type_name == "Integer":
+    if type_name in ("Integer", "BigInteger"):
         return _stable_int(key)
     if type_name in ("Float", "Numeric"):
         return round(_stable_int(key) / 100, 2)
