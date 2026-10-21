@@ -1,5 +1,6 @@
 // Model-led moves: each submission may name the next move (`next`); code only checks it is one of the moves
-// available on the graph now. Unavailable or missing, a choose turn asks the model again (orchestrator.ts).
+// available on the graph now. Unavailable or missing, a submission's turn is followed by one choose turn; a choose
+// turn that is refused runs a fallback move (below) instead of asking again (orchestrator.ts).
 import type { AgentConfig } from "./config.js";
 import { isStalled, pivotExhausted, toConnect, type FrontierDecision, type Move } from "./frontier.js";
 import { bestPathFromSymptom, getParents, type Graph, type GraphNode, type Prediction } from "./graph.js";
@@ -74,6 +75,16 @@ Moves: expand <event> = find what caused it; strengthen <event|link> = check it 
 Target a graph id listed below${choosing ? "." : ", or an event you report in this submission by its exact label."}${tail}${st.silent ? `\nYour last turn, on ${st.silent}, gave no valid submission: it counted as one attempt on that target, and nothing from it was kept.` : ""}${st.refused ? `\nYour last choice was not used: ${st.refused}` : ""}
 available now: ${avail.join("; ") || "none"}${rare.length ? `; probe (${rare.length} rare records unread)` : ""}${stories}${rareLine}
 </next_move>`;
+}
+
+// A refused choose turn runs an available move rather than ask again: one on the target the model named
+// (`branch N1` on the symptom becomes expand N1), else the first available, in the move-list order of options().
+export function fallback(g: Graph, cfg: AgentConfig, named: NextIn | undefined, turn: number): FrontierDecision | undefined {
+  const o = Object.entries(options(g, cfg)) as [Move, string[]][];
+  const want = named?.target?.trim();
+  const [move, ids] = o.find(([, ids]) => want && ids.includes(want)) ?? o[0] ?? [];
+  if (!move || !ids) return undefined;
+  return { move, targetId: want && ids.includes(want) ? want : ids[0]!, turn, reason: "fallback after a refused choice", ...(named?.source?.trim() ? { source: named.source.trim() } : {}) };
 }
 
 // The model's choice, checked against the graph after this turn's patch. Labels resolve to events created this

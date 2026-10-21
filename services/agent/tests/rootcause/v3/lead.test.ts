@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyPatch, emptyPatch } from "../../../plugins/rootcause/v3/graph.js";
-import { options, optionsText, resolveNext } from "../../../plugins/rootcause/v3/lead.js";
+import { fallback, options, optionsText, resolveNext } from "../../../plugins/rootcause/v3/lead.js";
 import type { TurnRequest } from "../../../plugins/rootcause/v3/model/client.js";
 import { run } from "../../../plugins/rootcause/v3/orchestrator.js";
 import { Registry } from "../../../plugins/rootcause/v3/tools/registry.js";
@@ -16,6 +16,13 @@ describe("lead", () => {
     const g = seeded();
     expect(resolveNext({ move: "pivot", target: "B9" }, g, cfg, 1, []).refused).toMatch(/not available/);
     expect(resolveNext({ move: "expand", target: "N42" }, g, cfg, 1, []).refused).toMatch(/available on: N1/);
+  });
+  it("falls back to a move on the named target, else the first available", () => {
+    const g = seeded();
+    expect(fallback(g, cfg, { move: "branch", target: "N1" }, 2)).toMatchObject({ move: "expand", targetId: "N1", turn: 2 });
+    expect(fallback(g, cfg, undefined, 2)).toMatchObject({ move: "expand", targetId: "N1" });
+    g.nodes.N1!.expandAttempts = cfg.maxExpandAttempts + 1;
+    expect(fallback(g, cfg, { move: "branch", target: "N1" }, 2)).toMatchObject({ move: "strengthen", targetId: "N1" });
   });
   it("resolves an event reported this turn by its label", () => {
     const g = seeded();
@@ -99,6 +106,24 @@ describe("the model names every move", () => {
     const decisions = trace.chronological().filter((e) => e.type === "decision").map((e) => e.payload);
     expect(decisions[0]).toMatchObject({ move: "choose", targetId: "N1" });
     expect(decisions.every((d) => !("priority" in (d as object)))).toBe(true);
+  });
+
+  it("runs an available move after a refused choice instead of asking again", async () => {
+    // branch is never offered on the symptom, so every choose answer is refused.
+    const { reqs, trace } = await drive((req, n, budget) => {
+      if (req.move === "conclude") return conclusion;
+      if (n === 7) budget.usd = 1e6;
+      return req.move === "choose" ? { move: "branch", target: "N1", why: "what else it led to" } : null;
+    });
+    const moves = reqs.map((r) => r.move);
+    expect(moves.at(-1)).toBe("conclude");
+    expect(moves.some((m, i) => m === "choose" && moves[i - 1] === "choose")).toBe(false);
+    expect(moves.filter((m) => m !== "choose" && m !== "conclude").length).toBeGreaterThan(1);
+    expect(moves).not.toContain("branch");
+    const ev = trace.chronological();
+    const fell = ev.filter((e) => e.type === "decision").map((e) => e.payload as { move: string; reason: string }).filter((d) => d.move !== "choose" && d.reason.startsWith("fallback after a refused choice"));
+    expect(fell[0]).toMatchObject({ move: "expand", reason: expect.stringContaining("branch is not available") });
+    expect(ev.find((e) => e.type === "reasoning")!.payload).toMatchObject({ lead: { move: "branch" }, refused: expect.stringContaining("not available"), next: "expand N1" });
   });
 
   it("runs the move a submission names without a choose turn", async () => {
