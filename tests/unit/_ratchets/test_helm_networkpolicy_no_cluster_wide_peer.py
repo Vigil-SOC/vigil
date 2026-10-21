@@ -33,7 +33,8 @@ def _render(tmp_path: Path, *sets: str) -> dict[str, dict]:
     meta = (chart / "Chart.yaml").read_text()
     (chart / "Chart.yaml").write_text(meta[: meta.index("\ndependencies:")] + "\n")
     args = ["helm", "template", "v", str(chart), "-s", "templates/networkpolicy.yaml"]
-    for s in ("networkPolicies.enabled=true", *sets):
+    # -s still evaluates secret.yaml, which refuses to render without a password.
+    for s in ("secrets.postgresPassword=test-password", "networkPolicies.enabled=true", *sets):
         args += ["--set", s]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
     return {
