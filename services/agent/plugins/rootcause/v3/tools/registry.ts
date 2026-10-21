@@ -109,13 +109,25 @@ export class Registry implements ToolRegistry {
   }
 
   // A search the code makes itself (the rare sweep, a story's sweep): takes the next ref and journals the call.
+  // The ref is reserved before the search runs, so overlapping calls get distinct refs in the order they were issued,
+  // and each journals only after the call before it has, so the ledger's order is the refs' order.
+  private journaled: Promise<void> = Promise.resolve();
   async call(name: string, input: unknown, ctx: ToolContext): Promise<ToolCallRecord> {
-    const toolCallId = `${CALL_REF}${this.seq + 1}`;
-    const started = Date.now();
-    const result = await this.run(name, input, ctx);
-    this.note(toolCallId, input, result.ok ? result.data ?? "" : "");
-    const record = { toolCallId, tool: name, input, result };
-    await this.journal?.({ ...record, ms: Date.now() - started });
-    return record;
+    const toolCallId = `${CALL_REF}${++this.seq}`;
+    const turn = this.journaled;
+    let done!: () => void;
+    this.journaled = new Promise<void>((r) => { done = r; });
+    try {
+      const started = Date.now();
+      const result = await this.run(name, input, ctx);
+      this.note(toolCallId, input, result.ok ? result.data ?? "" : "");
+      const record = { toolCallId, tool: name, input, result };
+      await turn;
+      await this.journal?.({ ...record, ms: Date.now() - started });
+      return record;
+    } finally {
+      await turn;
+      done();
+    }
   }
 }
