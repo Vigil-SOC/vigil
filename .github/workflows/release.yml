@@ -57,6 +57,8 @@ jobs:
     name: Build backend image
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
     needs: [version]
     permissions:
       contents: read
@@ -140,6 +142,8 @@ jobs:
     name: Build daemon image
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
     permissions:
       contents: read
       packages: write
@@ -214,6 +218,8 @@ jobs:
     name: Build MCP runner image
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
     permissions:
       contents: read
       packages: write
@@ -288,6 +294,8 @@ jobs:
     name: Build agent image
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
     permissions:
       contents: read
       packages: write
@@ -481,10 +489,9 @@ jobs:
     name: Annotate GitHub Release
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
-    needs: [version, smoke-test]
+    needs: [version, build-backend, build-daemon, build-agent, build-mcp-runner, smoke-test]
     permissions:
       contents: write    # edit release body
-      packages: read
 
     steps:
       - name: Checkout
@@ -493,28 +500,23 @@ jobs:
       - name: Build support tarball
         run: scripts/build-support-tarball.sh "${{ needs.version.outputs.version }}" support-dist
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fetch digests
-        id: digests
+      # The digests come from the build jobs: the multi-arch index digest each
+      # one pushed and signed. Refuse to publish a blank or non-sha256 value.
+      - name: Check digests
+        env:
+          BACKEND: ${{ needs.build-backend.outputs.digest }}
+          DAEMON: ${{ needs.build-daemon.outputs.digest }}
+          AGENT: ${{ needs.build-agent.outputs.digest }}
+          MCP_RUNNER: ${{ needs.build-mcp-runner.outputs.digest }}
         run: |
-          BACKEND=$(docker manifest inspect ghcr.io/vigil-soc/vigil-backend:${{ needs.version.outputs.version }} \
-            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
-          DAEMON=$(docker manifest inspect ghcr.io/vigil-soc/vigil-daemon:${{ needs.version.outputs.version }} \
-            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
-          AGENT=$(docker manifest inspect ghcr.io/vigil-soc/vigil-agent:${{ needs.version.outputs.version }} \
-            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
-          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
-          echo "daemon=$DAEMON"   >> "$GITHUB_OUTPUT"
-          MCP_RUNNER=$(docker manifest inspect ghcr.io/vigil-soc/vigil-mcp-runner:${{ needs.version.outputs.version }} \
-            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
-          echo "agent=$AGENT"     >> "$GITHUB_OUTPUT"
-          echo "mcp_runner=$MCP_RUNNER" >> "$GITHUB_OUTPUT"
+          fail=0
+          for name in BACKEND DAEMON AGENT MCP_RUNNER; do
+            case "${!name}" in
+              sha256:?*) ;;
+              *) echo "::error::${name} digest is '${!name}', expected sha256:…"; fail=1 ;;
+            esac
+          done
+          exit "$fail"
 
       - name: Append image refs to release notes
         uses: softprops/action-gh-release@v3
@@ -530,10 +532,10 @@ jobs:
 
             | Image | Tag | Digest |
             |-------|-----|--------|
-            | `ghcr.io/vigil-soc/vigil-backend` | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.backend }}` |
-            | `ghcr.io/vigil-soc/vigil-daemon`  | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.daemon }}`  |
-            | `ghcr.io/vigil-soc/vigil-agent`   | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.agent }}`   |
-            | `ghcr.io/vigil-soc/vigil-mcp-runner` | `${{ needs.version.outputs.version }}` | `${{ steps.digests.outputs.mcp_runner }}` |
+            | `ghcr.io/vigil-soc/vigil-backend` | `${{ needs.version.outputs.version }}` | `${{ needs.build-backend.outputs.digest }}` |
+            | `ghcr.io/vigil-soc/vigil-daemon`  | `${{ needs.version.outputs.version }}` | `${{ needs.build-daemon.outputs.digest }}`  |
+            | `ghcr.io/vigil-soc/vigil-agent`   | `${{ needs.version.outputs.version }}` | `${{ needs.build-agent.outputs.digest }}`   |
+            | `ghcr.io/vigil-soc/vigil-mcp-runner` | `${{ needs.version.outputs.version }}` | `${{ needs.build-mcp-runner.outputs.digest }}` |
 
             ```bash
             # Pull by tag
