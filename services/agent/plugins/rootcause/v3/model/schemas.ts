@@ -202,6 +202,31 @@ export const SUBMIT = {
 } as const;
 export type SubmitName = keyof typeof SUBMIT;
 
+// The length caps the schemas hold their text to, by field name, for `clip` (the model is not shown them: an over-long
+// note is trimmed, not refused). `items` is the cap on the strings of a list field. A name capped one way in one place
+// and another way elsewhere (a different cap, or none) is a clash: clip goes by name, so it would trim the wrong one.
+export function lengthLimits(schemas: Schema[]): { scalar: Record<string, number>; items: Record<string, number>; clashes: string[] } {
+  const seen = new Map<string, Set<number | undefined>>(), items: Record<string, number> = {};
+  const note = (key: string, n: number | undefined) => seen.set(key, (seen.get(key) ?? new Set()).add(n));
+  const walk = (node: unknown, key: string): void => {
+    if (Array.isArray(node)) return node.forEach((x) => walk(x, key));
+    if (!node || typeof node !== "object") return;
+    const s = node as Schema;
+    if (s.type === "string" && key) note(key, s.maxLength as number | undefined);
+    const it = s.items as Schema | undefined;
+    if (it?.type === "string") { if (typeof it.maxLength === "number") items[key] = it.maxLength; }
+    else if (it) walk(it, key);
+    for (const [k, v] of Object.entries((s.properties ?? {}) as Schema)) walk(v, k);
+  };
+  schemas.forEach((s) => walk(s, ""));
+  const scalar: Record<string, number> = {}, clashes: string[] = [];
+  for (const [k, ns] of seen) {
+    if (ns.size > 1) clashes.push(k);
+    else if ([...ns][0] !== undefined) scalar[k] = [...ns][0]!;
+  }
+  return { scalar, items, clashes };
+}
+
 export const SUBMIT_DESCRIPTIONS: Record<SubmitName, string> = {
   submit_causes: "Report up to 3 candidate causes of the target (expand or fork moves).",
   submit_assessment: "Report the evidence you gathered on the target (strengthen move).",

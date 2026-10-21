@@ -13,14 +13,14 @@ export interface Spent { readonly usd: number }
 export const ARTIFACT_KINDS = [
   "event-id", "process-guid", "parent-process-guid", "file-hash", "image-digest", "commit-sha", "workflow-run-id",
   "arn", "access-key", "k8s-resource", "cache-key", "pr-number", "url", "domain-name", "ip",
-  "host", "user", "process", "principal",
+  "host", "user", "process", "principal", "email-address", "message-id",
 ] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 // Strong: one value names one thing, so a shared value joins two records (dedup, direct stitch).
-export const STRONG_KINDS: ReadonlySet<ArtifactKind> = new Set(["event-id", "process-guid", "file-hash", "image-digest", "commit-sha", "workflow-run-id"]);
+export const STRONG_KINDS: ReadonlySet<ArtifactKind> = new Set(["event-id", "process-guid", "file-hash", "image-digest", "commit-sha", "workflow-run-id", "message-id"]);
 // Medium: shared values make a link likely but not certain (corroborating stitch).
-export const MEDIUM_KINDS: ReadonlySet<ArtifactKind> = new Set(["arn", "access-key", "k8s-resource", "cache-key", "pr-number", "url", "domain-name", "ip"]);
+export const MEDIUM_KINDS: ReadonlySet<ArtifactKind> = new Set(["arn", "access-key", "k8s-resource", "cache-key", "pr-number", "url", "domain-name", "ip", "email-address"]);
 
 export interface Artifact {
   kind: ArtifactKind;

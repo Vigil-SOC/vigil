@@ -11,6 +11,6 @@ IP_GEOLOCATION = register_descriptor(
         id="ip-geolocation",
         category="Threat Intelligence",
         mcp_server_names=("ip-geolocation",),
-        fields=(IntegrationField("service"),),
+        fields=(IntegrationField("api_key", secret=True),),
     )
 )

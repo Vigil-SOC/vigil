@@ -32,7 +32,7 @@ export interface TurnPayload {
 }
 
 export interface ExitPayload {
-  exit: ExitReason;
+  exit: ExitReason | null; // null: stopped or failed before an exit was reached
   report: string;
   entries: TraceEntry[];
 }

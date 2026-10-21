@@ -123,8 +123,33 @@ describe("runRootCauseV3", () => {
     expect(new Set(calls.map((c) => c.ref)).size).toBe(calls.length);
 
     // Both readers pick v3's shape off the engine stamp.
-    expect(rootCauseV3Projection("r1", events as never)).toMatchObject({ engine: "rootcause-v3", outcome: "aborted" });
+    const view = rootCauseV3Projection("r1", events as never);
+    expect(view).toMatchObject({ engine: "rootcause-v3", outcome: "aborted" });
+    // History counts the model's searches that ran; the code's own are counted apart.
+    expect(view.searches).toBe(calls.filter((c) => c.role !== "code" && c.failure !== "refused").length);
+    expect(view.code_searches).toBe(calls.filter((c) => c.role === "code").length);
     expect(rootCauseV3Replay("r1", events as never)).toMatchObject({ engine: "rootcause-v3" });
+  }, 20_000);
+});
+
+describe("a run the pool cuts off mid-move", () => {
+  it("records budget-exhausted, not null, in the ledger, the report and the projection", async () => {
+    const state = new InProcessState<V3Kinds>();
+    // Framing, mapping and the choose turn fit; the move's own call is refused.
+    const spec = specOf({ budgets: { max_calls: 4, max_cost_usd: 10, max_wall_ms: 600_000, max_park_ms: 60_000 } });
+    const model = modelOf((request) => {
+      if (properties(request).includes("observed_at")) return { emit: framed() };
+      if (properties(request).includes("map")) return { emit: { map: "One source, edr.", reasoning: "mapped" } };
+      if (properties(request).includes("why")) return { emit: { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } };
+      return { emit: { evidence: [], reasoning: "nothing found" } };
+    });
+    const done = await runRootCauseV3(harnessOf(spec, model, splunk(), state), { run_id: "r1", spec });
+    expect(done.status).toBe("budget_exhausted");
+    const events = await state.read("r1");
+    const exit = events.find((e) => e.kind === "rootcause_exit")!.payload as { exit: unknown; report: string };
+    expect(exit.exit).toBe("budget-exhausted");
+    expect(exit.report).toContain("exit **budget-exhausted**");
+    expect(rootCauseV3Projection("r1", events as never)).toMatchObject({ exit: "budget-exhausted", outcome: "budget_exhausted" });
   }, 20_000);
 });
 

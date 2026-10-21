@@ -53,6 +53,29 @@ except Exception as _crypto_import_error:  # pragma: no cover - import-time
     _CRYPTOGRAPHY_AVAILABLE = False
 
 
+# Set by the Helm chart when the State Directory is a per-pod emptyDir: a secret
+# written there reaches one pod and is lost on restart, so writes are refused.
+# Credentials injected as env vars (secrets.existingSecret, ExternalSecrets)
+# still resolve through get_secret.
+STATE_DIR_EPHEMERAL_ENV = "VIGIL_DIR_EPHEMERAL"
+SECRET_WRITE_REFUSED_DETAIL = (
+    "Credentials cannot be saved from Settings on this deployment: its state "
+    "directory is private to one pod and cleared on restart. Supply them through "
+    "the Helm chart's secrets.existingSecret or ExternalSecrets instead."
+)
+
+
+def secret_writes_refused() -> bool:
+    # os.environ, not Settings: exported by the chart beside VIGIL_DIR.
+    flag = os.environ.get(STATE_DIR_EPHEMERAL_ENV, "")  # noqa: ENV001
+    return flag.strip().lower() in ("1", "true", "yes", "on")
+
+
+def secret_write_failure_detail(fallback: str) -> str:
+    """HTTP detail for a failed set_secret: the refusal if that was the cause."""
+    return SECRET_WRITE_REFUSED_DETAIL if secret_writes_refused() else fallback
+
+
 class SecretsBackend(ABC):
     """Abstract base class for secrets storage backends."""
 
@@ -627,6 +650,13 @@ class SecretsManager:
         Returns:
             True if successful
         """
+        if secret_writes_refused():
+            logger.error(
+                "Refusing to write secret: state directory is per-pod (%s)",
+                STATE_DIR_EPHEMERAL_ENV,
+            )
+            return False
+
         if not self.write_backend.is_available():
             logger.error(f"Write backend '{self.write_backend_name}' not available")
             return False
