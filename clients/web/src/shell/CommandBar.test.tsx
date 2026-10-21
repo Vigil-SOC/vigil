@@ -188,6 +188,17 @@ afterEach(() => {
 })
 
 describe('CommandBar', () => {
+  it('keeps the header bar on the search token and sizes the hero bar to the Home column', () => {
+    const props = { boards: BOARDS, onOpenChat: vi.fn(), onOpenCase: vi.fn(), onGo: vi.fn() }
+    const { rerender } = render(<CommandBar {...props} />)
+    expect(document.querySelector('[data-command-slot]')).not.toHaveClass('is-hero')
+    rerender(<CommandBar {...props} placement="hero" />)
+    expect(document.querySelector('[data-command-slot]')).toHaveClass('is-hero')
+    expect(shellCss).toMatch(/\.vg-command-bar \{[^}]*height: var\(--size-search\)/)
+    expect(shellCss).toMatch(/\.vg-command-slot\.is-hero \.vg-command-bar \{[^}]*height: 58px/)
+    expect(shellCss).toMatch(/\.vg-command-slot\.is-hero \.vg-command-bar input \{[^}]*font-size: 17px/)
+  })
+
   it('a fill puts the text in the bar with the Run preview and runs nothing', () => {
     const onOpenChat = vi.fn()
     const props = { boards: BOARDS, onOpenChat, onOpenCase: vi.fn(), onGo: vi.fn() }

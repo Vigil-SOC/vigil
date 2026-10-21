@@ -640,6 +640,48 @@ describe('SocConsole', () => {
     expect(document.querySelector('.vg-status')).toBeNull()
   })
 
+  it('puts the one command bar under the Home headline and back in the header on other pages', async () => {
+    renderConsole('/home')
+    const hunt = await screen.findByRole('button', { name: '/hunt' })
+    const home = document.querySelector('.home-screen') as HTMLElement
+    const slot = () => document.querySelector('[data-command-slot]') as HTMLElement
+    expect(home).toContainElement(slot())
+    expect(slot()).toHaveClass('is-hero')
+    expect(document.querySelector('.vg-header')).not.toContainElement(slot())
+    expect(document.querySelectorAll('[data-command-slot]')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '/hold' })).not.toBeInTheDocument()
+
+    fireEvent.click(hunt)
+    const input = screen.getByRole('combobox', { name: 'Find a case, ask Vigil, or run a command' })
+    expect(input).toHaveValue('/hunt ')
+    expect(screen.getByRole('button', { name: 'Attach intelligence' })).toBeInTheDocument()
+
+    fireEvent.change(input, { target: { value: '/hunt' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input).toHaveValue('/hunt ')
+    expect(screen.getByRole('button', { name: 'Attach intelligence' })).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(input).toHaveFocus()
+
+    fireEvent.change(input, { target: { value: '/hunt keep' } })
+    clickScreen('Overview')
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Overview')
+    expect(document.querySelector('.home-screen')).toBeNull()
+    expect(document.querySelector('.vg-header')).toContainElement(slot())
+    expect(slot()).not.toHaveClass('is-hero')
+    expect(document.querySelectorAll('[data-command-slot]')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '/hunt' })).not.toBeInTheDocument()
+    // the same bar moved; the typed command is still there
+    expect(screen.getByRole('combobox', { name: 'Find a case, ask Vigil, or run a command' })).toHaveValue('/hunt keep')
+
+    clickScreen('Home')
+    expect(await screen.findByRole('button', { name: '/hunt' })).toBeInTheDocument()
+    expect(document.querySelector('.home-screen')).toContainElement(slot())
+    expect(slot()).toHaveClass('is-hero')
+    expect(screen.getByRole('combobox', { name: 'Find a case, ask Vigil, or run a command' })).toHaveValue('/hunt keep')
+  })
+
   it('hides the nav row and the top bar while Overview is on the wall', async () => {
     renderConsole('/overview')
     expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
@@ -1403,11 +1445,11 @@ describe('SocConsole', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByRole('dialog', { name: ASK_TITLE })).toHaveTextContent('Conversations are private to you and kept in your history.')
-      // TourAsk: the ring hugs the command-bar button, the card hangs under the top bar from it
+      // the ring hugs the command-bar button; on Home that button is in the hero, so the card sits under it
       const ask = document.querySelector('.console-tour-ring')
       expect(ask).toHaveAttribute('data-stop', 'ask')
       expect(ask).toHaveStyle({ top: '13px', left: '600px', width: '92px', height: '26px' })
-      expect(document.querySelector('.console-tour-card')).toHaveStyle({ top: '60px', left: '600px' })
+      expect(document.querySelector('.console-tour-card')).toHaveStyle({ top: '51px', left: '600px' })
       expect(document.querySelector('.vg-command-ask')).toHaveAccessibleName('Ask Vigil')
       expect(document.querySelector('.chat-fab')).not.toBeInTheDocument()
 

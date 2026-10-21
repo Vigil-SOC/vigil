@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
@@ -173,6 +174,16 @@ function SocConsoleInner() {
   }, [drawerCase]) // eslint-disable-line react-hooks/exhaustive-deps
   const [fill, setFill] = useState<{ text: string; seq: number } | null>(null)
   const fillCommand = useCallback((text: string) => setFill((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 })), [])
+  // One bar. Its DOM holder moves between the header and Home; the component does not remount.
+  const [commandHolder] = useState(() => {
+    const el = document.createElement('div')
+    el.className = 'vg-command-holder'
+    return el
+  })
+  const [commandHost, setCommandHost] = useState<HTMLElement | null>(null)
+  const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
+  const onCommandHost = useCallback((node: HTMLElement | null) => setCommandHost(node), [])
+  const onHeaderSlot = useCallback((node: HTMLDivElement | null) => setHeaderSlot(node), [])
   const [viewFull, setViewFull] = useState(false)
   const [wallMode, setWallMode] = useState(false)
   const homePerm = SCREEN_PERMS.home
@@ -481,6 +492,29 @@ function SocConsoleInner() {
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
+  const commandBoards = [...primary, ...more].map((item) => {
+    const key = item[2] as string
+    return { key, label: item[1], icon: item[0], desc: titles[key]?.[1] ?? '' }
+  })
+  const commandOnHome = valid && allowed && current === 'home' && !wallMode && commandHost !== null
+  const commandParent = commandOnHome ? commandHost : headerSlot
+  useLayoutEffect(() => {
+    if (commandParent && commandHolder.parentElement !== commandParent) commandParent.appendChild(commandHolder)
+  }, [commandParent, commandHolder])
+  const commandBar = (
+    <CommandBar
+      placement={commandOnHome ? 'hero' : 'header'}
+      boards={commandBoards}
+      onOpenChat={askVigil}
+      caseOpen={openCaseId !== null}
+      onOpenCase={setDrawerCase}
+      onGo={(next, options) => {
+        setDrawerCase(null) // the drawer would sit over the next screen
+        go(next, options)
+      }}
+      fill={fill}
+    />
+  )
 
   return (
     <div
@@ -495,20 +529,8 @@ function SocConsoleInner() {
             <VigilLogo className="vg-logo" />
             <DevModeWarning />
           </div>
-          <CommandBar
-            boards={[...primary, ...more].map((item) => {
-              const key = item[2] as string
-              return { key, label: item[1], icon: item[0], desc: titles[key]?.[1] ?? '' }
-            })}
-            onOpenChat={askVigil}
-            caseOpen={openCaseId !== null}
-            onOpenCase={setDrawerCase}
-            onGo={(next, options) => {
-              setDrawerCase(null) // the drawer would sit over the next screen
-              go(next, options)
-            }}
-            fill={fill}
-          />
+          <div ref={onHeaderSlot} className="vg-header-center" />
+          {createPortal(commandBar, commandHolder)}
           <div className="vg-header-end">
             {assist !== null && (
               <div className="vg-autonomy">
@@ -622,7 +644,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} viewFull={viewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} chatOpen={chatOpen} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} viewFull={viewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} onCommandHost={onCommandHost} chatOpen={chatOpen} />
                 )}
               </ErrorBoundary>
             </div>

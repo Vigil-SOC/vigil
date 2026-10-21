@@ -44,7 +44,7 @@ function cardPosition(stop: TourStopId, rect: DOMRect | null, floor: number, car
     case 'nav':
     case 'attention':
       return { top: below + cardH < vh ? below : Math.max(12, above), left }
-    // TourAsk: the card hangs just under the top bar, from the button
+    // Under the button. When it sits in the header, clear that bar's bottom edge.
     case 'ask':
       return { top: Math.max(below, floor + 8), left }
     default: {

@@ -773,11 +773,48 @@
   display: none;
 }
 
+.vg-header-center {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.vg-command-holder {
+  width: 100%;
+  min-width: 0;
+}
+
+.vg-header-center .vg-command-holder {
+  display: flex;
+  justify-content: center;
+}
+
 .vg-command-slot {
   position: relative;
   width: 100%;
   max-width: 760px;
   justify-self: center;
+}
+
+/* Home hero (MainP2): the column's full width, taller than the header's --size-search bar. */
+.vg-command-slot.is-hero {
+  max-width: none;
+  z-index: 25;
+}
+
+.vg-command-slot.is-hero .vg-command-bar {
+  height: 58px;
+  padding: 0 14px 0 18px;
+}
+
+.vg-command-slot.is-hero .vg-command-bar input {
+  font-size: 17px;
+}
+
+.vg-command-slot.is-hero .vg-command-ask {
+  height: 34px;
+  gap: 6px;
+  font-size: 13px;
 }
 
 .vg-command-bar {

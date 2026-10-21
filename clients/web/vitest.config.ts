@@ -6,8 +6,9 @@ export default defineConfig({
   test: {
     globals: true,
     // read as text by tests that assert a rule exists: shell.css by CommandBar.test.tsx (the disabled
-    // treatment), cases.css by CaseSide.test.tsx (the side panel wraps rather than scrolling sideways)
-    css: { include: [/shell\.css/, /cases\.css/] },
+    // treatment and the hero bar), home.css by HomeScreen.test.tsx (chips wrap as a row),
+    // cases.css by CaseSide.test.tsx (the side panel wraps rather than scrolling sideways)
+    css: { include: [/shell\.css/, /home\.css/, /cases\.css/] },
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     // Don't pick up test files inside agent worktrees — those copies of
