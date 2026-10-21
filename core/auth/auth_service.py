@@ -93,8 +93,12 @@ PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
 
 
 def _is_service_account(user: User) -> bool:
-    """Only an explicit True exempts from lockout; anything else fails closed."""
-    return user.service_account is True
+    """Only an explicit True exempts from lockout; anything else fails closed.
+
+    A user object without the field is not one. MFA lockout tests, and any
+    caller that has not loaded the column, must still lock.
+    """
+    return getattr(user, "service_account", None) is True
 
 
 def _account_is_locked(user) -> bool:
