@@ -3,6 +3,7 @@
 import type { AgentConfig } from "./config.js";
 import { applyPatch, bestPathFromSymptom, createGraph, getParents, emptyPatch, type Graph, type GraphPatch } from "./graph.js";
 import { renderReport } from "./report.js";
+import { settled } from "./scoring.js";
 import { rareSweep } from "./rare.js";
 import { route } from "./router.js";
 import { options, optionsText, resolveNext, type LeadState, type NextIn } from "./lead.js";
@@ -26,8 +27,7 @@ export function chainSolid(g: Graph, cfg: AgentConfig): boolean {
   if (path) {
     const nodes = path.nodeIds.map((id) => g.nodes[id]!);
     const top = nodes[nodes.length - 1]!;
-    // Near-certain counts as solid: the evidence rule can leave a 0.99 link suspected.
-    const ok = (x: { status: string; confidence: number }) => x.status === "confirmed" || x.confidence >= cfg.thresholds.settled;
+    const ok = (x: { status: string; confidence: number }) => settled(x, cfg);
     const solid = nodes.every((n) => n.kind !== "boundary-marker" && ok(n)) && path.edgeIds.every((id) => ok(g.edges[id]!));
     const attributed = nodes.filter((n) => n.kind === "action").every((n) => {
       const es = getParents(g, n.id, "attributed-to").filter((e) => !e.retired).sort((a, b) => b.confidence - a.confidence);
