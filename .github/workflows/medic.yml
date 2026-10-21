@@ -232,8 +232,8 @@ jobs:
       - name: Pytest (live Docker, check 4)
         run: |
           uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker -rs
-          # pytest 9 prints "43 tests collected", not "43/".
-          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker --collect-only -q | grep -q "^43 tests collected"
+          # Piped pytest 9 prints "43/222 tests collected (179 deselected)".
+          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker --collect-only -q | grep -Eq '^43(/[0-9]+)? tests collected'
 
       - name: Pytest
         run: uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy
