@@ -232,7 +232,9 @@ def backend_seen(s: Stack) -> list[dict]:
 
 
 def test_enable_prints_the_manual_step(healthy) -> None:
-    assert "Viewer" in healthy.enable_output
+    # V1: the script makes the gateway's Viewer service account itself and
+    # says so; the step left to the operator is the compose command.
+    assert "service account medic-" in healthy.enable_output
     assert "--profile medic" in healthy.enable_output
 
 
