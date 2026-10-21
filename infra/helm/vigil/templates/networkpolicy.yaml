@@ -135,10 +135,19 @@ spec:
     matchLabels:
       {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-worker") | nindent 6 }}
   policyTypes: [Ingress]
-  # Its work arrives over Redis, so nothing routes to it. The one exception is
-  # the kubelet, which has to reach the probe port 6990.
-  {{- if .Values.networkPolicies.probeAllowFrom }}
+  # Its work arrives over Redis, so nothing routes to it. Only the probe port
+  # 6990 is reached: by the kubelet, and by Medic, whose one sensor is /readyz.
+  {{- if or .Values.networkPolicies.probeAllowFrom .Values.medic.enabled }}
   ingress:
+    {{- if .Values.medic.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.medic.selectorLabels" (dict "context" . "component" "medic") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6990
+    {{- end }}
     {{- include "vigil.networkPolicy.probeRule" (dict "context" . "port" 6990) | nindent 4 }}
   {{- else }}
   ingress: []
