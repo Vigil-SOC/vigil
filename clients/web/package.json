@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@testing-library/jest-dom": "^6.1.5",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.2.55",
