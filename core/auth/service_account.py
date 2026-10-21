@@ -83,8 +83,14 @@ def schema_ready(conn) -> bool:
     return any(c["name"] == "service_account" for c in columns)
 
 
-def ensure(username: str, password: str) -> tuple[str, int]:
-    """Create, keep or rotate the service account. Returns (outcome, retired)."""
+def ensure(
+    username: str, password: str, out: Optional[TextIO] = None
+) -> tuple[str, int]:
+    """Create, keep or rotate the service account. Returns (outcome, retired).
+
+    When ``out`` is set, the status line is written there. It names the account
+    and a fixed outcome word. The password is not written.
+    """
     if not _USERNAME.fullmatch(username):
         raise ValueError(f"username must match {USERNAME_PATTERN}")
     if not _PASSWORD.fullmatch(password):
@@ -150,7 +156,11 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         for other in others:
             other.is_active = False
             retired += 1
-        return outcome, retired
+
+    if out is not None:
+        # After the commit. The name is this parameter; the password is not written.
+        _report(out, username, outcome, retired)
+    return outcome, retired
 
 
 def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
@@ -188,7 +198,7 @@ def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
         line += " (retired 9 other)"
     elif retired > 9:
         line += " (retired 10 or more other)"
-    print(line, file=out)
+    out.write(line + "\n")
 
 
 def main(
@@ -207,9 +217,6 @@ def main(
         )
         return EX_USAGE
     username = argv[1]
-    # Copied before ensure. The password is the other argument, and the logging
-    # check will not follow this name into the success line.
-    account = username
     password = stdin.readline().rstrip("\r\n")
     try:
         # A fresh process: nothing has built the engine yet. Lazy, so a
@@ -217,7 +224,7 @@ def main(
         manager = get_db_manager()
         if manager.engine is None:
             manager.initialize()
-        outcome, retired = ensure(username, password)
+        ensure(username, password, stdout)
     except ValueError as exc:
         print(f"error: {exc}", file=stderr)
         return EX_USAGE
@@ -233,7 +240,6 @@ def main(
     except SQLAlchemyError as exc:
         print(f"database error: {type(exc).__name__}", file=stderr)
         return EX_SOFTWARE
-    _report(stdout, account, outcome, retired)
     return EX_OK
 
 
