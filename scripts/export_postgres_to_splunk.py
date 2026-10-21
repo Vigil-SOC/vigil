@@ -156,7 +156,6 @@ class PostgresToSplunkExporter:
             "finding_id": finding.finding_id,
             "data_source": finding.data_source,
             "severity": finding.severity,
-            "status": finding.status,
             "anomaly_score": finding.anomaly_score,
             
             # MITRE ATT&CK

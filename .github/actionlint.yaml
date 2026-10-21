@@ -4,14 +4,11 @@
 # down, since GitHub rejects the file before scheduling anything and the run
 # then reports zero jobs with nothing pointing at the cause.
 #
-# The ignores below are pre-existing advisory findings, kept out of the gate so
+# The ignore below is a pre-existing advisory finding, kept out of the gate so
 # it fails only on things that actually break a workflow:
 #   - shellcheck findings inside `run:` blocks (style, and often wrong about
 #     Actions-specific idioms)
-#   - the `if: false` on the two deliberately disabled image-build jobs, which
-#     is how they are disabled, not a mistake
 paths:
   .github/workflows/*.yml:
     ignore:
       - 'shellcheck reported issue in this script'
-      - 'constant expression "false" in condition'

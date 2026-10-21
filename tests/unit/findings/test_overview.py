@@ -96,7 +96,6 @@ def _finding(finding_id: str, at: datetime, **kw) -> Finding:
         finding_id=finding_id,
         data_source=kw.pop("data_source", "ov-src"),
         created_at=at,
-        status="new",
         severity="high",
         **kw,
     )

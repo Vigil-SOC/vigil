@@ -2502,6 +2502,56 @@ describe('a case with several runs', () => {
       expect(card).toHaveTextContent('The run could not be read.')
     })
 
+    const ACCOUNTS = [
+      { name: 'unknown attacker', role: 'attacker', seenAs: ['evil.example', 'cdn.evil.example'] },
+      { name: 'svc-backup', role: 'victim', usedBy: ['unknown attacker'] },
+      { name: 'j.doe', role: 'legitimate' },
+      { name: 42, role: 'attacker' },
+      { name: 'nobody', role: 'bystander' },
+    ]
+    const LINES = ['unknown attacker · Attacker · seen as evil.example, cdn.evil.example', 'svc-backup · Victim · used by unknown attacker', 'j.doe · Legitimate']
+    const accountLines = (card: HTMLElement) => Array.from(card.querySelectorAll('.how-accounts li')).map((li) => li.textContent)
+
+    it('names the accounts under the chain, in projection order, on the open and closed moods', async () => {
+      withChain('case-how-acct', chain(5))
+      ;(testState.runs['run-rca'] as { projection: object }).projection = { ...ROOT_CAUSE, steps: chain(5), proven: 3, account: { accounts: ACCOUNTS, disposition: 'True Positive: the report sentence' } }
+      renderCase('case-how-acct')
+      let card = await screen.findByRole('region', { name: 'How it started' })
+      await waitFor(() => expect(accountLines(card)).toEqual(LINES))
+      expect(card.querySelector('.how-accounts li')).toHaveAttribute('title', LINES[0])
+      expect(card).not.toHaveTextContent('the report sentence')
+      cleanup()
+      testState.cases = [{ ...testState.cases[0], status: 'closed', combined_state: 'closed', closure: { closed_by: 'ada', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' } }]
+      renderCase('case-how-acct')
+      expect(await screen.findByRole('region', { name: 'Closed summary' })).toBeInTheDocument()
+      card = await screen.findByRole('region', { name: 'How it started' })
+      await waitFor(() => expect(accountLines(card)).toEqual(LINES))
+    })
+
+    it('draws no account line when the projection has none', async () => {
+      for (const account of [undefined, { accounts: [] }, null, { accounts: 'x' }]) {
+        withChain('case-how-noacct', chain(5))
+        ;(testState.runs['run-rca'] as { projection: object }).projection = { ...ROOT_CAUSE, steps: chain(5), proven: 3, account }
+        renderCase('case-how-noacct')
+        const card = await screen.findByRole('region', { name: 'How it started' })
+        expect(await within(card).findByText('5 events · 3 proven')).toBeInTheDocument()
+        expect(card.querySelector('.how-accounts')).toBeNull()
+        cleanup()
+      }
+    })
+
+    it('takes the accounts from the newest root-cause run with steps only', async () => {
+      withChain('case-how-two', chain(3))
+      ;(testState.cases[0] as { investigations: unknown[] }).investigations.push(ref('root-cause-analysis', 'run-rca-old', '2026-06-15T08:00:00Z'))
+      testState.runs['run-rca-old'] = { status: 'completed', projection: { ...ROOT_CAUSE, run_id: 'run-rca-old', steps: chain(3), account: { accounts: ACCOUNTS } } }
+      renderCase('case-how-two')
+      const card = await screen.findByRole('region', { name: 'How it started' })
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Other runs on this case' })).toHaveTextContent('Concluded'))
+      expect(within(card).getByRole('link', { name: 'Show all 3' })).toHaveAttribute('href', '/workflows?run=run-rca')
+      expect(card.querySelector('.how-accounts')).toBeNull()
+      expect(card).not.toHaveTextContent('svc-backup')
+    })
+
     it('shows on the closed mood too', async () => {
       withChain('case-how-closed', chain(5))
       testState.cases = [{ ...testState.cases[0], status: 'closed', combined_state: 'closed', closure: { closed_by: 'ada', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' } }]

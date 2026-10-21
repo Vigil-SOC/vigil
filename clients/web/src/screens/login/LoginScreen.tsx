@@ -37,6 +37,7 @@ export default function LoginScreen() {
   // account yet, so show first-account creation instead of sign-in.
   const [needsBootstrap, setNeedsBootstrap] = useState<boolean | null>(null)
   const [email, setEmail] = useState('')
+  const [setupCode, setSetupCode] = useState('')
 
   useEffect(() => {
     if (showMfa) setTimeout(() => mfaInputRef.current?.focus(), 80)
@@ -56,7 +57,12 @@ export default function LoginScreen() {
     setError('')
     setLoading(true)
     try {
-      await bootstrapApi.create({ username: usernameOrEmail, email, password })
+      await bootstrapApi.create({
+        username: usernameOrEmail,
+        email,
+        password,
+        setup_code: setupCode.trim(),
+      })
       await login(usernameOrEmail, password)
       navigate('/')
     } catch (err: any) {
@@ -157,6 +163,31 @@ export default function LoginScreen() {
       {needsBootstrap ? (
         <form onSubmit={handleBootstrap} autoComplete="on" noValidate>
           <div className="field">
+            <label htmlFor="bs-code">Setup code</label>
+            <div className="ctrl">
+              <Icon name="shield" className="lead" />
+              <input
+                id="bs-code"
+                name="setup-code"
+                type="text"
+                placeholder="From the API log"
+                autoComplete="off"
+                autoFocus
+                spellCheck={false}
+                disabled={loading}
+                value={setupCode}
+                onChange={(e) => setSetupCode(e.target.value)}
+                aria-describedby="bs-code-hint"
+              />
+            </div>
+            <p id="bs-code-hint" className="field-hint">
+              The API prints this once at startup, while no account exists. Read it
+              with docker compose logs (Compose), kubectl logs (Helm), or in the
+              ./start.sh terminal.
+            </p>
+          </div>
+
+          <div className="field">
             <label htmlFor="bs-user">Username</label>
             <div className="ctrl">
               <Icon name="user" className="lead" />
@@ -166,7 +197,6 @@ export default function LoginScreen() {
                 type="text"
                 placeholder="admin"
                 autoComplete="username"
-                autoFocus
                 disabled={loading}
                 value={usernameOrEmail}
                 onChange={(e) => setUsernameOrEmail(e.target.value)}
@@ -220,7 +250,7 @@ export default function LoginScreen() {
           <button
             className="btn-signin"
             type="submit"
-            disabled={loading || !usernameOrEmail || !email || !password}
+            disabled={loading || !setupCode.trim() || !usernameOrEmail || !email || !password}
           >
             {loading ? (
               <span className="spin" aria-hidden="true" />

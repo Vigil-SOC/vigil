@@ -219,6 +219,32 @@ def test_failed_attach_on_resolve_is_not_launchable():
     assert orch.stats["dedup_prevented"] == 0
 
 
+def test_a_queued_detection_for_an_excluded_ip_expires(monkeypatch):
+    monkeypatch.setattr(
+        "services.daemon.orchestrator.cached_active_ips",
+        lambda: frozenset({"203.0.113.9"}),
+    )
+    orch = _orchestrator()
+    finding = {**HIGH, "entity_context": {"src_ip": "203.0.113.9"}}
+    orch._hydrate_detection_finding = MagicMock(return_value=finding)
+    row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
+
+    assert orch._resolve_intake_row(row, utcnow()) is None
+    orch._decide_trigger.assert_called_once_with(
+        9, state="expired", reason="excluded_ip"
+    )
+    orch.shared_intel.check_overlap.assert_not_called()
+
+    # Only detections: an analyst's ask and an unhydrated finding stay queued.
+    orch._decide_trigger.reset_mock()
+    ask = {"id": 10, "kind": "human_ask", "payload": {"src_ip": "203.0.113.9"}}
+    assert orch._resolve_intake_row(ask, utcnow()) is ask
+    orch._hydrate_detection_finding = MagicMock(return_value=None)
+    gone = {"id": 11, "kind": "detection", "finding_id": "f-gone"}
+    assert orch._resolve_intake_row(gone, utcnow()) is gone
+    orch._decide_trigger.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_overlap_with_caseless_run_is_not_a_merge():
     orch = _orchestrator()

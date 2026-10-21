@@ -7,6 +7,8 @@ import LoginScreen from './LoginScreen'
 const login = vi.fn()
 const navigate = vi.fn()
 const requestPasswordReset = vi.fn()
+const bootstrapStatus = vi.fn(() => Promise.resolve({ data: { required: false } }))
+const bootstrapCreate = vi.fn((_payload?: unknown) => Promise.resolve({ data: {} }))
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ login }),
@@ -20,8 +22,8 @@ vi.mock('../../services/api', () => ({
   },
   // unmocked, this throws inside the mount effect and fails every test here
   bootstrapApi: {
-    status: () => Promise.resolve({ data: { required: false } }),
-    create: () => Promise.resolve({ data: {} }),
+    status: () => bootstrapStatus(),
+    create: (payload: unknown) => bootstrapCreate(payload),
   },
   authApi: { requestPasswordReset: (email: string) => requestPasswordReset(email) },
 }))
@@ -45,6 +47,10 @@ beforeEach(() => {
   login.mockReset()
   navigate.mockReset()
   requestPasswordReset.mockReset()
+  bootstrapStatus.mockReset()
+  bootstrapStatus.mockResolvedValue({ data: { required: false } })
+  bootstrapCreate.mockReset()
+  bootstrapCreate.mockResolvedValue({ data: {} })
 })
 
 describe('LoginScreen', () => {
@@ -88,6 +94,29 @@ describe('LoginScreen', () => {
     expect(code).toHaveValue('3cfb0b62')
     fireEvent.click(screen.getByRole('button', { name: /verify/i }))
     await waitFor(() => expect(login).toHaveBeenLastCalledWith('admin', 'admin123', '3cfb0b62'))
+  })
+
+  it('sends the setup code and shows the server refusal when it is wrong', async () => {
+    bootstrapStatus.mockResolvedValue({ data: { required: true } })
+    bootstrapCreate.mockRejectedValueOnce({
+      response: { status: 403, data: { detail: 'Setup code is missing or incorrect.' } },
+    })
+    renderLogin()
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    expect(screen.getByText(/docker compose logs/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Setup code'), { target: { value: 'wrong-code' } })
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'admin' } })
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.co' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'harbour-lantern' } })
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Setup code is missing or incorrect.')
+    expect(bootstrapCreate).toHaveBeenCalledWith({
+      username: 'admin',
+      email: 'a@b.co',
+      password: 'harbour-lantern',
+      setup_code: 'wrong-code',
+    })
+    expect(login).not.toHaveBeenCalled()
   })
 
   describe('sign-in errors', () => {

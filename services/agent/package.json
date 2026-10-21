@@ -26,15 +26,15 @@
     "bullmq": "5.81.3",
     "openai": "^4.104.0",
     "p-limit": "^6.2.0",
-    "pg": "^8.13.1",
-    "yaml": "^2.9.0"
+    "pg": "^8.23.1",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/pg": "^8.11.10",
-    "tsx": "^4.19.2",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "vite": "^6.4.4"

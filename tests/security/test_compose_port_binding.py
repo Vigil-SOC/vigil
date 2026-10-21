@@ -63,10 +63,10 @@ SHARED_HOST_PORTS: dict[str, frozenset[str]] = {
     # 8081 is the SIEM webhook receiver and fails closed without
     # DAEMON_WEBHOOK_TOKEN (services/daemon/poller.py).
     #
-    # 9090 stays published (#587 left it alone; Prometheus scrapes it over the
-    # compose bridge anyway). 9091 serves /health and /status unauthenticated,
-    # so it is loopback-only (#1683) and deliberately absent from this list.
-    "soc-daemon": frozenset({"8081", "9090"}),
+    # 9090 (/metrics) and 9091 (/health, /status) are unauthenticated and
+    # loopback-only (#2583, #1683): the bundled Prometheus scrapes
+    # soc-daemon:9090 over the compose bridge, so neither is listed here.
+    "soc-daemon": frozenset({"8081"}),
 }
 
 

@@ -18,7 +18,7 @@ we do not backport to earlier minors.
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| Latest `0.x` minor (currently `0.5.x`) | ✅ | Fixes ship here. Upgrade before reporting a bug you can only reproduce on an older tag. |
+| Latest released `0.x` minor ([latest release](https://github.com/Vigil-SOC/vigil/releases/latest)) | ✅ | Fixes ship here. Upgrade before reporting a bug you can only reproduce on an older tag. |
 | Older `0.x` minors | ❌ | No backports. What may change between releases is in [VERSIONING.md](VERSIONING.md). |
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
@@ -217,7 +217,8 @@ Not vulnerabilities. Reports on these will be closed with a pointer back here:
   must-change-before-production in
   [production security](https://vigilsoc.org/docs/production-security/). No
   default admin login ships; the first account is created through
-  `/api/auth/bootstrap`.
+  `/api/auth/bootstrap`, which requires the setup code the API prints at
+  startup while the user table is empty.
 - **Placeholder values in `env.example`.** They are a template, not a
   configuration.
 - **Findings that require a misconfiguration we already document as unsafe** —

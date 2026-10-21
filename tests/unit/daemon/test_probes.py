@@ -374,6 +374,35 @@ class TestTheProcessorGuard:
         processor._evaluate_for_response.assert_not_awaited()
 
 
+class TestTheExclusionSkip:
+    """A finding naming an excluded IP is stored but never triaged (#2638);
+    a probe naming one still is, or excluding it would silence the probe."""
+
+    async def _spawned(self, finding) -> FindingProcessor:
+        processor = FindingProcessor(ProcessingConfig())
+        processor._enrich_in_background = AsyncMock()
+        with patch(
+            "services.daemon.processor.cached_active_ips",
+            return_value=frozenset({"203.0.113.77"}),
+        ):
+            await processor._spawn_enrich(finding)
+        await asyncio.gather(*processor._enrich_tasks)
+        return processor
+
+    async def test_an_excluded_finding_is_not_triaged(self):
+        processor = await self._spawned(
+            {"finding_id": "f1", "entity_context": {"dst_ip": "203.0.113.77"}}
+        )
+        processor._enrich_in_background.assert_not_called()
+        assert processor.stats["skipped_excluded"] == 1
+
+    async def test_a_probe_naming_an_excluded_ip_is_still_triaged(self):
+        probe = build_probe_finding(PROBES[0], utcnow().date())
+        processor = await self._spawned(probe)
+        processor._enrich_in_background.assert_awaited_once()
+        assert processor.stats["skipped_excluded"] == 0
+
+
 def test_a_probe_is_not_evidence_in_the_case_vocabulary():
     assert (
         resolve_source_tier("probe", InvestigationKind.CASE) is SourceTier.NOT_EVIDENCE

@@ -187,7 +187,6 @@ def _splunk_event_to_finding(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "external_id": external_id,
         "timestamp": event.get("_time") or utcnow().isoformat(),
         "severity": severity,
-        "status": "new",
         "title": event.get("search_name") or event.get("rule_name") or "Splunk Alert",
         "description": event.get("description") or event.get("_raw", "")[:500],
         "entity_context": entity_context,

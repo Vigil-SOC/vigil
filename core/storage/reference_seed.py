@@ -93,9 +93,9 @@ def _emit(stmt: str):
         yield s
 
 
-def find_seed_file(root: Path = REPO_ROOT) -> Optional[Path]:
+def find_seed_file(root: Path = REPO_ROOT, filename: str = SEED_FILE) -> Optional[Path]:
     for directory in SEED_DIRS:
-        path = root / directory / SEED_FILE
+        path = root / directory / filename
         if path.is_file():
             return path
     return None

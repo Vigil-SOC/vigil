@@ -374,7 +374,6 @@ class IngestionService:
                     evidence_links=finding_data.get("evidence_links"),
                     cluster_id=finding_data.get("cluster_id"),
                     severity=finding_data.get("severity"),
-                    status=finding_data.get("status", "new"),
                 )
 
                 if finding:
@@ -851,7 +850,6 @@ class IngestionService:
             "evidence_links": None,
             "cluster_id": cluster_id,
             "severity": row.get("severity") or None,
-            "status": "new",
         }
 
     def _csv_row_to_case(self, row: Dict[str, str]) -> Dict[str, Any]:
@@ -1054,7 +1052,6 @@ class IngestionService:
             "evidence_links": None,
             "cluster_id": cluster_id,
             "severity": row.get("severity") or None,
-            "status": "new",
         }
 
     def _detect_parquet_schema(self, col_names: set) -> str:
@@ -1092,7 +1089,6 @@ class IngestionService:
             "evidence_links": None,
             "cluster_id": None,
             "severity": row.get("severity") or None,
-            "status": "unscored",
         }
 
     # Extension -> (ingestion method name, temp file suffix, file mode for write)

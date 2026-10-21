@@ -56,12 +56,9 @@ class Finding(Base):
     external_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     cluster_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     severity: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="new", server_default="new"
-    )
     # A noise mark is the finding's dismissal: its own terminal state, with who
     # (and which ClosedByKind) dismissed it and why. It hides the row from the
-    # Overview feed and does not change status.
+    # Overview feed.
     noise_marked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     noise_marked_by: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     noise_marked_by_kind: Mapped[Optional[str]] = mapped_column(
@@ -99,7 +96,6 @@ class Finding(Base):
     __table_args__ = (
         Index("idx_finding_timestamp", "timestamp"),
         Index("idx_finding_severity", "severity"),
-        Index("idx_finding_status", "status"),
         Index("idx_finding_data_source", "data_source"),
         Index("idx_finding_cluster_id", "cluster_id"),
         Index("idx_finding_anomaly_score", "anomaly_score"),

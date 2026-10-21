@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { clock } from './clock'
+import { stateWord } from '../../shared/findingState'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import type { OverviewFeedItem, OverviewPayload } from '../../services/api'
 
@@ -19,15 +20,13 @@ const TABS = [
 const SEVERITY = { crit: 'Critical', high: 'High', med: 'Medium', low: 'Low', none: '' } as const
 type Sev = keyof typeof SEVERITY
 
-// State pill colour by terminal state; anything else is neutral.
-const PILL: Record<string, string> = {
-  resolved_auto: 'good',
-  resolved_person: 'good',
-  needs_you: 'poor',
-  working: 'ac',
-  // The board's Dropped is the neutral pill; Scoring is fair.
-  dismissed: '',
-  scoring: 'fair',
+// State pill colour by the board's word (stTone on the Overview board); Dropped is neutral.
+function pillTone(word: string): string {
+  if (word.startsWith('Case')) return 'ac'
+  if (word === 'New') return 'poor'
+  if (word === 'Resolved') return 'good'
+  if (word === 'Scoring') return 'fair'
+  return ''
 }
 
 /** The severity key a row filters and paints by; anything unrecognised is "none". */
@@ -71,6 +70,9 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
   }
   const text = item.title || item.description || item.finding_id
   const full = item.title && item.description ? item.description : text
+  const word = stateWord(item.terminal_state, item.case_id)
+  // Only a live case is a link; a closed one reads Resolved.
+  const live = !!item.case_id && (item.terminal_state === 'working' || item.terminal_state === 'needs_you')
   return (
     <div role="button" tabIndex={0} className="ov-row" onClick={() => onOpen(item.finding_id)} onKeyDown={onKey}>
       <div className="ov-row-1">
@@ -86,19 +88,20 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
         <b>{badge.label}</b>
         <span>·</span>
         <span className="ov-fid" title={item.finding_id}>{item.finding_id}</span>
-        {item.case_id ? (
+        {live ? (
           <button
             type="button"
             className="ov-pill ac"
+            title={word}
             onClick={(e) => {
               e.stopPropagation() // the row opens the alert
               openCase(item.case_id!)
             }}
           >
-            Case {item.case_id}
+            {word}
           </button>
         ) : (
-          <span className={`ov-pill ${PILL[item.terminal_state] ?? ''}`}>{item.terminal_label}</span>
+          <span className={`ov-pill ${pillTone(word)}`} title={word}>{word}</span>
         )}
       </div>
     </div>

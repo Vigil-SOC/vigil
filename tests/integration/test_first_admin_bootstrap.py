@@ -24,6 +24,7 @@ skipping.
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -164,12 +165,49 @@ def _csrf(client: TestClient) -> dict:
     return {"X-CSRF-Token": client.cookies.get("csrf_token", "")}
 
 
+def test_bootstrap_refuses_a_missing_or_wrong_setup_code(client, caplog):
+    """A guess must not create a user, and a second guess is still refused."""
+    wrong = "not-the-setup-code"
+    again = "still-not-the-setup-code"
+    with caplog.at_level(logging.DEBUG):
+        missing = client.post("/api/auth/bootstrap", json=ADMIN, headers=_csrf(client))
+        assert missing.status_code == 403, missing.text
+        assert "setup code" in missing.json()["detail"].lower()
+
+        bad = client.post(
+            "/api/auth/bootstrap",
+            json={**ADMIN, "setup_code": wrong},
+            headers=_csrf(client),
+        )
+        assert bad.status_code == 403, bad.text
+        assert wrong not in bad.text
+
+        second = client.post(
+            "/api/auth/bootstrap",
+            json={**ADMIN, "setup_code": again},
+            headers=_csrf(client),
+        )
+        assert second.status_code == 403, second.text
+        assert again not in second.text
+
+    assert client.get("/api/auth/bootstrap").json() == {"required": True}
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert wrong not in logged
+    assert again not in logged
+
+
 def test_first_admin_can_bootstrap_login_and_reach_an_authenticated_route(client):
+    from core.auth.bootstrap_code import setup_code
+
     # An empty instance advertises first-run, and refuses to run open.
     assert client.get("/api/auth/bootstrap").json() == {"required": True}
     assert client.get("/api/auth/me").status_code == 401
 
-    created = client.post("/api/auth/bootstrap", json=ADMIN, headers=_csrf(client))
+    created = client.post(
+        "/api/auth/bootstrap",
+        json={**ADMIN, "setup_code": setup_code()},
+        headers=_csrf(client),
+    )
     assert created.status_code == 201, created.text
     assert created.json()["username"] == ADMIN["username"]
     assert client.get("/api/auth/bootstrap").json() == {"required": False}

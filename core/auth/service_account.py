@@ -74,7 +74,7 @@ def _email(username: str) -> str:
 
 
 def schema_ready(conn) -> bool:
-    """Whether ``users.service_account`` exists (create_all, 40_*.sql or migration)."""
+    """Whether ``users.service_account`` exists (create_all, 43_*.sql or migration)."""
     try:
         columns = inspect(conn).get_columns("users")
     except NoSuchTableError:

@@ -26,6 +26,7 @@ from core.auth.auth_service import (
     AuthService,
     password_matches_any,
 )
+from core.auth.bootstrap_code import setup_code_matches
 from core.auth.password_reset import (
     generate_reset_token,
     reset_link,
@@ -48,6 +49,14 @@ from core.storage.models import User
 from core.storage.schemas import UserSchema
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
+from services.api.middleware.auth_rate_key import (
+    bootstrap_rate_key,
+    login_rate_key,
+    refresh_rate_key,
+    reset_confirm_rate_key,
+    reset_request_rate_key,
+    session_rate_key,
+)
 from services.api.middleware.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -74,6 +83,20 @@ ADMIN_ROLE_ID = "role-admin"
 _BOOTSTRAP_LOCK = 8_274_119
 
 
+def _reject_if_locked(user: User) -> None:
+    """423 when the account is already locked. A missing attribute (tests
+    that build a stand-in user) is not a lock."""
+    until = getattr(user, "locked_until", None)
+    if until is None or until <= utcnow():
+        return
+    retry_after = max(1, int((until - utcnow()).total_seconds()))
+    raise HTTPException(
+        status_code=status.HTTP_423_LOCKED,
+        detail="Account locked due to repeated failed login attempts",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 # Request/Response Models
 class BootstrapStatusResponse(BaseModel):
     """Whether the instance still needs its first account."""
@@ -88,6 +111,8 @@ class BootstrapRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
+    # Optional so a missing code is a 403 from the handler, not a 422.
+    setup_code: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -112,6 +137,18 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str
     new_password: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Signed-in user's own profile.
+
+    ``current_password`` is required when ``email`` names a different mailbox.
+    The password is a body field so it is not written to access logs.
+    """
+
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    current_password: Optional[str] = None
 
 
 class RefreshTokenRequest(BaseModel):
@@ -218,7 +255,7 @@ def bootstrap_status(session: UnitOfWorkSession):
 
 
 @router.post("/bootstrap", status_code=status.HTTP_201_CREATED)
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=bootstrap_rate_key)
 def bootstrap_admin(
     request: Request,
     payload: BootstrapRequest,
@@ -228,7 +265,8 @@ def bootstrap_admin(
 
     Unauthenticated by necessity — it is the only way to obtain the account
     every other user-creating path requires. It closes permanently as soon as
-    one user exists, so it is not a signup endpoint.
+    one user exists, so it is not a signup endpoint. The body must include the
+    setup code the API logs at startup while the user table is empty.
     """
     # Serialize bootstrap attempts. Without this two callers both read an empty
     # table and both create an admin; there is no row yet to lock instead. The
@@ -242,6 +280,14 @@ def bootstrap_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="An account already exists. Ask an administrator to create yours.",
+        )
+
+    # Inside the advisory lock, before any user row is written. The submitted
+    # value is not logged: a wrong guess must not land in the log stream.
+    if not setup_code_matches(payload.setup_code):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Setup code is missing or incorrect.",
         )
 
     try:
@@ -274,7 +320,7 @@ def bootstrap_admin(
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=login_rate_key)
 def login(
     request: Request,
     response: Response,
@@ -328,11 +374,25 @@ def login(
                 headers={"X-MFA-Required": "true"},
             )
 
+        # authenticate_user clears the lockout counter on this session before
+        # the code is checked. verify_mfa_code opens a savepoint, and
+        # SQLAlchemy flushes pending changes before that SAVEPOINT, so the
+        # cleared counter would lock the row until this request ends and the
+        # failure count on the other connection would wait out the request.
+        # Drop the pending reset first. Put it back only if the code is good.
+        pending_reset = user in session
+        if pending_reset:
+            session.expire(user)
         if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code",
             )
+        if pending_reset:
+            user.failed_login_count = 0
+            user.locked_until = None
+            user.last_login = utcnow()
+            user.login_count = (user.login_count or 0) + 1
 
     # Generate tokens
     _ua = request.headers.get("user-agent")
@@ -430,7 +490,7 @@ async def logout(
 
 
 @router.post("/refresh", response_model=LoginResponse)
-@limiter.limit("30/minute")
+@limiter.limit("30/minute", key_func=refresh_rate_key)
 async def refresh_token(
     request: Request,
     response: Response,
@@ -536,14 +596,39 @@ def get_current_user_info(
 
 
 def _apply_profile_update(
-    session: Session, user: User, full_name: Optional[str], email: Optional[str]
+    session: Session,
+    user: User,
+    full_name: Optional[str],
+    email: Optional[str],
+    current_password: Optional[str],
 ) -> tuple[bool, dict]:
-    """Apply a profile edit; return whether the email changed and the new payload."""
-    email_changed = False
-    if full_name:
-        user.full_name = full_name
+    """Apply a profile edit; return whether the email changed and the new payload.
 
-    if email:
+    The mailbox is checked before any column is written. A rejected email
+    change must not depend on the request transaction rolling the name back.
+    """
+    changing_email = bool(email) and email.casefold() != user.email.casefold()
+    if changing_email:
+        # Password reset is mailed to the address on the account, so a live
+        # session is not enough to point that address somewhere else.
+        # 400, not 401: the session is valid and a body field is wrong. A 401
+        # would make the web client refresh and retry, spending two rate-limit slots.
+        if not current_password or not AuthService.verify_password(
+            current_password, user.password_hash
+        ):
+            logger.warning(
+                "Rejected email change for %s: current password %s",
+                user.username,
+                "missing" if not current_password else "incorrect",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Current password is incorrect"
+                    if current_password
+                    else "Current password is required to change the email address"
+                ),
+            )
         existing = (
             session.query(User)
             .filter(User.email == email, User.user_id != user.user_id)
@@ -554,40 +639,56 @@ def _apply_profile_update(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already in use",
             )
+
+    if full_name:
+        user.full_name = full_name
+    if changing_email:
         user.email = email
         user.is_verified = False
-        email_changed = True
 
     # Flush so the read-back sees server defaults; the request's unit
     # of work commits.
     session.flush()
     session.refresh(user)
-    return email_changed, UserSchema.dump(user)
+    return changing_email, UserSchema.dump(user)
 
 
 @router.put("/me")
+@limiter.limit("5/minute", key_func=session_rate_key)
 async def update_current_user(
-    full_name: Optional[str] = None,
-    email: Optional[EmailStr] = None,
-    *,
+    request: Request,
+    body: ProfileUpdateRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
     """
-    Update current user profile.
+    Update the signed-in user's profile.
 
     Args:
-        full_name: New full name
-        email: New email
+        request: FastAPI request (used by the rate limiter).
+        body: New name, email, and — when the email changes — current password.
         current_user: Current authenticated user
         session: Database session
 
     Returns:
         Updated user information
     """
+    # The old shape took these as query parameters. A password must not travel
+    # in the URL, and a query-string email would skip the body check below.
+    if "email" in request.query_params or "full_name" in request.query_params:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Send profile fields in the JSON body",
+        )
+
     try:
         email_changed, payload = await asyncio.to_thread(
-            _apply_profile_update, session, current_user, full_name, email
+            _apply_profile_update,
+            session,
+            current_user,
+            body.full_name,
+            body.email,
+            body.current_password,
         )
 
         if email_changed:
@@ -614,7 +715,7 @@ async def update_current_user(
 
 
 @router.post("/change-password")
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=session_rate_key)
 async def change_password(
     request: Request,
     response: Response,
@@ -731,7 +832,7 @@ def setup_mfa(
 
 
 @router.post("/mfa/verify", response_model=RecoveryCodesResponse)
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=session_rate_key)
 def verify_mfa(
     request: Request,
     body: MFAVerifyRequest,
@@ -750,6 +851,7 @@ def verify_mfa(
     Returns:
         Success message and one-time recovery codes (shown only once).
     """
+    _reject_if_locked(current_user)
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
@@ -763,7 +865,7 @@ def verify_mfa(
 
 
 @router.post("/mfa/recovery-codes", response_model=RecoveryCodesResponse)
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=session_rate_key)
 def regenerate_recovery_codes(
     request: Request,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -787,7 +889,7 @@ def regenerate_recovery_codes(
 
 
 @router.delete("/mfa")
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=session_rate_key)
 def disable_mfa(
     request: Request,
     body: MFAVerifyRequest,
@@ -806,6 +908,7 @@ def disable_mfa(
     Returns:
         Success message
     """
+    _reject_if_locked(current_user)
     if not AuthService.disable_mfa(current_user.user_id, body.code, session):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -821,7 +924,7 @@ def disable_mfa(
 
 
 @router.post("/password-reset/request")
-@limiter.limit("3/hour")
+@limiter.limit("3/hour", key_func=reset_request_rate_key)
 def password_reset_request(
     request: Request,
     body: PasswordResetRequest,
@@ -886,7 +989,7 @@ def _reset_request_message(settings) -> str:
 
 
 @router.post("/password-reset/confirm")
-@limiter.limit("5/hour")
+@limiter.limit("5/hour", key_func=reset_confirm_rate_key)
 async def password_reset_confirm(
     request: Request,
     body: PasswordResetConfirm,

@@ -33,8 +33,13 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.auth.bootstrap_code import announce_setup_code
 from core.auth.token_blacklist import warn_if_redis_evicts
-from core.platform.monitoring import get_metrics_response, init_sentry
+from core.platform.monitoring import (
+    get_metrics_response,
+    init_sentry,
+    require_metrics_token,
+)
 from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
@@ -657,6 +662,10 @@ async def _startup(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during storage initialization: {e}")
 
+    # After the database is up. Query failure logs a warning and no code;
+    # startup continues, and POST /api/auth/bootstrap still requires the code.
+    announce_setup_code()
+
     if _testing:
         logger.info(
             "TESTING=true — skipping external startup connections "
@@ -720,8 +729,13 @@ async def _shutdown(app: FastAPI):
         logger.warning("Telemetry shutdown error (non-fatal): %s", e)
 
 
-# Prometheus metrics endpoint
-@app.get("/metrics", include_in_schema=False)
+# Prometheus text. A static bearer (see require_metrics_token), not a user
+# session: those expire, and DEV_MODE would skip them.
+@app.get(
+    "/metrics",
+    include_in_schema=False,
+    dependencies=[Depends(require_metrics_token)],
+)
 async def metrics():
     """Expose Prometheus metrics for scraping."""
     return get_metrics_response()

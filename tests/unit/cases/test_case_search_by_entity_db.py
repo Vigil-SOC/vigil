@@ -27,7 +27,6 @@ def _seed():
                     "finding_id": f"{PREFIX}f-host",
                     "data_source": "zeek",
                     "severity": "high",
-                    "status": "new",
                     "timestamp": now,
                     "entity_context": {
                         "hostnames": ["FIN-WS-114"],
@@ -38,7 +37,6 @@ def _seed():
                     "finding_id": f"{PREFIX}f-other",
                     "data_source": "zeek",
                     "severity": "low",
-                    "status": "new",
                     "timestamp": now,
                     "entity_context": {"hostnames": ["HR-LAP-02"]},
                 },

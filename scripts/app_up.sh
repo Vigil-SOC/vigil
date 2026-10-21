@@ -124,4 +124,14 @@ else
 fi
 
 echo "URL http://${health_host}:6987"
+# uvicorn writes logs/backend.log, not this script's stderr, and the desktop
+# splash only relays stderr (clients/desktop/src/main.ts runScript). Repeat the
+# API's own line — the mark matches SETUP_CODE_LOG_MARK in
+# core/auth/bootstrap_code.py. Absent once an account exists.
+if [ -f "$REPO_ROOT/logs/backend.log" ]; then
+    setup_line=$(grep -F "First-run setup code:" "$REPO_ROOT/logs/backend.log" | tail -n 1 || true)
+    if [ -n "$setup_line" ]; then
+        echo "$setup_line" >&2
+    fi
+fi
 step up done

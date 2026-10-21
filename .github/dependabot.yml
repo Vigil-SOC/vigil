@@ -31,7 +31,7 @@ updates:
       - "area:infrastructure"
 
   - package-ecosystem: npm
-    directory: /ai
+    directory: /services/agent
     schedule:
       interval: weekly
       day: monday
@@ -52,7 +52,7 @@ updates:
       - "area:agents"
 
   - package-ecosystem: npm
-    directory: /frontend
+    directory: /clients/web
     schedule:
       interval: weekly
       day: monday
@@ -66,7 +66,7 @@ updates:
       - "area:frontend"
 
   - package-ecosystem: npm
-    directory: /desktop
+    directory: /clients/desktop
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
@@ -90,9 +90,65 @@ updates:
       - "area:infrastructure"
 
   - package-ecosystem: docker
-    directory: /docker
+    directory: /infra/docker
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
     labels:
+      - "area:infrastructure"
+
+  - package-ecosystem: npm
+    directory: /infra/docker/mcp-packages
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      mcp-packages-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "type:tech-debt"
+      - "area:infrastructure"
+
+  - package-ecosystem: uv
+    directory: /services/medic
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      medic-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "type:tech-debt"
+      - "area:infrastructure"
+
+  - package-ecosystem: uv
+    directory: /services/medic_gateway
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      medic-gateway-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "type:tech-debt"
+      - "area:infrastructure"
+
+  - package-ecosystem: uv
+    directory: /services/medic_dockerproxy
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      medic-dockerproxy-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "type:tech-debt"
       - "area:infrastructure"

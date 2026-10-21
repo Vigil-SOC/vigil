@@ -119,6 +119,58 @@ def _auth_deps():
     return {get_current_active_user, get_current_user}
 
 
+def _collect_routes(app) -> list:
+    """Every route object, including ones outside ``/api/``.
+
+    ``/metrics`` is the only non-``/api/`` path this file inspects. Walking
+    the rest (``/docs``, ``/mcp``, ``/internal``) is a separate decision.
+    """
+    found = []
+
+    def visit(obj) -> None:
+        if type(obj).__name__ == "_IncludedRouter":
+            for candidate in obj.effective_candidates():
+                visit(candidate)
+            return
+        if isinstance(getattr(obj, "path", None), str):
+            found.append(obj)
+
+    for route in app.routes:
+        visit(route)
+    return found
+
+
+def _dependency_calls(dependant):
+    """Every ``call`` on ``dependant`` and the dependencies mounted above it."""
+    if dependant is None:
+        return
+    if dependant.call is not None:
+        yield dependant.call
+    for dep in dependant.dependencies:
+        yield from _dependency_calls(dep)
+
+
+def test_metrics_route_requires_the_scrape_bearer():
+    """``GET /metrics`` is not a public path and not a user session.
+
+    The scrape bearer is its own dependency, so this inventory sees it
+    without treating every non-``/api/`` route as in scope. Matched by
+    module and name: ``test_monitoring`` reloads ``core.platform.monitoring``
+    after the app has bound the function it imported, so identity fails
+    once that test has already run.
+    """
+    from services.api.main import PUBLIC_API_PATHS, app
+
+    assert "/metrics" not in PUBLIC_API_PATHS
+    routes = [r for r in _collect_routes(app) if r.path == "/metrics"]
+    assert len(routes) == 1
+    assert any(
+        getattr(call, "__module__", None) == "core.platform.monitoring"
+        and getattr(call, "__name__", None) == "require_metrics_token"
+        for call in _dependency_calls(routes[0].dependant)
+    )
+
+
 def test_every_api_route_requires_auth_or_is_explicitly_public():
     # Import lazily so a broken main.py shows as a test failure rather
     # than a collection error.

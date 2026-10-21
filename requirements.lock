@@ -296,7 +296,7 @@ pydantic-settings==2.15.0
     # via -r requirements.txt
 pygments==2.21.0
     # via pytest
-pyjwt==2.13.0
+pyjwt==2.15.1
     # via
     #   -r requirements.txt
     #   mcp
@@ -444,7 +444,7 @@ urllib3==2.8.0
     #   botocore
     #   requests
     #   sentry-sdk
-uv==0.12.23
+uv==0.13.4
     # via -r requirements.txt
 uvicorn==0.54.0
     # via

@@ -106,7 +106,9 @@ export default function UsersSection({ notify }: SectionProps) {
   const validate = (): string | null => {
     if (!editing) {
       if (!form.username.trim()) return 'Username is required'
-      if (!form.password || form.password.length < 8) return 'Password must be at least 8 characters'
+      // Length and strength are the server's policy. A copy of those numbers
+      // here would drift from a deployment's AUTH_MIN_PASSWORD_LENGTH.
+      if (!form.password) return 'Enter a password.'
     }
     if (!form.full_name.trim()) return 'Full name is required'
     if (!form.email.trim()) return 'Email is required'
@@ -288,7 +290,7 @@ export default function UsersSection({ notify }: SectionProps) {
             />
           </Field>
           {!editing && (
-            <Field label="Password" hint="Minimum 8 characters.">
+            <Field label="Password" hint="At least 12 characters. A few unrelated words make a strong one.">
               <TextInput
                 type="password"
                 value={form.password}

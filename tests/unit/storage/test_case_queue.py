@@ -403,7 +403,7 @@ def test_row_reads_the_latest_investigation_and_the_strip(session):
         max_cost=5.0,
         iterations=7,
     )
-    session.add(Finding(finding_id="f-1", data_source="splunk", status="new"))
+    session.add(Finding(finding_id="f-1", data_source="splunk"))
     session.flush()
     case.findings = session.query(Finding).all()
     session.add_all(

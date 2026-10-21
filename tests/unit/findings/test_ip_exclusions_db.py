@@ -44,7 +44,6 @@ def _seed(**findings):
             data_source="loglm",
             entity_context=context,
             severity="high",
-            status="new",
             timestamp=utcnow(),
             anomaly_score=0.9,
         )
@@ -135,13 +134,15 @@ def test_removal_restores_findings_unchanged():
     _standard_findings()
     row = _exclude()
     before = {
-        f.finding_id: (f.severity, f.status) for f in DatabaseService().get_findings()
+        f.finding_id: (f.severity, f.noise_marked_at)
+        for f in DatabaseService().get_findings()
     }
     with unit_of_work() as session:
         ex.remove_exclusion(session, row["exclusion_id"], removed_by="analyst-2")
     assert _ids("hide") == _ids("include")
     after = {
-        f.finding_id: (f.severity, f.status) for f in DatabaseService().get_findings()
+        f.finding_id: (f.severity, f.noise_marked_at)
+        for f in DatabaseService().get_findings()
     }
     assert after == before
 
@@ -247,6 +248,41 @@ def test_loglm_ingest_still_stores_findings_for_an_excluded_address():
     assert stored.anomaly_score == pytest.approx(0.97)
     assert "ipx-loglm-1" in _ids("only")
     assert "ipx-loglm-1" not in _ids("hide")
+
+
+def test_the_backfill_sweep_skips_excluded_findings_but_not_probes():
+    _standard_findings()
+    DatabaseService().create_finding(
+        finding_id="ipx-probe",
+        mitre_predictions={},
+        data_source="probe",
+        entity_context={"src_ips": [SCANNER]},
+        severity="high",
+        status="new",
+        timestamp=utcnow(),
+        anomaly_score=0.0,
+    )
+
+    def missing(view):
+        return {
+            f["finding_id"]
+            for f in DatabaseService().get_findings_missing_enrichment(
+                limit=100000, exclusions=view
+            )
+            if f["finding_id"].startswith("ipx-")
+        }
+
+    row = _exclude()
+    assert missing("hide") == {
+        "ipx-other",
+        "ipx-nocontext",
+        "ipx-evidence-only",
+        "ipx-probe",
+    }
+    assert len(missing("include")) == 6
+    with unit_of_work() as session:
+        ex.remove_exclusion(session, row["exclusion_id"], removed_by="analyst-2")
+    assert missing("hide") == missing("include")
 
 
 # --- HTTP ----------------------------------------------------------------------

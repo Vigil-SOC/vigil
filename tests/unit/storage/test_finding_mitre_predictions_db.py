@@ -32,7 +32,6 @@ def _create(service: DatabaseService, finding_id: str, predictions: dict, **kwar
         timestamp=kwargs.get("timestamp", utcnow()),
         data_source=kwargs.get("data_source", "test"),
         severity=kwargs.get("severity", "high"),
-        status=kwargs.get("status", "new"),
     )
 
 

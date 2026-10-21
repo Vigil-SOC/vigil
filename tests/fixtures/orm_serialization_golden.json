@@ -315,7 +315,6 @@
           "finding_id": "finding_id-value",
           "mitre_predictions": {},
           "severity": "severity-value",
-          "status": "status-value",
           "timestamp": "2024-03-14T15:09:26.535000+00:00",
           "title": "title-value",
           "updated_at": "2024-03-14T15:09:26.535000+00:00"
@@ -1165,7 +1164,6 @@
       "finding_id": "finding_id-value",
       "mitre_predictions": {},
       "severity": "severity-value",
-      "status": "status-value",
       "timestamp": "2024-03-14T15:09:26.535000+00:00",
       "title": "title-value",
       "updated_at": "2024-03-14T15:09:26.535000+00:00"
@@ -1183,7 +1181,6 @@
       "finding_id": null,
       "mitre_predictions": {},
       "severity": null,
-      "status": null,
       "timestamp": null,
       "title": null,
       "updated_at": null

@@ -293,7 +293,7 @@ class DatabaseService:
             anomaly_score: Anomaly score (0-1), or None when the source omitted it
             timestamp: Finding timestamp, or None when the source omitted it
             data_source: Data source type
-            **kwargs: Additional fields (title, entity_context, evidence_links, cluster_id, severity, status)
+            **kwargs: Additional fields (title, entity_context, evidence_links, cluster_id, severity)
 
         Returns:
             Created Finding object or None if failed
@@ -311,7 +311,6 @@ class DatabaseService:
                 evidence_links=kwargs.get("evidence_links"),
                 cluster_id=kwargs.get("cluster_id"),
                 severity=kwargs.get("severity"),
-                status=kwargs.get("status", "new"),
             )
             _set_mitre_prediction_rows(finding, mitre_predictions)
             session.add(finding)
@@ -455,7 +454,6 @@ class DatabaseService:
                     evidence_links=r.get("evidence_links"),
                     cluster_id=r.get("cluster_id"),
                     severity=r.get("severity"),
-                    status=r.get("status", "new"),
                 )
                 _set_mitre_prediction_rows(finding, r.get("mitre_predictions") or {})
                 session.add(finding)
@@ -596,7 +594,10 @@ class DatabaseService:
 
     @default_on_error(list)
     def get_findings_missing_enrichment(
-        self, limit: int = 100, max_age_hours: Optional[int] = None
+        self,
+        limit: int = 100,
+        max_age_hours: Optional[int] = None,
+        exclusions: str = "include",
     ) -> List[Dict[str, Any]]:
         """Findings the daemon never triaged — ai_enrichment NULL, or holding
         only an on-demand analysis (none of ai_triage, ai_triage_error,
@@ -606,7 +607,9 @@ class DatabaseService:
         detached-safe data. ``max_age_hours`` bounds the working set by
         ``created_at`` (when Vigil stored the row), not the event ``timestamp``,
         so replayed or undated findings still get triaged (#2320) while
-        un-enrichable ones aren't retried forever."""
+        un-enrichable ones aren't retried forever. ``exclusions`` is an
+        :data:`EXCLUSION_VIEWS` value; ``hide`` still returns known-answer
+        probes (#923), which are triaged whatever addresses they name."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
@@ -627,6 +630,12 @@ class DatabaseService:
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
                 query = query.where(Finding.created_at >= cutoff)
+            exclusion_filter = exclusion_view_filter(exclusions)
+            if exclusion_filter is not None:
+                # services.daemon.probes.PROBE_DATA_SOURCE; storage can't import it.
+                query = query.where(
+                    or_(Finding.data_source == "probe", exclusion_filter)
+                )
             query = query.order_by(Finding.created_at.asc()).limit(limit)
             return FindingSchema.dump_many(session.execute(query).scalars().all())
 
@@ -784,7 +793,7 @@ class DatabaseService:
         AI analysis owns the rest. Merges against the row locked ``FOR UPDATE``,
         not the caller's (possibly stale) copy, so a concurrent triage and
         Generate don't lose each other's write. ``updates`` are plain column
-        sets applied in the same transaction (the daemon's severity/status).
+        sets applied in the same transaction (the daemon's severity).
         """
         with self.db_manager.session_scope() as session:
             finding = session.execute(
