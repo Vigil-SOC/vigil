@@ -46,8 +46,10 @@ jobs:
             tar -xzf "$tgz" -C infra/helm/vigil/charts/
           done
 
+      # secrets.postgresPassword has no default, so every default-values
+      # render sets a test one.
       - name: helm lint (default values)
-        run: helm lint infra/helm/vigil
+        run: helm lint infra/helm/vigil --set secrets.postgresPassword=test-password
 
       - name: helm lint (dev values)
         run: helm lint infra/helm/vigil -f infra/helm/vigil/values-dev.yaml
@@ -56,7 +58,8 @@ jobs:
         run: |
           helm lint infra/helm/vigil \
             --set postgresql.enabled=false --set postgresql.bitnami.enabled=true \
-            --set redis.enabled=false --set redis.bitnami.enabled=true
+            --set redis.enabled=false --set redis.bitnami.enabled=true \
+            --set secrets.postgresPassword=test-password
 
       - name: helm template (default values)
         run: |
@@ -77,6 +80,7 @@ jobs:
         run: |
           helm template release-check infra/helm/vigil \
             --set secrets.anthropicApiKey=test-key \
+            --set secrets.postgresPassword=test-password \
             --set postgresql.enabled=false --set postgresql.bitnami.enabled=true \
             --set redis.enabled=false --set redis.bitnami.enabled=true \
             > /tmp/manifest-bitnami.yaml
