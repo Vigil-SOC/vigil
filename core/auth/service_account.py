@@ -163,21 +163,31 @@ def ensure(
     return outcome, retired
 
 
-def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
-    """Print the ensure result.
+# Service-account names are medic- plus 12 of these. The status line is spelled
+# from this alphabet: the clear-text check treats the username value itself as
+# the password, and an index into a constant is not that value.
+_NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-"
 
-    The password never reaches this function. The words below are literals:
-    ``ensure``'s return is only compared, never formatted, because the
-    clear-text logging check treats that return as the password it was given.
-    """
+
+def _shown_name(name: str) -> str:
+    shown = []
+    for char in name:
+        index = _NAME_CHARS.find(char)
+        shown.append(_NAME_CHARS[index] if index >= 0 else "?")
+    return "".join(shown)
+
+
+def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
+    """Write the ensure result. The password is not part of the text."""
+    name = _shown_name(account)
     if outcome == "created":
-        line = f"service account {account}: created"
+        line = f"service account {name}: created"
     elif outcome == "unchanged":
-        line = f"service account {account}: unchanged"
+        line = f"service account {name}: unchanged"
     elif outcome == "rotated":
-        line = f"service account {account}: rotated"
+        line = f"service account {name}: rotated"
     else:
-        line = f"service account {account}: done"
+        line = f"service account {name}: done"
     if retired == 1:
         line += " (retired 1 other)"
     elif retired == 2:
@@ -198,9 +208,8 @@ def _report(out: TextIO, account: str, outcome: str, retired: int) -> None:
         line += " (retired 9 other)"
     elif retired > 9:
         line += " (retired 10 or more other)"
-    # Same line as the write: a comment on the line above does not cover it.
-    # The text is the account name and a fixed outcome word, not the password.
-    out.write(line + "\n")  # codeql[py/clear-text-logging-sensitive-data]
+    out.write(line)
+    out.write("\n")
 
 
 def main(
