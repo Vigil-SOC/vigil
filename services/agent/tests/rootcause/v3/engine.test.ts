@@ -132,6 +132,27 @@ describe("runRootCauseV3", () => {
   }, 20_000);
 });
 
+describe("a run the pool cuts off mid-move", () => {
+  it("records budget-exhausted, not null, in the ledger, the report and the projection", async () => {
+    const state = new InProcessState<V3Kinds>();
+    // Framing, mapping and the choose turn fit; the move's own call is refused.
+    const spec = specOf({ budgets: { max_calls: 4, max_cost_usd: 10, max_wall_ms: 600_000, max_park_ms: 60_000 } });
+    const model = modelOf((request) => {
+      if (properties(request).includes("observed_at")) return { emit: framed() };
+      if (properties(request).includes("map")) return { emit: { map: "One source, edr.", reasoning: "mapped" } };
+      if (properties(request).includes("why")) return { emit: { move: "strengthen", target: "N1", why: "the alert is unconfirmed" } };
+      return { emit: { evidence: [], reasoning: "nothing found" } };
+    });
+    const done = await runRootCauseV3(harnessOf(spec, model, splunk(), state), { run_id: "r1", spec });
+    expect(done.status).toBe("budget_exhausted");
+    const events = await state.read("r1");
+    const exit = events.find((e) => e.kind === "rootcause_exit")!.payload as { exit: unknown; report: string };
+    expect(exit.exit).toBe("budget-exhausted");
+    expect(exit.report).toContain("exit **budget-exhausted**");
+    expect(rootCauseV3Projection("r1", events as never)).toMatchObject({ exit: "budget-exhausted", outcome: "budget_exhausted" });
+  }, 20_000);
+});
+
 describe("a resumed run", () => {
   it("continues at the turn after the last journaled one, with its setup, spend and calls as they were", async () => {
     const state = new InProcessState<V3Kinds>();

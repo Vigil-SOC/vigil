@@ -17,7 +17,9 @@ RECOVERY_CODE = "ABCD1234"
 
 def _session(user):
     session = MagicMock()
-    session.query.return_value.filter.return_value.first.return_value = user
+    query = session.query.return_value.filter.return_value
+    query.populate_existing.return_value.with_for_update.return_value = query
+    query.first.return_value = user
     return session
 
 
@@ -29,6 +31,7 @@ def _user(mfa_secret):
         mfa_secret=mfa_secret,
         mfa_enabled=True,
         mfa_recovery_codes=[hashed],
+        mfa_last_totp_step=None,
     )
 
 
