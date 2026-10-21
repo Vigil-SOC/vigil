@@ -148,6 +148,48 @@ describe("a move as a kernel turn", () => {
       expect((await u.client.runTurn(u.request({ submitTool: "submit_theories" }))).submission).toBeNull();
     });
 
+    describe("a key the schema does not know", () => {
+      const boundary = { targetDomain: "email", reason: "the mail gateway would record the sender", inDomainExhausted: true };
+      const emit = async (submission: unknown) => {
+        const t = setup((request) => (request.emit !== undefined ? { emit: submission } : { content: "done" }));
+        const out = await t.client.runTurn(t.request());
+        return { t, got: out.submission as { candidates: { label: string }[]; boundary?: unknown } | null, note: t.trace.chronological().find((e) => e.type === "rejected-submission")?.payload as Record<string, string> | undefined };
+      };
+
+      it("is removed from a candidate that is kept, and a boundary in it moves up to the top level", async () => {
+        const { got, note } = await emit({ candidates: [{ ...cand("phishing email delivered", []), boundary }, cand("also good", [])], reasoning: "r" });
+        expect(got!.candidates.map((c) => c.label)).toEqual(["phishing email delivered", "also good"]);
+        expect(got!.candidates[0]).not.toHaveProperty("boundary");
+        expect(got!.boundary).toEqual(boundary);
+        expect(note!["salvaged"]).toBe("kept the rest, dropped 0 item(s)");
+        expect(note!["repaired"]).toBe("stripped 1 unknown key(s), lifted boundary to the top level");
+      });
+
+      it("is dropped, not lifted, when the top level already has that field or the value does not fit it", async () => {
+        const top = { ...boundary, reason: "set at the top" };
+        const held = await emit({ candidates: [{ ...cand("kept", []), boundary }], boundary: top, reasoning: "r" });
+        expect(held.got!.candidates[0]).not.toHaveProperty("boundary");
+        expect(held.got!.boundary).toEqual(top);
+        const misfit = await emit({ candidates: [{ ...cand("kept", []), boundary: { targetDomain: "email" } }], reasoning: "r" });
+        expect(misfit.got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(misfit.got).not.toHaveProperty("boundary");
+      });
+
+      it("is removed from the candidate, whatever it is called, and from the submission itself", async () => {
+        const inner = await emit({ candidates: [{ ...cand("kept", []), notes: "x" }], reasoning: "r" });
+        expect(inner.got!.candidates).toEqual([cand("kept", [])]);
+        const root = await emit({ candidates: [cand("kept", [])], reasoning: "r", confidence: 0.9 });
+        expect(root.got).toEqual({ candidates: [cand("kept", [])], reasoning: "r" });
+      });
+
+      it("does not save a candidate with a real error: it is dropped, and what it carried is not lifted", async () => {
+        const { label: _, ...unlabelled } = cand("", []);
+        const { got } = await emit({ candidates: [{ ...unlabelled, boundary }, cand("kept", [])], reasoning: "r" });
+        expect(got!.candidates.map((c) => c.label)).toEqual(["kept"]);
+        expect(got).not.toHaveProperty("boundary");
+      });
+    });
+
     it("gets nothing from an emission that was not JSON", async () => {
       const t = setup((request) => (request.emit !== undefined ? { emit: "no json here" } : { content: "done" }));
       expect((await t.client.runTurn(t.request())).submission).toBeNull();
