@@ -72,11 +72,11 @@ function withoutTrailer(text: string, id: string): string {
  * "the alert · <title>", not "the alert alert · <title>". A repeat, named in words, keeps it.
  */
 function withoutKindWord(text: string, kind: string | undefined): string {
-  return kind ? text.replace(new RegExp(`\\b${kind}s?\\s*$`, 'i'), '') : text
+  return kind ? text.replace(new RegExp(`(?<![\\w.-])${kind}s?\\s*$`, 'i'), '') : text
 }
 
 /** "Zscaler (Zscaler)": a name of up to four words repeated in brackets right after itself reads once. */
-const SAID_TWICE = /\b([\w-]+(?: [\w-]+){0,3}) \(\1\)/g
+const SAID_TWICE = /(?<![\w.-])([\w-]+(?: [\w-]+){0,3}) \(\1\)/g
 
 /** Blocks that are read as one paragraph: an id is drawn as its chip once in each (#2459). */
 const PARAGRAPHS = new Set(['paragraph', 'heading', 'tableCell'])
