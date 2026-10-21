@@ -6,7 +6,7 @@
 # container then restarts onto the already-initialized data dir and reports
 # healthy. Some files here legitimately fail depending on when they run: the
 # data-only ones target tables the backend's create_all builds at startup. The
-# Helm db-init Job tolerates failures for the same reason.
+# Helm db-init Job does not: it leaves those files out and fails on any error.
 #
 # Runs twice, from two contexts, which is why it is one script:
 #   initdb   — creates extensions and the auth tables (with their DEFAULT

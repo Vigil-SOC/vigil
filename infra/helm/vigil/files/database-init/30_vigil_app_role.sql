@@ -6,10 +6,16 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vigil_app') THEN
     CREATE ROLE vigil_app NOSUPERUSER LOGIN;
   END IF;
+  -- Only a superuser may touch SUPERUSER, so a database owner with CREATEROLE
+  -- can apply this file unless the role actually needs that fixed.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vigil_app' AND rolsuper) THEN
+    ALTER ROLE vigil_app NOSUPERUSER;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vigil_app' AND NOT rolcanlogin) THEN
+    ALTER ROLE vigil_app LOGIN;
+  END IF;
 END
 $$;
-
-ALTER ROLE vigil_app NOSUPERUSER LOGIN;
 
 GRANT USAGE, CREATE ON SCHEMA public TO vigil_app;
 

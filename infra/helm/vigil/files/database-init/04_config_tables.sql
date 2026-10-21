@@ -215,16 +215,3 @@ ORDER BY timestamp DESC
 LIMIT 100;
 
 COMMENT ON VIEW recent_config_changes IS 'Most recent 100 configuration changes';
-
-
--- ============================================================================
--- Grant Permissions
--- ============================================================================
-GRANT SELECT, INSERT, UPDATE, DELETE ON system_config TO deeptempo;
-GRANT SELECT, INSERT, UPDATE, DELETE ON user_preferences TO deeptempo;
-GRANT SELECT, INSERT, UPDATE, DELETE ON integration_configs TO deeptempo;
-GRANT SELECT, INSERT ON config_audit_log TO deeptempo;
-GRANT USAGE, SELECT ON SEQUENCE config_audit_log_id_seq TO deeptempo;
-GRANT SELECT ON enabled_integrations TO deeptempo;
-GRANT SELECT ON recent_config_changes TO deeptempo;
-
