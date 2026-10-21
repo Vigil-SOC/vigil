@@ -930,6 +930,8 @@ observability:
     namespace: ""
     interval: 30s
     scrapeTimeout: 10s
+    # With networkPolicies.enabled, the daemon's metrics port admits pods in the
+    # release namespace only: a Prometheus running elsewhere cannot scrape it.
     # Extra labels applied to the ServiceMonitor — set these to match your
     # Prometheus instance's serviceMonitorSelector. Common pattern for
     # kube-prometheus-stack: release: kube-prometheus-stack
@@ -949,22 +951,16 @@ networkPolicies:
   # adjust if your controller runs elsewhere or lives in the same namespace.
   ingressControllerNamespaceSelector:
     kubernetes.io/metadata.name: ingress-nginx
+  # Node CIDRs admitted to the httpGet probe ports only: backend service port,
+  # daemon health, agent-worker 6990 and agent-serve. Leave empty on Calico or
+  # Cilium, which let node-sourced probes through; set it on a CNI that does not,
+  # or probes fail and the pods restart.
+  probeAllowFrom: []
   daemon:
-    # CIDRs allowed to POST to the daemon's webhook port. Empty list means
-    # cluster-internal only. Add your SIEM/EDR outbound IPs here to let them
-    # push findings.
+    # CIDRs allowed to POST to the daemon's webhook port. Empty list means pods
+    # in the release namespace only. Add your SIEM/EDR outbound IPs here to let
+    # them push findings.
     webhookAllowFrom: []
-  agentServe:
-    # agent-serve answers chat and run projections, and its probes ride the same
-    # port. Ingress rules are OR'd, so allowing probes from any namespace also
-    # opens that port to every pod in the cluster — leaving the bearer token as
-    # the only gate (ADR 0014).
-    #
-    # True by default because a kubelet probe comes from the node, not a pod, and
-    # whether a CNI lets that past a pod-selector rule varies; a probe blocked by
-    # policy takes the Deployment down. Set false on Calico or Cilium, which
-    # permit node-sourced health checks — then only the backend can reach it.
-    allowProbesFromAnyNamespace: true
 
 # -----------------------------------------------------------------------------
 # Medic — the install's own ops-health watcher (System Watcher). Off by default.

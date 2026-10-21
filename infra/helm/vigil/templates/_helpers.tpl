@@ -400,3 +400,21 @@ Is an external Redis URL stored in a secret?
 true
 {{- end -}}
 {{- end -}}
+
+{{/*
+NetworkPolicy ingress rule admitting networkPolicies.probeAllowFrom (node CIDRs)
+to one httpGet probe port. Renders nothing when the list is empty.
+Usage: include "vigil.networkPolicy.probeRule" (dict "context" . "port" 8080)
+*/}}
+{{- define "vigil.networkPolicy.probeRule" -}}
+{{- with .context.Values.networkPolicies.probeAllowFrom -}}
+- from:
+    {{- range . }}
+    - ipBlock:
+        cidr: {{ . | quote }}
+    {{- end }}
+  ports:
+    - protocol: TCP
+      port: {{ $.port }}
+{{- end }}
+{{- end }}
