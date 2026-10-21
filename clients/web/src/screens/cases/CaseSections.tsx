@@ -122,7 +122,7 @@ function AddBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
 }
 
 export const inputCls =
-  'bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-none focus:border-accent-line w-full'
+  'bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full'
 
 export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; title?: string }) {
   const { data, phase, reload } = useResource<Schema<'CaseEvidenceSchema'>[]>(caseId, () =>
