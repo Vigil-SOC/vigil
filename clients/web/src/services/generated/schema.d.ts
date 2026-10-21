@@ -946,16 +946,11 @@ export interface paths {
         get: operations["get_api_auth_me"];
         /**
          * Update Current User
-         * @description Update current user profile.
+         * @description Update the current user's profile.
          *
-         *     Args:
-         *         full_name: New full name
-         *         email: New email
-         *         current_user: Current authenticated user
-         *         session: Database session
-         *
-         *     Returns:
-         *         Updated user information
+         *     Changing the email requires the current password, and a current MFA code
+         *     when MFA is enabled. ``full_name`` and ``email`` are accepted as query
+         *     parameters or in the body; the password and MFA code are body fields.
          */
         put: operations["put_api_auth_me"];
         post?: never;
@@ -10137,6 +10132,21 @@ export interface components {
             /** Priority */
             priority: string;
         };
+        /**
+         * ProfileUpdateRequest
+         * @description Profile edit. The password and MFA code are body fields so they never
+         *     land in a query string or an access log.
+         */
+        ProfileUpdateRequest: {
+            /** Current Password */
+            current_password?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Full Name */
+            full_name?: string | null;
+            /** Mfa Code */
+            mfa_code?: string | null;
+        };
         /** ProgressUpdate */
         ProgressUpdate: {
             /** Iteration */
@@ -13018,7 +13028,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

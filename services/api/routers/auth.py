@@ -9,7 +9,16 @@ import logging
 from datetime import datetime
 from typing import Annotated, List, NoReturn, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -143,6 +152,16 @@ class MFAVerifyRequest(BaseModel):
     """MFA verification request."""
 
     code: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Profile edit. The password and MFA code are body fields so they never
+    land in a query string or an access log."""
+
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    current_password: Optional[str] = None
+    mfa_code: Optional[str] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -569,6 +588,54 @@ def _refuse_while_locked(user: User) -> None:
         raise _lockout_http(locked_until)
 
 
+def _email_is_changing(user: User, email: Optional[str]) -> bool:
+    if not email:
+        return False
+    return email.casefold() != (user.email or "").casefold()
+
+
+async def _require_email_reauth(
+    session: Session,
+    user: User,
+    password: Optional[str],
+    mfa_code: Optional[str],
+) -> None:
+    """A new address becomes the password-reset destination, so it needs the
+    same proof as a password change: the current password, and a current
+    MFA code when MFA is on.
+
+    The password check is the only part that runs off the event loop. The
+    MFA check uses the request session, which is not safe to share with a
+    worker thread.
+    """
+    password_ok = bool(password) and await asyncio.to_thread(
+        AuthService.verify_password, password, user.password_hash
+    )
+    if not password_ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Current password is incorrect"
+                if password
+                else "Current password is required to change email"
+            ),
+        )
+    if not user.mfa_enabled:
+        return
+    _refuse_while_locked(user)
+    if not mfa_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="MFA code required"
+        )
+    if not AuthService.verify_mfa_code(user.user_id, mfa_code, session):
+        _failed_mfa(
+            session,
+            user,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid MFA code",
+        )
+
+
 def _apply_profile_update(
     session: Session, user: User, full_name: Optional[str], email: Optional[str]
 ) -> tuple[bool, dict]:
@@ -600,25 +667,38 @@ def _apply_profile_update(
 
 
 @router.put("/me")
+@limiter.limit("5/minute")
 async def update_current_user(
+    request: Request,
     full_name: Optional[str] = None,
     email: Optional[EmailStr] = None,
+    body: Annotated[Optional[ProfileUpdateRequest], Body()] = None,
     *,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
     """
-    Update current user profile.
+    Update the current user's profile.
 
-    Args:
-        full_name: New full name
-        email: New email
-        current_user: Current authenticated user
-        session: Database session
-
-    Returns:
-        Updated user information
+    Changing the email requires the current password, and a current MFA code
+    when MFA is enabled. ``full_name`` and ``email`` are accepted as query
+    parameters or in the body; the password and MFA code are body fields.
     """
+    body = body or ProfileUpdateRequest()
+    if body.full_name is not None:
+        full_name = body.full_name
+    if body.email is not None:
+        email = body.email
+
+    # A case-only repeat is not a change: don't demand the password and
+    # don't clear verification for an address the account already has.
+    if not _email_is_changing(current_user, email):
+        email = None
+    else:
+        await _require_email_reauth(
+            session, current_user, body.current_password, body.mfa_code
+        )
+
     try:
         email_changed, payload = await asyncio.to_thread(
             _apply_profile_update, session, current_user, full_name, email
