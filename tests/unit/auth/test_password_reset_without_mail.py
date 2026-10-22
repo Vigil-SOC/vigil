@@ -90,12 +90,6 @@ def test_reply_names_the_backend_not_the_account(backend, dev_mode, expect):
     assert known == unknown
 
 
-def _mailed_url(frontend_url):
-    _, send = _request(ADMIN, _settings(frontend_url=frontend_url))
-    body = send.call_args.kwargs["body"]
-    return urlparse(next(w for w in body.split() if w.startswith("http")))
-
-
 @pytest.mark.parametrize(
     "frontend_url,origin",
     [
@@ -104,7 +98,9 @@ def _mailed_url(frontend_url):
     ],
 )
 def test_mail_links_to_the_reset_screen(frontend_url, origin):
-    url = _mailed_url(frontend_url)
+    _, send = _request(ADMIN, _settings(frontend_url=frontend_url))
+    body = send.call_args.kwargs["body"]
+    url = urlparse(next(w for w in body.split() if w.startswith("http")))
     assert (url.scheme, url.hostname) == origin
     assert url.path == "/vigil/reset-password"
     token = parse_qs(url.query)["token"][0]

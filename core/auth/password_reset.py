@@ -69,8 +69,6 @@ def default_base_url(settings) -> str:
     Never derived from the request, whose Host header the client controls."""
     if settings.vigil_frontend_url:
         return settings.vigil_frontend_url
-    # start.sh serves the console on 6988; in the compose image the backend
-    # serves it itself on 6987.
     port = 6987 if os.path.exists("/.dockerenv") else 6988
     return f"http://localhost:{port}{settings.vigil_context_path.rstrip('/')}"
 
