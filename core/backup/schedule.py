@@ -31,7 +31,7 @@ from core.backup.create import (
     create_snapshot,
 )
 from core.backup.status import STATUS_FILENAME
-from core.config import vigil_path
+from core.config import get_settings, vigil_path
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,7 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
             extra_env=extra,
         )
         _forget(dest, path, extra)
+        forget_pre_upgrade(dest.repo, path, extra, _upgrade_dir())
         _write_status(dest.name, snapshot_id)
 
 
@@ -299,12 +300,22 @@ def _parse_time(value: object) -> datetime | None:
     return parsed
 
 
+def _upgrade_dir() -> Path | None:
+    raw = (get_settings().vigil_upgrade_dir or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
 def _forget(
     dest: Destination, passphrase: Path, extra: Mapping[str, str] | None = None
 ) -> None:
     # ``s3:`` / ``gs:`` / ``azure:`` keep whatever the bucket's rules keep.
     if _local_repo(dest.repo) is None:
         return
+    # pre-upgrade is not in this tag list. Its retention is forget_pre_upgrade,
+    # a separate restic invocation: always keep the newest, and drop an older
+    # one only after a later upgrade has been applied.
     # Default grouping is host,paths. Staging paths change every run, so
     # that would keep every snapshot. ``--tag`` twice is OR; one
     # ``--tag manual,scheduled`` would require both and skip these.
@@ -330,6 +341,100 @@ def _forget(
     )
     if proc.returncode != 0:
         raise BackupError(f"restic forget failed: {_output(proc)}")
+
+
+@dataclass(frozen=True)
+class _Tagged:
+    snapshot_id: str
+    taken_at: datetime
+
+
+def forget_pre_upgrade(
+    repo: str,
+    passphrase: Path,
+    extra: Mapping[str, str] | None,
+    upgrade_dir: Path | None,
+) -> None:
+    """Drop older pre-upgrade snapshots once a later upgrade has been applied.
+
+    The newest pre-upgrade snapshot is always kept. An older one goes only
+    when ``history.jsonl`` has an ``applied`` line newer than that snapshot.
+    Remote repositories are left to their bucket rules, same as ``_forget``.
+    """
+    local = _local_repo(repo)
+    if local is None or not (local / "config").is_file():
+        return
+    snaps = _tagged(repo, passphrase, extra, "pre-upgrade")
+    if len(snaps) < 2:
+        return
+    newest = max(snap.taken_at for snap in snaps)
+    applied = _applied_times(upgrade_dir)
+    drop = [
+        snap.snapshot_id
+        for snap in snaps
+        if snap.taken_at < newest and any(when > snap.taken_at for when in applied)
+    ]
+    if not drop:
+        return
+    proc = _run(
+        _priority_prefix() + ["restic", "-r", repo, "forget", "--prune", *drop],
+        env=_restic_env(passphrase, extra),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise BackupError(f"restic forget failed: {_output(proc)}")
+
+
+def _tagged(
+    repo: str,
+    passphrase: Path,
+    extra: Mapping[str, str] | None,
+    tag: str,
+) -> list[_Tagged]:
+    proc = _run(
+        _priority_prefix()
+        + ["restic", "-r", repo, "snapshots", "--json", "--tag", tag],
+        env=_restic_env(passphrase, extra),
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    found: list[_Tagged] = []
+    for snap in payload:
+        if not isinstance(snap, dict):
+            continue
+        snapshot_id = snap.get("id")
+        taken_at = _parse_time(snap.get("time"))
+        if isinstance(snapshot_id, str) and snapshot_id and taken_at is not None:
+            found.append(_Tagged(snapshot_id, taken_at))
+    return found
+
+
+def _applied_times(upgrade_dir: Path | None) -> list[datetime]:
+    if upgrade_dir is None:
+        return []
+    try:
+        lines = (upgrade_dir / "history.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    found: list[datetime] = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("outcome") != "applied":
+            continue
+        parsed = _parse_time(entry.get("time"))
+        if parsed is not None:
+            found.append(parsed)
+    return found
 
 
 def _write_status(destination: str, snapshot_id: str) -> None:

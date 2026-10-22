@@ -120,6 +120,7 @@ services:
       - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:?set by the desktop app}
       # core/config.py defaults to localhost:6989, which is nothing here.
       - AGENT_URL=http://agent-serve:6989
+      - VIGIL_UPGRADE_DIR=/var/lib/vigil-upgrade
     ports:
       - "127.0.0.1:6987:6987"
     volumes:
@@ -128,6 +129,7 @@ services:
       # named volume inherits that; a volume from before #701 does not, and has
       # to be recreated.
       - vigil_home:/home/vigil/.vigil
+      - upgrade_state:/var/lib/vigil-upgrade
       # Detection rule repositories, fetched from Settings. Pre-created by the
       # image like the State Directory, and kept out of it.
       - detection_rules:/home/vigil/security-detections
@@ -229,6 +231,7 @@ volumes:
   vigil_home:
   detection_rules:
   bifrost_data:
+  upgrade_state:
 
 networks:
   vigil:

@@ -83,8 +83,12 @@ def create_snapshot(
     tags: tuple[str, ...] = (),
     extra_env: Mapping[str, str] | None = None,
     version: str | None = None,
+    taken_by: str | None = None,
 ) -> str:
-    """``version`` is what the manifest records; default is the running code's."""
+    """``version`` is what the manifest records; default is the running code's.
+
+    ``taken_by`` is this image, set only for a pre-upgrade point.
+    """
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
         raise BackupError(f"passphrase file not found: {passphrase_file}")
@@ -112,7 +116,7 @@ def create_snapshot(
                 snap_conn.close()
             locations = _locations(staging, bifrost_data)
             manifest_path = staging / "manifest.json"
-            _write_manifest(manifest_path, locations, counts, kind, version)
+            _write_manifest(manifest_path, locations, counts, kind, version, taken_by)
             paths = [str(manifest_path)]
             paths.extend(loc.path for loc in locations if loc.path)
             snap = _restic_backup(repo, passphrase, paths, priority, tags, extra_env)
@@ -440,14 +444,19 @@ def _write_manifest(
     counts: dict[str, int],
     kind: str,
     version: str | None = None,
+    taken_by: str | None = None,
 ) -> None:
     payload = {
-        "version": version or __version__,
+        # None means "the running code". An explicit string is the database
+        # release, including when that string is not this image's version.
+        "version": __version__ if version is None else version,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "kind": kind,
         "locations": [loc.as_dict() for loc in locations],
         "tables": counts,
     }
+    if taken_by is not None:
+        payload["taken_by"] = taken_by
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

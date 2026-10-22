@@ -82,6 +82,7 @@ def test_backup_mounts_state_workdirs_and_owner_user() -> None:
     assert mounts.get(STATE_DIR) == "vigil_home"
     assert mounts.get(INVESTIGATIONS_DIR) == "vigil_investigations"
     assert mounts.get(BIFROST_DIR) == "bifrost_data"
+    assert mounts.get("/var/lib/vigil-upgrade") == "upgrade_state"
     postgres_user = _env(services["postgres"])["POSTGRES_USER"]
     backup_env = _env(backup)
     assert backup_env["POSTGRES_USER"] == postgres_user
@@ -91,6 +92,10 @@ def test_backup_mounts_state_workdirs_and_owner_user() -> None:
     )
     assert backup_env["POSTGRES_DB"] == _env(services["postgres"])["POSTGRES_DB"]
     assert backup_env["HOME"] == "/home/vigil"
+    assert backup_env["VIGIL_UPGRADE_DIR"] == "/var/lib/vigil-upgrade"
+    assert "VIGIL_UPGRADE_ACK_VERSION" in backup_env
+    assert "VIGIL_UPGRADE_ACK_REASON" in backup_env
+    assert "VIGIL_SKIP_PREUPGRADE_BACKUP" not in backup_env
     assert "deeptempo-network" in (backup.get("networks") or [])
     assert backup.get("restart") == "unless-stopped"
     assert (backup.get("healthcheck") or {}).get("disable") is True
@@ -141,7 +146,12 @@ def test_start_sh_backs_up_before_schema_init_and_shutdown_stops_the_loop() -> N
     init = text.index("python3 scripts/init_schema.py")
     loop = text.index("\nstart_backup_loop\n")
     assert pre < init < loop
-    assert '--target-version "$VERSION"' in text
+    assert "VIGIL_SKIP_PREUPGRADE_BACKUP" not in text
+    assert "--target-version" not in text
+    pre_fn = text.split("backup_pre_upgrade()", 1)[1].split("\nstart_backup_loop", 1)[0]
+    assert '[ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0' not in pre_fn
+    assert ".vigil-upgrade" in text
+    assert "VIGIL_UPGRADE_HOST_DIR" in text
     assert "backup-pre-upgrade" in text
     shutdown = (REPO / "shutdown_all.sh").read_text(encoding="utf-8")
     loop_name = "vigil-backup-loop"

@@ -146,6 +146,12 @@ def _create_database(name: str, *, ledger: bool) -> None:
     owner.dispose()
 
 
+def _create_orm(name: str) -> None:
+    engine = create_engine(_url(name))
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+
 def _child_env(
     root: Path, database: str, *, state: Path, workdir: Path, skills: Path, intent: Path
 ) -> dict[str, str]:
@@ -307,6 +313,9 @@ def test_round_trip_serves_restored_database(scratch_databases, tmp_path: Path):
     bifrost.mkdir()
     (bifrost / "note.txt").write_text("hello-bifrost", encoding="utf-8")
     _create_database("vigil_r_round", ledger=True)
+    # Restore no longer runs init_database, so the snapshot has to already
+    # contain the tables settle reads (users, approvals, the audit log).
+    _create_orm("vigil_r_round")
     repo = root / "repo"
     passphrase = _passphrase(root / "pass")
     env = _child_env(root, "vigil_r_round", **paths)
@@ -348,7 +357,6 @@ def test_round_trip_serves_restored_database(scratch_databases, tmp_path: Path):
     assert dest["intent"].read_text(encoding="utf-8") == "intent"
     assert "rows: ok" in restored.stdout
     assert "ledger: ok" in restored.stdout
-    assert "schema: ok" in restored.stdout
     assert "secrets: ok" in restored.stdout
     previous = next(
         line.split(": ", 1)[1]

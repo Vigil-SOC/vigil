@@ -52,11 +52,7 @@ from core.response.approval_service import ActionStatus
 from core.secrets_manager import EncryptedFileBackend
 from core.skills.skill_library import operator_skills_root
 from core.storage.config_service import get_config_service
-from core.storage.connection import (
-    DatabaseConfig,
-    get_db_manager,
-    init_database,
-)
+from core.storage.connection import DatabaseConfig, get_db_manager
 from core.storage.models import ApprovalAction, User
 from core.time import utcnow
 from core.version import __version__
@@ -113,6 +109,7 @@ def restore_snapshot(
     test: bool,
     actor: str | None = None,
     bifrost_data: str | None = None,
+    discarded: list[str] | None = None,
 ) -> str:
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
@@ -164,11 +161,9 @@ def restore_snapshot(
             _check_ledger(cfg, staged_name)
             _stage_locations(root, manifest, stamp, placed, created_dirs, bifrost_data)
             secrets = _check_secrets(placed)
-            _check_schema(cfg, staged_name)
             lines = [
                 f"rows: ok ({len(tables)} tables)",
                 "ledger: ok",
-                "schema: ok",
                 f"secrets: {secrets}",
             ]
             if test:
@@ -179,11 +174,14 @@ def restore_snapshot(
             swapped = True
             created = False
             # The swap stays even when this fails. --test returned above. The
-            # lines naming what it moved aside go out with the error.
+            # lines naming what it moved aside go out with the error. History
+            # is recorded after settle so a missing history file does not skip
+            # JWT rotation, and a write error still carries those lines.
             try:
                 lines.extend(
                     _settle_restored(cfg, manifest, snapshot_id, _actor(actor))
                 )
+                _record_restored(manifest, snapshot_id, discarded)
             except BackupError as exc:
                 raise BackupError("\n".join([*lines, str(exc)])) from exc
             return "\n".join(lines)
@@ -318,6 +316,15 @@ def _assert_compatible(manifest: dict) -> None:
     version = manifest.get("version")
     if not isinstance(version, str) or not version.strip():
         raise BackupError("manifest has no version")
+    if manifest.get("kind") == "pre-upgrade":
+        taken_by = manifest.get("taken_by")
+        floor = taken_by if isinstance(taken_by, str) and taken_by.strip() else version
+        if not _version_at_least(__version__, floor):
+            raise BackupError(
+                f"backup taken by {floor} is newer than this install "
+                f"({__version__}); install {floor}"
+            )
+        return
     theirs = _release_pair(version)
     ours = _release_pair(__version__)
     if theirs != ours:
@@ -325,6 +332,25 @@ def _assert_compatible(manifest: dict) -> None:
             f"backup version {version} does not match this install "
             f"({__version__}); install {version}"
         )
+
+
+def _version_at_least(ours: str, floor: str) -> bool:
+    """Full version compare. Identical strings match, including an unparsed dev."""
+    if ours.strip() == floor.strip():
+        return True
+    left, right = _version_key(ours), _version_key(floor)
+    width = max(len(left), len(right))
+    left = left + (0,) * (width - len(left))
+    right = right + (0,) * (width - len(right))
+    return left >= right
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    core = version.strip().split("+", 1)[0].split("-", 1)[0]
+    parts = [part for part in core.split(".") if part != ""]
+    if not parts or any(not part.isdigit() for part in parts):
+        raise BackupError(f"unreadable version {version}")
+    return tuple(int(part) for part in parts)
 
 
 def _release_pair(version: str) -> tuple[str, str]:
@@ -577,33 +603,34 @@ def _check_secrets(placed: list[_Placed]) -> str:
     return "ok"
 
 
-def _check_schema(cfg: DatabaseConfig, database: str) -> None:
-    manager = get_db_manager()
-    if manager.engine is not None:
-        manager.close()
-    # init_database() always uses the process-wide manager. Point it at the
-    # stage first: seeding the live database would change its row counts.
-    manager.config = _config_for(cfg, database)
+def _record_restored(
+    manifest: dict, snapshot_id: str, discarded: list[str] | None
+) -> None:
+    """One history line, same keys as ``core.upgrade.command._record``.
+
+    Written only when ``VIGIL_UPGRADE_DIR`` is set. ``--test`` never reaches
+    here: it returns before the swap.
+    """
+    raw = (get_settings().vigil_upgrade_dir or "").strip()
+    if not raw:
+        return
+    version = manifest.get("version")
+    entry = {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "from": __version__,
+        "to": version if isinstance(version, str) else None,
+        "outcome": "restored",
+        "restore_point": snapshot_id,
+        "reason": "",
+        "discarded": list(discarded or []),
+    }
+    path = Path(raw)
     try:
-        init_database()
-        report = get_db_manager().schema_report()
-    except Exception as exc:
-        raise BackupError(f"schema check failed: {exc}") from exc
-    finally:
-        get_db_manager().close()
-    if report["state"] != "ok":
-        raise BackupError(
-            "schema check failed: "
-            + json.dumps(
-                {
-                    "state": report["state"],
-                    "missing_tables": report.get("missing_tables"),
-                    "missing_columns": report.get("missing_columns"),
-                    "not_null_columns": report.get("not_null_columns"),
-                },
-                sort_keys=True,
-            )
-        )
+        path.mkdir(parents=True, exist_ok=True)
+        with (path / "history.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        raise BackupError(f"could not record the restore: {exc}") from exc
 
 
 def _config_for(cfg: DatabaseConfig, database: str) -> DatabaseConfig:
@@ -920,8 +947,8 @@ def _settle_restored(
 
 
 def _point_at_live(cfg: DatabaseConfig) -> None:
-    # _check_schema left the manager aimed at the staged name, which the swap
-    # removed. close() does not clear that config.
+    # The process-wide manager may still point at another database. close()
+    # does not clear that config.
     manager = get_db_manager()
     manager.close()
     # _config_for re-reads the platform proxy from secrets.enc. That file is

@@ -47,6 +47,15 @@ def test_backend_points_at_agent_serve() -> None:
     assert "AGENT_URL=http://agent-serve:6989" in env
 
 
+def test_backend_mounts_upgrade_state_and_has_no_pre_upgrade_service() -> None:
+    spec = _services()["backend"]
+    assert "VIGIL_UPGRADE_DIR=/var/lib/vigil-upgrade" in spec["environment"]
+    assert "upgrade_state:/var/lib/vigil-upgrade" in spec["volumes"]
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8")) or {}
+    assert "upgrade_state" in compose["volumes"]
+    assert "backup-pre-upgrade" not in compose["services"]
+
+
 @pytest.mark.parametrize(
     "path",
     [

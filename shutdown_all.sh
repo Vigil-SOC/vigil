@@ -30,6 +30,7 @@ optional-profile volumes:
   vigil_investigations    investigation files
   redis_data              Redis
   backup_repo             default on-box backup repository
+  upgrade_state           pre-upgrade restore points and upgrade history
 
 A backup has to be stored outside the compose volumes (a host path in
 VIGIL_BACKUP_REPO, or a copy taken off the box) or this command deletes it too.

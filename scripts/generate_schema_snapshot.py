@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
-"""Write the committed column listing for a freshly provisioned database.
+"""Provision a scratch database the way Compose does, for upgrade tests.
 
-A patch release may not change tables or columns: backup restore accepts any
-backup from the same major.minor, and re-provisioning afterwards recreates
-indexes. The listing is taken from a scratch database built the way Compose
-does — tolerant apply of ``infra/database/init/*.sql`` (``00_apply.sh``),
-``init_database()``, then the SQL again — so SQL-only tables and the
-nullability fixes that run after ``create_all`` are in it. Indexes,
-constraints and comments are not.
-
-``tests/integration/test_schema_snapshot.py`` rebuilds the listing and fails
-if it drifts. To change the schema on purpose, run this and commit the diff:
-
-    python scripts/generate_schema_snapshot.py
+``tests/integration/test_upgrade_command.py`` imports ``scratch_database``.
+The column snapshot this module used to write is gone: schema changes ship
+as revisions, and restore no longer requires the same major.minor.
 """
 
 from __future__ import annotations
@@ -30,7 +21,6 @@ from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
-SNAPSHOT = ROOT / "core" / "storage" / "schema.snapshot.json"
 INIT_DIR = ROOT / "infra" / "database" / "init"
 
 if str(ROOT) not in sys.path:
@@ -41,7 +31,6 @@ from core.storage.connection import (  # noqa: E402
     init_database,
     reset_schema_drift_check,
 )
-from scripts.generate_api_v1_contract import serialize  # noqa: E402
 
 # CREATE/DROP is only safe against a loopback server. Same set as
 # tests/integration/test_schema_drift_upgrade.py.
@@ -155,37 +144,6 @@ def _apply_init_sql(database: str) -> None:
             raise RuntimeError(f"psql failed on {path.name}: {detail}")
 
 
-def column_listing(connection) -> dict:
-    """Every public base table's columns: data type and nullability.
-
-    ``format_type`` keeps length and array element type, which
-    ``information_schema.columns.data_type`` drops. Indexes are rows in
-    ``pg_class`` with a different relkind, so an index-only change is absent
-    here. No constraints, no comments.
-    """
-    rows = connection.execute(text("""
-            SELECT c.relname, a.attname,
-                   format_type(a.atttypid, a.atttypmod),
-                   NOT a.attnotnull
-            FROM pg_catalog.pg_attribute a
-            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public'
-              AND c.relkind = 'r'
-              AND NOT c.relispartition
-              AND a.attnum > 0
-              AND NOT a.attisdropped
-            ORDER BY c.relname, a.attname
-            """))
-    listing: dict = {}
-    for table, column, data_type, nullable in rows:
-        listing.setdefault(table, {})[column] = {
-            "data_type": data_type,
-            "nullable": bool(nullable),
-        }
-    return listing
-
-
 def _init_on(engine) -> None:
     """Point the process singleton at ``engine`` for ``init_database()`` only.
 
@@ -247,24 +205,3 @@ def scratch_database(provision: bool = True) -> Iterator[tuple[str, Engine]]:
         with admin.connect() as conn:
             conn.execute(text(f"DROP DATABASE IF EXISTS {ident} WITH (FORCE)"))
         admin.dispose()
-
-
-def build_listing() -> dict:
-    """Provision a scratch database in compose order and list its columns."""
-    with scratch_database() as (_, engine), engine.connect() as conn:
-        return column_listing(conn)
-
-
-def main() -> int:
-    try:
-        listing = build_listing()
-    except ScratchDatabaseUnavailable as e:
-        print(e, file=sys.stderr)
-        return 1
-    SNAPSHOT.write_text(serialize(listing), encoding="utf-8")
-    print(f"wrote {SNAPSHOT.relative_to(ROOT)}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

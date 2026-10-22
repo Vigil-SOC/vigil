@@ -48,10 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     pre = sub.add_parser(
         "pre-upgrade",
-        help="snapshot the default destination if the database is a release behind",
-    )
-    pre.add_argument(
-        "--target-version", help="release being installed (default: this code's)"
+        help="snapshot when this image would migrate or the recorded version changed",
     )
     pre.add_argument("--bifrost-data", help="Bifrost data directory to include")
     return parser
@@ -86,9 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "pre-upgrade":
             _configure_logging()
-            pre_upgrade_snapshot(
-                target_version=args.target_version, bifrost_data=args.bifrost_data
-            )
+            pre_upgrade_snapshot(bifrost_data=args.bifrost_data)
             return 0
     except BackupSkipped as exc:
         print(str(exc), file=sys.stderr)

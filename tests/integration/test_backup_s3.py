@@ -257,7 +257,7 @@ def test_s3_snapshot_matches_counts_and_rejects_wrong_passphrase(
         env,
     )
     assert restored.returncode == 0, restored.stderr
-    for needle in ("rows: ok", "ledger: ok", "schema: ok", "secrets: ok"):
+    for needle in ("rows: ok", "ledger: ok", "secrets: ok"):
         assert needle in restored.stdout
 
     real = shutil.which("pg_dump")

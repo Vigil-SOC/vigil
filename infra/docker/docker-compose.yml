@@ -301,14 +301,18 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       VIGIL_BACKUP_OWNER_CONNECTION: "1"
       RESTIC_CACHE_DIR: /tmp/restic-cache
-      # Read by backup-pre-upgrade, which inherits this block.
-      VIGIL_SKIP_PREUPGRADE_BACKUP: ${VIGIL_SKIP_PREUPGRADE_BACKUP:-}
+      # Inherited by backup-pre-upgrade. History and the no-setup repo live here.
+      VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
+      # The only bypass: both must be set, and the version must be this image.
+      VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
+      VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
     volumes:
       - ${VIGIL_BACKUP_STATE_DIR:-vigil_home}:/home/vigil/.vigil
       - ${VIGIL_BACKUP_INVESTIGATIONS_DIR:-vigil_investigations}:/app/data/investigations
       - bifrost_data:/var/lib/vigil/bifrost
       - ${VIGIL_BACKUP_REPO:-backup_repo}:/backup/repo:${VIGIL_BACKUP_REPO_MODE:-rw}
       - ${VIGIL_BACKUP_PASSPHRASE_FILE:-/etc/hostname}:/backup/passphrase:ro
+      - ${VIGIL_UPGRADE_HOST_DIR:-upgrade_state}:/var/lib/vigil-upgrade
     entrypoint:
       - /bin/sh
       - -c
@@ -328,9 +332,9 @@ services:
       - deeptempo-network
 
   # Runs once per `up`, before anything that provisions the schema (backend,
-  # soc-daemon, llm-worker, db-seed, backup all wait on it). Takes a snapshot of
-  # the default destination only when the database's stamped major.minor differs
-  # from this image's; otherwise it exits 0 at once. Same definition as `backup`,
+  # soc-daemon, llm-worker, db-seed, backup all wait on it). Takes a restore
+  # point when this image would migrate or the recorded version changed;
+  # otherwise it exits 0 at once. Same definition as `backup`,
   # so depends_on, entrypoint and restart are restated: the merged-in depends_on
   # would make it wait on itself.
   backup-pre-upgrade:
@@ -1260,6 +1264,10 @@ volumes:
   # Placeholder repository for an unconfigured backup service. A host path in
   # VIGIL_BACKUP_REPO replaces it with a bind mount.
   backup_repo:
+    driver: local
+  # Pre-upgrade repo, passphrase, and history.jsonl. A host path in
+  # VIGIL_UPGRADE_HOST_DIR replaces it (start.sh uses ~/.vigil-upgrade).
+  upgrade_state:
     driver: local
   vigil_home:
     driver: local

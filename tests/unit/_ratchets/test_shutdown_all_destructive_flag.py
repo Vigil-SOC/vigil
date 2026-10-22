@@ -43,7 +43,13 @@ def test_readme_shutdown_section_marks_full_as_permanent_deletion() -> None:
     readme = (REPO / "README.md").read_text(encoding="utf-8")
     start = readme.index("### Shutdown")
     section = readme[start : readme.index("\n### ", start + 1)]
-    for name in ("postgres_data", "bifrost_data", "vigil_home", "backup_repo"):
+    for name in (
+        "postgres_data",
+        "bifrost_data",
+        "vigil_home",
+        "backup_repo",
+        "upgrade_state",
+    ):
         assert name in section
     d_at = section.index("./shutdown_all.sh -d")
     full_at = section.index("./shutdown_all.sh -d --full")

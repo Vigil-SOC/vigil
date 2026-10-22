@@ -15,7 +15,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
 
 from core.backup.create import LOCK_CLASSID, LOCK_OBJID, SKIPPED_MESSAGE
-from core.backup.schedule import Destination, _forget
+from core.backup.schedule import Destination, _forget, forget_pre_upgrade
 
 pytestmark = pytest.mark.integration
 
@@ -277,6 +277,82 @@ def test_local_retention_drops_scheduled_and_keeps_pre_upgrade(tmp_path: Path):
     scheduled = [snap for snap in kept if snap.get("tags") == ["scheduled"]]
     assert len(scheduled) == 1
     assert scheduled[0]["paths"][0].endswith("/newer")
+
+
+def test_pre_upgrade_forget_keeps_the_newest_until_a_later_apply(tmp_path: Path):
+    root = tmp_path / "pre"
+    root.mkdir()
+    repo = root / "repo"
+    phrase = root / "pass"
+    phrase.write_text("pre-pass", encoding="utf-8")
+    env = os.environ.copy()
+    env["RESTIC_PASSWORD_FILE"] = str(phrase)
+    env["RESTIC_CACHE_DIR"] = str(root / "cache")
+    (root / "cache").mkdir(parents=True)
+    subprocess.check_call(["restic", "-r", str(repo), "init"], env=env)
+    seeds = [
+        ("pre-upgrade", "2020-01-01 00:00:00", "oldest"),
+        ("pre-upgrade", "2021-01-01 00:00:00", "middle"),
+        ("pre-upgrade", "2022-01-01 00:00:00", "newest"),
+        ("safety", "2022-06-01 00:00:00", "safety"),
+    ]
+    for tag, when, name in seeds:
+        path = root / name
+        path.write_text(name, encoding="utf-8")
+        subprocess.check_call(
+            [
+                "restic",
+                "-r",
+                str(repo),
+                "backup",
+                "--tag",
+                tag,
+                "--time",
+                when,
+                str(path),
+            ],
+            env=env,
+        )
+
+    def names() -> list[str]:
+        return sorted(
+            Path(path).name
+            for snap in _snapshots(env, repo, phrase)
+            for path in snap.get("paths") or []
+        )
+
+    forget_pre_upgrade(str(repo), phrase, None, None)
+    assert names() == ["middle", "newest", "oldest", "safety"]
+
+    upgrade = root / "upgrade"
+    upgrade.mkdir()
+    (upgrade / "history.jsonl").write_text(
+        json.dumps(
+            {
+                "time": "2020-06-01T00:00:00+00:00",
+                "outcome": "applied",
+                "to": "0.1.0",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    forget_pre_upgrade(str(repo), phrase, None, upgrade)
+    assert names() == ["middle", "newest", "safety"]
+
+    with (upgrade / "history.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "time": "2023-01-01T00:00:00+00:00",
+                    "outcome": "applied",
+                    "to": "0.2.0",
+                }
+            )
+            + "\n"
+        )
+    forget_pre_upgrade(str(repo), phrase, None, upgrade)
+    assert names() == ["newest", "safety"]
 
 
 @needs_db
