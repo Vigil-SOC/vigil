@@ -315,7 +315,11 @@ function ApprovalsTab({
                 <tr key={a.action_id}>
                   <td>
                     <div style={{ fontWeight: 600 }}>{a.title || a.action_id}</div>
-                    {a.description && <div className="muted" style={{ maxWidth: 320, fontSize: 12 }}>{a.description}</div>}
+                    {a.description && (
+                      <div className="muted" style={{ maxWidth: 320, fontSize: 12, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                        {a.description}
+                      </div>
+                    )}
                   </td>
                   <td><span className="mono" style={{ fontSize: 11 }}>{a.workflow_run_id || a.target || '—'}</span></td>
                   <td>{checkpointChip(a)}</td>

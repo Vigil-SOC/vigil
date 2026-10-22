@@ -149,6 +149,45 @@ class TestPhaseApprovalAcrossTheBridge:
         assert len(pending) == 1
         assert pending[0].parameters["checkpoint_id"] == "chk-phase-2"
         assert pending[0].workflow_phase_id == "phase-2"
+        assert "tool" not in pending[0].parameters
+
+    def test_a_call_approval_records_the_tool_and_its_arguments(
+        self, clean_tables, internal
+    ):
+        from core.response.approval_service import ActionStatus, ApprovalService
+        from core.workflows.run_bridge_router import PhaseUpdate, record_phase
+
+        token = internal
+        run_id = _run()
+        args = '{"machine_id": "LAB-HOST-01", "comment": "contain"}'
+        record_phase(
+            run_id,
+            PhaseUpdate(
+                phase_id="phase-2",
+                agent="auto_responder",
+                name="Respond",
+                order=2,
+                status="pending_approval",
+                checkpoint_id="apr-isolate",
+                question=(
+                    "auto_responder wants to call microsoft-defender_mde_isolate "
+                    f"with {args}. Approve?"
+                ),
+                tool="microsoft-defender_mde_isolate",
+                args=args,
+            ),
+            token,
+            *_services(),
+        )
+
+        pending = ApprovalService().list_actions(
+            status=ActionStatus.PENDING, workflow_run_id=run_id
+        )
+        assert len(pending) == 1
+        assert pending[0].title == "Approve microsoft-defender_mde_isolate"
+        assert pending[0].parameters["tool"] == "microsoft-defender_mde_isolate"
+        assert pending[0].parameters["args"] == args
+        assert "LAB-HOST-01" in pending[0].description
 
     def test_the_same_checkpoint_reported_twice_raises_one_approval(
         self, clean_tables, internal

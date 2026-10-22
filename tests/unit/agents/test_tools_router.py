@@ -606,3 +606,87 @@ class TestSkillReadRecording:
         _answers(monkeypatch, {"name": "triage", "body": "# Triage"})
         response = self._read(client, {"name": "triage"})
         assert response.json()["ok"] is True
+
+
+class TestDirectActionApproval:
+    """A direct-action MCP tool runs only when a person approved that call."""
+
+    TOOL = "microsoft-defender_mde_isolate"
+    ARGS = {"machine_id": "LAB-HOST-01", "comment": "contain"}
+
+    def _post(self, client, **extra):
+        body = {"tool": self.TOOL, "args": dict(self.ARGS), "bounds": BOUNDS, **extra}
+        return client.post("/internal/tools/invoke", json=body, headers=AUTH)
+
+    def _served(self, monkeypatch):
+        seen = {}
+
+        async def _run(name, args, seconds, registry):
+            seen["name"] = name
+            seen["args"] = args
+            return [{"isolated": True}], True
+
+        _no_backend(monkeypatch)
+        monkeypatch.setattr(tools_router, "execute_mcp_tool", _run)
+        return seen
+
+    def test_refuses_when_no_approval_is_named(self, client, monkeypatch):
+        seen = self._served(monkeypatch)
+
+        body = self._post(client).json()
+
+        assert body["ok"] is False
+        assert body["failure"]["kind"] == "refused"
+        assert seen == {}
+
+    def test_runs_when_the_approved_call_matches(self, client, monkeypatch):
+        seen = self._served(monkeypatch)
+        approved = SimpleNamespace(
+            parameters={
+                "checkpoint_id": "apr-1",
+                "tool": self.TOOL,
+                # Key order differs from the request; the call is the same.
+                "args": '{"comment": "contain", "machine_id": "LAB-HOST-01"}',
+            }
+        )
+        monkeypatch.setattr(
+            tools_router.ApprovalService,
+            "list_actions",
+            lambda self, **kwargs: [approved],
+        )
+
+        body = self._post(client, run_id="run-1", checkpoint_id="apr-1").json()
+
+        assert body["ok"] is True
+        assert seen["name"] == self.TOOL
+        assert seen["args"]["machine_id"] == "LAB-HOST-01"
+
+    def test_refuses_an_approval_for_a_different_target(self, client, monkeypatch):
+        seen = self._served(monkeypatch)
+        approved = SimpleNamespace(
+            parameters={
+                "checkpoint_id": "apr-1",
+                "tool": self.TOOL,
+                "args": '{"machine_id": "OTHER-HOST", "comment": "contain"}',
+            }
+        )
+        monkeypatch.setattr(
+            tools_router.ApprovalService,
+            "list_actions",
+            lambda self, **kwargs: [approved],
+        )
+
+        body = self._post(client, run_id="run-1", checkpoint_id="apr-1").json()
+
+        assert body["failure"]["kind"] == "refused"
+        assert seen == {}
+
+    def test_a_read_does_not_need_an_approval(self, client, monkeypatch):
+        seen = self._served(monkeypatch)
+
+        body = _invoke(
+            client, tool="get_isolation_status", args={"machine_id": "h"}
+        ).json()
+
+        assert body["ok"] is True
+        assert seen["name"] == "get_isolation_status"

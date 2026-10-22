@@ -248,6 +248,28 @@ def test_art_execute_in_a_compose_asks_you():
 
     rows = {r["name"]: r["changes"] for r in report["permissions"]}
     assert rows[execute] == "asks_you"
+    assert report["checkpoints_note"] == (
+        "Direct-action calls pause for approval before they run."
+    )
+
+
+def test_a_direct_action_tool_in_a_compose_pauses_the_call():
+    report = _ask(
+        _compose(
+            {
+                "agent": "auto_responder",
+                "name": "Contain",
+                "tools": ["cf_waf_block_ip", "get_finding"],
+            }
+        )
+    )
+    rows = {r["name"]: r["changes"] for r in report["permissions"]}
+
+    assert rows["cf_waf_block_ip"] == "asks_you"
+    assert rows["get_finding"] == "on_its_own"
+    assert report["checkpoints_note"] == (
+        "Direct-action calls pause for approval before they run."
+    )
 
 
 def test_the_two_word_form_narrows_the_three_the_classifier_gives():
@@ -318,9 +340,9 @@ def test_the_one_tool_classifier_agrees_with_the_list_form():
         assert changes_for_tools([tool]) == changes_for_tool(tool)
     assert changes_for_tool("get_finding") == "read_only"
     assert changes_for_tool("create_approval_action") == "asks_first"
-    assert changes_for_tool("block_ip") == "on_its_own"
+    assert changes_for_tool("block_ip") == "asks_first"
     # The list is as hands-on as its most hands-on tool, in any order.
-    assert changes_for_tools(tools) == changes_for_tools(tools[::-1]) == "on_its_own"
+    assert changes_for_tools(tools) == changes_for_tools(tools[::-1]) == "asks_first"
     assert changes_for_tools([]) == "read_only"
 
 

@@ -54,7 +54,16 @@ export function composeHooks(mirror: Mirror): PluginHooks {
         });
 
         if (outcome.status === "waiting_approval") {
-          await mirror.phase(run_id, { ...at(phase, order), status: "pending_approval", ...idOf(outcome.pending), question: outcome.reason });
+          // A resume reports the open checkpoint with no call attached. The
+          // parking turn wrote the call onto the ledger; the approval has to
+          // carry it or the invoke door refuses the call once it is approved.
+          const asked = await mirroredCall(ctx, phase, outcome);
+          await mirror.phase(run_id, {
+            ...at(phase, order),
+            status: "pending_approval",
+            ...idOf(outcome.pending),
+            ...asked,
+          });
           return {
             kind: "park",
             checkpoint_id: outcome.pending?.checkpoint_id ?? checkpointFor(phase),
@@ -147,6 +156,31 @@ async function readLedger(held: State<ComposeKinds>, runId: string): Promise<Led
     if (event.kind === "spend") spent += (event.payload as SpendPayload).cost_usd ?? 0;
   }
   return { done: new Set(answers.map((answer) => answer.phase_id)), answers, resolutions, raised, spent };
+}
+
+// A gated call names the tool and the arguments. A phase gate has neither, and
+// the question is whatever the step already said. A resume's outcome names the
+// checkpoint only; the call is on the checkpoint the parking turn recorded.
+async function mirroredCall(
+  ctx: PluginContext,
+  phase: PhaseSpec,
+  outcome: Outcome<PhaseAnswer>,
+): Promise<Pick<PhaseUpdate, "question" | "tool" | "args">> {
+  const pending = outcome.pending;
+  let tool = pending?.tool ?? null;
+  let args = pending?.args ?? null;
+  if (!tool && pending?.checkpoint_id) {
+    const events = await state(ctx).read(ctx.options.run_id);
+    const raised = events.find(
+      (event) => event.kind === "checkpoint" && (event.payload as CheckpointPayload).checkpoint_id === pending.checkpoint_id,
+    );
+    const context = (raised?.payload as CheckpointPayload | undefined)?.context;
+    if (typeof context?.["tool"] === "string") tool = context["tool"];
+    if (typeof context?.["args"] === "string") args = context["args"];
+  }
+  if (!tool) return { question: outcome.reason };
+  const shown = args && args.length > 0 ? args : "{}";
+  return { question: `${phase.agent} wants to call ${tool} with ${shown}. Approve?`, tool, args: shown };
 }
 
 // Parks the run when a step needs a human and nobody has answered. A rejection ends

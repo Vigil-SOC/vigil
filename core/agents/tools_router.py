@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import nullcontext
 from typing import Any, ContextManager, Dict, List, Optional, Tuple
@@ -19,7 +20,9 @@ from core.auth import tool_principal
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
+from core.llm.chat_layers import _is_destructive_mcp
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
+from core.response.approval_service import ActionStatus, ApprovalService
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
@@ -57,6 +60,11 @@ class InvokeRequest(BaseModel):
     # across phases run by different agents. Absent means unattributed: a
     # skill read is still counted, with no agent to credit.
     agent_id: Optional[str] = None
+    # Set when the agent layer is running a call a person already approved.
+    # A direct-action tool is refused without them: the token alone is not
+    # an approval, and the row is what names the call and its arguments.
+    run_id: Optional[str] = None
+    checkpoint_id: Optional[str] = None
 
 
 def _failure(kind: str, **detail: Any) -> Dict[str, Any]:
@@ -214,6 +222,69 @@ def _source_system(tool: str, registry: MCPRegistry) -> str:
     return SOURCE_SYSTEM if split is None else split[0]
 
 
+def _norm_args(value: Any) -> Any:
+    """A shape two JSON parsers can agree on.
+
+    ``1`` and ``1.0`` are the same argument. A bool is not a number, and key
+    order is not part of the call.
+    """
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, list):
+        return [_norm_args(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _norm_args(item) for key, item in sorted(value.items())}
+    return str(value)
+
+
+def _args_match(stored: Any, sent: Dict[str, Any]) -> bool:
+    if not isinstance(stored, str):
+        return False
+    try:
+        parsed = json.loads(stored or "{}")
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    return _norm_args(parsed) == _norm_args(sent)
+
+
+def _direct_action_refusal(
+    body: InvokeRequest, tool: str, args: Dict[str, Any]
+) -> Optional[str]:
+    """Why this direct-action call may not run, or None when an approval covers it.
+
+    The agent layer parks the call and a person approves that checkpoint. This
+    repeats the check: a caller that holds the internal token and names the
+    tool itself does not get to skip it. Anything that is not a direct-action
+    tool is not this function's concern.
+    """
+    if not _is_destructive_mcp(tool):
+        return None
+    if not body.run_id or not body.checkpoint_id:
+        return f"{tool} changes the estate and no approval covers this call"
+    try:
+        actions = ApprovalService().list_actions(
+            status=ActionStatus.APPROVED, workflow_run_id=body.run_id
+        )
+    except Exception:  # noqa: BLE001 — unreadable is not approved
+        logger.exception("could not read approvals for %s", body.run_id)
+        return f"{tool} changes the estate and its approval could not be read"
+    for action in actions:
+        params = action.parameters or {}
+        if str(params.get("checkpoint_id") or "") != body.checkpoint_id:
+            continue
+        if params.get("tool") != tool:
+            continue
+        if _args_match(params.get("args"), args):
+            return None
+    return f"{tool} changes the estate and no approval covers this call"
+
+
 # Backend tools first, then the MCP servers. One ceiling governs both, so a tool
 # does not get a second timeout by virtue of living on the other side.
 #
@@ -231,6 +302,12 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
     )
     if handled:
         return result, True, SOURCE_SYSTEM
+    # After the backend, so a Vigil tool is not caught by a verb in its name.
+    # The arguments compared are the ones the model sent, before the row cap
+    # lowered a limit the approval was not asked about.
+    refusal = _direct_action_refusal(body, tool, raw)
+    if refusal is not None:
+        raise MCPFailure("refused", refusal)
     result, handled = await asyncio.wait_for(
         execute_mcp_tool(tool, args, seconds, registry), timeout=seconds
     )

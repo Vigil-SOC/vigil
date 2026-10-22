@@ -121,8 +121,8 @@ def test_changes_per_agent(agents):
     assert rows["investigator"]["changes"] == "asks_first"
     # ART execute is gated, so it asks first rather than acting on its own.
     assert rows["mitre_analyst"]["changes"] == "asks_first"
-    # Ungated Cloudflare tools win over its approval tool.
-    assert rows["auto_responder"]["changes"] == "on_its_own"
+    # Its Cloudflare block and revoke tools park for approval, same as the queue tool.
+    assert rows["auto_responder"]["changes"] == "asks_first"
 
 
 def test_changes_for_custom_tools():
@@ -130,7 +130,7 @@ def test_changes_for_custom_tools():
 
     assert changes_for_tools(["create_case", "update_case"]) == "read_only"
     assert changes_for_tools(["create_approval_action"]) == "asks_first"
-    assert changes_for_tools(["create_approval_action", "block_ip"]) == "on_its_own"
+    assert changes_for_tools(["create_approval_action", "block_ip"]) == "asks_first"
 
 
 def test_stats_failure_nulls_the_fields_and_keeps_the_list(agents, monkeypatch):
@@ -238,6 +238,6 @@ def test_tool_changes_marks_each_tool_an_agent_holds(agents):
     assert row["tool_changes"] == {
         "create_case": "read_only",
         "create_approval_action": "asks_first",
-        "isolate_host": "on_its_own",
+        "isolate_host": "asks_first",
     }
     assert agents()["triage"]["tool_changes"]["read_skill"] == "read_only"

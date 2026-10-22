@@ -1,4 +1,4 @@
-"""Compose approvals: ART execute is gated; incident-response is not (#837)."""
+"""Compose approvals: direct-action tools are gated; read-only grants are not."""
 
 from __future__ import annotations
 
@@ -76,6 +76,18 @@ def test_compose_phase_that_grants_execute_puts_it_in_approvals(execute_id):
     assert execute_id in ids
     assert "analyze_coverage" in ids
     assert config["approvals"] == [execute_id]
+
+
+def test_a_direct_action_tool_is_gated_and_a_read_is_not():
+    config = _config(
+        ["microsoft-defender_mde_isolate", "get_isolation_status", "analyze_coverage"],
+        "microsoft-defender_mde_isolate",
+        "get_isolation_status",
+    )
+    ids = [tool["id"] for tool in config["tools"]]
+    assert "microsoft-defender_mde_isolate" in ids
+    assert "get_isolation_status" in ids
+    assert config["approvals"] == ["microsoft-defender_mde_isolate"]
 
 
 def test_incident_response_stays_ungated():

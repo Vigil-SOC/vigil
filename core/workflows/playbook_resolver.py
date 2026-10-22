@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 import yaml
 
 from core.agents.enablement import disabled_agent_ids, disabled_message
-from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
+from core.llm.chat_layers import _is_destructive_mcp
 from core.llm.defaults import DEFAULT_MODEL
 from core.skills.skill_library import READ_SKILL_TOOL
 
@@ -347,11 +347,13 @@ def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
             ]
 
 
-# Only ART execute is gated. The id must be one config.tools actually carries:
-# spec.ts refuses an approvals name that is not declared. Native and MCP-flattened
-# spellings both count; whichever resolved is the one that goes on the list.
+# ART execute and any other direct-action MCP tool. The id must be one
+# config.tools actually carries: spec.ts refuses an approvals name that is not
+# declared. A phase that lists one parks on that call, arguments and all, until
+# someone who may approve releases it. Chat never grants these; a workflow must
+# not grant them ungated either.
 def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
-    return [tool["id"] for tool in tools if tool["id"] in EXECUTE_IDS]
+    return [tool["id"] for tool in tools if _is_destructive_mcp(tool["id"])]
 
 
 def resolve(
@@ -415,9 +417,9 @@ def resolve(
         ),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
-        # ART execute parks until a human approves. Other grants, and a compose
-        # that never received execute, stay ungated. A phase checkpoint is
-        # separate (approval_required on the step) and is not a substitute.
+        # Direct-action tools park until a person approves the call. A phase
+        # checkpoint (approval_required on the step) is a separate gate and is
+        # not a substitute: it does not name the call or its arguments.
         "approvals": _approvals_of(tools),
         "thresholds": {},
     }

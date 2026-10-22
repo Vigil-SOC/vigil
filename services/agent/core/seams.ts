@@ -52,8 +52,21 @@ export interface State<Kinds extends Record<string, unknown> = Record<never, nev
   terminal(runId: string): Promise<TerminalPayload | null>;
 }
 
+// The checkpoint a person already approved, so the far side can require it of a
+// direct-action call instead of trusting the token alone.
+export interface CallApproval {
+  runId: string;
+  checkpointId: string;
+}
+
 // How a call reaches its adapter, nothing more; it never scans or renders. The
 // signal is the run's: a worker that lost its lease drops the calls in flight.
 export interface ToolDispatch {
-  invoke(tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal, agentId?: string): Promise<ToolResult>;
+  invoke(
+    tool: RegisteredTool,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    agentId?: string,
+    approval?: CallApproval,
+  ): Promise<ToolResult>;
 }

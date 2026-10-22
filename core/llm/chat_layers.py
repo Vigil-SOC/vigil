@@ -107,13 +107,14 @@ _CHANGES_RANK = ("read_only", "asks_first", "on_its_own")
 def changes_for_tool(name: str) -> str:
     """What one tool does to the outside world.
 
-    ``on_its_own`` for a destructive MCP tool with no approval gate; ``asks_first``
-    for the approval tool and ART execute, which the gate covers; otherwise
-    ``read_only``. Vigil's own case writes are not outside changes.
+    ``asks_first`` for the approval tool and for a direct-action MCP tool. Chat
+    never calls the latter (it has no approval-resume path); a workflow parks
+    the call until a person approves that call. Otherwise ``read_only``.
+    Vigil's own case writes are not outside changes.
     """
-    if name in EXECUTE_IDS or name == "create_approval_action":
+    if name == "create_approval_action" or _is_destructive_mcp(name):
         return "asks_first"
-    return "on_its_own" if _is_destructive_mcp(name) else "read_only"
+    return "read_only"
 
 
 def changes_for_tools(tools: List[str]) -> str:
