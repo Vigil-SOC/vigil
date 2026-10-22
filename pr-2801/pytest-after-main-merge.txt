@@ -1,0 +1,24 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/2411755c-2c27-4c2d-876c-49c93f79f050/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 36 items
+
+tests/unit/auth/test_password_reset.py .........                         [ 25%]
+tests/unit/auth/test_password_reset_without_mail.py .......              [ 44%]
+tests/unit/auth/test_service_account_routes.py ....................      [100%]
+
+============================= slowest 10 durations =============================
+2.37s call     unit/auth/test_password_reset.py::TestConfirm::test_accepted_token_cannot_be_replayed
+1.60s call     unit/auth/test_password_reset.py::TestConfirm::test_rejected_password_leaves_the_token_usable[harbor-violet-compass-41]
+1.31s call     unit/auth/test_service_account_routes.py::test_console_login_by_a_service_account_looks_like_a_wrong_password[sec-fetch-site]
+1.23s call     unit/auth/test_service_account_routes.py::test_console_login_by_a_service_account_looks_like_a_wrong_password[origin]
+1.21s call     unit/auth/test_password_reset.py::TestConfirm::test_rejected_password_leaves_the_token_usable[short]
+1.14s call     unit/auth/test_service_account_routes.py::test_only_login_and_refresh_accept_a_service_account_token
+0.45s setup    unit/auth/test_service_account_routes.py::test_only_login_and_refresh_accept_a_service_account_token
+0.44s setup    unit/auth/test_password_reset.py::TestConfirm::test_rejected_password_leaves_the_token_usable[harbor-violet-compass-41]
+0.41s call     unit/auth/test_service_account_routes.py::test_gateway_login_gets_body_tokens_and_no_cookies
+0.40s setup    unit/auth/test_password_reset.py::TestConfirm::test_accepted_token_cannot_be_replayed
+======================= 36 passed, 51 warnings in 15.86s =======================
