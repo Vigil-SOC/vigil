@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/600cd65f-ab09-4bbf-8683-26dc09f78859/clients/web
+
+
+ Test Files  11 passed (11)
+      Tests  211 passed (211)
+   Start at  18:19:50
+   Duration  119.57s (transform 21.47s, setup 16.43s, import 60.39s, tests 127.86s, environment 37.74s)
+
