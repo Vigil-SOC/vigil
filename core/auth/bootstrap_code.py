@@ -12,6 +12,10 @@ import hashlib
 import hmac
 import logging
 
+from sqlalchemy.orm import Session
+
+from core.storage.models import User
+
 logger = logging.getLogger(__name__)
 
 # Distinct from password_reset.RESET_TOKEN_PURPOSE. The formatted log line
@@ -51,20 +55,27 @@ def setup_code_matches(submitted: str | None) -> bool:
     return hmac.compare_digest(candidate, expected)
 
 
+def has_human_user(session: Session) -> bool:
+    """Whether bootstrap is closed. A service account (Medic's gateway) cannot
+    sign anyone in, so it leaves bootstrap open."""
+    return (
+        session.query(User.user_id).filter(User.service_account.is_(False)).first()
+        is not None
+    )
+
+
 def announce_setup_code() -> None:
-    """Log the code once when the users table is empty.
+    """Log the code once while no human user exists.
 
     A failed query must not stop startup and must not print a code. POST still
     requires the code either way.
     """
     try:
-        from core.storage.models import User
         from core.storage.unit_of_work import unit_of_work
 
         with unit_of_work() as session:
-            has_user = session.query(User.user_id).first() is not None
-        if has_user:
-            return
+            if has_human_user(session):
+                return
         code = setup_code()
     except Exception as exc:
         logger.warning(

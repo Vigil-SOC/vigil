@@ -265,12 +265,13 @@ def test_a_fresh_process_initialises_the_database(monkeypatch):
 
 def test_a_service_account_does_not_close_first_admin_bootstrap():
     """Enabling Medic before anyone signs in must leave the install claimable."""
+    from core.auth.bootstrap_code import has_human_user
     from services.api.routers import auth as auth_router
 
     _run("ensure", NAME)
 
     with unit_of_work() as session:
-        assert auth_router._has_any_user(session) is False
+        assert has_human_user(session) is False
         assert auth_router.bootstrap_status(session).required is True
 
     AuthService.create_user(
@@ -281,7 +282,7 @@ def test_a_service_account_does_not_close_first_admin_bootstrap():
         role_id="role-viewer",
     )
     with unit_of_work() as session:
-        assert auth_router._has_any_user(session) is True
+        assert has_human_user(session) is True
 
 
 def test_ensure_undoes_what_a_stolen_session_could_change():
