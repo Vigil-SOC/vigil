@@ -1,0 +1,46 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/b27393f5-b455-4ee8-9f70-2d10af4e165d/clients/web
+
+stderr | src/shell/UserMenu.test.tsx > UserMenu > lays the menu out as the board does, with one theme toggle
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ❯ src/shell/UserMenu.test.tsx (11 tests | 1 failed | 10 skipped) 196ms
+     × lays the menu out as the board does, with one theme toggle 191ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/shell/UserMenu.test.tsx > UserMenu > lays the menu out as the board does, with one theme toggle
+AssertionError: expected [ Array(8) ] to deeply equal [ Array(8) ]
+
+- Expected
++ Received
+
+@@ -1,9 +1,9 @@
+  [
+    "Setup guide",
+    "Take the tour",
+-   StringMatching /^Share feedbackAbout Vigil · 9\.9\.9$/,
++   "Share feedbackAbout Vigil",
+    "Switch to light mode",
+    "Two-step sign-inOff",
+    "Settings",
+    "Change password",
+    "Sign out",
+
+ ❯ src/shell/UserMenu.test.tsx:95:18
+     93|     const menu = await screen.findByRole('menu', { name: 'Account' })
+     94|     const rows = screen.getAllByRole('menuitem').map((row) => row.text…
+     95|     expect(rows).toEqual([
+       |                  ^
+     96|       'Setup guide',
+     97|       'Take the tour',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  16:22:46
+   Duration  1.48s (transform 242ms, setup 268ms, import 270ms, tests 196ms, environment 524ms)
+
