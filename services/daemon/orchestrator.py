@@ -255,18 +255,17 @@ def intake_severity_band(
     return name if name in _BAND_RANK else "unknown"
 
 
-def rank_intake_row(
+def intake_rank_inputs(
     row: Dict,
     *,
     now: datetime,
     ttl_seconds: int,
     promote_fraction: float,
-) -> tuple:
-    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+) -> tuple[str, bool, float]:
+    """``(band, promoted, age_seconds)`` of a row: what ``rank_intake_row`` sorts on.
 
-    Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
-    ``low`` precedes ``medium``. Detection rows read current finding severity
-    from ``_finding``; ``schedule`` and ``human_ask`` read the row's ``priority``.
+    Detection rows read current finding severity from ``_finding``;
+    ``schedule`` and ``human_ask`` read the row's ``priority``.
     """
     age = intake_age_seconds(row, now)
     remaining = ttl_seconds - age
@@ -277,6 +276,24 @@ def rank_intake_row(
         row.get("kind"),
         finding_severity=finding_severity,
         priority=row.get("priority"),
+    )
+    return band, promoted, age
+
+
+def rank_intake_row(
+    row: Dict,
+    *,
+    now: datetime,
+    ttl_seconds: int,
+    promote_fraction: float,
+) -> tuple:
+    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+
+    Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
+    ``low`` precedes ``medium``.
+    """
+    band, promoted, _ = intake_rank_inputs(
+        row, now=now, ttl_seconds=ttl_seconds, promote_fraction=promote_fraction
     )
     created = _as_naive_utc(row.get("created_at"))
     return (
