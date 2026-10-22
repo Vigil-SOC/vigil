@@ -1,0 +1,3 @@
+tests/unit/findings/test_zz_write_paths_check.py {'imported': 1, 'skipped': 0}
+only view: {'wp-bulk': {'dst_ips': ['2001:db8::1']}, 'wp-upd': {'probe': {'x': 1}, 'src_ip': '2001:db8::1'}}
+=================== 1 passed, 1 warning in 72.13s (0:01:12) ====================

@@ -1,0 +1,10 @@
+E       AssertionError: assert [] == ['ipx-padded'...ipx-v6-upper']
+E         
+E         Right contains 4 more items, first extra item: 'ipx-padded'
+E         Use -v to get more diff
+E           psycopg2.ProgrammingError: can't call .executemany() on named cursors
+E           sqlalchemy.exc.ProgrammingError: (psycopg2.ProgrammingError) can't call .executemany() on named cursors
+E           [SQL: UPDATE findings SET entity_context = CAST(%(ctx)s AS jsonb) WHERE finding_id = %(id)s]
+E           [parameters: [{'ctx': '{"dst_ip": "203.0.113.9"}', 'id': 'ipx-padded'}, {'ctx': '{"dst_ip": "2001:db8::1"}', 'id': 'ipx-v6-upper'}, {'ctx': '{"src_ips": ["192.0.2.45", "2001:db8::1"]}', 'id': 'ipx-v6-expanded'}, {'ctx': '{"remote_ip": "2001:db8::1"}', 'id': 'ipx-v6-bracketed'}]]
+E           (Background on this error at: https://sqlalche.me/e/21/f405)
+================= 2 failed, 19 deselected, 1 warning in 56.85s =================

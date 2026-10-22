@@ -1,0 +1,2 @@
+SKIPPED [1] tests/integration/test_upgrade_adoption.py:122: a later revision is the head
+================== 20 passed, 1 skipped in 156.57s (0:02:36) ===================

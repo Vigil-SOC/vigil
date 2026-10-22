@@ -1,0 +1,31 @@
+
+╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐
+╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │
+ ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗
+ ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝
+╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║
+╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝
+  └──▶║║                    ▲ 
+      ╚╝────────────────────┘
+
+
+---------
+Contracts
+---------
+
+Analyzed 574 files, 1811 dependencies.
+--------------------------------------
+
+core is a library: it must not import the deployables KEPT
+the shared-infrastructure tier must not import a capability domain KEPT
+the versioned API surface composes the domains; nothing under core imports it 
+back KEPT
+Federation drives Ingestion, never the reverse KEPT
+core reaches tools/ at exactly one place, and that place is named here KEPT (1 ignored import)
+Medic imports nothing from core, tools or any other service (A3-1) KEPT
+The Medic gateway imports nothing from core, tools, Medic or any other service 
+(A3-1) KEPT
+The Medic Docker proxy imports nothing from core, tools, Medic or any other 
+service (A3-1) KEPT
+
+Contracts: 8 kept, 0 broken.

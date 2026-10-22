@@ -1,0 +1,2 @@
+FAILED tests/unit/api/test_stats_summary_sql.py::test_findings_summary_honours_exclusions_like_the_list
+===== 1 failed, 51 passed, 270 deselected, 2 warnings in 60.39s (0:01:00) ======
