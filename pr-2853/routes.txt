@@ -1,0 +1,4 @@
+{"ts": "2026-10-22T19:02:24.895571+00:00", "level": "INFO", "logger": "services.api.main", "message": "  Expected: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/3ad638ee-ba50-4edd-a1b0-ddcc79b00a84/clients/web/build", "msg_template": "  Expected: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/3ad638ee-ba50-4edd-a1b0-ddcc79b00a84/clients/web/build", "trace_id": "", "span_id": ""}
+{"ts": "2026-10-22T19:02:24.895719+00:00", "level": "INFO", "logger": "services.api.main", "message": "  Run 'npm run build' in the frontend directory to enable production mode", "msg_template": "  Run 'npm run build' in the frontend directory to enable production mode", "trace_id": "", "span_id": ""}
+timeline routes in app.openapi(): ['/api/timeline/range']
+OK: only /api/timeline/range is mounted
