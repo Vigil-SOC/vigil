@@ -93,7 +93,7 @@ def ensure_conversation(
     case_id: Optional[str] = None,
     page_context: Optional[str] = None,
 ) -> Optional[str]:
-    """Upsert the caller's conversation row for ``session_id``; return its id or None.
+    """Upsert the conversation row for ``session_id``; return its id or None.
 
     Returns None, changing nothing, when another user owns the row. On create,
     the title is derived from ``first_user_text`` and ``user_id`` /

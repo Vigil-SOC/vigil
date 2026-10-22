@@ -99,7 +99,7 @@ def test_page_sticks_and_a_blank_case_clears_without_inserting():
     assert replaced["page_context"] == "overview"
 
 
-def _turn(session_id, user_id, text, reply, case_id=None):
+def _turn(session_id, user_id, text, reply, case_id):
     claude._persist_chat_turn(
         session_id=session_id,
         user_id=user_id,

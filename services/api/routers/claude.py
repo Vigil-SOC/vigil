@@ -91,9 +91,9 @@ def _persist_chat_turn(
 
     Sync — invoked via ``asyncio.to_thread`` from the SSE generator. Persists
     the user turn (always complete) and the assistant turn (``complete=False``
-    on abort/error), or nothing when another user owns the conversation. Each
-    ``conversation_service`` call is itself fail-open; this wrapper adds a
-    final guard so nothing here can surface into the request path. The authoritative per-iteration record (including full tool
+    on abort/error). Each ``conversation_service`` call is itself fail-open;
+    this wrapper adds a final guard so nothing here can surface into the
+    request path. The authoritative per-iteration record (including full tool
     calls / results) remains in ``llm_interaction_logs`` keyed by the same
     ``session_id``.
     """
