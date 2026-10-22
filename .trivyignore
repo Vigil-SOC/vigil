@@ -1,10 +1,6 @@
 # Waivers for the image gates in .github/workflows/ci-cd.yml. One CVE per line,
 # each with why it is waived and what lifts it.
 
-# pillow 12.3.0, pulled in by reportlab 5.0.1. Fixed only in pillow 13.0.0; the
-# major upgrade is its own change. Drop this line when the lock moves to 13.
-CVE-2026-112403
-
 # fastmcp 2.13.3 in the okta-mcp-server uv tool venv (mcp-packages/uv-tools.txt).
 # okta-mcp-server pins fastmcp==2.13.3 exactly and has no later release; the fix
 # is fastmcp 3.2.0. The flaw is in FastMCP's OpenAPI integration, which okta_mcp
