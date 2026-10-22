@@ -1,0 +1,1631 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/bab794eb-8081-4dab-8f0f-501538bf721d/clients/web
+
+Error: Not implemented: navigation (except hash changes)
+    at module.exports (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/bab794eb-8081-4dab-8f0f-501538bf721d/clients/web/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at navigateFetch (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/bab794eb-8081-4dab-8f0f-501538bf721d/clients/web/node_modules/jsdom/lib/jsdom/living/window/navigation.js:77:3)
+    at exports.navigate (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/bab794eb-8081-4dab-8f0f-501538bf721d/clients/web/node_modules/jsdom/lib/jsdom/living/window/navigation.js:55:3)
+    at Timeout._onTimeout (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/bab794eb-8081-4dab-8f0f-501538bf721d/clients/web/node_modules/jsdom/lib/jsdom/living/nodes/HTMLHyperlinkElementUtils-impl.js:80:7)
+    at listOnTimeout (node:internal/timers:605:17)
+    at processTimers (node:internal/timers:541:7) undefined
+ ❯ src/screens/cases/CasePage.test.tsx (148 tests | 2 failed) 263000ms
+     × totals the Evidence header over every row, against the hunt's own explanation, and pages older rows in 5569ms
+     × shows Loading the run, never the honest line, on Explanations while the case read is in flight 4930ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/cases/CasePage.test.tsx > case page > totals the Evidence header over every row, against the hunt's own explanation, and pages older rows in
+TestingLibraryElementError: Unable to find role="heading" and name "Evidence trail · 157 rows · showing 100 of 157 · 95 support · 3 go against · 59 neither"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"detail-pane case-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"detail-head"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-crumb"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"back"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mCases[0m
+          [36m</button>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+          [36m>[39m
+            [0m›[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"mono"[39m
+          [36m>[39m
+            [0mcase-157[0m
+          [36m</span>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dh-crumb-end"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"vg-more dh-more"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-haspopup[39m=[32m"menu"[39m
+                [33maria-label[39m=[32m"Case actions"[39m
+                [33mclass[39m=[32m"btn ghost icon"[39m
+                [33mtitle[39m=[32m"Case actions"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"15"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"15"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"5"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"19"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Close"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"15"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<h2>[39m
+          [0mOpen case[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"case-state-line"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"sev-mark high"[39m
+            [33mtitle[39m=[32m"High priority"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"sev-box"[39m
+            [36m/>[39m
+            [0mHigh[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"state-pill live"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"state-dot"[39m
+            [36m/>[39m
+            [0mExecuting[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"case-reason clamp2"[39m
+            [33mtitle[39m=[32m"Step 3 · 2 explanations · 157 evidence rows so far"[39m
+          [36m>[39m
+            [0mStep 3 · 2 explanations · 157 evidence rows so far[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-meta"[39m
+        [36m>[39m
+          [36m<span>[39m
+            [0mIncident response[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [0mOpened [0m
+            [0mJun 15, 2026 · 09:14[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"13"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"13"[39m
+            [36m>[39m
+              [36m<circle[39m
+                [33mcx[39m=[32m"12"[39m
+                [33mcy[39m=[32m"12"[39m
+                [33mr[39m=[32m"9"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M12 7v5l3 2"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [0m Resolve by [0m
+            [0mJun 20, 2026 · 12:00[0m
+            [0m · [0m
+            [36m<span[39m
+              [33mclass[39m=[32m"case-sla fair"[39m
+              [33mtitle[39m=[32m"SLA warning"[39m
+            [36m>[39m
+              [0m124 d over[0m
+            [36m</span>[39m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"not-measured case-trust"[39m
+          [36m>[39m
+            [0mNot measured yet[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"Case sections"[39m
+          [33mclass[39m=[32m"tab-strip"[39m
+          [33mrole[39m=[32m"tablist"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mSummary[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"...
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"detail-pane case-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"detail-head"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-crumb"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"back"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mCases[0m
+          [36m</button>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+          [36m>[39m
+            [0m›[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"mono"[39m
+          [36m>[39m
+            [0mcase-157[0m
+          [36m</span>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dh-crumb-end"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"vg-more dh-more"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-haspopup[39m=[32m"menu"[39m
+                [33maria-label[39m=[32m"Case actions"[39m
+                [33mclass[39m=[32m"btn ghost icon"[39m
+                [33mtitle[39m=[32m"Case actions"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"15"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"15"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"5"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"19"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Close"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"15"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<h2>[39m
+          [0mOpen case[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"case-state-line"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"sev-mark high"[39m
+            [33mtitle[39m=[32m"High priority"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"sev-box"[39m
+            [36m/>[39m
+            [0mHigh[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"state-pill live"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"state-dot"[39m
+            [36m/>[39m
+            [0mExecuting[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"case-reason clamp2"[39m
+            [33mtitle[39m=[32m"Step 3 · 2 explanations · 157 evidence rows so far"[39m
+          [36m>[39m
+            [0mStep 3 · 2 explanations · 157 evidence rows so far[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-meta"[39m
+        [36m>[39m
+          [36m<span>[39m
+            [0mIncident response[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [0mOpened [0m
+            [0mJun 15, 2026 · 09:14[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"13"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"13"[39m
+            [36m>[39m
+              [36m<circle[39m
+                [33mcx[39m=[32m"12"[39m
+                [33mcy[39m=[32m"12"[39m
+                [33mr[39m=[32m"9"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M12 7v5l3 2"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [0m Resolve by [0m
+            [0mJun 20, 2026 · 12:00[0m
+            [0m · [0m
+            [36m<span[39m
+              [33mclass[39m=[32m"case-sla fair"[39m
+              [33mtitle[39m=[32m"SLA warning"[39m
+            [36m>[39m
+              [0m124 d over[0m
+            [36m</span>[39m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"not-measured case-trust"[39m
+          [36m>[39m
+            [0mNot measured yet[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"Case sections"[39m
+          [33mclass[39m=[32m"tab-strip"[39m
+          [33mrole[39m=[32m"tablist"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mSummary[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"...
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CasePage.test.tsx:581:25
+    579|     fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    580|     await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWit…
+    581|     expect(await screen.findByRole('heading', { name: 'Evidence trail …
+       |                         ^
+    582|   })
+    583|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/screens/cases/CasePage.test.tsx > case page > shows Loading the run, never the honest line, on Explanations while the case read is in flight
+TestingLibraryElementError: Unable to find an element with the text: This workflow does not test explanations yet.. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"detail-pane case-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"detail-head"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-crumb"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"back"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mCases[0m
+          [36m</button>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+          [36m>[39m
+            [0m›[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"mono"[39m
+          [36m>[39m
+            [0mcase-closed[0m
+          [36m</span>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dh-crumb-end"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"vg-more dh-more"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-haspopup[39m=[32m"menu"[39m
+                [33maria-label[39m=[32m"Case actions"[39m
+                [33mclass[39m=[32m"btn ghost icon"[39m
+                [33mtitle[39m=[32m"Case actions"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"15"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"15"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"5"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"19"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Close"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"15"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<h2>[39m
+          [0mClosed case[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"case-state-line"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"sev-mark high"[39m
+            [33mtitle[39m=[32m"High priority"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"sev-box"[39m
+            [36m/>[39m
+            [0mHigh[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"state-pill closed"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"state-dot"[39m
+            [36m/>[39m
+            [0mClosed[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"case-reason clamp2"[39m
+            [33mtitle[39m=[32m"Closed Jun 15, 2026 · 15:48 by ada · False positive · analyst"[39m
+          [36m>[39m
+            [0mClosed Jun 15, 2026 · 15:48 by ada · False positive · analyst[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-meta"[39m
+        [36m>[39m
+          [36m<span>[39m
+            [0mIncident response[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [0mOpened [0m
+            [0mJun 15, 2026 · 09:14[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"13"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"13"[39m
+            [36m>[39m
+              [36m<circle[39m
+                [33mcx[39m=[32m"12"[39m
+                [33mcy[39m=[32m"12"[39m
+                [33mr[39m=[32m"9"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M12 7v5l3 2"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [0m Resolve by [0m
+            [0mJun 20, 2026 · 12:00[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"not-measured case-trust"[39m
+          [36m>[39m
+            [0mNot measured yet[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"Case sections"[39m
+          [33mclass[39m=[32m"tab-strip"[39m
+          [33mrole[39m=[32m"tablist"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mSummary[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"true"[39m
+            [33mclass[39m=[32m"active"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mExplanations[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mEvidence[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mChecked[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mMemory and blind spots[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mRecord[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"case-stage"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"detail-body"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"muted"[39m
+          [36m>[39m
+            [0mLoading the run…[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<aside[39m
+          [33maria-label[39m=[32m"Case details"[39m
+          [33mclass[39m=[32m"case-side"[39m
+        [36m>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"side-title"[39m
+            [36m>[39m
+              [0mDetails[0m
+            [36m</h3>[39m
+            [36m<dl[39m
+              [33mclass[39m=[32m"side-kv"[39m
+            [36m>[39m
+              [36m<dt>[39m
+                [0mWorkflow[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0mIncident response[0m
+              [36m</dd>[39m
+              [36m<dt>[39m
+                [0mLimit[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m$5.00[0m
+              [36m</dd>[39m
+              [36m<dt>[39m
+                [0mResolve by[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0mJun 20, 2026 · 12:00[0m
+              [36m</dd>[39m
+              [36m<dt>[39m
+                [0mEntities[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m—[0m
+              [36m</dd>[39m
+            [36m</dl>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"side-title"[39m
+            [36m>[39m
+              [0mCost[0m
+            [36m</h3>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"side-cost"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0m$1.00 of $5.00[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"side-level good"[39m
+              [36m>[39m
+                [0mGood[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33maria-label[39m=[32m"Cost against the limit"[39m
+              [33maria-valuemax[39m=[32m"100"[39m
+              [33maria-valuemin[39m=[32m"0"[39m
+              [33maria-valuenow[39m=[32m"20"[39m
+              [33mclass[39m=[32m"meter-bar"[39m
+              [33mrole[39m=[32m"meter"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"meter-fill good"[39m
+                [33mstyle[39m=[32m"width: 20%;"[39m
+              [36m/>[39m
+            [36m</div>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"side-title"[39m
+            [36m>[39m
+              [0mKnown about these entities[0m
+            [36m</h3>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"muted"[39m
+            [36m>[39m
+              [0mThe run did not journal a recall.[0m
+            [36m</p>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-expanded[39m=[32m"false"[39m
+              [33mclass[39m=[32m"side-people-toggle"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0mPeople · [0m
+                [0munassigned, 0 comments[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"side-chev"[39m
+              [36m>[39m
+                [0m▾[0m
+              [36m</span>[39m
+            [36m</button>[39m
+          [36m</section>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"case-fold"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0mFiles[0m
+            [36m</summary>[39m
+            [36m<section[39m
+              [33mclass[39m=[32m"side-sec"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"side-sec-head"[39m
+              [36m>[39m
+                [36m<h3>[39m
+                  [0mFiles[0m
+                [36m</h3>[39m
+                [36m<span>[39m
+                  [0m0 items[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"grow"[39m
+                [36m/>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"btn ghost icon"[39m
+                  [33mtitle[39m=[32m"Add"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"14"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"14"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M12 5v14M5 12h14"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"empty-state compact"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-icon"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"18"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"18"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M6 2h8l4 4v16H6V2z"[39m
+                    [36m/>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M14 2v4h4"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-copy"[39m
+                [36m>[39m
+                  [36m<h3>[39m
+                    [0mNo evidence attached[0m
+                  [36m</h3>[39m
+                  [36m<p>[39m
+                    [0mAdd screenshots, URLs, logs, or files that support this case.[0m
+                  [36m</p>[39m
+                [36m</div>[39m
+              [36m</div>[39m
+            [36m</section>[39m
+          [36m</details>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"case-fold"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0mIOCs[0m
+            [36m</summary>[39m
+            [36m<section[39m
+              [33mclass[39m=[32m"side-sec"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"side-sec-head"[39m
+              [36m>[39m
+                [36m<h3>[39m
+                  [0mIndicators of Compromise[0m
+                [36m</h3>[39m
+                [36m<span>[39m
+                  [0m0[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"grow"[39m
+                [36m/>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"btn ghost icon"[39m
+                  [33mtitle[39m=[32m"Add"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"14"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"14"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M12 5v14M5 12h14"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"empty-state compact"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-icon"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"18"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"18"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M12 3l9 16H3L12 3zM12 9v5M12 17h.01"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-copy"[39m
+                [36m>[39m
+                  [36m<h3>[39m
+                    [0mNo IOCs recorded[0m
+                  [36m</h3>[39m
+                  [36m<p>[39m
+                    [0mAdd IPs, domains, hashes, URLs, or emails observed during investigation.[0m
+                  [36m</p>[39m
+                [36m</div>[39m
+              [36m</div>[39m
+            [36m</section>[39m
+          [36m</details>[39m
+        [36m</aside>[39m
+      [36m</div>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"Ask Vigil"[39m
+        [33mclass[39m=[32m"case-composer"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"composer-box"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-label[39m=[32m"Composer mode"[39m
+            [33mclass[39m=[32m"composer-modes"[39m
+            [33mrole[39m=[32m"group"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"true"[39m
+              [33mclass[39m=[32m"on"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mAsk[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mdisabled[39m=[32m""[39m
+              [33mtitle[39m=[32m"Coming in a later release"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mTell[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mdisabled[39m=[32m""[39m
+              [33mtitle[39m=[32m"Coming in a later release"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mDo[0m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-foot"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"chat-input"[39m
+            [36m>[39m
+              [36m<textarea[39m
+                [33maria-label[39m=[32m"Ask about this case"[39m
+                [33mplaceholder[39m=[32m"Ask about this case"[39m
+                [33mrows[39m=[32m"1"[39m
+                [33mstyle[39m=[32m"height: 0px;"[39m
+              [36m/>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"ci-row"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"ci-grow"[39m
+                [36m/>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"composer-note"[39m
+                [36m>[39m
+                  [0mPrivate to you · Ask only[0m
+                [36m</span>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"ci-send"[39m
+                  [33mdisabled[39m=[32m""[39m
+                  [33mtitle[39m=[32m"Send"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+              [36m</div>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+    [36m</div>[39m
+    [36m<div[39m
+      [33maria-atomic[39m=[32m"false"[39m
+      [33maria-live[39m=[32m"polite"[39m
+      [33mclass[39m=[32m"toast-viewport"[39m
+    [36m/>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"detail-pane case-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"detail-head"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-crumb"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"back"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mCases[0m
+          [36m</button>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+          [36m>[39m
+            [0m›[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"mono"[39m
+          [36m>[39m
+            [0mcase-closed[0m
+          [36m</span>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dh-crumb-end"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"vg-more dh-more"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-haspopup[39m=[32m"menu"[39m
+                [33maria-label[39m=[32m"Case actions"[39m
+                [33mclass[39m=[32m"btn ghost icon"[39m
+                [33mtitle[39m=[32m"Case actions"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"15"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"15"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"5"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"19"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"1.6"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Close"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"15"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<h2>[39m
+          [0mClosed case[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"case-state-line"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"sev-mark high"[39m
+            [33mtitle[39m=[32m"High priority"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"sev-box"[39m
+            [36m/>[39m
+            [0mHigh[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"state-pill closed"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"state-dot"[39m
+            [36m/>[39m
+            [0mClosed[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"case-reason clamp2"[39m
+            [33mtitle[39m=[32m"Closed Jun 15, 2026 · 15:48 by ada · False positive · analyst"[39m
+          [36m>[39m
+            [0mClosed Jun 15, 2026 · 15:48 by ada · False positive · analyst[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dh-meta"[39m
+        [36m>[39m
+          [36m<span>[39m
+            [0mIncident response[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [0mOpened [0m
+            [0mJun 15, 2026 · 09:14[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"13"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"13"[39m
+            [36m>[39m
+              [36m<circle[39m
+                [33mcx[39m=[32m"12"[39m
+                [33mcy[39m=[32m"12"[39m
+                [33mr[39m=[32m"9"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M12 7v5l3 2"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [0m Resolve by [0m
+            [0mJun 20, 2026 · 12:00[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"not-measured case-trust"[39m
+          [36m>[39m
+            [0mNot measured yet[0m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"Case sections"[39m
+          [33mclass[39m=[32m"tab-strip"[39m
+          [33mrole[39m=[32m"tablist"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mSummary[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"true"[39m
+            [33mclass[39m=[32m"active"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mExplanations[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mEvidence[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mChecked[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mMemory and blind spots[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mRecord[0m
+            [36m<span[39m
+              [33mclass[39m=[32m"tab-count"[39m
+            [36m>[39m
+              [0m0[0m
+            [36m</span>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"case-stage"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"detail-body"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"muted"[39m
+          [36m>[39m
+            [0mLoading the run…[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<aside[39m
+          [33maria-label[39m=[32m"Case details"[39m
+          [33mclass[39m=[32m"case-side"[39m
+        [36m>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"side-title"[39m
+            [36m>[39m
+              [0mDetails[0m
+            [36m</h3>[39m
+            [36m<dl[39m
+              [33mclass[39m=[32m"side-kv"[39m
+            [36m>[39m
+              [36m<dt>[39m
+                [0mWorkflow[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0mIncident response[0m
+              [36m</dd>[39m
+              [36m<dt>[39m
+                [0mLimit[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m$5.00[0m
+              [36m</dd>[39m
+              [36m<dt>[39m
+                [0mResolve by[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0mJun 20, 2026 · 12:00[0m
+              [36m</dd>[39m
+              [36m<dt>[39m
+                [0mEntities[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m—[0m
+              [36m</dd>[39m
+            [36m</dl>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"side-title"[39m
+            [36m>[39m
+              [0mCost[0m
+            [36m</h3>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"side-cost"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0m$1.00 of $5.00[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"side-level good"[39m
+              [36m>[39m
+                [0mGood[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33maria-label[39m=[32m"Cost against the limit"[39m
+              [33maria-valuemax[39m=[32m"100"[39m
+              [33maria-valuemin[39m=[32m"0"[39m
+              [33maria-valuenow[39m=[32m"20"[39m
+              [33mclass[39m=[32m"meter-bar"[39m
+              [33mrole[39m=[32m"meter"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"meter-fill good"[39m
+                [33mstyle[39m=[32m"width: 20%;"[39m
+              [36m/>[39m
+            [36m</div>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"side-title"[39m
+            [36m>[39m
+              [0mKnown about these entities[0m
+            [36m</h3>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"muted"[39m
+            [36m>[39m
+              [0mThe run did not journal a recall.[0m
+            [36m</p>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33mclass[39m=[32m"side-block"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-expanded[39m=[32m"false"[39m
+              [33mclass[39m=[32m"side-people-toggle"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0mPeople · [0m
+                [0munassigned, 0 comments[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"side-chev"[39m
+              [36m>[39m
+                [0m▾[0m
+              [36m</span>[39m
+            [36m</button>[39m
+          [36m</section>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"case-fold"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0mFiles[0m
+            [36m</summary>[39m
+            [36m<section[39m
+              [33mclass[39m=[32m"side-sec"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"side-sec-head"[39m
+              [36m>[39m
+                [36m<h3>[39m
+                  [0mFiles[0m
+                [36m</h3>[39m
+                [36m<span>[39m
+                  [0m0 items[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"grow"[39m
+                [36m/>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"btn ghost icon"[39m
+                  [33mtitle[39m=[32m"Add"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"14"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"14"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M12 5v14M5 12h14"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"empty-state compact"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-icon"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"18"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"18"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M6 2h8l4 4v16H6V2z"[39m
+                    [36m/>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M14 2v4h4"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-copy"[39m
+                [36m>[39m
+                  [36m<h3>[39m
+                    [0mNo evidence attached[0m
+                  [36m</h3>[39m
+                  [36m<p>[39m
+                    [0mAdd screenshots, URLs, logs, or files that support this case.[0m
+                  [36m</p>[39m
+                [36m</div>[39m
+              [36m</div>[39m
+            [36m</section>[39m
+          [36m</details>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"case-fold"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0mIOCs[0m
+            [36m</summary>[39m
+            [36m<section[39m
+              [33mclass[39m=[32m"side-sec"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"side-sec-head"[39m
+              [36m>[39m
+                [36m<h3>[39m
+                  [0mIndicators of Compromise[0m
+                [36m</h3>[39m
+                [36m<span>[39m
+                  [0m0[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"grow"[39m
+                [36m/>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"btn ghost icon"[39m
+                  [33mtitle[39m=[32m"Add"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"14"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"14"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M12 5v14M5 12h14"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"empty-state compact"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-icon"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mheight[39m=[32m"18"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                    [33mwidth[39m=[32m"18"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M12 3l9 16H3L12 3zM12 9v5M12 17h.01"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</div>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"empty-state-copy"[39m
+                [36m>[39m
+                  [36m<h3>[39m
+                    [0mNo IOCs recorded[0m
+                  [36m</h3>[39m
+                  [36m<p>[39m
+                    [0mAdd IPs, domains, hashes, URLs, or emails observed during investigation.[0m
+                  [36m</p>[39m
+                [36m</div>[39m
+              [36m</div>[39m
+            [36m</section>[39m
+          [36m</details>[39m
+        [36m</aside>[39m
+      [36m</div>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"Ask Vigil"[39m
+        [33mclass[39m=[32m"case-composer"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"composer-box"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-label[39m=[32m"Composer mode"[39m
+            [33mclass[39m=[32m"composer-modes"[39m
+            [33mrole[39m=[32m"group"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"true"[39m
+              [33mclass[39m=[32m"on"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mAsk[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mdisabled[39m=[32m""[39m
+              [33mtitle[39m=[32m"Coming in a later release"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mTell[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mdisabled[39m=[32m""[39m
+              [33mtitle[39m=[32m"Coming in a later release"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mDo[0m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-foot"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"chat-input"[39m
+            [36m>[39m
+              [36m<textarea[39m
+                [33maria-label[39m=[32m"Ask about this case"[39m
+                [33mplaceholder[39m=[32m"Ask about this case"[39m
+                [33mrows[39m=[32m"1"[39m
+                [33mstyle[39m=[32m"height: 0px;"[39m
+              [36m/>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"ci-row"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"ci-grow"[39m
+                [36m/>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"composer-note"[39m
+                [36m>[39m
+                  [0mPrivate to you · Ask only[0m
+                [36m</span>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"ci-send"[39m
+                  [33mdisabled[39m=[32m""[39m
+                  [33mtitle[39m=[32m"Send"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+              [36m</div>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+    [36m</div>[39m
+    [36m<div[39m
+      [33maria-atomic[39m=[32m"false"[39m
+      [33maria-live[39m=[32m"polite"[39m
+      [33mclass[39m=[32m"toast-viewport"[39m
+    [36m/>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CasePage.test.tsx:1044:25
+    1042|     expect(screen.queryByText('This workflow does not test explanation…
+    1043|     release()
+    1044|     expect(await screen.findByText('This workflow does not test explan…
+       |                         ^
+    1045|   })
+    1046|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  2 failed | 303 passed (305)
+   Start at  18:13:37
+   Duration  296.22s (transform 36.80s, setup 12.62s, import 116.52s, tests 601.42s, environment 26.01s)
+
+exit 1
