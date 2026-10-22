@@ -150,7 +150,6 @@ function SocConsoleInner() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
-  // the last health read that answered; a failed round keeps it
   const [health, setHealth] = useState<HealthRead | null>(null)
   const bypassed = authBypassed(health)
   // Home's setup steps; null when unread or failed, so no chip and no menu count
