@@ -121,10 +121,7 @@ def _workflow(payload: dict, investigation_workflow: Optional[str]) -> str:
     return ""
 
 
-_DOCUMENT_KEYS = {
-    "human_ask": "document",
-    "schedule": "hypothesis",
-}
+_DOCUMENT_KEYS = {"human_ask": "document", "schedule": "hypothesis"}
 
 
 def _document_line(kind: str, payload: dict) -> Optional[str]:

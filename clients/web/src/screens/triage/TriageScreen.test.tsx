@@ -367,7 +367,7 @@ describe('TriageScreen', () => {
     expect(screen.queryByText(/records omitted/)).not.toBeInTheDocument()
   })
 
-  it('shows a scheduled hunt’s hypothesis', async () => {
+  it('shows the hypothesis of a scheduled hunt', async () => {
     const base = payload()
     const hunt = {
       ...base.rows[1],
