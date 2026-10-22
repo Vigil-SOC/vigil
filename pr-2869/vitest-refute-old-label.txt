@@ -1,0 +1,1685 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/ee9811c6-1b92-4991-aeed-050887934806/clients/web
+
+stderr | src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > empty: four connect slots, five outcome slots, no counts, and every card kept
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ❯ src/screens/overview/OverviewScreen.test.tsx (22 tests | 6 failed) 52191ms
+     × empty: four connect slots, five outcome slots, no counts, and every card kept 5720ms
+     × marks then clears, says a second launch is already queued, and shows a Jira error 9021ms
+     × opens an alert from ?alert= with the feed row, and closing removes only that param 1136ms
+     × reads an alert outside the feed, starting from its noise mark 1849ms
+     × says an unknown alert is not found, and a failed read can be retried 2141ms
+     × rail: a row click and Enter set ?alert=, and the Case pill opens the case without the alert 6076ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > empty: four connect slots, five outcome slots, no counts, and every card kept
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/overview/OverviewScreen.test.tsx:136:3
+    134|   afterEach(() => vi.useRealTimers())
+    135|
+    136|   it('empty: four connect slots, five outcome slots, no counts, and ev…
+       |   ^
+    137|     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ emp…
+    138|     renderScreen()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > marks then clears, says a second launch is already queued, and shows a Jira error
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "Mark as noise"
+
+Here are the accessible roles:
+
+  heading:
+
+  Name "Overview":
+  [36m<h1 />[39m
+
+  Name "How alerts flow through Vigil":
+  [36m<h2 />[39m
+
+  Name "Agents running now":
+  [36m<h2 />[39m
+
+  Name "Incoming alerts":
+  [36m<h2 />[39m
+
+  Name "High f-1 · 00:01:00 Odd login":
+  [36m<h3[39m
+    [33mid[39m=[32m"_r_c_"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"ov-flow-sub"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"ov-unmeasured"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "Full screen":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"ov-btn"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Refresh":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Refresh"[39m
+    [33mclass[39m=[32m"btn ghost icon"[39m
+    [33mtitle[39m=[32m"Refresh"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "About this diagram":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-label[39m=[32m"About this diagram"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "This count is alerts, not decisions.":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-label[39m=[32m"This count is alerts, not decisions."[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "About agents running now":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-label[39m=[32m"About agents running now"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Agents & workflows →":
+  [36m<button[39m
+    [33mclass[39m=[32m"ov-agents-link"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "About incoming alerts":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-label[39m=[32m"About incoming alerts"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Pause the live feed":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Pause the live feed"[39m
+    [33mclass[39m=[32m"ov-pause"[39m
+    [33mtitle[39m=[32m"Pause the live feed"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "High 00:01:00 Odd login Splunk · f-1 New":
+  [36m<div[39m
+    [33mclass[39m=[32m"ov-row"[39m
+    [33mrole[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Close":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Close"[39m
+    [33mclass[39m=[32m"modal-x"[39m
+    [33mtitle[39m=[32m"Close"[39m
+  [36m/>[39m
+
+  Name "Case case-1":
+  [36m<button[39m
+    [33mclass[39m=[32m"ov-case-link"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Mark as noise (teaches triage)":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn ghost"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it.":
+  [36m<button[39m
+    [33maria-label[39m=[32m"The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it."[39m
+    [33mclass[39m=[32m"btn ghost icon"[39m
+    [33mtitle[39m=[32m"The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it."[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Send to triage":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn ghost"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Open case":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn ghost"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Create ticket":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn ghost"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "ServiceNow":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn ghost"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "How alerts flow through Vigil":
+  [36m<section[39m
+    [33maria-label[39m=[32m"How alerts flow through Vigil"[39m
+    [33mclass[39m=[32m"ov-flow"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "Splunk 2 alerts":
+  [36m<a[39m
+    [33mclass[39m=[32m"ov-src"[39m
+    [33mhref[39m=[32m"/triage?source=splunk"[39m
+    [33mstyle[39m=[32m"left: 0px; top: 177px; width: 196px; opacity: 1;"[39m
+    [33mtitle[39m=[32m"Splunk: 2 alerts today. Opens the Triage queue for this source."[39m
+  [36m/>[39m
+
+  Name "Triage queue →":
+  [36m<a[39m
+    [33mhref[39m=[32m"/triage"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  group:
+
+  Name "Resolved automatically":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Resolved automatically"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 33px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Closed by a person":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Closed by a person"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 82.33333333333334px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Still working":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Still working"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 131.66666666666669px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Needs you":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Needs you"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 181px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Dropped as noise":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Dropped as noise"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 230.33333333333334px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Scoring":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Scoring"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 279.66666666666663px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "Not in a case":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Not in a case"[39m
+    [33mclass[39m=[32m"ov-out"[39m
+    [33mrole[39m=[32m"group"[39m
+    [33mstyle[39m=[32m"left: 456px; top: 329px; opacity: 1;"[39m
+    [33mtabindex[39m=[32m"0"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<div[39m
+    [33mclass[39m=[32m"ov-agents-grid"[39m
+    [33mrole[39m=[32m"list"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<div[39m
+    [33mclass[39m=[32m"ov-agent"[39m
+    [33mrole[39m=[32m"listitem"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  complementary:
+
+  Name "Incoming alerts":
+  [36m<aside[39m
+    [33maria-label[39m=[32m"Incoming alerts"[39m
+    [33mclass[39m=[32m"ov-rail"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tablist:
+
+  Name "Severity":
+  [36m<div[39m
+    [33maria-label[39m=[32m"Severity"[39m
+    [33mclass[39m=[32m"ov-tabs"[39m
+    [33mrole[39m=[32m"tablist"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tab:
+
+  Name "All":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"true"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Crit":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "High":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Med":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Low":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  time:
+
+  Name "2026-10-01T00:01:00":
+  [36m<time[39m
+    [33mclass[39m=[32m"ov-time"[39m
+    [33mtitle[39m=[32m"2026-10-01T00:01:00"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  dialog:
+
+  Name "High f-1 · 00:01:00 Odd login":
+  [36m<div[39m
+    [33maria-labelledby[39m=[32m"_r_c_"[39m
+    [33maria-modal[39m=[32m"true"[39m
+    [33mclass[39m=[32m"modal"[39m
+    [33mrole[39m=[32m"dialog"[39m
+    [33mstyle[39m=[32m"width: 860px;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<output[39m
+    [33mdata-testid[39m=[32m"where"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"ov-screen"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"ov-main"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"ov-head"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h1>[39m
+              [0mOverview[0m
+            [36m</h1>[39m
+            [36m<p>[39m
+              [0mWhere your data comes from, what Vigil does with it, and what came out. Today, UTC 2026-10-01.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-head-r"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ov-legend"[39m
+              [33mtitle[39m=[32m"Health: Good 95% and up, Fair 85 to 95%, Poor under 85%."[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill good"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12.5l4.2 4.2L19 7.2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mGood[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill fair"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12h14"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mFair[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill poor"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 7l10 10M17 7 7 17"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mPoor[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"ov-btn"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0mFull screen[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Refresh"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Refresh"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"How alerts flow through Vigil"[39m
+          [33mclass[39m=[32m"ov-flow"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-flow-h"[39m
+          [36m>[39m
+            [36m<h2>[39m
+              [0mHow alerts flow through Vigil[0m
+            [36m</h2>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"info-tip"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-label[39m=[32m"About this diagram"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"14"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"14"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"9"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 11v5"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 8h.01"[39m
+                  [36m/>[39m
+                [36...
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/screens/overview/OverviewScreen.test.tsx:285:28
+    283|       .mockResolvedValueOnce({ data: { ...item, terminal_state: 'dismi…
+    284|       .mockResolvedValueOnce({ data: item } as never)
+    285|     fireEvent.click(screen.getByRole('button', { name: 'Mark as noise'…
+       |                            ^
+    286|     expect(await screen.findByRole('button', { name: 'Undo' })).toBeIn…
+    287|     expect(facts).toHaveTextContent('StatusDropped')
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > opens an alert from ?alert= with the feed row, and closing removes only that param
+TestingLibraryElementError: Unable to find role="button" and name "Mark as noise"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"ov-screen"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"ov-main"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"ov-head"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h1>[39m
+              [0mOverview[0m
+            [36m</h1>[39m
+            [36m<p>[39m
+              [0mWhere your data comes from, what Vigil does with it, and what came out. Today, UTC 2026-10-01.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-head-r"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ov-legend"[39m
+              [33mtitle[39m=[32m"Health: Good 95% and up, Fair 85 to 95%, Poor under 85%."[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill good"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12.5l4.2 4.2L19 7.2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mGood[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill fair"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12h14"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mFair[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill poor"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 7l10 10M17 7 7 17"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mPoor[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"ov-btn"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0mFull screen[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Refresh"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Refresh"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"How alerts flow through Vigil"[39m
+          [33mclass[39m=[32m"ov-flow"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-flow-h"[39m
+          [36m>[39m
+            [36m<h2>[39m
+              [0mHow alerts flow through Vigil[0m
+            [36m</h2>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"info-tip"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-label[39m=[32m"About this diagram"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"14"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"14"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"9"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 11v5"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 8h.01"[39m
+                  [36m/>[39m
+                [36...
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"ov-screen"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"ov-main"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"ov-head"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h1>[39m
+              [0mOverview[0m
+            [36m</h1>[39m
+            [36m<p>[39m
+              [0mWhere your data comes from, what Vigil does with it, and what came out. Today, UTC 2026-10-01.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-head-r"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ov-legend"[39m
+              [33mtitle[39m=[32m"Health: Good 95% and up, Fair 85 to 95%, Poor under 85%."[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill good"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12.5l4.2 4.2L19 7.2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mGood[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill fair"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12h14"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mFair[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill poor"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 7l10 10M17 7 7 17"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mPoor[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"ov-btn"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0mFull screen[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Refresh"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Refresh"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"How alerts flow through Vigil"[39m
+          [33mclass[39m=[32m"ov-flow"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-flow-h"[39m
+          [36m>[39m
+            [36m<h2>[39m
+              [0mHow alerts flow through Vigil[0m
+            [36m</h2>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"info-tip"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-label[39m=[32m"About this diagram"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"14"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"14"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"9"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 11v5"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 8h.01"[39m
+                  [36m/>[39m
+                [36...
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/overview/OverviewScreen.test.tsx:358:25
+    356|     vi.mocked(overviewApi.alert).mockClear()
+    357|     renderScreen('/overview?alert=f-1&keep=1')
+    358|     expect(await screen.findByRole('button', { name: 'Mark as noise' }…
+       |                         ^
+    359|     expect(within(screen.getByRole('dialog')).getByText('Odd login')).…
+    360|     expect(overviewApi.alert).not.toHaveBeenCalled()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > reads an alert outside the feed, starting from its noise mark
+TestingLibraryElementError: Unable to find an element with the text: Old one. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<div[39m
+  [33maria-labelledby[39m=[32m"_r_o_"[39m
+  [33maria-modal[39m=[32m"true"[39m
+  [33mclass[39m=[32m"modal"[39m
+  [33mrole[39m=[32m"dialog"[39m
+  [33mstyle[39m=[32m"width: 860px;"[39m
+  [33mtabindex[39m=[32m"-1"[39m
+[36m>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"modal-head"[39m
+  [36m>[39m
+    [36m<h3[39m
+      [33mid[39m=[32m"_r_o_"[39m
+    [36m>[39m
+      [36m<span[39m
+        [33mclass[39m=[32m"ov-pop-t"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"ov-pop-m"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"ov-sev"[39m
+          [36m>[39m
+            [36m<i[39m
+              [33mstyle[39m=[32m"background: var(--sev-high);"[39m
+            [36m/>[39m
+            [0mHigh[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [0mf-1[0m
+            [0m · [0m
+            [0m00:01:00[0m
+          [36m</span>[39m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"ov-pop-d"[39m
+        [36m>[39m
+          [0mOdd login[0m
+        [36m</span>[39m
+      [36m</span>[39m
+    [36m</h3>[39m
+    [36m<button[39m
+      [33maria-label[39m=[32m"Close"[39m
+      [33mclass[39m=[32m"modal-x"[39m
+      [33mtitle[39m=[32m"Close"[39m
+    [36m>[39m
+      [36m<svg[39m
+        [33mfill[39m=[32m"none"[39m
+        [33mheight[39m=[32m"16"[39m
+        [33mstroke[39m=[32m"currentColor"[39m
+        [33mstroke-linecap[39m=[32m"round"[39m
+        [33mstroke-linejoin[39m=[32m"round"[39m
+        [33mstroke-width[39m=[32m"1.8"[39m
+        [33mviewBox[39m=[32m"0 0 24 24"[39m
+        [33mwidth[39m=[32m"16"[39m
+      [36m>[39m
+        [36m<path[39m
+          [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+        [36m/>[39m
+      [36m</svg>[39m
+    [36m</button>[39m
+  [36m</div>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"modal-body"[39m
+  [36m>[39m
+    [36m<dl[39m
+      [33mclass[39m=[32m"ov-facts"[39m
+    [36m>[39m
+      [36m<div>[39m
+        [36m<dt>[39m
+          [0mSource[0m
+        [36m</dt>[39m
+        [36m<dd>[39m
+          [0mSplunk[0m
+        [36m</dd>[39m
+      [36m</div>[39m
+      [36m<div>[39m
+        [36m<dt>[39m
+          [0mStatus[0m
+        [36m</dt>[39m
+        [36m<dd>[39m
+          [0mDropped[0m
+        [36m</dd>[39m
+      [36m</div>[39m
+      [36m<div>[39m
+        [36m<dt>[39m
+          [0mCase[0m
+        [36m</dt>[39m
+        [36m<dd>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"ov-case-link"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mCase [0m
+            [0mcase-1[0m
+          [36m</button>[39m
+        [36m</dd>[39m
+      [36m</div>[39m
+    [36m</dl>[39m
+    [36m<p>[39m
+      [0mdns[0m
+      [0m · [0m
+      [0mnot_in_artifact[0m
+      [0m · dns.v1[0m
+      [0m · records omitted from this list[0m
+    [36m</p>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"flex items-center gap-2 flex-wrap"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mUndo[0m
+      [36m</button>[39m
+      [36m<button[39m
+        [33maria-label[39m=[32m"The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it."[39m
+        [33mclass[39m=[32m"btn ghost icon"[39m
+        [33mtitle[39m=[32m"The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it."[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [36m<svg[39m
+          [33mfill[39m=[32m"none"[39m
+          [33mheight[39m=[32m"14"[39m
+          [33mstroke[39m=[32m"currentColor"[39m
+          [33mstroke-linecap[39m=[32m"round"[39m
+          [33mstroke-linejoin[39m=[32m"round"[39m
+          [33mstroke-width[39m=[32m"1.8"[39m
+          [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [33mwidth[39m=[32m"14"[39m
+        [36m>[39m
+          [36m<circle[39m
+            [33mcx[39m=[32m"12"[39m
+            [33mcy[39m=[32m"12"[39m
+            [33mr[39m=[32m"9"[39m
+          [36m/>[39m
+          [36m<path[39m
+            [33md[39m=[32m"M12 11v5"[39m
+          [36m/>[39m
+          [36m<path[39m
+            [33md[39m=[32m"M12 8h.01"[39m
+          [36m/>[39m
+        [36m</svg>[39m
+      [36m</button>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mSend to triage[0m
+      [36m</button>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mOpen case[0m
+      [36m</button>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mCreate ticket[0m
+      [36m</button>[39m
+      [36m<span[39m
+        [33mtitle[39m=[32m"Coming in a later release"[39m
+      [36m>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost"[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0mServiceNow[0m
+        [36m</button>[39m
+      [36m</span>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</div>[39m
+
+Ignored nodes: comments, script, style
+[36m<div[39m
+  [33maria-labelledby[39m=[32m"_r_o_"[39m
+  [33maria-modal[39m=[32m"true"[39m
+  [33mclass[39m=[32m"modal"[39m
+  [33mrole[39m=[32m"dialog"[39m
+  [33mstyle[39m=[32m"width: 860px;"[39m
+  [33mtabindex[39m=[32m"-1"[39m
+[36m>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"modal-head"[39m
+  [36m>[39m
+    [36m<h3[39m
+      [33mid[39m=[32m"_r_o_"[39m
+    [36m>[39m
+      [36m<span[39m
+        [33mclass[39m=[32m"ov-pop-t"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"ov-pop-m"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"ov-sev"[39m
+          [36m>[39m
+            [36m<i[39m
+              [33mstyle[39m=[32m"background: var(--sev-high);"[39m
+            [36m/>[39m
+            [0mHigh[0m
+          [36m</span>[39m
+          [36m<span>[39m
+            [0mf-1[0m
+            [0m · [0m
+            [0m00:01:00[0m
+          [36m</span>[39m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"ov-pop-d"[39m
+        [36m>[39m
+          [0mOdd login[0m
+        [36m</span>[39m
+      [36m</span>[39m
+    [36m</h3>[39m
+    [36m<button[39m
+      [33maria-label[39m=[32m"Close"[39m
+      [33mclass[39m=[32m"modal-x"[39m
+      [33mtitle[39m=[32m"Close"[39m
+    [36m>[39m
+      [36m<svg[39m
+        [33mfill[39m=[32m"none"[39m
+        [33mheight[39m=[32m"16"[39m
+        [33mstroke[39m=[32m"currentColor"[39m
+        [33mstroke-linecap[39m=[32m"round"[39m
+        [33mstroke-linejoin[39m=[32m"round"[39m
+        [33mstroke-width[39m=[32m"1.8"[39m
+        [33mviewBox[39m=[32m"0 0 24 24"[39m
+        [33mwidth[39m=[32m"16"[39m
+      [36m>[39m
+        [36m<path[39m
+          [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+        [36m/>[39m
+      [36m</svg>[39m
+    [36m</button>[39m
+  [36m</div>[39m
+  [36m<div[39m
+    [33mclass[39m=[32m"modal-body"[39m
+  [36m>[39m
+    [36m<dl[39m
+      [33mclass[39m=[32m"ov-facts"[39m
+    [36m>[39m
+      [36m<div>[39m
+        [36m<dt>[39m
+          [0mSource[0m
+        [36m</dt>[39m
+        [36m<dd>[39m
+          [0mSplunk[0m
+        [36m</dd>[39m
+      [36m</div>[39m
+      [36m<div>[39m
+        [36m<dt>[39m
+          [0mStatus[0m
+        [36m</dt>[39m
+        [36m<dd>[39m
+          [0mDropped[0m
+        [36m</dd>[39m
+      [36m</div>[39m
+      [36m<div>[39m
+        [36m<dt>[39m
+          [0mCase[0m
+        [36m</dt>[39m
+        [36m<dd>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"ov-case-link"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mCase [0m
+            [0mcase-1[0m
+          [36m</button>[39m
+        [36m</dd>[39m
+      [36m</div>[39m
+    [36m</dl>[39m
+    [36m<p>[39m
+      [0mdns[0m
+      [0m · [0m
+      [0mnot_in_artifact[0m
+      [0m · dns.v1[0m
+      [0m · records omitted from this list[0m
+    [36m</p>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"flex items-center gap-2 flex-wrap"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mUndo[0m
+      [36m</button>[39m
+      [36m<button[39m
+        [33maria-label[39m=[32m"The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it."[39m
+        [33mclass[39m=[32m"btn ghost icon"[39m
+        [33mtitle[39m=[32m"The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it."[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [36m<svg[39m
+          [33mfill[39m=[32m"none"[39m
+          [33mheight[39m=[32m"14"[39m
+          [33mstroke[39m=[32m"currentColor"[39m
+          [33mstroke-linecap[39m=[32m"round"[39m
+          [33mstroke-linejoin[39m=[32m"round"[39m
+          [33mstroke-width[39m=[32m"1.8"[39m
+          [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [33mwidth[39m=[32m"14"[39m
+        [36m>[39m
+          [36m<circle[39m
+            [33mcx[39m=[32m"12"[39m
+            [33mcy[39m=[32m"12"[39m
+            [33mr[39m=[32m"9"[39m
+          [36m/>[39m
+          [36m<path[39m
+            [33md[39m=[32m"M12 11v5"[39m
+          [36m/>[39m
+          [36m<path[39m
+            [33md[39m=[32m"M12 8h.01"[39m
+          [36m/>[39m
+        [36m</svg>[39m
+      [36m</button>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mSend to triage[0m
+      [36m</button>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mOpen case[0m
+      [36m</button>[39m
+      [36m<button[39m
+        [33mclass[39m=[32m"btn ghost"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [0mCreate ticket[0m
+      [36m</button>[39m
+      [36m<span[39m
+        [33mtitle[39m=[32m"Coming in a later release"[39m
+      [36m>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost"[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0mServiceNow[0m
+        [36m</button>[39m
+      [36m</span>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</div>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/overview/OverviewScreen.test.tsx:373:60
+    371|     renderScreen('/overview?alert=f-old')
+    372|     expect(screen.getByText('Loading alert…')).toBeInTheDocument()
+    373|     expect(await within(await screen.findByRole('dialog')).findByText(…
+       |                                                            ^
+    374|     expect(overviewApi.alert).toHaveBeenCalledWith('f-old')
+    375|     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > says an unknown alert is not found, and a failed read can be retried
+TestingLibraryElementError: Unable to find an element with the text: Alert nope not found.. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"ov-screen"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"ov-main"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"ov-head"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h1>[39m
+              [0mOverview[0m
+            [36m</h1>[39m
+            [36m<p>[39m
+              [0mWhere your data comes from, what Vigil does with it, and what came out. Today, UTC 2026-10-01.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-head-r"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ov-legend"[39m
+              [33mtitle[39m=[32m"Health: Good 95% and up, Fair 85 to 95%, Poor under 85%."[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill good"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12.5l4.2 4.2L19 7.2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mGood[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill fair"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12h14"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mFair[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill poor"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 7l10 10M17 7 7 17"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mPoor[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"ov-btn"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0mFull screen[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Refresh"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Refresh"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"How alerts flow through Vigil"[39m
+          [33mclass[39m=[32m"ov-flow"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-flow-h"[39m
+          [36m>[39m
+            [36m<h2>[39m
+              [0mHow alerts flow through Vigil[0m
+            [36m</h2>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"info-tip"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-label[39m=[32m"About this diagram"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"14"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"14"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"9"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 11v5"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 8h.01"[39m
+                  [36m/>[39m
+                [36...
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"ov-screen"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"ov-main"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"ov-head"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h1>[39m
+              [0mOverview[0m
+            [36m</h1>[39m
+            [36m<p>[39m
+              [0mWhere your data comes from, what Vigil does with it, and what came out. Today, UTC 2026-10-01.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-head-r"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ov-legend"[39m
+              [33mtitle[39m=[32m"Health: Good 95% and up, Fair 85 to 95%, Poor under 85%."[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill good"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12.5l4.2 4.2L19 7.2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mGood[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill fair"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M5 12h14"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mFair[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"level-pill poor"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"11"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"3"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"11"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 7l10 10M17 7 7 17"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mPoor[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"ov-btn"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0mFull screen[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Refresh"[39m
+              [33mclass[39m=[32m"btn ghost icon"[39m
+              [33mtitle[39m=[32m"Refresh"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"How alerts flow through Vigil"[39m
+          [33mclass[39m=[32m"ov-flow"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"ov-flow-h"[39m
+          [36m>[39m
+            [36m<h2>[39m
+              [0mHow alerts flow through Vigil[0m
+            [36m</h2>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"info-tip"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"false"[39m
+                [33maria-label[39m=[32m"About this diagram"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mheight[39m=[32m"14"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [33mwidth[39m=[32m"14"[39m
+                [36m>[39m
+                  [36m<circle[39m
+                    [33mcx[39m=[32m"12"[39m
+                    [33mcy[39m=[32m"12"[39m
+                    [33mr[39m=[32m"9"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 11v5"[39m
+                  [36m/>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M12 8h.01"[39m
+                  [36m/>[39m
+                [36...
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/overview/OverviewScreen.test.tsx:382:25
+    380|     vi.mocked(overviewApi.alert).mockRejectedValueOnce({ response: { s…
+    381|     const { unmount } = renderScreen('/overview?alert=nope')
+    382|     expect(await screen.findByText('Alert nope not found.')).toBeInThe…
+       |                         ^
+    383|     unmount()
+    384|     vi.mocked(overviewApi.alert)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  src/screens/overview/OverviewScreen.test.tsx > OverviewScreen > rail: a row click and Enter set ?alert=, and the Case pill opens the case without the alert
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/overview/OverviewScreen.test.tsx:459:3
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 16 passed (22)
+   Start at  22:53:45
+   Duration  80.84s (transform 9.31s, setup 5.45s, import 11.37s, tests 52.19s, environment 9.08s)
+
