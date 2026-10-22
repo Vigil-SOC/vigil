@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Optional, Sequence
 
 from core.findings.arrival_counts import utc_day_bounds
-from core.response.approval_service import pending_approval_case_ids
+from core.response.approval_service import needs_you_case_ids
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     Case,
@@ -42,7 +42,7 @@ class _LinkedCase:
 
 def _state(
     case: Optional[_LinkedCase],
-    pending: set[str],
+    needs_you_ids: set[str],
     *,
     dismissed: bool = False,
     scoring: bool = False,
@@ -52,7 +52,7 @@ def _state(
         return "dismissed"
     if case is None:
         return "scoring" if scoring else "waiting"
-    if case.case_id in pending:
+    if case.case_id in needs_you_ids:
         return "needs_you"
     if case.status == "closed":
         # No closure row counts as an agent close: close_case defaults the kind.
@@ -108,7 +108,7 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
     ids = list(finding_ids)
     if not ids:
         return {}
-    pending = pending_approval_case_ids()
+    needs_you_ids = needs_you_case_ids()
     db = get_db_manager()
     with db.session_scope() as session:
         cases = _cases_for(session, ids)
@@ -128,7 +128,7 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
         finding_id: (
             _state(
                 cases.get(finding_id),
-                pending,
+                needs_you_ids,
                 dismissed=finding_id in dismissed,
                 scoring=finding_id in scoring,
             ),
