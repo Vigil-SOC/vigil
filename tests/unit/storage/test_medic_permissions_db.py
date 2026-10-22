@@ -124,11 +124,17 @@ def test_the_medic_service_account_holds_neither(conn, monkeypatch):
     _apply(conn)
     conn.execute(
         text(
-            "INSERT INTO users (user_id, username, email, password_hash, "
-            "full_name, role_id, is_active, is_verified, mfa_enabled, "
-            "mfa_recovery_codes, login_count, service_account) "
-            "VALUES ('svc-medic', 'svc-medic', 'svc@example.test', 'x', 'x', "
-            "'role-viewer', true, true, false, '[]', 0, true)"
+            "INSERT INTO principals (principal_id, kind) "
+            "VALUES ('svc-medic', 'service_account')"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO users (user_id, principal_id, username, email, "
+            "password_hash, full_name, role_id, is_active, is_verified, "
+            "mfa_enabled, mfa_recovery_codes, login_count, service_account) "
+            "VALUES ('svc-medic', 'svc-medic', 'svc-medic', 'svc@example.test', "
+            "'x', 'x', 'role-viewer', true, true, false, '[]', 0, true)"
         )
     )
     session = Session(bind=conn)

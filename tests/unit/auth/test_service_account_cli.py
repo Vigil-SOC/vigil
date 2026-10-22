@@ -13,6 +13,7 @@ import re
 import pytest
 from sqlalchemy import text
 
+from core.auth import principals
 from core.auth import service_account as sa
 from core.auth.auth_service import AuthService
 from core.storage.connection import get_db_manager
@@ -302,6 +303,19 @@ def test_ensure_undoes_what_a_stolen_session_could_change():
     assert user.mfa_enabled is False
     assert user.mfa_secret is None
     assert user.mfa_recovery_codes == []
+
+
+def test_a_deleted_service_account_is_not_brought_back():
+    _run("ensure", NAME)
+    with unit_of_work() as session:
+        user = session.query(User).filter(User.username == NAME).one()
+        principals.mark_deleted(session, user.principal_id)
+        user.is_active = False
+
+    code, _, err = _run("ensure", NAME)
+
+    assert code == sa.EX_REFUSED, err
+    assert _user().is_active is False
 
 
 def test_a_database_error_prints_no_parameters(monkeypatch):

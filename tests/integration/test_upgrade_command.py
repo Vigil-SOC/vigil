@@ -1,8 +1,9 @@
 """``python -m core.upgrade`` against scratch databases on one local Postgres.
 
 The empty-database run must end where a fresh init-plus-``create_all``
-install does, by ``core.upgrade.schema``'s comparison. To rewrite the
-committed head schema after adding a revision:
+install does once the revisions after the baseline have run on it, by
+``core.upgrade.schema``'s comparison. To rewrite the committed head schema
+after adding a revision:
 
     VIGIL_WRITE_HEAD_SCHEMA=1 pytest tests/integration/test_upgrade_command.py
 """
@@ -39,7 +40,8 @@ SEEDED = (
     "system_config",
     "user_preferences",
 )
-HEAD = "0001_baseline"
+BASELINE = "0001_baseline"
+HEAD = "0002_principals_sign_ins"
 
 
 @contextmanager
@@ -98,10 +100,26 @@ def _version(engine):
         return conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
 
 
+def _apply_later_revisions(engine) -> None:
+    """Each revision after the baseline, as SQL, on a create_all-built install:
+    what that install's first upgrade runs once it is adopted."""
+    raw = engine.raw_connection()
+    try:
+        with raw.cursor() as cursor:
+            for path in sorted((command.PACKAGE_DIR / "versions").glob("*.sql")):
+                if path.stem != "0001_baseline":
+                    cursor.execute(path.read_text())
+        raw.commit()
+    finally:
+        raw.close()
+
+
 @pytest.fixture(scope="module")
 def provisioned():
-    with _scratch(True) as engine, engine.connect() as conn:
-        yield schema_state(conn), _rows(conn)
+    with _scratch(True) as engine:
+        _apply_later_revisions(engine)
+        with engine.connect() as conn:
+            yield schema_state(conn), _rows(conn)
 
 
 @pytest.fixture
@@ -174,13 +192,13 @@ def _newer(engine, tmp_path):
 @pytest.mark.parametrize(
     "setup, kw, verdict, pending",
     [
-        (None, {"restore_point": "rp-1"}, command.APPLY, [HEAD]),
-        (None, {}, command.NEEDS_RESTORE_POINT, [HEAD]),
+        (None, {"restore_point": "rp-1"}, command.APPLY, [BASELINE, HEAD]),
+        (None, {}, command.NEEDS_RESTORE_POINT, [BASELINE, HEAD]),
         (
             None,
             {"ack_version": "0.0.1", "ack_reason": "own backup"},
             command.NEEDS_RESTORE_POINT,
-            [HEAD],
+            [BASELINE, HEAD],
         ),
         (_at_head, {}, command.RESTART, []),
         (_unstamped, {"restore_point": "rp-1"}, command.REFUSE, []),

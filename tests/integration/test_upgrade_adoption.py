@@ -19,6 +19,7 @@ from core.upgrade import command
 from core.upgrade.adopt import read_stamp
 from core.upgrade.schema import compare, schema_state
 from tests.integration.test_upgrade_command import (
+    BASELINE,
     HEAD,
     _rows,
     _run,
@@ -117,7 +118,7 @@ def _adopted(engine, baseline, tag: str = "v0.7.0", unowned=()) -> dict:
 
 def test_baseline_schema_is_the_fresh_baseline(baseline):
     # Checkable only while 0001 is the head; then baseline_schema.json is frozen.
-    if command.script_directory().get_current_head() != HEAD:
+    if command.script_directory().get_current_head() != BASELINE:
         pytest.skip("a later revision is the head")
     assert json.loads(command.BASELINE_SCHEMA.read_text()) == baseline[0]
 
@@ -133,7 +134,7 @@ def test_clean_release_adopts_to_the_baseline(baseline, scratch, tmp_path, tag):
         command.NEEDS_RESTORE_POINT,
     )
     assert f"adoption from {tag[1:]} would run" in report["reason"]
-    assert report["drift"] == [] and report["pending"] == [HEAD]
+    assert report["drift"] == [] and report["pending"] == [BASELINE, HEAD]
     assert report["adoption"]["from"] == tag[1:]
     assert _snapshot(scratch) == before, "--check changed the database"
     assert not (tmp_path / "upgrade").exists(), "--check wrote the upgrade directory"

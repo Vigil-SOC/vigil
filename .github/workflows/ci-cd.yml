@@ -945,10 +945,28 @@ jobs:
             -e POSTGRES_APP_PASSWORD=vigil-app-test \
             "$(yq "$container | .image" "$job")" "${command[@]}"
 
+      - name: Provision schema as vigil_app
+        # As the backend first starts under the chart: _env.tpl logs it in as
+        # vigil_app, and services/api/main.py calls init_database() at startup.
+        # Not strict yet: columns a revision adds (users.principal_id, 0002)
+        # exist only once the upgrade below has run.
+        env:
+          POSTGRES_USER: vigil_app
+          POSTGRES_PASSWORD: vigil-app-test
+        run: |
+          python -c "from core.storage.connection import init_database; init_database()"
+
+      - name: Apply schema revisions as the chart user
+        # What the chart's upgrade step will run (#2739): adopt the install,
+        # then apply every revision after the baseline. CI has no restore point.
+        env:
+          POSTGRES_USER: deeptempo
+          VIGIL_UPGRADE_ACK_REASON: "CI: fresh install, nothing to restore"
+        run: |
+          VIGIL_UPGRADE_ACK_VERSION="$(cat VERSION)" python -m core.upgrade
+
       - name: Initialize schema as vigil_app
         id: init-schema
-        # As the backend starts under the chart: _env.tpl logs it in as
-        # vigil_app, and services/api/main.py calls init_database() at startup.
         # Strict for the reason the jobs above are (#562), and it covers what
         # theirs cannot: here about half the ORM tables come from init SQL, as on
         # a real install, so a table whose SQL disagrees with its model is drift.

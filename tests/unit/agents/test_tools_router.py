@@ -54,6 +54,7 @@ def _grant(monkeypatch, username: str, permissions: dict) -> None:
     session.add(
         User(
             user_id="u-1",
+            principal_id="u-1",
             username=username,
             email=f"{username}@example.com",
             password_hash="x",
