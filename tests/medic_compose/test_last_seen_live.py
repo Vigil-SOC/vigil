@@ -29,10 +29,18 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from core.platform.medic_status import DOWN_AFTER_S
-from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE
+from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE, REPO
 from tests.medic_compose.test_enable_live import INSTALL, OVERRIDE, Stack
 
+# core.platform.medic_status.DOWN_AFTER_S, read from the source: this suite runs
+# without Vigil's dependencies (medic.yml's Compose job), so it can't import it.
+DOWN_AFTER_S = int(
+    re.search(
+        r"^DOWN_AFTER_S = (\d+)$",
+        (REPO / "core" / "platform" / "medic_status.py").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    ).group(1)
+)
 # One status sample = `docker exec backend python -c …` (a few seconds) + 3 s.
 SAMPLE_SLACK_S = 10
 PROJECT = os.environ.get("VIGIL_MEDIC_LAST_SEEN_PROJECT", "medic-s9")
