@@ -319,7 +319,7 @@ class DatabaseConfig:
         """Initialize from the encrypted-store DSN, else POSTGRES_*.
 
         DATABASE_URL is not consulted — that is the TypeScript agent's
-        knob, and ``scripts/migrate_schema.py``. Inserting it as a third
+        knob. Inserting it as a third
         source would break the ranking this class is built on.
         """
         dsn = (
@@ -684,7 +684,7 @@ class DatabaseManager:
         a column that isn't there and it surfaces as a mystery application bug.
 
         ``empty`` no Vigil tables (safe to provision) / ``ok`` / ``drifted``
-        (tables exist, columns missing — needs scripts/migrate_schema.py, since
+        (tables exist, columns missing — needs ``python -m core.upgrade``, since
         create_all is checkfirst=True and won't alter them) / ``unknown``.
 
         A column the model allows NULL in but the table declares NOT NULL is
@@ -1022,9 +1022,9 @@ def check_schema_drift(
                 f"Database schema is behind the models: missing columns: "
                 f"{detail}. create_all cannot add them (checkfirst=True never "
                 "alters an existing table), so reads of these tables will fail "
-                "with UndefinedColumn. Run scripts/migrate_schema.py against "
-                "this database, and check it has a step for each column above — "
-                "it only covers columns registered by hand."
+                "with UndefinedColumn. Run python -m core.upgrade against this "
+                "database as its owner; it refuses a schema it cannot bring to "
+                "the baseline and says why."
             )
             if not_null:
                 summary += (

@@ -291,7 +291,7 @@ def test_drift_is_logged_at_error_with_the_exact_columns(drifted_manager, caplog
     assert (
         f"{DRIFT_TABLE}.{DRIFT_COLUMN}" in logged
     ), f"the message must name the missing column, got: {logged!r}"
-    assert "migrate_schema" in logged, "the message should say what to run"
+    assert "python -m core.upgrade" in logged, "the message should say what to run"
 
 
 def test_serving_continues_by_default(drifted_manager):

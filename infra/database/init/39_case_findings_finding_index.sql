@@ -8,8 +8,7 @@
 -- case_findings is created by SQLAlchemy rather than declared here, and
 -- create_all adds no index to a table that already exists. On a first install
 -- the table is not there yet and this statement fails harmlessly; create_all
--- then builds the table with the index. scripts/migrate_schema.py covers a
--- database this file never reached, or one where this file's role does not own
--- the table.
+-- then builds the table with the index. python -m core.upgrade runs this file
+-- when it adopts a database this file never reached (core/upgrade/adopt.py).
 CREATE INDEX IF NOT EXISTS idx_case_findings_finding
     ON case_findings (finding_id, case_id);

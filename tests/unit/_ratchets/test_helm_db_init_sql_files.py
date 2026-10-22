@@ -30,8 +30,8 @@ HELM_VALUES = REPO / "infra" / "helm" / "vigil" / "values.yaml"
 # builds (as vigil_app, so the Job's user does not own them).
 EXEMPT = {
     "05_case_management_extended.sql": "rows seeded by core/storage/reference_seed.py",
-    "28_case_closure_actor.sql": "column is on the ORM model; scripts/migrate_schema.py backfills it",
-    "39_case_findings_finding_index.sql": "index is on the ORM model; scripts/migrate_schema.py backfills it",
+    "28_case_closure_actor.sql": "column is on the ORM model; python -m core.upgrade runs it when adopting",
+    "39_case_findings_finding_index.sql": "index is on the ORM model; python -m core.upgrade runs it when adopting",
 }
 
 

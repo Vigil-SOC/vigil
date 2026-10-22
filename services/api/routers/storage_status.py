@@ -260,7 +260,8 @@ def _schema_message(schema: dict) -> str:
     if state == "drifted":
         return (
             "Connected, but the database schema is out of date and the app will "
-            "misbehave against it. Run scripts/migrate_schema.py to bring it up to date."
+            "misbehave against it. Run python -m core.upgrade as the database owner "
+            "to bring it up to date."
         )
     if state == "unknown":
         return "Connected, but the schema could not be inspected."

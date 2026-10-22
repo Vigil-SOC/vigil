@@ -39,7 +39,6 @@ def test_env_example_states_the_split_instead_of_a_single_source():
     assert "DATABASE_URL is the single source of truth" not in text
     assert "DATABASE_URL=" in text
     assert "services/agent/core/db.ts" in text
-    assert "migrate_schema.py" in text
 
 
 def test_helm_does_not_assemble_database_url():

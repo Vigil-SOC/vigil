@@ -1,15 +1,13 @@
-"""``medic.read`` / ``medic.admin`` in a real Postgres: the init SQL and the migration.
+"""``medic.read`` / ``medic.admin`` in a real Postgres: the init SQL.
 
 The default roles come from ``06_auth_tables.sql`` with ``ON CONFLICT DO
 NOTHING``, so a new permission there would never reach an existing install. Like
 ``loglm.view`` (``17_loglm_setup.sql``), the Medic grants are a later file,
-``45_medic_permissions.sql`` (Compose db-seed, Helm db-init), plus the same
-statement as a ``scripts/migrate_schema.py`` step. Compose's db-seed re-runs
-every file on each ``up``, so a grant an operator has turned off must stay off.
-Each change runs in a transaction that is rolled back.
+``45_medic_permissions.sql`` (Compose db-seed, Helm db-init). Compose's
+db-seed re-runs every file on each ``up``, so a grant an operator has turned
+off must stay off. Each change runs in a transaction that is rolled back.
 """
 
-import importlib.util
 import json
 import re
 from pathlib import Path
@@ -26,7 +24,6 @@ from tests.security.test_medic_route_matrix import MEDIC_GRANTS
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 REPO = Path(__file__).resolve().parents[3]
-MIGRATE_SCHEMA = REPO / "scripts" / "migrate_schema.py"
 INIT_DIRS = (
     REPO / "infra" / "database" / "init",
     REPO / "infra" / "helm" / "vigil" / "files" / "database-init",
@@ -45,21 +42,8 @@ def _default_roles_sql() -> str:
     return match.group(0)
 
 
-def _step():
-    # scripts/ is not a package; the migrator is a CLI file, so load it by path.
-    spec = importlib.util.spec_from_file_location(
-        "vigil_migrate_schema", MIGRATE_SCHEMA
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.grant_medic_permissions
-
-
-def _apply(conn, how: str) -> None:
-    if how == "migration":
-        _step()(conn)
-    else:
-        conn.execute(text(INIT_SQL.read_text(encoding="utf-8")))
+def _apply(conn) -> None:
+    conn.execute(text(INIT_SQL.read_text(encoding="utf-8")))
 
 
 def _permissions(conn) -> dict[str, dict]:
@@ -84,13 +68,12 @@ def test_the_init_file_is_the_same_in_both_init_dirs():
     assert len(texts) == 1
 
 
-@pytest.mark.parametrize("how", ["init_sql", "migration"])
-def test_each_default_role_gets_its_medic_grants(conn, how):
+def test_each_default_role_gets_its_medic_grants(conn):
     before = _permissions(conn)
     assert not any(k in p for p in before.values() for k in MEDIC)
 
     for _ in range(2):  # rerunnable
-        _apply(conn, how)
+        _apply(conn)
 
     after = _permissions(conn)
     assert set(after) == set(MEDIC_GRANTS)
@@ -102,8 +85,7 @@ def test_each_default_role_gets_its_medic_grants(conn, how):
         assert rest == before[role_id], role_id
 
 
-@pytest.mark.parametrize("how", ["init_sql", "migration"])
-def test_a_grant_an_operator_turned_off_stays_off(conn, how):
+def test_a_grant_an_operator_turned_off_stays_off(conn):
     conn.execute(
         text(
             "UPDATE roles SET permissions = permissions || "
@@ -120,7 +102,7 @@ def test_a_grant_an_operator_turned_off_stays_off(conn, how):
         {"p": json.dumps({MEDIC_ADMIN_PERMISSION: False})},
     )
 
-    _apply(conn, how)
+    _apply(conn)
 
     perms = _permissions(conn)
     assert perms["role-manager"][MEDIC_READ_PERMISSION] is False
@@ -128,11 +110,10 @@ def test_a_grant_an_operator_turned_off_stays_off(conn, how):
     assert perms["role-admin"][MEDIC_READ_PERMISSION] is True
 
 
-@pytest.mark.parametrize("how", ["init_sql", "migration"])
-def test_a_missing_default_role_is_not_created(conn, how):
+def test_a_missing_default_role_is_not_created(conn):
     conn.execute(text("DELETE FROM roles WHERE role_id = 'role-manager'"))
 
-    _apply(conn, how)
+    _apply(conn)
 
     assert "role-manager" not in _permissions(conn)
 
@@ -140,7 +121,7 @@ def test_a_missing_default_role_is_not_created(conn, how):
 def test_the_medic_service_account_holds_neither(conn, monkeypatch):
     """V1's gateway login is a Viewer: it must not read Medic through the backend."""
     monkeypatch.setattr("core.auth.auth_service._is_dev_mode", lambda: False)
-    _apply(conn, "init_sql")
+    _apply(conn)
     conn.execute(
         text(
             "INSERT INTO users (user_id, username, email, password_hash, "

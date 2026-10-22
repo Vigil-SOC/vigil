@@ -5,7 +5,9 @@ writes nothing and prints one JSON report. Apply goes ahead only when nothing
 is pending and the version is unchanged (a restart), or with the restore-point
 id just taken, or with ``VIGIL_UPGRADE_ACK_VERSION`` equal to this image's
 version and a non-empty ``VIGIL_UPGRADE_ACK_REASON``. Each revision is its own
-transaction. Apply outcomes other than a restart are appended to
+transaction. A database with tables and no ``alembic_version`` is adopted
+first (``core/upgrade/adopt.py``): ``--check`` runs the adoption in a
+transaction it rolls back. Apply outcomes other than a restart are appended to
 ``$VIGIL_UPGRADE_DIR/history.jsonl``.
 """
 
@@ -29,8 +31,10 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
 
+from core.upgrade import adopt
 from core.upgrade.schema import VERSION_TABLE, compare, schema_state
 from core.version import __version__
 
@@ -67,6 +71,8 @@ class Plan:
     previous_version: Optional[str] = None
     # The id passed in, or OVERRIDDEN for an acknowledgement.
     restore_point: Optional[str] = None
+    # Set when the database is a 0.7.0/0.8.0 install: what a dry run found.
+    adoption: Optional[adopt.Adoption] = None
 
 
 def alembic_config() -> Config:
@@ -97,6 +103,45 @@ def upgrade_lock(engine: Engine) -> Iterator[None]:
             conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
     finally:
         conn.close()
+
+
+def _head_schema() -> dict[str, Any]:
+    return json.loads(HEAD_SCHEMA.read_text(encoding="utf-8"))
+
+
+class UnknownDrift(RuntimeError):
+    """Adoption left a difference in an object Vigil owns."""
+
+    def __init__(self, adoption: adopt.Adoption):
+        super().__init__(
+            f"unknown drift in {len(adoption.drift)} Vigil object(s): adoption "
+            f"from {adoption.stamp} would not reach {adopt.BASELINE}, so nothing "
+            "was written. There is no override; see docs/upgrading.md"
+        )
+        self.adoption = adoption
+
+
+def _adopt(conn, stamp: str, script: Optional[ScriptDirectory] = None):
+    """Adopt in ``conn``'s transaction; stamp only when ``script`` is given."""
+    adoption = adopt.adopt(conn, stamp, _head_schema())
+    if adoption.drift:
+        raise UnknownDrift(adoption)
+    if script is not None:
+        adopt.stamp_baseline(conn, script)
+    return adoption
+
+
+def _dry_run(conn, stamp: str) -> Plan | adopt.Adoption:
+    """Adoption in a transaction that is rolled back: its result, or a refusal."""
+    conn.rollback()
+    try:
+        return _adopt(conn, stamp)
+    except UnknownDrift as e:
+        return Plan(REFUSE, str(e), adoption=e.adoption)
+    except (SQLAlchemyError, conn.dialect.dbapi.Error, adopt.AdoptionError) as e:
+        return Plan(REFUSE, f"adoption from {stamp} failed and was rolled back: {e}")
+    finally:
+        conn.rollback()
 
 
 def _previous_version(upgrade_dir: Optional[Path]) -> Optional[str]:
@@ -144,7 +189,17 @@ def plan(
                 "or install a release at least as new as the database.",
                 revision=revision,
             )
-    else:
+        older = adopt.restamped(conn, __version__)
+        if older:
+            return Plan(
+                REFUSE,
+                f"release {older} ran its old init path against this database "
+                f"after it reached {revision}: restore first, from the restore "
+                "point taken before the upgrade",
+                revision=revision,
+            )
+    adoption = None
+    if revision is None:
         tables = conn.execute(
             text(
                 "SELECT count(*) FROM pg_tables "
@@ -153,11 +208,19 @@ def plan(
             {"t": VERSION_TABLE},
         ).scalar_one()
         if tables:
-            return Plan(
-                REFUSE,
-                "the database has Vigil tables but no alembic_version; adopting "
-                "an existing install is not supported by this build",
-            )
+            stamp = adopt.read_stamp(conn)
+            if stamp not in adopt.FORWARD_BY_STAMP:
+                return Plan(
+                    REFUSE,
+                    "the database has Vigil tables but no alembic_version, and its "
+                    f"schema_version is {stamp or 'missing'}, which this image "
+                    f"adopts only from {' or '.join(adopt.FORWARD_BY_STAMP)}: "
+                    "install a 0.7.x release first, start it once, then upgrade",
+                )
+            found = _dry_run(conn, stamp)
+            if isinstance(found, Plan):
+                return found
+            adoption = found
 
     pending = [
         s.revision
@@ -179,6 +242,13 @@ def plan(
         if pending
         else f"version changes from {previous} to {__version__}"
     )
+    if adoption is not None:
+        restart.adoption = adoption
+        change = (
+            f"adoption from {adoption.stamp} would run "
+            f"({len(adoption.repairs)} known repair(s)) and stamp "
+            f"{adopt.BASELINE}; {change}"
+        )
     if restore_point:
         return replace(
             restart, verdict=APPLY, reason=change, restore_point=restore_point
@@ -215,10 +285,12 @@ def check_report(
 ) -> dict[str, Any]:
     """The --check JSON: verdict, reason, drift, pending, restore and free bytes."""
     drift: list[dict[str, Any]] = []
-    # Only a database at a known head has an expected schema to compare with.
-    if current.verdict != REFUSE and current.revision and not current.pending:
-        expected = json.loads(HEAD_SCHEMA.read_text(encoding="utf-8"))
-        drift = compare(expected, schema_state(conn))
+    # Only a database at a known head has an expected schema to compare with;
+    # an adoption's is what remained after its dry run.
+    if current.adoption is not None:
+        drift = current.adoption.drift
+    elif current.verdict != REFUSE and current.revision and not current.pending:
+        drift = compare(_head_schema(), schema_state(conn))
     db_bytes = conn.execute(
         text("SELECT pg_database_size(current_database())")
     ).scalar_one()
@@ -229,6 +301,8 @@ def check_report(
         "pending": current.pending,
         "restore_bytes": int(db_bytes) + (_tree_bytes(state_dir) if state_dir else 0),
     }
+    if current.adoption is not None:
+        report["adoption"] = current.adoption.summary()
     if upgrade_dir is not None and upgrade_dir.is_dir():
         report["free_bytes"] = shutil.disk_usage(upgrade_dir).free
     return report
@@ -252,7 +326,13 @@ def _migrate(engine: Engine, script: ScriptDirectory) -> None:
             env.run_migrations()
 
 
-def _record(upgrade_dir: Optional[Path], current: Plan, outcome: str, reason: str):
+def _record(
+    upgrade_dir: Optional[Path],
+    current: Plan,
+    outcome: str,
+    reason: str,
+    adoption: Optional[adopt.Adoption] = None,
+):
     entry: dict[str, Any] = {
         "time": datetime.now(timezone.utc).isoformat(),
         "from": current.previous_version,
@@ -262,6 +342,10 @@ def _record(upgrade_dir: Optional[Path], current: Plan, outcome: str, reason: st
         "reason": reason,
         "discarded": [],
     }
+    if adoption is not None:
+        entry["adoption"] = adoption.summary()
+        if adoption.drift:  # schema only: object names and definitions
+            entry["drift"] = adoption.drift
     if upgrade_dir is not None:
         upgrade_dir.mkdir(parents=True, exist_ok=True)
         with (upgrade_dir / "history.jsonl").open("a", encoding="utf-8") as f:
@@ -307,17 +391,33 @@ def run(
                 emit({"outcome": RESTART, "reason": current.reason, "to": __version__})
                 return EXIT_OK
             if current.verdict != APPLY:
-                emit(_record(upgrade_dir, current, "refused", current.reason))
+                emit(
+                    _record(
+                        upgrade_dir,
+                        current,
+                        "refused",
+                        current.reason,
+                        current.adoption,
+                    )
+                )
                 return EXIT_REFUSED
+            adoption = None
             try:
+                if current.adoption is not None:
+                    # Repairs and the stamp commit together or not at all.
+                    with engine.connect() as conn, conn.begin():
+                        adoption = _adopt(conn, current.adoption.stamp, script)
                 _migrate(engine, script)
+            except UnknownDrift as e:
+                emit(_record(upgrade_dir, current, "refused", str(e), e.adoption))
+                return EXIT_REFUSED
             except Exception as e:  # noqa: BLE001 - recorded, then non-zero exit
                 emit(
                     _record(upgrade_dir, current, "failed", f"{type(e).__name__}: {e}")
                 )
                 return EXIT_FAILED
             reason = ack_reason.strip() if current.restore_point == OVERRIDDEN else ""
-            emit(_record(upgrade_dir, current, "applied", reason))
+            emit(_record(upgrade_dir, current, "applied", reason, adoption))
             return EXIT_OK
     except UpgradeBusy as e:
         emit({"outcome": "refused", "reason": str(e)})

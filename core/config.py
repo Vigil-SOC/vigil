@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     vigil_upgrade_ack_reason: str = ""
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
-    # agent and scripts/migrate_schema.py can keep it in the environment.
+    # agent can keep it in the environment.
     # Python sessions go through DatabaseConfig (encrypted DSN / POSTGRES_*).
     postgresql_connection_string: Optional[str] = None
     postgres_host: str = "localhost"

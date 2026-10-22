@@ -1,13 +1,12 @@
-"""``users.service_account`` in a real Postgres: create_all, the init SQL, the migration.
+"""``users.service_account`` in a real Postgres: create_all and the init SQL.
 
 A fresh install gets the column from create_all; a database built before it gets
-it from ``43_users_service_account.sql`` (Compose db-seed, Helm db-init) or from
-``scripts/migrate_schema.py``. Every existing row must read False: only the enable
-flow makes a service account. Each change runs in a transaction that is rolled
-back, so the shared test database is left as found.
+it from ``43_users_service_account.sql`` (Compose db-seed, Helm db-init). Every
+existing row must read False: only the enable flow makes a service account. Each
+change runs in a transaction that is rolled back, so the shared test database is
+left as found.
 """
 
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,6 @@ from core.storage.connection import get_db_manager
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 REPO = Path(__file__).resolve().parents[3]
-MIGRATE_SCHEMA = REPO / "scripts" / "migrate_schema.py"
 INIT_SQL = REPO / "infra" / "database" / "init" / "43_users_service_account.sql"
 
 
@@ -31,16 +29,6 @@ def _column(conn):
             "AND table_name = 'users' AND column_name = 'service_account'"
         )
     ).one_or_none()
-
-
-def _step():
-    # scripts/ is not a package; the migrator is a CLI file, so load it by path.
-    spec = importlib.util.spec_from_file_location(
-        "vigil_migrate_schema", MIGRATE_SCHEMA
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.add_users_service_account
 
 
 def _insert_user(conn, user_id: str) -> None:
@@ -71,8 +59,7 @@ def test_create_all_builds_the_column_not_null_default_false():
     assert default == "false"
 
 
-@pytest.mark.parametrize("apply", ["migration", "init_sql"])
-def test_an_old_users_table_gains_the_column_false_for_every_row(apply):
+def test_an_old_users_table_gains_the_column_false_for_every_row():
     with get_db_manager().engine.connect() as conn:
         tx = conn.begin()
         try:
@@ -81,10 +68,7 @@ def test_an_old_users_table_gains_the_column_false_for_every_row(apply):
             assert _column(conn) is None
 
             for _ in range(2):  # rerunnable
-                if apply == "migration":
-                    _step()(conn)
-                else:
-                    conn.execute(text(INIT_SQL.read_text(encoding="utf-8")))
+                conn.execute(text(INIT_SQL.read_text(encoding="utf-8")))
 
             assert _column(conn) is not None
             flag = conn.execute(

@@ -4,8 +4,8 @@ create_all is checkfirst=True: it builds a missing table with every index its
 model declares, and it never adds an index to a table it finds. Compose and
 Helm create some tables from infra/database/init/ first, so an index declared
 only on the model never reaches those installs. idx_workflow_runs_triggered_by
-was one: 12_workflow_runs.sql created workflow_runs without it, and only
-scripts/migrate_schema.py, run as the table's owner, added it.
+was one: 12_workflow_runs.sql created workflow_runs without it, and only a
+hand-written migration step, run as the table's owner, added it.
 
 A model index counts as created when the init SQL creates an index of the same
 name, or one on the same table over the same columns in the same order.

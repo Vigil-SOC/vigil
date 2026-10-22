@@ -4,7 +4,7 @@
 -- backend's clock. It lives here, not in Redis or memory, so it survives a
 -- backend restart and Helm replicas read the same answer.
 -- status_snapshot holds typed fields from Medic's status op only (K1 §6 G2).
--- scripts/migrate_schema.py runs this same statement.
+-- python -m core.upgrade runs this file when it adopts a 0.7 or 0.8 database.
 
 CREATE TABLE IF NOT EXISTS medic_last_seen (
     id SMALLINT PRIMARY KEY DEFAULT 1 CONSTRAINT medic_last_seen_one_row CHECK (id = 1),

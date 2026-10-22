@@ -1,14 +1,12 @@
-"""``medic_last_seen`` in a real Postgres: create_all, the init SQL, the migration.
+"""``medic_last_seen`` in a real Postgres: create_all and the init SQL.
 
 A fresh install gets the table from create_all; a database built before it gets
-it from ``44_medic_last_seen.sql`` (Compose db-seed, Helm db-init) or from
-``scripts/migrate_schema.py``. All three must build the same table, with the
-same limits: one row, a closed ``failure_kind``, a size-capped snapshot. Each
-change runs in a transaction that is rolled back, so the shared test database
-is left as found.
+it from ``44_medic_last_seen.sql`` (Compose db-seed, Helm db-init). The two must
+build the same table, with the same limits: one row, a closed ``failure_kind``,
+a size-capped snapshot. Each change runs in a transaction that is rolled back,
+so the shared test database is left as found.
 """
 
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -20,7 +18,6 @@ from core.storage.connection import get_db_manager
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 REPO = Path(__file__).resolve().parents[3]
-MIGRATE_SCHEMA = REPO / "scripts" / "migrate_schema.py"
 INIT_SQL = REPO / "infra" / "database" / "init" / "44_medic_last_seen.sql"
 HELM_SQL = REPO / "infra" / "helm" / "vigil" / "files" / "database-init" / INIT_SQL.name
 
@@ -55,15 +52,6 @@ def _checks(conn):
     return dict(rows)
 
 
-def _step():
-    spec = importlib.util.spec_from_file_location(
-        "vigil_migrate_schema", MIGRATE_SCHEMA
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.add_medic_last_seen
-
-
 def _insert(conn, **values):
     row = {"id": 1, "updated_at": "2026-10-08 12:00:00", **values}
     cols = ", ".join(row)
@@ -91,28 +79,14 @@ def test_create_all_builds_the_table(conn):
     }
 
 
-@pytest.mark.parametrize("how", ["init_sql", "migration"])
-def test_init_sql_and_migration_build_the_same_table(conn, how):
+def test_init_sql_builds_the_same_table(conn):
     orm_checks = _checks(conn)
     conn.execute(text("DROP TABLE medic_last_seen"))
-    if how == "init_sql":
-        conn.execute(text(INIT_SQL.read_text()))
-        conn.execute(text(INIT_SQL.read_text()))  # db-seed re-applies it
-    else:
-        _step()(conn)
-        _step()(conn)
+    conn.execute(text(INIT_SQL.read_text()))
+    conn.execute(text(INIT_SQL.read_text()))  # db-seed re-applies it
     assert _columns(conn) == COLUMNS
     assert _checks(conn) == orm_checks
     _insert(conn, failure_kind="refused")
-
-
-def test_the_migration_leaves_an_existing_row(conn):
-    _insert(conn, failure_kind="timeout")
-    _step()(conn)
-    assert (
-        conn.execute(text("SELECT failure_kind FROM medic_last_seen")).scalar()
-        == "timeout"
-    )
 
 
 def test_no_row_on_a_fresh_install(conn):

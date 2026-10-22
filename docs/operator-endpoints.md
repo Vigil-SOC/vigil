@@ -134,7 +134,7 @@ No request body. It first compares the database with the ORM models:
 |---|---|---|
 | `empty` | none of Vigil's tables exist | creates the tables, `200 {"success": true, "message": "Schema created", ...}` |
 | `ok` | every table and column is present | changes nothing, `200 {"success": true, "message": "Schema already up to date", ...}` |
-| `drifted` | some tables or columns are missing, or a column is `NOT NULL` where the model allows null | `409`; run `scripts/migrate_schema.py` instead |
+| `drifted` | some tables or columns are missing, or a column is `NOT NULL` where the model allows null | `409`; run `python -m core.upgrade` as the database owner instead (see [upgrading](upgrading.md)) |
 | `unknown` | the schema could not be inspected | `409` |
 
 A `200` response also carries the schema report: `state`, `missing_tables`, `missing_columns` and `not_null_columns`.
