@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import '../../../../docs/design/console/tokens/tokens.css'

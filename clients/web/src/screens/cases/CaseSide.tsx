@@ -19,7 +19,7 @@ export interface SideRun {
   fold: RunFold | null
 }
 
-function Block({ title, children, anchor }: { title: string; children: ReactNode; anchor?: RefObject<HTMLElement> }) {
+function Block({ title, children, anchor }: { title: string; children: ReactNode; anchor?: RefObject<HTMLElement | null> }) {
   return (
     <section className="side-block" ref={anchor}>
       <h3 className="side-title">{title}</h3>
@@ -59,7 +59,7 @@ function levelOf(ratio: number): Level {
 }
 
 function Details({ linked, latest, workflowNames, sla, closed, fold, spend, anchor }: {
-  anchor: RefObject<HTMLElement>
+  anchor: RefObject<HTMLElement | null>
   linked: CaseLinkedFinding[]
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>

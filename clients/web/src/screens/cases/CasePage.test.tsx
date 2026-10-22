@@ -1918,7 +1918,7 @@ describe('case page', () => {
       expect(within(head).getByText('High')).toBeInTheDocument()
       expect(within(head).getByText('Executing')).toHaveClass('state-pill', 'live')
       expect(await within(head).findByText('Incident response')).toBeInTheDocument()
-      expect(within(head).getByText('Step 3 · 2 explanations · 1 evidence row so far')).toHaveClass('case-reason')
+      expect(await within(head).findByText('Step 3 · 2 explanations · 1 evidence row so far')).toHaveClass('case-reason')
       expect(within(head).queryByText('who logged in')).not.toBeInTheDocument()
       expect(within(head).queryByText(/Combined from/)).not.toBeInTheDocument()
       const left = await within(head).findByText('7 h left')
@@ -2567,13 +2567,17 @@ describe('a case with several runs', () => {
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
       runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
     )
+    // a failed assertion used to leave the reject in place for the next test
+    onTestFinished(() => void vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)))
     renderCase('case-broken')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
-    const line = await screen.findByText(INV_TAG, { selector: '.case-run-line .rec-run' })
-    expect(line.closest('p')).toHaveTextContent('The run could not be read.')
+    // the tag is on screen while the run is still loading; the error replaces that line
+    await waitFor(() => {
+      const line = screen.getByText(INV_TAG, { selector: '.case-run-line .rec-run' })
+      expect(line.closest('p')).toHaveTextContent('The run could not be read.')
+    })
     // a run that cannot be read might keep a record, so the honest line waits for it
     expect(screen.queryByText(/does not test explanations yet/)).not.toBeInTheDocument()
-    vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never))
   })
 
   it('shows one Explanations list across runs, each row tagged, by standing word then newest run', async () => {

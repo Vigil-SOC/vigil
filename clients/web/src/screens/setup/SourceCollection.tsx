@@ -39,7 +39,7 @@ export default function SourceCollection({
   const [failure, setFailure] = useState<string | null>(null)
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean | null; text: string } | null>(null)
-  const timer = useRef<ReturnType<typeof setTimeout>>()
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const alive = useRef(true)
   // reset on mount too: StrictMode runs mount, cleanup, mount
   useEffect(() => {

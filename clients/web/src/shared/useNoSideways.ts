@@ -29,7 +29,7 @@ export function scrollsSideways(el: HTMLElement): boolean {
  * nearest ancestor matching `closest`) scrolls sideways, naming the element that
  * pushes it. Unit tests lay nothing out, so this is the check that sees it.
  */
-export function useNoSideways(ref: RefObject<HTMLElement>, name: string, closest?: string) {
+export function useNoSideways(ref: RefObject<HTMLElement | null>, name: string, closest?: string) {
   useEffect(() => {
     if (!import.meta.env.DEV || typeof ResizeObserver === 'undefined') return
     const el = closest ? ref.current?.closest<HTMLElement>(closest) : ref.current

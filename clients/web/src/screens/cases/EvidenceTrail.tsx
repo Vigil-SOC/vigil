@@ -152,7 +152,7 @@ function TrailCard({ title, note, rows, focusKey, focusRef, footer }: {
   note: string | null
   rows: TableRow[]
   focusKey: string | null
-  focusRef: RefObject<HTMLDivElement>
+  focusRef: RefObject<HTMLDivElement | null>
   footer: ReactNode
 }) {
   return (

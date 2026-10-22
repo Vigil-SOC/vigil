@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
 import { PageHead } from '../../shared/PageHead'

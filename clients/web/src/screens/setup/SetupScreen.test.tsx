@@ -480,7 +480,8 @@ describe('SetupScreen', () => {
         fillCrowdStrike()
         testConnection()
         const rows = await screen.findByRole('list', { name: 'Connection checks' })
-        expect(within(rows).getByText('Bad credentials')).toBeInTheDocument()
+        // the list is up while the check still says Connecting
+        expect(await within(rows).findByText('Bad credentials')).toBeInTheDocument()
         expect(within(rows).getByRole('img', { name: 'Needs you' })).toBeInTheDocument()
         expect(screen.queryByText(/^Connected\./)).not.toBeInTheDocument()
         expect(screen.queryByRole('switch', { name: 'Collect alerts' })).not.toBeInTheDocument()
@@ -499,7 +500,7 @@ describe('SetupScreen', () => {
         testConnection()
         const rows = await screen.findByRole('list', { name: 'Connection checks' })
         expect(
-          within(rows).getByText(
+          await within(rows).findByText(
             "CrowdStrike Falcon didn't accept the connection: Client ID and Client Secret are missing or wrong. Check them and test again.",
           ),
         ).toBeInTheDocument()
@@ -515,7 +516,7 @@ describe('SetupScreen', () => {
         testConnection()
         const rows = await screen.findByRole('list', { name: 'Connection checks' })
         expect(
-          within(rows).getByText(
+          await within(rows).findByText(
             "CrowdStrike Falcon didn't accept the connection: Client ID is missing or wrong. Check it and test again.",
           ),
         ).toBeInTheDocument()

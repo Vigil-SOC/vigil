@@ -15,7 +15,7 @@ export function ThreadGrip({
   preview,
   commit,
 }: {
-  bodyRef: RefObject<HTMLElement>
+  bodyRef: RefObject<HTMLElement | null>
   height: number | null
   preview: (height: number) => void
   commit: (height: number | null) => void

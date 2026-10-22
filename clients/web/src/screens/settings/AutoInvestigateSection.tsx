@@ -95,7 +95,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const approval = useForceManualApproval()
   const lastSaved = useRef<OrchestratorConfig | null>(null)
   const configRef = useRef<OrchestratorConfig | null>(null)
-  const idleTimer = useRef<ReturnType<typeof setTimeout>>()
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [advanced, setAdvanced] = useState(false)
   const [intentRevision, setIntentRevision] = useState(0)
   const [pending, setPending] = useState<PendingSave | null>(null)
@@ -106,7 +106,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
   // leaving the page inside the debounce still saves the pending duration
-  const commitRef = useRef<(cfg: OrchestratorConfig) => void>()
+  const commitRef = useRef<((cfg: OrchestratorConfig) => void) | undefined>(undefined)
   useEffect(
     () => () => {
       if (idleTimer.current) {
