@@ -725,6 +725,9 @@ class AuthService:
                 "ai_decisions.approve": True,
                 "medic.read": True,
                 "medic.admin": True,
+                "audit.read": True,
+                "audit.forward": True,
+                "audit.manage": True,
             }
 
         with unit_of_work(session) as session:

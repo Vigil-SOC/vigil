@@ -63,6 +63,10 @@ class PhaseUpdate(BaseModel):
     error: Optional[str] = None
     checkpoint_id: Optional[str] = None
     question: Optional[str] = None
+    # Set when the pause is one call, not the whole phase. The approval then
+    # names the tool and the arguments the person is releasing.
+    tool: Optional[str] = None
+    args: Optional[str] = None
 
 
 class TerminalHandoff(BaseModel):
@@ -967,13 +971,27 @@ def list_decisions(
 def _raise_approval(
     run_id: str, update: PhaseUpdate, approvals: ApprovalService
 ) -> None:
+    question = update.question or f"Approve {update.name}"
+    # The title is the row's one line. A call's arguments go in the description,
+    # where they can wrap, rather than stretching the line with the payload.
+    title = f"Approve {update.tool}" if update.tool else question
+    parameters: Dict[str, Any] = {"phase_id": update.phase_id, "agent_id": update.agent}
+    if update.tool:
+        parameters["tool"] = update.tool
+    if update.args is not None:
+        parameters["args"] = update.args
+    reason = (
+        "The call changes the estate and waits for approval"
+        if update.tool
+        else "The playbook marks this phase approval_required"
+    )
     raise_for_checkpoint(
         run_id=run_id,
         checkpoint_id=str(update.checkpoint_id),
-        title=update.question or f"Approve {update.name}",
-        description=update.question or f"Phase {update.order}: {update.name}",
-        reason="The playbook marks this phase approval_required",
-        parameters={"phase_id": update.phase_id, "agent_id": update.agent},
+        title=title[:120],
+        description=question,
+        reason=reason,
+        parameters=parameters,
         phase_id=update.phase_id,
         approvals=approvals,
     )

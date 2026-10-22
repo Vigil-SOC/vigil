@@ -210,7 +210,7 @@ describe('ChangePasswordDialog', () => {
     await openDialog()
     fillValid()
     fireEvent.click(submit())
-    expect(await screen.findByRole('alert')).toHaveTextContent('Too many attempts. Wait a minute, then try again.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many attempts. Wait a while and try again.')
   })
 
   it('leaves the item out when the backend reports auth is bypassed', async () => {

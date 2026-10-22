@@ -450,7 +450,7 @@ def _build_services(app: FastAPI):
     set_process_mcp_client(app.state.mcp_client)
 
     # Long-lived, so its reconnect throttle applies across health probes; a fresh
-    # service per probe would re-run init_database(create_tables=True) each time.
+    # service per probe would re-run init_database() each time.
     app.state.health_storage = DatabaseDataService()
     # One HTTP client and one cached answer for every caller of GET /api/processes.
     app.state.process_health = ProcessHealth()
@@ -610,19 +610,20 @@ async def _startup(app: FastAPI):
     logger.info("Initializing data storage...")
     try:
         from core.config import is_demo_mode
+        from core.storage.connection import SchemaRevisionError
         from core.storage.database_data_service import DatabaseDataService
 
-        # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
-        # any endpoint tries to query it. start.sh runs scripts/init_schema.py
-        # first, but this covers environments that launch uvicorn directly
-        # (e.g. Docker, systemd, CI). A failure here is fatal — some endpoints
-        # use get_db_session() directly (see core/cases/case_metrics_router.py).
+        # The upgrade one-shot is what creates the schema. This only checks
+        # that alembic_version is this image's head, so a process started
+        # without that one-shot does not serve a database it cannot use.
         if not is_demo_mode():
             try:
                 from core.storage.connection import init_database
 
-                init_database(echo=False, create_tables=True)
-                logger.info("✓ Database schema ensured (create_all)")
+                init_database(echo=False)
+                logger.info("✓ Database schema revision matches this image")
+            except SchemaRevisionError:
+                raise
             except Exception as schema_err:
                 logger.error(
                     "Fatal: could not initialize database schema: %s",
@@ -657,6 +658,8 @@ async def _startup(app: FastAPI):
 
     except MissingPostgresPasswordError:
         raise  # fail closed: no database credentials, nothing to serve
+    except SchemaRevisionError:
+        raise  # the schema cannot serve this image
     except ImportError as e:
         logger.warning(f"Database modules not available: {e}")
     except Exception as e:

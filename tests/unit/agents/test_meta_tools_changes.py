@@ -21,7 +21,7 @@ def test_changes_marks_connected_and_built_in_tools():
     assert "splunk_search" in body["tools"]
     changes = body["changes"]
     assert changes["splunk_search"] == "read_only"
-    assert changes["crowdstrike_isolate_host"] == "on_its_own"
+    assert changes["crowdstrike_isolate_host"] == "asks_first"
     assert changes["create_approval_action"] == "asks_first"
     # Built-in tools are always there, connected or not.
     assert changes["read_skill"] == "read_only"
