@@ -211,9 +211,8 @@ export PYTHONPATH="${PWD}:${PYTHONPATH}"
 # 1. Containers
 docker compose -f infra/docker/docker-compose.yml up -d postgres redis bifrost
 
-# 2. Schema and reference data (no admin is seeded)
-python scripts/init_schema.py
-python scripts/seed_reference_data.py
+# 2. Schema. The upgrade one-shot creates it; the API does not.
+docker compose -f infra/docker/docker-compose.yml up -d upgrade
 
 # 3. API
 uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload

@@ -71,15 +71,17 @@ x-backend-build: &backend-build
 
 services:
   postgres:
-    # Stock Postgres, matching db-seed and the desktop stack. The schema only
+    # Stock Postgres, matching the desktop stack. The schema only
     # needs uuid-ossp and pg_trgm; the pgvector store was LogLM's and is gone.
+    # The upgrade one-shot creates the extensions, the role and the tables.
+    # First boot must not apply infra/database/init.
     image: postgres:16-alpine
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
-      # First-boot init sets vigil_app's password from this. Not the owner password.
+      # The upgrade one-shot sets vigil_app's password from this. Not the owner password.
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
@@ -92,15 +94,6 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Path is relative to this compose file (infra/docker/), so ../ points
-      # at infra/, where the schema SQL now lives (infra/database/init/).
-      # Must run here, not just in db-seed: the extensions have to exist before
-      # the backend's create_all (its indexes use pg_trgm's gin_trgm_ops), and
-      # the auth tables have to be created by this SQL — with the DEFAULT
-      # clauses create_all does not emit. 00_apply.sh explains why it isn't
-      # plain *.sql (Postgres initdb uses ON_ERROR_STOP=1 and would abort at 05).
-      - ./initdb:/docker-entrypoint-initdb.d:ro
-      - ../database/init:/db-init:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deeptempo -d deeptempo_soc"]
       interval: 10s
@@ -110,50 +103,41 @@ services:
     networks:
       - deeptempo-network
 
-  # Second pass over the same files, once the backend's create_all has built the
-  # tables the data-only scripts need. On the default `up` (no profile): a seed
-  # profile would never run — this compose file has no wrapper that `compose
-  # run`s it. /api/health always returns 200, so wait for a table only create_all
-  # creates — its DDL is one transaction, so that sentinel implies the rest.
-  # Re-runs on every `up` so a volume that aborted at 05 still gets the rest of
-  # the files.
-  db-seed:
-    image: postgres:16-alpine
-    container_name: deeptempo-db-seed
+  # The only schema writer. Runs after the pre-upgrade snapshot and before
+  # the API, daemon, workers and agent processes. restart "no": a non-zero
+  # exit is not retried, and those processes are not started. The owner
+  # connection is the backup service's; vigil_app cannot apply the baseline.
+  # Re-runs on every `up`. A restart of the same revision exits 0 at once.
+  upgrade:
+    # Built by backup-pre-upgrade (see x-backend-build). Same image as backup.
+    image: vigil-backend:local
+    pull_policy: never
+    container_name: deeptempo-upgrade
     environment:
-      PGHOST: postgres
-      PGUSER: deeptempo
-      PGDATABASE: deeptempo_soc
-      PGPASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      HOME: /home/vigil
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: deeptempo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
+      VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
+      VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
     volumes:
-      - ../database/init:/db-init:ro
-      - ./initdb/00_apply.sh:/apply.sh:ro
+      - ${VIGIL_UPGRADE_HOST_DIR:-upgrade_state}:/var/lib/vigil-upgrade
+      - ./upgrade-oneshot.sh:/upgrade-oneshot.sh:ro
+      - ./initdb/00_apply.sh:/vigil-app-password.sh:ro
     entrypoint:
       - /bin/sh
-      - -c
-      - >
-        for i in $$(seq 1 60); do
-          [ "$$(psql -tAc "SELECT to_regclass('public.sla_policies') IS NOT NULL")" = t ] && break;
-          sleep 1;
-        done;
-        if [ "$$(psql -tAc "SELECT to_regclass('public.sla_policies') IS NOT NULL")" != t ]; then
-          echo "sla_policies still missing after wait; applying anyway" >&2;
-        fi;
-        exec sh /apply.sh
+      - /upgrade-oneshot.sh
     depends_on:
       postgres:
         condition: service_healthy
-      # service_started, not service_healthy: /api/health always returns 200,
-      # including when the body says "degraded", so compose treating the
-      # backend as ready is not a schema signal. The wait loop above is the
-      # real gate.
-      # Started implies postgres/redis/bifrost are already up, which a
-      # postgres-only depends_on would not.
-      backend:
-        condition: service_started
       backup-pre-upgrade:
         condition: service_completed_successfully
+    healthcheck:
+      disable: true
     restart: "no"
     networks:
       - deeptempo-network
@@ -273,6 +257,8 @@ services:
         condition: service_healthy
       backup-pre-upgrade:
         condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
@@ -331,8 +317,8 @@ services:
     networks:
       - deeptempo-network
 
-  # Runs once per `up`, before anything that provisions the schema (backend,
-  # soc-daemon, llm-worker, db-seed, backup all wait on it). Takes a restore
+  # Runs once per `up`, before the upgrade one-shot (backend, soc-daemon,
+  # llm-worker, the agent processes, upgrade and backup all wait on it). Takes a restore
   # point when this image would migrate or the recorded version changed;
   # otherwise it exits 0 at once. Same definition as `backup`,
   # so depends_on, entrypoint and restart are restated: the merged-in depends_on
@@ -357,7 +343,7 @@ services:
     restart: "no"
 
   # ─── Daemon layer (--profile daemon) ──────────────────────────────────────
-  # Default `up` is the investigation set: postgres, db-seed, redis, bifrost,
+  # Default `up` is the investigation set: postgres, upgrade, redis, bifrost,
   # backend, agent-worker, agent-serve, plus the backup schedule above.
   # Incident response never touches soc-daemon or llm-worker: workflows
   # enqueue BullMQ `agent-runs` to agent-worker and AGENT_URL is agent-serve.
@@ -479,6 +465,8 @@ services:
         condition: service_healthy
       backup-pre-upgrade:
         condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
@@ -544,6 +532,8 @@ services:
         condition: service_healthy
       backup-pre-upgrade:
         condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
@@ -583,6 +573,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - deeptempo-network
@@ -615,6 +609,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - deeptempo-network

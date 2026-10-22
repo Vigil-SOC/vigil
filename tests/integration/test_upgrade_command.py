@@ -158,6 +158,12 @@ def test_empty_database_matches_fresh_install(provisioned, empty, tmp_path):
     with empty.connect() as conn:
         state = schema_state(conn)
         assert _rows(conn) == _granted(expected_rows)
+        assert conn.execute(
+            text(
+                "SELECT has_table_privilege('vigil_app', 'public.alembic_version', "
+                "'SELECT')"
+            )
+        ).scalar(), "the app role reads the revision at startup"
         assert not _app_can_move_revision(conn), "the app role can move the revision"
 
     if os.environ.get("VIGIL_WRITE_HEAD_SCHEMA"):

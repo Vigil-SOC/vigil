@@ -45,7 +45,7 @@ from core.auth.token_blacklist import (
     revoke_all_for_user,
 )
 from core.config import get_settings
-from core.platform.email_service import send_email
+from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.schemas import UserSchema
@@ -1051,8 +1051,7 @@ def password_reset_request(
 def _reset_request_message(settings) -> str:
     """What the requester is told. Depends only on how mail is configured,
     never on the account, so the reply still can't enumerate emails."""
-    # Any value but smtp falls back to the console backend (get_email_backend).
-    if settings.vigil_email_backend.strip().lower() == "smtp":
+    if mail_is_configured():
         return "If that email matches an active account, a reset link has been sent."
     if settings.dev_mode:
         return (
