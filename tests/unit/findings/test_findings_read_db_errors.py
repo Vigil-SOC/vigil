@@ -1,5 +1,3 @@
-"""A failed findings read is a 5xx, not an empty queue or a 404 (#2818)."""
-
 from __future__ import annotations
 
 import os
