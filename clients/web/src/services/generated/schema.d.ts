@@ -2391,35 +2391,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Models
-         * @description List available models for the Chat UI model picker.
-         *
-         *     Backward-compatible alias for `/api/ai/models` (GH #89). Returns every
-         *     model across all *active* providers (Anthropic, Ollama, OpenAI, …) so the
-         *     picker reflects what the instance can actually run: an Ollama-only
-         *     deployment shows its Ollama models instead of Claude models it will never
-         *     call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-         *     selection still matches a menu entry; the chat send path resolves the
-         *     provider from the active default when no `provider_id::` prefix is present
-         *     (see `_resolve_provider_model_for_request`).
-         */
-        get: operations["get_api_claude_models"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/ai-operations": {
         parameters: {
             query?: never;
@@ -15556,37 +15527,6 @@ export interface operations {
                 "application/json": components["schemas"]["ChatRequest"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_claude_models: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
