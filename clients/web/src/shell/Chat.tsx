@@ -258,7 +258,6 @@ function VigilMessage({
   text: string
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
-  /** dock only: opens the reasoning trace */
   onTrace?: () => void
 }) {
   const copy = (
