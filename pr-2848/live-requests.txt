@@ -1,0 +1,9 @@
+GET /api/timeline/range?start=2026-10-22T00:00:00.000Z&end=2026-10-22T23:59:59.999Z&limit=200
+{"events":[],"total":0,"start_time":"2026-10-22T00:00:00Z","end_time":"2026-10-22T23:59:59.999000Z"}
+HTTP 200
+GET /api/timeline/range?start=not-a-date
+{"detail":[{"type":"datetime_from_date_parsing","loc":["query","start"],"msg":"Input should be a valid datetime or date, invalid character in year","input":"not-a-date","ctx":{"error":"invalid character in year"}}]}
+HTTP 422
+GET /api/timeline/range?end=2026-13-45
+{"detail":[{"type":"datetime_from_date_parsing","loc":["query","end"],"msg":"Input should be a valid datetime or date, month value is outside expected range of 1-12","input":"2026-13-45","ctx":{"error":"month value is outside expected range of 1-12"}}]}
+HTTP 422

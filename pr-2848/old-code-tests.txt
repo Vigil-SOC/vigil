@@ -1,0 +1,3 @@
+FAILED tests/unit/api/test_timeline_range_filters.py::test_an_unparsable_bound_is_a_422[start]
+FAILED tests/unit/api/test_timeline_range_filters.py::test_an_unparsable_bound_is_a_422[end]
+=================== 2 failed, 5 passed, 1 warning in 47.63s ====================
