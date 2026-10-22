@@ -233,8 +233,8 @@ def test_backend_clock_skew_does_not_force_a_login_per_call(env):
 
 
 def test_login_and_refresh_carry_no_browser_markers(env):
-    """Vigil treats Origin or any Sec-Fetch-* header as a console request and
-    refuses it for a service account (D2-17b), so the gateway must send neither."""
+    """Vigil treats Origin or Sec-Fetch-Site as a console request and refuses it
+    for a service account (D2-17b). Stricter here: no Sec-Fetch-* header at all."""
     env.backend.access_ttl = 60
     assert get(env) == 200
     env.clock.offset = 60 - 15 + 1
