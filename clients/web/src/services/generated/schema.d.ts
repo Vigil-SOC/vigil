@@ -2407,9 +2407,7 @@ export interface paths {
          *     picker reflects what the instance can actually run: an Ollama-only
          *     deployment shows its Ollama models instead of Claude models it will never
          *     call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-         *     selection still matches a menu entry; the chat send path resolves the
-         *     provider from the active default when no `provider_id::` prefix is present
-         *     (see `_resolve_provider_model_for_request`).
+         *     selection still matches a menu entry.
          */
         get: operations["get_api_claude_models"];
         put?: never;
@@ -8346,23 +8344,14 @@ export interface components {
             agent_id?: string | null;
             /** Case Id */
             case_id?: string | null;
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
-            /** Model */
-            model?: string | null;
             /** Page Context */
             page_context?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Session Id */
             session_id?: string | null;
-            /** System Prompt */
-            system_prompt?: string | null;
         };
         /** CheckpointRaised */
         CheckpointRaised: {

@@ -28,7 +28,6 @@ from core.llm.chat_layers import (
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
-from core.llm.system_prompt import validate_system_prompt
 from core.llm.target import (
     component_fallback,
     first_servable,
@@ -149,20 +148,9 @@ def _raise_no_provider() -> None:
 
 
 def _resolve_provider_model_for_request(
-    requested_model: Optional[str], agent_id: Optional[str]
+    agent_id: Optional[str],
 ) -> Tuple[Optional[str], str]:
-    """Resolve provider + model for chat requests.
-
-    Older Chat UI state can persist model ids as ``provider_id::model_id``.
-    Keep accepting that shape so a stale localStorage value does not route an
-    Ollama/OpenAI model through the wrong provider.
-    """
-    if requested_model:
-        if "::" in requested_model:
-            provider_id, model_id = requested_model.split("::", 1)
-            return (provider_id or None, model_id or requested_model)
-        return (None, requested_model)
-
+    """Resolve provider + model for chat requests."""
     registry = get_registry()
     agent = None
     category: str = "chat_default"
@@ -263,11 +251,6 @@ class ChatRequest(BaseModel):
     """Chat request model."""
 
     messages: List[ChatMessage]
-    system_prompt: Optional[str] = None
-    # None means "resolve via ai_model_configs" (GH #89). Callers may still
-    # override with an explicit model id.
-    model: Optional[str] = None
-    max_tokens: int = 4096
     agent_id: Optional[str] = None
     session_id: Optional[str] = (
         None  # Chat session identifier for reasoning-trace persistence (GH #79)
@@ -279,11 +262,6 @@ class ChatRequest(BaseModel):
     # ``page_context`` is the route key and is stored only while still null.
     case_id: Optional[str] = None
     page_context: Optional[str] = None
-
-    @field_validator("system_prompt")
-    @classmethod
-    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
-        return validate_system_prompt(v, source="chat")
 
 
 LATEST_ONLY = (
@@ -344,11 +322,10 @@ async def chat_stream(
     # Resolved here because this is the side that knows what an agent is: the
     # harness is handed a prompt, a model and a tool list, never an agent id.
     provider_id, resolved_model = _resolve_provider_model_for_request(
-        request.model, request.agent_id
+        request.agent_id
     )
-    request.model = resolved_model
 
-    system_prompt = request.system_prompt
+    system_prompt: Optional[str] = None
     tools: Optional[List[str]] = None
     if request.agent_id:
         from core.agents.manager import AgentManager
@@ -377,7 +354,7 @@ async def chat_stream(
     active_provider = provider_for(provider_id)
     if active_provider is None:
         _raise_no_provider()
-    model = request.model = model_for(active_provider, request.model)
+    model = model_for(active_provider, resolved_model)
     provider_type = active_provider.provider_type
 
     # Whatever MCP integrations are connected right now (VirusTotal, OTX, MISP,
@@ -423,6 +400,7 @@ async def chat_stream(
         _relay(
             payload,
             request,
+            model,
             session_id,
             getattr(current_user, "user_id", None),
         ),
@@ -454,6 +432,7 @@ def _turns_of(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 async def _relay(
     payload: Dict[str, Any],
     request: ChatRequest,
+    model: str,
     session_id: str,
     user_id: Optional[str],
 ):
@@ -497,7 +476,7 @@ async def _relay(
                 session_id=session_id,
                 user_id=user_id,
                 agent_id=request.agent_id,
-                model=request.model,
+                model=model,
                 # The question as asked: the agent turns merge consecutive user messages.
                 user_text=_user_text_from_content(request.messages[-1].content).strip()
                 or payload["turns"][-1]["content"],
@@ -551,9 +530,7 @@ async def get_models():
     picker reflects what the instance can actually run: an Ollama-only
     deployment shows its Ollama models instead of Claude models it will never
     call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-    selection still matches a menu entry; the chat send path resolves the
-    provider from the active default when no `provider_id::` prefix is present
-    (see `_resolve_provider_model_for_request`).
+    selection still matches a menu entry.
     """
     registry = get_registry()
     try:
