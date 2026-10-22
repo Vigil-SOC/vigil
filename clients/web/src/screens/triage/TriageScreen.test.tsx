@@ -206,6 +206,22 @@ describe('TriageScreen', () => {
     expect(screen.queryByText(/Showing/)).not.toBeInTheDocument()
   })
 
+  it('drops a response that a newer filter has overtaken', async () => {
+    vi.mocked(triageApi.get).mockResolvedValueOnce({ data: payload() } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    let resolveStale: (value: unknown) => void = () => {}
+    vi.mocked(triageApi.get)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveStale = resolve }) as never)
+      .mockResolvedValueOnce({ data: payload({ rows: [] }) } as never)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name: 'Splunk 7' }))
+    await screen.findByText('Nothing in the queue matches these filters.')
+    resolveStale({ data: payload() })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.getByText('Nothing in the queue matches these filters.')).toBeInTheDocument()
+  })
+
   it('keeps a linked source as a selected chip with 0, and says when the cap hides rows', async () => {
     const base = payload()
     vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, matched: 340, counts: { ...base.counts, total: 340 } } } as never)
@@ -376,7 +392,7 @@ describe('TriageScreen', () => {
   it('shows the error state with a retry', async () => {
     vi.mocked(triageApi.get).mockRejectedValue(new Error('down'))
     renderScreen()
-    expect((await screen.findAllByText('Couldn’t load triage')).length).toBeGreaterThan(0)
+    expect(await screen.findByText('Couldn’t load triage')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 
