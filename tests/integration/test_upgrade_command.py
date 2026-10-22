@@ -121,12 +121,20 @@ def test_empty_database_matches_fresh_install(provisioned, empty, tmp_path):
         state = schema_state(conn)
         assert compare(expected_state, state) == []
         assert _rows(conn) == expected_rows
-        assert not conn.execute(
+        assert conn.execute(
             text(
                 "SELECT has_table_privilege('vigil_app', 'public.alembic_version', "
-                "'SELECT, INSERT, UPDATE, DELETE')"
+                "'SELECT')"
             )
-        ).scalar(), "the app role can move the schema revision"
+        ).scalar(), "the app role reads the revision at startup"
+        for privilege in ("INSERT", "UPDATE", "DELETE"):
+            assert not conn.execute(
+                text(
+                    "SELECT has_table_privilege('vigil_app', "
+                    "'public.alembic_version', :p)"
+                ),
+                {"p": privilege},
+            ).scalar(), privilege
 
     if os.environ.get("VIGIL_WRITE_HEAD_SCHEMA"):
         command.HEAD_SCHEMA.write_text(

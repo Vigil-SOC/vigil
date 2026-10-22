@@ -147,8 +147,12 @@ def _create_database(name: str, *, ledger: bool) -> None:
 
 
 def _create_orm(name: str) -> None:
+    from core.storage.connection import stamp_schema_head
+
     engine = create_engine(_url(name))
     Base.metadata.create_all(engine)
+    # The API process only checks alembic_version; a create_all database has none.
+    stamp_schema_head(engine)
     engine.dispose()
 
 

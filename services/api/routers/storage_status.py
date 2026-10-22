@@ -253,9 +253,8 @@ def _schema_message(schema: dict) -> str:
     state = schema["state"]
     if state == "empty":
         return (
-            "Connected. The database has no Vigil tables yet - run "
-            "scripts/init_schema.py (then scripts/seed_reference_data.py for roles) "
-            "against it, then reconnect."
+            "Connected. The database has no Vigil tables yet. "
+            "Run python -m core.upgrade as the database owner, then reconnect."
         )
     if state == "drifted":
         return (

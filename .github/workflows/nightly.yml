@@ -99,11 +99,24 @@ jobs:
         env:
           DB_STRICT_SCHEMA: "true"
         run: |
-          python -c "from core.storage.connection import init_database; init_database()"
+          python - <<'PY'
+          from core.storage.connection import (
+              get_db_manager,
+              init_database,
+              seed_reference_tables,
+              stamp_schema_head,
+          )
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          seed_reference_tables(manager)
+          stamp_schema_head(manager.engine)
+          init_database()
+          PY
 
       # The agent layer's tables are raw SQL with no ORM model, deliberately:
       # Python makes two reads against the ledger and a model invites writes.
-      # init_database() builds from the models, so it creates none of them.
+      # create_tables() builds from the models, so it creates none of them.
       - name: Apply agent-layer schema
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \

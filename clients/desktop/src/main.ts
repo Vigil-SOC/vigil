@@ -51,12 +51,13 @@ const composeArgs = (...rest: string[]): string[] => [
   ...rest,
 ];
 
-// The compose file's bind mounts (./initdb, ./db-init, ./bifrost-config.json)
-// resolve against its directory. Bundled inside an AppImage that directory is a
-// FUSE self-mount (/tmp/.mount_*) the Docker daemon cannot stat, so `up` dies on
-// "mkdir /tmp/.mount_… : file exists". Copy the tree into userData and run from
-// there. Keyed on the app version so upgrades restage new compose/init SQL. Safe
-// to wipe: it holds only read-only bind sources; DB data lives in a named volume.
+// The compose file's bind mounts (./initdb, ./upgrade-oneshot.sh,
+// ./bifrost-config.json) resolve against its directory. Bundled inside an
+// AppImage that directory is a FUSE self-mount (/tmp/.mount_*) the Docker
+// daemon cannot stat, so `up` dies on "mkdir /tmp/.mount_… : file exists".
+// Copy the tree into userData and run from there. Keyed on the app version so
+// upgrades restage the compose file. Safe to wipe: it holds only read-only
+// bind sources; DB data lives in a named volume.
 function stageStandalone(): void {
   const dest = standaloneDir();
   const marker = path.join(dest, ".staged-version");
@@ -636,17 +637,14 @@ async function bringUpStandalone(): Promise<boolean> {
   }
 
   phase("services", "start");
-  // Existing volumes skip initdb. Apply SQL (including vigil_app) before the
-  // backend logs in as that role, or `up --wait` deadlocks on /api/health.
+  // Existing volumes skip the owner password set on first boot. Reset it
+  // before the upgrade one-shot logs in as that role. The image trusts
+  // local-socket logins, so this does not need the old value.
   if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres"))) !== 0) {
     phase("services", "fail");
     sendSplash("error", "The Vigil containers did not start. See the log above.");
     return false;
   }
-  // initdb set the superuser password only once, so a volume from an older
-  // install (or a lost config.json) still holds a different one. The image
-  // trusts local-socket logins, so reset it from the container's own env
-  // without knowing the old value; a no-op when it already matches.
   if (
     (await runCompose(
       composeArgs(
@@ -660,31 +658,14 @@ async function bringUpStandalone(): Promise<boolean> {
     sendSplash("error", "Could not set the database password. See the log above.");
     return false;
   }
-  if (
-    (await runCompose(
-      composeArgs("run", "--rm", "--no-deps", "--entrypoint", "sh", "db-seed", "/apply.sh"),
-    )) !== 0
-  ) {
-    phase("services", "fail");
-    sendSplash("error", "Could not prepare the database. See the log above.");
-    return false;
-  }
+  // upgrade runs python -m core.upgrade, then sets vigil_app's password.
+  // The API and the agent processes wait on it; a non-zero exit leaves them down.
   if ((await runCompose(composeArgs("up", "-d", "--wait"))) !== 0) {
     phase("services", "fail");
     sendSplash("error", "The Vigil containers did not start. See the log above.");
     return false;
   }
   phase("services", "ok");
-
-  // Only now does the schema exist (the backend runs create_all at startup), so
-  // the seed data — roles, the default admin, SLA policies — can land.
-  phase("schema", "start");
-  if ((await runCompose(composeArgs("run", "--rm", "--no-deps", "db-seed"))) !== 0) {
-    phase("schema", "fail");
-    sendSplash("error", "Could not prepare the database. See the log above.");
-    return false;
-  }
-  phase("schema", "ok");
   await relayBackendSetupCode();
   return true;
 }

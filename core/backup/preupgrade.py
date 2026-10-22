@@ -48,6 +48,9 @@ from core.version import __version__
 logger = logging.getLogger(__name__)
 
 KIND = "pre-upgrade"
+# One line, the snapshot id ``python -m core.upgrade --restore-point`` reads.
+# The upgrade one-shot and this command share the upgrade directory.
+RESTORE_POINT_NAME = "restore-point"
 # No stamped release and no applied history yet. Not this image's version.
 UNSTAMPED_RELEASE = "0.0.0"
 DEFAULT_UPGRADE_DIR = Path("/var/lib/vigil-upgrade")

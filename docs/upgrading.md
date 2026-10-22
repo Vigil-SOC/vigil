@@ -9,6 +9,16 @@ python -m core.upgrade --restore-point <id>       # apply, naming the restore po
 
 Instead of a restore point you can set `VIGIL_UPGRADE_ACK_VERSION` to this release's version and `VIGIL_UPGRADE_ACK_REASON` to why you are going ahead without one. Each run that applies or refuses is appended to `$VIGIL_UPGRADE_DIR/history.jsonl`.
 
+## Compose, the desktop app, and start.sh
+
+`docker compose up`, the desktop stack, and `./start.sh` (and `scripts/app_up.sh`) run this command for you. It runs once Postgres is healthy and before the API, the daemon, the workers, and the agent processes start. Nothing is served while it runs: that is a maintenance window. Source events are not queued. When the stack is back, pollers re-read their lookback — 60 minutes for Splunk.
+
+The directory is `/var/lib/vigil-upgrade` in Compose and on the desktop (the `upgrade_state` volume), and `~/.vigil-upgrade` for `start.sh`. A pre-upgrade snapshot is taken first and its id is passed in. Set the two acknowledgement variables above to go ahead without one.
+
+A refused upgrade changes nothing and exits non-zero. This install stays down until you fix the cause or reinstall the previous release. The API, daemon, workers, and agent processes are not started.
+
+Rolling back by image tag alone is not the way back. Restore the restore point, using the release that took it, then install the previous release.
+
 ## Adopting a 0.7.0 or 0.8.0 database
 
 A database that has Vigil's tables but no `alembic_version` table was installed by 0.7.0 or 0.8.0. It is not rebuilt. In one transaction the command:

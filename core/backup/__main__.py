@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from core.backup.create import BackupError, BackupSkipped, create_snapshot
-from core.backup.preupgrade import pre_upgrade_snapshot
+from core.backup.preupgrade import RESTORE_POINT_NAME, pre_upgrade_snapshot
 from core.backup.restore import restore_snapshot
 from core.backup.schedule import _configure_logging, run_forever
+from core.config import get_settings
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -54,6 +57,28 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _publish_restore_point(snapshot_id: str | None) -> None:
+    """Leave the id where the upgrade one-shot reads it, or clear a stale one.
+
+    stdout stays empty: the id is only logged. A restart or an acknowledgement
+    takes no snapshot, and a previous id must not be passed as this run's.
+    """
+    raw = (get_settings().vigil_upgrade_dir or "").strip()
+    if not raw:
+        if snapshot_id:
+            raise BackupError(
+                "pre-upgrade snapshot taken but VIGIL_UPGRADE_DIR is unset"
+            )
+        return
+    path = Path(raw) / RESTORE_POINT_NAME
+    if not snapshot_id:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(snapshot_id + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -83,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "pre-upgrade":
             _configure_logging()
-            pre_upgrade_snapshot(bifrost_data=args.bifrost_data)
+            _publish_restore_point(pre_upgrade_snapshot(bifrost_data=args.bifrost_data))
             return 0
     except BackupSkipped as exc:
         print(str(exc), file=sys.stderr)

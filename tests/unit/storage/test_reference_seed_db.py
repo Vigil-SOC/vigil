@@ -14,10 +14,12 @@ from sqlalchemy import text
 
 import core.storage.connection as connection_module
 from core.storage.connection import (
+    SchemaRevisionError,
     get_db_manager,
     init_database,
     reset_reference_seed_check,
     seed_reference_tables,
+    stamp_schema_head,
 )
 from core.storage.reference_seed import find_seed_file, seed_empty_tables
 
@@ -103,26 +105,7 @@ def test_a_failing_table_leaves_the_others_seeded(conn):
     assert _count(conn, "case_templates") == 0
 
 
-def test_init_database_seeds_through_the_real_seed(monkeypatch, fresh_check):
-    # The conftest keeps init_database() from seeding the shared database;
-    # restore the real seed for this one test and delete what it wrote.
-    monkeypatch.setattr(connection_module, "seed_empty_tables", seed_empty_tables)
-    engine = get_db_manager().engine
-    with engine.connect() as c:
-        assert _count(c, "sla_policies") == 0 and _count(c, "case_templates") == 0
-    try:
-        init_database()
-        with engine.connect() as c:
-            assert _count(c, "sla_policies") == EXPECTED["sla_policies"]
-            assert _count(c, "case_templates") == EXPECTED["case_templates"]
-    finally:
-        with engine.begin() as c:
-            c.execute(text("DELETE FROM case_templates"))
-            c.execute(text("DELETE FROM sla_policies"))
-
-
-def test_each_database_is_seeded_once_per_process(monkeypatch, fresh_check):
-    # init_database() runs on every DatabaseDataService construction.
+def test_init_database_does_not_seed(monkeypatch, fresh_check):
     calls = []
     monkeypatch.setattr(
         connection_module,
@@ -130,9 +113,19 @@ def test_each_database_is_seeded_once_per_process(monkeypatch, fresh_check):
         lambda conn, sql=None: calls.append(sql) or ({}, {}),
     )
     init_database()
-    init_database()
-    init_database(create_tables=False)
-    assert len(calls) == 1
+    init_database(create_tables=True)
+    assert calls == []
+
+
+def test_init_database_refuses_tables_without_a_revision():
+    engine = get_db_manager().engine
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE alembic_version"))
+    try:
+        with pytest.raises(SchemaRevisionError, match="no alembic_version"):
+            init_database()
+    finally:
+        stamp_schema_head(engine)
 
 
 def test_a_failure_is_logged_and_retried_after_the_recheck_interval(

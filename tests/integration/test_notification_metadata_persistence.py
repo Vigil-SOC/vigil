@@ -36,7 +36,12 @@ def _database():
     evidence for #559. CI provisions the schema as its own job step, so anything
     failing past the probe is a genuine failure.
     """
-    from core.storage.connection import get_db_manager, init_database
+    from core.storage.connection import (
+        get_db_manager,
+        init_database,
+        seed_reference_tables,
+        stamp_schema_head,
+    )
 
     manager = get_db_manager()
     try:
@@ -51,6 +56,9 @@ def _database():
             "requires a local PostgreSQL (docker compose up -d postgres): " f"{exc}"
         )
 
+    manager.create_tables()
+    seed_reference_tables(manager)
+    stamp_schema_head(manager.engine)
     init_database()
 
 

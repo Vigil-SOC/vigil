@@ -60,10 +60,10 @@ def test_compose_app_services_do_not_receive_the_owner_password() -> None:
             owner_value = pairs.get("PGPASSWORD") or pairs.get("POSTGRES_PASSWORD")
             assert owner_value == OWNER_DEFAULT, name
             owners += 1
-            if name in ("postgres", "db-seed"):
+            if name in ("postgres", "upgrade"):
                 assert pairs.get("POSTGRES_APP_PASSWORD") == APP_DEFAULT, name
     assert app >= 4, "agent anchor, backend, daemon and llm-worker"
-    assert owners >= 3, "postgres, db-seed and backup"
+    assert owners >= 3, "postgres, upgrade and backup"
 
 
 @pytest.mark.parametrize("script", APPLY_SCRIPTS, ids=lambda path: path.parent.parent.name)

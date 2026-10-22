@@ -40,13 +40,6 @@ services:
       POSTGRES_INITDB_ARGS: "-E UTF8"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Must run here, not just in db-seed: the extensions have to exist before
-      # the backend's create_all (its indexes use pg_trgm's gin_trgm_ops), and
-      # the auth tables have to be created by this SQL — with the DEFAULT
-      # clauses create_all does not emit — or seeding the admin row fails on
-      # the columns it omits. 00_apply.sh explains why it isn't plain *.sql.
-      - ./initdb:/docker-entrypoint-initdb.d:ro
-      - ./db-init:/db-init:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deeptempo -d deeptempo_soc"]
       interval: 10s
@@ -145,6 +138,8 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -170,6 +165,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - vigil
@@ -186,41 +185,84 @@ services:
       start_period: 10s
     # An SSE stream can sit on one model call for minutes.
     stop_grace_period: 120s
-    # Postgres only: serve never touches the queue.
+    # Postgres only, plus the upgrade one-shot: serve never touches the queue.
     depends_on:
       postgres:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+      upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - vigil
 
-  # Second pass over the same files, once the backend's create_all has built the
-  # tables the data-only scripts need. Behind a profile so `up` ignores it; the
-  # app runs it with `compose run`. A healthy backend only means /api/health
-  # answers and create_all may still be running, so wait for a table only it
-  # creates — its DDL is one transaction, so that sentinel implies the rest.
-  db-seed:
-    profiles:
-      - seed
-    image: postgres:16-alpine
+  # Snapshot before the upgrade one-shot. No backups.json on a desktop install,
+  # so the point lands in the upgrade directory. Writes restore-point there;
+  # the upgrade service passes it and does not take another.
+  backup-pre-upgrade:
+    image: ghcr.io/vigil-soc/vigil-backend:${VIGIL_VERSION}
     environment:
-      PGHOST: postgres
-      PGUSER: deeptempo
-      PGDATABASE: deeptempo_soc
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
+      HOME: /home/vigil
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: deeptempo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set by the desktop app}
+      VIGIL_BACKUP_OWNER_CONNECTION: "1"
+      VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
+      VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
+      VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
     volumes:
-      - ./db-init:/db-init:ro
-      - ./initdb/00_apply.sh:/apply.sh:ro
+      - vigil_home:/home/vigil/.vigil
+      - upgrade_state:/var/lib/vigil-upgrade
+      - bifrost_data:/var/lib/vigil/bifrost
+    entrypoint:
+      - python
+      - -m
+      - core.backup
+      - pre-upgrade
+      - --bifrost-data
+      - /var/lib/vigil/bifrost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+    networks:
+      - vigil
+
+  # Schema, then vigil_app's password. restart "no": a refusal leaves the API
+  # and the agent processes unstarted.
+  upgrade:
+    image: ghcr.io/vigil-soc/vigil-backend:${VIGIL_VERSION}
+    environment:
+      HOME: /home/vigil
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: deeptempo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set by the desktop app}
+      VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
+      VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
+      VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
+    volumes:
+      - upgrade_state:/var/lib/vigil-upgrade
+      - ./upgrade-oneshot.sh:/upgrade-oneshot.sh:ro
+      - ./initdb/00_apply.sh:/vigil-app-password.sh:ro
     entrypoint:
       - /bin/sh
-      - -c
-      - >
-        for i in $$(seq 1 60); do
-          [ "$$(psql -tAc "SELECT to_regclass('public.sla_policies') IS NOT NULL")" = t ] && break;
-          sleep 1;
-        done;
-        exec sh /apply.sh
+      - /upgrade-oneshot.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
     restart: "no"
     networks:
       - vigil

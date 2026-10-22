@@ -92,10 +92,9 @@ def throwaway_database():
 
     pinned = pytest.MonkeyPatch()
     pinned.setattr(connection_module, "db_config_generation", lambda: 0.0)
-    # Keep it the bare ORM schema. init_database() seeds the default SLA
-    # policies and case templates into empty tables, which the first
-    # DatabaseDataService a test builds would trigger; a test that makes its
-    # own default policy would then find two. Seed tests call it themselves.
+    # Keep it the bare ORM schema. seed_reference_tables() fills empty SLA
+    # and template tables; a test that makes its own default policy would
+    # then find two. Seed tests call the real seeder themselves.
     pinned.setattr(
         connection_module, "seed_empty_tables", lambda conn, sql=None: ({}, {})
     )
@@ -107,6 +106,9 @@ def throwaway_database():
             except Exception as e:  # noqa: BLE001
                 print(f"[test-db] {statement} failed, continuing: {e}")
         manager.create_tables()
+        # create_tables() leaves no alembic revision. init_database() checks
+        # it and raises, including when the tables are already there.
+        connection_module.stamp_schema_head(manager.engine)
         yield name
     finally:
         pinned.undo()

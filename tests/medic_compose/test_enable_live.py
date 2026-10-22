@@ -4,7 +4,7 @@ Opt-in (it builds the backend image and runs a stack for a few minutes):
 
     VIGIL_MEDIC_COMPOSE_LIVE=1 python -m pytest tests/medic_compose/test_enable_live.py
 
-1. A fresh install with Medic off (real backend, Postgres, db-seed, Redis; stubs
+1. A fresh install with Medic off (real backend, Postgres, upgrade, Redis; stubs
    for Bifrost, the backup and the agents, `compose.v1.yml`): the backend says
    ``off`` and no service account exists.
 2. `scripts/medic/enable-compose.sh`, for real, under its own project
@@ -30,7 +30,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE, clean_env, compose_cmd
+from tests.medic_compose.compose import (
+    ENABLE,
+    HAVE_COMPOSE,
+    REPO,
+    clean_env,
+    compose_cmd,
+)
 
 HERE = Path(__file__).resolve().parent
 OVERRIDE = HERE / "compose.v1.yml"
@@ -41,7 +47,7 @@ INSTALL = (
     "bifrost",
     "backup-pre-upgrade",
     "backend",
-    "db-seed",
+    "upgrade",
     "agent-worker",
     "agent-serve",
 )
@@ -101,6 +107,8 @@ class Stack:
             VIGIL_MEDIC_SECRETS_DIR=str(self.secrets_dir),
             VIGIL_MEDIC_COMPOSE_OVERRIDE=":".join(str(f) for f in files),
             MEDIC_V1_STUB_DIR=str(HERE),
+            VIGIL_UPGRADE_ACK_VERSION=(REPO / "VERSION").read_text(encoding="utf-8").strip(),
+            VIGIL_UPGRADE_ACK_REASON="medic compose live test",
             JWT_SECRET_KEY="V1JWT" + secrets.token_hex(24),
             AGENT_INTERNAL_TOKEN="V1TOKEN" + secrets.token_hex(8),
             POSTGRES_PASSWORD="V1PG" + secrets.token_hex(12),
@@ -190,7 +198,7 @@ def stack(tmp_path_factory):
     try:
         s.compose("build", "backend")
         s.compose("up", "-d", *INSTALL)
-        # db-seed seeds the roles once create_all has run.
+        # The upgrade one-shot seeds the Viewer role before the backend starts.
         s.wait(
             lambda: s.sql("SELECT count(*) FROM roles WHERE role_id = 'role-viewer'"),
             lambda out: out == "1",

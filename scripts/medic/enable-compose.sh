@@ -265,7 +265,7 @@ ensure_account() {
         exit 1
     fi
     err="$(mktemp)"
-    # Only 75 (schema or Viewer role not there yet: db-seed still running) is
+    # Only 75 (schema or Viewer role not there yet) is
     # retried. Anything else is final: 64 usage, 70 database error, 77 refused,
     # 1 an image without this code (rebuild the backend).
     for _ in $(seq 1 60); do
@@ -326,8 +326,9 @@ if [ "$secrets_only" = 0 ]; then
     if [ "$api_outcome" = created ] || [ -e "$dir/.recreate" ]; then
         dcm up -d --force-recreate backend
     fi
-    # db-seed seeds the Viewer role; only a full `up` would start it otherwise.
-    dcm up -d backend db-seed
+    # The upgrade one-shot is a dependency of backend, so this applies the schema
+    # and the Viewer role before the account step.
+    dcm up -d backend
     ensure_account
     if [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ] \
         || [ -e "$dir/.recreate" ]; then

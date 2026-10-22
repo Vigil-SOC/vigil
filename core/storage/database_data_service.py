@@ -10,6 +10,7 @@ from core.config import is_demo_mode
 from core.exceptions import DatabaseError
 from core.storage.connection import (
     SchemaDriftError,
+    SchemaRevisionError,
     get_db_manager,
     init_database,
 )
@@ -83,7 +84,7 @@ class DatabaseDataService:
 
     def _init_database(self):
         try:
-            init_database(echo=False, create_tables=True)
+            init_database(echo=False)
             db_manager = get_db_manager()
             if not db_manager.health_check():
                 raise DatabaseError("Database health check failed")
@@ -93,9 +94,9 @@ class DatabaseDataService:
             if self._db_was_down:
                 self._db_was_down = False
                 logger.info("PostgreSQL reconnected")
-        except SchemaDriftError:
-            # DB_STRICT_SCHEMA is set, so the operator asked for this to be
-            # fatal (#562).
+        except (SchemaDriftError, SchemaRevisionError):
+            # Drift is fatal only when DB_STRICT_SCHEMA is set (#562). A
+            # revision that is not this image's head is always fatal.
             self._db_connected = False
             self._db_service = None
             raise

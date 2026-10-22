@@ -128,8 +128,8 @@ def test_full_run_creates_the_account_then_starts_medic(run) -> None:
     names = [s[0] for s in steps]
     assert names.index("build") < names.index("up") < names.index("exec")
     assert ["build", "medic", "medic-gateway", "medic-dockerproxy"] in steps
-    # db-seed seeds the Viewer role; nothing else starts it (review S3).
-    assert ["up", "-d", "backend", "db-seed"] in steps
+    # The upgrade one-shot is a dependency of backend, so the Viewer role exists.
+    assert ["up", "-d", "backend"] in steps
     user = run.secret("viewer_username")
     assert [
         "exec",
@@ -399,7 +399,7 @@ def test_a_new_api_key_recreates_the_backend_before_it_is_used(run) -> None:
     steps = [_sub(c) for c in run.compose_calls()]
     # Before the account step and Medic, so the backend's key file is the new one.
     assert steps.index(RECREATE_BACKEND) < steps.index(
-        ["up", "-d", "backend", "db-seed"]
+        ["up", "-d", "backend"]
     )
 
 
