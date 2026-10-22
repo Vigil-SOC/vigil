@@ -655,7 +655,7 @@ def seed_default_roles(conn):
 
 # medic.read / medic.admin for the default roles (C6/V3); existing keys win, so a
 # grant an operator turned off stays off. The same statement as
-# infra/database/init/44_medic_permissions.sql.
+# infra/database/init/45_medic_permissions.sql.
 @migration("Grant medic.read / medic.admin to the default roles")
 def grant_medic_permissions(conn):
     if not _table_exists(conn, 'roles'):

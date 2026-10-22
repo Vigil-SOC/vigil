@@ -3,7 +3,7 @@
 The default roles come from ``06_auth_tables.sql`` with ``ON CONFLICT DO
 NOTHING``, so a new permission there would never reach an existing install. Like
 ``loglm.view`` (``17_loglm_setup.sql``), the Medic grants are a later file,
-``44_medic_permissions.sql`` (Compose db-seed, Helm db-init), plus the same
+``45_medic_permissions.sql`` (Compose db-seed, Helm db-init), plus the same
 statement as a ``scripts/migrate_schema.py`` step. Compose's db-seed re-runs
 every file on each ``up``, so a grant an operator has turned off must stay off.
 Each change runs in a transaction that is rolled back.
@@ -31,7 +31,7 @@ INIT_DIRS = (
     REPO / "infra" / "database" / "init",
     REPO / "infra" / "helm" / "vigil" / "files" / "database-init",
 )
-INIT_SQL = INIT_DIRS[0] / "44_medic_permissions.sql"
+INIT_SQL = INIT_DIRS[0] / "45_medic_permissions.sql"
 MEDIC = (MEDIC_READ_PERMISSION, MEDIC_ADMIN_PERMISSION)
 
 
