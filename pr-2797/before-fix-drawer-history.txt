@@ -1,0 +1,5 @@
+       × comes back to the case on Back from a page the drawer led to, as Watch it run and Replay do 1721ms
+       × closes on Back to an entry it was never open over 447ms
+       × closes on a ⌘K jump to the screen it is open over, and Back brings it back 1420ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 4 passed | 66 skipped (73)

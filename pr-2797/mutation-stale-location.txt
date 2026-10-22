@@ -1,0 +1,3 @@
+       × opens a case that resolves after a move over the page moved to 534ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 6 passed | 66 skipped (73)

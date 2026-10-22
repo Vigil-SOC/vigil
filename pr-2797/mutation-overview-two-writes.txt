@@ -1,0 +1,3 @@
+       × opens the case from an Overview alert in place of the alert, and Back leaves both closed 307ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 5 passed | 66 skipped (72)

@@ -1,0 +1,4 @@
+     × navigates primary screens and the More menu 7925ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed | 94 passed (95)
+      Tests  1 failed | 1348 passed (1349)

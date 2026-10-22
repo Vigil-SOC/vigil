@@ -1,0 +1,3 @@
+       × closes on a ⌘K jump to the screen it is open over 1707ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 6 passed | 66 skipped (73)

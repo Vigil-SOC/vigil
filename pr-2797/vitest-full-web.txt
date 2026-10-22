@@ -1,0 +1,5 @@
+     × navigates primary screens and the More menu 6923ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/shell/SocConsole.test.tsx > SocConsole > navigates primary screens and the More menu
+ Test Files  1 failed | 94 passed (95)
+      Tests  1 failed | 1352 passed (1353)
