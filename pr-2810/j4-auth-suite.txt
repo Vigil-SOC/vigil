@@ -1,0 +1,45 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/5f9312a8-b0f7-4f08-9fb5-2e4814e87471/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 205 items
+
+tests/unit/auth/test_auth.py ..............                              [  6%]
+tests/unit/auth/test_auth_lockout_persistence.py ...                     [  8%]
+tests/unit/auth/test_bootstrap_code.py .......                           [ 11%]
+tests/unit/auth/test_change_password.py .....                            [ 14%]
+tests/unit/auth/test_dev_mode_permissions.py .                           [ 14%]
+tests/unit/auth/test_dev_mode_production_refusal.py ......               [ 17%]
+tests/unit/auth/test_mcp_credentials.py ..................               [ 26%]
+tests/unit/auth/test_mfa_failure_lockout.py .......                      [ 29%]
+tests/unit/auth/test_mfa_key_change.py ......                            [ 32%]
+tests/unit/auth/test_mfa_management.py ............                      [ 38%]
+tests/unit/auth/test_password_reset.py ......                            [ 41%]
+tests/unit/auth/test_password_reset_without_mail.py .........            [ 45%]
+tests/unit/auth/test_password_validator.py ...........                   [ 51%]
+tests/unit/auth/test_profile_email_change.py .........                   [ 55%]
+tests/unit/auth/test_service_account_cli.py ............................ [ 69%]
+                                                                         [ 69%]
+tests/unit/auth/test_service_account_limits.py .........                 [ 73%]
+tests/unit/auth/test_service_account_lockout.py .........                [ 78%]
+tests/unit/auth/test_token_blacklist_eviction.py ......                  [ 80%]
+tests/unit/auth/test_token_blacklist_outage_logging.py ..                [ 81%]
+tests/unit/auth/test_token_type.py ...............                       [ 89%]
+tests/unit/auth/test_tool_principal.py .......                           [ 92%]
+tests/unit/auth/test_user_update_authorization.py ..........             [ 97%]
+tests/unit/auth/test_user_update_revokes_tokens.py .....                 [100%]
+
+============================= slowest 10 durations =============================
+31.16s call     unit/auth/test_mfa_management.py::test_disable_is_rate_limited
+17.90s call     unit/auth/test_mfa_management.py::test_enrolment_code_cannot_disable_mfa
+16.69s call     unit/auth/test_mfa_management.py::test_setup_resets_the_stored_step
+11.36s call     unit/auth/test_mfa_management.py::test_code_from_an_earlier_step_is_refused
+11.30s call     unit/auth/test_mfa_management.py::test_disable_with_wrong_code_is_refused_and_leaves_mfa_on
+10.48s call     unit/auth/test_mfa_management.py::test_login_code_is_refused_the_second_time_within_its_step
+6.45s setup    unit/auth/test_token_type.py::test_only_an_access_token_authenticates[access-200-bearer]
+6.27s call     unit/auth/test_mfa_management.py::test_disable_with_recovery_code_clears_the_rest
+5.68s call     unit/auth/test_mfa_management.py::test_disable_with_totp_clears_secret_and_recovery_codes
+5.51s call     unit/auth/test_mfa_management.py::test_setup_while_enabled_is_409_and_changes_nothing
+================= 205 passed, 59 warnings in 244.45s (0:04:04) =================

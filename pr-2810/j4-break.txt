@@ -1,0 +1,60 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/5f9312a8-b0f7-4f08-9fb5-2e4814e87471/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 9 items
+
+tests/unit/auth/test_password_reset_without_mail.py ...F.....            [100%]
+
+=================================== FAILURES ===================================
+________________ test_mail_links_to_the_reset_screen[-origin0] _________________
+
+frontend_url = '', origin = ('http', 'localhost')
+
+    @pytest.mark.parametrize(
+        "frontend_url,origin",
+        [
+            ("", ("http", "localhost")),
+            ("https://soc.example/vigil", ("https", "soc.example")),
+        ],
+    )
+    def test_mail_links_to_the_reset_screen(frontend_url, origin):
+>       url = _mailed_url(frontend_url)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+frontend_url = ''
+origin     = ('http', 'localhost')
+
+tests/unit/auth/test_password_reset_without_mail.py:107: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+frontend_url = ''
+
+    def _mailed_url(frontend_url):
+        _, send = _request(ADMIN, _settings(frontend_url=frontend_url))
+        body = send.call_args.kwargs["body"]
+>       return urlparse(next(w for w in body.split() if w.startswith("http")))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+_          = 'If that email matches an active account, a reset link has been sent.'
+body       = 'Hello Admin,\n\nA password reset was requested for this account. Use the link below to choose a new password. The lin...lkIjoidS1hZG1pbiJ9.atpGzQ.HFBUeDLIhhnksaRH-5NY-pAehqk\n\nIf you did not request this reset, you can ignore this email.'
+frontend_url = ''
+send       = <MagicMock name='send_email' id='139859257538224'>
+
+tests/unit/auth/test_password_reset_without_mail.py:96: StopIteration
+============================= slowest 10 durations =============================
+0.08s call     unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[console-False-scripts/reset-password.sh]
+0.07s call     unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[smtp-False-a reset link has been sent]
+0.07s call     unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[console-True-server log]
+0.06s setup    unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[console-False-scripts/reset-password.sh]
+0.05s call     unit/auth/test_password_reset_without_mail.py::test_mail_links_to_the_reset_screen[https://soc.example/vigil-origin1]
+0.04s call     unit/auth/test_password_reset_without_mail.py::test_mail_links_to_the_reset_screen[-origin0]
+0.02s call     unit/auth/test_password_reset_without_mail.py::test_link_carries_a_token_for_that_user
+
+(3 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/auth/test_password_reset_without_mail.py::test_mail_links_to_the_reset_screen[-origin0]
+========================= 1 failed, 8 passed in 2.67s ==========================
