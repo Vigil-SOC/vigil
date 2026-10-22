@@ -95,7 +95,6 @@ const newSessionId = (): string => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-/** A reason the server gave: the backend was reached, so it is not a transport failure. */
 class ServerRefusal extends Error {}
 
 interface Conversation {
@@ -145,7 +144,6 @@ function askedOf(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter((m, i) => m.role !== 'error' && msgs[i + 1]?.role !== 'error')
 }
 
-/** The failure's own words, from a refused response's `detail`; null when it carries none. */
 async function refusalOf(res: Response): Promise<string | null> {
   try {
     const detail = (await res.json())?.detail
