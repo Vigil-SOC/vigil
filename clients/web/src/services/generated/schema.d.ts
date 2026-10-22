@@ -9469,8 +9469,12 @@ export interface components {
                 [key: string]: unknown;
             };
             bounds: components["schemas"]["Bounds"];
+            /** Checkpoint Id */
+            checkpoint_id?: string | null;
             /** Principal */
             principal?: string | null;
+            /** Run Id */
+            run_id?: string | null;
             /** Tool */
             tool: string;
         };
@@ -10063,6 +10067,8 @@ export interface components {
             agent: string;
             /** Approval State */
             approval_state?: string | null;
+            /** Args */
+            args?: string | null;
             /** Checkpoint Id */
             checkpoint_id?: string | null;
             /** Error */
@@ -10081,6 +10087,8 @@ export interface components {
             question?: string | null;
             /** Status */
             status: string;
+            /** Tool */
+            tool?: string | null;
         };
         /**
          * PlatformDatabaseProxyConfig

@@ -38,6 +38,7 @@ from services.medic.app.wiring import (
 )
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
+from services.medic.sensors.containers import docker_containers
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.store import StoreError, open_writer
 
@@ -196,6 +197,11 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
     serve = config.agent_serve_addr(env, shape)
     if serve is not None:
         sensors.append(agent_serve_ready(host=serve[0], port=serve[1]))
+    # Helm and host-native don't run this sensor (pods are a separate read).
+    if shape == "compose":
+        proxy = config.dockerproxy_addr(env, shape)
+        if proxy is not None:
+            sensors.append(docker_containers(host=proxy[0], port=proxy[1]))
     return sensors
 
 
