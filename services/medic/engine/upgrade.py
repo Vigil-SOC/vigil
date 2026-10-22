@@ -51,7 +51,15 @@ class UpgradeWatch:
             return
         restarted = False
         if obs.get("epoch") is not None:
-            restarted |= self._changed(f"epoch|{obs['signal']}", t, obs["epoch"])
+            # One signal can carry a different epoch per producer (`pods` does,
+            # one per pod). Keying only on the signal would flap that mark on
+            # every list and hold an upgrade window open.
+            instance = obs["target"].get("instance") or ""
+            restarted |= self._changed(
+                f"epoch|{obs['signal']}|{obs['target']['service']}|{instance}",
+                t,
+                obs["epoch"],
+            )
         for v in obs.get("values", []):
             if v.get("state") != "present":
                 continue

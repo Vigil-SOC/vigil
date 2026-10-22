@@ -230,6 +230,26 @@ def _value(key: str, value) -> dict:
     return {"key": key, "state": "present", "value": value}
 
 
+def test_epochs_of_one_signal_do_not_flap_across_pods() -> None:
+    """A Helm list emits one pods epoch per pod. That is not two restarts."""
+    w = UpgradeWatch(None)
+
+    def pod(service: str, instance: str, epoch: str, t: float) -> None:
+        obs = _sample(service, 0, epoch=epoch, signal="pods")
+        obs["target"]["instance"] = instance
+        w.observe(obs, t)
+
+    pod("backend", "backend-a", "container:t1", 0)
+    pod("soc-daemon", "daemon-0", "container:t2", 0.001)
+    pod("backend", "backend-a", "container:t1", 30)
+    pod("soc-daemon", "daemon-0", "container:t2", 30.001)
+    assert not w.active(30)
+    pod("backend", "backend-a", "container:t3", 60)
+    assert not w.active(60)  # one service restarting is not an upgrade
+    pod("soc-daemon", "daemon-0", "container:t4", 60.001)
+    assert w.active(60.001)
+
+
 def test_restarts_of_two_services_within_5_min_open_a_window() -> None:
     w = UpgradeWatch(None)
     w.observe(_sample("backend", 0, epoch="e1", signal="a"), 0)
