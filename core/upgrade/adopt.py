@@ -43,7 +43,7 @@ HELM_SKIPS = (
     "34_drop_skills.sql",
 )
 MCP_CREDENTIALS = "34_mcp_credentials.sql"
-# Helm never re-ran 06, so a 0.7 Helm install can lack this column.
+# Helm never re-ran 06, so a Helm install can lack this column.
 MFA_STEP = "06_auth_tables.sql: mfa_last_totp_step"
 # 0.8.0 got these from create_all and no init file has them; before this
 # module, scripts/migrate_schema.py (add_findings_noise_reason) added them.
@@ -64,8 +64,13 @@ FORWARD = (
     "44_medic_last_seen.sql",
     "45_medic_permissions.sql",
 )
-# The stamps adoption accepts, and the suffix each one runs.
-FORWARD_BY_STAMP = {"0.7.0": FORWARD, "0.8.0": FORWARD[-2:]}
+# The stamps adoption accepts, and the suffix each one runs. A 0.8.0 stamp
+# can be a 0.7 install upgraded in place, which never got the two columns
+# only 06 and create_all build; both steps are no-ops where they exist.
+FORWARD_BY_STAMP = {"0.7.0": FORWARD, "0.8.0": FORWARD[-4:]}
+# Waits for a lock longer than this fail the run instead of queueing the app
+# behind an ALTER.
+LOCK_TIMEOUT = "30s"
 APP_ROLE_FILE = "30_vigil_app_role.sql"
 
 # Every release up to 0.8 ran the init path that writes schema_version.
@@ -119,12 +124,13 @@ def _pre_baseline(version: Optional[str]) -> bool:
     return (int(match[1]), int(match[2])) <= LAST_PRE_BASELINE
 
 
-def restamped(conn: Connection, own_version: str) -> Optional[str]:
+def restamped(conn: Connection) -> Optional[str]:
     """The pre-baseline version an older release stamped after the baseline, or None.
 
-    Adoption leaves the old stamp as it found it, so only a ``schema_version``
-    row written in a later transaction than ``alembic_version``'s counts. A
-    restore loads both in one transaction.
+    Adoption leaves the old stamp as it found it, and a post-baseline
+    ``init_database()`` no longer writes it, so only a ``schema_version`` row
+    written in a later transaction than ``alembic_version``'s counts. A restore
+    loads both in one transaction.
     """
     if (
         conn.execute(text("SELECT to_regclass('public.system_config')")).scalar()
@@ -137,10 +143,7 @@ def restamped(conn: Connection, own_version: str) -> Optional[str]:
         WHERE s.key = 'schema_version'
           AND s.xmin <> a.xmin AND age(s.xmin) < age(a.xmin)
     """)).scalar()
-    # The current image's own init path may still write its version.
-    if version != own_version and _pre_baseline(version):
-        return version
-    return None
+    return version if _pre_baseline(version) else None
 
 
 def _sql(name: str) -> str:
@@ -169,9 +172,14 @@ def _run(conn: Connection, adoption: Adoption, name: str) -> None:
     try:
         cursor.execute(_sql(name))
         cursor.execute("RESET ALL")
+        _lock_timeout(cursor)
     finally:
         cursor.close()
     adoption.repairs.append(name)
+
+
+def _lock_timeout(cursor) -> None:
+    cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
 
 
 def _role_exists(conn: Connection, role: str) -> bool:
@@ -202,31 +210,50 @@ def _reassign_app_objects(conn: Connection, adoption: Adoption) -> None:
         "S": "SEQUENCE",
         "f": "FOREIGN TABLE",
     }
-    for kind, name in rows:
-        conn.execute(
-            text(f"ALTER {kinds.get(kind, 'TABLE')} {name} OWNER TO CURRENT_USER")
-        )
     functions = conn.execute(text("""
         SELECT p.oid::regprocedure::text FROM pg_proc p
         WHERE p.pronamespace = 'public'::regnamespace AND p.proowner = CAST(:app AS regrole)
     """).bindparams(app=APP_ROLE)).scalars().all()
+    if not rows and not functions:
+        return
+    # ALTER OWNER needs the old owner's privileges. A non-superuser owner
+    # (CREATEROLE on an external Postgres) holds it only for this transaction.
+    member = conn.execute(
+        text("SELECT pg_has_role(:app, 'USAGE')").bindparams(app=APP_ROLE)
+    ).scalar()
+    if not member:
+        conn.execute(text(f"GRANT {APP_ROLE} TO CURRENT_USER"))
+    for kind, name in rows:
+        conn.execute(
+            text(f"ALTER {kinds.get(kind, 'TABLE')} {name} OWNER TO CURRENT_USER")
+        )
     for signature in functions:
         conn.execute(text(f"ALTER ROUTINE {signature} OWNER TO CURRENT_USER"))
-    if rows or functions:
-        adoption.repairs.append(
-            f"owner of {len(rows) + len(functions)} {APP_ROLE} object(s)"
-        )
+    if not member:
+        conn.execute(text(f"REVOKE {APP_ROLE} FROM CURRENT_USER"))
+    adoption.repairs.append(
+        f"owner of {len(rows) + len(functions)} {APP_ROLE} object(s)"
+    )
 
 
 def _revoke_legacy_owner(conn: Connection, adoption: Adoption) -> None:
     current = conn.execute(text("SELECT current_user")).scalar_one()
     if current == LEGACY_OWNER or not _role_exists(conn, LEGACY_OWNER):
         return
-    for objects in ("TABLES", "SEQUENCES"):
-        conn.execute(
-            text(f"REVOKE ALL ON ALL {objects} IN SCHEMA public FROM {LEGACY_OWNER}")
-        )
-    adoption.repairs.append(f"grants to {LEGACY_OWNER} revoked")
+    # Only on what this owner owns: a REVOKE on someone else's table errors.
+    granted = conn.execute(text("""
+        SELECT c.relkind = 'S', format('%I.%I', 'public', c.relname)
+        FROM pg_class c
+        WHERE c.relnamespace = 'public'::regnamespace
+          AND c.relowner = CAST(current_user AS regrole)
+          AND EXISTS (SELECT 1 FROM aclexplode(c.relacl) a
+                      WHERE a.grantee = CAST(:legacy AS regrole))
+    """).bindparams(legacy=LEGACY_OWNER)).all()
+    for sequence, name in granted:
+        kind = "SEQUENCE" if sequence else "TABLE"
+        conn.execute(text(f"REVOKE ALL ON {kind} {name} FROM {LEGACY_OWNER}"))
+    if granted:
+        adoption.repairs.append(f"grants to {LEGACY_OWNER} revoked")
 
 
 def _remove_legacy_roles(conn: Connection, adoption: Adoption) -> None:
@@ -275,6 +302,7 @@ def _owned(entry: dict[str, Any], expected: dict[str, Any]) -> bool:
 def adopt(conn: Connection, stamp: str, expected: dict[str, Any]) -> Adoption:
     """Run the repairs for ``stamp`` and compare; the caller owns the transaction."""
     adoption = Adoption(stamp)
+    conn.execute(text(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
     _reassign_app_objects(conn, adoption)
     for name in HELM_SKIPS:
         _run(conn, adoption, name)

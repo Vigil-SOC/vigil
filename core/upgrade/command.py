@@ -42,6 +42,9 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 # The schema a database at head should have, as schema_state() reports it.
 # tests/integration/test_upgrade_command.py checks it and says how to rewrite it.
 HEAD_SCHEMA = PACKAGE_DIR / "head_schema.json"
+# The schema at 0001_baseline, which adoption must reach before it stamps it.
+# Frozen: head_schema.json moves on with each later revision.
+BASELINE_SCHEMA = PACKAGE_DIR / "baseline_schema.json"
 
 LOCK_KEY = 0x7669_6769_6C55_5047  # "vigilUPG"
 LOCK_WAIT_SECONDS = 15.0
@@ -105,8 +108,8 @@ def upgrade_lock(engine: Engine) -> Iterator[None]:
         conn.close()
 
 
-def _head_schema() -> dict[str, Any]:
-    return json.loads(HEAD_SCHEMA.read_text(encoding="utf-8"))
+def _schema(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 class UnknownDrift(RuntimeError):
@@ -123,7 +126,7 @@ class UnknownDrift(RuntimeError):
 
 def _adopt(conn, stamp: str, script: Optional[ScriptDirectory] = None):
     """Adopt in ``conn``'s transaction; stamp only when ``script`` is given."""
-    adoption = adopt.adopt(conn, stamp, _head_schema())
+    adoption = adopt.adopt(conn, stamp, _schema(BASELINE_SCHEMA))
     if adoption.drift:
         raise UnknownDrift(adoption)
     if script is not None:
@@ -189,7 +192,7 @@ def plan(
                 "or install a release at least as new as the database.",
                 revision=revision,
             )
-        older = adopt.restamped(conn, __version__)
+        older = adopt.restamped(conn)
         if older:
             return Plan(
                 REFUSE,
@@ -290,7 +293,7 @@ def check_report(
     if current.adoption is not None:
         drift = current.adoption.drift
     elif current.verdict != REFUSE and current.revision and not current.pending:
-        drift = compare(_head_schema(), schema_state(conn))
+        drift = compare(_schema(HEAD_SCHEMA), schema_state(conn))
     db_bytes = conn.execute(
         text("SELECT pg_database_size(current_database())")
     ).scalar_one()
@@ -412,8 +415,15 @@ def run(
                 emit(_record(upgrade_dir, current, "refused", str(e), e.adoption))
                 return EXIT_REFUSED
             except Exception as e:  # noqa: BLE001 - recorded, then non-zero exit
+                # A set adoption committed before a later revision failed.
                 emit(
-                    _record(upgrade_dir, current, "failed", f"{type(e).__name__}: {e}")
+                    _record(
+                        upgrade_dir,
+                        current,
+                        "failed",
+                        f"{type(e).__name__}: {e}",
+                        adoption,
+                    )
                 )
                 return EXIT_FAILED
             reason = ack_reason.strip() if current.restore_point == OVERRIDDEN else ""

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from core.storage.connection import _stamp_schema_version
 from core.upgrade import command
 from core.upgrade.adopt import read_stamp
 from core.upgrade.schema import compare, schema_state
@@ -114,6 +115,13 @@ def _adopted(engine, baseline, tag: str = "v0.7.0", unowned=()) -> dict:
         return _operator_rows(_rows(conn))
 
 
+def test_baseline_schema_is_the_fresh_baseline(baseline):
+    # Checkable only while 0001 is the head; then baseline_schema.json is frozen.
+    if command.script_directory().get_current_head() != HEAD:
+        pytest.skip("a later revision is the head")
+    assert json.loads(command.BASELINE_SCHEMA.read_text()) == baseline[0]
+
+
 @pytest.mark.parametrize("tag", TAGS)
 def test_clean_release_adopts_to_the_baseline(baseline, scratch, tmp_path, tag):
     _load(scratch, tag)
@@ -140,7 +148,22 @@ def test_clean_release_adopts_to_the_baseline(baseline, scratch, tmp_path, tag):
 
 
 def _helm(engine) -> None:
-    """What the chart's db-init left: the EXEMPT files and the 0.6.0 gap unapplied."""
+    """What the chart's db-init left: the EXEMPT files and the 0.6.0 gap
+    unapplied, and grants to deeptempo from the 0.7 copies of the init files."""
+    with engine.connect() as conn:
+        owner = conn.execute(text("SELECT current_user")).scalar_one()
+    if owner != "deeptempo":
+        _exec(
+            engine,
+            """
+            DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'deeptempo')
+              THEN CREATE ROLE deeptempo NOLOGIN; END IF;
+            END $$;
+            GRANT SELECT, INSERT, UPDATE, DELETE ON system_config TO deeptempo;
+            GRANT USAGE, SELECT ON SEQUENCE config_audit_log_id_seq TO deeptempo;
+        """,
+        )
     _exec(
         engine,
         """
@@ -293,6 +316,9 @@ def test_a_stamp_outside_the_window_says_install_0_7_first(scratch, tmp_path, st
 def test_a_restamp_by_an_older_release_says_restore_first(baseline, scratch, tmp_path):
     _load(scratch, "v0.7.0")
     assert _run(scratch, tmp_path, restore_point="rp-1")[0] == command.EXIT_OK
+    # This image's own startup stamp leaves an adopted database alone.
+    _stamp_schema_version(scratch)
+    assert _run(scratch, tmp_path)[1]["outcome"] == "restart"
     # What 0.7.0's init_database() does when it starts against the database.
     _exec(
         scratch,

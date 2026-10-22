@@ -1139,12 +1139,20 @@ def read_schema_version(config: "DatabaseConfig") -> Optional[str]:
 
 
 def _stamp_schema_version(engine: Engine) -> None:
-    """Record ``__version__`` as the schema version, if it is not already."""
+    """Record ``__version__`` as the schema version, if it is not already.
+
+    Not once ``python -m core.upgrade`` has stamped ``alembic_version``: from
+    then on a newer schema_version row means an older release ran its init
+    path, which the upgrade refuses with "restore first".
+    """
     key = engine.url.render_as_string(hide_password=True)
     if key in _schema_stamped:
         return
     with engine.begin() as conn:
-        if _read_stamp(conn) != __version__:
+        revisions = conn.execute(
+            text("SELECT to_regclass('public.alembic_version')")
+        ).scalar()
+        if revisions is None and _read_stamp(conn) != __version__:
             conn.execute(
                 text(
                     "INSERT INTO system_config (key, value, description, config_type)"

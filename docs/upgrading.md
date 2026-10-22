@@ -28,9 +28,9 @@ A refusal exits 1, changes nothing, and gives its reason in the `reason` field.
 
 **Unknown drift.** After the repairs, something Vigil owns still differs from a fresh install. That could be a column, index, constraint, grant or owner on one of Vigil's tables, or a table, function or extension that a fresh install has. The `drift` field lists each object together with what was expected and what was found. It contains schema only, never row data. This refusal has **no override**. A restore point does not get past it and neither does the acknowledgement. Objects that Vigil does not own, such as a table you added or Helm's `_vigil_schema_versions`, are listed under `adoption.unowned` and never block.
 
-**"install a 0.7.x release first".** The database has tables, but `schema_version` is missing, or is not `0.7.0` or `0.8.0`. A pre-0.7 install or a development checkout gives this. Install a 0.7.x release, start it once so it stamps the database, then run this upgrade again.
+**"install a 0.7.x release first".** The database has tables, but `schema_version` is missing, or is not `0.7.0` or `0.8.0`. A pre-0.7 install gives this, and so does a development build that stamped some other version. Install a 0.7.x release, start it once so it stamps the database, then run this upgrade again.
 
-**"restore first".** The database had already reached `0001_baseline`. Then an older release (0.8 or earlier) started against it and ran its old init path. That is what happens if you roll back by image tag alone. The schema can no longer be trusted. Restore the restore point taken before the upgrade, using the release that took it, and then upgrade again. Do not roll back by changing the image tag.
+**"restore first".** The database had already reached `0001_baseline`. Then an older release (0.8 or earlier) started against it and its old init path re-stamped `schema_version`. From the baseline on, Vigil no longer writes that row. That is what happens if you roll back by image tag alone. The schema can no longer be trusted. Restore the restore point taken before the upgrade, using the release that took it, and then upgrade again. Do not roll back by changing the image tag.
 
 ## Support path
 
