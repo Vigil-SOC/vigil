@@ -1,5 +1,3 @@
-/* Names for finding rows, which carry only a technique id. The ATT&CK rollup
-   resolves names server-side (core/threat_intel/mitre_lookup.py). */
 const DASH = '—'
 
 interface Meta {
