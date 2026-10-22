@@ -28,7 +28,6 @@ from services.daemon.orchestrator import (
 )
 
 ROW_CAP = 200
-UNMEASURED = "Not measured yet"
 ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
 _PICKUP_STATES = ("launched", "merged")
 
@@ -373,9 +372,6 @@ def _present(
         "state_label": label,
         "source": _source_text(kind, finding),
         **ranking,
-        "score": None,
-        "trust": None,
-        "weight": None,
         "pickup_seconds": pickup,
         "workflow_id": workflow,
         "case_door": door,
@@ -443,7 +439,6 @@ def _strip(session, counts: dict, day: date) -> dict:
         },
         "waiting": counts["state"].get("queued", 0),
         "cases_created_today": cases,
-        "trust_floor": UNMEASURED,
     }
 
 
@@ -492,5 +487,4 @@ def triage_payload(
         "arrival_info": ARRIVAL_INFO,
         "strip_info": STRIP_INFO,
         "breakdown_info": BREAKDOWN_INFO,
-        "unmeasured_text": UNMEASURED,
     }
