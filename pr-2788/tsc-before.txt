@@ -1,0 +1,1 @@
+npx tsc --noEmit -p . (main): exit 0, no output

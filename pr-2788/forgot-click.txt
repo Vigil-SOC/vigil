@@ -1,0 +1,5 @@
+  - button "Switch to light mode" [ref=e1]
+      - heading "Vigilant, Open, Trustworthy." [level=1, ref=e2]
+    - heading "Reset your password" [level=2, ref=e3]
+    - button "Send reset link" [disabled, ref=e4]
+    - button "← Back to sign in" [ref=e6]
