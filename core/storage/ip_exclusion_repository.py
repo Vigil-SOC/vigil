@@ -25,31 +25,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, array
 from sqlalchemy.orm import Session
 
+from core.storage.ip_address import FINDING_IP_KEYS
 from core.storage.models import Finding, IpExclusion
-
-# Top-level entity_context keys ingest writes addresses under. Each holds a
-# string or a list of strings.
-FINDING_IP_KEYS = (
-    "src_ip",
-    "src_ips",
-    "source_ip",
-    "source_ips",
-    "srcip",
-    "dst_ip",
-    "dst_ips",
-    "dest_ip",
-    "dest_ips",
-    "destination_ip",
-    "destination_ips",
-    "dstip",
-    "ip",
-    "ips",
-    "ip_address",
-    "ip_addresses",
-    "local_ip",
-    "remote_ip",
-    "client_ip",
-)
 
 # How a findings query treats findings that name an excluded address.
 EXCLUSION_VIEWS = ("include", "hide", "only")
@@ -80,7 +57,8 @@ def finding_names_any(ips) -> ColumnElement[bool]:
     """SQL: the finding names any of ``ips`` (a ``text[]`` expression).
 
     ``jsonb ?| text[]`` matches a string scalar and the string elements of an
-    array, the two shapes :data:`FINDING_IP_KEYS` hold. Coalesced so a finding
+    array, the two shapes :data:`FINDING_IP_KEYS` hold. The match is exact text,
+    which is right because ``Finding`` stores those addresses canonical. Coalesced so a finding
     without entity context is false rather than NULL: ``NOT NULL`` would drop it
     from the hidden view as well.
     """

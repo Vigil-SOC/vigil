@@ -39,7 +39,8 @@ SEEDED = (
     "system_config",
     "user_preferences",
 )
-HEAD = "0001_baseline"
+REVISIONS = ["0001_baseline", "0002_canonical_finding_ips"]
+HEAD = REVISIONS[-1]
 
 
 @contextmanager
@@ -174,13 +175,13 @@ def _newer(engine, tmp_path):
 @pytest.mark.parametrize(
     "setup, kw, verdict, pending",
     [
-        (None, {"restore_point": "rp-1"}, command.APPLY, [HEAD]),
-        (None, {}, command.NEEDS_RESTORE_POINT, [HEAD]),
+        (None, {"restore_point": "rp-1"}, command.APPLY, REVISIONS),
+        (None, {}, command.NEEDS_RESTORE_POINT, REVISIONS),
         (
             None,
             {"ack_version": "0.0.1", "ack_reason": "own backup"},
             command.NEEDS_RESTORE_POINT,
-            [HEAD],
+            REVISIONS,
         ),
         (_at_head, {}, command.RESTART, []),
         (_unstamped, {"restore_point": "rp-1"}, command.REFUSE, []),

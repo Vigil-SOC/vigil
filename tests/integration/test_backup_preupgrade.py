@@ -32,7 +32,7 @@ pytestmark = _restore_marks
 DATABASE = "vigil_r_preupgrade"
 EMPTY = "vigil_r_preupgrade_empty"
 PASSPHRASE = "pre-upgrade-pass"
-HEAD = "0001_baseline"
+HEAD = "0002_canonical_finding_ips"
 
 # The manifest records the database stamp, which is this release but not this
 # exact version, so a re-stamp would show. The image under test is CURRENT.
