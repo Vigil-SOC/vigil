@@ -129,7 +129,16 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
 
   return {
     open: async (ctx, base) => {
-      await startHunt(state(ctx), ports.queue, ctx.options.run_id, huntSpec(kernelSpec(base.spec as RunSpec)), base.started_by, ctx.options.run_kind, ctx.options.plugin.needs);
+      await startHunt(
+        state(ctx),
+        ports.queue,
+        ctx.options.run_id,
+        huntSpec(kernelSpec(base.spec as RunSpec)),
+        base.started_by,
+        ctx.options.run_kind,
+        ctx.options.plugin.needs,
+        base.principal,
+      );
     },
 
     tools: (ctx) => [...huntTools(ctx, ports), ...expandTool(ctx)],

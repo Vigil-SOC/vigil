@@ -16,6 +16,7 @@ export interface ComposeOptions {
   run_id: string;
   spec: RunSpec;
   started_by?: string;
+  principal?: string;
   mirror?: Mirror;
   // Aborted when this worker loses its lease: a run another worker has taken over
   // must stop writing, and stop paying for calls nobody will record.
@@ -54,6 +55,7 @@ export async function runCompose(harness: Harness<ComposeKinds>, options: Compos
     hooks: composeHooks(mirror),
     tools: toolsFrom(options.spec.tools),
     started_by: options.started_by ?? "compose",
+    ...(options.principal === undefined ? {} : { principal: options.principal }),
     // Python records the decision and the mirror carries it back, so the ledger
     // keeps its single writer. The phase row is how a person is asked.
     answers: (runId) => mirror.decisions(runId),

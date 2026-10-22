@@ -67,6 +67,9 @@ export interface RunPayload {
   seed: string;
   tenant_id: string | null;
   started_by: string;
+  // The API-signed name of the person who started the run, when a person did.
+  // A resume reads it back: the resume job does not carry the start request.
+  principal?: string;
   // Set on a child run: the run it was started by, and what for.
   parent?: ParentLink;
 }

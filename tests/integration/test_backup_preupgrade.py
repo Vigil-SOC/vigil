@@ -25,6 +25,7 @@ from test_backup_restore import pytestmark as _restore_marks
 
 from core.backup.preupgrade import RESTORE_POINT_NAME
 from core.storage.models.config import SystemConfig
+from core.upgrade.command import script_directory
 from core.version import __version__
 
 # Same database mark and skip-without-postgres as the restore tests.
@@ -33,7 +34,8 @@ pytestmark = _restore_marks
 DATABASE = "vigil_r_preupgrade"
 EMPTY = "vigil_r_preupgrade_empty"
 PASSPHRASE = "pre-upgrade-pass"
-HEAD = "0001_baseline"
+# Stamped as the database's revision: nothing pending.
+HEAD = script_directory().get_current_head()
 
 # The manifest records the database stamp, which is this release but not this
 # exact version, so a re-stamp would show. The image under test is CURRENT.

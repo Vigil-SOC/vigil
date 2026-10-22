@@ -354,6 +354,131 @@
   "nullable": true,
   "type": "character varying(80)"
  },
+ "column audit_trail.actor_text": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column audit_trail.attempted_name": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column audit_trail.entry_hash": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column audit_trail.late": {
+  "default": "false",
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column audit_trail.occurred_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column audit_trail.operator_text": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column audit_trail.payload": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column audit_trail.personal": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
+ "column audit_trail.prev_hash": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column audit_trail.seq": {
+  "default": null,
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column audit_trail.source_ip": {
+  "acl": [
+   "app:UPDATE"
+  ],
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column audit_trail_anchor.entry_hash": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column audit_trail_anchor.id": {
+  "default": "1",
+  "nullable": false,
+  "type": "smallint"
+ },
+ "column audit_trail_anchor.seq": {
+  "default": null,
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column audit_trail_held.beside": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column audit_trail_held.count": {
+  "default": "1",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column audit_trail_held.first_seq": {
+  "default": null,
+  "nullable": true,
+  "type": "bigint"
+ },
+ "column audit_trail_held.id": {
+  "default": "nextval('audit_trail_held_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column audit_trail_held.last_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column audit_trail_held.occurred_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column audit_trail_held.payload": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column audit_trail_held.window_key": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column case_attachments.attachment_id": {
   "default": "nextval('case_attachments_attachment_id_seq'::regclass)",
   "nullable": false,
@@ -3478,6 +3603,12 @@
  "constraint approval_actions.approval_actions_reversibility_check": "CHECK (((reversibility)::text = ANY ((ARRAY['reversible'::character varying, 'irreversible'::character varying])::text[])))",
  "constraint approval_actions.approval_actions_status_check": "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'approved'::character varying, 'rejected'::character varying, 'executed'::character varying, 'failed'::character varying])::text[])))",
  "constraint approval_actions.approval_actions_workflow_run_id_fkey": "FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(run_id) ON DELETE SET NULL",
+ "constraint audit_trail.audit_trail_payload_check": "CHECK (((jsonb_typeof(payload) = 'object'::text) AND (NOT (payload ?| ARRAY['seq'::text, 'occurred_at'::text, 'late'::text]))))",
+ "constraint audit_trail.audit_trail_pkey": "PRIMARY KEY (seq)",
+ "constraint audit_trail_anchor.audit_trail_anchor_id_check": "CHECK ((id = 1))",
+ "constraint audit_trail_anchor.audit_trail_anchor_pkey": "PRIMARY KEY (id)",
+ "constraint audit_trail_held.audit_trail_held_pkey": "PRIMARY KEY (id)",
+ "constraint audit_trail_held.audit_trail_held_window_key_key": "UNIQUE (window_key)",
  "constraint case_attachments.case_attachments_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_attachments.case_attachments_pkey": "PRIMARY KEY (attachment_id)",
  "constraint case_audit_logs.case_audit_logs_pkey": "PRIMARY KEY (audit_id)",
@@ -3627,6 +3758,30 @@
   "definition": "CREATE OR REPLACE FUNCTION public.agent_events_assign_hashes()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public'\nAS $function$\nBEGIN\n  SELECT event_hash INTO NEW.prev_hash\n    FROM agent_events\n    WHERE run_id = NEW.run_id AND seq < NEW.seq\n    ORDER BY seq DESC\n    LIMIT 1;\n  NEW.prev_hash := coalesce(NEW.prev_hash, '');\n  NEW.event_hash := agent_event_hash(NEW.prev_hash, NEW.payload);\n  RETURN NEW;\nEND;\n$function$\n",
   "owner": "owner"
  },
+ "function audit_trail_assign()": {
+  "acl": [
+   "PUBLIC:EXECUTE",
+   "owner:EXECUTE"
+  ],
+  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_assign()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\nBEGIN\n  -- 0x766967696C415544, \"vigilAUD\": the trail's own key.\n  PERFORM pg_advisory_xact_lock(8532464671515563332);\n  SELECT t.seq, t.entry_hash INTO NEW.seq, NEW.prev_hash\n    FROM public.audit_trail t ORDER BY t.seq DESC LIMIT 1;\n  IF NOT FOUND THEN\n    SELECT a.seq, a.entry_hash INTO NEW.seq, NEW.prev_hash FROM public.audit_trail_anchor a;\n  END IF;\n  NEW.seq := NEW.seq + 1;\n  NEW.entry_hash := public.audit_trail_hash(\n    NEW.prev_hash, NEW.seq, NEW.occurred_at, NEW.late, NEW.payload);\n  RETURN NEW;\nEND;\n$function$\n",
+  "owner": "owner"
+ },
+ "function audit_trail_delete_prefix(bigint)": {
+  "acl": [
+   "app:EXECUTE",
+   "owner:EXECUTE"
+  ],
+  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_delete_prefix(through bigint)\n RETURNS bigint\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\nDECLARE\n  last_hash text;\n  removed bigint;\nBEGIN\n  PERFORM pg_advisory_xact_lock(8532464671516545614);\n  PERFORM pg_advisory_xact_lock(8532464671515563332);\n  SELECT entry_hash INTO last_hash FROM public.audit_trail WHERE seq = through;\n  IF NOT FOUND THEN\n    RAISE EXCEPTION 'audit trail has no entry %', through;\n  END IF;\n  DELETE FROM public.audit_trail WHERE seq <= through;\n  GET DIAGNOSTICS removed = ROW_COUNT;\n  UPDATE public.audit_trail_anchor SET seq = through, entry_hash = last_hash;\n  RETURN removed;\nEND;\n$function$\n",
+  "owner": "owner"
+ },
+ "function audit_trail_hash(text,bigint,timestamp with time zone,boolean,jsonb)": {
+  "acl": [
+   "PUBLIC:EXECUTE",
+   "owner:EXECUTE"
+  ],
+  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_hash(prev_hash text, seq bigint, occurred_at timestamp with time zone, late boolean, payload jsonb)\n RETURNS text\n LANGUAGE sql\n STABLE\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\n  SELECT public.agent_event_hash(prev_hash, payload || jsonb_build_object(\n    'seq', seq,\n    'late', late,\n    -- UTC text, so the hash does not depend on the session's TimeZone.\n    'occurred_at',\n    to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')\n  ));\n$function$\n",
+  "owner": "owner"
+ },
  "function update_ai_model_configs_timestamp()": {
   "acl": [
    "PUBLIC:EXECUTE",
@@ -3691,6 +3846,10 @@
  "index ai_decision_logs_pkey": "CREATE UNIQUE INDEX ai_decision_logs_pkey ON public.ai_decision_logs USING btree (id)",
  "index ai_model_configs_pkey": "CREATE UNIQUE INDEX ai_model_configs_pkey ON public.ai_model_configs USING btree (component)",
  "index approval_actions_pkey": "CREATE UNIQUE INDEX approval_actions_pkey ON public.approval_actions USING btree (action_id)",
+ "index audit_trail_anchor_pkey": "CREATE UNIQUE INDEX audit_trail_anchor_pkey ON public.audit_trail_anchor USING btree (id)",
+ "index audit_trail_held_pkey": "CREATE UNIQUE INDEX audit_trail_held_pkey ON public.audit_trail_held USING btree (id)",
+ "index audit_trail_held_window_key_key": "CREATE UNIQUE INDEX audit_trail_held_window_key_key ON public.audit_trail_held USING btree (window_key)",
+ "index audit_trail_pkey": "CREATE UNIQUE INDEX audit_trail_pkey ON public.audit_trail USING btree (seq)",
  "index case_attachments_pkey": "CREATE UNIQUE INDEX case_attachments_pkey ON public.case_attachments USING btree (attachment_id)",
  "index case_audit_logs_pkey": "CREATE UNIQUE INDEX case_audit_logs_pkey ON public.case_audit_logs USING btree (audit_id)",
  "index case_closure_info_pkey": "CREATE UNIQUE INDEX case_closure_info_pkey ON public.case_closure_info USING btree (case_id)",
@@ -4068,6 +4227,83 @@
    false
   ],
   "sequence": null
+ },
+ "relation audit_trail": {
+  "acl": [
+   "app:INSERT",
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation audit_trail_anchor": {
+  "acl": [
+   "app:SELECT",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation audit_trail_held": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation audit_trail_held_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
  "relation case_attachments": {
   "acl": [
@@ -5631,6 +5867,7 @@
  },
  "trigger agent_events.agent_events_assign_hashes": "CREATE TRIGGER agent_events_assign_hashes BEFORE INSERT ON public.agent_events FOR EACH ROW EXECUTE FUNCTION agent_events_assign_hashes()",
  "trigger ai_model_configs.trigger_ai_model_configs_updated_at": "CREATE TRIGGER trigger_ai_model_configs_updated_at BEFORE UPDATE ON public.ai_model_configs FOR EACH ROW EXECUTE FUNCTION update_ai_model_configs_timestamp()",
+ "trigger audit_trail.audit_trail_assign": "CREATE TRIGGER audit_trail_assign BEFORE INSERT ON public.audit_trail FOR EACH ROW EXECUTE FUNCTION audit_trail_assign()",
  "trigger custom_agents.trigger_custom_agents_updated_at": "CREATE TRIGGER trigger_custom_agents_updated_at BEFORE UPDATE ON public.custom_agents FOR EACH ROW EXECUTE FUNCTION update_custom_agents_timestamp()",
  "trigger integration_configs.trigger_integration_configs_updated_at": "CREATE TRIGGER trigger_integration_configs_updated_at BEFORE UPDATE ON public.integration_configs FOR EACH ROW EXECUTE FUNCTION update_integration_configs_timestamp()",
  "trigger llm_provider_configs.trigger_llm_provider_configs_updated_at": "CREATE TRIGGER trigger_llm_provider_configs_updated_at BEFORE UPDATE ON public.llm_provider_configs FOR EACH ROW EXECUTE FUNCTION update_llm_provider_configs_timestamp()",
