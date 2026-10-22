@@ -17,12 +17,16 @@ How it works:
   can't forge a matching header.
 
 Exempt paths:
-- Endpoints that authenticate themselves (webhooks using HMAC, ingestion
-  endpoints using bearer/API-key, the MCP surface using a minted credential,
-  the agent layer's /internal endpoints using the shared internal token)
-  are always exempt; `VIGIL_CSRF_EXEMPT_PATHS` adds to that set rather than
-  replacing it. Any request whose path starts with one of those prefixes
-  skips both the cookie check and the cookie seeding.
+- Endpoints that authenticate themselves (webhooks using HMAC, the MCP
+  surface using a minted credential, the agent layer's /internal endpoints
+  using the shared internal token) are always exempt; `VIGIL_CSRF_EXEMPT_PATHS`
+  adds to that set rather than replacing it. Any request whose path starts
+  with one of those prefixes skips both the cookie check and the cookie seeding.
+- Ingestion is not in that set. The console calls it with the same session
+  cookie as every other route, so a request that brings that cookie takes
+  the same check. A request with no session cookie is a bearer caller: there
+  is no cookie for a forged browser request to borrow, and that caller has
+  no csrf_token to echo, so the check is skipped for that request only.
 
 Report-only mode:
 - `VIGIL_CSRF_REPORT_ONLY=true` logs violations at WARNING but lets the
@@ -38,7 +42,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from core.auth.auth_cookies import context_path_prefix, cookie_root_path
+from core.auth.auth_cookies import (
+    ACCESS_COOKIE_NAME,
+    context_path_prefix,
+    cookie_root_path,
+)
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -55,9 +63,14 @@ COOKIE_MISSING_DETAIL = (
 
 # CSRF defends a browser session driven by a cookie. These are reached with a
 # credential in a header instead, by something that is not a browser -- webhooks,
-# ingestion, the /mcp surface, and the agent layer's /internal endpoints -- so
-# there is no ambient authority for a forged request to borrow, and a caller
-# that cannot be handed a csrf_token cookie could not satisfy the check anyway.
+# the /mcp surface, and the agent layer's /internal endpoints -- so there is no
+# ambient authority for a forged request to borrow, and a caller that cannot be
+# handed a csrf_token cookie could not satisfy the check anyway.
+#
+# Ingestion is absent on purpose. It authenticates with the session cookie from
+# the console (a bearer token is only the fallback), so a path exemption would
+# leave that cookie unprotected. A cookieless ingestion request is handled in
+# dispatch, not by listing the path here.
 #
 # Always, rather than by default. An operator's list is added to these, not
 # substituted for them: every shipped config already names a list, so a default
@@ -67,7 +80,28 @@ COOKIE_MISSING_DETAIL = (
 # have no way to pass. /internal/ still runs through _apply_context_path: the
 # routers are mounted under VIGIL_CONTEXT_PATH, so the prefixed form is the one
 # a sub-path deploy actually serves.
-_ALWAYS_EXEMPT = ("/api/webhooks/", "/api/ingest/", "/mcp", "/internal/")
+_ALWAYS_EXEMPT = ("/api/webhooks/", "/mcp", "/internal/")
+
+
+def _is_ingestion_path(path: str) -> bool:
+    """The ingestion router, including under VIGIL_CONTEXT_PATH.
+
+    The marker stops at ``ingest`` so ``/api/ingestible`` does not match, and
+    the bare path matches as well as its children.
+    """
+    marker = f"{context_path_prefix()}/api/ingest"
+    return path == marker or path.startswith(marker + "/")
+
+
+def _ingestion_without_session(request: Request) -> bool:
+    """Bearer ingestion sends no session cookie, so the check cannot apply.
+
+    A browser request cannot drop the cookie it attaches, so skipping only
+    this case leaves the console's cookie-authenticated calls covered.
+    """
+    if not _is_ingestion_path(request.url.path):
+        return False
+    return not request.cookies.get(ACCESS_COOKIE_NAME)
 
 
 def _apply_context_path(path: str, prefix: str) -> str:
@@ -141,7 +175,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if self._is_exempt(path):
+        if self._is_exempt(path) or _ingestion_without_session(request):
             return await call_next(request)
 
         if request.method in UNSAFE_METHODS:

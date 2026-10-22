@@ -755,10 +755,12 @@ config:
 
   # CSRF
   VIGIL_CSRF_ENABLED: "true"
-  # Added to the always-exempt set (webhooks, ingestion, the /mcp surface,
-  # the agent layer's /internal endpoints) rather than replacing it.
+  # Added to the always-exempt set (webhooks, the /mcp surface, the agent
+  # layer's /internal endpoints) rather than replacing it. Ingestion is not
+  # exempt: the console sends the session cookie, and a bearer call with no
+  # session cookie skips the check on its own.
   # App-root relative; the API prefixes each entry with VIGIL_CONTEXT_PATH.
-  VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/,/api/ingest/"
+  VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/"
 
   # Auth cookies
   VIGIL_COOKIE_SECURE: "true"
