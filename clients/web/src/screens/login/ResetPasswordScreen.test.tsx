@@ -59,17 +59,33 @@ describe('ResetPasswordScreen', () => {
     )
   })
 
-  it('shows the server detail and retires the spent link on a 400', async () => {
-    // the server consumes the token before the policy check, so no retry
-    confirmPasswordReset.mockRejectedValueOnce({
-      response: { status: 400, data: { detail: 'Password is too short (Add 4 more characters.)' } },
-    })
+  it('shows the server detail and retries with the same token after a rejected password', async () => {
+    confirmPasswordReset
+      .mockRejectedValueOnce({
+        response: { status: 400, data: { detail: 'Password is too short (Add 4 more characters.)' } },
+      })
+      .mockResolvedValueOnce({ data: { message: 'ok' } })
     renderAt('/reset-password?token=tok123')
     submit('short')
     expect(await screen.findByRole('alert')).toHaveTextContent('Password is too short')
-    expect(screen.getByRole('heading', { name: 'Reset link used' })).toBeInTheDocument()
-    expect(screen.queryByLabelText('New password')).not.toBeInTheDocument()
     expect(navigate).not.toHaveBeenCalled()
+    submit('a-long-new-passphrase')
+    await waitFor(() => expect(navigate).toHaveBeenCalled())
+    expect(confirmPasswordReset).toHaveBeenLastCalledWith({
+      token: 'tok123',
+      new_password: 'a-long-new-passphrase',
+    })
+  })
+
+  it('shows the server detail for a rejected token and offers a new link', async () => {
+    confirmPasswordReset.mockRejectedValueOnce({
+      response: { status: 400, data: { detail: 'Invalid or expired reset token' } },
+    })
+    renderAt('/reset-password?token=tok123')
+    submit('a-long-new-passphrase')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid or expired reset token')
+    fireEvent.click(screen.getByRole('button', { name: /request a new link/i }))
+    expect(navigate).toHaveBeenCalledWith('/login', { state: { forgot: true } })
   })
 
   it('keeps the form for a retry when the API is unreachable', async () => {

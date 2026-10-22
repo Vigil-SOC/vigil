@@ -28,9 +28,10 @@ from core.auth.auth_service import (
 )
 from core.auth.bootstrap_code import setup_code_matches
 from core.auth.password_reset import (
+    consume_reset_token,
+    decode_reset_token,
     generate_reset_token,
     reset_link,
-    verify_reset_token,
 )
 from core.auth.password_validator import (
     PasswordPolicyError,
@@ -997,15 +998,17 @@ async def password_reset_confirm(
 ):
     """
     Complete a password reset. Validates the signed token, enforces the
-    password strength policy + reuse check, rotates the hash, and
-    revokes every outstanding token so any existing sessions die.
+    password strength policy + reuse check, consumes the token, rotates
+    the hash, and revokes every outstanding token so any existing
+    sessions die. A rejected password leaves the token usable.
     """
-    user_id = await verify_reset_token(body.token)
+    invalid_token = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid or expired reset token",
+    )
+    user_id = decode_reset_token(body.token)
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
+        raise invalid_token
 
     user = await asyncio.to_thread(_get_user, session, user_id)
     if not user or not user.is_active:
@@ -1028,6 +1031,8 @@ async def password_reset_confirm(
 
     try:
         await asyncio.to_thread(_apply_new_password, user, body.new_password)
+        if not await consume_reset_token(body.token):
+            raise invalid_token
         # Clear any active lockout so the user can immediately log in.
         user.failed_login_count = 0
         user.locked_until = None
