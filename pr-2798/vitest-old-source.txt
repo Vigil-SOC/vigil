@@ -1,0 +1,1129 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/7eb9abbd-4255-4823-b32c-06faf593f3b1/clients/web
+
+ ❯ src/shell/UserMenu.test.tsx (13 tests | 2 failed) 2884ms
+     × keeps an analyst's theme in this browser without touching the server default 1073ms
+     × saves the default theme for a settings writer and reports a refusal 1038ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/shell/UserMenu.test.tsx > UserMenu > keeps an analyst's theme in this browser without touching the server default
+TestingLibraryElementError: Unable to find role="menuitem" and name "Switch to dark mode"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div />[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"user-menu"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"true"[39m
+        [33maria-haspopup[39m=[32m"menu"[39m
+        [33maria-label[39m=[32m"Account menu"[39m
+        [33mclass[39m=[32m"vg-avatar active"[39m
+      [36m>[39m
+        [36m<span>[39m
+          [0mTU[0m
+        [36m</span>[39m
+      [36m</button>[39m
+      [36m<div[39m
+        [33maria-label[39m=[32m"Account"[39m
+        [33mclass[39m=[32m"user-pop"[39m
+        [33mrole[39m=[32m"menu"[39m
+        [33mstyle[39m=[32m"position: fixed; top: 6px; right: 1024px; z-index: 80;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-head"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"user-pop-initials"[39m
+          [36m>[39m
+            [0mTU[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-who"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-name"[39m
+            [36m>[39m
+              [0mTest User[0m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-sub"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"user-pop-role"[39m
+              [36m>[39m
+                [0madmin[0m
+              [36m</span>[39m
+            [36m</span>[39m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-sep"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"6"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"18"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"18"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8.4 6H13a2 2 0 012 2v1.6M8.4 18H13a2 2 0 002-2v-1.6"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Setup guide[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M7 4v16l13-8L7 4z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Take the tour[0m
+        [36m</button>[39m
+        [36m<a[39m
+          [33mhref[39m=[32m"https://github.com/Vigil-SOC/vigil/issues/new?labels=console-feedback&title=Console+feedback%3A+cases&body=Screen%3A+cases%0AVersion%3A+9.9.9%0A%0A"[39m
+          [33mrel[39m=[32m"noreferrer"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+          [33mtarget[39m=[32m"_blank"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 20v-4h4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mShare feedback[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mAbout Vigil[0m
+            [0m · 9.9.9[0m
+          [36m</span>[39m
+        [36m</a>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mSwitch to light mode[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mTwo-step sign-in[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mOff[0m
+          [36m</span>[39m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"3"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Settings[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<rect[39m
+              [33mheight[39m=[32m"11"[39m
+              [33mrx[39m=[32m"2"[39m
+              [33mwidth[39m=[32m"16"[39m
+              [33mx[39m=[32m"4"[39m
+              [33my[39m=[32m"10"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8 10V7a4 4 0 018 0v3"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Change password[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"signout"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 17l5-5-5-5"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M21 12H9"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Sign out[0m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+    [36m<div[39m
+      [33maria-atomic[39m=[32m"false"[39m
+      [33maria-live[39m=[32m"polite"[39m
+      [33mclass[39m=[32m"toast-viewport"[39m
+    [36m/>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div />[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"user-menu"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"true"[39m
+        [33maria-haspopup[39m=[32m"menu"[39m
+        [33maria-label[39m=[32m"Account menu"[39m
+        [33mclass[39m=[32m"vg-avatar active"[39m
+      [36m>[39m
+        [36m<span>[39m
+          [0mTU[0m
+        [36m</span>[39m
+      [36m</button>[39m
+      [36m<div[39m
+        [33maria-label[39m=[32m"Account"[39m
+        [33mclass[39m=[32m"user-pop"[39m
+        [33mrole[39m=[32m"menu"[39m
+        [33mstyle[39m=[32m"position: fixed; top: 6px; right: 1024px; z-index: 80;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-head"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"user-pop-initials"[39m
+          [36m>[39m
+            [0mTU[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-who"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-name"[39m
+            [36m>[39m
+              [0mTest User[0m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-sub"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"user-pop-role"[39m
+              [36m>[39m
+                [0madmin[0m
+              [36m</span>[39m
+            [36m</span>[39m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-sep"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"6"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"18"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"18"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8.4 6H13a2 2 0 012 2v1.6M8.4 18H13a2 2 0 002-2v-1.6"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Setup guide[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M7 4v16l13-8L7 4z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Take the tour[0m
+        [36m</button>[39m
+        [36m<a[39m
+          [33mhref[39m=[32m"https://github.com/Vigil-SOC/vigil/issues/new?labels=console-feedback&title=Console+feedback%3A+cases&body=Screen%3A+cases%0AVersion%3A+9.9.9%0A%0A"[39m
+          [33mrel[39m=[32m"noreferrer"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+          [33mtarget[39m=[32m"_blank"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 20v-4h4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mShare feedback[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mAbout Vigil[0m
+            [0m · 9.9.9[0m
+          [36m</span>[39m
+        [36m</a>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mSwitch to light mode[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mTwo-step sign-in[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mOff[0m
+          [36m</span>[39m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"3"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Settings[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<rect[39m
+              [33mheight[39m=[32m"11"[39m
+              [33mrx[39m=[32m"2"[39m
+              [33mwidth[39m=[32m"16"[39m
+              [33mx[39m=[32m"4"[39m
+              [33my[39m=[32m"10"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8 10V7a4 4 0 018 0v3"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Change password[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"signout"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 17l5-5-5-5"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M21 12H9"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Sign out[0m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+    [36m<div[39m
+      [33maria-atomic[39m=[32m"false"[39m
+      [33maria-live[39m=[32m"polite"[39m
+      [33mclass[39m=[32m"toast-viewport"[39m
+    [36m/>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/shell/UserMenu.test.tsx:133:25
+    131|     renderMenu()
+    132|     fireEvent.click(screen.getByRole('button', { name: 'Account menu' …
+    133|     expect(await screen.findByRole('menuitem', { name: 'Switch to dark…
+       |                         ^
+    134|     expect(setTheme).not.toHaveBeenCalled()
+    135|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/shell/UserMenu.test.tsx > UserMenu > saves the default theme for a settings writer and reports a refusal
+TestingLibraryElementError: Unable to find role="alert"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"user-menu"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"true"[39m
+        [33maria-haspopup[39m=[32m"menu"[39m
+        [33maria-label[39m=[32m"Account menu"[39m
+        [33mclass[39m=[32m"vg-avatar active"[39m
+      [36m>[39m
+        [36m<span>[39m
+          [0mTU[0m
+        [36m</span>[39m
+      [36m</button>[39m
+      [36m<div[39m
+        [33maria-label[39m=[32m"Account"[39m
+        [33mclass[39m=[32m"user-pop"[39m
+        [33mrole[39m=[32m"menu"[39m
+        [33mstyle[39m=[32m"position: fixed; top: 6px; right: 1024px; z-index: 80;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-head"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"user-pop-initials"[39m
+          [36m>[39m
+            [0mTU[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-who"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-name"[39m
+            [36m>[39m
+              [0mTest User[0m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-sub"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"user-pop-role"[39m
+              [36m>[39m
+                [0madmin[0m
+              [36m</span>[39m
+            [36m</span>[39m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-sep"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"6"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"18"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"18"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8.4 6H13a2 2 0 012 2v1.6M8.4 18H13a2 2 0 002-2v-1.6"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Setup guide[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M7 4v16l13-8L7 4z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Take the tour[0m
+        [36m</button>[39m
+        [36m<a[39m
+          [33mhref[39m=[32m"https://github.com/Vigil-SOC/vigil/issues/new?labels=console-feedback&title=Console+feedback%3A+cases&body=Screen%3A+cases%0AVersion%3A+9.9.9%0A%0A"[39m
+          [33mrel[39m=[32m"noreferrer"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+          [33mtarget[39m=[32m"_blank"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 20v-4h4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mShare feedback[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mAbout Vigil[0m
+            [0m · 9.9.9[0m
+          [36m</span>[39m
+        [36m</a>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mSwitch to light mode[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mTwo-step sign-in[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mOff[0m
+          [36m</span>[39m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"3"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Settings[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<rect[39m
+              [33mheight[39m=[32m"11"[39m
+              [33mrx[39m=[32m"2"[39m
+              [33mwidth[39m=[32m"16"[39m
+              [33mx[39m=[32m"4"[39m
+              [33my[39m=[32m"10"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8 10V7a4 4 0 018 0v3"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Change password[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"signout"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 17l5-5-5-5"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M21 12H9"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Sign out[0m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+    [36m<div[39m
+      [33maria-atomic[39m=[32m"false"[39m
+      [33maria-live[39m=[32m"polite"[39m
+      [33mclass[39m=[32m"toast-viewport"[39m
+    [36m/>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"user-menu"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"true"[39m
+        [33maria-haspopup[39m=[32m"menu"[39m
+        [33maria-label[39m=[32m"Account menu"[39m
+        [33mclass[39m=[32m"vg-avatar active"[39m
+      [36m>[39m
+        [36m<span>[39m
+          [0mTU[0m
+        [36m</span>[39m
+      [36m</button>[39m
+      [36m<div[39m
+        [33maria-label[39m=[32m"Account"[39m
+        [33mclass[39m=[32m"user-pop"[39m
+        [33mrole[39m=[32m"menu"[39m
+        [33mstyle[39m=[32m"position: fixed; top: 6px; right: 1024px; z-index: 80;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-head"[39m
+        [36m>[39m
+          [36m<span[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"user-pop-initials"[39m
+          [36m>[39m
+            [0mTU[0m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-who"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-name"[39m
+            [36m>[39m
+              [0mTest User[0m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"user-pop-sub"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"user-pop-role"[39m
+              [36m>[39m
+                [0madmin[0m
+              [36m</span>[39m
+            [36m</span>[39m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"user-pop-sep"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"6"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"6"[39m
+              [33mcy[39m=[32m"18"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"18"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"2.4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8.4 6H13a2 2 0 012 2v1.6M8.4 18H13a2 2 0 002-2v-1.6"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Setup guide[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M7 4v16l13-8L7 4z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Take the tour[0m
+        [36m</button>[39m
+        [36m<a[39m
+          [33mhref[39m=[32m"https://github.com/Vigil-SOC/vigil/issues/new?labels=console-feedback&title=Console+feedback%3A+cases&body=Screen%3A+cases%0AVersion%3A+9.9.9%0A%0A"[39m
+          [33mrel[39m=[32m"noreferrer"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+          [33mtarget[39m=[32m"_blank"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 20v-4h4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mShare feedback[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mAbout Vigil[0m
+            [0m · 9.9.9[0m
+          [36m</span>[39m
+        [36m</a>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mSwitch to light mode[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0mTwo-step sign-in[0m
+          [36m<span[39m
+            [33mclass[39m=[32m"user-pop-note"[39m
+          [36m>[39m
+            [0mOff[0m
+          [36m</span>[39m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<circle[39m
+              [33mcx[39m=[32m"12"[39m
+              [33mcy[39m=[32m"12"[39m
+              [33mr[39m=[32m"3"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Settings[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<rect[39m
+              [33mheight[39m=[32m"11"[39m
+              [33mrx[39m=[32m"2"[39m
+              [33mwidth[39m=[32m"16"[39m
+              [33mx[39m=[32m"4"[39m
+              [33my[39m=[32m"10"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M8 10V7a4 4 0 018 0v3"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Change password[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"signout"[39m
+          [33mrole[39m=[32m"menuitem"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"15"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"15"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M16 17l5-5-5-5"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M21 12H9"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [0m Sign out[0m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+    [36m<div[39m
+      [33maria-atomic[39m=[32m"false"[39m
+      [33maria-live[39m=[32m"polite"[39m
+      [33mclass[39m=[32m"toast-viewport"[39m
+    [36m/>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/shell/UserMenu.test.tsx:143:25
+    141|     fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to li…
+    142|     expect(setTheme).toHaveBeenCalledWith('light')
+    143|     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn…
+       |                         ^
+    144|     expect(screen.getByRole('menuitem', { name: 'Switch to dark mode' …
+    145|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 11 passed (13)
+   Start at  17:22:19
+   Duration  4.09s (transform 270ms, setup 233ms, import 310ms, tests 2.88s, environment 486ms)
+

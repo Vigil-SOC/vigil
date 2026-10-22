@@ -1,0 +1,7 @@
+vite dev on 127.0.0.1:5199, no backend. agent-browser on /login.
+eval document.querySelector('.auth-root').dataset.theme + localStorage('vigil.colorScheme')
+before click:   "dark ls=null"
+click .auth-theme
+after click:    "light ls=light"
+reload
+after reload:   "light ls=light"
