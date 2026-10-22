@@ -160,12 +160,11 @@ function SocConsoleInner() {
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [caseSeed, setCaseSeed] = useState<string | null>(null)
   const drawerCase = heldCase(location.state)
-  // A case opened after an await writes to the entry the user is on by then.
-  const here = useRef(location)
-  here.current = location
+  const latestLocation = useRef(location)
+  latestLocation.current = location
   const setDrawerCase = useCallback(
     (id: string | null) => {
-      const { pathname, search, hash, state } = here.current
+      const { pathname, search, hash, state } = latestLocation.current
       navigate({ pathname, search, hash }, { replace: true, state: holdCase(state, id) })
     },
     [navigate],

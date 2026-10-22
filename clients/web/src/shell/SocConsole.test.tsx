@@ -830,7 +830,6 @@ describe('SocConsole', () => {
     it('comes back to the case on Back from a page the drawer led to, as Watch it run and Replay do', async () => {
       renderWithHistory()
       await openDrawer()
-      // Watch it run pushes the run page, an entry with no drawer on it.
       act(() => navigate('/workflows?run=run-1'))
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
       act(() => navigate(-1))
