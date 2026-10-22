@@ -43,6 +43,14 @@ class Stub:
                 stub.paths.append(path)
                 # Compose also polls the Docker proxy. An empty list is a
                 # successful read, so that sensor doesn't go blind beside /readyz.
+                if path == "/_gw/status":
+                    body = b'{"state":"ok","since":0}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if path == "/containers/json":
                     body = b"[]"
                     self.send_response(200)
@@ -125,6 +133,7 @@ def _env(data_dir: Path, stub: Stub, serve: Stub | None = None) -> dict[str, str
         # serve stub's paths stay /readyz.
         "VIGIL_MEDIC_AGENT_SERVE_ADDR": (serve or stub).addr,
         "VIGIL_MEDIC_DOCKERPROXY_ADDR": stub.addr,
+        "VIGIL_MEDIC_GATEWAY_ADDR": stub.addr,
     }
 
 
