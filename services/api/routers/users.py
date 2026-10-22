@@ -393,23 +393,6 @@ async def update_user(
         user, stale_reason, payload = await asyncio.to_thread(
             _apply_user_update, session, current_user, user_id, request
         )
-
-        # Sign the user out everywhere so their next session carries the new
-        # email or role, not the claims and permissions cached at login.
-        if stale_reason:
-            try:
-                await revoke_all_for_user(user.user_id)
-            except Exception as exc:
-                logger.error(
-                    "%s for %s but revoke_all_for_user failed: %s",
-                    stale_reason,
-                    user.username,
-                    exc,
-                )
-
-        logger.info(f"User updated by {current_user.username}: {user.username}")
-        return payload
-
     except HTTPException:
         raise
     except Exception as e:
@@ -418,6 +401,14 @@ async def update_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update user",
         )
+
+    # Sign the user out everywhere so their next session carries the new
+    # email or role, not the claims and permissions cached at login.
+    if stale_reason:
+        await revoke_all_for_user(user.user_id)
+
+    logger.info(f"User updated by {current_user.username}: {user.username}")
+    return payload
 
 
 @router.delete("/{user_id}")

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core.config import get_settings
+from core.exceptions import SOCError
 from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
@@ -150,19 +151,34 @@ async def consume_refresh_jti(jti: str, expires_at: Optional[datetime]) -> bool:
         return _FAIL_OPEN
 
 
+class RevocationUnavailable(SOCError):
+    status_code = 503
+
+    def __init__(self, message: str):
+        super().__init__(message, "REVOCATION_UNAVAILABLE")
+
+
 async def revoke_all_for_user(user_id: str) -> None:
     """
     Invalidate every outstanding token for a user by moving the cutoff
     timestamp forward.
+
+    Raises ``RevocationUnavailable`` if the cutoff cannot be written.
     """
     client = _get_client()
     if client is None:
-        logger.warning("revoke_all_for_user: redis client unavailable; skipping")
-        return
+        raise RevocationUnavailable("redis client unavailable")
     # Every token older than the cutoff has expired once a refresh token's
     # lifetime has passed, so the key can age out instead of accumulating.
     ttl_seconds = get_settings().jwt_refresh_expiration_days * 86400
-    await client.set(f"{_USER_CUTOFF_PREFIX}{user_id}", str(_now_ts()), ex=ttl_seconds)
+    try:
+        await client.set(
+            f"{_USER_CUTOFF_PREFIX}{user_id}", str(_now_ts()), ex=ttl_seconds
+        )
+    except Exception as exc:
+        raise RevocationUnavailable(
+            f"cutoff write for {user_id} failed: {exc}"
+        ) from exc
 
 
 async def warn_if_redis_evicts() -> None:

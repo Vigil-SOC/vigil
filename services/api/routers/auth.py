@@ -690,20 +690,6 @@ async def update_current_user(
             body.email,
             body.current_password,
         )
-
-        if email_changed:
-            try:
-                await revoke_all_for_user(current_user.user_id)
-            except Exception as exc:
-                logger.error(
-                    "Email changed for %s but revoke_all_for_user failed: %s",
-                    current_user.username,
-                    exc,
-                )
-
-        logger.info(f"User profile updated: {current_user.username}")
-        return payload
-
     except HTTPException:
         raise
     except Exception as e:
@@ -712,6 +698,12 @@ async def update_current_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update profile",
         )
+
+    if email_changed:
+        await revoke_all_for_user(current_user.user_id)
+
+    logger.info(f"User profile updated: {current_user.username}")
+    return payload
 
 
 @router.post("/change-password")
@@ -763,23 +755,6 @@ async def change_password(
     try:
         # Enforce no-reuse + hash + history rotation
         await asyncio.to_thread(_apply_new_password, current_user, body.new_password)
-
-        # Invalidate every outstanding token for this user. The current
-        # session is effectively logged out; the client should re-login.
-        try:
-            await revoke_all_for_user(current_user.user_id)
-        except Exception as exc:
-            logger.error(
-                "Password changed for %s but revoke_all_for_user failed: %s. "
-                "Old tokens may remain valid until natural expiry.",
-                current_user.username,
-                exc,
-            )
-
-        clear_auth_cookies(response)
-        logger.info(f"Password changed for user: {current_user.username}")
-        return {"message": "Password changed successfully. Please log in again."}
-
     except HTTPException:
         raise
     except Exception as e:
@@ -788,6 +763,14 @@ async def change_password(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to change password",
         )
+
+    # Invalidate every outstanding token for this user. The current
+    # session is effectively logged out; the client should re-login.
+    await revoke_all_for_user(current_user.user_id)
+
+    clear_auth_cookies(response)
+    logger.info(f"Password changed for user: {current_user.username}")
+    return {"message": "Password changed successfully. Please log in again."}
 
 
 @router.post("/mfa/setup", response_model=MFASetupResponse)
@@ -1031,18 +1014,6 @@ async def password_reset_confirm(
         # Clear any active lockout so the user can immediately log in.
         user.failed_login_count = 0
         user.locked_until = None
-
-        try:
-            await revoke_all_for_user(user.user_id)
-        except Exception as exc:
-            logger.error(
-                "Password reset for %s but revoke_all_for_user failed: %s",
-                user.username,
-                exc,
-            )
-
-        logger.info("Password reset completed for user: %s", user.username)
-        return {"message": "Password reset successfully"}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1051,3 +1022,8 @@ async def password_reset_confirm(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password",
         )
+
+    await revoke_all_for_user(user.user_id)
+
+    logger.info("Password reset completed for user: %s", user.username)
+    return {"message": "Password reset successfully"}
