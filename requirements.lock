@@ -263,8 +263,10 @@ packaging==26.3
     #   pytest
 paramiko==5.0.0
     # via sshtunnel
-pillow==12.3.0
-    # via reportlab
+pillow==13.0.0
+    # via
+    #   -r requirements.txt
+    #   reportlab
 pluggy==1.6.0
     # via
     #   pytest
