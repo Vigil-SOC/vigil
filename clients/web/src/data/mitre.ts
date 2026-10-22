@@ -1,6 +1,5 @@
-/* The backend leaves `tactic`/`technique_name` unresolved ("Unknown" / == id),
-   so resolve them here. Lookups fall back to the base technique
-   (T1059.001 -> T1059), then to the id, then an em-dash. */
+/* Names for finding rows, which carry only a technique id. The ATT&CK rollup
+   resolves names server-side (core/threat_intel/mitre_lookup.py). */
 const DASH = '—'
 
 interface Meta {
