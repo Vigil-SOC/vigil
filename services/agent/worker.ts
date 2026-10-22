@@ -182,24 +182,40 @@ function as<K extends Record<string, unknown>>(state: State): State<K> {
   return state as unknown as State<K>;
 }
 
+// The person the run acts for. A start job carries the token the API signed;
+// a resume does not, and the run event is where the start left it. Absent for
+// a system run, and for a ledger opened before this was recorded.
+export async function principalFor(state: State, job: RunJob): Promise<string | undefined> {
+  const carried = job.principal;
+  if (typeof carried === "string" && carried !== "") return carried;
+  const opened = (await state.read(job.run_id)).find((event) => event.kind === "run");
+  const held = opened === undefined ? undefined : (opened.payload as RunPayload).principal;
+  return typeof held === "string" && held !== "" ? held : undefined;
+}
+
 // The one place a run kind becomes a loop. A kind with no workflow throws here,
 // before the ledger opens, rather than journalling a run nothing will ever advance.
 async function drive(
   state: State,
   job: RunJob,
   spec: RunSpec,
-  build: HarnessFactory,
+  factory: HarnessFactory,
   signal: AbortSignal,
   directives: DirectiveQueue,
+  principal: string | undefined,
 ): Promise<string | null> {
   const { run_kind: kind, run_id, enqueued_by: started_by } = job;
+  const named = principal === undefined ? {} : { principal };
+  // A caller that already bound someone wins. Otherwise every call this run
+  // makes carries the person the job or the ledger named.
+  const build: HarnessFactory = (k, s, st, memory, seed, given) => factory(k, s, st, memory, seed, given ?? principal);
   // Folded off the ledger, so a resumed run continues its allowance instead of
   // starting one. Without this, a run killed near its ceiling comes back with a
   // full budget, and a watchdog that resumes it automatically makes that a loop.
   const seed = seedFrom(await state.read(run_id));
 
   if (kind === "compose") {
-    await runCompose(build(kind, spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, mirror: mirrorFor(), signal });
+    await runCompose(build(kind, spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
     return null;
   }
   const entry = archFor(kind);
@@ -212,7 +228,7 @@ async function drive(
     // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
     const done = await runAgent(harness, {
       run_id, run_kind: kind, spec, plugin: manifest, ...(hooks === undefined ? {} : { hooks }),
-      tools: toolsFrom(spec.tools), started_by, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
+      tools: toolsFrom(spec.tools), started_by, ...named, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
     });
     return done.status === "waiting_approval" ? done.reason : null;
   }
@@ -224,12 +240,12 @@ async function drive(
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
-    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, onProgress: progressFor(), signal });
+    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, ...named, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, onProgress: progressFor(), signal });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {
     const harness = build(kind, spec, as<V3Kinds>(state), undefined, seed);
-    await runRootCauseV3(harness, { run_id, spec, started_by, signal, stop: stopFrom(directives, run_id), log: (line) => log.info(line, { run_id }) });
+    await runRootCauseV3(harness, { run_id, spec, started_by, ...named, signal, stop: stopFrom(directives, run_id), log: (line) => log.info(line, { run_id }) });
     return null;
   }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
@@ -293,7 +309,8 @@ export async function advance(
     // iteration can take minutes, and onCost only clears the row once it ends.
     // Compose reports its own state through its phases.
     if (answered > 0 && job.run_kind !== "compose") await tell(job.run_id, { status: "running", reason: "", cost_usd: await spentOn(state, job.run_id) });
-    const parked = await drive(state, job, spec, build, halt.signal, directives);
+    const principal = await principalFor(state, job);
+    const parked = await drive(state, job, spec, build, halt.signal, directives, principal);
     await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
     await forget(state, leases, job, owner, error, final || unrecoverable(error));
