@@ -2,8 +2,8 @@
 
 Surfaces the durable conversation store behind the console chat dock:
 list past conversations, reopen one with its full message history, rename,
-soft-archive, hard-delete, and a one-time localStorage import. Every handler
-is auth-gated and scoped to the authenticated user via ``get_current_user``.
+soft-archive, and hard-delete. Every handler is auth-gated and scoped to the
+authenticated user via ``get_current_user``.
 
 This store is separate from ``llm_interaction_logs`` (the compliance audit
 log), which is never touched here — deleting a conversation does not remove
@@ -11,7 +11,7 @@ its audit trail.
 """
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -41,12 +41,6 @@ class UpdateConversationRequest(BaseModel):
     case_id: Optional[str] = None
 
 
-class ImportConversationsRequest(BaseModel):
-    """POST /import body — best-effort bulk import of localStorage history."""
-
-    conversations: List[dict] = []
-
-
 @router.get("/")
 async def list_conversations(
     archived: bool = Query(False, description="Include archived conversations"),
@@ -64,19 +58,6 @@ async def list_conversations(
         q=q,
     )
     return {"conversations": items}
-
-
-@router.post("/import")
-async def import_conversations(
-    body: ImportConversationsRequest,
-    current_user: User = Depends(get_current_user),
-):
-    """One-time best-effort import of browser localStorage history.
-
-    Idempotent — conversations whose id already exists are skipped. Returns
-    ``{"imported": n, "skipped": m}``.
-    """
-    return conversation_service.bulk_import(current_user.user_id, body.conversations)
 
 
 @router.get("/{conversation_id}")

@@ -1196,21 +1196,6 @@ export interface ConversationDetail extends ConversationSummary {
   messages: ConversationMessage[]
 }
 
-export interface ImportConversationInput {
-  id: string
-  title?: string | null
-  agent_id?: string | null
-  model?: string | null
-  messages: Array<{
-    role: string
-    content: string
-    thinking?: string | null
-    tool_calls?: unknown[]
-    complete?: boolean
-    model?: string | null
-  }>
-}
-
 export const conversationsApi = {
   // trailing slash avoids a 307 to the backend root route
   list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string }) =>
@@ -1222,9 +1207,6 @@ export const conversationsApi = {
     api.patch(`/conversations/${encodeURIComponent(id)}`, data),
 
   delete: (id: string) => api.delete(`/conversations/${encodeURIComponent(id)}`),
-
-  importHistory: (conversations: ImportConversationInput[]) =>
-    api.post('/conversations/import', { conversations }),
 }
 
 export const kafkaApi = {

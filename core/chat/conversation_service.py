@@ -12,7 +12,7 @@ invoked from the chat stream — :func:`ensure_conversation` and
 :func:`append_message` — are **fail-open**: persistence failures are logged,
 never raised, so they can never break the chat. Async callers wrap these in
 ``asyncio.to_thread(...)``. The user-initiated CRUD helpers (list/get/rename/
-archive/delete/import) propagate hard DB errors so the API can surface them,
+archive/delete) propagate hard DB errors so the API can surface them,
 but return ``None``/``False`` for not-found-or-not-owned.
 """
 
@@ -307,79 +307,3 @@ def delete(conversation_id: str, user_id: Optional[str]) -> bool:
             return False
         session.delete(conv)  # ORM cascade removes messages
         return True
-
-
-def bulk_import(user_id: Optional[str], conversations: List[dict]) -> dict:
-    """One-time best-effort import of localStorage history.
-
-    Idempotent: conversations whose id already exists are skipped. Each input
-    item: ``{id, title?, agent_id?, model?, created_at?, messages: [...]}``;
-    each message: ``{role, content, thinking?, tool_calls?, model?, ...}``.
-    Per-conversation failures are isolated so one bad item can't abort the
-    whole import. Returns ``{"imported": n, "skipped": m}``.
-    """
-    imported = 0
-    skipped = 0
-    db_manager = get_db_manager()
-    for item in conversations or []:
-        conv_id = (item or {}).get("id")
-        if not conv_id:
-            skipped += 1
-            continue
-        try:
-            with db_manager.session_scope() as session:
-                exists = (
-                    session.execute(
-                        select(Conversation.id).where(Conversation.id == conv_id)
-                    )
-                    .scalars()
-                    .first()
-                )
-                if exists:
-                    skipped += 1
-                    continue
-
-                msgs = item.get("messages") or []
-                first_user_text = next(
-                    (
-                        m.get("content")
-                        for m in msgs
-                        if (m or {}).get("role") == "user" and m.get("content")
-                    ),
-                    None,
-                )
-                conv = Conversation(
-                    id=conv_id,
-                    user_id=user_id,
-                    title=item.get("title") or _derive_title(first_user_text),
-                    agent_id=item.get("agent_id"),
-                    model=item.get("model"),
-                    message_count=len(msgs),
-                )
-                session.add(conv)
-                last_at = None
-                for seq, m in enumerate(msgs):
-                    m = m or {}
-                    session.add(
-                        ChatMessage(
-                            conversation_id=conv_id,
-                            seq=seq,
-                            role=m.get("role") or "user",
-                            content=m.get("content") or "",
-                            thinking=m.get("thinking") or None,
-                            tool_calls=m.get("tool_calls") or [],
-                            complete=bool(m.get("complete", True)),
-                            model=m.get("model"),
-                            input_tokens=int(m.get("input_tokens") or 0),
-                            output_tokens=int(m.get("output_tokens") or 0),
-                            cost_usd=float(m.get("cost_usd") or 0.0),
-                        )
-                    )
-                    last_at = utcnow()
-                if last_at is not None:
-                    conv.last_message_at = last_at
-            imported += 1
-        except Exception as exc:  # noqa: BLE001 — isolate one bad conversation
-            logger.warning("bulk_import skipped %s (non-fatal): %s", conv_id, exc)
-            skipped += 1
-    return {"imported": imported, "skipped": skipped}

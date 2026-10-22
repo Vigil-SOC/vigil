@@ -285,7 +285,6 @@ vi.mock('../services/api', () => ({
     get: () => Promise.resolve({ data: { messages: [] } }),
     update: () => Promise.resolve({ data: {} }),
     delete: () => Promise.resolve({ data: {} }),
-    importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
   },
   // the spending card shows its own error state; budgets aren't under test here
   budgetsApi: {

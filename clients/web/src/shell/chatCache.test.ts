@@ -1,11 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  chatWasImported,
-  chatCacheEpoch,
   clearChatCache,
   loadHistory,
   loadKeymap,
-  markChatImported,
   retainChatCache,
   saveHistory,
   serverUnreachable,
@@ -39,7 +36,6 @@ describe('chat cache', () => {
     localStorage.setItem('soc.chat.keymap', JSON.stringify({ seed: 'c1' }))
     localStorage.setItem('soc.chat.imported', '1')
     expect(loadHistory('alice')).toEqual([])
-    expect(chatWasImported('alice')).toBe(false)
     retainChatCache('alice')
     expect(localStorage.getItem('soc.chat.history')).toBeNull()
     expect(localStorage.getItem('soc.chat.keymap')).toBeNull()
@@ -49,24 +45,16 @@ describe('chat cache', () => {
   it('keeps only the signed-in user, and sign-out removes theirs too', () => {
     saveHistory('alice', [sample])
     saveHistory('bob', [{ ...sample, id: 'c2', messages: [{ role: 'user', text: 'bob' }] }])
-    markChatImported('bob')
+    localStorage.setItem('soc.chat.imported.alice', '1')
     localStorage.setItem('soc.chat.threadHeight', '400')
     retainChatCache('alice')
     expect(loadHistory('alice')).toEqual([sample])
     expect(loadHistory('bob')).toEqual([])
-    expect(chatWasImported('bob')).toBe(false)
+    expect(localStorage.getItem('soc.chat.imported.alice')).toBeNull()
     expect(localStorage.getItem('soc.chat.threadHeight')).toBe('400')
     clearChatCache()
     expect(loadHistory('alice')).toEqual([])
     expect(localStorage.getItem('soc.chat.threadHeight')).toBe('400')
-  })
-
-  it('bumps an epoch when the cache is narrowed or cleared', () => {
-    const before = chatCacheEpoch()
-    retainChatCache('alice')
-    expect(chatCacheEpoch()).toBe(before + 1)
-    clearChatCache()
-    expect(chatCacheEpoch()).toBe(before + 2)
   })
 
   it('treats only a missing response or a 5xx as unreachable', () => {
