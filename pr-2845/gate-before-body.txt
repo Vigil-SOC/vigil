@@ -1,0 +1,4 @@
+AFTER (branch): permission False | POST /api/exclusions malformed body -> 403 | sessions opened so far: 0
+AFTER (branch): permission True | POST /api/exclusions malformed body -> 422 | sessions opened so far: 1
+BEFORE (main): permission False | POST /api/exclusions malformed body -> 422 | sessions opened so far: 1
+BEFORE (main): permission True | POST /api/exclusions malformed body -> 422 | sessions opened so far: 2

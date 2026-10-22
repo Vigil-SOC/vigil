@@ -1,0 +1,1 @@
+exclusions routes in matrix: [('GET', '/api/exclusions', (('findings.read', False),)), ('POST', '/api/exclusions', (('findings.write', False),)), ('POST', '/api/exclusions/{exclusion_id}/remove', (('findings.write', False),))]

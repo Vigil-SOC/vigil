@@ -1,0 +1,3 @@
+E           - POST /api/exclusions
+E           - POST /api/exclusions/{exclusion_id}/remove
+=================== 1 failed, 63 passed, 1 warning in 5.62s ====================

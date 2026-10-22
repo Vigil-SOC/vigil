@@ -1,0 +1,2 @@
+security/test_role_route_matrix.py::test_a_role_without_the_permission_is_refused[role-viewer:POST /api/exclusions]
+security/test_role_route_matrix.py::test_a_role_without_the_permission_is_refused[role-viewer:POST /api/exclusions/{exclusion_id}/remove]

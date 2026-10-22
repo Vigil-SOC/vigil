@@ -1,0 +1,5 @@
+openapi paths sha256 before/after:
+bebc9068036d55729ada518419dd21a9fe3eefd964d26175bbc2fa0a5aa5f140  /tmp/oa_before.json
+bebc9068036d55729ada518419dd21a9fe3eefd964d26175bbc2fa0a5aa5f140  /tmp/oa_after.json
+IDENTICAL
+2606 /tmp/oa_after.json
