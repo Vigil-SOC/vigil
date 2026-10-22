@@ -161,10 +161,10 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
         investigation_id="tr-inv-started",
         created_at=NOW - timedelta(seconds=10),
         decided_at=NOW,
-        payload={"workflow_id": "incident-response"},
+        payload={"workflow_id": "incident-response", "document": "not an ask"},
     )
     # A second launch of the same case today still counts once.
-    _trigger(
+    bare_hunt = _trigger(
         state="launched",
         case_id="tr-case-1",
         investigation_id="tr-inv-started-2",
@@ -178,7 +178,10 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
         investigation_id="tr-inv-picked",
         created_at=NOW - timedelta(seconds=5),
         decided_at=NOW,
-        payload={"workflow_id": "threat-hunt"},
+        payload={
+            "workflow_id": "threat-hunt",
+            "hypothesis": "Hunt for T1059\non build hosts",
+        },
     )
     added = _trigger(
         state="merged",
@@ -222,11 +225,14 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[started]["case_door"] == "tr-case-1"
     assert rows[started]["pickup_seconds"] == 10
     assert rows[started]["workflow_id"] == "incident-response"
+    assert rows[started]["document"] is None
 
     assert rows[picked]["state_label"] == "Picked up"
     assert rows[picked]["case_door"] is None
     assert rows[picked]["source"] == "Schedule"
     assert rows[picked]["workflow_id"] == "threat-hunt"
+    assert rows[picked]["document"] == "Hunt for T1059 on build hosts"
+    assert rows[bare_hunt]["document"] is None
 
     assert rows[added]["state_label"] == "Added to a case"
     assert rows[added]["case_door"] == "tr-case-1"

@@ -121,13 +121,17 @@ def _workflow(payload: dict, investigation_workflow: Optional[str]) -> str:
     return ""
 
 
+_DOCUMENT_KEYS = {
+    "human_ask": "document",
+    "schedule": "hypothesis",
+}
+
+
 def _document_line(kind: str, payload: dict) -> Optional[str]:
-    if kind != "human_ask":
+    text = payload.get(_DOCUMENT_KEYS.get(kind))
+    if not isinstance(text, str):
         return None
-    document = payload.get("document")
-    if not isinstance(document, str):
-        return None
-    line = " ".join(document.split())
+    line = " ".join(text.split())
     return line or None
 
 
