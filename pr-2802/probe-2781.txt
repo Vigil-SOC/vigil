@@ -1,0 +1,8 @@
+⚠️  DEV_MODE is ENABLED - authentication is BYPASSED. Gates opened: session auth (every request runs as a mock admin with full permissions); vstrike inbound (POST /api/integrations/vstrike/findings accepts pushes without its bearer key). This is for a developer's own machine only; set DEV_MODE=false in .env to require a login.
+effort lookup failed for chat_default: Database not initialized. Call initialize() first.
+context window lookup failed for gemini-flash-latest: 'Reg' object has no attribute 'get_model_info'
+fields after parse: ['agent_id', 'case_id', 'messages', 'page_context', 'parent_run_id', 'session_id']
+config model line: ['model: gemini-flash-latest']
+EVIL in system_prompt: False
+persisted model: gemini-flash-latest
+OK

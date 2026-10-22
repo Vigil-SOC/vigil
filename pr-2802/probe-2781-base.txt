@@ -1,0 +1,9 @@
+fields after parse: ['agent_id', 'case_id', 'max_tokens', 'messages', 'model', 'page_context', 'parent_run_id', 'session_id', 'system_prompt']
+config model line: ['model: llama3.1:8b']
+EVIL in system_prompt: True
+persisted model: llama3.1:8b
+Traceback (most recent call last):
+  File "/tmp/s2781/probe.py", line 44, in <module>
+    assert "EVIL" not in sent["system_prompt"] and saved["model"] == "gemini-flash-latest"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
