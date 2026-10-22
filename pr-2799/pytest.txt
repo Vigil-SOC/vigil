@@ -1,0 +1,1302 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1babfe74-3d3c-4171-b2da-36b2b034bff4/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 59 items
+
+tests/unit/findings/test_findings_enrich_endpoint.py ..................  [ 30%]
+tests/unit/chat/test_case_brief.py .....................                 [ 66%]
+tests/unit/chat/test_chat_failed_turn.py ..                              [ 69%]
+tests/unit/chat/test_chat_models_endpoint.py ...                         [ 74%]
+tests/unit/chat/test_chat_page_context.py .                              [ 76%]
+tests/unit/chat/test_chat_picker_embedding_filter.py ...                 [ 81%]
+tests/unit/chat/test_chat_principal.py ......                            [ 91%]
+tests/unit/chat/test_chat_skills_index.py ...                            [ 96%]
+tests/unit/chat/test_conversation_scope.py EE                            [100%]
+
+==================================== ERRORS ====================================
+____________ ERROR at setup of test_q_returns_only_the_callers_rows ____________
+
+self = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+engine = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+connection = None, _has_events = None, _allow_revalidate = True
+_allow_autobegin = True
+
+    def __init__(
+        self,
+        engine: Engine,
+        connection: Optional[PoolProxiedConnection] = None,
+        _has_events: Optional[bool] = None,
+        _allow_revalidate: bool = True,
+        _allow_autobegin: bool = True,
+    ):
+        """Construct a new Connection."""
+        self.engine = engine
+        self.dialect = dialect = engine.dialect
+    
+        if connection is None:
+            try:
+>               self._dbapi_connection = engine.raw_connection()
+                                         ^^^^^^^^^^^^^^^^^^^^^^^
+
+_allow_autobegin = True
+_allow_revalidate = True
+_has_events = None
+connection = None
+dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+self       = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:149: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3284: in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+        self       = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:445: in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:1303: in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionFairy'>
+        fairy      = None
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        threadconns = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:709: in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionRecord'>
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:176: in _do_get
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25e00>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c0220>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:174: in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:386: in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:671: in __init__
+    self.__connect()
+        connect    = True
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:906: in __connect
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25fc0>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c2560>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:902: in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/create.py:645: in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs_tup  = []
+        connection_record = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+        cparams    = immutabledict({'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', 'port': 55499, 'connect_timeout': 5, 'options': '-c idle_in_transaction_session_timeout=300000'})
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:869: in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs      = ()
+        cparams    = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+        self       = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+dsn = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+connection_factory = None, cursor_factory = None
+kwargs = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+
+    def connect(dsn=None, connection_factory=None, cursor_factory=None, **kwargs):
+        """
+        Create a new database connection.
+    
+        The connection parameters can be specified as a string:
+    
+            conn = psycopg2.connect("dbname=test user=postgres password=secret")
+    
+        or using a set of keyword arguments:
+    
+            conn = psycopg2.connect(database="test", user="postgres", password="secret")
+    
+        Or as a mix of both. The basic connection parameters are:
+    
+        - *dbname*: the database name
+        - *database*: the database name (only as keyword argument)
+        - *user*: user name used to authenticate
+        - *password*: password used to authenticate
+        - *host*: database host address (defaults to UNIX socket if not provided)
+        - *port*: connection port number (defaults to 5432 if not provided)
+    
+        Using the *connection_factory* parameter a different class or connections
+        factory can be specified. It should be a callable object taking a dsn
+        argument.
+    
+        Using the *cursor_factory* parameter, a new default cursor factory will be
+        used by cursor().
+    
+        Using *async*=True an asynchronous connection will be created. *async_* is
+        a valid alias (for Python versions where ``async`` is a keyword).
+    
+        Any other keyword parameter will be passed to the underlying client
+        library: the list of supported parameters depends on the library version.
+    
+        """
+        kwasync = {}
+        if 'async' in kwargs:
+            kwasync['async'] = kwargs.pop('async')
+        if 'async_' in kwargs:
+            kwasync['async_'] = kwargs.pop('async_')
+    
+        dsn = _ext.make_dsn(dsn, **kwargs)
+>       conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       psycopg2.OperationalError: connection to server at "127.0.0.1", port 55499 failed: Connection refused
+E       	Is the server running on that host and accepting TCP/IP connections?
+
+connection_factory = None
+cursor_factory = None
+dsn        = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+kwargs     = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+kwasync    = {}
+
+../../../../vigil/venv/lib/python3.12/site-packages/psycopg2/__init__.py:122: OperationalError
+
+The above exception was the direct cause of the following exception:
+
+fixturedef = <FixtureDef argname='_isolate_database' scope='function' baseid='unit'>
+request = <SubRequest '_isolate_database' for <Function test_q_returns_only_the_callers_rows>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        if (
+            fixturedef.argname == "event_loop_policy"
+            and fixturedef.func.__module__ != __name__
+        ):
+            warnings.warn(
+                PytestDeprecationWarning(_EVENT_LOOP_POLICY_FIXTURE_DEPRECATION_WARNING),
+            )
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+asyncio_mode = <Mode.AUTO: 'auto'>
+fixturedef = <FixtureDef argname='_isolate_database' scope='function' baseid='unit'>
+request    = <SubRequest '_isolate_database' for <Function test_q_returns_only_the_callers_rows>>
+
+../../../../vigil/venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:926: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/conftest.py:139: in _isolate_database
+    request.getfixturevalue("throwaway_database")
+        request    = <SubRequest '_isolate_database' for <Function test_q_returns_only_the_callers_rows>>
+../../../../vigil/venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:926: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+        asyncio_mode = <Mode.AUTO: 'auto'>
+        fixturedef = <FixtureDef argname='throwaway_database' scope='session' baseid='unit'>
+        request    = <SubRequest 'throwaway_database' for <Function test_q_returns_only_the_callers_rows>>
+tests/unit/conftest.py:80: in throwaway_database
+    _run_autocommit(manager, f"CREATE DATABASE {ident}")
+        DatabaseConfig = <class 'core.storage.connection.DatabaseConfig'>
+        get_db_manager = <function get_db_manager at 0x7f3abd80f380>
+        ident      = '"vigil_test_2420132_2ab08703"'
+        manager    = <core.storage.connection.DatabaseManager object at 0x7f3ab8b0f800>
+        name       = 'vigil_test_2420132_2ab08703'
+        origin     = <core.storage.connection.DatabaseConfig object at 0x7f3ab94c3680>
+tests/unit/conftest.py:51: in _run_autocommit
+    with manager.engine.connect() as conn:
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+        manager    = <core.storage.connection.DatabaseManager object at 0x7f3ab8b0f800>
+        statements = ('CREATE DATABASE "vigil_test_2420132_2ab08703"',)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3260: in connect
+    return self._connection_cls(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:151: in __init__
+    Connection._handle_dbapi_exception_noconnection(
+        _allow_autobegin = True
+        _allow_revalidate = True
+        _has_events = None
+        connection = None
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+        engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+        self       = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2417: in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+        cls        = <class 'sqlalchemy.engine.base.Connection'>
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+        e          = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+        exc_info   = (<class 'psycopg2.OperationalError'>, OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connec...used\n\tIs the server running on that host and accepting TCP/IP connections?\n'), <traceback object at 0x7f3ab8a25c00>)
+        invalidate_pool_on_disconnect = True
+        is_disconnect = False
+        is_pre_ping = False
+        newraise   = None
+        should_wrap = True
+        sqlalchemy_exception = OperationalError('(psycopg2.OperationalError) connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:149: in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+        _allow_autobegin = True
+        _allow_revalidate = True
+        _has_events = None
+        connection = None
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+        engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+        self       = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3284: in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+        self       = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:445: in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:1303: in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionFairy'>
+        fairy      = None
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        threadconns = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:709: in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionRecord'>
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:176: in _do_get
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25e00>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c0220>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:174: in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:386: in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:671: in __init__
+    self.__connect()
+        connect    = True
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:906: in __connect
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25fc0>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c2560>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:902: in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/create.py:645: in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs_tup  = []
+        connection_record = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+        cparams    = immutabledict({'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', 'port': 55499, 'connect_timeout': 5, 'options': '-c idle_in_transaction_session_timeout=300000'})
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:869: in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs      = ()
+        cparams    = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+        self       = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+dsn = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+connection_factory = None, cursor_factory = None
+kwargs = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+
+    def connect(dsn=None, connection_factory=None, cursor_factory=None, **kwargs):
+        """
+        Create a new database connection.
+    
+        The connection parameters can be specified as a string:
+    
+            conn = psycopg2.connect("dbname=test user=postgres password=secret")
+    
+        or using a set of keyword arguments:
+    
+            conn = psycopg2.connect(database="test", user="postgres", password="secret")
+    
+        Or as a mix of both. The basic connection parameters are:
+    
+        - *dbname*: the database name
+        - *database*: the database name (only as keyword argument)
+        - *user*: user name used to authenticate
+        - *password*: password used to authenticate
+        - *host*: database host address (defaults to UNIX socket if not provided)
+        - *port*: connection port number (defaults to 5432 if not provided)
+    
+        Using the *connection_factory* parameter a different class or connections
+        factory can be specified. It should be a callable object taking a dsn
+        argument.
+    
+        Using the *cursor_factory* parameter, a new default cursor factory will be
+        used by cursor().
+    
+        Using *async*=True an asynchronous connection will be created. *async_* is
+        a valid alias (for Python versions where ``async`` is a keyword).
+    
+        Any other keyword parameter will be passed to the underlying client
+        library: the list of supported parameters depends on the library version.
+    
+        """
+        kwasync = {}
+        if 'async' in kwargs:
+            kwasync['async'] = kwargs.pop('async')
+        if 'async_' in kwargs:
+            kwasync['async_'] = kwargs.pop('async_')
+    
+        dsn = _ext.make_dsn(dsn, **kwargs)
+>       conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "127.0.0.1", port 55499 failed: Connection refused
+E       	Is the server running on that host and accepting TCP/IP connections?
+E       
+E       (Background on this error at: https://sqlalche.me/e/21/e3q8)
+
+connection_factory = None
+cursor_factory = None
+dsn        = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+kwargs     = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+kwasync    = {}
+
+../../../../vigil/venv/lib/python3.12/site-packages/psycopg2/__init__.py:122: OperationalError
+_ ERROR at setup of test_page_sticks_and_a_blank_case_clears_without_inserting _
+
+self = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+engine = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+connection = None, _has_events = None, _allow_revalidate = True
+_allow_autobegin = True
+
+    def __init__(
+        self,
+        engine: Engine,
+        connection: Optional[PoolProxiedConnection] = None,
+        _has_events: Optional[bool] = None,
+        _allow_revalidate: bool = True,
+        _allow_autobegin: bool = True,
+    ):
+        """Construct a new Connection."""
+        self.engine = engine
+        self.dialect = dialect = engine.dialect
+    
+        if connection is None:
+            try:
+>               self._dbapi_connection = engine.raw_connection()
+                                         ^^^^^^^^^^^^^^^^^^^^^^^
+
+_allow_autobegin = True
+_allow_revalidate = True
+_has_events = None
+connection = None
+dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+self       = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:149: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3284: in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+        self       = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:445: in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:1303: in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionFairy'>
+        fairy      = None
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        threadconns = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:709: in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionRecord'>
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:176: in _do_get
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25e00>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c0220>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:174: in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:386: in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:671: in __init__
+    self.__connect()
+        connect    = True
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:906: in __connect
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25fc0>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c2560>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:902: in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/create.py:645: in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs_tup  = []
+        connection_record = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+        cparams    = immutabledict({'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', 'port': 55499, 'connect_timeout': 5, 'options': '-c idle_in_transaction_session_timeout=300000'})
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:869: in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs      = ()
+        cparams    = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+        self       = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+dsn = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+connection_factory = None, cursor_factory = None
+kwargs = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+
+    def connect(dsn=None, connection_factory=None, cursor_factory=None, **kwargs):
+        """
+        Create a new database connection.
+    
+        The connection parameters can be specified as a string:
+    
+            conn = psycopg2.connect("dbname=test user=postgres password=secret")
+    
+        or using a set of keyword arguments:
+    
+            conn = psycopg2.connect(database="test", user="postgres", password="secret")
+    
+        Or as a mix of both. The basic connection parameters are:
+    
+        - *dbname*: the database name
+        - *database*: the database name (only as keyword argument)
+        - *user*: user name used to authenticate
+        - *password*: password used to authenticate
+        - *host*: database host address (defaults to UNIX socket if not provided)
+        - *port*: connection port number (defaults to 5432 if not provided)
+    
+        Using the *connection_factory* parameter a different class or connections
+        factory can be specified. It should be a callable object taking a dsn
+        argument.
+    
+        Using the *cursor_factory* parameter, a new default cursor factory will be
+        used by cursor().
+    
+        Using *async*=True an asynchronous connection will be created. *async_* is
+        a valid alias (for Python versions where ``async`` is a keyword).
+    
+        Any other keyword parameter will be passed to the underlying client
+        library: the list of supported parameters depends on the library version.
+    
+        """
+        kwasync = {}
+        if 'async' in kwargs:
+            kwasync['async'] = kwargs.pop('async')
+        if 'async_' in kwargs:
+            kwasync['async_'] = kwargs.pop('async_')
+    
+        dsn = _ext.make_dsn(dsn, **kwargs)
+>       conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       psycopg2.OperationalError: connection to server at "127.0.0.1", port 55499 failed: Connection refused
+E       	Is the server running on that host and accepting TCP/IP connections?
+
+connection_factory = None
+cursor_factory = None
+dsn        = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+kwargs     = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+kwasync    = {}
+
+../../../../vigil/venv/lib/python3.12/site-packages/psycopg2/__init__.py:122: OperationalError
+
+The above exception was the direct cause of the following exception:
+
+fixturedef = <FixtureDef argname='_isolate_database' scope='function' baseid='unit'>
+request = <SubRequest '_isolate_database' for <Function test_page_sticks_and_a_blank_case_clears_without_inserting>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        if (
+            fixturedef.argname == "event_loop_policy"
+            and fixturedef.func.__module__ != __name__
+        ):
+            warnings.warn(
+                PytestDeprecationWarning(_EVENT_LOOP_POLICY_FIXTURE_DEPRECATION_WARNING),
+            )
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+asyncio_mode = <Mode.AUTO: 'auto'>
+fixturedef = <FixtureDef argname='_isolate_database' scope='function' baseid='unit'>
+request    = <SubRequest '_isolate_database' for <Function test_page_sticks_and_a_blank_case_clears_without_inserting>>
+
+../../../../vigil/venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:926: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/conftest.py:139: in _isolate_database
+    request.getfixturevalue("throwaway_database")
+        request    = <SubRequest '_isolate_database' for <Function test_page_sticks_and_a_blank_case_clears_without_inserting>>
+tests/unit/conftest.py:80: in throwaway_database
+    _run_autocommit(manager, f"CREATE DATABASE {ident}")
+        DatabaseConfig = <class 'core.storage.connection.DatabaseConfig'>
+        get_db_manager = <function get_db_manager at 0x7f3abd80f380>
+        ident      = '"vigil_test_2420132_2ab08703"'
+        manager    = <core.storage.connection.DatabaseManager object at 0x7f3ab8b0f800>
+        name       = 'vigil_test_2420132_2ab08703'
+        origin     = <core.storage.connection.DatabaseConfig object at 0x7f3ab94c3680>
+tests/unit/conftest.py:51: in _run_autocommit
+    with manager.engine.connect() as conn:
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+        manager    = <core.storage.connection.DatabaseManager object at 0x7f3ab8b0f800>
+        statements = ('CREATE DATABASE "vigil_test_2420132_2ab08703"',)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3260: in connect
+    return self._connection_cls(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:151: in __init__
+    Connection._handle_dbapi_exception_noconnection(
+        _allow_autobegin = True
+        _allow_revalidate = True
+        _has_events = None
+        connection = None
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+        engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+        self       = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2417: in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+        cls        = <class 'sqlalchemy.engine.base.Connection'>
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+        e          = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+        exc_info   = (<class 'psycopg2.OperationalError'>, OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connec...used\n\tIs the server running on that host and accepting TCP/IP connections?\n'), <traceback object at 0x7f3ab8a25c00>)
+        invalidate_pool_on_disconnect = True
+        is_disconnect = False
+        is_pre_ping = False
+        newraise   = None
+        should_wrap = True
+        sqlalchemy_exception = OperationalError('(psycopg2.OperationalError) connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:149: in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+        _allow_autobegin = True
+        _allow_revalidate = True
+        _has_events = None
+        connection = None
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+        engine     = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+        self       = <sqlalchemy.engine.base.Connection object at 0x7f3ab94c1ac0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:3284: in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+        self       = Engine(postgresql+psycopg2://deslop:***@127.0.0.1:55499/postgres)
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:445: in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:1303: in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionFairy'>
+        fairy      = None
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        threadconns = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:709: in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+        cls        = <class 'sqlalchemy.pool.base._ConnectionRecord'>
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:176: in _do_get
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25e00>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c0220>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/impl.py:174: in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        use_overflow = True
+        wait       = False
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:386: in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+        self       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:671: in __init__
+    self.__connect()
+        connect    = True
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:906: in __connect
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:166: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+        exc_tb     = <traceback object at 0x7f3ab8a25fc0>
+        exc_type   = <class 'psycopg2.OperationalError'>
+        exc_value  = OperationalError('connection to server at "127.0.0.1", port 55499 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n')
+        self       = <sqlalchemy.util.langhelpers.safe_reraise object at 0x7f3ab94c2560>
+        traceback  = None
+        type_      = None
+        value      = None
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py:902: in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool       = <sqlalchemy.pool.impl.QueuePool object at 0x7f3ab94c01d0>
+        self       = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/create.py:645: in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs_tup  = []
+        connection_record = <sqlalchemy.pool.base._ConnectionRecord object at 0x7f3ab8bb93d0>
+        cparams    = immutabledict({'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', 'port': 55499, 'connect_timeout': 5, 'options': '-c idle_in_transaction_session_timeout=300000'})
+        dialect    = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+../../../../vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:869: in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        cargs      = ()
+        cparams    = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+        self       = <sqlalchemy.dialects.postgresql.psycopg2.PGDialect_psycopg2 object at 0x7f3ab94c09e0>
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+dsn = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+connection_factory = None, cursor_factory = None
+kwargs = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+
+    def connect(dsn=None, connection_factory=None, cursor_factory=None, **kwargs):
+        """
+        Create a new database connection.
+    
+        The connection parameters can be specified as a string:
+    
+            conn = psycopg2.connect("dbname=test user=postgres password=secret")
+    
+        or using a set of keyword arguments:
+    
+            conn = psycopg2.connect(database="test", user="postgres", password="secret")
+    
+        Or as a mix of both. The basic connection parameters are:
+    
+        - *dbname*: the database name
+        - *database*: the database name (only as keyword argument)
+        - *user*: user name used to authenticate
+        - *password*: password used to authenticate
+        - *host*: database host address (defaults to UNIX socket if not provided)
+        - *port*: connection port number (defaults to 5432 if not provided)
+    
+        Using the *connection_factory* parameter a different class or connections
+        factory can be specified. It should be a callable object taking a dsn
+        argument.
+    
+        Using the *cursor_factory* parameter, a new default cursor factory will be
+        used by cursor().
+    
+        Using *async*=True an asynchronous connection will be created. *async_* is
+        a valid alias (for Python versions where ``async`` is a keyword).
+    
+        Any other keyword parameter will be passed to the underlying client
+        library: the list of supported parameters depends on the library version.
+    
+        """
+        kwasync = {}
+        if 'async' in kwargs:
+            kwasync['async'] = kwargs.pop('async')
+        if 'async_' in kwargs:
+            kwasync['async_'] = kwargs.pop('async_')
+    
+        dsn = _ext.make_dsn(dsn, **kwargs)
+>       conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "127.0.0.1", port 55499 failed: Connection refused
+E       	Is the server running on that host and accepting TCP/IP connections?
+E       
+E       (Background on this error at: https://sqlalche.me/e/21/e3q8)
+
+connection_factory = None
+cursor_factory = None
+dsn        = "host=127.0.0.1 dbname=postgres user=deslop password=deslop-throwaway port=55499 connect_timeout=5 options='-c idle_in_transaction_session_timeout=300000'"
+kwargs     = {'host': '127.0.0.1', 'dbname': 'postgres', 'user': 'deslop', 'password': 'deslop-throwaway', ...}
+kwasync    = {}
+
+../../../../vigil/venv/lib/python3.12/site-packages/psycopg2/__init__.py:122: OperationalError
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.14-final-0 _______________
+
+Name                                                         Stmts   Miss   Cover   Missing
+-------------------------------------------------------------------------------------------
+core/agents/agent_ai_generator.py                              106     89  16.04%   15, 39-89, 94, 109-194, 197-217, 220-234, 240-247, 250, 268-277, 280-299
+core/agents/builtins.py                                         42      4  90.48%   52-55
+core/agents/custom_agent_service.py                            114    114   0.00%   3-321
+core/agents/directives.py                                       67     67   0.00%   4-196
+core/agents/enablement.py                                       17      6  64.71%   27-31, 41
+core/agents/integration_tools.py                                38     38   0.00%   5-112
+core/agents/internal_auth.py                                    15      6  60.00%   28-40
+core/agents/manager.py                                          98     70  28.57%   26-27, 41-42, 71-72, 80-85, 97-122, 125-130, 144-189, 198-202, 207-216
+core/agents/mcp_tools.py                                        82     82   0.00%   5-148
+core/agents/projections.py                                     158    124  21.52%   31, 39-42, 48-56, 62-80, 89-90, 98, 111-130, 142-157, 166-180, 190-208, 218-232, 240-241, 250-255, 259-260, 271-292
+core/agents/prompts.py                                          35     14  60.00%   55, 150-151, 167, 182-187, 195-198
+core/agents/queue.py                                            60     32  46.67%   47, 58, 78, 97-103, 109-114, 119-121, 127-152, 156-158, 162
+core/agents/run_limits.py                                       23     15  34.78%   41-60
+core/agents/run_stats.py                                        24     13  45.83%   26-60
+core/agents/tool_registry.py                                   322    322   0.00%   4-742
+core/agents/tools_router.py                                    148    148   0.00%   4-289
+core/api/v1/agent_runs_router.py                               129    129   0.00%   4-314
+core/api/v1/approvals_router.py                                121    121   0.00%   9-318
+core/api/v1/case_metrics_router.py                             157    157   0.00%   13-502
+core/api/v1/cases_router.py                                    315    315   0.00%   17-821
+core/api/v1/findings_router.py                                 105    105   0.00%   17-322
+core/api/v1/workflows_router.py                                 40     40   0.00%   22-115
+core/auth/auth_cookies.py                                       47     26  44.68%   36, 41-42, 47, 52, 58, 62-68, 72-75, 87-110, 116, 128-137
+core/auth/auth_service.py                                      379    270  28.76%   43, 54-61, 72, 102-105, 109-110, 117-118, 123-134, 151-153, 168, 180, 189-212, 223-227, 240-248, 257-310, 321-341, 357-359, 363-364, 369-370, 375-389, 406-444, 456-462, 474-520, 530-543, 548-550, 555-556, 561, 571-577, 585-589, 603, 614-621, 626-633, 649-660, 678-691, 708-739, 765-800
+core/auth/bootstrap_code.py                                     36     36   0.00%   9-76
+core/auth/current_user.py                                       58     39  32.76%   43, 64-86, 116-203
+core/auth/mcp_credential_service.py                             63     40  36.51%   57, 61, 74-97, 109-137, 142-153, 162-166
+core/auth/password_reset.py                                     45     45   0.00%   23-110
+core/auth/password_validator.py                                 48     48   0.00%   3-116
+core/auth/permissions.py                                        36     14  61.11%   43-50, 67-71, 81-85
+core/auth/service_account.py                                   138    138   0.00%   31-246
+core/auth/token_blacklist.py                                   122     95  22.13%   57-76, 81-86, 91, 95, 104-117, 126-150, 158-165, 177-189, 205-221, 226-252
+core/auth/tool_principal.py                                     30      4  86.67%   77-79, 82
+core/backup/__main__.py                                         50     50   0.00%   3-95
+core/backup/connection.py                                       24     24   0.00%   10-45
+core/backup/create.py                                          333    333   0.00%   8-649
+core/backup/preupgrade.py                                      146    146   0.00%   16-286
+core/backup/restore.py                                         706    706   0.00%   17-1138
+core/backup/schedule.py                                        274    274   0.00%   8-450
+core/backup/status.py                                           22     22   0.00%   8-35
+core/cases/agent_closure.py                                     23     23   0.00%   8-63
+core/cases/case_attachment_service.py                           29     29   0.00%   8-73
+core/cases/case_automation_service.py                          163    163   0.00%   7-332
+core/cases/case_brief.py                                       209      6  97.13%   92, 110, 131, 204, 293-294
+core/cases/case_collaboration_service.py                        83     83   0.00%   7-334
+core/cases/case_evidence_service.py                             72     72   0.00%   7-241
+core/cases/case_ioc_service.py                                  71     71   0.00%   7-289
+core/cases/case_journal_service.py                              77     77   0.00%   25-196
+core/cases/case_metrics_service.py                              86     86   0.00%   7-220
+core/cases/case_notification_service.py                         54     54   0.00%   7-280
+core/cases/case_record.py                                      333    333   0.00%   10-621
+core/cases/case_records_service.py                              90     63  30.00%   69, 85, 98-106, 111, 132-144, 153-160, 172-179, 191-200, 217-228, 239, 247, 252-260, 271-281, 292-304, 315-330
+core/cases/case_search_router.py                                15     15   0.00%   3-58
+core/cases/case_search_service.py                               46     46   0.00%   7-238
+core/cases/case_sla_service.py                                 211    211   0.00%   8-599
+core/cases/case_state.py                                        60     35  41.67%   42, 51-52, 69-77, 81-83, 98-106, 115-118, 137-138, 167-182, 193-197
+core/cases/case_templates_router.py                             72     72   0.00%   3-193
+core/cases/case_workflow_service.py                            180    180   0.00%   8-692
+core/cases/closure.py                                           13      0 100.00%
+core/cases/combined_state.py                                    73     36  50.68%   28, 30, 41-46, 51-53, 74-106, 136-146
+core/cases/linked_entities.py                                   41     41   0.00%   9-106
+core/cases/sandbox_correlation_service.py                      157    157   0.00%   20-359
+core/cases/sla_policies_router.py                              165    165   0.00%   3-457
+core/chat/conversation_service.py                              157    135  14.01%   37-44, 49, 73-76, 95-126, 149-195, 202-203, 218-244, 249-254, 259-266, 277-284, 291-298, 303-309, 321-385
+core/config.py                                                 298     77  74.16%   24-36, 52-53, 57-58, 63, 75-92, 120, 384, 397, 407-412, 416-420, 426, 433-438, 454-475, 481-500, 504-513, 523-526, 530
+core/deps.py                                                    40     15  62.50%   31, 35, 39, 43, 47, 51, 55, 59, 63, 67, 72, 79-83
+core/detections/detection_rules_service.py                     303    255  15.84%   98-101, 105-125, 129, 133-167, 171-205, 210-214, 223-229, 232-233, 237-242, 249-257, 261-265, 269-272, 278, 282-285, 289, 294-305, 329-427, 431-455, 459-480, 484-506, 510-527, 541, 551-556, 559-585, 592-608, 612-622
+core/detections/lint.py                                        163    163   0.00%   9-293
+core/detections/reconstruction.py                              314    314   0.00%   9-457
+core/detections/tools.py                                       321    321   0.00%   6-718
+core/documents/condense.py                                      49     49   0.00%   8-107
+core/documents/extract.py                                      111    111   0.00%   9-186
+core/documents/fence.py                                          9      4  55.56%   19-20, 25-26
+core/exceptions.py                                              32     13  59.38%   21-23, 28, 37, 64, 69, 73-78
+core/federation/__init__.py                                      2      0 100.00%
+core/federation/adapters/_base.py                               51     51   0.00%   3-139
+core/federation/adapters/_siem_base.py                          82     82   0.00%   11-207
+core/federation/contract.py                                     20      4  80.00%   46, 50, 69, 87
+core/federation/lag.py                                          26     26   0.00%   3-53
+core/federation/registry.py                                     40     27  32.50%   55-62, 67-68, 73-81, 95-104
+core/federation/runner.py                                      183    183   0.00%   20-359
+core/federation/seed.py                                         20     20   0.00%   9-51
+core/federation/store.py                                       103    103   0.00%   7-190
+core/findings/alert_outcomes.py                                 63     42  33.33%   51-62, 66-90, 95, 100-103, 108-127, 143-152
+core/findings/arrival_counts.py                                 21     12  42.86%   21-24, 33-50
+core/findings/enrichment/__init__.py                             5      0 100.00%
+core/findings/enrichment/errors.py                               6      0 100.00%
+core/findings/enrichment/parse.py                               21     13  38.10%   24-30, 39-48
+core/findings/enrichment/prompt.py                              56     40  28.57%   35-61, 74-90, 106, 123-132
+core/findings/enrichment/service.py                             96     58  39.58%   58-62, 120-194, 217-225, 269-316
+core/findings/exclusions.py                                    127     86  32.28%   76-85, 90-91, 97-112, 120-125, 133-138, 144, 148-155, 167-199, 210-222, 236-237, 243-244, 248-251, 256-257, 263-266, 273-282
+core/findings/exclusions_router.py                              63     63   0.00%   11-149
+core/findings/ip_address.py                                     12      9  25.00%   14-22
+core/findings/overview.py                                      126     89  29.37%   75-82, 86-110, 114-190, 195-246, 250, 261-266, 273-289
+core/findings/source_evidence.py                               198    157  20.71%   63-66, 94-97, 101-106, 115-132, 138-139, 159-253, 264-344, 360-371, 376-392
+core/findings/source_link.py                                    67     55  17.91%   16-27, 37-38, 43-55, 59-65, 77-97
+core/frontmatter.py                                             22      7  68.18%   28-29, 41, 44-45, 47, 49
+core/ingestion/ack.py                                           14     14   0.00%   8-34
+core/ingestion/dedup.py                                        170    170   0.00%   20-272
+core/ingestion/ingestion_jobs.py                               116    116   0.00%   1-182
+core/ingestion/ingestion_service.py                            683    683   0.00%   12-1262
+core/ingestion/kafka_config.py                                  16      0 100.00%
+core/ingestion/kafka_consumer_service.py                       137    137   0.00%   19-249
+core/ingestion/kafka_router.py                                  79     79   0.00%   14-172
+core/ingestion/siem_ingestion_service.py                        82     82   0.00%   7-255
+core/integrations/_base/aad_token.py                            35     35   0.00%   3-80
+core/integrations/_base/config.py                               25     15  40.00%   31-44, 60, 65, 70
+core/integrations/_base/config_gap.py                           17     17   0.00%   7-46
+core/integrations/_base/descriptor.py                           67     14  79.10%   26-28, 32-35, 65, 72-74, 106, 146-147
+core/integrations/_base/ids.py                                  11     11   0.00%   3-22
+core/integrations/_base/proxy.py                                12     12   0.00%   9-37
+core/integrations/_base/search_params.py                        14     14   0.00%   7-38
+core/integrations/_base/tls.py                                  12     12   0.00%   9-34
+core/integrations/_base/tool_result.py                          21     21   0.00%   8-40
+core/integrations/alienvault_otx/descriptor.py                   2      0 100.00%
+core/integrations/alienvault_otx/tool.py                        69     69   0.00%   1-165
+core/integrations/anyrun/descriptor.py                           2      0 100.00%
+core/integrations/anyrun/tool.py                                57     57   0.00%   1-119
+core/integrations/atomic_red_team/descriptor.py                  5      0 100.00%
+core/integrations/atomic_red_team/tool.py                       72     72   0.00%   14-214
+core/integrations/aws_security_hub/adapter.py                   12     12   0.00%   3-31
+core/integrations/aws_security_hub/descriptor.py                 2      0 100.00%
+core/integrations/aws_security_hub/ingestion.py                 81     81   0.00%   7-213
+core/integrations/azure_ad/descriptor.py                         2      0 100.00%
+core/integrations/azure_ad/tool.py                              76     76   0.00%   1-177
+core/integrations/azure_sentinel/adapter.py                     12     12   0.00%   3-31
+core/integrations/azure_sentinel/descriptor.py                   2      0 100.00%
+core/integrations/azure_sentinel/ingestion.py                   74     74   0.00%   7-232
+core/integrations/cape_sandbox/descriptor.py                     2      0 100.00%
+core/integrations/cape_sandbox/tool.py                         153    153   0.00%   12-391
+core/integrations/carbon_black/descriptor.py                     2      0 100.00%
+core/integrations/carbon_black/tool.py                          67     67   0.00%   1-164
+core/integrations/cloudflare/cloudflare_webhooks_router.py      87     87   0.00%   17-218
+core/integrations/cloudflare/descriptor.py                       2      0 100.00%
+core/integrations/cloudflare/ingestion.py                       56     56   0.00%   13-145
+core/integrations/cloudflare/tool.py                           117    117   0.00%   11-452
+core/integrations/credential_check.py                          174    174   0.00%   14-381
+core/integrations/crowdstrike/adapter.py                        71     71   0.00%   3-176
+core/integrations/crowdstrike/client.py                        103    103   0.00%   3-209
+core/integrations/crowdstrike/descriptor.py                      2      0 100.00%
+core/integrations/custom_integration_service.py                184    184   0.00%   3-688
+core/integrations/darktrace/darktrace_webhook_router.py        100    100   0.00%   19-275
+core/integrations/darktrace/ingestion.py                       125    125   0.00%   14-256
+core/integrations/elastic/adapter.py                            14     14   0.00%   3-40
+core/integrations/elastic/client.py                            133    133   0.00%   3-321
+core/integrations/elastic/descriptor.py                          3      0 100.00%
+core/integrations/elastic/ingestion.py                         168    168   0.00%   10-432
+core/integrations/elastic/tool.py                              104    104   0.00%   7-302
+core/integrations/extension/session_service.py                  67     67   0.00%   8-152
+core/integrations/extension/trust.py                            33     25  24.24%   24-30, 35-42, 49-58
+core/integrations/hybrid_analysis/descriptor.py                  2      0 100.00%
+core/integrations/hybrid_analysis/tool.py                       55     55   0.00%   1-113
+core/integrations/integration_bridge_service.py                 66     49  25.76%   30-31, 43-48, 58-95, 107-108, 120-121, 133-150, 159-167
+core/integrations/integration_secrets.py                        73     31  57.53%   237-245, 256, 274-288, 298-301, 313-316, 332-339
+core/integrations/ip_geolocation/descriptor.py                   2      0 100.00%
+core/integrations/ip_geolocation/tool.py                        81     81   0.00%   1-166
+core/integrations/jira/descriptor.py                             2      0 100.00%
+core/integrations/joe_sandbox/descriptor.py                      2      0 100.00%
+core/integrations/mcp/child_env.py                              26     26   0.00%   23-87
+core/integrations/mcp/client.py                                429    429   0.00%   3-878
+core/integrations/mcp/in_process.py                             45     45   0.00%   19-136
+core/integrations/mcp/packaged.py                              120    120   0.00%   9-186
+core/integrations/mcp/registry.py                              146    122  16.44%   25-27, 40-48, 52, 58-61, 70-97, 101, 104-122, 126, 137-147, 151-155, 159-164, 177-182, 192-220, 231-235, 245-257, 262-265, 282-313, 325-330
+core/integrations/mcp/runner.py                                 86     86   0.00%   9-160
+core/integrations/mcp/service.py                               183    183   0.00%   3-428
+core/integrations/mcp/surface.py                                32     18  43.75%   46-61, 69-71, 83-87, 92
+core/integrations/mcp/verify_catalog.py                         28     28   0.00%   6-51
+core/integrations/microsoft_defender/adapter.py                 12     12   0.00%   3-31
+core/integrations/microsoft_defender/descriptor.py               2      0 100.00%
+core/integrations/microsoft_defender/ingestion.py              113    113   0.00%   7-261
+core/integrations/microsoft_defender/tool.py                    72     72   0.00%   1-164
+core/integrations/microsoft_teams/descriptor.py                  2      0 100.00%
+core/integrations/microsoft_teams/tool.py                       50     50   0.00%   1-121
+core/integrations/misp/descriptor.py                             2      0 100.00%
+core/integrations/misp/tool.py                                  63     63   0.00%   1-153
+core/integrations/okta/descriptor.py                             2      0 100.00%
+core/integrations/opensearch/adapter.py                         13     13   0.00%   3-37
+core/integrations/opensearch/client.py                          98     98   0.00%   12-260
+core/integrations/opensearch/descriptor.py                       3      0 100.00%
+core/integrations/opensearch/ingestion.py                      151    151   0.00%   15-322
+core/integrations/opensearch/tool.py                            98     98   0.00%   7-294
+core/integrations/pagerduty/descriptor.py                        2      0 100.00%
+core/integrations/palo_alto/descriptor.py                        2      0 100.00%
+core/integrations/palo_alto/tool.py                             53     53   0.00%   1-142
+core/integrations/sentinelone/descriptor.py                      2      0 100.00%
+core/integrations/shodan/descriptor.py                           2      0 100.00%
+core/integrations/slack/descriptor.py                            2      0 100.00%
+core/integrations/slack/tool.py                                 53     53   0.00%   1-127
+core/integrations/splunk/adapter.py                             86     86   0.00%   3-203
+core/integrations/splunk/client.py                             150    150   0.00%   3-397
+core/integrations/splunk/descriptor.py                           3      0 100.00%
+core/integrations/splunk/tool.py                               189    189   0.00%   1-454
+core/integrations/url_analysis/descriptor.py                     2      0 100.00%
+core/integrations/url_analysis/tool.py                          55     55   0.00%   1-123
+core/integrations/virustotal/descriptor.py                       2      0 100.00%
+core/integrations/vstrike/client.py                            438    438   0.00%   14-893
+core/integrations/vstrike/descriptor.py                          2      0 100.00%
+core/integrations/vstrike/schemas.py                            53     53   0.00%   11-125
+core/integrations/vstrike/tool.py                              152    152   0.00%   22-429
+core/intent.py                                                 106     71  33.02%   146-147, 151-158, 167-188, 193-199, 209-215, 219-232, 248-273, 277
+core/llm/bifrost/admin.py                                      592    592   0.00%   34-1434
+core/llm/bifrost/auth.py                                         5      5   0.00%   9-24
+core/llm/bifrost/costs.py                                       68     68   0.00%   26-279
+core/llm/bifrost/mirror.py                                     165    165   0.00%   24-380
+core/llm/chat_layers.py                                         56     15  73.21%   93-100, 114-116, 121, 172, 205, 210
+core/llm/cost/budget.py                                         86     55  36.05%   79-90, 99-113, 122, 132-138, 148-154, 159-166, 174-186, 191-193
+core/llm/cost/calls.py                                          34     18  47.06%   24, 43-71, 97
+core/llm/cost/estimator.py                                      90     90   0.00%   33-210
+core/llm/cost/pricing_router.py                                 62     62   0.00%   10-152
+core/llm/defaults.py                                            26     17  34.62%   34-35, 40-44, 68-70, 83-89
+core/llm/gateway/gateway.py                                     69     69   0.00%   9-175
+core/llm/gateway_retry.py                                       76     56  26.32%   39-40, 44-56, 60-65, 70-72, 83-122, 128-132, 138-143
+core/llm/harness/claude.py                                     161    130  19.25%   29-30, 44-48, 65-105, 121, 125-133, 142-205, 210-241, 250-269, 284-294, 325-385, 399-477
+core/llm/outage.py                                              18     18   0.00%   7-41
+core/llm/providers/base_url.py                                  27     27   0.00%   8-53
+core/llm/providers/clients.py                                   15      9  40.00%   45-49, 54-56, 65-67
+core/llm/providers/discovery.py                                246    192  21.95%   69, 87-93, 96, 99-102, 109-110, 116, 127-141, 151-156, 184-242, 268-314, 329-336, 393-394, 398, 432-491, 514-573
+core/llm/providers/provider_service.py                          56     56   0.00%   9-179
+core/llm/providers/recovery.py                                  90     90   0.00%   7-155
+core/llm/providers/registry.py                                 332    207  37.65%   71-73, 93, 132-148, 188-203, 215-220, 224-230, 237-241, 251-254, 281-299, 322, 327-336, 342-343, 392, 439, 489-496, 505-506, 510, 524, 530, 553-587, 611-612, 618-619, 628, 639-640, 651-652, 696-698, 703, 729-740, 746-749, 758-759, 770-785, 796-886, 898-921, 942-958
+core/llm/router/format.py                                       88     79  10.23%   39-57, 66-81, 86-116, 127-168, 180-198
+core/llm/router/router.py                                      262    221  15.65%   31-33, 53, 57, 69-95, 99-117, 130-174, 180-191, 201-219, 233-251, 264, 297-310, 341-424, 443-492, 509-525, 535, 555-583, 587-623, 646-681
+core/llm/security.py                                            74     40  45.95%   112, 116, 125-136, 141-147, 165, 169-172, 196-218, 235, 247-248
+core/llm/system_prompt.py                                       24     16  33.33%   37-39, 62-80
+core/llm/target.py                                              94     54  42.55%   35-50, 65-88, 94-97, 124, 130, 140-142, 148-165, 176-180
+core/llm/tool_schemas.py                                        13      0 100.00%
+core/memory/case_distil.py                                     143    143   0.00%   30-546
+core/memory/distil.py                                          254    254   0.00%   26-955
+core/memory/entity_keys.py                                      95     65  31.58%   35-37, 46-52, 63-69, 74, 88-89, 94, 127-131, 135, 144-152, 157-170, 202, 215-231, 242
+core/memory/hunt_claim.py                                       74     74   0.00%   8-155
+core/memory/hunt_coverage.py                                    47     47   0.00%   18-131
+core/memory/learning_episodes.py                               229    229   0.00%   27-485
+core/memory/prior_hunts.py                                      73     73   0.00%   21-221
+core/memory/recall.py                                          128    128   0.00%   37-516
+core/memory/recall_contract.py                                  64      3  95.31%   292, 319, 332
+core/memory/snapshot.py                                        128    128   0.00%   66-506
+core/memory/source_tier.py                                      49     49   0.00%   24-293
+core/memory/tlds.py                                              5      0 100.00%
+core/platform/autostart_config.py                               53     53   0.00%   20-110
+core/platform/demo_data_service.py                             145    107  26.21%   54-56, 60-61, 65-66, 70-72, 76-89, 101-103, 106-108, 111-126, 148-164, 193-201, 204, 207-210, 213, 216-219, 222-224, 235-254, 257-261, 266-275, 278-283, 287-295, 298-302, 306-308
+core/platform/email_service.py                                  56     56   0.00%   17-147
+core/platform/log_redaction.py                                  18     18   0.00%   3-32
+core/platform/medic_last_seen.py                               189    189   0.00%   17-355
+core/platform/medic_status.py                                   47     47   0.00%   14-91
+core/platform/monitoring.py                                    101    101   0.00%   11-244
+core/platform/ollama_supervisor.py                              98     98   0.00%   20-242
+core/platform/process_health.py                                 53     33  37.74%   43-47, 52-58, 61, 66-76, 81-85, 89-91, 97-105
+core/platform/runtime_config.py                                 74     74   0.00%   22-140
+core/platform/service_contract.py                               35     35   0.00%   11-60
+core/platform/service_manager.py                               144    144   0.00%   22-422
+core/platform/url_safety.py                                     76     58  23.68%   54-63, 72-98, 124-182
+core/rate_limit.py                                              35     23  34.29%   12-16, 19-24, 27-30, 39-41, 45-49
+core/redis_client.py                                            15     10  33.33%   26-37
+core/reporting/ai_decisions_router.py                          105    105   0.00%   8-276
+core/reporting/ai_insights_service.py                          118    118   0.00%   11-372
+core/reporting/analytics_service.py                            171    171   0.00%   7-806
+core/reporting/report_service.py                               147    147   0.00%   3-454
+core/response/approval_service.py                              360    266  26.11%   55-65, 140, 168, 187-188, 202-209, 213-214, 252-269, 294-365, 369-376, 387-410, 422-434, 442-465, 474-503, 511-531, 539-553, 557-558, 581-584, 588, 592-595, 604-616, 623-647, 651-655, 666-684, 705-740, 750-786, 796-805
+core/response/autonomous_response_service.py                   145    145   0.00%   3-422
+core/response/checkpoints.py                                    43     35  18.60%   13-21, 37-61, 69-79, 91-115
+core/response/config.py                                         54     33  38.89%   30-33, 47-54, 78-79, 103-120, 135-148
+core/routing.py                                                 45     14  68.89%   103, 105, 107-112, 119, 126, 134, 141, 151-152
+core/secrets.py                                                 10      2  80.00%   31, 35
+core/secrets_manager.py                                        415    250  39.76%   70-71, 76, 112-114, 119-122, 157-169, 175, 182-200, 205-216, 240-259, 264-282, 287-305, 310-327, 332-334, 375-379, 383-395, 398-405, 432-433, 439, 448-472, 476-488, 492, 495, 499-526, 529-536, 577, 585-588, 598, 601, 653-670, 682-692, 696-697, 763-824, 861, 863, 871-873, 876-880, 900, 905
+core/skills/skill_eval.py                                       41     41   0.00%   11-118
+core/skills/skill_library.py                                   431    316  26.68%   78, 80, 89, 91, 94, 100, 112, 115-116, 118, 122, 127, 135, 151-152, 156-158, 160-166, 177, 192, 196, 201-204, 209-211, 216-220, 225-230, 234, 242-256, 266-280, 284, 288, 298-320, 325-329, 334-348, 352-366, 375-377, 385-392, 398-408, 432-481, 486-500, 509-537, 542-559, 568-574, 589-639, 644-662, 671-679, 692-705, 710-718, 722-731
+core/skills/skill_usage.py                                      21     21   0.00%   9-62
+core/storage/case_repository.py                                234    164  29.91%   61-65, 70-71, 85-135, 140-143, 158, 170, 179, 200, 211, 222, 235-237, 249-270, 278, 334, 340-342, 357, 362-365, 390-433, 453-456, 467-472, 480-481, 488-493, 497-509, 533-562, 595-731, 748-796
+core/storage/config_service.py                                 116     72  37.93%   74-76, 87-89, 113-149, 170-180, 208-255, 271-289, 302-309, 316-320, 342, 364-365
+core/storage/connection.py                                     510    288  43.53%   102-106, 113, 116-126, 152-186, 210-211, 219-221, 246, 290-291, 304-310, 332-340, 354-359, 372-379, 403, 405, 418, 459, 461-462, 497-501, 533-540, 563-566, 592-633, 640-657, 668-669, 675-677, 693-734, 743-763, 794, 804-814, 823-829, 877, 914-917, 926, 964-1047, 1059-1062, 1073-1107, 1118-1124, 1129-1138, 1148-1169, 1185-1204
+core/storage/database_data_service.py                          323    270  16.41%   24-29, 34-38, 43-60, 79-82, 85-106, 116-125, 135-143, 146, 149, 152-160, 179-203, 213-221, 233-249, 268-297, 300-309, 318-327, 336-347, 350-371, 374-382, 387-399, 402-411, 419-430, 433-442, 453-481, 484-492, 495-503, 514-536, 548-557, 566-577
+core/storage/db_proxy.py                                       104     66  36.54%   82-99, 146-153, 171-209, 215-221, 232-266
+core/storage/ip_exclusion_repository.py                         41     26  36.59%   60, 73, 87, 92-102, 110-139, 143-146, 150, 158
+core/storage/models/__init__.py                                 13      0 100.00%
+core/storage/models/ai.py                                      123      0 100.00%
+core/storage/models/auth.py                                     61      7  88.52%   182-187, 191
+core/storage/models/base.py                                     17      7  58.82%   36-48
+core/storage/models/case.py                                     24      0 100.00%
+core/storage/models/case_entities.py                           247      0 100.00%
+core/storage/models/config.py                                  103      0 100.00%
+core/storage/models/episodic.py                                 96      0 100.00%
+core/storage/models/exclusion.py                                20      0 100.00%
+core/storage/models/finding.py                                  37      0 100.00%
+core/storage/models/medic.py                                    15      0 100.00%
+core/storage/models/skill.py                                    13      0 100.00%
+core/storage/models/workflow.py                                165      0 100.00%
+core/storage/reference_seed.py                                 100     82  18.00%   40-87, 91-93, 97-101, 106, 111-116, 131-158
+core/storage/s3_service.py                                      79     79   0.00%   3-176
+core/storage/schemas/__init__.py                                 9      0 100.00%
+core/storage/schemas/ai.py                                     120      5  95.83%   82, 127-129, 134
+core/storage/schemas/auth.py                                    23      0 100.00%
+core/storage/schemas/base.py                                    27      6  77.78%   20, 24, 28, 37, 77, 82
+core/storage/schemas/case.py                                    37     12  67.57%   24-36
+core/storage/schemas/case_api.py                               129    129   0.00%   9-221
+core/storage/schemas/case_entities.py                          231      0 100.00%
+core/storage/schemas/config.py                                  83      0 100.00%
+core/storage/schemas/finding.py                                 36     11  69.44%   12-15, 41-44, 48-50
+core/storage/schemas/workflow.py                               141      1  99.29%   60
+core/storage/service.py                                        485    396  18.35%   46, 58-61, 66-73, 77-79, 111-115, 132-147, 164, 172-179, 184, 201-227, 233-265, 273, 301-321, 332-394, 407-461, 474-479, 492-509, 551-593, 613-640, 656-670, 692-728, 742-779, 798-816, 829-837, 847-859, 870-891, 914-951, 965-973, 997-1011, 1019-1021, 1039-1060, 1073-1081, 1095-1109, 1123-1137, 1175-1194, 1226-1253, 1266-1267, 1297-1322, 1337-1410
+core/storage/shared_ioc_repository.py                           91     61  32.97%   51-61, 66-69, 78-86, 96-102, 112, 118-131, 139-152, 155, 160, 164, 168, 171-187, 192-201, 204-209, 212-215, 219-227
+core/storage/unit_of_work.py                                    17     11  35.29%   54-67
+core/telemetry.py                                              235    171  27.23%   40, 52, 55, 64, 69, 72, 76, 79, 82, 85, 92, 95, 105, 115, 121, 124, 129, 139-226, 245-258, 264-269, 276-281, 290-299, 307-314, 323, 375-403, 415-424, 436-453, 472-474, 501-526, 538-561
+core/telemetry_sanitizer.py                                     64     64   0.00%   16-192
+core/threat_intel/attack_router.py                              39     39   0.00%   3-105
+core/threat_intel/mitre_lookup.py                               58     51  12.07%   26-39, 75-99, 116-147
+core/threat_intel/occurrence_rollup.py                          71     71   0.00%   7-136
+core/threat_intel/threat_feed_service.py                       269    269   0.00%   10-550
+core/time.py                                                     4      1  75.00%   17
+core/upgrade/__main__.py                                         2      2   0.00%   1-3
+core/upgrade/adopt.py                                          140    140   0.00%   23-332
+core/upgrade/command.py                                        226    226   0.00%   14-460
+core/upgrade/revision.py                                         9      9   0.00%   3-18
+core/upgrade/schema.py                                          40     40   0.00%   13-209
+core/version.py                                                  8      2  75.00%   21-22
+core/webhook_rejections.py                                      48     48   0.00%   12-95
+core/workflows/catalog.py                                       72     48  33.33%   48-51, 64-103, 123-132, 145-155, 166-173, 187-194
+core/workflows/custom_workflow_service.py                      108     85  21.30%   28-29, 34, 44-52, 57-59, 70-90, 112-140, 144-147, 151-158, 174-207, 211-219
+core/workflows/enablement.py                                    25     14  44.00%   23-27, 31, 39-48, 58
+core/workflows/handoff_cases.py                                 16     10  37.50%   29-30, 35, 46-52
+core/workflows/hunt_preflight.py                               136    136   0.00%   12-283
+core/workflows/hypothesis_subjects.py                            8      5  37.50%   33-42
+core/workflows/playbook_resolver.py                            207    147  28.99%   52-59, 63-88, 102-104, 163-188, 194, 198, 208-224, 233-239, 243, 251-254, 260-272, 276-295, 304-327, 333-334, 340-344, 354, 366-425, 486-492, 505-507, 520-566, 579-617, 650-668, 674, 691
+core/workflows/playbooks_router.py                              38     38   0.00%   4-90
+core/workflows/routing.py                                       16      9  43.75%   25-32, 36
+core/workflows/run_bridge_router.py                            363    244  32.78%   135-156, 169-170, 184-185, 199-245, 267-269, 284-287, 294-310, 335-351, 359-362, 366-368, 376-393, 397-405, 424-442, 461-500, 506-525, 539-563, 574-604, 611, 615-619, 624-629, 640-668, 683-690, 696, 714-721, 733-754, 765-782, 797-802, 810-811, 825-828, 838-848, 866-885, 911-915, 940-962, 970
+core/workflows/run_cancel.py                                    62     62   0.00%   9-126
+core/workflows/run_resume.py                                    28     28   0.00%   4-64
+core/workflows/workflow_ai_generator.py                        103     85  17.48%   28-29, 47-97, 102, 110-135, 154-175, 178-184, 189-196, 199-216, 223-234, 238-249
+core/workflows/workflow_run_service.py                         221    190  14.03%   29-35, 40, 45-47, 73-94, 112-129, 137-151, 159-170, 190-228, 252-289, 303-315, 319-326, 330-340, 349-359, 388-434, 438-450
+core/workflows/workflows_router.py                             372    372   0.00%   3-920
+core/workflows/workflows_service.py                            331    264  20.24%   35, 39-42, 48-52, 58-67, 73, 79-80, 89, 146-150, 156-157, 167-180, 186-191, 207-223, 227, 231, 235-236, 242-247, 251-256, 263-264, 268, 272-275, 279-309, 314-318, 327-345, 361-394, 413-423, 427-460, 464, 468-475, 479-484, 491-495, 499-502, 509-514, 520-523, 544-654, 666-743
+services/api/discovery.py                                       73     73   0.00%   19-174
+services/api/errors.py                                          59     14  76.27%   37-53, 73, 84, 103-104, 118
+services/api/main.py                                           443    443   0.00%   7-1030
+services/api/mcp_surface.py                                     85     85   0.00%   18-237
+services/api/middleware/auth.py                                 15      7  53.33%   29-33, 42-43, 51, 56
+services/api/middleware/auth_rate_key.py                        78     78   0.00%   11-111
+services/api/middleware/client_address.py                       64     64   0.00%   8-88
+services/api/middleware/csrf.py                                 61     61   0.00%   37-224
+services/api/middleware/rate_limit.py                           20     20   0.00%   4-46
+services/api/middleware/security_headers.py                     66     66   0.00%   14-166
+services/api/routers/agents.py                                  39     39   0.00%   3-97
+services/api/routers/ai_config.py                              130    130   0.00%   11-284
+services/api/routers/analytics.py                               93     93   0.00%   11-310
+services/api/routers/auth.py                                   339    339   0.00%   7-1050
+services/api/routers/bifrost_config.py                         308    308   0.00%   36-724
+services/api/routers/budgets.py                                 37     37   0.00%   17-121
+services/api/routers/cases.py                                  329    329   0.00%   3-852
+services/api/routers/claude.py                                 271     75  72.32%   66-72, 99-127, 153-156, 163-170, 176, 212-227, 250, 278, 293, 295, 312, 335, 371, 381, 404, 412, 433, 467-470, 473, 480-483, 503-504, 508, 514-515, 525-530, 553-555, 563-565, 603
+services/api/routers/config.py                                 696    696   0.00%   3-1880
+services/api/routers/conversations.py                           50     50   0.00%   13-135
+services/api/routers/custom_agents.py                          186    186   0.00%   7-351
+services/api/routers/custom_integrations.py                     77     77   0.00%   9-184
+services/api/routers/detection_rules.py                         92     92   0.00%   3-263
+services/api/routers/extensions.py                              20     20   0.00%   8-56
+services/api/routers/federation.py                              94     94   0.00%   9-217
+services/api/routers/findings.py                               102     37  63.73%   68-71, 137-150, 161-167, 183-189, 198-204, 217-236
+services/api/routers/ingestion.py                              211    211   0.00%   12-469
+services/api/routers/jira_export.py                             97     97   0.00%   7-237
+services/api/routers/llm_providers.py                          168    168   0.00%   8-317
+services/api/routers/local_services.py                          99     99   0.00%   14-243
+services/api/routers/mcp.py                                    233    233   0.00%   9-553
+services/api/routers/orchestrator.py                           289    289   0.00%   8-668
+services/api/routers/overview.py                                14     14   0.00%   3-29
+services/api/routers/processes.py                               10     10   0.00%   11-38
+services/api/routers/reasoning.py                               71     71   0.00%   3-243
+services/api/routers/skills.py                                 156    156   0.00%   9-315
+services/api/routers/storage_status.py                          97     97   0.00%   7-291
+services/api/routers/timeline.py                               113    113   0.00%   3-430
+services/api/routers/triage.py                                  10     10   0.00%   3-35
+services/api/routers/users.py                                  175    175   0.00%   7-504
+services/api/routers/vstrike.py                                119    119   0.00%   13-293
+services/api/triage_read.py                                    191    191   0.00%   9-486
+services/daemon/__init__.py                                     10      7  30.00%   11-19
+services/daemon/config.py                                      179     97  45.81%   118-267, 270-271
+services/daemon/intent.py                                      219    219   0.00%   14-429
+services/daemon/kafka_ingestor.py                               92     92   0.00%   12-152
+services/daemon/main.py                                        150    150   0.00%   3-255
+services/daemon/metrics.py                                     125    125   0.00%   11-254
+services/daemon/orchestrator.py                               1080    932  13.70%   63-69, 77-79, 116-117, 129-130, 134-135, 149-150, 158-159, 175-179, 191-200, 222-233, 238-241, 251-255, 271-282, 297-318, 332, 339-343, 354, 364-389, 393-396, 401-427, 435-443, 448-453, 464-472, 488-493, 524-528, 540-560, 564, 567-568, 571-572, 576-578, 582-625, 630-648, 656-670, 674-706, 709-714, 717-721, 725-730, 733-752, 756-771, 787-822, 825-827, 830-855, 867-884, 916-937, 946-962, 992-1134, 1138-1153, 1161-1278, 1287-1292, 1301-1306, 1311-1315, 1324-1331, 1338-1339, 1344, 1351-1357, 1360-1459, 1470-1537, 1542-1571, 1574-1577, 1584-1609, 1612-1613, 1629-1643, 1651-1667, 1674-1689, 1693, 1702-1747, 1757-1776, 1785-1793, 1803-1849, 1853-1878, 1898-1937, 1945-2011, 2033-2058, 2064-2102, 2121-2178, 2181-2196, 2199-2203, 2213-2236, 2240-2251, 2255-2270, 2273-2287, 2298-2319, 2323-2344, 2348-2358, 2375-2403, 2411-2414
+services/daemon/plan_generator.py                              137    120  12.41%   171-188, 193-226, 230-236, 247-312, 316-349, 360, 392-410, 414
+services/daemon/poller.py                                      450    450   0.00%   18-943
+services/daemon/probes.py                                       83     83   0.00%   14-246
+services/daemon/processor.py                                   529    529   0.00%   3-1048
+services/daemon/responder.py                                   194    194   0.00%   3-406
+services/daemon/sandbox_poller.py                              183    183   0.00%   14-317
+services/daemon/sandbox_submitter.py                           186    186   0.00%   20-324
+services/daemon/scheduler.py                                   227    227   0.00%   3-497
+services/daemon/shared_intel.py                                 44     30  31.82%   26, 45-50, 58-67, 72-78, 81, 91-93, 102-107
+services/daemon/threat_feed_poller.py                          167    167   0.00%   11-349
+services/daemon/vendor_errors.py                                54     54   0.00%   8-103
+services/daemon/workdir.py                                     117     94  19.66%   33-34, 37-49, 52, 55-58, 61-66, 69-74, 77-84, 87-94, 97, 102-116, 119-129, 133-140, 143-151, 155-160
+services/mcp_runner/catalog.py                                  81     81   0.00%   14-142
+services/mcp_runner/main.py                                    113    113   0.00%   12-202
+services/mcp_runner/supervisor.py                              210    210   0.00%   10-335
+services/medic/__main__.py                                       5      5   0.00%   1-9
+services/medic/api/history.py                                   78     78   0.00%   10-125
+services/medic/api/ready.py                                     34     34   0.00%   10-59
+services/medic/api/server.py                                   207    207   0.00%   15-346
+services/medic/api/status.py                                    49     49   0.00%   8-150
+services/medic/app/cli.py                                      243    243   0.00%   3-508
+services/medic/app/config.py                                    97     97   0.00%   3-180
+services/medic/app/gap.py                                       42     42   0.00%   10-74
+services/medic/app/heartbeat.py                                 67     67   0.00%   8-147
+services/medic/app/policy_probe.py                              34     34   0.00%   12-63
+services/medic/app/watchdog.py                                  48     48   0.00%   8-88
+services/medic/app/wiring.py                                   101    101   0.00%   11-187
+services/medic/engine/__init__.py                                3      3   0.00%   7-15
+services/medic/engine/core.py                                  363    363   0.00%   15-571
+services/medic/engine/evaluate.py                              233    233   0.00%   8-346
+services/medic/engine/history.py                                80     80   0.00%   8-133
+services/medic/engine/loader.py                                 56     56   0.00%   7-92
+services/medic/engine/suppress.py                               61     61   0.00%   13-118
+services/medic/engine/upgrade.py                                62     62   0.00%   13-95
+services/medic/redact/__init__.py                                3      3   0.00%   8-20
+services/medic/redact/choke.py                                  92     92   0.00%   8-142
+services/medic/redact/rules.py                                 187    187   0.00%   28-343
+services/medic/redact/secret_names.py                            1      1   0.00%   7
+services/medic/router/__init__.py                               27     27   0.00%   12-57
+services/medic/sensors/__init__.py                               6      6   0.00%   3-17
+services/medic/sensors/base.py                                  98     98   0.00%   9-202
+services/medic/sensors/bus.py                                   40     40   0.00%   11-74
+services/medic/sensors/http_ready.py                            71     71   0.00%   27-142
+services/medic/sensors/pipeline.py                              66     66   0.00%   9-131
+services/medic/sensors/scheduler.py                            192    192   0.00%   22-366
+services/medic/sensors/sink.py                                  13     13   0.00%   3-25
+services/medic/store/__init__.py                                 3      3   0.00%   3-18
+services/medic/store/__main__.py                                22     22   0.00%   7-34
+services/medic/store/files.py                                   76     76   0.00%   9-147
+services/medic/store/writer.py                                 289    289   0.00%   13-510
+services/medic_dockerproxy/__main__.py                           3      3   0.00%   1-5
+services/medic_dockerproxy/cli.py                               72     72   0.00%   3-104
+services/medic_dockerproxy/logs.py                              24     24   0.00%   7-45
+services/medic_dockerproxy/policy.py                           103    103   0.00%   9-181
+services/medic_dockerproxy/project.py                           32     32   0.00%   10-88
+services/medic_dockerproxy/server.py                           170    170   0.00%   10-261
+services/medic_gateway/__main__.py                               3      3   0.00%   1-5
+services/medic_gateway/cli.py                                   90     90   0.00%   3-137
+services/medic_gateway/logs.py                                  57     57   0.00%   8-89
+services/medic_gateway/policy.py                                94     94   0.00%   8-198
+services/medic_gateway/server.py                               209    209   0.00%   9-303
+services/medic_gateway/session.py                              130    130   0.00%   9-182
+services/worker/__init__.py                                      1      1   0.00%   6
+services/worker/__main__.py                                      8      8   0.00%   1-15
+services/worker/jobs.py                                        119    119   0.00%   4-240
+-------------------------------------------------------------------------------------------
+TOTAL                                                        46688  40689  12.85%
+
+72 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+1.58s call     unit/findings/test_findings_enrich_endpoint.py::test_resolve_raises_no_provider_when_anthropic_has_no_api_key
+0.31s call     unit/chat/test_chat_principal.py::test_the_turn_config_carries_the_window_and_survives_a_failed_lookup[<lambda>-None1]
+0.29s call     unit/chat/test_chat_principal.py::test_the_turn_config_carries_the_chat_default_effort[None]
+0.28s call     unit/chat/test_chat_principal.py::test_the_turn_config_carries_the_window_and_survives_a_failed_lookup[<lambda>-None0]
+0.26s call     unit/chat/test_chat_principal.py::test_the_turn_config_carries_the_chat_default_effort[high]
+0.25s call     unit/chat/test_chat_principal.py::test_the_turn_config_carries_the_window_and_survives_a_failed_lookup[<lambda>-16384]
+0.23s call     unit/chat/test_chat_skills_index.py::test_default_chat_lists_skills_and_new_ones_show_next_turn
+0.13s call     unit/chat/test_chat_page_context.py::test_turn_without_a_model_names_the_page_and_uses_chat_default
+0.12s call     unit/chat/test_chat_principal.py::test_the_turn_carries_a_principal_for_the_signed_in_user
+0.12s call     unit/chat/test_case_brief.py::test_three_runs_with_a_full_hunt_stay_within_the_cap
+=========================== short test summary info ============================
+ERROR tests/unit/chat/test_conversation_scope.py::test_q_returns_only_the_callers_rows
+ERROR tests/unit/chat/test_conversation_scope.py::test_page_sticks_and_a_blank_case_clears_without_inserting
+=================== 57 passed, 1 warning, 2 errors in 39.02s ===================

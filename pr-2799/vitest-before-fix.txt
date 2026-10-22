@@ -1,0 +1,310 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1babfe74-3d3c-4171-b2da-36b2b034bff4/clients/web
+
+ ❯ src/shell/Chat.test.tsx (39 tests | 1 failed) 3144ms
+     × shows the reason a 503 gives instead of blaming the backend 1026ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/shell/Chat.test.tsx > failed case-composer turns > shows the reason a 503 gives instead of blaming the backend
+TestingLibraryElementError: Unable to find an element with the text: /No LLM provider is configured/. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"Ask Vigil"[39m
+      [33mclass[39m=[32m"case-composer thread-open"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33maria-label[39m=[32m"Resize the thread"[39m
+        [33maria-orientation[39m=[32m"horizontal"[39m
+        [33maria-valuemin[39m=[32m"96"[39m
+        [33mclass[39m=[32m"composer-grip"[39m
+        [33mrole[39m=[32m"separator"[39m
+        [33mtabindex[39m=[32m"0"[39m
+        [33mtitle[39m=[32m"Drag to resize the thread · double-click to reset"[39m
+      [36m/>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"true"[39m
+        [33mclass[39m=[32m"composer-fold"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33maria-hidden[39m=[32m"true"[39m
+          [33mclass[39m=[32m"composer-chev"[39m
+        [36m>[39m
+          [0m▾[0m
+        [36m</span>[39m
+        [0m2[0m
+        [0m message[0m
+        [0ms[0m
+        [0m · [0m
+        [0mhide[0m
+      [36m</button>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"chat-body"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"msg user"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"body"[39m
+          [36m>[39m
+            [0mwhy?[0m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"msg vigil err"[39m
+          [33mrole[39m=[32m"alert"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"body"[39m
+          [36m>[39m
+            [0mCould not reach Vigil: HTTP 503. Is the backend running?[0m
+          [36m</div>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"btn ghost msg-retry"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mRetry[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"composer-box"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"Composer mode"[39m
+          [33mclass[39m=[32m"composer-modes"[39m
+          [33mrole[39m=[32m"group"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-pressed[39m=[32m"true"[39m
+            [33mclass[39m=[32m"on"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mAsk[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtitle[39m=[32m"Coming in a later release"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mTell[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtitle[39m=[32m"Coming in a later release"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mDo[0m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"chat-foot"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-input"[39m
+          [36m>[39m
+            [36m<textarea[39m
+              [33maria-label[39m=[32m"Ask about this case"[39m
+              [33mplaceholder[39m=[32m"Ask about this case"[39m
+              [33mrows[39m=[32m"1"[39m
+              [33mstyle[39m=[32m"height: 0px;"[39m
+            [36m/>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ci-row"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"ci-grow"[39m
+              [36m/>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"composer-note"[39m
+              [36m>[39m
+                [0mPrivate to you · Ask only[0m
+              [36m</span>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"ci-send"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtitle[39m=[32m"Send"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"Ask Vigil"[39m
+      [33mclass[39m=[32m"case-composer thread-open"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33maria-label[39m=[32m"Resize the thread"[39m
+        [33maria-orientation[39m=[32m"horizontal"[39m
+        [33maria-valuemin[39m=[32m"96"[39m
+        [33mclass[39m=[32m"composer-grip"[39m
+        [33mrole[39m=[32m"separator"[39m
+        [33mtabindex[39m=[32m"0"[39m
+        [33mtitle[39m=[32m"Drag to resize the thread · double-click to reset"[39m
+      [36m/>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"true"[39m
+        [33mclass[39m=[32m"composer-fold"[39m
+        [33mtype[39m=[32m"button"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33maria-hidden[39m=[32m"true"[39m
+          [33mclass[39m=[32m"composer-chev"[39m
+        [36m>[39m
+          [0m▾[0m
+        [36m</span>[39m
+        [0m2[0m
+        [0m message[0m
+        [0ms[0m
+        [0m · [0m
+        [0mhide[0m
+      [36m</button>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"chat-body"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"msg user"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"body"[39m
+          [36m>[39m
+            [0mwhy?[0m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"msg vigil err"[39m
+          [33mrole[39m=[32m"alert"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"body"[39m
+          [36m>[39m
+            [0mCould not reach Vigil: HTTP 503. Is the backend running?[0m
+          [36m</div>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"btn ghost msg-retry"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mRetry[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"composer-box"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"Composer mode"[39m
+          [33mclass[39m=[32m"composer-modes"[39m
+          [33mrole[39m=[32m"group"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-pressed[39m=[32m"true"[39m
+            [33mclass[39m=[32m"on"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mAsk[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtitle[39m=[32m"Coming in a later release"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mTell[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtitle[39m=[32m"Coming in a later release"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mDo[0m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"chat-foot"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"chat-input"[39m
+          [36m>[39m
+            [36m<textarea[39m
+              [33maria-label[39m=[32m"Ask about this case"[39m
+              [33mplaceholder[39m=[32m"Ask about this case"[39m
+              [33mrows[39m=[32m"1"[39m
+              [33mstyle[39m=[32m"height: 0px;"[39m
+            [36m/>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"ci-row"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"ci-grow"[39m
+              [36m/>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"composer-note"[39m
+              [36m>[39m
+                [0mPrivate to you · Ask only[0m
+              [36m</span>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"ci-send"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtitle[39m=[32m"Send"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/shell/Chat.test.tsx:528:25
+    526|     renderPinned()
+    527|     ask('why?')
+    528|     expect(await screen.findByText(/No LLM provider is configured/)).t…
+       |                         ^
+    529|     expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
+    530|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 38 passed (39)
+   Start at  17:23:13
+   Duration  5.84s (transform 333ms, setup 227ms, import 1.80s, tests 3.14s, environment 484ms)
+
