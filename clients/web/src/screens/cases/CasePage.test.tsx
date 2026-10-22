@@ -55,9 +55,9 @@ vi.mock('../../services/api', () => ({
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   conversationsApi: {
-    list: vi.fn((params?: { q?: string }) => {
-      const q = params?.q
-      const conversations = testState.convos.filter((row) => !q || row.case_id === q)
+    list: vi.fn((params?: { case_id?: string }) => {
+      const caseId = params?.case_id
+      const conversations = testState.convos.filter((row) => !caseId || row.case_id === caseId)
       return Promise.resolve({ data: { conversations } })
     }),
     get: vi.fn((id: string) => {

@@ -209,15 +209,19 @@ def list_conversations(
     limit: int = 50,
     offset: int = 0,
     q: Optional[str] = None,
+    case_id: Optional[str] = None,
 ) -> List[dict]:
     """Conversations for ``user_id``, newest activity first (summary dicts).
 
-    ``q`` matches title, case id, or page key. Rows owned by anyone else are
-    never included, even when the text matches.
+    ``q`` matches title, case id, or page key. ``case_id`` matches the case id
+    exactly. Rows owned by anyone else are never included, even when the text
+    matches.
     """
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
         stmt = select(Conversation).where(Conversation.user_id == user_id)
+        if case_id is not None:
+            stmt = stmt.where(Conversation.case_id == case_id)
         needle = (q or "").strip()
         if needle:
             pattern = _like_pattern(needle)
