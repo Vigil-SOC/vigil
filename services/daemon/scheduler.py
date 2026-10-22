@@ -467,8 +467,6 @@ class TaskScheduler:
             "components": {},
         }
 
-        # Probe the connection rather than counting findings: get_findings
-        # returns [] on failure, so a dead database looked like an empty one.
         if not self._data_service:
             health["components"]["database"] = {"status": "unavailable"}
         elif get_db_manager().health_check():
