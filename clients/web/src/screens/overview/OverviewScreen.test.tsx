@@ -542,7 +542,8 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
     const { openCase } = renderScreen('/overview?alert=f-1')
     const dialog = await screen.findByRole('dialog')
-    expect(dialog).toHaveTextContent('High')
+    // The dialog opens on ?alert= before the feed arrives, so wait for the row.
+    expect(await within(dialog).findByText('High')).toBeInTheDocument()
     expect(dialog).toHaveTextContent('f-1 · 00:01:00')
     expect(dialog.querySelector('.ov-pop-d')).toHaveTextContent('Odd login alert')
     expect(dialog.querySelector('.ov-pop-desc')).toHaveTextContent('Odd login')
