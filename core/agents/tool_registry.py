@@ -10,7 +10,11 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
-from core.auth.permissions import APPROVE_PERMISSION, username_has_permission
+from core.auth.permissions import (
+    APPROVE_PERMISSION,
+    permission_refusal,
+    username_has_permission,
+)
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
@@ -180,6 +184,8 @@ def get_finding(*, finding_id: str) -> Any:
 # A dismissal is the finding's terminal state. The actor is the caller and the
 # kind is agent, as with record_agent_close; the reason is what makes it a record.
 def dismiss_finding(*, finding_id: str, reason: str) -> Args:
+    if refusal := permission_refusal("findings.write"):
+        return refusal
     from core.cases.agent_closure import actor, service_session
     from core.cases.closure import ClosedByKind
     from core.storage.models import Finding
@@ -243,6 +249,8 @@ def create_case(
     assignee: Optional[str] = None,
     tags: Optional[list] = None,
 ) -> Args:
+    if refusal := permission_refusal("cases.write"):
+        return refusal
     data = _data()
     ids = finding_ids or []
     case = data.create_case(
@@ -282,6 +290,8 @@ def update_case(
     assignee: Optional[str] = None,
     add_note: Optional[str] = None,
 ) -> Args:
+    if refusal := permission_refusal("cases.write"):
+        return refusal
     from core.cases.agent_closure import record_agent_close, record_reopen
     from core.time import utcnow
 
@@ -343,6 +353,8 @@ def _case_records(args: Args) -> Args:
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
+    if refusal := permission_refusal("cases.write"):
+        return refusal
     from core.cases import case_journal_service
 
     linked = case_journal_service.link_finding(_data(), case_id, finding_id)
@@ -365,6 +377,8 @@ def add_resolution_step(
     action_taken: str,
     result: Optional[str] = None,
 ) -> Args:
+    if refusal := permission_refusal("cases.write"):
+        return refusal
     from core.cases import case_journal_service
 
     step = case_journal_service.append_resolution_step(

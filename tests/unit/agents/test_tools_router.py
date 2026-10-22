@@ -7,6 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from core.agents import internal_auth, tool_registry, tools_router
 from core.agents.mcp_tools import MCPFailure
@@ -17,10 +22,54 @@ from core.cases.closure import ClosedByKind
 from core.integrations.mcp import in_process
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import current_caller
+from core.storage.models import Role, User
+from core.storage.models.base import Base
 from tools.mcp import vigil
 
 BOUNDS = {"max_rows": 2, "timeout_ms": 500}
 AUTH = {"Authorization": "Bearer shhh"}
+
+
+# roles.permissions is JSONB, which SQLite cannot render. SQLite only.
+@compiles(JSONB, "sqlite")
+def _jsonb_is_json_on_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+def _grant(monkeypatch, username: str, permissions: dict) -> None:
+    """The live role ``username`` holds, in the store the tool check reads.
+
+    The request runs on the test client's thread, so the connection is shared.
+    """
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine, tables=[Role.__table__, User.__table__])
+    session = sessionmaker(bind=engine)()
+    session.add(
+        Role(role_id="r-1", name="analyst", description="", permissions=permissions)
+    )
+    session.add(
+        User(
+            user_id="u-1",
+            username=username,
+            email=f"{username}@example.com",
+            password_hash="x",
+            full_name=username,
+            role_id="r-1",
+            is_active=True,
+        )
+    )
+    session.commit()
+
+    @contextmanager
+    def _this_store(_session=None):
+        yield session
+
+    monkeypatch.setattr("core.auth.permissions.unit_of_work", _this_store)
+    monkeypatch.setattr("core.auth.auth_service.unit_of_work", _this_store)
 
 
 @pytest.fixture
@@ -399,6 +448,9 @@ def closes(monkeypatch):
     monkeypatch.setattr(vigil, "_service_session", _session)
     monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
+    # nestor is allowed to close. The test is about whose name is recorded;
+    # a principal with no cases.write is refused before the record is written.
+    _grant(monkeypatch, "nestor", {"cases.write": True})
 
     registry = MCPRegistry()
     in_process.register(registry)

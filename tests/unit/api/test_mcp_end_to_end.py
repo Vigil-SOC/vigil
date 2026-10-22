@@ -21,6 +21,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.pool import StaticPool
 
 from core.auth import mcp_credential_service as credentials
@@ -52,7 +53,12 @@ def issued_credential():
     )
     session = sessionmaker(bind=engine)()
     session.add(
-        Role(role_id="r-analyst", name="analyst", description="", permissions={})
+        Role(
+            role_id="r-analyst",
+            name="analyst",
+            description="",
+            permissions={"cases.write": True, "findings.write": True},
+        )
     )
     session.add(
         User(
@@ -73,8 +79,14 @@ def issued_credential():
     def _this_store(_=None):
         yield session
 
-    with patch("core.auth.mcp_credential_service.unit_of_work", _this_store):
-        yield minted.token
+    # The tool checks the owner's live role through the same store the
+    # credential was minted in. A second database would not have this user.
+    with (
+        patch("core.auth.mcp_credential_service.unit_of_work", _this_store),
+        patch("core.auth.permissions.unit_of_work", _this_store),
+        patch("core.auth.auth_service.unit_of_work", _this_store),
+    ):
+        yield minted.token, session
 
     session.close()
 
@@ -92,8 +104,9 @@ def client_on_a_domain():
 def test_a_credential_vigil_issued_reaches_the_tools(
     client_on_a_domain, issued_credential
 ):
+    token, _session = issued_credential
     headers = {
-        "Authorization": f"Bearer {issued_credential}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/json, text/event-stream",
     }
 
@@ -137,6 +150,7 @@ def test_a_case_closed_through_the_surface_records_the_credentials_owner(
     client_on_a_domain, issued_credential, monkeypatch
 ):
     """The external door of #1087: the name written is the person's, not "agent"."""
+    token, _session = issued_credential
     recorded = []
 
     def _close(self, session, case_id, **kwargs):
@@ -154,7 +168,7 @@ def test_a_case_closed_through_the_surface_records_the_credentials_owner(
     monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
 
     headers = {
-        "Authorization": f"Bearer {issued_credential}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/json, text/event-stream",
     }
     with patch("services.api.mcp_surface.is_enabled", return_value=True):
@@ -194,3 +208,77 @@ def test_a_case_closed_through_the_surface_records_the_credentials_owner(
 
     assert called.status_code == 200, called.text
     assert recorded == ["nestor"]
+
+
+def test_a_demoted_credential_cannot_close_through_the_surface(
+    client_on_a_domain, issued_credential, monkeypatch
+):
+    """The same credential, after the role loses cases.write, does not close."""
+    token, session = issued_credential
+    role = session.query(Role).one()
+    role.permissions = {"cases.read": True, "findings.read": True}
+    flag_modified(role, "permissions")
+    session.commit()
+
+    recorded = []
+
+    def _close(self, session, case_id, **kwargs):
+        recorded.append(kwargs["closed_by"])
+        closure = MagicMock()
+        closure.to_dict.return_value = {"case_id": case_id}
+        return closure
+
+    @contextmanager
+    def _own_session():
+        yield object()
+
+    monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
+    monkeypatch.setattr(vigil, "_service_session", _own_session)
+    monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json, text/event-stream",
+    }
+    with patch("services.api.mcp_surface.is_enabled", return_value=True):
+        opened = client_on_a_domain.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "not-vigil", "version": "1"},
+                },
+            },
+            headers=headers,
+        )
+        assert opened.status_code == 200, opened.text
+        headers["mcp-session-id"] = opened.headers["mcp-session-id"]
+        client_on_a_domain.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers=headers,
+        )
+        called = client_on_a_domain.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "close_case",
+                    "arguments": {
+                        "case_id": "case-1",
+                        "closure_category": "resolved",
+                    },
+                },
+            },
+            headers=headers,
+        )
+
+    assert called.status_code == 200, called.text
+    assert "cases.write required" in called.text
+    assert recorded == []

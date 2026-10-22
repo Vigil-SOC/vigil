@@ -103,7 +103,8 @@ def authenticate(token: str, session: Optional[Session] = None) -> Optional[User
     None covers every way this can fail -- not one of ours, unknown, revoked,
     expired, or belonging to a deactivated account -- because a caller holding
     a credential that does not work learns nothing useful from which, and an
-    attacker probing would learn plenty.
+    attacker probing would learn plenty. The user's role is not read here:
+    a credential carries none of its own, and each tool checks the live role.
     """
     if not looks_like_mcp_token(token):
         return None

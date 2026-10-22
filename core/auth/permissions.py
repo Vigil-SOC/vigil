@@ -8,14 +8,18 @@
 
 from __future__ import annotations
 
-from typing import Callable
+import logging
+from typing import Callable, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
+from core.integrations.mcp.surface import current_caller
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
+
+logger = logging.getLogger(__name__)
 
 APPROVE_PERMISSION = "ai_decisions.approve"
 
@@ -61,3 +65,17 @@ def username_has_permission(username: str, permission: str) -> bool:
         user_id = user.user_id if user else ""
     # An unknown id holds nothing, except under DEV_MODE, which grants all.
     return AuthService.check_permission(user_id, permission)
+
+
+def permission_refusal(permission: str) -> Optional[dict[str, str]]:
+    """An error when the bound principal does not hold ``permission``.
+
+    A credential has no permissions of its own. The person it names is checked
+    against their live role, so a demotion or a role edit applies on the next
+    call. No bound principal is a hunt, which is not a role to consult.
+    """
+    caller = current_caller()
+    if caller is None or username_has_permission(caller, permission):
+        return None
+    logger.warning("%s refused: %s required", caller, permission)
+    return {"error": f"{caller} may not do this: {permission} required"}
