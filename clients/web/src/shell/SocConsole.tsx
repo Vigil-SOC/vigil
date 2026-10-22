@@ -43,6 +43,7 @@ import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
 import { VigilLogo } from '../shared/VigilLogo'
 import {
+  authBypassed,
   foldStatus,
   type FederationRead,
   type HealthRead,
@@ -149,6 +150,9 @@ function SocConsoleInner() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
+  // the last health read that answered; a failed round keeps it
+  const [health, setHealth] = useState<HealthRead | null>(null)
+  const bypassed = authBypassed(health)
   // Home's setup steps; null when unread or failed, so no chip and no menu count
   const [setupSteps, setSetupSteps] = useState<{ id: string; done: boolean }[] | null>(null)
   const [setupHidden, setSetupHidden] = useState<string[]>(() => readSetupHidden())
@@ -401,7 +405,9 @@ function SocConsoleInner() {
         settled(consoleApi.getProcesses().then((res) => res.data as ProcessesRead)),
       ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
-        if (live) setStatus(foldStatus({ health, federation, mcp, routability, processes }))
+        if (!live) return
+        setStatus(foldStatus({ health, federation, mcp, routability, processes }))
+        if (health) setHealth(health)
       })
     }
     pollStatus()
@@ -527,7 +533,7 @@ function SocConsoleInner() {
         {!wallMode && <header className="vg-header">
           <div className="vg-brand">
             <VigilLogo className="vg-logo" />
-            <DevModeWarning />
+            {bypassed && <DevModeWarning />}
           </div>
           <div ref={onHeaderSlot} className="vg-header-center" />
           {createPortal(commandBar, commandHolder)}
@@ -551,7 +557,12 @@ function SocConsoleInner() {
                 />
               </div>
             )}
-            <UserMenu onShowTour={startTour} setupLeft={setupLeft} />
+            <UserMenu
+              onShowTour={startTour}
+              setupLeft={setupLeft}
+              authBypassed={bypassed}
+              version={health?.version ?? ''}
+            />
           </div>
         </header>}
         {!wallMode && <nav className="vg-nav" aria-label="Primary">

@@ -1314,6 +1314,28 @@ describe('SocConsole', () => {
     expect(poor).toHaveClass('is-poor')
   })
 
+  it('reads health once and shows the backend bypass in the header and the account menu', async () => {
+    vi.mocked(consoleApi.getHealth).mockClear()
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: { status: 'healthy', version: '4.5.6', auth_bypassed: true, storage: { database_available: true } },
+    } as never)
+    renderConsole()
+    expect(await screen.findByRole('status', { name: /Authentication bypassed/ })).toHaveTextContent('NO AUTH')
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByText('About Vigil · 4.5.6')).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Change password' })).not.toBeInTheDocument()
+    expect(consoleApi.getHealth).toHaveBeenCalledTimes(1)
+  })
+
+  it('claims no bypass when the health read fails', async () => {
+    vi.mocked(consoleApi.getHealth).mockRejectedValue(new Error('down'))
+    renderConsole()
+    await screen.findByRole('status', { name: 'System status' })
+    expect(screen.queryByRole('status', { name: /Authentication bypassed/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByRole('menuitem', { name: 'Change password' })).toBeInTheDocument()
+  })
+
   it('re-reads the status sources every 30 seconds and turns Poor when one degrades later', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { HOME_SETUP_HREF } from '../screens/home/setupHidden'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
@@ -12,10 +11,6 @@ import ChangePasswordDialog from './ChangePasswordDialog'
 const FEEDBACK_BASE =
   import.meta.env.VITE_FEEDBACK_URL ||
   'https://github.com/Vigil-SOC/vigil/issues/new?labels=console-feedback'
-
-// With auth bypassed there is no real account behind the mocked user, so
-// there is no password to change. The backend can say so at runtime too.
-const BUILT_WITH_BYPASS = import.meta.env.VITE_DEV_MODE === 'true'
 
 export function feedbackHref(screen: string, version: string): string {
   const url = new URL(FEEDBACK_BASE)
@@ -38,19 +33,23 @@ export function userInitials(user: { full_name?: string | null; username?: strin
 export default function UserMenu({
   onShowTour,
   setupLeft,
+  authBypassed,
+  version,
 }: {
   onShowTour: () => void
   /** Home's open setup steps, as the shell's chip counts them; null or 0 hides the item */
   setupLeft: number | null
+  /** no real account behind the mocked user, so no password to change */
+  authBypassed: boolean
+  /** the backend's version from /api/health; '' until it answers */
+  version: string
 }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { screen } = useParams<{ screen?: string }>()
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
-  const [version, setVersion] = useState('')
   const [twoStepOpen, setTwoStepOpen] = useState(false)
-  const [authBypassed, setAuthBypassed] = useState(BUILT_WITH_BYPASS)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const avatarRef = useRef<HTMLButtonElement>(null)
   const ref = useRef<HTMLDivElement>(null)
@@ -62,21 +61,6 @@ export default function UserMenu({
     if (!el) return
     const r = el.getBoundingClientRect()
     setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) })
-  }, [])
-
-  useEffect(() => {
-    let live = true
-    consoleApi
-      .getHealth()
-      .then((res) => {
-        const body = res.data as { version?: string; auth_bypassed?: boolean } | undefined
-        if (live && body?.version) setVersion(body.version)
-        if (live && body?.auth_bypassed === true) setAuthBypassed(true)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
   }, [])
 
   useEffect(() => {

@@ -9,9 +9,6 @@ vi.mock('../services/api', () => ({
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
     setTheme: () => Promise.resolve({ data: {} }),
   },
-  consoleApi: {
-    getHealth: () => Promise.resolve({ data: { version: '9.9.9', status: 'healthy' } }),
-  },
 }))
 
 const auth = vi.hoisted(() => ({
@@ -41,7 +38,7 @@ function renderMenu(path = '/cases', onShowTour = vi.fn(), setupLeft: number | n
         <Routes>
           <Route path="/setup" element={<div>setup-route</div>} />
           <Route path="/home" element={<HomeProbe />} />
-          <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} setupLeft={setupLeft} />} />
+          <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} setupLeft={setupLeft} authBypassed={false} version="9.9.9" />} />
         </Routes>
       </MemoryRouter>
     </ColorSchemeProvider>,
