@@ -240,6 +240,34 @@ def test_restarts_of_two_services_within_5_min_open_a_window() -> None:
     assert w.active(350) and w.until == 350 + 900
 
 
+def test_container_epochs_do_not_count_as_each_others_restarts() -> None:
+    """A containers read is one epoch per container. Those must not flap the
+    shared epoch series, or the upgrade window never arms a new chain."""
+    w = UpgradeWatch(None)
+
+    def container(service: str, instance: str, epoch: str, t: float) -> None:
+        obs = _sample(service, 0, epoch=epoch, signal="containers")
+        obs["target"]["instance"] = instance
+        w.observe(obs, t)
+
+    for t in (0.0, 30.0):
+        container("backend", "deeptempo-backend-1", "container:t1", t)
+        container("postgres", "deeptempo-postgres-1", "container:t2", t + 0.001)
+        container("redis", "deeptempo-redis-1", "container:t3", t + 0.002)
+    assert not w.active(31)
+    # The chain was not left open, so a version change still starts one.
+    w.observe(
+        _sample("backend", 0, signal="version", values=[_value("version", "1")]), 31
+    )
+    w.observe(
+        _sample("backend", 0, signal="version", values=[_value("version", "2")]), 40
+    )
+    assert w.active(40) and w.since == 40
+    container("backend", "deeptempo-backend-1", "container:t4", 50)
+    container("postgres", "deeptempo-postgres-1", "container:t5", 51)
+    assert w.restarts["backend"] == 50 and w.restarts["postgres"] == 51
+
+
 def test_restart_markers_that_dont_open_a_window() -> None:
     w = UpgradeWatch(None)
     for t, up in ((0, 50), (60, 110)):  # uptime rising: no restart

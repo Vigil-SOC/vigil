@@ -51,7 +51,11 @@ class UpgradeWatch:
             return
         restarted = False
         if obs.get("epoch") is not None:
-            restarted |= self._changed(f"epoch|{obs['signal']}", t, obs["epoch"])
+            # One signal can be many containers. Key the epoch by who produced
+            # it, or their different start times read as a restart every poll.
+            target = obs["target"]
+            who = f"{target['service']}|{target.get('instance', '')}"
+            restarted |= self._changed(f"epoch|{obs['signal']}|{who}", t, obs["epoch"])
         for v in obs.get("values", []):
             if v.get("state") != "present":
                 continue
