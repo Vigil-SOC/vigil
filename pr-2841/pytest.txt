@@ -1,0 +1,5 @@
+0.43s call     unit/findings/test_overview.py::test_alert_read_matches_the_feed_item_and_reaches_past_the_feed
+0.33s call     unit/findings/test_triage.py::test_queued_rows_follow_rank_intake_row_severity_before_age
+0.29s call     unit/findings/test_overview.py::test_feed_source_link_and_case_follow_the_existing_resolvers
+0.25s setup    unit/findings/test_triage.py::test_route_returns_the_strip
+======================== 17 passed in 71.05s (0:01:11) =========================

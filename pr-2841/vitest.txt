@@ -1,0 +1,15 @@
+    461|   })
+    462|
+    463|   it('navigates primary screens and the More menu', () => {
+       |   ^
+    464|     renderConsole()
+    465|     const screens: [string, string][] = [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 13 passed (14)
+      Tests  1 failed | 286 passed (287)
+   Start at  18:52:49
+   Duration  75.34s (transform 22.29s, setup 14.04s, import 54.21s, tests 109.43s, environment 32.97s)
+

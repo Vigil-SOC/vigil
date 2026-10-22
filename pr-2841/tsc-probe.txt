@@ -1,0 +1,6 @@
+src/__probe.ts(2,57): error TS2339: Property 'unmeasured_text' does not exist on type 'TriagePayload'.
+src/__probe.ts(2,82): error TS2339: Property 'trust_floor' does not exist on type '{ picked_up: { launched_or_merged: number; created_today: number; share: number | null; }; waiting: number; cases_created_today: number; }'.
+src/__probe.ts(2,97): error TS2339: Property 'score' does not exist on type 'TriageRow'.
+src/__probe.ts(2,106): error TS2339: Property 'trust' does not exist on type 'TriageRow'.
+src/__probe.ts(2,115): error TS2339: Property 'weight' does not exist on type 'TriageRow'.
+tsc=2
