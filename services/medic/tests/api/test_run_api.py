@@ -157,7 +157,8 @@ def test_bind_is_loopback_unless_the_shape_is_explicitly_a_container() -> None:
         assert config.api_bind({config.SHAPE_VAR: shape}) == ("127.0.0.1", port)
     # Inside its container or pod: Compose's network / Helm's NetworkPolicy fence it.
     for shape in ("compose", "helm"):
-        assert config.api_bind({config.SHAPE_VAR: shape}) == ("0.0.0.0", port)
+        wildcard = "0.0.0.0"  # nosec B104 - the value under test
+        assert config.api_bind({config.SHAPE_VAR: shape}) == (wildcard, port)
     assert config.api_bind({config.API_PORT_VAR: "9000"})[1] == 9000
 
 

@@ -337,7 +337,8 @@ def test_bind_peer_narrows_the_listener_to_the_address_toward_it(
     # Compose: only the address on the gateway's network (medic-private), never
     # medic-net, where the agents could reach it (K1 §6 G3).
     api = _api(key_file, board, clock, _free_port(), bind_peer="localhost")
-    api.bind = ("0.0.0.0", api.bind[1])  # what config gives a container shape
+    # What config gives a container shape.
+    api.bind = ("0.0.0.0", api.bind[1])  # nosec B104 - narrowed by bind_peer
     try:
         with caplog.at_level(logging.INFO, logger="services.medic"):
             api.ensure()
