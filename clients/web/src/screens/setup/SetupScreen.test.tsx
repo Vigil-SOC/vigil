@@ -622,7 +622,9 @@ describe('SetupScreen', () => {
         vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ enabled: false })]))
         fireEvent.click(toggle)
         expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { enabled: false })
-        expect(await screen.findByRole('button', { name: 'Test' })).toBeDisabled()
+        // The save resolves after the click returns, so the button is still
+        // enabled until that state lands.
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Test' })).toBeDisabled())
         expect(screen.getByText('Turn on Collect alerts to test.')).toBeInTheDocument()
       })
 
