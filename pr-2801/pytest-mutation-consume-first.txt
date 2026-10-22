@@ -1,0 +1,10 @@
+# Mutation: consume before the password checks (old order)
+E       AssertionError: {"detail":"Invalid or expired reset token"}
+E       assert 400 == 200
+E        +  where 400 = <Response [400 Bad Request]>.status_code
+E       AssertionError: {"detail":"Invalid or expired reset token"}
+E       assert 400 == 200
+E        +  where 400 = <Response [400 Bad Request]>.status_code
+FAILED tests/unit/auth/test_password_reset.py::TestConfirm::test_rejected_password_leaves_the_token_usable[short]
+FAILED tests/unit/auth/test_password_reset.py::TestConfirm::test_rejected_password_leaves_the_token_usable[harbor-violet-compass-41]
+========================= 2 failed, 7 passed in 3.68s ==========================

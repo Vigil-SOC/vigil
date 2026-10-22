@@ -1,0 +1,5 @@
+# Mutation: never consume
+E       assert 200 == 400
+E        +  where 200 = <Response [200 OK]>.status_code
+FAILED tests/unit/auth/test_password_reset.py::TestConfirm::test_accepted_token_cannot_be_replayed
+========================= 1 failed, 8 passed in 6.09s ==========================
