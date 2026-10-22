@@ -58,7 +58,8 @@ def load_pack_suppression(pack: Path = PACK_SOURCE) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     # The loader's strict YAML (no aliases, no duplicate keys), as F6 will use.
-    doc = yaml.load(path.read_text(), Loader=rule_check._StrictLoader)
+    loader = rule_check._StrictLoader  # SafeLoader subclass: B506 false positive
+    doc = yaml.load(path.read_text(), Loader=loader)  # nosec B506
     entries = doc.get("entries") if isinstance(doc, dict) else None
     if not isinstance(entries, list):
         raise TypeError(f"{path.name}: expected a mapping with a list of entries")
