@@ -269,6 +269,11 @@ def test_medic_watches_the_agent_worker_on_medic_net(on) -> None:
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "agent-worker:6990"
 
 
+def test_medic_is_told_the_docker_proxy_address(on) -> None:
+    env = env_of(on["services"]["medic"])
+    assert env["VIGIL_MEDIC_DOCKERPROXY_ADDR"] == "medic-dockerproxy:8472"
+
+
 def test_gateway_binds_each_listener_to_one_network(on) -> None:
     spec = on["services"]["medic-gateway"]
     env = env_of(spec)
@@ -450,7 +455,9 @@ def test_key_readers_join_the_key_group_and_nothing_else_does(on) -> None:
     # The file is root:10010 0640 on Linux (enable-compose.sh): Medic (10001)
     # and the backend (1000) read it through this group, never through gid
     # 1000, which on Linux is often a person's own group.
-    groups = {name: spec.get("group_add") or [] for name, spec in on["services"].items()}
+    groups = {
+        name: spec.get("group_add") or [] for name, spec in on["services"].items()
+    }
     with_key_gid = sorted(n for n, g in groups.items() if KEY_GID in map(str, g))
     assert with_key_gid == ["backend", "medic"]
     assert [str(g) for g in groups["medic"]] == [KEY_GID]

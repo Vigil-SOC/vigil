@@ -11,6 +11,10 @@ DATA_DIR_VAR = "VIGIL_MEDIC_DATA_DIR"
 SHAPE_VAR = "VIGIL_MEDIC_INSTALL_SHAPE"
 AGENT_WORKER_VAR = "VIGIL_MEDIC_AGENT_WORKER_ADDR"
 AGENT_SERVE_VAR = "VIGIL_MEDIC_AGENT_SERVE_ADDR"
+# Docker Engine API via medic-dockerproxy (D6-2). Compose only: Helm reads
+# pods on its own, and host-native has no proxy. host:port, like the others.
+DOCKERPROXY_VAR = "VIGIL_MEDIC_DOCKERPROXY_ADDR"
+DOCKERPROXY_DEFAULT = {"compose": "medic-dockerproxy:8472"}
 # A3-3: on Helm, a host:port Medic's egress policy must block (the chart sets it).
 POLICY_PROBE_VAR = "VIGIL_MEDIC_POLICY_PROBE_ADDR"
 # ...and a host:port it allows (the gateway): the positive control.
@@ -88,6 +92,18 @@ def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
 def agent_serve_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
     value = (env.get(AGENT_SERVE_VAR) or AGENT_SERVE_DEFAULT.get(shape, "")).strip()
     return _host_port(AGENT_SERVE_VAR, value) if value else None
+
+
+def dockerproxy_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
+    """Compose default `medic-dockerproxy:8472`. Unset elsewhere is fine."""
+    raw = env.get(DOCKERPROXY_VAR)
+    if raw is None or not raw.strip():
+        value = DOCKERPROXY_DEFAULT.get(shape, "")
+        if not value:
+            return None
+    else:
+        value = raw.strip()
+    return _host_port(DOCKERPROXY_VAR, value)
 
 
 def _helm_addr(env: Mapping[str, str], shape: str, var: str, what: str):

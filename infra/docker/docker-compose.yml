@@ -670,6 +670,8 @@ services:
       VIGIL_MEDIC_INSTALL_SHAPE: compose
       # /readyz over medic-net (the real liveness signal; /healthz always says ok).
       VIGIL_MEDIC_AGENT_WORKER_ADDR: agent-worker:6990
+      # Docker Engine API, on medic-private only (D6-2). host:port.
+      VIGIL_MEDIC_DOCKERPROXY_ADDR: medic-dockerproxy:8472
     secrets:
       # X-Medic-Key (X2): what the backend presents, via the gateway, to Medic's API.
       - medic_api_key
