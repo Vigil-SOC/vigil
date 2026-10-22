@@ -971,20 +971,29 @@ jobs:
             -e POSTGRES_APP_PASSWORD=vigil-app-test \
             "$(yq "$container | .image" "$job")" "${command[@]}"
 
-      - name: Provision schema as vigil_app
-        # As the backend first starts under the chart: _env.tpl logs it in as
-        # vigil_app, and services/api/main.py calls init_database() at startup.
-        # Not strict yet: columns a revision adds (users.principal_id,
-        # 0003_principals_sign_ins) exist only once the upgrade below has run.
+      - name: Create the tables the chart SQL does not, as vigil_app
+        # create_all builds the tables the init files never had. It does not
+        # add a column to a table the chart already built, so
+        # users.principal_id waits for the upgrade. The stamp is what a 0.8
+        # start wrote. init_database() no longer writes it, and it refuses a
+        # database with tables and no alembic_version. Adoption accepts only
+        # that stamp.
         env:
           POSTGRES_USER: vigil_app
           POSTGRES_PASSWORD: vigil-app-test
         run: |
-          python -c "from core.storage.connection import init_database; init_database()"
+          python - <<'PY'
+          from core.storage.connection import _stamp_schema_version, get_db_manager
+
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          _stamp_schema_version(manager.engine)
+          PY
 
       - name: Apply schema revisions as the chart user
-        # What the chart's upgrade step will run (#2739): adopt the install,
-        # then apply every revision after the baseline. CI has no restore point.
+        # Adopts the install and applies every revision after the baseline,
+        # including users.principal_id (#2739). CI has no restore point.
         env:
           POSTGRES_USER: deeptempo
           VIGIL_UPGRADE_ACK_REASON: "CI: fresh install, nothing to restore"
