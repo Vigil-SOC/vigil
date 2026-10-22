@@ -1,0 +1,25 @@
+    at processTimers (node:internal/timers:541:7) undefined
+ ❯ src/shell/SocConsole.test.tsx (69 tests | 1 failed) 60596ms
+     × navigates primary screens and the More menu 8916ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/shell/SocConsole.test.tsx > SocConsole > navigates primary screens and the More menu
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/shell/SocConsole.test.tsx:464:3
+    462|   })
+    463|
+    464|   it('navigates primary screens and the More menu', () => {
+       |   ^
+    465|     renderConsole()
+    466|     const screens: [string, string][] = [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 16 passed (17)
+      Tests  1 failed | 454 passed (455)
+   Start at  17:43:28
+   Duration  88.85s (transform 27.32s, setup 13.16s, import 75.87s, tests 196.88s, environment 39.21s)
+

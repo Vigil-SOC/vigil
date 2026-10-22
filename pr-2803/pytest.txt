@@ -1,0 +1,8 @@
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: getIncident: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: postFeedback: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: listDecisions: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: getDecision: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: listSensors: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: getPack: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+SKIPPED [5] tests/security/test_medic_route_matrix.py:199: getEvidenceExport: H3 (outputs/A2-issues/H3.md) builds this route and fills in its row
+========== 437 passed, 45 skipped, 406 warnings in 100.76s (0:01:40) ===========
