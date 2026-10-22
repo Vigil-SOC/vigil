@@ -1,0 +1,113 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/b27393f5-b455-4ee8-9f70-2d10af4e165d/clients/web
+
+ ❯ src/services/notifications.test.ts (4 tests | 3 failed) 63ms
+     × shows nothing until enabled, even with permission granted 45ms
+     × never asks for permission when showing 5ms
+     × shows under the context path once enabled and granted 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/services/notifications.test.ts > notificationService > shows nothing until enabled, even with permission granted
+AssertionError: expected [ { …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "options": {
++       "body": "Vigil: done",
++       "data": {
++         "case_id": undefined,
++         "finding_id": undefined,
++         "type": "investigation",
++       },
++       "icon": "/favicon.ico",
++       "requireInteraction": true,
++       "silent": false,
++       "tag": "investigation-undefined",
++     },
++     "title": "Investigation Complete",
++   },
++ ]
+
+ ❯ src/services/notifications.test.ts:44:25
+     42|     const service = await loadService()
+     43|     service.notifyInvestigationComplete(complete)
+     44|     expect(constructed).toEqual([])
+       |                         ^
+     45|   })
+     46|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/services/notifications.test.ts > notificationService > never asks for permission when showing
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 3 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array []
+
+  2nd vi.fn() call:
+
+    Array []
+
+  3rd vi.fn() call:
+
+    Array []
+
+
+Number of calls: 3
+
+ ❯ src/services/notifications.test.ts:54:35
+     52|     service.notifyInvestigationComplete(complete)
+     53|     service.notifyNewFinding({ finding_id: 'f1', severity: 'high' })
+     54|     expect(requestPermission).not.toHaveBeenCalled()
+       |                                   ^
+     55|     expect(constructed).toEqual([])
+     56|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/services/notifications.test.ts > notificationService > shows under the context path once enabled and granted
+AssertionError: expected [ { …(2) } ] to deeply equal [ { …(2) } ]
+
+- Expected
++ Received
+
+@@ -4,12 +4,13 @@
+        "body": "HIGH: Beacon",
+        "data": {
+          "id": "f1",
+          "type": "finding",
+        },
+-       "icon": "/vigil/favicon.ico",
++       "icon": "/favicon.ico",
+        "requireInteraction": true,
++       "silent": false,
+        "tag": "finding-f1",
+      },
+      "title": "New Security Finding",
+    },
+  ]
+
+ ❯ src/services/notifications.test.ts:63:25
+     61|     service.setEnabled(true)
+     62|     service.notifyNewFinding({ finding_id: 'f1', severity: 'high', tit…
+     63|     expect(constructed).toEqual([
+       |                         ^
+     64|       {
+     65|         title: 'New Security Finding',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 1 passed (4)
+   Start at  16:08:51
+   Duration  1.40s (transform 86ms, setup 334ms, import 23ms, tests 63ms, environment 668ms)
+
