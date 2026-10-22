@@ -13,8 +13,6 @@ down_revision = "0001_baseline"
 
 
 def canonicalize(conn) -> int:
-    """Rewrite each finding whose entity IP fields are not canonical; returns
-    how many it rewrote."""
     rows = conn.execute(
         text(
             "SELECT finding_id, entity_context FROM findings "

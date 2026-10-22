@@ -57,8 +57,7 @@ def finding_names_any(ips) -> ColumnElement[bool]:
     """SQL: the finding names any of ``ips`` (a ``text[]`` expression).
 
     ``jsonb ?| text[]`` matches a string scalar and the string elements of an
-    array, the two shapes :data:`FINDING_IP_KEYS` hold. The match is exact text,
-    which is right because ``Finding`` stores those addresses canonical. Coalesced so a finding
+    array, the two shapes :data:`FINDING_IP_KEYS` hold. Coalesced so a finding
     without entity context is false rather than NULL: ``NOT NULL`` would drop it
     from the hidden view as well.
     """

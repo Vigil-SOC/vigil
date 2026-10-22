@@ -1,9 +1,4 @@
-"""One address's canonical text form, and the finding fields that hold one.
-
-Findings store their entity IP fields in canonical form, the form exclusions
-are stored in, so the SQL exclusion filter's exact-text match and
-``core.findings.exclusions.excluded_ips_of`` agree on every stored row.
-"""
+"""One address's canonical text form, and the finding fields that hold one."""
 
 import ipaddress
 from typing import Any, Optional
