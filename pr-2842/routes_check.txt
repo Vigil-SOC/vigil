@@ -1,0 +1,6 @@
+findings mounted at ('/api/findings',) DELETE: ['/all', '/{finding_id}/noise']
+v1_findings mounted at ('/api/v1/findings', '/api/findings') DELETE: []
+control DELETE /api/findings/all -> 500
+DELETE /api/findings/f-test-1 -> 405 {"detail":"Method Not Allowed"}
+DELETE /api/v1/findings/f-test-1 -> 405 {"detail":"Method Not Allowed"}
+OK: no delete-by-id route on either findings router
