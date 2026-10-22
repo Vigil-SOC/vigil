@@ -1,0 +1,242 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/5862c10f-7a43-4d4b-b3bd-5fc723e7e7e8/clients/web
+
+ ❯ src/screens/triage/TriageScreen.test.tsx (19 tests | 1 failed) 8092ms
+     × shows the error state with a retry 1036ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/triage/TriageScreen.test.tsx > TriageScreen > shows the error state with a retry
+TestingLibraryElementError: Found multiple elements with the text: Couldn’t load triage
+
+Here are the matching elements:
+
+Ignored nodes: comments, script, style
+[36m<h3>[39m
+  [0mCouldn’t load triage[0m
+[36m</h3>[39m
+
+Ignored nodes: comments, script, style
+[36m<p>[39m
+  [0mCouldn’t load triage[0m
+[36m</p>[39m
+
+(If this is intentional, then use the `*AllBy*` variant of the query (like `queryAllByText`, `getAllByText`, or `findAllByText`)).
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"tq-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"tq-head"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"tq-title"[39m
+        [36m>[39m
+          [36m<h1[39m
+            [33mstyle[39m=[32m"font-weight: 700; letter-spacing: -0.2px;"[39m
+          [36m>[39m
+            [0mTriage queue[0m
+          [36m</h1>[39m
+          [36m<p>[39m
+            [0mEvery incoming alert and what triage did with it. Agents pick alerts up on their own; check that grouping looks right.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<button[39m
+          [33maria-label[39m=[32m"Refresh"[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Refresh"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33maria-live[39m=[32m"assertive"[39m
+        [33mclass[39m=[32m"empty-state"[39m
+        [33mrole[39m=[32m"alert"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-icon"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"24"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 3l9 16H3L12 3zM12 9v5M12 17h.01"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-copy"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0mCouldn’t load triage[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0mCouldn’t load triage[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-actions"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"btn primary"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [0mRetry[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"tq-page"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"tq-head"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"tq-title"[39m
+        [36m>[39m
+          [36m<h1[39m
+            [33mstyle[39m=[32m"font-weight: 700; letter-spacing: -0.2px;"[39m
+          [36m>[39m
+            [0mTriage queue[0m
+          [36m</h1>[39m
+          [36m<p>[39m
+            [0mEvery incoming alert and what triage did with it. Agents pick alerts up on their own; check that grouping looks right.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<button[39m
+          [33maria-label[39m=[32m"Refresh"[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Refresh"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33maria-live[39m=[32m"assertive"[39m
+        [33mclass[39m=[32m"empty-state"[39m
+        [33mrole[39m=[32m"alert"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-icon"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"24"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 3l9 16H3L12 3zM12 9v5M12 17h.01"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-copy"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0mCouldn’t load triage[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0mCouldn’t load triage[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-actions"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"btn primary"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M21 12a9 9 0 11-3-6.7L21 8M21 4v4h-4"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [0mRetry[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/triage/TriageScreen.test.tsx:395:25
+    393|     vi.mocked(triageApi.get).mockRejectedValue(new Error('down'))
+    394|     renderScreen()
+    395|     expect(await screen.findByText('Couldn’t load triage')).toBeInTheD…
+       |                         ^
+    396|     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDoc…
+    397|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 18 passed (19)
+   Start at  18:52:45
+   Duration  11.65s (transform 904ms, setup 601ms, import 998ms, tests 8.09s, environment 1.42s)
+
