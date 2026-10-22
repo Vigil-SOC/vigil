@@ -1768,6 +1768,22 @@ CREATE TABLE public.mcp_credentials (
 );
 
 --
+-- Name: medic_last_seen; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.medic_last_seen (
+    id smallint DEFAULT 1 NOT NULL,
+    last_seen_at timestamp without time zone,
+    first_failed_at timestamp without time zone,
+    failure_kind character varying(8),
+    status_snapshot jsonb,
+    updated_at timestamp without time zone NOT NULL,
+    CONSTRAINT medic_last_seen_failure_kind CHECK ((failure_kind IN ('refused', 'timeout', '401', '5xx'))),
+    CONSTRAINT medic_last_seen_one_row CHECK ((id = 1)),
+    CONSTRAINT medic_last_seen_snapshot_typed CHECK (((jsonb_typeof(status_snapshot) = 'object'::text) AND (octet_length((status_snapshot)::text) <= 4096)))
+);
+
+--
 -- Name: recent_config_changes; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -2687,6 +2703,13 @@ ALTER TABLE ONLY public.mcp_credentials
 
 ALTER TABLE ONLY public.mcp_credentials
     ADD CONSTRAINT mcp_credentials_token_hash_key UNIQUE (token_hash);
+
+--
+-- Name: medic_last_seen medic_last_seen_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.medic_last_seen
+    ADD CONSTRAINT medic_last_seen_pkey PRIMARY KEY (id);
 
 --
 -- Name: roles roles_name_key; Type: CONSTRAINT; Schema: public; Owner: -

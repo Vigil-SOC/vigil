@@ -2824,6 +2824,36 @@
   "nullable": false,
   "type": "character varying(50)"
  },
+ "column medic_last_seen.failure_kind": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(8)"
+ },
+ "column medic_last_seen.first_failed_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column medic_last_seen.id": {
+  "default": "1",
+  "nullable": false,
+  "type": "smallint"
+ },
+ "column medic_last_seen.last_seen_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column medic_last_seen.status_snapshot": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
+ "column medic_last_seen.updated_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
  "column recent_config_changes.action": {
   "default": null,
   "nullable": true,
@@ -3543,6 +3573,10 @@
  "constraint mcp_credentials.mcp_credentials_pkey": "PRIMARY KEY (credential_id)",
  "constraint mcp_credentials.mcp_credentials_token_hash_key": "UNIQUE (token_hash)",
  "constraint mcp_credentials.mcp_credentials_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE",
+ "constraint medic_last_seen.medic_last_seen_failure_kind": "CHECK (((failure_kind)::text = ANY ((ARRAY['refused'::character varying, 'timeout'::character varying, '401'::character varying, '5xx'::character varying])::text[])))",
+ "constraint medic_last_seen.medic_last_seen_one_row": "CHECK ((id = 1))",
+ "constraint medic_last_seen.medic_last_seen_pkey": "PRIMARY KEY (id)",
+ "constraint medic_last_seen.medic_last_seen_snapshot_typed": "CHECK (((jsonb_typeof(status_snapshot) = 'object'::text) AND (octet_length((status_snapshot)::text) <= 4096)))",
  "constraint roles.roles_name_key": "UNIQUE (name)",
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
@@ -3852,6 +3886,7 @@
  "index llm_provider_default_per_type": "CREATE UNIQUE INDEX llm_provider_default_per_type ON public.llm_provider_configs USING btree (provider_type) WHERE (is_default = true)",
  "index mcp_credentials_pkey": "CREATE UNIQUE INDEX mcp_credentials_pkey ON public.mcp_credentials USING btree (credential_id)",
  "index mcp_credentials_token_hash_key": "CREATE UNIQUE INDEX mcp_credentials_token_hash_key ON public.mcp_credentials USING btree (token_hash)",
+ "index medic_last_seen_pkey": "CREATE UNIQUE INDEX medic_last_seen_pkey ON public.medic_last_seen USING btree (id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
  "index shared_iocs_pkey": "CREATE UNIQUE INDEX shared_iocs_pkey ON public.shared_iocs USING btree (id)",
@@ -5213,6 +5248,28 @@
   "sequence": null
  },
  "relation mcp_credentials": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation medic_last_seen": {
   "acl": [
    "app:DELETE",
    "app:INSERT",
