@@ -29,10 +29,14 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from core.platform.medic_status import DOWN_AFTER_S
 from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE
 from tests.medic_compose.test_enable_live import INSTALL, OVERRIDE, Stack
 
+# Same bound as core.platform.medic_status.DOWN_AFTER_S (V2-2). This file must
+# not import core: "Medic on Compose" collects tests with only pytest and
+# PyYAML, and core.config needs pydantic. tests/unit/platform/test_medic_status.py
+# pins the constant at 270.
+DOWN_AFTER_S = 270
 # One status sample = `docker exec backend python -c …` (a few seconds) + 3 s.
 SAMPLE_SLACK_S = 10
 PROJECT = os.environ.get("VIGIL_MEDIC_LAST_SEEN_PROJECT", "medic-s9")
@@ -186,11 +190,10 @@ def test_killed_medic_reads_down_within_270_s(killed) -> None:
     # clock against the moment Medic was gone, that must be within 270 s.
     last_seen = _ts(killed["row"].split("|")[0])
     down_at = last_seen + timedelta(seconds=DOWN_AFTER_S)
-    assert DOWN_AFTER_S == 270
-    assert down_at - killed["stopped_at"] <= timedelta(seconds=270), killed
+    assert down_at - killed["stopped_at"] <= timedelta(seconds=DOWN_AFTER_S), killed
     # And the backend really reads Down then: observed on the wall clock, late
     # by at most one sample (a `docker exec python` start-up plus the 3 s wait).
-    assert killed["elapsed"] <= 270 + SAMPLE_SLACK_S, killed
+    assert killed["elapsed"] <= DOWN_AFTER_S + SAMPLE_SLACK_S, killed
     _, failed, kind, _ = killed["row"].split("|")
     assert failed != "-" and kind == "refused"
 
