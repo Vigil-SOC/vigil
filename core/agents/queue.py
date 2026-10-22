@@ -54,8 +54,9 @@ def build_start_job(
     request: Dict[str, Any],
     enqueued_by: str,
     tenant_id: Optional[str] = None,
+    principal: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    job = {
         "schema_version": JOB_SCHEMA_VERSION,
         "run_id": run_id,
         "run_kind": run_kind,
@@ -65,6 +66,10 @@ def build_start_job(
         "reason": "start",
         "request": request,
     }
+    # Omitted when there is no person. An empty field would read as one.
+    if principal:
+        job["principal"] = principal
+    return job
 
 
 # A resume carries no request: the ledger holds the spec, and what unblocks the

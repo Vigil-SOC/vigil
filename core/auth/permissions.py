@@ -76,7 +76,9 @@ def permission_refusal(permission: str) -> Optional[dict[str, str]]:
 
     A credential has no permissions of its own. The person it names is checked
     against their live role, so a demotion or a role edit applies on the next
-    call. No bound principal is a hunt, which is not a role to consult.
+    call. No bound principal is a system run — one the orchestrator or a
+    handoff started — which is not a role to consult. A person who started a
+    run is named on it, and this check is theirs.
     """
     caller = current_caller()
     if caller is None or username_has_permission(caller, permission):
