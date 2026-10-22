@@ -1,0 +1,4 @@
+     × shows a scheduled hunt’s hypothesis 64ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/screens/triage/TriageScreen.test.tsx > TriageScreen > shows a scheduled hunt’s hypothesis
+      Tests  1 failed | 18 passed (19)

@@ -1,0 +1,6 @@
+        assert rows[picked]["case_door"] is None
+        assert rows[picked]["source"] == "Schedule"
+        assert rows[picked]["workflow_id"] == "threat-hunt"
+>       assert rows[picked]["document"] == "Hunt for T1059 on build hosts"
+E       AssertionError: assert None == 'Hunt for T1059 on build hosts'
+======================= 1 failed, 7 deselected in 59.56s =======================

@@ -1,0 +1,5 @@
+0.19s teardown unit/findings/test_triage.py::test_route_returns_the_strip
+0.06s call     unit/findings/test_triage.py::test_source_quiet_when_last_success_is_older_than_its_interval
+0.06s call     unit/findings/test_triage.py::test_route_returns_the_strip
+0.04s call     unit/findings/test_triage.py::test_finding_only_source_has_null_lag_and_is_not_quiet
+========================= 8 passed in 73.07s (0:01:13) =========================
