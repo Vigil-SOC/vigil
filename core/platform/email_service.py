@@ -29,26 +29,17 @@ logger = logging.getLogger(__name__)
 
 class EmailBackend(ABC):
     @abstractmethod
-    def send(
-        self, *, to: str, subject: str, body: str, from_addr: Optional[str] = None
-    ) -> None: ...
+    def send(self, *, to: str, subject: str, body: str) -> None: ...
 
 
 class ConsoleBackend(EmailBackend):
-    def send(
-        self,
-        *,
-        to: str,
-        subject: str,
-        body: str,
-        from_addr: Optional[str] = None,
-    ) -> None:
+    def send(self, *, to: str, subject: str, body: str) -> None:
         settings = get_settings()
         if settings.dev_mode:
             logger.info(
                 "[email/console] to=%s from=%s subject=%r\n%s",
                 to,
-                from_addr or settings.smtp_from,
+                settings.smtp_from,
                 subject,
                 body,
             )
@@ -63,32 +54,16 @@ class ConsoleBackend(EmailBackend):
 
 
 class SMTPBackend(EmailBackend):
-    def __init__(
-        self,
-        *,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        use_tls: Optional[bool] = None,
-        default_from: Optional[str] = None,
-    ):
+    def __init__(self):
         settings = get_settings()
-        self.host = host or settings.smtp_host
-        self.port = port or settings.smtp_port
-        self.username = username or settings.smtp_user or settings.smtp_username
-        self.password = password or get_secret("SMTP_PASSWORD")
-        self.use_tls = use_tls if use_tls is not None else settings.smtp_tls
-        self.default_from = default_from or settings.smtp_from
+        self.host = settings.smtp_host
+        self.port = settings.smtp_port
+        self.username = settings.smtp_user or settings.smtp_username
+        self.password = get_secret("SMTP_PASSWORD")
+        self.use_tls = settings.smtp_tls
+        self.default_from = settings.smtp_from
 
-    def send(
-        self,
-        *,
-        to: str,
-        subject: str,
-        body: str,
-        from_addr: Optional[str] = None,
-    ) -> None:
+    def send(self, *, to: str, subject: str, body: str) -> None:
         if not self.host:
             raise RuntimeError(
                 "SMTPBackend selected but SMTP_HOST is not set. "
@@ -97,7 +72,7 @@ class SMTPBackend(EmailBackend):
             )
 
         msg = EmailMessage()
-        msg["From"] = from_addr or self.default_from
+        msg["From"] = self.default_from
         msg["To"] = to
         msg["Subject"] = subject
         msg.set_content(body)
@@ -113,15 +88,20 @@ class SMTPBackend(EmailBackend):
 _backend: Optional[EmailBackend] = None
 
 
+def mail_is_configured() -> bool:
+    """Any VIGIL_EMAIL_BACKEND but smtp falls back to the console backend."""
+    return get_settings().vigil_email_backend.strip().lower() == "smtp"
+
+
 def get_email_backend() -> EmailBackend:
     """Resolve the configured email backend. Lazy so env is picked up at use."""
     global _backend
     if _backend is not None:
         return _backend
-    choice = get_settings().vigil_email_backend.strip().lower()
-    if choice == "smtp":
+    if mail_is_configured():
         _backend = SMTPBackend()
     else:
+        choice = get_settings().vigil_email_backend.strip().lower()
         if choice != "console":
             logger.warning(
                 "Unknown VIGIL_EMAIL_BACKEND=%r; falling back to console backend",
@@ -131,18 +111,11 @@ def get_email_backend() -> EmailBackend:
     return _backend
 
 
-def send_email(
-    *,
-    to: str,
-    subject: str,
-    body: str,
-    from_addr: Optional[str] = None,
-) -> None:
-    """Convenience wrapper — logs and swallows exceptions so an email
-    outage does not turn into a user-facing 500. Callers that need the
-    error (e.g. admin ops) can call the backend directly."""
+def send_email(*, to: str, subject: str, body: str) -> None:
+    """Logs and swallows exceptions so an email outage does not turn into a
+    user-facing 500."""
     try:
-        get_email_backend().send(to=to, subject=subject, body=body, from_addr=from_addr)
+        get_email_backend().send(to=to, subject=subject, body=body)
     except Exception as exc:
         logger.error(
             "Email send failed: to=%s subject=%r error=%s", mask_email(to), subject, exc

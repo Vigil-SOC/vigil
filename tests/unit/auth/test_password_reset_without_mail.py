@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.auth import password_reset
+from core.platform import email_service
 from core.routing import request_unit_of_work
 from services.api.middleware.rate_limit import limiter
 from services.api.routers import auth
@@ -56,8 +57,8 @@ def _request(user, settings):
     app.dependency_overrides[request_unit_of_work] = lambda: _session(user)
     limiter.reset()
     with patch.object(auth, "get_settings", return_value=settings), patch.object(
-        auth, "send_email"
-    ):
+        email_service, "get_settings", return_value=settings
+    ), patch.object(auth, "send_email"):
         resp = TestClient(app).post(
             "/api/auth/password-reset/request", json={"email": "admin@example.com"}
         )
