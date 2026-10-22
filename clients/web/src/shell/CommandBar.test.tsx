@@ -691,6 +691,8 @@ describe('CommandBar', () => {
         fireEvent.change(screen.getByLabelText('Intelligence text'), { target: { value: REPORT } })
         fireEvent.click(screen.getByRole('button', { name: 'Attach text' }))
         expect(await screen.findByText('Pasted text')).toBeInTheDocument()
+        // The name shows while the text is still being read; Run only carries it once read.
+        expect(await screen.findByText('3 pages')).toBeInTheDocument()
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         await waitFor(() => expect(attachDocument).toHaveBeenCalled())
         expect(attachDocument.mock.calls[0][2]).toEqual({ name: 'Pasted text', pages: 3 })
