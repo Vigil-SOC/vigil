@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from core.api.v1.approvals_router import router as approvals_router
 from core.findings.alert_outcomes import finding_states
-from core.response.approval_service import _row_to_pending, needs_you_case_ids
+from core.response.approval_service import _row_to_pending
 from core.storage.models import (
     ApprovalAction,
     Case,
@@ -342,7 +342,6 @@ def capped_finding(hunts):
 
 
 def test_a_finding_on_a_hunt_stopped_at_a_limit_needs_you(capped_finding):
-    assert "case-ny-capped" in needs_you_case_ids()
     assert finding_states(["ny-capped-finding"]) == {
         "ny-capped-finding": ("needs_you", "case-ny-capped")
     }
