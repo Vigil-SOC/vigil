@@ -213,6 +213,13 @@
    "expected": "mysql -u root -p [REDACTED] -h db"
   },
   {
+   "id": "flag-mysql-p-twice",
+   "family": "flag",
+   "input": "mysql -p canaryMysqlP0015 -p canaryMysqlP0016 -h db",
+   "secret": "canaryMysqlP0016",
+   "expected": "mysql -p [REDACTED] -p [REDACTED] -h db"
+  },
+  {
    "id": "flag-mysqladmin-p",
    "family": "flag",
    "input": "mysqladmin -p canaryMysqlAdmin0010 ping",
@@ -231,6 +238,13 @@
    "family": "token_shape",
    "input": "sent header Bearer canaryB12",
    "secret": "canaryB12",
+   "expected": "sent header Bearer [REDACTED]"
+  },
+  {
+   "id": "token-bearer-tiny",
+   "family": "token_shape",
+   "input": "sent header Bearer a1b",
+   "secret": "a1b",
    "expected": "sent header Bearer [REDACTED]"
   },
   {
