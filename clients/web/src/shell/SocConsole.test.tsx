@@ -230,9 +230,6 @@ vi.mock('../services/api', () => ({
       data: { steps: [], alerts_exist: 1, demo_enabled: false },
     })),
   },
-  orchestratorApi: {
-    getStatus: () => Promise.resolve({ data: { enabled: false } }),
-  },
   reasoningApi: {
     getSessionSummary: () => Promise.resolve(null),
     listInteractions: () => Promise.resolve({ interactions: [] }),
