@@ -77,7 +77,6 @@ def test_announce_logs_the_code_only_while_no_human_user_exists(
     # The template recorded for grouping does not carry the value.
     assert all(r.msg == bootstrap_code.SETUP_CODE_LOG_TEMPLATE for r in logged)
 
-    # Medic's gateway account, created before the first admin (Helm NOTES order).
     exit_code = service_account.main(
         ["ensure", "medic-a1b2c3d4e5f6"],
         stdin=io.StringIO("d" * 64 + "\n"),
