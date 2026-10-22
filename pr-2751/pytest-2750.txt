@@ -1,0 +1,24 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/29e6a738-a00a-4ce8-bf56-bc97c0c37fe0/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 54 items
+
+tests/unit/findings/test_board_brief.py .................                [ 31%]
+tests/unit/skills/test_skills_api.py ................................... [ 96%]
+..                                                                       [100%]
+
+============================= slowest 10 durations =============================
+0.25s call     unit/skills/test_skills_api.py::test_write_then_prompt_includes_the_skill
+0.22s call     unit/skills/test_skills_api.py::test_file_read_returns_text_and_refuses_escapes_and_binaries
+0.22s call     unit/skills/test_skills_api.py::test_file_count_matches_the_detail_files
+0.21s call     unit/skills/test_skills_api.py::test_each_save_adds_one_to_the_version_and_keeps_other_frontmatter
+0.18s call     unit/skills/test_skills_api.py::test_a_stale_version_is_refused_with_409_and_nothing_is_written
+0.17s call     unit/skills/test_skills_api.py::test_a_copy_refuses_bad_sources_taken_names_and_leaves_nothing_behind
+0.15s call     unit/skills/test_skills_api.py::test_saving_a_builtin_as_a_copy_carries_the_folder_at_version_one
+0.14s call     unit/skills/test_skills_api.py::test_default_root_is_created_on_the_first_save
+0.13s call     unit/skills/test_skills_api.py::test_a_create_into_an_existing_folder_is_refused_and_leaves_it_alone
+0.13s setup    unit/findings/test_board_brief.py::TestReporterAgentConfig::test_reporter_agent_exists
+======================== 54 passed, 1 warning in 4.64s =========================
