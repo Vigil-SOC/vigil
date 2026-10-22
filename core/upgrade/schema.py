@@ -1,7 +1,9 @@
 """What Vigil owns in the public schema, read from pg_catalog, and how two differ.
 
 ``schema_state`` flattens tables, columns, defaults, indexes, constraints,
-triggers, views, functions, owners and grants into ``{object: description}``.
+triggers (and whether they are enabled), views, functions, sequences, row
+security and policies, owners and grants (column grants and default
+privileges included) into ``{object: description}``.
 Role names are mapped by role, not literal name: the connecting user is
 ``owner`` and ``vigil_app`` is ``app``, so databases owned by different
 logins compare equal. Objects that belong to an extension and Alembic's own
@@ -68,8 +70,13 @@ def schema_state(conn: Connection) -> dict[str, Any]:
 
     relations = conn.execute(
         text(f"""
-        SELECT c.oid, c.relname, c.relkind, pg_get_userbyid(c.relowner)
+        SELECT c.oid, c.relname, c.relkind, pg_get_userbyid(c.relowner),
+               c.relrowsecurity, c.relforcerowsecurity,
+               CASE WHEN s.seqrelid IS NOT NULL THEN json_build_array(
+                   format_type(s.seqtypid, NULL), s.seqstart, s.seqincrement,
+                   s.seqmin, s.seqmax, s.seqcache, s.seqcycle)::text END
         FROM pg_class c
+        LEFT JOIN pg_sequence s ON s.seqrelid = c.oid
         WHERE c.relnamespace = 'public'::regnamespace
           AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
           AND c.relname <> :version_table
@@ -78,9 +85,11 @@ def schema_state(conn: Connection) -> dict[str, Any]:
     """),
         {"version_table": VERSION_TABLE},
     ).all()
-    for oid, name, kind, rel_owner in relations:
+    for oid, name, kind, rel_owner, rls, force_rls, sequence in relations:
         state[f"relation {name}"] = {
             "kind": kind,
+            "row_security": [rls, force_rls],
+            "sequence": sequence,
             "owner": _role(rel_owner, roles),
             "acl": _acl(
                 conn,
@@ -91,10 +100,20 @@ def schema_state(conn: Connection) -> dict[str, Any]:
             ),
         }
 
-    for table, column, data_type, not_null, default in conn.execute(
+    for (
+        table,
+        column,
+        data_type,
+        not_null,
+        default,
+        attrelid,
+        attnum,
+        acl,
+    ) in conn.execute(
         text("""
         SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod),
-               a.attnotnull, pg_get_expr(d.adbin, d.adrelid)
+               a.attnotnull, pg_get_expr(d.adbin, d.adrelid),
+               a.attrelid, a.attnum, a.attacl IS NOT NULL
         FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
         LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
@@ -105,11 +124,15 @@ def schema_state(conn: Connection) -> dict[str, Any]:
     """),
         {"version_table": VERSION_TABLE},
     ):
-        state[f"column {table}.{column}"] = {
-            "type": data_type,
-            "nullable": not not_null,
-            "default": default,
-        }
+        entry = {"type": data_type, "nullable": not not_null, "default": default}
+        if acl:  # column-level grants
+            entry["acl"] = _acl(
+                conn,
+                "(SELECT attacl FROM pg_attribute "
+                f"WHERE attrelid = {int(attrelid)} AND attnum = {int(attnum)})",
+                roles,
+            )
+        state[f"column {table}.{column}"] = entry
 
     queries = {
         "index": """
@@ -127,8 +150,15 @@ def schema_state(conn: Connection) -> dict[str, Any]:
         """,
         "trigger": """
             SELECT t.relname || '.' || g.tgname, pg_get_triggerdef(g.oid)
+                   || CASE WHEN g.tgenabled = 'O' THEN ''
+                      ELSE ' [enabled=' || g.tgenabled::text || ']' END
             FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
             WHERE t.relnamespace = 'public'::regnamespace AND NOT g.tgisinternal
+        """,
+        "policy": """
+            SELECT tablename || '.' || policyname,
+                   concat_ws(' ', permissive, cmd, roles::text, qual, with_check)
+            FROM pg_policies WHERE schemaname = 'public'
         """,
         "view": """
             SELECT c.relname, pg_get_viewdef(c.oid)

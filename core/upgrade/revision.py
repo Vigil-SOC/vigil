@@ -12,5 +12,7 @@ def run_sql(revision_file: str) -> None:
     cursor = op.get_bind().connection.cursor()
     try:
         cursor.execute(sql)
+        # A SET in one file must not outlive it into the next revision.
+        cursor.execute("RESET ALL")
     finally:
         cursor.close()

@@ -4047,6 +4047,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT SELECT, INSERT ON TABLE agent_events TO vigil_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON TABLE agent_events FROM vigil_app;
 
+-- Alembic created alembic_version just before this file ran, so the grants
+-- above reached it. Only the owner moves the revision.
+REVOKE ALL ON TABLE public.alembic_version FROM vigil_app;
+
 -- Reference rows from the init SQL and core/storage/reference_seed.py.
 -- created_at/updated_at take their defaults at install time. No
 -- system_config schema_version row: revisions replace that stamp. No users
