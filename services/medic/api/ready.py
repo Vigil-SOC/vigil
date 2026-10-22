@@ -40,7 +40,7 @@ def check_ready(
     try:
         if peer is not None:
             host = local_address_toward(peer)
-        elif host == "0.0.0.0":
+        elif host == "0.0.0.0":  # nosec B104 - a comparison, not a bind: probe loopback
             host = "127.0.0.1"
         conn = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
