@@ -1,0 +1,2 @@
+core/platform/email_service.py:56:class SMTPBackend(EmailBackend):
+core/platform/email_service.py:102:        _backend = SMTPBackend()

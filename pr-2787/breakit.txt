@@ -1,0 +1,10 @@
+WARNING:core.platform.email_service:Unknown VIGIL_EMAIL_BACKEND='sendgrid'; falling back to console backend
+WARNING:core.platform.email_service:Unknown VIGIL_EMAIL_BACKEND=''; falling back to console backend
+' SMTP ' mail_is_configured= True SMTPBackend
+  SMTP call('relay', 2525, timeout=10) starttls True login call('u', 'pw-SMTP_PASSWORD') From vigil@x
+'smtp' mail_is_configured= True SMTPBackend
+  SMTP call('relay', 2525, timeout=10) starttls True login call('u', 'pw-SMTP_PASSWORD') From vigil@x
+'console' mail_is_configured= False ConsoleBackend
+'sendgrid' mail_is_configured= False ConsoleBackend
+'' mail_is_configured= False ConsoleBackend
+OK
