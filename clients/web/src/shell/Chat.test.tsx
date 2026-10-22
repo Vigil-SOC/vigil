@@ -513,6 +513,22 @@ describe('failed case-composer turns', () => {
     expect(await screen.findByText(/Could not reach Vigil: HTTP 503\. Is the backend running\?/)).toBeInTheDocument()
   })
 
+  it('shows the reason a 503 gives instead of blaming the backend', async () => {
+    vi.mocked(streamFetch).mockResolvedValueOnce(
+      refused(503, {
+        detail: {
+          code: 'no_llm_provider_configured',
+          message: 'No LLM provider is configured. Add one in Settings › AI models, then try again.',
+          settings_path: '/settings#llm-providers',
+        },
+      }),
+    )
+    renderPinned()
+    ask('why?')
+    expect(await screen.findByText(/No LLM provider is configured/)).toBeInTheDocument()
+    expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
+  })
+
   it('does not send an unanswered question with the next one', async () => {
     vi.mocked(streamFetch).mockResolvedValueOnce(refused(402, { detail: 'No room.' }))
     renderPinned()
