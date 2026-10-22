@@ -21,11 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # NODE
 ########################################################
 
-# Every Node job in ci-cd.yml and nightly.yml pins Node 20 (npm 10), and
-# services/agent requires >=20. Ubuntu 24.04's apt `npm` is 9.2.0, whose
-# `npm audit --audit-level=high` exits 0 even with a high advisory present, so
-# the Security Scan - NPM gate could not be checked here. Official tarball,
-# checksum from its SHASUMS256.txt. /usr/local/bin precedes /usr/bin on PATH.
+# The web, OpenAPI, and npm-audit jobs in ci-cd.yml and nightly.yml pin Node 20
+# (npm 10). Ubuntu 24.04's apt npm is 9.2.0, whose `npm audit --audit-level=high`
+# exits 0 even with a high advisory present, so the Security Scan - NPM gate
+# could not be checked here. Official tarball, checksum from its SHASUMS256.txt.
+# /usr/local/bin precedes /usr/bin, but a cloud agent's shell is given the
+# harness Node (22 today) ahead of both, so `node` and `#!/usr/bin/env node`
+# were not this binary. The selector further down puts it back in front.
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
          amd64) NARCH=x64; NSUM=df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d ;; \
@@ -40,6 +42,107 @@ RUN ARCH="$(dpkg --print-architecture)" \
        --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md' \
     && rm -f /tmp/node.tar.xz \
     && node --version && npm --version
+
+# test-agent-layer pins Node 22 because services/agent/eval/estate.ts imports
+# node:sqlite, which Node 20 does not ship. This is the release setup-node
+# resolves for node-version: '22' (npm 10.9.9). It stays off the default PATH;
+# the selector uses it for services/agent only.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+         amd64) NARCH=x64; NSUM=1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce ;; \
+         arm64) NARCH=arm64; NSUM=6287aa46b6c375d816e63ae66d024fbbfd70404825aabdfdf898a970871d2f4b ;; \
+         *) echo "unsupported arch $ARCH" && exit 1 ;; \
+       esac \
+    && NODE_VERSION=v22.23.4 \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /tmp/node22.tar.xz \
+       "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NARCH}.tar.xz" \
+    && echo "${NSUM}  /tmp/node22.tar.xz" | sha256sum -c - \
+    && mkdir -p /usr/local/lib/node-v22 \
+    && tar -xJf /tmp/node22.tar.xz -C /usr/local/lib/node-v22 --strip-components=1 \
+    && rm -f /tmp/node22.tar.xz \
+    && /usr/local/lib/node-v22/bin/node --version \
+    && /usr/local/lib/node-v22/bin/node -e "import('node:sqlite').then(()=>{})"
+
+# `node` / `npm` / `npx` on PATH, and the `node` that `#!/usr/bin/env node`
+# finds, follow CI's split: Node 20 everywhere except services/agent, which is
+# Node 22. Bash functions cover a restored PATH that puts the harness node
+# first again; the directory prepend covers shebangs in start/install, which
+# do not go through that restore. BASH_ENV is how a non-interactive agent
+# shell (bash -c, not a login shell) picks this up.
+RUN python3 - <<'PY'
+from pathlib import Path
+import os
+
+root = Path("/usr/local/lib/ci-node")
+bindir = root / "bin"
+bindir.mkdir(parents=True, exist_ok=True)
+
+(root / "select.sh").write_text(
+    """ci_node_dir() {
+  case "${PWD:-}" in
+    */services/agent|*/services/agent/*)
+      printf '%s\\n' /usr/local/lib/node-v22/bin
+      return 0
+      ;;
+  esac
+  for arg in "$@"; do
+    case "$arg" in
+      *services/agent*)
+        printf '%s\\n' /usr/local/lib/node-v22/bin
+        return 0
+        ;;
+    esac
+  done
+  printf '%s\\n' /usr/local/lib/ci-node20/bin
+}
+"""
+)
+
+dispatch = bindir / "dispatch"
+dispatch.write_text(
+    """#!/bin/bash
+set -euo pipefail
+. /usr/local/lib/ci-node/select.sh
+tool="$(basename "$0")"
+dir="$(ci_node_dir "$@")"
+export PATH="${dir}:${PATH:-}"
+exec "${dir}/${tool}" "$@"
+"""
+)
+os.chmod(dispatch, 0o755)
+for name in ("node", "npm", "npx", "corepack"):
+    link = bindir / name
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to("dispatch")
+
+n20 = Path("/usr/local/lib/ci-node20/bin")
+n20.mkdir(parents=True, exist_ok=True)
+for name in ("node", "npm", "npx", "corepack"):
+    dest = n20 / name
+    if dest.is_symlink() or dest.exists():
+        dest.unlink()
+    dest.symlink_to(f"/usr/local/bin/{name}")
+
+(root / "bash-env.sh").write_text(
+    """ci=/usr/local/lib/ci-node/bin
+case ":${PATH:-}:" in
+  *:"$ci":*) ;;
+  *) PATH="${ci}${PATH:+:$PATH}"; export PATH ;;
+esac
+node() { command /usr/local/lib/ci-node/bin/node "$@"; }
+npm() { command /usr/local/lib/ci-node/bin/npm "$@"; }
+npx() { command /usr/local/lib/ci-node/bin/npx "$@"; }
+corepack() { command /usr/local/lib/ci-node/bin/corepack "$@"; }
+"""
+)
+PY
+RUN mkdir -p /tmp/ci-node-smoke/services/agent \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'node --version' | grep -qx 'v20.20.2' \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'cd /tmp/ci-node-smoke/services/agent && node --version' | grep -qx 'v22.23.4' \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'cd /tmp/ci-node-smoke/services/agent && node -e "import(\"node:sqlite\").then(()=>{})"' \
+    && rm -rf /tmp/ci-node-smoke
+ENV BASH_ENV=/usr/local/lib/ci-node/bash-env.sh
 
 ########################################################
 # DOCKER INSTALLATION
