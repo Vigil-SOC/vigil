@@ -12,6 +12,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+# Imported at load, while core.config.is_demo_mode is still the real function.
+# database_data_service binds that name at import; importing it after a test
+# has installed a stand-in makes pytest restore the stand-in (#2717).
+import core.storage.database_data_service as database_data_service
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import (
@@ -630,7 +634,7 @@ def test_demo_mode_still_hydrates_a_detection_from_postgres(monkeypatch):
     from core.storage.service import DatabaseService
 
     monkeypatch.setattr("core.config.is_demo_mode", lambda: True)
-    monkeypatch.setattr("core.storage.database_data_service.is_demo_mode", lambda: True)
+    monkeypatch.setattr(database_data_service, "is_demo_mode", lambda: True)
     monkeypatch.setattr(DatabaseService, "__init__", lambda self: None)
     real = Finding(
         finding_id="f-real",
