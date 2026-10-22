@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from core.audit import trail
 from core.exceptions import default_on_error
-from core.integrations.integration_secrets import redact_secrets
 from core.storage.connection import get_db_manager
 from core.storage.models import ConfigAuditLog, IntegrationConfig, SystemConfig
 from core.storage.schemas import IntegrationConfigSchema
@@ -27,6 +26,9 @@ logger = logging.getLogger(__name__)
 CONFIG_CHANGE = "config.change"
 _REDACTED = "[REDACTED]"
 _scrubber = SensitiveAttributeScrubber()
+# Set by core.integrations.integration_secrets. Storage cannot import that
+# module; an integration audit with no redactor fails the write.
+_integration_redactor = None
 
 
 @contextmanager
@@ -411,6 +413,12 @@ def _redact_tree(value: Any, key: str = "") -> Any:
     return value
 
 
+def register_integration_secret_redactor(redactor) -> None:
+    """Install ``redact_secrets`` for integration values on the trail."""
+    global _integration_redactor
+    _integration_redactor = redactor
+
+
 def redacted_config_copy(
     config_type: str, config_key: str, value: Optional[Dict[str, Any]]
 ) -> Any:
@@ -418,7 +426,9 @@ def redacted_config_copy(
     if value is None:
         return None
     if config_type == "integration" and isinstance(value, dict):
-        return redact_secrets(config_key, value)
+        if _integration_redactor is None:
+            raise RuntimeError("integration secret redactor is not registered")
+        return _integration_redactor(config_key, value)
     return _redact_tree(value)
 
 

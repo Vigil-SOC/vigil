@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from core.audit import trail
+from core.integrations.integration_secrets import redact_secrets
 from core.storage.config_service import ConfigService
 from tests.integration.test_upgrade_command import _run, _scratch
 
@@ -168,8 +169,8 @@ def test_secrets_are_redacted_in_the_trail_and_kept_on_the_row(db):
     assert _system(db, "audit.t.secret")["nested"]["password"] == "pw"
 
     by_key = {p["config_key"]: p for p in _payloads(db)}
+    assert by_key["github"]["new_value"] == redact_secrets("github", integration)
     assert "token" not in by_key["github"]["new_value"]
-    assert by_key["github"]["new_value"]["org"] == "acme"
     assert "ghp_secret" not in str(by_key["github"])
     redacted = by_key["audit.t.secret"]["new_value"]
     assert redacted["api_key"] == "[REDACTED]"
