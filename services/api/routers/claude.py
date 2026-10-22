@@ -150,7 +150,6 @@ def _raise_no_provider() -> None:
 def _resolve_provider_model_for_request(
     agent_id: Optional[str],
 ) -> Tuple[Optional[str], str]:
-    """Resolve provider + model for chat requests."""
     registry = get_registry()
     agent = None
     category: str = "chat_default"
@@ -321,9 +320,7 @@ async def chat_stream(
         raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
     # Resolved here because this is the side that knows what an agent is: the
     # harness is handed a prompt, a model and a tool list, never an agent id.
-    provider_id, resolved_model = _resolve_provider_model_for_request(
-        request.agent_id
-    )
+    provider_id, resolved_model = _resolve_provider_model_for_request(request.agent_id)
 
     system_prompt: Optional[str] = None
     tools: Optional[List[str]] = None

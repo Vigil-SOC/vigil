@@ -1,4 +1,4 @@
-"""Unit tests for the reconciled non-Anthropic chat routing in
+"""Unit tests for the non-Anthropic chat routing in
 ``services/api/routers/claude.py``.
 
 Chat falls back to the *configured default* provider so Ollama-only
@@ -82,7 +82,7 @@ def _spec(
 
 
 def test_unspecified_model_falls_back_to_default_model(monkeypatch):
-    # No request model and no registry hit → the centralised DEFAULT_MODEL,
+    # No agent and no registry hit → the centralised DEFAULT_MODEL,
     # NOT a hardcoded Claude id.
     class _Reg:
         def resolve_model_for_component(self, *a, **k):
