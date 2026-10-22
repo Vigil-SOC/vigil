@@ -372,8 +372,9 @@ async def _list(
 def _base_url(api: str | None) -> str:
     if api is not None:
         return api.rstrip("/")
-    host = os.environ.get("KUBERNETES_SERVICE_HOST", "").strip()
-    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443").strip()
+    # Kubelet injects the in-cluster API address. Medic has no settings object.
+    host = os.environ.get("KUBERNETES_SERVICE_HOST", "").strip()  # noqa: ENV001
+    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443").strip()  # noqa: ENV001
     if not _HOST.fullmatch(host) or not port.isdigit() or not 1 <= int(port) <= 65535:
         raise _Fail(ReadError("other", detail="api server address unusable"))
     if ":" in host and not (host.startswith("[") and host.endswith("]")):
