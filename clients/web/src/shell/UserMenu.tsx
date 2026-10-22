@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { consoleApi } from '../services/api'
+import { configApi, consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { HOME_SETUP_HREF } from '../screens/home/setupHidden'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
+import { useToast } from './toast'
 import TwoStepDialog from './TwoStepDialog'
 import ChangePasswordDialog from './ChangePasswordDialog'
 
@@ -43,7 +44,8 @@ export default function UserMenu({
   /** Home's open setup steps, as the shell's chip counts them; null or 0 hides the item */
   setupLeft: number | null
 }) {
-  const { user, logout } = useAuth()
+  const { user, logout, hasPermission } = useAuth()
+  const { notify } = useToast()
   const navigate = useNavigate()
   const { screen } = useParams<{ screen?: string }>()
   const { scheme, setScheme } = useColorScheme()
@@ -110,6 +112,13 @@ export default function UserMenu({
   const role = user.role_id.replace(/^role-/, '').replace(/-/g, ' ')
   const current = screen || 'console'
 
+  const toggleScheme = () => {
+    const next = scheme === 'dark' ? 'light' : 'dark'
+    setScheme(next)
+    if (!hasPermission('settings.write')) return
+    configApi.setTheme(next).catch(() => notify('err', "Couldn't save the default theme."))
+  }
+
   const handleLogout = async () => {
     setOpen(false)
     await logout()
@@ -169,7 +178,7 @@ export default function UserMenu({
           Share feedback
           <span className="user-pop-note">About Vigil{version ? ` · ${version}` : ''}</span>
         </a>
-        <button role="menuitem" onClick={() => setScheme(scheme === 'dark' ? 'light' : 'dark')}>
+        <button role="menuitem" onClick={toggleScheme}>
           <Icon name={scheme === 'dark' ? 'sun' : 'moon'} size={15} />
           {scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         </button>
