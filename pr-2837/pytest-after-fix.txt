@@ -1,0 +1,25 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/790ca998-6eb3-49bf-aa2a-c7f924400553/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 202 items
+
+tests/unit/chat/test_case_brief.py .....................                 [ 10%]
+tests/unit/chat/test_chat_failed_turn.py ..                              [ 11%]
+tests/unit/chat/test_chat_models_endpoint.py ...                         [ 12%]
+tests/unit/chat/test_chat_page_context.py .                              [ 13%]
+tests/unit/chat/test_chat_picker_embedding_filter.py ...                 [ 14%]
+tests/unit/chat/test_chat_principal.py ......                            [ 17%]
+tests/unit/chat/test_chat_skills_index.py ...                            [ 19%]
+tests/unit/chat/test_conversation_scope.py ....                          [ 21%]
+tests/security/test_route_permissions.py ............................... [ 36%]
+.................................                                        [ 52%]
+tests/security/test_unauth_endpoints.py ................................ [ 68%]
+...................                                                      [ 78%]
+tests/unit/llm/test_claude_chat_routing.py ...........................   [ 91%]
+tests/unit/agents/test_agent_enablement.py .................             [100%]
+
+============================= slowest 10 durations =============================
+======================= 202 passed, 1 warning in 19.12s ========================

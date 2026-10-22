@@ -1,0 +1,80 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/790ca998-6eb3-49bf-aa2a-c7f924400553/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 4 items
+
+tests/unit/chat/test_conversation_scope.py ..FF                          [100%]
+
+=================================== FAILURES ===================================
+__________ test_a_turn_on_another_users_conversation_changes_nothing ___________
+
+    def test_a_turn_on_another_users_conversation_changes_nothing():
+        owner = f"analyst-{uuid.uuid4().hex[:8]}"
+        other = f"analyst-{uuid.uuid4().hex[:8]}"
+        session_id = f"conv-{uuid.uuid4().hex[:8]}"
+    
+        _turn(session_id, owner, "mine", "a1", case_id="CASE-1")
+        _turn(session_id, other, "injected", "a2", case_id="CASE-EVIL")
+    
+        conv = conversation_service.get_conversation(session_id, owner)
+>       assert [m["content"] for m in conv["messages"]] == ["mine", "a1"]
+E       AssertionError: assert ['mine', 'a1'...jected', 'a2'] == ['mine', 'a1']
+E         
+E         Left contains 2 more items, first extra item: 'injected'
+E         Use -v to get more diff
+
+conv       = {'id': 'conv-a4064040', 'user_id': 'analyst-d2dcb646', 'title': 'mine', 'case_id': 'CASE-EVIL', ...}
+other      = 'analyst-96bee630'
+owner      = 'analyst-d2dcb646'
+session_id = 'conv-a4064040'
+
+tests/unit/chat/test_conversation_scope.py:126: AssertionError
+_____________ test_the_stream_refuses_a_session_another_user_owns ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fc1b198ebd0>
+
+    @pytest.mark.asyncio
+    async def test_the_stream_refuses_a_session_another_user_owns(monkeypatch):
+        owner = f"analyst-{uuid.uuid4().hex[:8]}"
+        session_id = f"conv-{uuid.uuid4().hex[:8]}"
+        conversation_service.ensure_conversation(session_id, owner)
+        sent = {}
+    
+        async def _relay(payload, *_args):
+            sent.update(payload)
+            yield ""
+    
+        monkeypatch.setattr(
+            claude, "_resolve_provider_model_for_request", lambda *_: (None, "m")
+        )
+        monkeypatch.setattr(
+            claude, "provider_for", lambda _: SimpleNamespace(provider_type="gemini")
+        )
+        monkeypatch.setattr(claude, "model_for", lambda _p, model: model)
+        monkeypatch.setattr(claude, "live_mcp_tools", lambda _: [])
+        monkeypatch.setattr(claude, "_relay", _relay)
+    
+>       with pytest.raises(HTTPException) as refused:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE HTTPException
+
+_relay     = <function test_the_stream_refuses_a_session_another_user_owns.<locals>._relay at 0x7fc1b2cd32e0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fc1b198ebd0>
+owner      = 'analyst-7a1b7da3'
+refused    = <ExceptionInfo for raises contextmanager>
+sent       = {}
+session_id = 'conv-e8634a0e'
+
+tests/unit/chat/test_conversation_scope.py:158: Failed
+------------------------------ Captured log call -------------------------------
+WARNING  core.llm.providers.registry:registry.py:351 No gateway rate for gemini/m — its calls are recorded as unpriced
+============================= slowest 10 durations =============================
+
+(4 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/chat/test_conversation_scope.py::test_a_turn_on_another_users_conversation_changes_nothing
+FAILED tests/unit/chat/test_conversation_scope.py::test_the_stream_refuses_a_session_another_user_owns
+==================== 2 failed, 2 passed, 1 warning in 2.95s ====================
