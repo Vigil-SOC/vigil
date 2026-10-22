@@ -232,10 +232,10 @@ function SocConsoleInner() {
       // Compare the query too, not just the screen: a repeat badged click is a
       // no-op that used to push a duplicate history entry, and an unbadged
       // click from ?tab=approvals is a real move that used to be swallowed.
-      if (valid && next === current && search === location.search && drawerCase === null) return
+      if (valid && next === current && search === location.search) return
       navigate({ pathname: `/${next}`, search }, { replace: options?.replace })
     },
-    [valid, current, navigate, location.search, drawerCase],
+    [valid, current, navigate, location.search],
   )
   const goSettings = useCallback(
     (section: SettingsSectionKey) => {
@@ -506,7 +506,10 @@ function SocConsoleInner() {
       onOpenChat={askVigil}
       caseOpen={openCaseId !== null}
       onOpenCase={setDrawerCase}
-      onGo={go}
+      onGo={(next, options) => {
+        if (drawerCase) setDrawerCase(null)
+        go(next, options)
+      }}
       fill={fill}
     />
   )

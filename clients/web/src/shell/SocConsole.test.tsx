@@ -884,15 +884,14 @@ describe('SocConsole', () => {
       get.mockRestore()
     })
 
-    it('closes on a ⌘K jump to the screen it is open over, and Back brings it back', async () => {
+    it('closes on a ⌘K jump to the screen it is open over', async () => {
       renderWithHistory()
       await openDrawer()
       const input = screen.getByRole('combobox', { name: /Find a case/ })
       fireEvent.change(input, { target: { value: 'Cases' } })
       fireEvent.keyDown(input, { key: 'Enter' })
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
-      act(() => navigate(-1))
-      await screen.findByRole('dialog', { name: 'Case' })
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/cases')
     })
 
     it('opens a case that resolves after a move over the page moved to', async () => {
