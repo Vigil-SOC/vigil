@@ -102,6 +102,109 @@ def test_a_routed_child_is_not_suppressed_later() -> None:
     assert suppress.route(400, [parent, child], [ENTRY], False, "blind") == []
 
 
+def test_a_suppressed_child_repoints_to_the_parent_still_open() -> None:
+    """Two open parents: the child names the earliest. The later one resolving
+    leaves that name. The named one resolving writes a second `suppressed`
+    for the parent that is still open, and the same parent again writes nothing."""
+    early = _open(
+        "llm.a",
+        LLM,
+        {"incident_id": "inc_early000", "opened_at": 100, "routed_at": 100},
+    )
+    late = _open(
+        "llm.b",
+        LLM,
+        {"incident_id": "inc_late0000", "opened_at": 200, "routed_at": 200},
+    )
+    child = _open(
+        "pipe.y", P4, {"incident_id": "inc_child000", "opened_at": 300, "hold_end": 900}
+    )
+    first = suppress.route(400, [early, late, child], [ENTRY], False, "blind")
+    assert [f for _, f in first] == [
+        {"change": "suppressed", "suppressed_by": "inc_early000"}
+    ]
+    assert suppress.route(500, [early, child], [ENTRY], False, "blind") == []
+    assert child.m["suppressed_by"] == "inc_early000"
+    second = suppress.route(600, [late, child], [ENTRY], False, "blind")
+    assert [f for _, f in second] == [
+        {"change": "suppressed", "suppressed_by": "inc_late0000"}
+    ]
+    assert child.m["freed_at"] is None
+    assert suppress.route(615, [late, child], [ENTRY], False, "blind") == []
+
+
+def test_held_by_upgrade_until_follows_the_window_through_unknown_ticks() -> None:
+    """A true tick inside the window stores its end. Unknown ticks leave that
+    snapshot, and a version flip during them moves UpgradeWatch.end. The
+    incident opens on the first true tick after the window, naming that end."""
+    rule = {
+        "apiVersion": "medic.rules/v1",
+        "kind": "Rule",
+        "id": "ingest.held-past-upgrade",
+        "title": "Vector rule ingest.held-past-upgrade",
+        "revision": 1,
+        "fault": {"class": "ingest", "mode": "I-2", "causes": ["I-2.a"]},
+        "lane": 3,
+        "signals": {
+            "down": {"sample": {"signal": "daemon_status.kafka", "key": "connected"}}
+        },
+        "when": {"fn": "latest", "signal": "down", "op": "==", "value": False},
+        "for": "2m",
+        "advice": {
+            "summary": "Test rule for an evaluation vector.",
+            "fix": "No action: this rule exists only in a test vector.",
+        },
+    }
+    vector = {
+        "start": "2026-10-07T10:00:00Z",
+        "end": "+22m",
+        "rules": [{"inline": rule}],
+        "sensors": [
+            {
+                "id": "http.probe",
+                "covers": ["daemon_status.kafka", "daemon_health"],
+                "interval": "15s",
+                "service": "soc-daemon",
+                "states": [["+0s", "ok"], ["+3m", "error"], ["+21m", "ok"]],
+            },
+            {
+                "id": "http.version",
+                "covers": ["version"],
+                "interval": "15s",
+                "service": "backend",
+                "states": [["+0s", "ok"]],
+            },
+        ],
+        "types": {
+            "daemon_status.kafka": {"connected": "bool"},
+            "version": {"version": "enum"},
+        },
+        "series": [
+            {
+                "signal": "daemon_status.kafka",
+                "key": "connected",
+                "steps": [["+0s", False]],
+            },
+            {
+                "signal": "version",
+                "key": "version",
+                "steps": [["+0s", "1"], ["+15s", "2"], ["+5m", "3"]],
+            },
+        ],
+        "expect": [{"at": "+22m"}],
+        "incidents": {},
+    }
+    [inc] = [
+        i
+        for i in run(vector).incidents().values()
+        if i["rule"] == "ingest.held-past-upgrade"
+    ]
+    # Window opens at +15s (end +15m15s) and a flip at +5m, during unknown, moves
+    # the end to +20m. The stale snapshot is +15m15s.
+    assert inc["opened_at"] == 21 * 60
+    assert inc["held_by_upgrade_until"] == 20 * 60
+
+
 def test_a_freed_child_waits_while_unknown_and_routes_once_true() -> None:
     m = {"incident_id": "inc_child000", "suppressed_by": "inc_parent00"}
     child = _open("pipe.y", P4, m | {"freed_at": 1000}, value=None)

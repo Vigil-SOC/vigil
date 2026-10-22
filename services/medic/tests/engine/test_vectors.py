@@ -146,7 +146,8 @@ SIDE = {"evidence_added", "routed", "suppressed", "unsuppressed"}  # while open
 @pytest.mark.parametrize("path", VECTORS, ids=lambda p: p.stem)
 def test_record_sequences_are_legal(path: Path) -> None:
     """Each incident: opened once, legal transitions (§4, §5), routing facts only
-    while open, routed at most once and never while suppressed (§6), and evidence
+    while open, routed at most once and never while suppressed (§6), a second
+    `suppressed` only to re-point at a different still-open parent, and evidence
     for at most one observation per rule signal (decision-record.md §3, N4).
     Records don't name the rule signal, so that last check is a count."""
     vector = load(path)
@@ -157,6 +158,7 @@ def test_record_sequences_are_legal(path: Path) -> None:
     limit: dict[str, int] = {}
     routed: dict[str, bool] = {}
     suppressed: dict[str, bool] = {}
+    named: dict[str, str] = {}
     for rec in run(vector).records:
         body = rec["body"]
         iid = body["incident_id"]
@@ -186,8 +188,13 @@ def test_record_sequences_are_legal(path: Path) -> None:
         if step == "evidence_added":
             items[iid] += len(body["evidence"])
         elif step == "suppressed":
-            assert not routed[iid] and not suppressed[iid], (iid, step)
+            parent = body["suppressed_by"]
+            assert not routed[iid], (iid, step)
+            if suppressed[iid]:  # still open (SIDE, above) and not yet routed
+                assert parent != named[iid], (iid, parent)  # the same parent twice
+                assert last.get(parent) not in (None, "closed"), (iid, parent)
             suppressed[iid] = True
+            named[iid] = parent
         elif step == "unsuppressed":
             assert suppressed[iid], (iid, step)
             suppressed[iid] = False
