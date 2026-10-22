@@ -12,7 +12,7 @@ off the frozen catalog read. Every shape is read from the engine's own constants
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.llm.chat_layers import changes_for_tool
+from core.llm.chat_layers import _is_destructive_mcp, changes_for_tool
 from core.workflows.playbook_resolver import (
     HUNT_CAPABILITIES,
     INVESTIGATE_CAPABILITIES,
@@ -192,6 +192,10 @@ def _permissions(
                 "asks_you" if changes_for_tool(name) == "asks_first" else "on_its_own"
             ),
         }
+        # The call itself parks. create_approval_action also asks a person, but
+        # it files a queue row rather than being one of these gates.
+        if _is_destructive_mcp(name):
+            row["gated"] = True
         if name in report["unbound"]:
             row["bound"] = False
         elif name in report["bound"]:
@@ -239,7 +243,11 @@ def _checkpoints(
     kind = definition.run_kind
     if not is_hunt_like(kind):
         if kind == COMPOSE_RUN_KIND:
-            return {}, "It pauses only at phases marked approval_required."
+            return (
+                {},
+                "It pauses at a phase marked approval_required, and before "
+                "each direct-action tool call.",
+            )
         return {}, "This workflow never pauses to ask."
     note = None
     try:

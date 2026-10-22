@@ -15,7 +15,7 @@ import { CHECKPOINT_CLASSES, HANDOFF_ROW, LOOP_CAPTION, composeStrip, stripFor, 
 interface Helper { agent: string; name: string; tools: string[]; approval_required: boolean }
 interface RoleLine { name: string; tools: string[] }
 interface Roles { lead: RoleLine | null; helpers: Helper[]; reviewer: RoleLine | null }
-interface Permission { name: string; label?: string; changes: 'asks_you' | 'on_its_own'; bound?: boolean }
+interface Permission { name: string; label?: string; changes: 'asks_you' | 'on_its_own'; bound?: boolean; gated?: boolean }
 interface Budgets { max_iterations?: number; max_turns?: number; max_calls?: number; max_cost_usd?: number; max_wall_ms?: number }
 
 /** GET /workflows/{id}/preflight. A draft has none of it but the phases, so every key may be absent. */
@@ -360,6 +360,15 @@ function Pill({ ask }: { ask: boolean }) {
   )
 }
 
+// A direct-action tool parks on the call itself. asks_you is wider than that:
+// create_approval_action asks a person by filing a queue row, and that call is
+// not one of these gates, so only `gated` rows are listed here.
+function toolStops(pre: Partial<Preflight>, selected: number | null): Permission[] {
+  const phase = selected === null ? null : pre.roles?.helpers?.[selected]
+  const held = phase ? new Set(phase.tools) : null
+  return (pre.permissions ?? []).filter((p) => p.gated === true && (held === null || held.has(p.name)))
+}
+
 function StopsAndCheckpoints({ definition, single, pre, stage, selected, missing }: {
   definition: Definition
   single: boolean
@@ -392,11 +401,17 @@ function StopsAndCheckpoints({ definition, single, pre, stage, selected, missing
       {hasCheckpoints && stage && classes.length === 0 && <Muted>No checkpoint at this stage.</Muted>}
       {compose && phaseStops.map(({ h, i }) => (
         <span key={i} className="flex items-center justify-between gap-2 text-[12px] text-tx-2">
-          Approval required · {h.name}
-          <Pill ask />
+          <span className="min-w-0 break-words">Approval required · {h.name}</span>
+          <span className="shrink-0"><Pill ask /></span>
         </span>
       ))}
-      {compose && pre.roles && phaseStops.length === 0 && <Muted>{selected === null ? 'This definition declares no pause.' : 'No pause at this stage.'}</Muted>}
+      {compose && toolStops(pre, selected).map((p) => (
+        <span key={p.name} className="flex items-center justify-between gap-2 text-[12px] text-tx-2">
+          <span className="min-w-0 break-words">Asks before {p.label ?? p.name}</span>
+          <span className="shrink-0"><Pill ask /></span>
+        </span>
+      ))}
+      {compose && pre.roles && phaseStops.length === 0 && toolStops(pre, selected).length === 0 && <Muted>{selected === null ? 'This definition declares no pause.' : 'No pause at this stage.'}</Muted>}
       {!compose && !hasCheckpoints && pre.checkpoints && <Muted>{pre.checkpoints_note ?? 'This definition declares no pause.'}</Muted>}
       {hasCheckpoints && pre.checkpoints_note && <Muted>{pre.checkpoints_note}</Muted>}
     </Panel>

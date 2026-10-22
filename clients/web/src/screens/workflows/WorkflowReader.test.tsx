@@ -188,6 +188,43 @@ describe('workflow reader pane', () => {
     expect(within(panel('Stops when')).getByText('No pause at this stage.')).toBeInTheDocument()
   })
 
+  it('lists a direct-action tool as a pause, and only on the phase that holds it', async () => {
+    const tool = 'microsoft-defender_mde_isolate'
+    serve({
+      definition: { run_kind: 'compose', hunt_like: false, objectives: [], phases: [] },
+      preflight: {
+        roles: { lead: null, reviewer: null, helpers: [
+          { agent: 'reporter', name: 'Write', tools: ['get_case'], approval_required: false },
+          { agent: 'auto_responder', name: 'Contain', tools: [tool], approval_required: false },
+        ] },
+        roles_note: null, model: null, model_source: null, skills: [], skills_note: 'No phase can read a skill.',
+        permissions: [
+          { name: 'get_case', changes: 'on_its_own' },
+          { name: 'create_approval_action', changes: 'asks_you' },
+          { name: tool, changes: 'asks_you', gated: true },
+        ],
+        permissions_note: null, budgets: { max_calls: 20, max_cost_usd: 5, max_wall_ms: 1_800_000 },
+        checkpoints: {}, checkpoints_note: 'It pauses at a phase marked approval_required, and before each direct-action tool call.',
+      },
+    })
+    renderPane(<WorkflowReaderPane wf={row({ id: 'contain', name: 'Contain' })} {...actions} />)
+    const strip = await screen.findByRole('region', { name: 'How it runs' })
+    const stops = panel('Stops when')
+    expect(within(stops).getByText(`Asks before ${tool}`)).toBeInTheDocument()
+    expect(within(stops).queryByText('Asks before create_approval_action')).toBeNull()
+    expect(within(stops).queryByText('This definition declares no pause.')).toBeNull()
+    expect(within(panel('What it may do on its own')).getByText(tool)).toBeInTheDocument()
+    expect(within(panel('What it may do on its own')).getAllByText('Asks you')).toHaveLength(2)
+
+    fireEvent.click(within(strip).getByRole('button', { name: /Write/ }))
+    expect(within(panel('Stops when')).getByText('No pause at this stage.')).toBeInTheDocument()
+    expect(within(panel('Stops when')).queryByText(`Asks before ${tool}`)).toBeNull()
+
+    fireEvent.click(within(strip).getByRole('button', { name: /Contain/ }))
+    expect(within(panel('Stops when')).getByText(`Asks before ${tool}`)).toBeInTheDocument()
+    expect(within(panel('Stops when')).queryByText('No pause at this stage.')).toBeNull()
+  })
+
   it('shows a single-agent kind as one agent with its instructions and no helper panels', async () => {
     const body = '# Cloud\n\nOne.\n\nTwo.\n\nThree.\n\nFour.\n\nFive.'
     serve({

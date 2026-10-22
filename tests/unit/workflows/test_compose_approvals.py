@@ -1,4 +1,7 @@
-"""Compose approvals: ART execute is gated; incident-response is not (#837)."""
+"""Compose approvals: ART execute and direct-action tools are gated.
+
+Shipped investigate and hunt definitions grant neither, so they stay ungated.
+"""
 
 from __future__ import annotations
 
@@ -76,6 +79,20 @@ def test_compose_phase_that_grants_execute_puts_it_in_approvals(execute_id):
     assert execute_id in ids
     assert "analyze_coverage" in ids
     assert config["approvals"] == [execute_id]
+
+
+def test_a_direct_action_tool_is_gated_and_a_read_of_it_is_not():
+    isolate = "test-edr_isolate_host"
+    status = "test-edr_get_isolation_status"
+    config = _config(
+        [isolate, status, "get_finding", "cf_waf_block_ip"],
+        isolate,
+        status,
+        "cf_waf_block_ip",
+    )
+    assert config["approvals"] == [isolate, "cf_waf_block_ip"]
+    granted = [tool["id"] for tool in config["tools"]]
+    assert status in granted and "get_finding" in granted
 
 
 def test_incident_response_stays_ungated():
