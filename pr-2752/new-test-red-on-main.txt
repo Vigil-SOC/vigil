@@ -1,0 +1,34 @@
+# alert_outcomes on main (pending_approval_case_ids), new test only
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/eb31c140-3ea0-44d0-820f-39608421bea4/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 6 items / 5 deselected / 1 selected
+
+tests/unit/response/test_needs_you.py F                                  [100%]
+
+=================================== FAILURES ===================================
+____________ test_a_finding_on_a_hunt_stopped_at_a_limit_needs_you _____________
+
+capped_finding = None
+
+    def test_a_finding_on_a_hunt_stopped_at_a_limit_needs_you(capped_finding):
+        assert "case-ny-capped" in needs_you_case_ids()
+>       assert finding_states(["ny-capped-finding"]) == {
+            "ny-capped-finding": ("needs_you", "case-ny-capped")
+        }
+E       AssertionError: assert {'ny-capped-f...e-ny-capped')} == {'ny-capped-f...e-ny-capped')}
+E         
+E         Differing items:
+E         {'ny-capped-finding': ('working', 'case-ny-capped')} != {'ny-capped-finding': ('needs_you', 'case-ny-capped')}
+E         Use -v to get more diff
+
+capped_finding = None
+
+tests/unit/response/test_needs_you.py:346: AssertionError
+============================= slowest 10 durations =============================
+=========================== short test summary info ============================
+FAILED tests/unit/response/test_needs_you.py::test_a_finding_on_a_hunt_stopped_at_a_limit_needs_you
+======================= 1 failed, 5 deselected in 2.34s ========================

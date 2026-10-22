@@ -1,0 +1,45 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0 -- /home/gray/Deeptempo/vigil/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/eb31c140-3ea0-44d0-820f-39608421bea4/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 23 items
+
+tests/unit/findings/test_overview.py::test_completion_level_bands PASSED [  4%]
+tests/unit/findings/test_overview.py::test_terminal_states_partition_the_day PASSED [  8%]
+tests/unit/findings/test_overview.py::test_rate_includes_deleted_rows_and_phase_falls_back PASSED [ 13%]
+tests/unit/findings/test_overview.py::test_empty_when_no_source_is_enabled_and_nothing_arrived PASSED [ 17%]
+tests/unit/findings/test_overview.py::test_feed_skips_noise_before_the_limit_and_clear_restores_the_row PASSED [ 21%]
+tests/unit/findings/test_overview.py::test_feed_source_link_and_case_follow_the_existing_resolvers PASSED [ 26%]
+tests/unit/findings/test_overview.py::test_alert_read_matches_the_feed_item_and_reaches_past_the_feed PASSED [ 30%]
+tests/unit/findings/test_overview.py::test_alert_read_404_names_the_id PASSED [ 34%]
+tests/unit/findings/test_overview.py::test_overview_route_marks_unmeasured_nodes PASSED [ 39%]
+tests/unit/findings/test_overview_actions.py::test_mark_then_clear_hides_and_restores_the_feed_row PASSED [ 43%]
+tests/unit/findings/test_overview_actions.py::test_mark_with_a_reason_reads_back_as_an_analyst_dismissal PASSED [ 47%]
+tests/unit/findings/test_overview_actions.py::test_agent_tool_dismisses_as_agent_and_refuses_a_blank_reason PASSED [ 52%]
+tests/unit/findings/test_overview_actions.py::test_second_launch_does_not_insert_another_queued_row PASSED [ 56%]
+tests/unit/findings/test_overview_actions.py::test_missing_finding_is_not_marked_or_launched PASSED [ 60%]
+tests/unit/response/test_needs_you.py::test_needs_you_is_oldest_pending_approvals_only PASSED [ 65%]
+tests/unit/response/test_needs_you.py::test_row_to_pending_stamps_every_time_as_utc PASSED [ 69%]
+tests/unit/response/test_needs_you.py::test_case_id_filter_uses_the_resolved_id PASSED [ 73%]
+tests/unit/response/test_needs_you.py::test_a_hunt_stopped_at_a_limit_needs_a_person PASSED [ 78%]
+tests/unit/response/test_needs_you.py::test_a_finding_on_a_hunt_stopped_at_a_limit_needs_you PASSED [ 82%]
+tests/unit/response/test_needs_you.py::test_a_hypothesis_approval_carries_what_is_being_approved PASSED [ 86%]
+tests/unit/cases/test_get_cases_needs_you.py::test_get_cases_passes_one_needs_you_read_into_the_page PASSED [ 91%]
+tests/unit/cases/test_get_cases_needs_you.py::test_kind_resolves_to_the_workflow_ids_with_that_run_kind PASSED [ 95%]
+tests/unit/cases/test_get_cases_needs_you.py::test_needs_you_param_and_strip_share_the_one_read PASSED [100%]
+
+============================= slowest 10 durations =============================
+0.78s setup    unit/findings/test_overview.py::test_completion_level_bands
+0.20s call     unit/findings/test_overview.py::test_terminal_states_partition_the_day
+0.16s call     unit/findings/test_overview_actions.py::test_mark_then_clear_hides_and_restores_the_feed_row
+0.14s call     unit/findings/test_overview.py::test_alert_read_matches_the_feed_item_and_reaches_past_the_feed
+0.13s call     unit/findings/test_overview.py::test_feed_skips_noise_before_the_limit_and_clear_restores_the_row
+0.07s call     unit/findings/test_overview.py::test_rate_includes_deleted_rows_and_phase_falls_back
+0.07s call     unit/findings/test_overview_actions.py::test_second_launch_does_not_insert_another_queued_row
+0.07s call     unit/findings/test_overview.py::test_feed_source_link_and_case_follow_the_existing_resolvers
+0.06s setup    unit/findings/test_overview_actions.py::test_mark_then_clear_hides_and_restores_the_feed_row
+0.06s call     unit/findings/test_overview_actions.py::test_mark_with_a_reason_reads_back_as_an_analyst_dismissal
+======================== 23 passed, 1 warning in 3.44s =========================
