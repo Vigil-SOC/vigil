@@ -1,0 +1,11 @@
+POST /api/cases/templates/ 200
+PUT /api/cases/templates/t-1 200
+DELETE /api/cases/templates/t-1 200
+POST /api/cases/templates/t-1/create-case 200
+POST /api/cases/templates/ 403 {'detail': 'Permission denied: cases.write required'}
+PUT /api/cases/templates/t-1 403 {'detail': 'Permission denied: cases.write required'}
+DELETE /api/cases/templates/t-1 403 {'detail': 'Permission denied: cases.write required'}
+POST /api/cases/templates/t-1/create-case 403 {'detail': 'Permission denied: cases.write required'}
+GET /api/cases/templates/ 200
+GET /api/cases/templates/t-1 200
+================== 10 passed, 2 warnings in 89.76s (0:01:29) ===================

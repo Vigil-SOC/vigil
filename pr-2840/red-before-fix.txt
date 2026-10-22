@@ -1,0 +1,24 @@
+E       AssertionError: ('POST', '/api/cases/templates/', '{"detail":"Failed to create template"}')
+E       assert 500 == 403
+E        +  where 500 = <Response [500 Internal Server Error]>.status_code
+E       AssertionError: ('PUT', '/api/cases/templates/t-1', '{"detail":"Template not found or update failed"}')
+E       assert 404 == 403
+E        +  where 404 = <Response [404 Not Found]>.status_code
+E       AssertionError: ('DELETE', '/api/cases/templates/t-1', '{"detail":"Template not found"}')
+E       assert 404 == 403
+E        +  where 404 = <Response [404 Not Found]>.status_code
+E       AssertionError: ('POST', '/api/cases/templates/t-1/create-case', '{"detail":"Failed to create case from template"}')
+E       assert 500 == 403
+E        +  where 500 = <Response [500 Internal Server Error]>.status_code
+E       AssertionError: Write routes with no permission guard and not in auth_only_write_routes.txt; add a permission_gate(...) or list them:
+E           - DELETE /api/cases/templates/{template_id}
+E           - POST /api/cases/templates/
+E           - POST /api/cases/templates/{template_id}/create-case
+E           - PUT /api/cases/templates/{template_id}
+E       assert not ({'DELETE /api/auth/mfa', 'DELETE /api/cases/templates/{template_id}', 'DELETE /api/conversations/{conversation_id}', '... /api/findings/{finding_id}/noise', 'DELETE /api/sla-policies/{policy_id}', 'DELETE /api/workflows/runs/{run_id}', ...} - {'DELETE /api/auth/mfa', 'DELETE /api/conversations/{conversation_id}', 'DELETE /api/findings/{finding_id}/noise', 'DE...pi/sla-policies/{policy_id}', 'DELETE /api/workflows/runs/{run_id}', 'PATCH /api/conversations/{conversation_id}', ...})
+FAILED tests/security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases/templates/-body19-cases.write]
+FAILED tests/security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[PUT-/api/cases/templates/t-1-body20-cases.write]
+FAILED tests/security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[DELETE-/api/cases/templates/t-1-None-cases.write]
+FAILED tests/security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases/templates/t-1/create-case-body22-cases.write]
+FAILED tests/security/test_route_permissions.py::test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list
+=========== 5 failed, 63 deselected, 2 warnings in 72.07s (0:01:12) ============

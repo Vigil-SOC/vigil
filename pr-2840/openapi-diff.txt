@@ -1,0 +1,4 @@
+template paths: ['/api/cases/templates/', '/api/cases/templates/{template_id}', '/api/cases/templates/{template_id}/create-case']
+template path specs identical: True
+components identical: True
+paths that differ: ['/api/bifrost/{path}']
