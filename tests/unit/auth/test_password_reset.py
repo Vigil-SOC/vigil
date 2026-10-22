@@ -53,8 +53,6 @@ class TestPasswordReset:
         assert asyncio.run(password_reset.consume_reset_token(token)) is False
 
     def test_redis_outage_is_fail_open(self, monkeypatch):
-        # If Redis raises, we lose single-use enforcement but still honor
-        # the signed TTL — the token is accepted.
         client = AsyncMock()
         client.set = AsyncMock(side_effect=RuntimeError("redis down"))
         monkeypatch.setattr(password_reset, "_redis_client", lambda: client)
@@ -76,8 +74,6 @@ NEW = "glacier-thimble-orchard-73"
 
 
 class _NxRedis:
-    """Honors SET NX, the one Redis behavior single use rests on."""
-
     def __init__(self):
         self.keys = set()
 

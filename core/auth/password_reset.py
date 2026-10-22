@@ -100,10 +100,6 @@ async def consume_reset_token(token: str) -> bool:
             logger.info("Password reset token replay rejected")
             return False
     except Exception as exc:
-        # Fail-open: if Redis is down we lose single-use enforcement
-        # but still honour the signed TTL. A compromised reset email
-        # during an outage could be replayed within the TTL — a
-        # user-facing retry is the mitigation.
         logger.warning(
             "Password reset single-use check failed (%s); allowing by signature only",
             exc,
