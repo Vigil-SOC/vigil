@@ -16,6 +16,9 @@ interface JobBase {
   tenant_id: string | null;
   enqueued_at: string;
   enqueued_by: string;
+  // API-signed name of the person who started the run. Absent for a system run,
+  // and on a resume, which reads it back off the ledger instead.
+  principal?: string;
   // The W3C traceparent of whoever enqueued it, so the run's spans continue that
   // request's trace. Optional: absent when tracing is off, and on any older job.
   traceparent?: string;
