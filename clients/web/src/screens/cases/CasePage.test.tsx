@@ -125,8 +125,15 @@ function investigation(status: string, live: boolean, runId: string) {
   }
 }
 
-function renderCase(id: string) {
-  return render(
+/** React 19 finishes `render` before passive effects and the promises they start. */
+async function paint() {
+  await act(async () => {
+    await Promise.resolve()
+  })
+}
+
+async function renderCase(id: string) {
+  const view = render(
     <MemoryRouter initialEntries={[`/cases?case=${id}`]}>
       <ToastProvider>
         <Routes>
@@ -135,19 +142,29 @@ function renderCase(id: string) {
       </ToastProvider>
     </MemoryRouter>,
   )
+  await paint()
+  return view
 }
 
 /** The case page alone, as the drawer renders it. */
-function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void; seed?: string | null; onSeedConsumed?: () => void } = {}) {
+async function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void; seed?: string | null; onSeedConsumed?: () => void; settle?: boolean } = {}) {
+  const { settle = true, ...rest } = props
   const ui = (caseId: string) => (
     <MemoryRouter>
       <ToastProvider>
-        <CasesDetail id={caseId} onBack={props.onBack ?? vi.fn()} onExpand={props.onExpand} pageKey="cases" seed={props.seed} onSeedConsumed={props.onSeedConsumed} />
+        <CasesDetail id={caseId} onBack={rest.onBack ?? vi.fn()} onExpand={rest.onExpand} pageKey="cases" seed={rest.seed} onSeedConsumed={rest.onSeedConsumed} />
       </ToastProvider>
     </MemoryRouter>
   )
   const view = render(ui(id))
-  return { ...view, showCase: (caseId: string) => view.rerender(ui(caseId)) }
+  if (settle) await paint()
+  return {
+    ...view,
+    showCase: async (caseId: string) => {
+      view.rerender(ui(caseId))
+      await paint()
+    },
+  }
 }
 
 function need(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
@@ -184,7 +201,9 @@ beforeEach(() => {
   testState.recordError = null
   testState.recordRows = []
   testState.convos = []
-  vi.mocked(workflowApi.getRun).mockClear()
+  // a one-shot getRun from a test that ended before its effect ran must not answer the next test
+  vi.mocked(workflowApi.getRun).mockReset()
+  vi.mocked(workflowApi.getRun).mockImplementation((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } } as never))
   vi.mocked(streamFetch).mockClear()
   vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
   vi.mocked(approvalsApi.approve).mockReset()
@@ -207,7 +226,7 @@ describe('case page', () => {
       investigations: [investigation('executing', true, 'run-hunt')],
     }]
     testState.runs['run-hunt'] = { hunt: HUNT }
-    renderCase('case-hunt')
+    await renderCase('case-hunt')
 
     expect(await screen.findByRole('heading', { name: 'Hunt case' })).toBeInTheDocument()
     const header = document.querySelector('.detail-head') as HTMLElement
@@ -282,7 +301,7 @@ describe('case page', () => {
         ],
       },
     }
-    renderCase('case-words')
+    await renderCase('case-words')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim a')).toBeInTheDocument()
     // the design's five words in the board's tones; a ledger status never shows as a word
@@ -325,7 +344,7 @@ describe('case page', () => {
         evidence_count: 2,
       },
     }
-    renderCase('case-note')
+    await renderCase('case-note')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     const note = await screen.findByText(/abandoned: not supported by sensor-attested records\./)
     expect(note).toHaveTextContent('abandoned: not supported by sensor-attested records. · 2 evidence rows')
@@ -346,7 +365,7 @@ describe('case page', () => {
     testState.runs['run-hunt'] = {
       hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
     }
-    renderCase('case-handoff')
+    await renderCase('case-handoff')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim h')).toBeInTheDocument()
     // the hunt is the case's run and comes first on the run filter
@@ -365,7 +384,7 @@ describe('case page', () => {
     testState.runs['run-hunt'] = {
       hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
     }
-    renderCase('case-no-rca')
+    await renderCase('case-no-rca')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim h')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Open run/ })).not.toBeInTheDocument()
@@ -374,7 +393,7 @@ describe('case page', () => {
   it('shows an empty, loading and failed Explanations tab', async () => {
     huntCase('case-empty-expl')
     testState.runs['run-case-empty-expl'] = { hunt: { ...HUNT, hypotheses: [] } }
-    const view = renderCase('case-empty-expl')
+    const view = await renderCase('case-empty-expl')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('No explanations yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Rule one out' })).toBeDisabled()
@@ -382,7 +401,7 @@ describe('case page', () => {
 
     huntCase('case-loading')
     vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
-    const loading = renderCase('case-loading')
+    const loading = await renderCase('case-loading')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
     expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
@@ -390,7 +409,7 @@ describe('case page', () => {
 
     huntCase('case-failed')
     vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
-    renderCase('case-failed')
+    await renderCase('case-failed')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect((await screen.findAllByText('The run could not be read.')).length).toBeGreaterThan(0)
   })
@@ -421,7 +440,7 @@ describe('case page', () => {
         ],
       },
     }
-    renderCase('case-trail')
+    await renderCase('case-trail')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · showing 4 of 7 · 0 support · 2 go against · 5 neither' })).toBeInTheDocument()
@@ -474,7 +493,7 @@ describe('case page', () => {
         ],
       },
     }
-    renderCase('case-origin')
+    await renderCase('case-origin')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
@@ -514,7 +533,7 @@ describe('case page', () => {
         ],
       },
     }
-    renderCase('case-neither')
+    await renderCase('case-neither')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
@@ -549,7 +568,7 @@ describe('case page', () => {
         ],
     }
     testState.runs['run-157'] = { hunt: hunt157 }
-    renderCase('case-157')
+    await renderCase('case-157')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByRole('heading', { name: 'Evidence trail · 157 rows · showing 50 of 157 · 95 support · 3 go against · 59 neither' })).toBeInTheDocument()
@@ -568,7 +587,7 @@ describe('case page', () => {
       evidence_id: `n${i}`, iteration: 9, source_system: 'elastic', summary: `row ${i}`, is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [],
     }))
     testState.runs['run-one'] = { hunt: { ...HUNT, evidence_count: 80, evidence: rows } }
-    renderCase('case-older-fail')
+    await renderCase('case-older-fail')
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     await screen.findByText('row 0')
     const ok = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
@@ -603,7 +622,7 @@ describe('case page', () => {
       investigations: [investigation('executing', true, 'run-err')],
     }]
     vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
-    renderCase('case-err')
+    await renderCase('case-err')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('The run could not be read.')).toBeInTheDocument()
@@ -622,7 +641,7 @@ describe('case page', () => {
       investigations: [investigation('executing', true, 'run-wait')],
     }]
     vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
-    renderCase('case-wait')
+    await renderCase('case-wait')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(screen.getByText('Loading the run…')).toBeInTheDocument()
@@ -641,7 +660,7 @@ describe('case page', () => {
       investigations: [investigation('executing', true, 'run-none')],
     }]
     testState.runs['run-none'] = { hunt: { ...HUNT, evidence: [], evidence_count: 0 } }
-    renderCase('case-none')
+    await renderCase('case-none')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('No evidence yet')).toBeInTheDocument()
@@ -671,7 +690,7 @@ describe('case page', () => {
         cost_usd: 0.1,
       },
     }
-    renderCase('case-inv')
+    await renderCase('case-inv')
 
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('Now · step 2')).toBeInTheDocument()
@@ -690,7 +709,7 @@ describe('case page', () => {
     expect(screen.getByText(/tool down/)).toBeInTheDocument()
   })
 
-  function investigateCase(projection: unknown) {
+  async function investigateCase(projection: unknown) {
     testState.cases = [{
       case_id: 'case-inv',
       title: 'Investigate case',
@@ -702,11 +721,11 @@ describe('case page', () => {
       investigations: [investigation('completed', false, 'run-inv')],
     }]
     testState.runs['run-inv'] = { status: 'completed', projection }
-    renderCase('case-inv')
+    await renderCase('case-inv')
   }
 
   it('shows a kernel investigation\'s record: explanations with their counts, linked rows with their stance', async () => {
-    investigateCase(investigateProjection)
+    await investigateCase(investigateProjection)
 
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     const redTeam = (await screen.findByText('The activity is part of an authorized red-team engagement.')).closest('li') as HTMLElement
@@ -727,7 +746,7 @@ describe('case page', () => {
   })
 
   it('shows a held dismissal as what it was held as, what was asked, and why; its open question as a blind spot', async () => {
-    investigateCase(heldProjection)
+    await investigateCase(heldProjection)
 
     expect(await screen.findByText(/^Asked benign · held as needs review: the review was insufficient: Only the case note/)).toBeInTheDocument()
     expect(screen.getByText(/^Needs review — EDR detected/)).toBeInTheDocument()
@@ -749,7 +768,7 @@ describe('case page', () => {
       combined_state: 'open',
       investigations: [],
     }]
-    renderCase('case-empty')
+    await renderCase('case-empty')
     expect(await screen.findByRole('heading', { name: 'Empty case' })).toBeInTheDocument()
     for (const name of ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record']) {
       expect(screen.getByRole('tab', { name: new RegExp(name) })).toBeInTheDocument()
@@ -768,7 +787,7 @@ describe('case page', () => {
       { id: 'r1', kind: 'run', text: 'started', at: '2026-06-15T09:00:00Z', chained: true },
       { id: 'r2', kind: 'directive', text: 'note', at: '2026-06-15T09:01:00Z', chained: false },
     ]
-    renderCase('case-agents')
+    await renderCase('case-agents')
 
     const table = await screen.findByRole('table', { name: 'Agents' })
     const rows = within(table).getAllByRole('row')
@@ -804,7 +823,7 @@ describe('case page', () => {
       investigations: [{ ...investigation('running', true, 'run-only'), investigation_id: null }],
     }]
     testState.runs['run-only'] = { hunt: null }
-    renderCase('case-run-only')
+    await renderCase('case-run-only')
 
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('The run has started and has not reported yet.')).toBeInTheDocument()
@@ -836,7 +855,7 @@ describe('case page', () => {
         cost_usd: 0.5,
       },
     }
-    renderCase('case-lead')
+    await renderCase('case-lead')
 
     const table = await screen.findByRole('table', { name: 'Agents' })
     const rows = within(table).getAllByRole('row')
@@ -853,7 +872,7 @@ describe('case page', () => {
       { ...openCase('case-slow'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-slow')] },
       { ...openCase('case-bad'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-bad')] },
     ]
-    renderCase('case-none')
+    await renderCase('case-none')
     expect(await screen.findByText('No live investigation.')).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
     expect(screen.queryByText('What it changed')).not.toBeInTheDocument()
@@ -863,13 +882,13 @@ describe('case page', () => {
     cleanup()
 
     vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
-    renderCase('case-slow')
+    await renderCase('case-slow')
     expect(await screen.findAllByText('Loading the run…')).not.toHaveLength(0)
     expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('Loading…')).toHaveLength(3)
     cleanup()
 
     vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
-    renderCase('case-bad')
+    await renderCase('case-bad')
     expect(await screen.findAllByText('The run could not be read.')).not.toHaveLength(0)
     expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('Couldn’t read the run')).toHaveLength(3)
   })
@@ -882,14 +901,14 @@ describe('case page', () => {
       closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', verdict: 'the scanner' },
       investigations: [],
     }]
-    renderCase('case-done')
+    await renderCase('case-done')
     const doors = await screen.findByRole('region', { name: 'Audit doors' })
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
   })
 
   describe('Checked tab', () => {
-    const leadCase = (run: unknown) => {
+    const leadCase = async (run: unknown) => {
       testState.cases = [{
         case_id: 'case-chk',
         title: 'Checked case',
@@ -901,7 +920,7 @@ describe('case page', () => {
         investigations: [investigation('completed', false, 'run-chk')],
       }]
       testState.runs['run-chk'] = run
-      renderCase('case-chk')
+      await renderCase('case-chk')
     }
     const openChecked = async () => {
       await screen.findByRole('heading', { name: 'Checked case' })
@@ -914,7 +933,7 @@ describe('case page', () => {
     it('says the run is loading, not that nothing was asked', async () => {
       testState.cases = [{ ...testState.cases[0], case_id: 'case-chk', title: 'Checked case', finding_ids: [], investigations: [investigation('open', false, 'run-chk')] }]
       vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
-      renderCase('case-chk')
+      await renderCase('case-chk')
       await openChecked()
       expect(await screen.findByText('Loading the run…', { selector: 'h3' })).toBeInTheDocument()
       expect(screen.queryByText('No questions asked yet')).not.toBeInTheDocument()
@@ -923,13 +942,13 @@ describe('case page', () => {
     it('says the run could not be read', async () => {
       testState.cases = [{ case_id: 'case-chk', title: 'Checked case', status: 'open', priority: 'low', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [investigation('open', false, 'run-chk')] }]
       vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
-      renderCase('case-chk')
+      await renderCase('case-chk')
       await openChecked()
       expect(await screen.findByRole('alert')).toHaveTextContent('The run could not be read.')
     })
 
     it('lists the calls only, counts the no-source gaps in the header; "—" when the run has no cost', async () => {
-      leadCase(lead({
+      await leadCase(lead({
         calls: [{ question: 'who logged in', tool: 'okta', result_length: 1240, cost_usd: 0.02, duration_ms: 800 }],
         gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
       }))
@@ -948,7 +967,7 @@ describe('case page', () => {
     })
 
     it('keeps the header when there are gaps but no calls', async () => {
-      leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
+      await leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
       expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.50 · 1 with no source')
@@ -956,7 +975,7 @@ describe('case page', () => {
     })
 
     it('shows the empty state for a ready run with no calls and no gaps', async () => {
-      leadCase(lead({}))
+      await leadCase(lead({}))
       await openChecked()
       expect(await screen.findByText('No questions asked yet')).toBeInTheDocument()
     })
@@ -987,7 +1006,7 @@ describe('case page', () => {
   it('shows the closed line and verdict, and reopens through the status update', async () => {
     closedCase(CLOSURE)
     testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
-    renderCase('case-closed')
+    await renderCase('case-closed')
 
     expect(await screen.findByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
     // the header reason and the Summary read the same line
@@ -1004,7 +1023,7 @@ describe('case page', () => {
   it('drops a missing category and closer kind from the Closed line without stray separators', async () => {
     closedCase({ ...CLOSURE, closure_category: '', closed_by_kind: '' })
     testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
-    renderCase('case-closed')
+    await renderCase('case-closed')
 
     expect(await screen.findAllByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toHaveLength(2)
   })
@@ -1017,7 +1036,7 @@ describe('case page', () => {
     const held = new Promise<void>((resolve) => { release = resolve })
     const row = testState.cases[0]
     vi.mocked(casesApi.getById).mockImplementationOnce((async () => { await held; return { data: row } }) as never)
-    renderCase('case-closed')
+    await renderCase('case-closed')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(screen.getByText('Loading the run…')).toBeInTheDocument()
     expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
@@ -1034,7 +1053,7 @@ describe('case page', () => {
     testState.runs['run-closed'] = {
       hunt: { ...HUNT, evidence: [ev(1, 'supports'), ev(2, 'supports'), ev(3, 'supports'), ev(4, 'weakens'), ev(5, null), ev(6, 'weakens', { is_gap: true })] },
     }
-    renderCase('case-closed')
+    await renderCase('case-closed')
 
     const list = await screen.findByRole('list')
     const rows = within(list).getAllByRole('listitem').map((li) => li.textContent)
@@ -1044,7 +1063,7 @@ describe('case page', () => {
   it('shows a lead fold’s answers with dashes for step and stance', async () => {
     closedCase(CLOSURE)
     testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [{ agent_id: 'triage', answer: 'benign scanner' }], calls: [], gaps: [], recall: null } }
-    renderCase('case-closed')
+    await renderCase('case-closed')
 
     const list = await screen.findByRole('list')
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['—benign scanner—'])
@@ -1053,7 +1072,7 @@ describe('case page', () => {
   it('drops the time without a closed_at and shows a dash for an empty verdict', async () => {
     closedCase({ ...CLOSURE, closed_at: null, verdict: '' })
     testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
-    renderCase('case-closed')
+    await renderCase('case-closed')
 
     expect(await screen.findByRole('heading', { name: '—' })).toBeInTheDocument()
     expect(screen.getAllByText(/^Closed by ada/)).toHaveLength(2)
@@ -1064,7 +1083,7 @@ describe('case page', () => {
   it('says so while the run loads', async () => {
     closedCase(CLOSURE)
     vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
-    renderCase('case-closed')
+    await renderCase('case-closed')
     const closed = await screen.findByRole('region', { name: 'Closed summary' }, { timeout: 5000 })
     expect(within(closed).getByText('Loading the run…')).toBeInTheDocument()
   })
@@ -1072,13 +1091,13 @@ describe('case page', () => {
   it('says so when the run cannot be read', async () => {
     closedCase(CLOSURE)
     vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
-    renderCase('case-closed')
+    await renderCase('case-closed')
     expect(await screen.findByText('The run could not be read.')).toBeInTheDocument()
   })
 
   it('keeps "No findings yet." for a closed case with no run', async () => {
     closedCase(CLOSURE, [])
-    renderCase('case-closed')
+    await renderCase('case-closed')
     await screen.findByRole('heading', { name: 'the scanner' })
     expect(screen.getByText('No findings yet.')).toBeInTheDocument()
   })
@@ -1099,7 +1118,7 @@ describe('case page', () => {
       ],
     }]
     testState.runs['run-links'] = { hunt: HUNT }
-    renderCase('case-links')
+    await renderCase('case-links')
 
     const header = (await screen.findByRole('heading', { name: 'Linked case' })).closest('.detail-head') as HTMLElement
     expect(within(header).getByText('Combined from 3 alerts')).toBeInTheDocument()
@@ -1138,7 +1157,7 @@ describe('case page', () => {
       linked_findings: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ finding_id: id, title: `Alert ${id}`, source_link: null })),
     }]
     testState.runs['run-many'] = { hunt: HUNT }
-    renderCase('case-many')
+    await renderCase('case-many')
 
     const side = await screen.findByRole('complementary', { name: 'Case details' })
     const titles = within(side).getAllByRole('heading').map((h) => h.textContent)
@@ -1163,7 +1182,7 @@ describe('case page', () => {
       combined_state: 'open',
       investigations: [],
     }]
-    renderCase('case-record')
+    await renderCase('case-record')
     fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
     expect(await screen.findByText('the agent layer answered 502')).toBeInTheDocument()
   })
@@ -1176,7 +1195,7 @@ describe('case page', () => {
       { id: 'r4', at: '2026-06-15T10:11:00Z', kind: 'run', source: 'run', chained: true, text: 'Run started' },
     ]
 
-    const openRecord = async (ui: () => ReturnType<typeof renderCase> | ReturnType<typeof renderDetail> = () => renderCase('case-rec')) => {
+    const openRecord = async (ui: () => ReturnType<typeof renderCase> | ReturnType<typeof renderDetail> = async () => renderCase('case-rec')) => {
       testState.cases = [{
         case_id: 'case-rec',
         title: 'Record case',
@@ -1188,7 +1207,7 @@ describe('case page', () => {
         investigations: [investigation('executing', true, 'run/1')],
       }]
       testState.runs['run/1'] = { hunt: HUNT }
-      ui()
+      await ui()
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
     }
 
@@ -1234,7 +1253,7 @@ describe('case page', () => {
       }]
       testState.runs['run/1'] = { hunt: HUNT }
       testState.runs['root-run'] = { hunt: HUNT }
-      renderCase('case-rec')
+      await renderCase('case-rec')
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
       const row = async (text: string) => (await screen.findByText(text, { exact: false })).closest('.rec-row')
       expect(await row('Hunt started')).toHaveTextContent('Incident response · started 09:58')
@@ -1264,7 +1283,7 @@ describe('case page', () => {
     it('Replay links to the run on Workflows, and closes the drawer', async () => {
       testState.recordRows = rows
       const onBack = vi.fn()
-      await openRecord(() => renderDetail('case-rec', { onBack, onExpand: vi.fn() }))
+      await openRecord(async () => renderDetail('case-rec', { onBack, onExpand: vi.fn() }))
       const link = await screen.findByRole('link', { name: 'Replay' })
       expect(link).toHaveAttribute('href', '/workflows?run=run%2F1')
       fireEvent.click(link)
@@ -1283,7 +1302,7 @@ describe('case page', () => {
         combined_state: 'open',
         investigations: [],
       }]
-      renderCase('case-rec')
+      await renderCase('case-rec')
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
       await screen.findByText('Lead started step 7')
       expect(screen.queryByRole('link', { name: 'Replay' })).not.toBeInTheDocument()
@@ -1333,7 +1352,7 @@ describe('case page', () => {
     })
     it('disables Export audit, with an ⓘ saying why, when the run has no investigation id', async () => {
       testState.recordRows = rows
-      await openRecord(() => {
+      await openRecord(async () => {
         const [row] = testState.cases as unknown as { investigations: unknown[] }[]
         row.investigations = row.investigations.map((item) => ({ ...(item as object), investigation_id: null }))
         return renderCase('case-rec')
@@ -1360,7 +1379,7 @@ describe('case page', () => {
       combined_state: 'open',
       investigations: [],
     }]
-    renderCase('case-hunt')
+    await renderCase('case-hunt')
     expect(await screen.findByText('Private to you · Ask only')).toBeInTheDocument()
     expect(document.querySelector('.case-ask')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Tell' }))
@@ -1392,7 +1411,7 @@ describe('case page', () => {
       chained: true,
       text: 'because the login failed',
     }]
-    renderCase('case-hunt')
+    await renderCase('case-hunt')
     const header = (await screen.findByRole('heading', { name: 'Hunt case' })).closest('.detail-head') as HTMLElement
     expect(within(header).getByText('Executing')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Record/ }))
@@ -1420,7 +1439,7 @@ describe('case page', () => {
       investigations: [],
     }]
     const onSeedConsumed = vi.fn()
-    renderDetail('case-hunt', { seed: 'what happened on web-01?', onSeedConsumed })
+    await renderDetail('case-hunt', { seed: 'what happened on web-01?', onSeedConsumed })
     await waitFor(() => expect(streamFetch).toHaveBeenCalled())
     const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
     expect(body.case_id).toBe('case-hunt')
@@ -1440,7 +1459,7 @@ describe('case page', () => {
       investigations,
     }]
     testState.cases = twoRuns([investigation('completed', false, 'run-a')])
-    const { unmount } = renderDetail('case-runs')
+    const { unmount } = await renderDetail('case-runs')
     expect(await screen.findByRole('heading', { name: 'Findings so far' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Where do the runs disagree?' })).not.toBeInTheDocument()
     unmount()
@@ -1449,7 +1468,7 @@ describe('case page', () => {
       investigation('completed', false, 'run-a'),
       { ...investigation('completed', false, 'run-b'), investigation_id: 'inv-2', primary: false },
     ])
-    renderDetail('case-runs')
+    await renderDetail('case-runs')
     fireEvent.click(await screen.findByRole('button', { name: 'Where do the runs disagree?' }))
     await waitFor(() => expect(streamFetch).toHaveBeenCalled())
     const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
@@ -1485,7 +1504,7 @@ describe('case page', () => {
       case_id: 'case-hunt',
       messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not, and h1 is ruled out.' }],
     }]
-    const { showCase } = renderDetail('case-hunt')
+    const { showCase } = await renderDetail('case-hunt')
 
     // the chip names the step and source the row came from (#2285), where the answer wrote the id and nowhere else (#2565)
     const chips = await screen.findAllByRole('button', { name: 'step 2 · elastic' })
@@ -1504,7 +1523,7 @@ describe('case page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'explanation · The host is owned' }))
     expect(screen.getByRole('tab', { name: /^Explanations/ })).toHaveAttribute('aria-selected', 'true')
 
-    showCase('case-next')
+    await showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText(/ghost-9 does not/)).not.toBeInTheDocument())
   })
@@ -1528,7 +1547,7 @@ describe('case page', () => {
   it('shows a reversible and an irreversible ask with their own controls', async () => {
     testState.cases = [decCase]
     queue(need(), irreversible())
-    renderCase('case-dec')
+    await renderCase('case-dec')
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
     const body = document.querySelector('.detail-body') as HTMLElement
@@ -1548,7 +1567,7 @@ describe('case page', () => {
     testState.cases = [decCase]
     queue(need())
     vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
-    renderCase('case-dec')
+    await renderCase('case-dec')
     await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
     const changed = vi.fn()
     window.addEventListener(CASES_CHANGED, changed)
@@ -1580,7 +1599,7 @@ describe('case page', () => {
   it('Approve is the accent primary, not the destructive outline, and shows the undo toast at once', async () => {
     testState.cases = [decCase]
     queue(need())
-    renderCase('case-dec')
+    await renderCase('case-dec')
     await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
     const approve = screen.getByRole('button', { name: 'Approve' })
     expect(approve).toHaveClass('btn', 'primary')
@@ -1593,7 +1612,7 @@ describe('case page', () => {
   it('Undo sends nothing and brings the block back', async () => {
     testState.cases = [decCase]
     queue(need())
-    renderCase('case-dec')
+    await renderCase('case-dec')
     await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
 
     vi.useFakeTimers()
@@ -1613,7 +1632,7 @@ describe('case page', () => {
     testState.cases = [decCase]
     queue(need({ source_id: 'act-no', title: 'Disable account' }))
     vi.mocked(approvalsApi.reject).mockResolvedValue({} as never)
-    renderCase('case-dec')
+    await renderCase('case-dec')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
     const submit = screen.getByRole('button', { name: 'Confirm reject' })
@@ -1641,7 +1660,7 @@ describe('case page', () => {
     testState.cases = [decCase]
     queue(irreversible())
     vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
-    renderCase('case-dec')
+    await renderCase('case-dec')
     const hold = await screen.findByRole('button', { name: /Press and hold to confirm/ })
 
     vi.useFakeTimers()
@@ -1673,7 +1692,7 @@ describe('case page', () => {
       testState.cases = [decCase]
       queue(need())
       vi.mocked(approvalsApi.approve).mockReturnValue(new Promise(() => {}) as never)
-      renderCase('case-dec')
+      await renderCase('case-dec')
       await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
 
       fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
@@ -1692,7 +1711,7 @@ describe('case page', () => {
     testState.cases = [decCase]
     queue(need())
     vi.mocked(approvalsApi.approve).mockRejectedValue({ response: { data: { detail: 'already decided' } } })
-    renderCase('case-dec')
+    await renderCase('case-dec')
     await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
     const changed = vi.fn()
     window.addEventListener(CASES_CHANGED, changed)
@@ -1749,7 +1768,7 @@ describe('case page', () => {
       vi.mocked(approvalsApi.needsYou).mockResolvedValue({
         data: { count: 3, items: [need({ reason: '', kind: 'checkpoint' }), need({ source_id: 'a2', title: 'Two', kind: 'checkpoint', created_at: '2026-06-15T05:00:00Z' }), need({ source_id: 'a3', title: 'Three', kind: 'checkpoint', created_at: 'garbage' })] },
       } as never)
-      renderCase('case-dec')
+      await renderCase('case-dec')
       expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
       expect(screen.getByText('Needs your decision · waiting 12 min')).toBeInTheDocument()
       expect(screen.getByText('Needs your decision · waiting 4 h')).toBeInTheDocument()
@@ -1768,7 +1787,7 @@ describe('case page', () => {
     )
     queue(...proposals, need({ source_id: 'cp', kind: 'checkpoint', title: 'Proceed to containment?' }))
     vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
-    renderCase('case-dec')
+    await renderCase('case-dec')
 
     expect(await screen.findByRole('heading', { name: 'Proceed to containment?' })).toBeInTheDocument()
     expect(document.querySelectorAll('.case-needs article')).toHaveLength(1)
@@ -1797,7 +1816,7 @@ describe('case page', () => {
   it('names how many proposals wait when no run is paused', async () => {
     testState.cases = [decCase]
     queue(need(), need({ source_id: 'a2', title: 'Isolate WS-1' }), need({ source_id: 'a3', title: 'Disable bob' }))
-    renderCase('case-dec')
+    await renderCase('case-dec')
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'More proposed actions · 2' })).toBeInTheDocument()
@@ -1809,14 +1828,14 @@ describe('case page', () => {
   it('shows the error and renders nothing without items', async () => {
     testState.cases = [{ case_id: 'case-dec', title: 'Decision case', status: 'open', priority: 'high', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [] }]
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
-    const { unmount } = renderCase('case-dec')
+    const { unmount } = await renderCase('case-dec')
     expect(await screen.findByRole('heading', { name: 'Decision case' })).toBeInTheDocument()
     expect(document.querySelector('.case-needs')).toBeNull()
     unmount()
 
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ reversibility: 'irreversible' })] } } as never)
     vi.mocked(approvalsApi.approve).mockRejectedValueOnce({ response: { data: { detail: 'Already decided' } } })
-    renderCase('case-dec')
+    await renderCase('case-dec')
     const hold = await screen.findByRole('button', { name: /Press and hold to confirm/ })
     fireEvent.pointerDown(hold)
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already decided'), { timeout: 3000 })
@@ -1837,7 +1856,7 @@ describe('case page', () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({
       data: { count: 1, items: [need({ title: 'Quarantine mailbox', case_id: 'case-closed' })] },
     } as never)
-    renderCase('case-closed')
+    await renderCase('case-closed')
 
     expect(await screen.findByRole('heading', { name: 'Quarantine mailbox' })).toBeInTheDocument()
     const body = document.querySelector('.detail-body') as HTMLElement
@@ -1861,7 +1880,7 @@ describe('case page', () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({
       data: { count: 1, items: [need()] },
     } as never)
-    renderCase('case-dec')
+    await renderCase('case-dec')
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
@@ -1886,7 +1905,7 @@ describe('case page', () => {
 
     it('shows the loading state, then the breadcrumb and title', async () => {
       testState.cases = [open('case-9')]
-      renderDetail('case-9')
+      await renderDetail('case-9', { settle: false })
       expect(screen.getByText('Loading case…')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
       expect(await screen.findByRole('heading', { name: 'Frame case' })).toBeInTheDocument()
@@ -1897,7 +1916,7 @@ describe('case page', () => {
     it('shows a failed read with the crumb and no menu', async () => {
       testState.getByIdError = true
       const onBack = vi.fn()
-      renderDetail('case-9', { onBack })
+      await renderDetail('case-9', { onBack })
       expect(await screen.findByText(/Couldn’t load this case: backend down/)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Cases' }))
@@ -1913,7 +1932,7 @@ describe('case page', () => {
         investigations: [investigation('executing', true, 'run-hunt')],
       }]
       testState.runs['run-hunt'] = { hunt: HUNT }
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
       expect(within(head).getByText('High')).toBeInTheDocument()
       expect(within(head).getByText('Executing')).toHaveClass('state-pill', 'live')
@@ -1930,7 +1949,7 @@ describe('case page', () => {
     it('falls back to the workflow id when the catalog does not answer', async () => {
       vi.mocked(workflowApi.listAll).mockRejectedValueOnce(new Error('down'))
       testState.cases = [{ ...open('case-9'), investigations: [investigation('open', false, 'run-x')] }]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
       expect(await within(head).findByText('incident-response')).toBeInTheDocument()
     })
@@ -1938,7 +1957,7 @@ describe('case page', () => {
     it('leaves the workflow slot out of the header for a case with no run or SLA', async () => {
       vi.mocked(casesApi.getSLA).mockResolvedValueOnce({ data: null } as never)
       testState.cases = [open('case-9')]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
       expect(within(head).queryByText('No workflow')).not.toBeInTheDocument()
       expect(within(head).getByText(/Resolve by —/)).toBeInTheDocument()
@@ -1949,7 +1968,7 @@ describe('case page', () => {
     it('shows Needs you with the ask on the pill, and the strip off Summary only', async () => {
       testState.cases = [{ ...open('case-9'), combined_state: 'executing' }]
       vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ case_id: 'case-9' })] } } as never)
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
       expect(await within(head).findByText('Needs you')).toHaveClass('state-pill', 'needs')
       expect(within(head).getByText('Block 1.2.3.4')).toHaveClass('case-reason')
@@ -1966,7 +1985,7 @@ describe('case page', () => {
       testState.cases = [open('case-9')]
       const onBack = vi.fn()
       const onExpand = vi.fn()
-      const { unmount } = renderDetail('case-9', { onBack, onExpand })
+      const { unmount } = await renderDetail('case-9', { onBack, onExpand })
       await screen.findByRole('heading', { name: 'Frame case' })
       fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
       fireEvent.click(screen.getByRole('button', { name: 'Close' }))
@@ -1977,7 +1996,7 @@ describe('case page', () => {
       unmount()
 
       const onBackPage = vi.fn()
-      renderDetail('case-9', { onBack: onBackPage })
+      await renderDetail('case-9', { onBack: onBackPage })
       await screen.findByRole('heading', { name: 'Frame case' })
       expect(screen.queryByRole('button', { name: 'Expand' })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Close' }))
@@ -1987,7 +2006,7 @@ describe('case page', () => {
     it('full page: Escape calls onBack, unless a menu is open, the key was handled, or a field has focus', async () => {
       testState.cases = [open('case-9')]
       const onBack = vi.fn()
-      renderDetail('case-9', { onBack })
+      await renderDetail('case-9', { onBack })
       await screen.findByRole('heading', { name: 'Frame case' })
       fireEvent.keyDown(document.body, { key: 'Escape' })
       expect(onBack).toHaveBeenCalledTimes(1)
@@ -2007,7 +2026,7 @@ describe('case page', () => {
     it('full page: a closed dialog that stays mounted (the Ask Vigil dock) does not stop Escape; an open one does', async () => {
       testState.cases = [open('case-9')]
       const onBack = vi.fn()
-      renderDetail('case-9', { onBack })
+      await renderDetail('case-9', { onBack })
       await screen.findByRole('heading', { name: 'Frame case' })
       const dock = document.createElement('aside')
       dock.setAttribute('role', 'dialog')
@@ -2024,7 +2043,7 @@ describe('case page', () => {
 
     it('opens Edit and Merge from the ⋯ menu; Merge loads its own picker', async () => {
       testState.cases = [open('case-9'), { ...open('case-10'), title: 'Other case' }]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       await screen.findByRole('heading', { name: 'Frame case' })
       const menu = screen.getByRole('button', { name: 'Case actions' })
       expect(menu).toHaveAttribute('aria-haspopup', 'menu')
@@ -2046,7 +2065,7 @@ describe('case page', () => {
 
     it('shows a failed merge picker with Retry', async () => {
       testState.cases = [open('case-9')]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       await screen.findByRole('heading', { name: 'Frame case' })
       vi.mocked(casesApi.getAll).mockRejectedValueOnce(new Error('list down'))
       fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
@@ -2059,7 +2078,7 @@ describe('case page', () => {
     it('gates Delete on cases.delete and confirms before deleting', async () => {
       testState.cases = [open('case-9')]
       testState.canDelete = false
-      const { unmount } = renderDetail('case-9')
+      const { unmount } = await renderDetail('case-9')
       await screen.findByRole('heading', { name: 'Frame case' })
       fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
       expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
@@ -2068,7 +2087,7 @@ describe('case page', () => {
 
       testState.canDelete = true
       const onBack = vi.fn()
-      renderDetail('case-9', { onBack })
+      await renderDetail('case-9', { onBack })
       await screen.findByRole('heading', { name: 'Frame case' })
       fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
       fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }))
@@ -2082,7 +2101,7 @@ describe('case page', () => {
 
     it('closes the menu on outside click and on Escape', async () => {
       testState.cases = [open('case-9')]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       await screen.findByRole('heading', { name: 'Frame case' })
       fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
       expect(screen.getByRole('menu')).toBeInTheDocument()
@@ -2133,7 +2152,7 @@ describe('case page', () => {
           },
         },
       }
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const panel = await side()
       expect(await panel.findByText('Incident response')).toBeInTheDocument()
       expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.00')
@@ -2152,7 +2171,7 @@ describe('case page', () => {
 
     it('clamps an overspent bar and reads Poor', async () => {
       testState.cases = [withBudget(3, 2, 'critical')]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const panel = await side()
       const meter = await panel.findByRole('meter')
       expect(meter).toHaveAttribute('aria-valuenow', '100')
@@ -2162,7 +2181,7 @@ describe('case page', () => {
 
     it('shows Not measured, no bar and no Good for no run or a zero limit', async () => {
       testState.cases = [base()]
-      const { unmount } = renderDetail('case-9')
+      const { unmount } = await renderDetail('case-9')
       let panel = await side()
       expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
       expect(panel.queryByRole('meter')).not.toBeInTheDocument()
@@ -2170,7 +2189,7 @@ describe('case page', () => {
       unmount()
 
       testState.cases = [withBudget(0, 0, 'healthy')]
-      renderDetail('case-9')
+      await renderDetail('case-9')
       panel = await side()
       expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
       expect(panel.queryByRole('meter')).not.toBeInTheDocument()
@@ -2180,12 +2199,12 @@ describe('case page', () => {
     it('keeps the two empty recall copies', async () => {
       testState.cases = [withBudget(1, 2, 'healthy')]
       testState.runs['run-x'] = { hunt: HUNT }
-      const { unmount } = renderDetail('case-9')
+      const { unmount } = await renderDetail('case-9')
       expect(await (await side()).findByText('The run did not journal a recall.')).toBeInTheDocument()
       unmount()
 
       testState.runs['run-x'] = { hunt: { ...HUNT, recall: { unavailable: 'memory down' } } }
-      renderDetail('case-9')
+      await renderDetail('case-9')
       expect(await (await side()).findByText('Recall did not happen: memory down')).toBeInTheDocument()
     })
 
@@ -2194,7 +2213,7 @@ describe('case page', () => {
       let resolve: (v: unknown) => void = () => undefined
       vi.mocked(casesApi.getComments).mockReturnValueOnce(new Promise((r) => { resolve = r }) as never)
       vi.mocked(casesApi.getTasks).mockResolvedValueOnce({ data: { tasks: [{ task_id: 1, title: 'Isolate host', status: 'pending', priority: 'high' }] } } as never)
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const panel = await side()
       const toggle = await panel.findByRole('button', { name: /^People/ })
       expect(toggle).toHaveTextContent('People · ada lovelace')
@@ -2223,7 +2242,7 @@ describe('case page', () => {
     it('says comments are unavailable on a failed read, and posting reloads them', async () => {
       testState.cases = [base({ assignee: null })]
       vi.mocked(casesApi.getComments).mockRejectedValueOnce(new Error('down'))
-      renderDetail('case-9')
+      await renderDetail('case-9')
       const panel = await side()
       const toggle = await panel.findByRole('button', { name: /^People/ })
       await waitFor(() => expect(toggle).toHaveTextContent('People · unassigned, comments unavailable'))
@@ -2248,7 +2267,7 @@ describe('Memory and blind spots tab', () => {
     gaps: [{ ...prov('hunt', 'hunt-3'), hypothesis_id: 'h3', statement: 'MFA push logs never checked', disposition: 'no_evidence_gathered' }],
   }
 
-  function open(id: string, run: unknown) {
+  async function open(id: string, run: unknown) {
     testState.cases = [{
       case_id: id,
       title: 'Memory case',
@@ -2260,13 +2279,13 @@ describe('Memory and blind spots tab', () => {
       investigations: [investigation('executing', true, `run-${id}`)],
     }]
     testState.runs[`run-${id}`] = run
-    renderCase(id)
+    await renderCase(id)
   }
 
   const memoryTab = () => screen.findByRole('tab', { name: /Memory/ })
 
   it('shows recalled rows with provenance, merged blind spots, and counts the rows', async () => {
-    open('m-hunt', { hunt: { ...HUNT, recall, calls: [...HUNT.calls, { question: 'what is 10.0.0.7', tool: 'recall_entity', result_length: 340, cost_usd: 0 }], evidence: [{ ...HUNT.evidence[0], is_gap: true, gap_detail: 'no proxy logs' }] } })
+    await open('m-hunt', { hunt: { ...HUNT, recall, calls: [...HUNT.calls, { question: 'what is 10.0.0.7', tool: 'recall_entity', result_length: 340, cost_usd: 0 }], evidence: [{ ...HUNT.evidence[0], is_gap: true, gap_detail: 'no proxy logs' }] } })
     fireEvent.click(await memoryTab())
     const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
     // sighting + verdict + recall_entity call + declared gap + visibility gap
@@ -2292,7 +2311,7 @@ describe('Memory and blind spots tab', () => {
   })
 
   it('reads a lead run: recall and visibility gaps', async () => {
-    open('m-lead', {
+    await open('m-lead', {
       projection: {
         iterations: 1, decisions: [], findings: [], calls: [], recall,
         gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
@@ -2304,7 +2323,7 @@ describe('Memory and blind spots tab', () => {
   })
 
   it('keeps Withdraw and Record a blind spot disabled as Later', async () => {
-    open('m-later', { hunt: { ...HUNT, recall } })
+    await open('m-later', { hunt: { ...HUNT, recall } })
     fireEvent.click(await memoryTab())
     const withdraw = await screen.findByRole('button', { name: 'Withdraw' })
     const record = screen.getByRole('button', { name: 'Record a blind spot' })
@@ -2316,28 +2335,28 @@ describe('Memory and blind spots tab', () => {
   })
 
   it('tells an unavailable recall from an empty one and from none journaled', async () => {
-    open('m-un', { hunt: { ...HUNT, recall: { unavailable: 'memory store down', keys: ['m.kaur'] } } })
+    await open('m-un', { hunt: { ...HUNT, recall: { unavailable: 'memory store down', keys: ['m.kaur'] } } })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('Recall did not happen: memory store down (m.kaur)')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('0')
   })
 
   it('says so when the recall found no entities', async () => {
-    open('m-none', { hunt: { ...HUNT, recall: { keys: [], sightings: [], verdicts: [], gaps: [] } } })
+    await open('m-none', { hunt: { ...HUNT, recall: { keys: [], sightings: [], verdicts: [], gaps: [] } } })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('No entities recalled.')).toBeInTheDocument()
     expect(screen.getByText('None recorded.')).toBeInTheDocument()
   })
 
   it('says when the run journaled no opening recall but asked mid-run', async () => {
-    open('m-mid', { hunt: { ...HUNT, calls: [{ question: 'who is m.kaur', tool: 'recall_entity', result_length: 9, cost_usd: 0 }] } })
+    await open('m-mid', { hunt: { ...HUNT, calls: [{ question: 'who is m.kaur', tool: 'recall_entity', result_length: 9, cost_usd: 0 }] } })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('The run did not journal an opening recall.')).toBeInTheDocument()
     expect(screen.getByText('who is m.kaur')).toBeInTheDocument()
   })
 
   it('is empty with no recall and no gaps, and keeps the tab', async () => {
-    open('m-empty', { hunt: { ...HUNT, evidence: [] } })
+    await open('m-empty', { hunt: { ...HUNT, evidence: [] } })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('No memory recorded')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('0')
@@ -2345,14 +2364,14 @@ describe('Memory and blind spots tab', () => {
 
   it('shows loading, then an error when the run cannot be read', async () => {
     vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
-    open('m-load', { hunt: HUNT })
+    await open('m-load', { hunt: HUNT })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
   })
 
   it('reports an unreadable run', async () => {
     vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
-    open('m-err', { hunt: HUNT })
+    await open('m-err', { hunt: HUNT })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('The run could not be read')).toBeInTheDocument()
   })
@@ -2421,7 +2440,7 @@ describe('a case with several runs', () => {
 
   it('lists the case as one: its runs on a filter, the primary first, and the honest line only when no run keeps a record', async () => {
     threeRuns('case-three')
-    renderCase('case-three')
+    await renderCase('case-three')
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     const others = screen.getByRole('region', { name: 'Other runs on this case' })
@@ -2462,7 +2481,7 @@ describe('a case with several runs', () => {
 
     it('names the origin, counts the proof, shows the first and last links and links the run', async () => {
       withChain('case-how', chain(5))
-      renderCase('case-how')
+      await renderCase('case-how')
       const card = await screen.findByRole('region', { name: 'How it started' })
       expect(await within(card).findByText('5 events · 3 proven')).toBeInTheDocument()
       expect(within(card).getAllByText('event 0')).toHaveLength(2)
@@ -2474,7 +2493,7 @@ describe('a case with several runs', () => {
 
     it('shows every row of a two-step chain and no Show all', async () => {
       withChain('case-how2', chain(2), 2)
-      renderCase('case-how2')
+      await renderCase('case-how2')
       const card = await screen.findByRole('region', { name: 'How it started' })
       expect(within(card).getAllByRole('listitem')).toHaveLength(2)
       expect(within(card).queryByText(/Show all/)).not.toBeInTheDocument()
@@ -2482,12 +2501,12 @@ describe('a case with several runs', () => {
 
     it('is absent with no root-cause run or no steps', async () => {
       twoRuns('case-how-none')
-      renderCase('case-how-none')
+      await renderCase('case-how-none')
       await screen.findByRole('region', { name: 'Other runs on this case' })
       expect(screen.queryByRole('region', { name: 'How it started' })).not.toBeInTheDocument()
       cleanup()
       withChain('case-how-empty', [], 0)
-      renderCase('case-how-empty')
+      await renderCase('case-how-empty')
       await waitFor(() => expect(screen.getByRole('region', { name: 'Other runs on this case' })).toHaveTextContent('Concluded'))
       expect(screen.queryByRole('region', { name: 'How it started' })).not.toBeInTheDocument()
     })
@@ -2497,7 +2516,7 @@ describe('a case with several runs', () => {
       const read = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
       vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => (runId === 'run-rca' ? Promise.reject(new Error('down')) : read(runId)))
       onTestFinished(() => void vi.mocked(workflowApi.getRun).mockImplementation(read))
-      renderCase('case-how-err')
+      await renderCase('case-how-err')
       const card = await screen.findByRole('region', { name: 'How it started' })
       expect(card).toHaveTextContent('The run could not be read.')
     })
@@ -2515,14 +2534,14 @@ describe('a case with several runs', () => {
     it('names the accounts under the chain, in projection order, on the open and closed moods', async () => {
       withChain('case-how-acct', chain(5))
       ;(testState.runs['run-rca'] as { projection: object }).projection = { ...ROOT_CAUSE, steps: chain(5), proven: 3, account: { accounts: ACCOUNTS, disposition: 'True Positive: the report sentence' } }
-      renderCase('case-how-acct')
+      await renderCase('case-how-acct')
       let card = await screen.findByRole('region', { name: 'How it started' })
       await waitFor(() => expect(accountLines(card)).toEqual(LINES))
       expect(card.querySelector('.how-accounts li')).toHaveAttribute('title', LINES[0])
       expect(card).not.toHaveTextContent('the report sentence')
       cleanup()
       testState.cases = [{ ...testState.cases[0], status: 'closed', combined_state: 'closed', closure: { closed_by: 'ada', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' } }]
-      renderCase('case-how-acct')
+      await renderCase('case-how-acct')
       expect(await screen.findByRole('region', { name: 'Closed summary' })).toBeInTheDocument()
       card = await screen.findByRole('region', { name: 'How it started' })
       await waitFor(() => expect(accountLines(card)).toEqual(LINES))
@@ -2532,7 +2551,7 @@ describe('a case with several runs', () => {
       for (const account of [undefined, { accounts: [] }, null, { accounts: 'x' }]) {
         withChain('case-how-noacct', chain(5))
         ;(testState.runs['run-rca'] as { projection: object }).projection = { ...ROOT_CAUSE, steps: chain(5), proven: 3, account }
-        renderCase('case-how-noacct')
+        await renderCase('case-how-noacct')
         const card = await screen.findByRole('region', { name: 'How it started' })
         expect(await within(card).findByText('5 events · 3 proven')).toBeInTheDocument()
         expect(card.querySelector('.how-accounts')).toBeNull()
@@ -2544,7 +2563,7 @@ describe('a case with several runs', () => {
       withChain('case-how-two', chain(3))
       ;(testState.cases[0] as { investigations: unknown[] }).investigations.push(ref('root-cause-analysis', 'run-rca-old', '2026-06-15T08:00:00Z'))
       testState.runs['run-rca-old'] = { status: 'completed', projection: { ...ROOT_CAUSE, run_id: 'run-rca-old', steps: chain(3), account: { accounts: ACCOUNTS } } }
-      renderCase('case-how-two')
+      await renderCase('case-how-two')
       const card = await screen.findByRole('region', { name: 'How it started' })
       await waitFor(() => expect(screen.getByRole('region', { name: 'Other runs on this case' })).toHaveTextContent('Concluded'))
       expect(within(card).getByRole('link', { name: 'Show all 3' })).toHaveAttribute('href', '/workflows?run=run-rca')
@@ -2555,7 +2574,7 @@ describe('a case with several runs', () => {
     it('shows on the closed mood too', async () => {
       withChain('case-how-closed', chain(5))
       testState.cases = [{ ...testState.cases[0], status: 'closed', combined_state: 'closed', closure: { closed_by: 'ada', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' } }]
-      renderCase('case-how-closed')
+      await renderCase('case-how-closed')
       expect(await screen.findByRole('region', { name: 'Closed summary' })).toBeInTheDocument()
       expect(await screen.findByRole('link', { name: 'Show all 5' })).toBeInTheDocument()
     })
@@ -2569,7 +2588,7 @@ describe('a case with several runs', () => {
     )
     // a failed assertion used to leave the reject in place for the next test
     onTestFinished(() => void vi.mocked(workflowApi.getRun).mockImplementation((runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)))
-    renderCase('case-broken')
+    await renderCase('case-broken')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     // the tag is on screen while the run is still loading; the error replaces that line
     await waitFor(() => {
@@ -2582,7 +2601,7 @@ describe('a case with several runs', () => {
 
   it('shows one Explanations list across runs, each row tagged, by standing word then newest run', async () => {
     twoRuns('case-merged')
-    renderCase('case-merged')
+    await renderCase('case-merged')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('claim h3')).toBeInTheDocument()
     await waitFor(() => expect(document.querySelectorAll('.case-expl-rows li')).toHaveLength(4))
@@ -2601,7 +2620,7 @@ describe('a case with several runs', () => {
 
   it('narrows the four tabs to one run on the filter and leaves the tab counts alone', async () => {
     twoRuns('case-filter')
-    renderCase('case-filter')
+    await renderCase('case-filter')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     await waitFor(() => expect(document.querySelectorAll('.case-expl-rows li')).toHaveLength(4))
     const counts = () => tabs.map((name) => screen.getByRole('tab', { name: new RegExp(`^${name}`) }).textContent)
@@ -2624,7 +2643,7 @@ describe('a case with several runs', () => {
 
   it('merges a gap row from the hunt and a row from the investigation into one Evidence table, newest first', async () => {
     twoRuns('case-evidence')
-    renderCase('case-evidence')
+    await renderCase('case-evidence')
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('the investigation’s transfer row')).toBeInTheDocument()
     await waitFor(() => expect(document.querySelectorAll('.ev-row')).toHaveLength(3))
@@ -2647,7 +2666,7 @@ describe('a case with several runs', () => {
     testState.runs['run-hunt'] = { status: 'completed', hunt: { ...(testState.runs['run-hunt'] as { hunt: object }).hunt, evidence: many, evidence_count: 60 } }
     const inv = testState.runs['run-inv'] as { projection: { evidence: unknown[] } }
     inv.projection.evidence.push(evidence('e-older', 'an older investigation row', '2026-06-15T08:00:00Z'))
-    renderCase('case-older')
+    await renderCase('case-older')
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('row 48')).toBeInTheDocument()
     expect(screen.queryByText('row 49')).not.toBeInTheDocument()
@@ -2677,7 +2696,7 @@ describe('a case with several runs', () => {
   it('says how many runs are unpriced beside the total, on the Checked door and header, never as $0', async () => {
     threeRuns('case-unpriced')
     testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
-    renderCase('case-unpriced')
+    await renderCase('case-unpriced')
     const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
     await waitFor(() => expect(door).toHaveTextContent('$0.60 · 1 run unpriced'))
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
@@ -2690,7 +2709,7 @@ describe('a case with several runs', () => {
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
       runId === 'run-inv' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
     )
-    renderCase('case-unread')
+    await renderCase('case-unread')
     const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
     await waitFor(() => expect(door).toHaveTextContent('$0.60 · 1 run unpriced'))
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
@@ -2704,7 +2723,7 @@ describe('a case with several runs', () => {
     testState.runs['run-inv'] = { status: 'completed', projection: { findings: [{ agent_id: 'triage', answer: 'benign login' }] } }
     testState.runs['run-rca'] = { status: 'completed', projection: { ...ROOT_CAUSE, cost_usd: null } }
     testState.runs['run-hunt'] = { status: 'running', hunt: { ...HUNT, status: 'running', cost_usd: null } }
-    renderCase('case-none-priced')
+    await renderCase('case-none-priced')
     const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
     await waitFor(() => expect(door).toHaveTextContent('3 runs unpriced'))
     expect(door).not.toHaveTextContent('$')
@@ -2712,7 +2731,7 @@ describe('a case with several runs', () => {
 
   it('adds no unpriced note when every run is priced', async () => {
     threeRuns('case-all-priced')
-    renderCase('case-all-priced')
+    await renderCase('case-all-priced')
     const door = within(await screen.findByRole('region', { name: 'Audit doors' })).getByRole('button', { name: /^Checked/ })
     await waitFor(() => expect(door).toHaveTextContent('$0.70'))
     expect(door).not.toHaveTextContent('unpriced')
@@ -2726,7 +2745,7 @@ describe('a case with several runs', () => {
     twoRuns('case-older-fail-many')
     const many = Array.from({ length: 50 }, (_, i) => evidence(`n${i}`, `row ${i}`, new Date(Date.UTC(2026, 5, 15, 9, 0, 0) - i * 1000).toISOString()))
     testState.runs['run-hunt'] = { status: 'completed', hunt: { ...(testState.runs['run-hunt'] as { hunt: object }).hunt, evidence: many, evidence_count: 60 } }
-    renderCase('case-older-fail-many')
+    await renderCase('case-older-fail-many')
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('row 48')).toBeInTheDocument()
     const ok = (runId: string) => Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never)
@@ -2759,7 +2778,7 @@ describe('a case with several runs', () => {
       projection: { ...(testState.runs['run-inv'] as { projection: object }).projection, calls: [{ ref: 'c9', question: 'read the proxy', tool: 'proxy_query', result_length: 4, cost_usd: 0.02, iteration: 1 }] },
     }
     vi.mocked(workflowApi.getCall).mockResolvedValue({ data: { ref: 'c9', tool: 'proxy_query', arguments: '{}', result: 'ok', ok: true } } as never)
-    renderCase('case-checked')
+    await renderCase('case-checked')
     fireEvent.click(await screen.findByRole('tab', { name: /Checked/ }))
     expect(await screen.findByText(/What Vigil checked · 2 queries/)).toBeInTheDocument()
     expect(document.querySelectorAll('.case-checked')).toHaveLength(1)
@@ -2773,7 +2792,7 @@ describe('a case with several runs', () => {
   it('shows no run tag, filter or other runs on a case with one run', async () => {
     testState.cases = [{ ...openCase('case-one'), investigations: [investigation('executing', true, 'run-one')] }]
     testState.runs['run-one'] = { status: 'running', hunt: { ...HUNT, status: 'running' } }
-    renderCase('case-one')
+    await renderCase('case-one')
     expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Other runs on this case' })).not.toBeInTheDocument()
     for (const name of [/Explanations/, /^Evidence/, /Checked/, /Memory and blind spots/]) {
@@ -2794,14 +2813,14 @@ describe('the case verdict', () => {
     status: 'completed',
     projection: { disposition, outcome: 'concluded', findings: [{ agent_id: 'agent', answer: { summary: 'the account', disposition, next_steps: nextSteps } }], cost_usd: 0.1 },
   })
-  const openWith = (id: string, investigations: unknown[], runs: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+  const openWith = async (id: string, investigations: unknown[], runs: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
     testState.cases = [{ ...openCase(id), combined_state: 'open', investigations, ...extra }]
     Object.assign(testState.runs, runs)
-    renderCase(id)
+    await renderCase(id)
   }
 
   it('reads needs review, naming the older hunt, when a newer rerun dismisses what it found', async () => {
-    openWith('case-rerun', [ref('run-old', '2026-06-15T09:00:00Z', true), ref('run-new', '2026-06-15T10:00:00Z', false)], { 'run-old': hunt('malicious'), 'run-new': hunt('benign') })
+    await openWith('case-rerun', [ref('run-old', '2026-06-15T09:00:00Z', true), ref('run-new', '2026-06-15T10:00:00Z', false)], { 'run-old': hunt('malicious'), 'run-new': hunt('benign') })
     const verdict = await screen.findByRole('region', { name: 'Case verdict' })
     expect(verdict).toHaveTextContent('Needs review')
     expect(verdict).toHaveTextContent(/^Runs sayNeeds reviewthreat-hunt · started 09:00 says malicious\.$/)
@@ -2810,7 +2829,7 @@ describe('the case verdict', () => {
 
   it('holds back every verdict while a run is still loading', async () => {
     vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
-    openWith('case-loading', [ref('run-a', '2026-06-15T09:00:00Z', true), ref('run-b', '2026-06-15T10:00:00Z', false)], { 'run-a': hunt('benign'), 'run-b': hunt('benign') })
+    await openWith('case-loading', [ref('run-a', '2026-06-15T09:00:00Z', true), ref('run-b', '2026-06-15T10:00:00Z', false)], { 'run-a': hunt('benign'), 'run-b': hunt('benign') })
     await screen.findByRole('region', { name: 'Other runs on this case' })
     expect(screen.queryByRole('region', { name: 'Case verdict' })).not.toBeInTheDocument()
   })
@@ -2819,7 +2838,7 @@ describe('the case verdict', () => {
     vi.mocked(workflowApi.getRun).mockImplementation((runId: string) =>
       runId === 'run-bad' ? Promise.reject(new Error('down')) : Promise.resolve({ data: { run_id: runId, ...(testState.runs[runId] as object) } } as never),
     )
-    openWith('case-unread', [ref('run-ok', '2026-06-15T10:00:00Z', true), ref('run-bad', '2026-06-15T09:00:00Z', false)], { 'run-ok': hunt('benign') })
+    await openWith('case-unread', [ref('run-ok', '2026-06-15T10:00:00Z', true), ref('run-bad', '2026-06-15T09:00:00Z', false)], { 'run-ok': hunt('benign') })
     const verdict = await screen.findByRole('region', { name: 'Case verdict' })
     expect(verdict).toHaveTextContent('Needs review')
     expect(verdict).toHaveTextContent('threat-hunt · started 09:00 could not be read.')
@@ -2827,27 +2846,27 @@ describe('the case verdict', () => {
   })
 
   it('shows the lone run’s word with no basis, and Do now for an investigation but not a hunt', async () => {
-    openWith('case-one-inv', [ref('run-one', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-one': lead('suspicious', ['Isolate the host']) })
+    await openWith('case-one-inv', [ref('run-one', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-one': lead('suspicious', ['Isolate the host']) })
     const verdict = await screen.findByRole('region', { name: 'Case verdict' })
     expect(verdict).toHaveTextContent('Suspicious')
     expect(within(verdict).getByText('Do now')).toBeInTheDocument()
     expect(within(verdict).getByText('Isolate the host')).toBeInTheDocument()
     cleanup()
-    openWith('case-one-hunt', [ref('run-h', '2026-06-15T09:00:00Z', true)], { 'run-h': hunt('suspicious') })
+    await openWith('case-one-hunt', [ref('run-h', '2026-06-15T09:00:00Z', true)], { 'run-h': hunt('suspicious') })
     const hunted = await screen.findByRole('region', { name: 'Case verdict' })
     expect(hunted).toHaveTextContent('Suspicious')
     expect(within(hunted).queryByText('Do now')).not.toBeInTheDocument()
   })
 
   it('adds nothing when no run says a word', async () => {
-    openWith('case-silent', [ref('run-s', '2026-06-15T09:00:00Z', true)], { 'run-s': hunt(null) })
+    await openWith('case-silent', [ref('run-s', '2026-06-15T09:00:00Z', true)], { 'run-s': hunt(null) })
     await screen.findByText(/Open case/)
     await waitFor(() => expect(vi.mocked(workflowApi.getRun).mock.calls.some(([id]) => id === 'run-s')).toBe(true))
     expect(screen.queryByRole('region', { name: 'Case verdict' })).not.toBeInTheDocument()
   })
 
   it('flags a false-positive closure over a malicious run, under the closure line', async () => {
-    openWith('case-flag', [ref('run-m', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-m': lead('malicious', ['Contain the host']) }, {
+    await openWith('case-flag', [ref('run-m', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-m': lead('malicious', ['Contain the host']) }, {
       status: 'closed',
       combined_state: 'closed',
       closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
@@ -2858,7 +2877,7 @@ describe('the case verdict', () => {
   })
 
   it('does not flag a closure the runs agree with', async () => {
-    openWith('case-agree', [ref('run-b', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-b': lead('benign') }, {
+    await openWith('case-agree', [ref('run-b', '2026-06-15T09:00:00Z', true, 'incident-response')], { 'run-b': lead('benign') }, {
       status: 'closed',
       combined_state: 'closed',
       closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
@@ -2871,11 +2890,11 @@ describe('the case verdict', () => {
   it('lets a benign investigation stand over an inconclusive hunt, open and closed as false positive', async () => {
     const refs = [ref('run-h', '2026-06-15T09:00:00Z', true), ref('run-i', '2026-06-15T10:00:00Z', false, 'incident-response')]
     const runs = { 'run-h': hunt('inconclusive'), 'run-i': lead('benign') }
-    openWith('case-handoff', refs, runs)
+    await openWith('case-handoff', refs, runs)
     const verdict = await screen.findByRole('region', { name: 'Case verdict' })
     expect(verdict).toHaveTextContent(/^Runs sayBenign$/)
     cleanup()
-    openWith('case-handoff-closed', refs, runs, {
+    await openWith('case-handoff-closed', refs, runs, {
       status: 'closed',
       combined_state: 'closed',
       closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: '2026-06-15T15:48:00Z', verdict: 'the scanner' },
@@ -2888,10 +2907,10 @@ describe('the case verdict', () => {
 
 describe('following a live run', () => {
   const live = (over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'running' }, ...over })
-  const open = (id: string, run: unknown, state = 'executing') => {
+  const open = async (id: string, run: unknown, state = 'executing') => {
     testState.cases = [{ ...openCase(id), combined_state: state, investigations: [investigation(state, true, `run-${id}`)] }]
     testState.runs[`run-${id}`] = run
-    renderCase(id)
+    await renderCase(id)
   }
   const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
 
@@ -2899,7 +2918,7 @@ describe('following a live run', () => {
   afterEach(() => vi.useRealTimers())
 
   it('re-reads the run, case and record while live, and stops once it parks', async () => {
-    open('case-live', live())
+    await open('case-live', live())
     expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
     const reads = () => vi.mocked(workflowApi.getRun).mock.calls.length
     const first = reads()
@@ -2937,14 +2956,14 @@ describe('following a live run', () => {
 
   it('lets Needs you win over a stopped run', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ case_id: 'case-need' })] } } as never)
-    open('case-need', live({ status: 'failed', error: 'boom' }), 'waiting_approval')
+    await open('case-need', live({ status: 'failed', error: 'boom' }), 'waiting_approval')
     expect((await screen.findAllByText('Needs you'))[0]).toBeInTheDocument()
     expect(document.querySelector('.state-pill')).toHaveTextContent('Needs you')
     expect(screen.queryByRole('region', { name: 'Run state' })).not.toBeInTheDocument()
   })
 
   it('says handed off in Findings so far, as a word beside the explanation rather than a list bullet', async () => {
-    open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
+    await open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
     const row = (await screen.findByText('Still forming')).closest('li') as HTMLElement
     expect(row.closest('ul')).toHaveClass('case-findings')
     expect(within(row).getByText('Proven')).toHaveClass('case-expl-pill')
@@ -2954,7 +2973,7 @@ describe('following a live run', () => {
 
 describe('watching a run, its cost and its agents', () => {
   const hunt = (over: Record<string, unknown> = {}) => ({ ...HUNT, status: 'active', ...over })
-  const open = (id: string, run: unknown, ref: Record<string, unknown> = {}, props: Parameters<typeof renderDetail>[1] = {}) => {
+  const open = async (id: string, run: unknown, ref: Record<string, unknown> = {}, props: Parameters<typeof renderDetail>[1] = {}) => {
     testState.cases = [{ ...openCase(id), combined_state: 'executing', investigations: [{ ...investigation('executing', true, `run-${id}`), cost_usd: 0, max_cost_usd: 0, ...ref }] }]
     testState.runs[`run-${id}`] = run
     return renderDetail(id, props)
@@ -2963,27 +2982,27 @@ describe('watching a run, its cost and its agents', () => {
 
   it('links the Now card and the stopped card to Watch a run, and closes the drawer', async () => {
     const onBack = vi.fn()
-    open('case-w', { status: 'running', hunt: hunt() }, {}, { onBack, onExpand: vi.fn() })
+    await open('case-w', { status: 'running', hunt: hunt() }, {}, { onBack, onExpand: vi.fn() })
     const link = await within(await screen.findByRole('region', { name: 'Now' })).findByRole('link', { name: 'Watch it run' })
     expect(link).toHaveAttribute('href', '/workflows?run=run-case-w')
     fireEvent.click(link)
     expect(onBack).toHaveBeenCalled()
     cleanup()
 
-    open('case-w2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
+    await open('case-w2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
     const stopped = await screen.findByRole('region', { name: 'Run state' })
     expect(within(stopped).getByRole('link', { name: 'Watch it run' })).toHaveAttribute('href', '/workflows?run=run-case-w2')
   })
 
   it('offers no Watch link without a run', async () => {
     testState.cases = [openCase('case-none')]
-    renderDetail('case-none')
+    await renderDetail('case-none')
     await screen.findByText('No live investigation.')
     expect(screen.queryByRole('link', { name: 'Watch it run' })).not.toBeInTheDocument()
   })
 
   it('shows a hunt’s live cost against the cap off the run, and keeps it once parked', async () => {
-    open('case-c', { status: 'running', hunt: hunt({ cost_usd: 1.4989, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
+    await open('case-c', { status: 'running', hunt: hunt({ cost_usd: 1.4989, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
     const panel = await side()
     expect(await panel.findByText('$1.50 of $5.00')).toBeInTheDocument()
     expect(panel.getByText('Good')).toBeInTheDocument()
@@ -2993,21 +3012,21 @@ describe('watching a run, its cost and its agents', () => {
     expect(within(document.querySelector('.dh-meta') as HTMLElement).getByText(/Not measured yet/)).toBeInTheDocument()
     cleanup()
 
-    open('case-c2', { status: 'running', hunt: hunt({ status: 'parked', cost_usd: 4.8, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
+    await open('case-c2', { status: 'running', hunt: hunt({ status: 'parked', cost_usd: 4.8, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
     const parked = await side()
     expect(await parked.findByText('$4.80 of $5.00')).toBeInTheDocument()
     expect(parked.getByText('Poor')).toBeInTheDocument()
   })
 
   it('shows the cost alone when no cap is known, and Not measured only when no cost is', async () => {
-    open('case-c3', { status: 'running', hunt: hunt({ cost_usd: 0.4 }) })
+    await open('case-c3', { status: 'running', hunt: hunt({ cost_usd: 0.4 }) })
     const panel = await side()
     expect(await panel.findByText('$0.40')).toBeInTheDocument()
     expect(panel.queryByRole('meter')).not.toBeInTheDocument()
     expect(panel.queryByText('Good')).not.toBeInTheDocument()
     cleanup()
 
-    open('case-c4', { status: 'running', hunt: hunt({ cost_usd: 0 }) })
+    await open('case-c4', { status: 'running', hunt: hunt({ cost_usd: 0 }) })
     expect(await (await side()).findByText('Not measured yet')).toBeInTheDocument()
   })
 
@@ -3016,43 +3035,43 @@ describe('watching a run, its cost and its agents', () => {
       status: 'completed',
       projection: { iterations: 2, decisions: [], findings: [], calls: [], gaps: [], recall: null, outcome: 'completed', reason: 'done', cost_usd: cost, max_cost_usd: cap },
     })
-    open('case-l1', lead(2.1, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
+    await open('case-l1', lead(2.1, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
     const panel = await side()
     expect(await panel.findByText('$2.10 of $15.00')).toBeInTheDocument()
     expect(panel.getByText('Good')).toBeInTheDocument()
     expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$15.00')
     cleanup()
 
-    open('case-l2', lead(20, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 20 })
+    await open('case-l2', lead(20, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 20 })
     const over = await side()
     expect(await over.findByText('$20.00 of $15.00')).toBeInTheDocument()
     expect(over.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
     cleanup()
 
-    open('case-l3', lead(2.1, 0), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
+    await open('case-l3', lead(2.1, 0), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
     const none = await side()
     expect(await none.findByText('$2.10')).toBeInTheDocument()
     expect(none.queryByRole('meter')).not.toBeInTheDocument()
   })
 
   it('lists agents only while the run is in flight', async () => {
-    open('case-a', { status: 'running', hunt: hunt() })
+    await open('case-a', { status: 'running', hunt: hunt() })
     const table = await screen.findByRole('table', { name: 'Agents' })
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     cleanup()
 
-    open('case-a2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
+    await open('case-a2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
     await screen.findByRole('region', { name: 'Run state' })
     expect(screen.queryByRole('table', { name: 'Agents' })).not.toBeInTheDocument()
     cleanup()
 
-    open('case-a3', { status: 'completed', hunt: hunt({ outcome: 'completed' }) })
+    await open('case-a3', { status: 'completed', hunt: hunt({ outcome: 'completed' }) })
     await waitFor(() => expect(screen.getByText('No live investigation.')).toBeInTheDocument())
     expect(screen.queryByRole('table', { name: 'Agents' })).not.toBeInTheDocument()
   })
 
   it('says a lead’s decision in plain words in the Now card, the title line and the agent rows', async () => {
-    open('case-words', {
+    await open('case-words', {
       status: 'running',
       hunt: hunt({ moves: [
         { query_intent: '', action: 'ABANDON', worker_agent_id: 'lead', iteration: 2, created_at: '2026-06-15T09:10:00Z' },
@@ -3070,10 +3089,10 @@ describe('watching a run, its cost and its agents', () => {
 
 describe('a kernel hunt on its case', () => {
   const run = (hunt: Record<string, unknown>, over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'active', ...hunt }, ...over })
-  const open = (id: string, body: unknown, state = 'executing') => {
+  const open = async (id: string, body: unknown, state = 'executing') => {
     testState.cases = [{ ...openCase(id), combined_state: state, investigations: [investigation(state, state === 'executing', `run-${id}`)] }]
     testState.runs[`run-${id}`] = body
-    renderCase(id)
+    await renderCase(id)
   }
   let queued: NeedsYouItem[] = []
   const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
@@ -3103,7 +3122,7 @@ describe('a kernel hunt on its case', () => {
 
   it('names every explanation it asks you to approve, the benign one labelled, and counts as the Explanations tab does', async () => {
     queued = [served()]
-    open('case-gate', gated(), 'waiting_approval')
+    await open('case-gate', gated(), 'waiting_approval')
     const block = (await screen.findByRole('heading', { name: GATE.question })).closest('article') as HTMLElement
     const listed = within(block).getByRole('list', { name: 'What you are approving' })
     const rows = within(listed).getAllByRole('listitem')
@@ -3117,7 +3136,7 @@ describe('a kernel hunt on its case', () => {
   })
 
   it('shows the decision with its Approve the moment the run waits, before the approvals queue has served it', async () => {
-    open('case-gate', gated(), 'waiting_approval')
+    await open('case-gate', gated(), 'waiting_approval')
     const block = (await screen.findByRole('heading', { name: GATE.question })).closest('article') as HTMLElement
     expect(within(block).getByRole('button', { name: 'Approve' })).toBeEnabled()
     expect(within(block).getAllByRole('listitem')).toHaveLength(2)
@@ -3134,7 +3153,7 @@ describe('a kernel hunt on its case', () => {
   it('says approved at once after Approve and never flips back to waiting while the run catches up', async () => {
     queued = [served()]
     vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
-    open('case-gate', gated(), 'waiting_approval')
+    await open('case-gate', gated(), 'waiting_approval')
     await screen.findByRole('heading', { name: GATE.question })
 
     vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -3168,7 +3187,7 @@ describe('a kernel hunt on its case', () => {
 
   it('offers Keep going on a hunt parked at its limit, sends the run page\'s extend, and counts it as needing you', async () => {
     queued = [need({ kind: 'parked', source_id: 'run-case-cap', run_id: 'run-case-cap', title: 'Keep the hunt going?', reason: 'Ran out of turns: iteration 48 of 48, having spent $0.1200 of $15.00', created_at: '', case_id: 'case-cap' })]
-    open('case-cap', PARKED, 'open')
+    await open('case-cap', PARKED, 'open')
     const block = (await screen.findByRole('heading', { name: 'Keep the hunt going?' })).closest('article') as HTMLElement
     expect(document.querySelector('.state-pill')).toHaveTextContent('Needs you')
     expect(block).toHaveTextContent('Ran out of turns: iteration 48 of 48')
@@ -3179,21 +3198,21 @@ describe('a kernel hunt on its case', () => {
   })
 
   it('offers Keep going on the paused card too, before the queue has listed the parked hunt', async () => {
-    open('case-cap2', PARKED, 'open')
+    await open('case-cap2', PARKED, 'open')
     const state = await screen.findByRole('region', { name: 'Run state' })
     expect(state).toHaveTextContent('Ran out of turns')
     expect(within(state).getByRole('group', { name: 'Keep going' })).toBeInTheDocument()
   })
 
   it('offers nothing new on a run that ended for good', async () => {
-    open('case-done', run({ status: 'terminal', outcome: 'completed', reason: 'concluded' }, { status: 'completed' }), 'open')
+    await open('case-done', run({ status: 'terminal', outcome: 'completed', reason: 'concluded' }, { status: 'completed' }), 'open')
     expect(await screen.findByRole('region', { name: 'Run outcome' })).toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Keep going' })).not.toBeInTheDocument()
   })
 
   it('ends the Now card with the run: one outcome off the verdicts, the prose behind the ⓘ, the open question as a decision', async () => {
     const prose = 'Accurate standing: h-1 should be reported as inconclusive, not proven, pending the host.'
-    open('case-ended', run({
+    await open('case-ended', run({
       status: 'terminal',
       outcome: 'completed',
       reason: `the agent stopped before the hunt could conclude (refused: open question q-fd133cef scores 8, at or above the priority floor of 5: Which host carries dl-005?): ${prose}`,
@@ -3225,7 +3244,7 @@ describe('a kernel hunt on its case', () => {
     testState.recordRows = [
       { id: 'activity:0', at: '2026-06-15T10:00:00Z', kind: 'agent_run_root_cause_not_started', source: 'case_activities', chained: false, text: 'Root cause was not started: it needs a SIEM.' },
     ]
-    open('case-handed', run({
+    await open('case-handed', run({
       status: 'terminal',
       outcome: 'completed',
       reason: 'concluded',
@@ -3242,13 +3261,13 @@ describe('a kernel hunt on its case', () => {
   })
 
   it('shows no root-cause line when the record has none', async () => {
-    open('case-no-line', run({ status: 'terminal', outcome: 'completed', reason: 'concluded' }, { status: 'completed' }), 'open')
+    await open('case-no-line', run({ status: 'terminal', outcome: 'completed', reason: 'concluded' }, { status: 'completed' }), 'open')
     expect(await screen.findByRole('region', { name: 'Run outcome' })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Root cause' })).not.toBeInTheDocument()
   })
 
   it('names the hunt lead as the agent on the case and shows the move in words', async () => {
-    open('case-words2', run({
+    await open('case-words2', run({
       moves: [{ decision_id: 'r9', query_intent: 'Searched alerts for HTTPS beaconing', action: 'QUERY', worker_agent_id: 'Hunt lead', iteration: 3, created_at: '2026-06-15T09:14:00Z' }],
     }))
     const now = await screen.findByRole('region', { name: 'Now' })
@@ -3259,7 +3278,7 @@ describe('a kernel hunt on its case', () => {
   })
 
   it('says not recorded for a cost the run never priced, and shows a sub-cent turn to the digit', async () => {
-    open('case-costs', run({
+    await open('case-costs', run({
       calls: [
         { question: 'q', tool: 'search_findings', result_length: 10, cost_usd: null, duration_ms: 8, iteration: 1 },
         { question: 'q', tool: 'lookup_indicators', result_length: 10, cost_usd: 0.0015, iteration: 2 },
@@ -3275,7 +3294,7 @@ describe('a kernel hunt on its case', () => {
   })
 
   it('says "Coming in a later release" on every drawn but not live control, never the internal wording', async () => {
-    open('case-later', run({ evidence: [...HUNT.evidence, { evidence_id: 'g1', iteration: 1, source_system: 'deployment', summary: 'no telemetry search', is_gap: true, gap_detail: null, source_tier: null, bears_on: [] }] }))
+    await open('case-later', run({ evidence: [...HUNT.evidence, { evidence_id: 'g1', iteration: 1, source_system: 'deployment', summary: 'no telemetry search', is_gap: true, gap_detail: null, source_tier: null, bears_on: [] }] }))
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     for (const name of ['+ Add an explanation', 'Rule one out']) {
       expect(await screen.findByRole('button', { name })).toHaveAttribute('title', 'Coming in a later release')
