@@ -26,6 +26,9 @@ def test_every_redact_awk_family_has_a_case() -> None:
         "token_shape",
         "flag",
         "contextual_token",
+        "cookie",
+        "redis_auth",
+        "variable_reference",
     }
 
 
