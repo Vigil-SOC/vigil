@@ -1,0 +1,201 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1516cb13-d161-4b3d-8794-91884ffeba18/clients/web
+
+stderr | src/screens/home/HomeScreen.test.tsx > Home command chips > offers the live commands, and a click fills that command so its preview opens
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ❯ src/screens/home/HomeScreen.test.tsx (36 tests | 1 failed) 22632ms
+     × offers the live commands, and a click fills that command so its preview opens 1511ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/home/HomeScreen.test.tsx > Home command chips > offers the live commands, and a click fills that command so its preview opens
+TestingLibraryElementError: Unable to find an element with the text: ·. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+<body>
+  <div>
+    <div
+      class="home-screen"
+    >
+      <div
+        class="home-page"
+      >
+        <div
+          class="home-top"
+        >
+          <div
+            class="home-chips"
+          >
+            <button
+              class="home-chip"
+              type="button"
+            >
+              /investigate
+            </button>
+            <button
+              class="home-chip"
+              type="button"
+            >
+              /hunt
+            </button>
+            <button
+              class="home-chip"
+              type="button"
+            >
+              /replay
+            </button>
+            <button
+              class="home-chip"
+              type="button"
+            >
+              /ask
+            </button>
+            <button
+              class="home-chip"
+              type="button"
+            >
+              /ticket
+            </button>
+          </div>
+        </div>
+        <section
+          aria-label="Setup"
+          id="home-setup"
+        >
+          <div
+            class="home-head"
+          >
+            <div
+              class="home-head-title"
+            >
+              <h2>
+                Get more from Vigil
+              </h2>
+              <span
+                class="home-sub"
+              >
+                Fixed order · most impact first
+              </span>
+              <span
+                class="info-tip"
+              >
+                <button
+                  aria-expanded="false"
+                  aria-label="How Get more from Vigil is calculated"
+                  type="button"
+                >
+                  <svg
+                    fill="none"
+                    height="14"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.8"
+                    viewBox="0 0 24 24"
+                    width="14"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="9"
+                    />
+                    <path
+                      d="M12 11v5"
+                    />
+                    <path
+                      d="M12 8h.01"
+                    />
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <a
+              href="/settings?section=integrations"
+            >
+              Browse integrations →
+            </a>
+          </div>
+        </section>
+        <section
+          aria-label="Needs your attention"
+        >
+          <div
+            class="home-head"
+          >
+            <div
+              class="home-head-title"
+            >
+              <h2>
+                Needs your attention
+              </h2>
+              <span
+                class="info-tip"
+              >
+                <button
+                  aria-expanded="false"
+                  aria-label="How Needs your attention is calculated"
+                  type="button"
+                >
+                  <svg
+                    fill="none"
+                    height="14"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.8"
+                    viewBox="0 0 24 24"
+                    width="14"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="9"
+                    />
+                    <path
+                      d="M12 11v5"
+                    />
+                    <path
+                      d="M12 8h.01"
+                    />
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <a
+              href="/cases"
+            >
+              Cases →
+            </a>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div
+      aria-atomic="false"
+      aria-live="polite"
+      class="toast-viewport"
+    />
+  </div>
+</body>
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/screens/home/HomeScreen.test.tsx:110:19
+    108|     fireEvent.click(screen.getByRole('button', { name: '/investigate' …
+    109|     expect(fillCommand).toHaveBeenLastCalledWith('/investigate ')
+    110|     expect(screen.getByText('·')).toBeInTheDocument()
+       |                   ^
+    111|     expect(screen.getByText(/50% of alerts picked up automatically tod…
+    112|     expect(homeCss).toMatch(/\.home-chips \{[^}]*flex-wrap: wrap/)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 35 passed (36)
+   Start at  22:52:55
+   Duration  47.98s (transform 6.36s, setup 5.90s, import 5.64s, tests 22.63s, environment 9.37s)
+

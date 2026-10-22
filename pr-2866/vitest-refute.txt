@@ -1,0 +1,6 @@
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+Expected element to have text content:
+  Source Setup stepsCalculation
+Received:
+  Source Setup steps (B8)Calculation Fixed order; done steps and steps hidden with Not now are left outLimit None
+      Tests  1 failed | 35 skipped (36)
