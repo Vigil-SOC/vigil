@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0 -- /home/gray/Deeptempo/vigil/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/9413e77f-5e5c-4548-973c-a867ed654b1e/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 37 items
+
+tests/unit/auth/test_mfa_key_change.py::test_undecryptable_secret_is_reported_not_treated_as_plaintext PASSED [  2%]
+tests/unit/auth/test_mfa_key_change.py::test_undecryptable_secret_logs_once_per_interval PASSED [  5%]
+tests/unit/auth/test_mfa_key_change.py::test_enable_mfa_and_qr_uri_fail_cleanly_on_undecryptable_secret PASSED [  8%]
+tests/unit/auth/test_mfa_key_change.py::test_recovery_code_still_works_after_key_change_and_is_consumed PASSED [ 10%]
+tests/unit/auth/test_mfa_key_change.py::test_legacy_plaintext_secret_still_verifies PASSED [ 13%]
+tests/unit/auth/test_mfa_key_change.py::test_encrypted_secret_round_trips_under_the_same_key PASSED [ 16%]
+tests/unit/auth/test_mfa_management.py::test_setup_then_verify_enables_mfa_and_returns_codes PASSED [ 18%]
+tests/unit/auth/test_mfa_management.py::test_setup_while_enabled_is_409_and_changes_nothing PASSED [ 21%]
+tests/unit/auth/test_mfa_management.py::test_disable_with_wrong_code_is_refused_and_leaves_mfa_on PASSED [ 24%]
+tests/unit/auth/test_mfa_management.py::test_disable_with_totp_clears_secret_and_recovery_codes PASSED [ 27%]
+tests/unit/auth/test_mfa_management.py::test_disable_with_recovery_code_clears_the_rest PASSED [ 29%]
+tests/unit/auth/test_mfa_management.py::test_disable_when_mfa_is_off_is_400 PASSED [ 32%]
+tests/unit/auth/test_mfa_management.py::test_disable_requires_a_code_in_the_body PASSED [ 35%]
+tests/unit/auth/test_mfa_management.py::test_disable_is_rate_limited PASSED [ 37%]
+tests/unit/auth/test_mfa_management.py::test_login_code_is_refused_the_second_time_within_its_step PASSED [ 40%]
+tests/unit/auth/test_mfa_management.py::test_code_from_an_earlier_step_is_refused PASSED [ 43%]
+tests/unit/auth/test_mfa_management.py::test_enrolment_code_cannot_disable_mfa PASSED [ 45%]
+tests/unit/auth/test_mfa_management.py::test_setup_resets_the_stored_step PASSED [ 48%]
+tests/unit/auth/test_auth_lockout_persistence.py::test_failed_attempt_is_committed_outside_the_caller_transaction PASSED [ 51%]
+tests/unit/auth/test_auth_lockout_persistence.py::test_threshold_locks_the_account_durably PASSED [ 54%]
+tests/unit/auth/test_auth_lockout_persistence.py::test_successful_login_still_joins_the_caller_transaction PASSED [ 56%]
+tests/unit/auth/test_service_account_lockout.py::test_ten_bad_passwords_lock_a_normal_viewer PASSED [ 59%]
+tests/unit/auth/test_service_account_lockout.py::test_fifty_bad_passwords_never_lock_a_service_account PASSED [ 62%]
+tests/unit/auth/test_service_account_lockout.py::test_failed_service_account_logins_log_at_warning PASSED [ 64%]
+tests/unit/auth/test_service_account_lockout.py::test_a_lock_already_on_a_service_account_does_not_refuse_it PASSED [ 67%]
+tests/unit/auth/test_service_account_lockout.py::test_a_lock_on_a_normal_account_still_refuses_the_right_password PASSED [ 70%]
+tests/unit/auth/test_service_account_lockout.py::test_only_a_true_flag_exempts[None] PASSED [ 72%]
+tests/unit/auth/test_service_account_lockout.py::test_only_a_true_flag_exempts[0] PASSED [ 75%]
+tests/unit/auth/test_service_account_lockout.py::test_only_a_true_flag_exempts[] PASSED [ 78%]
+tests/unit/auth/test_service_account_lockout.py::test_only_a_true_flag_exempts[true] PASSED [ 81%]
+tests/integration/test_mfa_code_single_use.py::test_concurrent_recovery_code_is_accepted_exactly_once PASSED [ 83%]
+tests/integration/test_mfa_failure_lockout.py::test_wrong_login_code_at_the_threshold_locks_the_account PASSED [ 86%]
+tests/integration/test_mfa_failure_lockout.py::test_correct_login_code_clears_the_count PASSED [ 89%]
+tests/integration/test_mfa_failure_lockout.py::test_wrong_code_on_a_locked_account_is_not_counted_again PASSED [ 91%]
+tests/integration/test_mfa_failure_lockout.py::test_wrong_enable_code_counts PASSED [ 94%]
+tests/integration/test_mfa_failure_lockout.py::test_mfa_routes_refuse_a_locked_account_with_423[POST-/mfa/verify] PASSED [ 97%]
+tests/integration/test_mfa_failure_lockout.py::test_mfa_routes_refuse_a_locked_account_with_423[DELETE-/mfa] PASSED [100%]
+
+============================= slowest 10 durations =============================
+================== 37 passed, 2 warnings in 141.94s (0:02:21) ==================

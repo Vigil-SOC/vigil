@@ -1,0 +1,31 @@
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f49130e8d40>
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f49130e8d40>
+        errors     = []
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f4913202570>
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f4913202570>
+        errors     = []
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f491334e4b0>
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f491334e4b0>
+        errors     = []
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f4903cde8d0>
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f4903cde8d0>
+        errors     = []
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f491ea60380>
+../../../../vigil/venv/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f491ea60380>
+        errors     = []
+FAILED tests/unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[console-False-scripts/reset-password.sh]
+FAILED tests/unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[console-True-server log]
+FAILED tests/unit/auth/test_password_reset_without_mail.py::test_reply_names_the_backend_not_the_account[smtp-False-a reset link has been sent]
+FAILED tests/unit/platform/test_secrets_not_logged.py::TestPasswordResetLogging::test_console_backend_logs_neither_token_nor_address
+FAILED tests/unit/platform/test_secrets_not_logged.py::TestPasswordResetLogging::test_dev_mode_still_shows_the_message
+= 5 failed, 804 passed, 6 skipped, 28 deselected, 121 warnings in 561.57s (0:09:21) =

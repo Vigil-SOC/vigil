@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/9413e77f-5e5c-4548-973c-a867ed654b1e/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 13 items
+
+tests/unit/platform/test_secrets_not_logged.py ......                    [ 46%]
+tests/unit/auth/test_password_reset_without_mail.py .......              [100%]
+
+============================= slowest 10 durations =============================
+
+(2 durations < 0.005s hidden.  Use -vv to show these durations.)
+============================== 13 passed in 1.63s ==============================

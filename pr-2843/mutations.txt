@@ -1,0 +1,47 @@
+== mutation A: skip counting a wrong code (the old fake-session branch, now unconditional)
+2
+        _add_user(db, failed_login_count=auth_service.LOCKOUT_THRESHOLD - 1)
+>       assert user.failed_login_count == auth_service.LOCKOUT_THRESHOLD
+E        +  where 4 = <core.storage.models.auth.User object at 0x7f96b8d2cda0>.failed_login_count
+>       assert user.failed_login_count == 1
+E        +  where 0 = <core.storage.models.auth.User object at 0x7f96b8d2da60>.failed_login_count
+FAILED tests/integration/test_mfa_failure_lockout.py::test_wrong_login_code_at_the_threshold_locks_the_account
+FAILED tests/integration/test_mfa_failure_lockout.py::test_wrong_enable_code_counts
+=================== 2 failed, 4 passed, 2 warnings in 4.67s ====================
+== mutation B: keep the row lock (commit the savepoint instead of rolling it back) on a wrong code
+        _add_user(db, failed_login_count=auth_service.LOCKOUT_THRESHOLD - 1)
+>       assert user.failed_login_count == auth_service.LOCKOUT_THRESHOLD
+E        +  where 4 = <core.storage.models.auth.User object at 0x7f1849d04740>.failed_login_count
+WARNING  core.auth.auth_service:auth_service.py:342 Account locked after 5 failed attempts: analyst
+ERROR    core.auth.auth_service:exceptions.py:77 AuthService.verify_mfa_code failed
+    AuthService._count_mfa_failure(failed[0], failed[1])
+    AuthService._record_failed_attempt(user_id, utcnow())
+  File "/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/9413e77f-5e5c-4548-973c-a867ed654b1e/core/auth/auth_service.py", line 322, in _record_failed_attempt
+[SQL: UPDATE users SET failed_login_count=%(failed_login_count)s, locked_until=%(locked_until)s, updated_at=%(updated_at)s WHERE users.user_id = %(users_user_id)s]
+[parameters: {'failed_login_count': 5, 'locked_until': datetime.datetime(2026, 10, 22, 18, 9, 34, 633277), 'updated_at': datetime.datetime(2026, 10, 22, 17, 54, 34, 670157), 'users_user_id': 'u-1'}]
+>       assert user.failed_login_count == 1
+E        +  where 0 = <core.storage.models.auth.User object at 0x7f1849d55ac0>.failed_login_count
+ERROR    core.auth.auth_service:exceptions.py:77 AuthService.enable_mfa failed
+    AuthService._count_mfa_failure(failed[0], failed[1])
+    AuthService._record_failed_attempt(user_id, utcnow())
+  File "/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/9413e77f-5e5c-4548-973c-a867ed654b1e/core/auth/auth_service.py", line 322, in _record_failed_attempt
+[SQL: UPDATE users SET failed_login_count=%(failed_login_count)s, updated_at=%(updated_at)s WHERE users.user_id = %(users_user_id)s]
+[parameters: {'failed_login_count': 1, 'updated_at': datetime.datetime(2026, 10, 22, 17, 54, 40, 211103), 'users_user_id': 'u-1'}]
+FAILED tests/integration/test_mfa_failure_lockout.py::test_wrong_login_code_at_the_threshold_locks_the_account
+FAILED tests/integration/test_mfa_failure_lockout.py::test_wrong_enable_code_counts
+=================== 2 failed, 4 passed, 2 warnings in 15.14s ===================
+== mutation C: lock check ignores locked_until
+        _add_user(db, failed_login_count=auth_service.LOCKOUT_THRESHOLD - 1)
+        assert user.failed_login_count == auth_service.LOCKOUT_THRESHOLD
+WARNING  core.auth.auth_service:auth_service.py:342 Account locked after 5 failed attempts: analyst
+        _add_user(db, failed_login_count=5, locked_until=utcnow() + timedelta(minutes=5))
+>       assert _stored(db).failed_login_count == 5
+E        +  where 6 = <core.storage.models.auth.User object at 0x7f101a72a990>.failed_login_count
+WARNING  core.auth.auth_service:auth_service.py:342 Account locked after 6 failed attempts: analyst
+        _add_user(db, failed_login_count=5, locked_until=utcnow() + timedelta(minutes=5))
+        _add_user(db, failed_login_count=5, locked_until=utcnow() + timedelta(minutes=5))
+FAILED tests/integration/test_mfa_failure_lockout.py::test_wrong_login_code_at_the_threshold_locks_the_account
+FAILED tests/integration/test_mfa_failure_lockout.py::test_wrong_code_on_a_locked_account_is_not_counted_again
+FAILED tests/integration/test_mfa_failure_lockout.py::test_mfa_routes_refuse_a_locked_account_with_423[POST-/mfa/verify]
+FAILED tests/integration/test_mfa_failure_lockout.py::test_mfa_routes_refuse_a_locked_account_with_423[DELETE-/mfa]
+=================== 4 failed, 2 passed, 4 warnings in 4.87s ====================
