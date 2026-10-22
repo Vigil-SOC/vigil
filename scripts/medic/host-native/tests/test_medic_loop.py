@@ -169,9 +169,7 @@ def _child_env(box: Path, *extra: str) -> dict[str, str]:
         _stop(proc)
 
 
-def test_unset_gateway_address_and_dev_mode_stay_unset(
-    box: Path, monkeypatch
-) -> None:
+def test_unset_gateway_address_and_dev_mode_stay_unset(box: Path, monkeypatch) -> None:
     """Host-native has no gateway. Inventing either would register the sensor."""
     monkeypatch.delenv("VIGIL_MEDIC_GATEWAY_ADDR", raising=False)
     monkeypatch.delenv("DEV_MODE", raising=False)
