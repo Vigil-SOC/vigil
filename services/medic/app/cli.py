@@ -39,6 +39,7 @@ from services.medic.app.wiring import (
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
+from services.medic.sensors.kube import kube_sensor
 from services.medic.store import StoreError, open_writer
 
 log = logging.getLogger("services.medic")
@@ -196,6 +197,9 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
     serve = config.agent_serve_addr(env, shape)
     if serve is not None:
         sensors.append(agent_serve_ready(host=serve[0], port=serve[1]))
+    if shape == "helm":
+        # The token mount is read in collect(), so a missing file fails a cycle.
+        sensors.append(kube_sensor())
     return sensors
 
 

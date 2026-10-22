@@ -16,7 +16,8 @@ SERVE_VAR = "VIGIL_MEDIC_AGENT_SERVE_ADDR"
 
 
 def _urls(env: dict[str, str], shape: str) -> dict[str, str]:
-    return {s.id: s.url for s in sensors_for(env, shape)}
+    # Readiness sensors carry a url. The Helm kube sensor does not.
+    return {s.id: s.url for s in sensors_for(env, shape) if hasattr(s, "url")}
 
 
 def test_compose_reads_the_worker_and_serve() -> None:
@@ -35,6 +36,21 @@ def test_serve_isnt_read_where_medic_cant_reach_it_by_default(shape: str) -> Non
 def test_the_variable_sets_where_serve_is_read(shape: str) -> None:
     urls = _urls({SERVE_VAR: "127.0.0.1:16989"}, shape)
     assert urls["http_ready.agent_serve"] == "http://127.0.0.1:16989/readyz"
+
+
+def test_the_kube_sensor_is_registered_on_helm_only() -> None:
+    def ids(shape: str) -> list[str]:
+        return [s.id for s in sensors_for({}, shape)]
+
+    assert "kube" in ids("helm")
+    assert "kube" not in ids("compose")
+    assert "kube" not in ids("start_sh")
+    kube = next(s for s in sensors_for({}, "helm") if s.id == "kube")
+    assert not hasattr(kube, "url")
+    assert kube.covers == ("pods", "version")
+    assert kube.service == "medic"
+    assert kube.interval_s == 30
+    assert kube.timeout_s < kube.interval_s
 
 
 @pytest.mark.parametrize(
