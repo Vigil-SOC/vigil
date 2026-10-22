@@ -1,0 +1,6 @@
+tests/unit/findings/test_zz_tmp_feedcase.py FEED {'ov-two': ('ov-c-new', 'working', 'Still working'), 'ov-one': ('ov-c-p', 'resolved_person', 'Closed by a person'), 'ov-none': (None, 'waiting', 'Not in a case')}
+ALERT ov-c-new working ['finding_id', 'severity', 'data_source', 'title', 'description', 'created_at', 'evidence_links', 'source_evidence', 'noise_marked', 'source_link', 'case_id', 'terminal_state', 'terminal_label']
+============================== 1 passed in 16.03s ==============================
+[main] tests/unit/findings/test_zz_tmp_feedcase.py FEED {'ov-two': ('ov-c-new', 'working', 'Still working'), 'ov-one': ('ov-c-p', 'resolved_person', 'Closed by a person'), 'ov-none': (None, 'waiting', 'Not in a case')}
+[main] ALERT ov-c-new working ['finding_id', 'severity', 'data_source', 'title', 'description', 'created_at', 'evidence_links', 'source_evidence', 'noise_marked', 'source_link', 'case_id', 'terminal_state', 'terminal_label']
+[main] ============================== 1 passed in 18.54s ==============================

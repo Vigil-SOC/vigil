@@ -1,0 +1,15 @@
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+3.70s setup    unit/findings/test_overview.py::test_completion_level_bands
+2.23s call     unit/findings/test_overview.py::test_alert_read_matches_the_feed_item_and_reaches_past_the_feed
+2.05s call     unit/findings/test_overview.py::test_terminal_states_partition_the_day
+1.83s setup    unit/findings/test_overview_actions.py::test_mark_then_clear_hides_and_restores_the_feed_row
+1.66s call     unit/findings/test_overview.py::test_feed_skips_noise_before_the_limit_and_clear_restores_the_row
+1.49s call     unit/findings/test_overview_actions.py::test_mark_then_clear_hides_and_restores_the_feed_row
+0.68s call     unit/findings/test_overview.py::test_feed_source_link_and_case_follow_the_existing_resolvers
+0.63s call     unit/findings/test_overview.py::test_overview_route_marks_unmeasured_nodes
+0.60s call     unit/response/test_needs_you.py::test_a_hunt_stopped_at_a_limit_needs_a_person
+0.54s call     unit/response/test_needs_you.py::test_case_id_filter_uses_the_resolved_id
+================== 20 passed, 1 warning in 415.96s (0:06:55) ===================
+
+[exited with code 0]

@@ -1,0 +1,3 @@
+/home/gray/Deeptempo/vigil/venv/bin/python: No module named ruff
+All done! ✨ 🍰 ✨
+1 file would be left unchanged.
