@@ -1,8 +1,8 @@
-"""Principals, sign-ins, and credentials that outlive the account (#2758)."""
+"""The append-only audit trail, its held rows and anchor, and the audit.* grants."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0002_principals_sign_ins"
+revision = "0002_audit_trail"
 down_revision = "0001_baseline"
 
 

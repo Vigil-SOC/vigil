@@ -324,6 +324,17 @@ function WhoDoesIt({ entries, pre, stage, huntLike, missing }: { entries: Entry[
   )
 }
 
+// create_approval_action asks by filing a queue row; it does not park the run.
+// Every other asks_you tool is a direct-action call the run parks on.
+function directActionTools(pre: Partial<Preflight>, selected: number | null): boolean {
+  const helpers = pre.roles?.helpers ?? []
+  const shown = selected === null ? helpers : helpers.filter((_, i) => i === selected)
+  const names = new Set(shown.flatMap((h) => h.tools ?? []))
+  return (pre.permissions ?? []).some(
+    (p) => names.has(p.name) && p.changes === 'asks_you' && p.name !== 'create_approval_action',
+  )
+}
+
 const CHANGES = {
   on_its_own: { text: 'On its own', color: 'var(--good)' },
   asks_you: { text: 'Asks you', color: 'var(--fair)' },
@@ -371,6 +382,7 @@ function StopsAndCheckpoints({ definition, single, pre, stage, selected, missing
   const stops = [...(single ? [] : definition.objectives ?? []), ...(pre.budgets ? limitSentences(pre.budgets) : [])]
   const compose = definition.run_kind === 'compose' || !definition.run_kind
   const phaseStops = (pre.roles?.helpers ?? []).map((h, i) => ({ h, i })).filter(({ h, i }) => h.approval_required && (selected === null || i === selected))
+  const gatedCalls = directActionTools(pre, selected)
   const classes = Object.keys(CHECKPOINT_CLASSES).filter((c) => pre.checkpoints && c in pre.checkpoints && (!stage || stage.checkpoints.includes(c)))
   const hasCheckpoints = pre.checkpoints && Object.keys(pre.checkpoints).length > 0
   return (
@@ -396,7 +408,8 @@ function StopsAndCheckpoints({ definition, single, pre, stage, selected, missing
           <Pill ask />
         </span>
       ))}
-      {compose && pre.roles && phaseStops.length === 0 && <Muted>{selected === null ? 'This definition declares no pause.' : 'No pause at this stage.'}</Muted>}
+      {compose && gatedCalls && <Muted>Direct-action calls pause for approval before they run.</Muted>}
+      {compose && pre.roles && phaseStops.length === 0 && !gatedCalls && <Muted>{selected === null ? 'This definition declares no pause.' : 'No pause at this stage.'}</Muted>}
       {!compose && !hasCheckpoints && pre.checkpoints && <Muted>{pre.checkpoints_note ?? 'This definition declares no pause.'}</Muted>}
       {hasCheckpoints && pre.checkpoints_note && <Muted>{pre.checkpoints_note}</Muted>}
     </Panel>

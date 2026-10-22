@@ -150,7 +150,7 @@ def test_production_default_is_the_redaction_choke() -> None:
         "values": [],
         "target": {"service": "backend", "shape": "helm"},
     }
-    assert pipeline.choke(draft)["redaction"]["version"] == "k2min-1"
+    assert pipeline.choke(draft)["redaction"]["version"] == "k2min-2"
 
 
 async def test_userinfo_in_a_label_shaped_value_is_redacted() -> None:

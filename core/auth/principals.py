@@ -23,7 +23,7 @@ SYSTEM = "system"
 
 SYSTEM_PRINCIPAL_ID = "system"
 # The agent-service plugins (services/agent/plugins/*/plugin.yaml): a set of
-# their own, not AgentId. 0002_principals_sign_ins.sql seeds the same list.
+# their own, not AgentId. 0003_principals_sign_ins.sql seeds the same list.
 PLUGIN_IDS = ("hunt", "investigate", "rootcause", "adjudicate", "compose", "tally")
 CHAT_PLUGIN_ID = "chat"
 CHAT_LABEL = "the chat assistant"

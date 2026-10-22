@@ -27,7 +27,7 @@ class Principal(Base):
     system. The id never changes and is never reused, and the row outlives the
     account: deleting one sets ``deleted_at``. For a person or a service account
     the id is the ``user_id``; an agent's is ``agent:<key>``; the system's is
-    ``system``. Built by ``core/upgrade/versions/0002_principals_sign_ins.sql``.
+    ``system``. Built by ``core/upgrade/versions/0003_principals_sign_ins.sql``.
     """
 
     __tablename__ = "principals"

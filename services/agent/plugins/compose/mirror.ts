@@ -19,6 +19,10 @@ export interface PhaseUpdate {
   error?: string;
   checkpoint_id?: string;
   question?: string;
+  // Set when the pause is one call. The approval records both, and the invoke
+  // door refuses the call unless that record is the one a person approved.
+  tool?: string;
+  args?: string;
 }
 
 // How a run ended, as the console records it. summary is the deliverable, cost is
