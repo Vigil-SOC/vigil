@@ -145,7 +145,7 @@
 
     "virustotal": {
       "command": "npx",
-      "args": ["-y", "@burtthecoder/mcp-virustotal@1.0.25"],
+      "args": ["-y", "@burtthecoder/mcp-virustotal@1.0.35"],
       "env": {
         "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
       }
@@ -160,7 +160,7 @@
     },
     "firecrawl": {
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp@3.24.0"],
+      "args": ["-y", "firecrawl-mcp@3.30.3"],
       "env": {
         "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
