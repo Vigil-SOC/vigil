@@ -1,8 +1,9 @@
 """``python -m core.upgrade`` against scratch databases on one local Postgres.
 
-The empty-database run must end where a fresh init-plus-``create_all``
-install does, by ``core.upgrade.schema``'s comparison. To rewrite the
-committed head schema after adding a revision:
+A fresh init-plus-``create_all`` install must still be ``0001_baseline``'s
+schema, and the empty-database run must end at the committed head schema, by
+``core.upgrade.schema``'s comparison. To rewrite the head schema after adding a
+revision:
 
     VIGIL_WRITE_HEAD_SCHEMA=1 pytest tests/integration/test_upgrade_command.py
 """
@@ -39,7 +40,17 @@ SEEDED = (
     "system_config",
     "user_preferences",
 )
-HEAD = "0001_baseline"
+BASELINE = "0001_baseline"
+# Every revision, oldest first: what an empty database has pending.
+REVISIONS = [
+    s.revision for s in reversed(list(command.script_directory().walk_revisions()))
+]
+HEAD = REVISIONS[-1]
+# Role grants later revisions seed onto the baseline's rows.
+LATER_GRANTS = {
+    "role-admin": {"audit.read": True, "audit.forward": True, "audit.manage": True},
+    "role-manager": {"audit.read": True},
+}
 
 
 @contextmanager
@@ -52,6 +63,29 @@ def _scratch(provision: bool):
             yield engine
     except ScratchDatabaseUnavailable as e:
         pytest.skip(str(e))
+
+
+def _granted(rows: dict) -> dict:
+    """A fresh install's seeded rows as they stand at the head revision."""
+    roles = []
+    for line in rows["roles"]:
+        role = json.loads(line)
+        role["permissions"] = {
+            **LATER_GRANTS.get(role["role_id"], {}),
+            **role["permissions"],
+        }
+        roles.append(json.dumps(role, sort_keys=True))
+    return {**rows, "roles": sorted(roles)}
+
+
+def _app_can_move_revision(conn) -> bool:
+    # The app may read the revision (core/audit/trail.py), never write it.
+    return conn.execute(
+        text(
+            "SELECT has_table_privilege('vigil_app', 'public.alembic_version', "
+            "'INSERT, UPDATE, DELETE, TRUNCATE')"
+        )
+    ).scalar()
 
 
 def _url(engine) -> str:
@@ -117,16 +151,14 @@ def test_empty_database_matches_fresh_install(provisioned, empty, tmp_path):
     assert report["outcome"] == "applied" and report["restore_point"] == "rp-1"
     assert [h["outcome"] for h in _history(tmp_path)] == ["applied"]
 
+    # The init path is frozen at the baseline; schema changes are revisions.
+    baseline = json.loads(command.BASELINE_SCHEMA.read_text())
+    assert compare(baseline, expected_state) == []
+
     with empty.connect() as conn:
         state = schema_state(conn)
-        assert compare(expected_state, state) == []
-        assert _rows(conn) == expected_rows
-        assert not conn.execute(
-            text(
-                "SELECT has_table_privilege('vigil_app', 'public.alembic_version', "
-                "'SELECT, INSERT, UPDATE, DELETE')"
-            )
-        ).scalar(), "the app role can move the schema revision"
+        assert _rows(conn) == _granted(expected_rows)
+        assert not _app_can_move_revision(conn), "the app role can move the revision"
 
     if os.environ.get("VIGIL_WRITE_HEAD_SCHEMA"):
         command.HEAD_SCHEMA.write_text(
@@ -174,13 +206,13 @@ def _newer(engine, tmp_path):
 @pytest.mark.parametrize(
     "setup, kw, verdict, pending",
     [
-        (None, {"restore_point": "rp-1"}, command.APPLY, [HEAD]),
-        (None, {}, command.NEEDS_RESTORE_POINT, [HEAD]),
+        (None, {"restore_point": "rp-1"}, command.APPLY, REVISIONS),
+        (None, {}, command.NEEDS_RESTORE_POINT, REVISIONS),
         (
             None,
             {"ack_version": "0.0.1", "ack_reason": "own backup"},
             command.NEEDS_RESTORE_POINT,
-            [HEAD],
+            REVISIONS,
         ),
         (_at_head, {}, command.RESTART, []),
         (_unstamped, {"restore_point": "rp-1"}, command.REFUSE, []),

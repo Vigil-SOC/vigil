@@ -286,6 +286,36 @@ def rank_intake_row(
     )
 
 
+def _caller(investigation_id: str) -> tuple[Optional[str], Optional[str]]:
+    """The person a Human Ask named, as ``(username, principal)``.
+
+    Both are absent for a detection or a schedule. A read that fails is the
+    same answer: the run still starts, and its tools record an agent.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    try:
+        with get_db_manager().session_scope() as session:
+            row = (
+                session.query(IntakeTrigger)
+                .filter(IntakeTrigger.investigation_id == investigation_id)
+                .order_by(IntakeTrigger.id.desc())
+                .first()
+            )
+            payload = row.payload if row is not None else None
+    except Exception:  # noqa: BLE001 — unreadable is not a person
+        logger.warning("could not read the caller for %s", investigation_id)
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    name = payload.get("started_by")
+    token = payload.get("principal")
+    username = name if isinstance(name, str) and name else None
+    principal = token if isinstance(token, str) and token else None
+    return username, principal
+
+
 def insert_intake_trigger(
     *,
     kind: str,
@@ -1397,6 +1427,7 @@ class Orchestrator:
         # the job being queued.
         runs = WorkflowRunService()
         row = None
+        started_by, principal = _caller(inv_id)
         try:
             run_kind = self._declared_run_kind(inv_record["workflow_id"])
             try:
@@ -1419,7 +1450,7 @@ class Orchestrator:
                             inv_record["workflow_id"]
                         ),
                         trigger_context=context,
-                        triggered_by="orchestrator",
+                        triggered_by=started_by or "orchestrator",
                     )
                     if row is None:
                         logger.warning("no workflow_runs row for %s", run_id)
@@ -1433,7 +1464,8 @@ class Orchestrator:
                 run_id,
                 run_kind,
                 request,
-                enqueued_by="orchestrator",
+                enqueued_by=started_by or "orchestrator",
+                principal=principal,
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
@@ -1454,7 +1486,9 @@ class Orchestrator:
         # After the real run is queued and its row says so: a shadow that fails
         # must never mark the investigation failed or hold up its transition.
         try:
-            await self._enqueue_shadow_adjudication(inv_record, request)
+            await self._enqueue_shadow_adjudication(
+                inv_record, request, started_by=started_by, principal=principal
+            )
         except Exception as exc:  # noqa: BLE001 — the shadow is best-effort
             logger.error(
                 "could not enqueue shadow adjudication for %s: %s", inv_id, exc
@@ -1465,7 +1499,11 @@ class Orchestrator:
     # No investigations row and no AIDecisionLog entry: the ledger is its record,
     # and the workflow_runs row is what lets Workflows History and replay reach it.
     async def _enqueue_shadow_adjudication(
-        self, inv_record: Dict, request: Dict[str, Any]
+        self,
+        inv_record: Dict,
+        request: Dict[str, Any],
+        started_by: Optional[str] = None,
+        principal: Optional[str] = None,
     ) -> None:
         if not is_enabled(SHADOW_WORKFLOW_ID):
             return
@@ -1523,7 +1561,11 @@ class Orchestrator:
             logger.warning("no workflow_runs row for shadow run %s", shadow_id)
 
         job = build_start_job(
-            shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
+            shadow_id,
+            "adjudicate",
+            shadow,
+            enqueued_by=started_by or "orchestrator",
+            principal=principal,
         )
         try:
             await enqueue_run(job, job_id=shadow_id)

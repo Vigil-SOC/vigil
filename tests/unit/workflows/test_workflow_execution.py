@@ -65,6 +65,33 @@ async def test_execute_workflow_enqueues_a_compose_run(monkeypatch):
     assert job["run_kind"] == "compose"
     assert job["reason"] == "start"
     assert job["run_id"] == "run-1"
+    assert "principal" not in job
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_carries_the_callers_principal(monkeypatch):
+    monkeypatch.setattr(
+        WorkflowsService, "get_workflow", lambda self, wid: _make_workflow(wid)
+    )
+    captured = {}
+
+    async def _enqueue(job, job_id=None):
+        captured["job"] = job
+        return "job-1"
+
+    with patch(
+        "core.workflows.workflow_run_service.WorkflowRunService.begin_run",
+        return_value="run-1",
+    ), patch("core.agents.queue.enqueue_run", new=AsyncMock(side_effect=_enqueue)):
+        await WorkflowsService().execute_workflow(
+            "incident-response",
+            {"finding_id": "f-1"},
+            triggered_by="nestor",
+            principal="signed-by-the-api",
+        )
+
+    assert captured["job"]["principal"] == "signed-by-the-api"
+    assert captured["job"]["enqueued_by"] == "nestor"
 
 
 @pytest.mark.asyncio
