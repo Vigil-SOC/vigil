@@ -3,7 +3,6 @@ import { configApi } from '../services/api'
 
 type Scheme = 'light' | 'dark'
 
-// Per-browser choice. When unset, the server's default theme applies.
 const COLOR_SCHEME_KEY = 'vigil.colorScheme'
 
 function readSavedScheme(): Scheme | null {
