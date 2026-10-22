@@ -1,0 +1,2 @@
+      Tests  1 passed | 70 skipped (71)
+      Tests  1 passed | 70 skipped (71)

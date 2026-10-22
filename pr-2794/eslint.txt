@@ -1,0 +1,8 @@
+  23:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/75c1ca5f-9639-4103-884e-5583a23a1375/clients/web/src/shell/toast.tsx
+  49:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+✖ 10 problems (7 errors, 3 warnings)
+
+eslint exit 1
