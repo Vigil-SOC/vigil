@@ -252,7 +252,10 @@ describe('workflow reader pane', () => {
 describe('the enable switch and header', () => {
   it('turns a workflow off optimistically, and puts it back with the reason when the server refuses', async () => {
     serve(hunt)
-    api.setEnabled.mockRejectedValueOnce({ response: { data: { detail: 'it cannot be turned off' } } })
+    // Held open so the optimistic off is still on screen when the click returns.
+    // A rejection that settles inside the click rolls the switch back first.
+    let refuse: (reason: unknown) => void = () => {}
+    api.setEnabled.mockReturnValueOnce(new Promise((_ok, reject) => { refuse = reject }))
     renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
     const toggle = await screen.findByRole('switch', { name: 'Threat hunt on' })
     expect(screen.getByText('Built in · version 3')).toBeInTheDocument()
@@ -260,6 +263,7 @@ describe('the enable switch and header', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'false')
     expect(screen.getByRole('button', { name: /Run workflow/ })).toBeDisabled()
     expect(api.setEnabled).toHaveBeenCalledWith('threat-hunt', false)
+    refuse({ response: { data: { detail: 'it cannot be turned off' } } })
     expect(await screen.findByRole('alert')).toHaveTextContent('it cannot be turned off')
     expect(toggle).toHaveAttribute('aria-checked', 'true')
     expect(actions.onToggled).not.toHaveBeenCalled()
