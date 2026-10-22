@@ -209,6 +209,9 @@ ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
         "METRICS_TOKEN",
         "OPENAI_API_KEY",
         "PAGERDUTY_ROUTING_KEY",
+        # vigil_app's password. Init, Compose and Helm read this name. App
+        # processes receive the value as POSTGRES_PASSWORD, so Python does not.
+        "POSTGRES_APP_PASSWORD",
         "POSTGRES_PASSWORD",
         "SHODAN_API_KEY",
         "SLACK_BOT_TOKEN",
