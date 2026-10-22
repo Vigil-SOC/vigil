@@ -764,8 +764,7 @@ class ModelRegistry:
         """Return active ``LLMProviderConfig`` rows.
 
         Isolated (and overridable) so the aggregation logic in
-        ``list_available_models`` can be unit-tested
-        without a live Postgres.
+        ``list_available_models`` can be unit-tested without a live Postgres.
         """
         try:
             from core.storage.connection import get_db_session
