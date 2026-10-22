@@ -45,7 +45,8 @@ VIGIL = "0.6.0"
 
 
 def _yaml(path: Path):
-    return yaml.load(path.read_text(), Loader=rule_check._StrictLoader)
+    loader = rule_check._StrictLoader  # SafeLoader subclass: B506 false positive
+    return yaml.load(path.read_text(), Loader=loader)  # nosec B506
 
 
 def pack_rules() -> dict[str, dict]:
