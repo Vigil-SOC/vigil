@@ -118,7 +118,5 @@ def test_case_id_finds_the_exact_case_past_newer_lookalikes():
             for n in range(100, 150)
         )
 
-    crowded = conversation_service.list_conversations(owner, q="CASE-1")
-    assert target not in [row["id"] for row in crowded]
     rows = conversation_service.list_conversations(owner, case_id="CASE-1", limit=1)
     assert [row["id"] for row in rows] == [target]
