@@ -1,0 +1,2 @@
+0.31s call     unit/chat/test_conversation_scope.py::test_page_sticks_and_a_blank_case_clears_without_inserting
+======================== 42 passed, 1 warning in 23.44s ========================

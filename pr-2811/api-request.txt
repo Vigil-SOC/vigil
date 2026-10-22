@@ -1,0 +1,6 @@
+GET ?q=CASE-1 status: 200
+GET ?q=CASE-1 rows: 50 contains target: False
+GET ?case_id=CASE-1&limit=1 status: 200 ids: ['conv-671d7fa5'] target: conv-671d7fa5
+GET ?case_id=CASE-9999&limit=1 rows: 0
+GET (no params) rows: 50
+========================= 1 passed, 1 warning in 4.46s =========================
