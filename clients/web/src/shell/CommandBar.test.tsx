@@ -1,9 +1,10 @@
-import { useState, type ComponentProps } from 'react'
+import type { ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import CommandBar from './CommandBar'
 import CaseDrawer from './CaseDrawer'
+import { heldCase, holdCase } from './heldCase'
 import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 import shellCss from './shell.css?inline'
@@ -119,8 +120,10 @@ const tags = () => screen.getAllByRole('option').map((o) => o.querySelector('.vg
 const sections = () => screen.getAllByRole('group').map((g) => g.getAttribute('aria-label'))
 
 function Shell() {
-  const [caseId, setCaseId] = useState<string | null>(null)
   const location = useLocation()
+  const navigate = useNavigate()
+  const caseId = heldCase(location.state)
+  const setCaseId = (id: string | null) => navigate(location, { replace: true, state: holdCase(location.state, id) })
   return (
     <>
       <div data-testid="where">{location.pathname}{location.search}</div>

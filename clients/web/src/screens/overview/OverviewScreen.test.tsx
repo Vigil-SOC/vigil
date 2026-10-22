@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
+import { heldCase } from '../../shell/heldCase'
 import api, { configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
@@ -108,7 +109,8 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
 }
 
 function Where() {
-  return <output data-testid="where">{useLocation().search}</output>
+  const { search, state } = useLocation()
+  return <output data-testid="where" data-held={heldCase(state) ?? ''}>{search}</output>
 }
 
 function renderScreen(url = '/overview', chatOpen = false) {
@@ -127,6 +129,7 @@ function renderScreen(url = '/overview', chatOpen = false) {
 }
 
 const where = () => screen.getByTestId('where').textContent
+const held = () => screen.getByTestId('where').dataset.held
 
 const item = (id: string, over: Partial<OverviewFeedItem> = {}): OverviewFeedItem => ({ ...payload().feed[0], finding_id: id, ...over })
 
@@ -407,7 +410,8 @@ describe('OverviewScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     fireEvent.click(screen.getByText('f-1'))
     fireEvent.click(await screen.findByRole('button', { name: 'Open case' }))
-    expect(openCase).toHaveBeenLastCalledWith('case-7')
+    expect(openCase).toHaveBeenCalledTimes(1)
+    expect(held()).toBe('case-7')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(where()).toBe('')
   })
@@ -540,7 +544,7 @@ describe('OverviewScreen', () => {
       item('f-2', { source_link: null, title: null, description: 'Quiet one' }),
     ]
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
-    const { openCase } = renderScreen('/overview?alert=f-1')
+    renderScreen('/overview?alert=f-1')
     const dialog = await screen.findByRole('dialog')
     // The dialog opens on ?alert= before the feed arrives, so wait for the row.
     expect(await within(dialog).findByText('High')).toBeInTheDocument()
@@ -553,7 +557,7 @@ describe('OverviewScreen', () => {
     expect(facts).not.toHaveTextContent('Triage')
     expect(within(dialog).getByRole('link', { name: 'Open in Splunk ↗' })).toBeInTheDocument()
     fireEvent.click(within(facts as HTMLElement).getByRole('button', { name: 'Case case-7' }))
-    expect(openCase).toHaveBeenCalledWith('case-7')
+    expect(held()).toBe('case-7')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /Quiet one/ }))
     const second = await screen.findByRole('dialog')
