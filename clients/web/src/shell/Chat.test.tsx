@@ -32,7 +32,6 @@ vi.mock('./useConversations', () => ({
   useConversations: () => ({
     items: historyState.items,
     phase: historyState.phase,
-    error: null,
     reload: historyState.reload,
     offline: historyState.offline,
   }),

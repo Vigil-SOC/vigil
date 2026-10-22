@@ -43,7 +43,6 @@ type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
   role: Role
   text: string
-  ms?: number
 }
 
 interface SessionSummary {
@@ -257,10 +256,9 @@ function VigilMessage({
   onTrace,
 }: {
   text: string
-  ms?: number
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
-  /** dock only: opens the reasoning trace; the case composer keeps its "More" */
+  /** dock only: opens the reasoning trace */
   onTrace?: () => void
 }) {
   const copy = (
@@ -271,10 +269,8 @@ function VigilMessage({
       <AnswerText text={text} citations={citations} onCite={onCite} />
       <div className="msg-actions">
         {copy}
-        {onTrace ? (
+        {onTrace && (
           <button title="Reasoning trace" aria-label="Reasoning trace" onClick={onTrace}><Icon name="reason" size={15} /></button>
-        ) : (
-          <button title="More"><Icon name="more" size={15} /></button>
         )}
       </div>
     </>
@@ -558,7 +554,6 @@ export default function Chat({
     setLoading(true)
     setStreamText('')
     setIsProcessingTools(false)
-    const start = Date.now()
 
     const ac = new AbortController()
     abortRef.current = ac
@@ -630,10 +625,9 @@ export default function Chat({
           }
         }
       }
-      const ms = Date.now() - start
       if (gen === turnGen.current) {
         setMessages((m) => {
-          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ms }
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_' }
           const next = [...m, vigil]
           messagesRef.current = next
           return next
@@ -1015,7 +1009,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} ms={m.ms} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (
