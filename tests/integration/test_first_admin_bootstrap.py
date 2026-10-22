@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from core import redis_client
 from core.config import DEFAULT_REDIS_URL, get_settings
-from core.storage.connection import DatabaseConfig, get_db_manager
+from core.storage.connection import DatabaseConfig, get_db_manager, stamp_schema_head
 from core.storage.models import Base, Role
 from services.api.middleware.rate_limit import limiter
 
@@ -111,8 +111,10 @@ def empty_database():
         c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         c.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
     Base.metadata.create_all(scratch)
-    # What scripts/seed_reference_data.py provides on a real install: the role
-    # the first admin is created with. users stays empty on purpose.
+    # Startup only checks alembic_version. This scratch database is built with
+    # create_all, so it has to be stamped at this image's head.
+    stamp_schema_head(scratch)
+    # The role the first admin is created with. users stays empty on purpose.
     with Session(scratch) as s:
         s.add(
             Role(
