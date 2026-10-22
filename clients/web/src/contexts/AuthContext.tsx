@@ -20,25 +20,6 @@ const DEV_USER: User = {
   mfa_enabled: false,
   last_login: new Date().toISOString(),
   login_count: 999,
-  permissions: {
-    'findings.read': true,
-    'findings.write': true,
-    'findings.delete': true,
-    'cases.read': true,
-    'cases.write': true,
-    'cases.delete': true,
-    'cases.assign': true,
-    'integrations.read': true,
-    'integrations.write': true,
-    'users.read': true,
-    'users.write': true,
-    'users.delete': true,
-    'settings.read': true,
-    'settings.write': true,
-    'config.write': true,
-    'ai_chat.use': true,
-    'ai_decisions.approve': true,
-  },
 };
 
 interface User {
@@ -67,10 +48,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<void>;
   logout: () => Promise<void>;
-  refreshToken: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
-  hasAnyPermission: (...permissions: string[]) => boolean;
-  hasAllPermissions: (...permissions: string[]) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -137,17 +115,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loadUser();
   }, [loadUser]);
 
-  useEffect(() => {
-    if (!user) return;
-
-    // tokens expire in 24 hours
-    const interval = setInterval(() => {
-      refreshToken();
-    }, 23 * 60 * 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, [user]);
-
   const login = async (usernameOrEmail: string, password: string, mfaCode?: string) => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Bypassing login, using mock user');
@@ -196,37 +163,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const refreshToken = async () => {
-    try {
-      // the refresh cookie is HttpOnly; the browser sends it automatically
-      const response = await api.post('/auth/refresh');
-      if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
-      setUser(response.data.user);
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-      await logout();
-    }
-  };
-
   const hasPermission = (permission: string): boolean => {
     if (DEV_MODE && user) return true;
     
     if (!user || !user.permissions) return false;
     return user.permissions[permission] === true;
-  };
-
-  const hasAnyPermission = (...permissions: string[]): boolean => {
-    if (DEV_MODE && user) return true;
-    
-    if (!user || !user.permissions) return false;
-    return permissions.some(perm => user.permissions![perm] === true);
-  };
-
-  const hasAllPermissions = (...permissions: string[]): boolean => {
-    if (DEV_MODE && user) return true;
-    
-    if (!user || !user.permissions) return false;
-    return permissions.every(perm => user.permissions![perm] === true);
   };
 
   const value: AuthContextType = {
@@ -238,10 +179,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     refreshUser,
     login,
     logout,
-    refreshToken,
     hasPermission,
-    hasAnyPermission,
-    hasAllPermissions,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

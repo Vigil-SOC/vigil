@@ -15,7 +15,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('')
   const [mfaCode, setMfaCode] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [remember, setRemember] = useState(true)
   const [showMfa, setShowMfa] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -354,18 +353,7 @@ export default function LoginScreen() {
               </div>
             </div>
 
-            <div className="row-between">
-              <label className="remember">
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                />
-                <span className="box">
-                  <Icon name="check2" />
-                </span>
-                Keep me signed in
-              </label>
+            <div className="row-end">
               <button type="button" className="link" onClick={openForgot}>
                 Forgot password?
               </button>
