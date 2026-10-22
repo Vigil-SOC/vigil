@@ -1,0 +1,35 @@
+ FAIL  src/screens/dashboard/useAttack.test.ts > useAttack > shows the names the rollup resolved and a dash where it could not
+AssertionError: expected [ …(2) ] to deeply equal [ [ 'T1573.001', …(2) ], …(1) ]
+
+- Expected
++ Received
+
+  [
+    [
+      "T1573.001",
+-     "Encrypted Channel",
+-     "Command and Control",
++     "T1573.001",
++     "—",
+    ],
+    [
+      "T9999",
+-     "—",
++     "T9999",
+      "—",
+    ],
+  ]
+
+ ❯ src/screens/dashboard/useAttack.test.ts:24:82
+     22|     await waitFor(() => expect(result.current.phase).toBe('ready'))
+     23|
+     24|     expect(result.current.data?.techniques.map((t) => [t.id, t.name, t…
+       |                                                                                  ^
+     25|       ['T1573.001', 'Encrypted Channel', 'Command and Control'],
+     26|       ['T9999', '—', '—'],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)

@@ -1,0 +1,8 @@
+tsc-exit=0
+
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/d966446a-3ac4-4a4f-a910-68f3be510eb0/clients/web/src/shell/SocConsole.test.tsx
+  15:11  error  '_permission' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 1 problem (1 error, 0 warnings)
+
+eslint-exit=1

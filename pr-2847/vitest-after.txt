@@ -1,0 +1,15 @@
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ✓ src/shell/SocConsole.test.tsx > SocConsole > console tour > skips Home for an operator who cannot open it 247ms
+ ✓ src/shell/SocConsole.test.tsx > SocConsole > console tour > starts again at the primary nav from the account menu 619ms
+
+ Test Files  3 passed (3)
+      Tests  86 passed (86)
+   Start at  19:23:17
+   Duration  44.45s (transform 4.83s, setup 1.15s, import 13.03s, tests 35.88s, environment 3.52s)
+
