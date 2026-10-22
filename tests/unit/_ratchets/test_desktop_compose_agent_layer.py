@@ -104,24 +104,46 @@ def test_bifrost_request_log_lands_in_a_named_volume(path: Path) -> None:
         )
 
 
-def test_postgres_password_is_minted_by_the_app() -> None:
-    """Every Postgres password is the app's per-install secret (#2570).
+_OWNER = "${POSTGRES_PASSWORD:?set by the desktop app}"
+_APP = "${POSTGRES_APP_PASSWORD:?set by the desktop app}"
 
-    A literal here is the published default: any container on the network could
+
+def _env_pairs(env: object) -> list[tuple[str, str]]:
+    if isinstance(env, dict):
+        return [(str(key), str(value)) for key, value in env.items()]
+    if not isinstance(env, list):
+        return []
+    pairs: list[tuple[str, str]] = []
+    for item in env:
+        key, value = str(item).split("=", 1)
+        pairs.append((key, value))
+    return pairs
+
+
+def test_postgres_password_is_minted_by_the_app() -> None:
+    """Owner and vigil_app passwords are distinct per-install secrets (#2570).
+
+    A literal here is a published default: any container on the network could
     log in as the superuser, and the backend logs an ERROR the user cannot fix.
+    vigil_app's password is a second minted secret. App containers receive only
+    that one, so reading their environment does not authenticate as the owner.
     """
     raw = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8")) or {}
     envs = {"x-agent-env": raw["x-agent-env"]}
     envs.update({n: s.get("environment") or {} for n, s in raw["services"].items()})
-    found = 0
+    owner_slots = 0
+    app_slots = 0
     for name, env in envs.items():
-        pairs = (
-            env.items() if isinstance(env, dict) else (e.split("=", 1) for e in env)
-        )
-        for key, value in pairs:
-            if key in ("POSTGRES_PASSWORD", "PGPASSWORD"):
-                found += 1
-                assert value == "${POSTGRES_PASSWORD:?set by the desktop app}", (
-                    f"{name} sets {key} to {value!r}, not the app-minted secret"
-                )
-    assert found >= 5, "expected agent, postgres, backend and db-seed passwords"
+        pairs = dict(_env_pairs(env))
+        user = pairs.get("POSTGRES_USER") or pairs.get("PGUSER")
+        if user == "vigil_app" or name == "x-agent-env":
+            assert pairs.get("POSTGRES_PASSWORD") == _APP, name
+            assert _OWNER not in pairs.values(), name
+            app_slots += 1
+        if user == "deeptempo":
+            owner_value = pairs.get("PGPASSWORD") or pairs.get("POSTGRES_PASSWORD")
+            assert owner_value == _OWNER, name
+            assert pairs.get("POSTGRES_APP_PASSWORD") == _APP, name
+            owner_slots += 1
+    assert app_slots >= 3, "expected the agent env, backend and anchor"
+    assert owner_slots >= 2, "expected postgres and db-seed"

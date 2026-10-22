@@ -261,7 +261,11 @@ def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
 
 # Passwords this repo ships in Compose, Helm and env.example. Anyone can read them.
 _SHIPPED_DEFAULT_PASSWORDS = frozenset(
-    {"deeptempo_secure_password_change_me", "change-me-before-production"}
+    {
+        "deeptempo_secure_password_change_me",
+        "vigil_app_password_change_me",
+        "change-me-before-production",
+    }
 )
 _DEV_MODE_PASSWORD = "deeptempo_secure_password_change_me"
 _shipped_default_logged = False

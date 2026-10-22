@@ -49,8 +49,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "vigil.postgres.passwordSecret" . }}
-                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
             {{- include "vigil.env" . | nindent 12 }}
             # Medic's master switch, read by the backend too so Off never shows
             # as Down (C8). Rendered whether or not Medic is.

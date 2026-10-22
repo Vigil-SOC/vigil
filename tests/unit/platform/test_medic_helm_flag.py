@@ -50,7 +50,7 @@ def _helm(chart: Path, *args: str) -> str:
             "secrets.jwtSecretKey=x",
             # The chart has no default Postgres password (#2621).
             "--set",
-            "secrets.postgresPassword=test-password",
+            "secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password",
         ],
         capture_output=True,
         text=True,

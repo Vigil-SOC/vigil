@@ -31,7 +31,10 @@ def _render(tmp_path: Path, *sets: str) -> list[dict]:
     meta = (chart / "Chart.yaml").read_text()
     (chart / "Chart.yaml").write_text(meta[: meta.index("\ndependencies:")] + "\n")
     args = ["helm", "template", "v", str(chart)]
-    for s in ("secrets.postgresPassword=test-password", *sets):
+    for s in (
+        "secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password",
+        *sets,
+    ):
         args += ["--set", s]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
     return [d for d in yaml.safe_load_all(out) if d]

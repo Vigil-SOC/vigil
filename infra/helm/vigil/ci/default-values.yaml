@@ -2,3 +2,4 @@
 # defaults plus the one value it refuses to render without.
 secrets:
   postgresPassword: test-password
+  vigilAppPassword: test-app-password

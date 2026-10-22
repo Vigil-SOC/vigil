@@ -6,14 +6,35 @@ Postgres/Redis.
 Full install, values, and troubleshooting:
 <https://vigilsoc.org/docs/helm-chart/>
 
-## Postgres password
+## Postgres passwords
 
-`secrets.postgresPassword` has no default: set it (`openssl rand -hex 24`), or
-supply it through `secrets.existingSecret` or `secrets.externalSecret`. The
-chart refuses to render the old published default `change-me-before-production`.
-A release still on it must change the password inside Postgres first (the chart
-never runs `ALTER ROLE`), for `postgresql.auth.username` and `vigil_app`, then
-upgrade with the same value as `secrets.postgresPassword`.
+Two passwords, and they must differ.
+
+`secrets.postgresPassword` is the database owner (`postgresql.auth.username`,
+`deeptempo` by default). It is stored in its own Secret (`<release>-postgres`)
+and mounted only on the in-chart Postgres and the db-init Job. It is not in the
+application Secret those pods load with `envFrom`.
+
+`secrets.vigilAppPassword` is the `vigil_app` role. The backend, daemon, workers
+and agents log in as that role and receive only this password, as
+`POSTGRES_PASSWORD`. The db-init Job sets it with `ALTER ROLE vigil_app` on
+install and upgrade.
+
+Neither has a default. Set both (`openssl rand -hex 24`). With
+`secrets.existingSecret` or `secrets.externalSecret`, that Secret must contain
+`POSTGRES_APP_PASSWORD`. Put the owner password in `postgresql.auth.existingSecret`
+(or `postgresql.external.existingSecret`) rather than in the application Secret.
+If the application Secret also holds `POSTGRES_PASSWORD`, the workload env
+replaces that variable with `POSTGRES_APP_PASSWORD` before the process starts.
+The chart refuses to render the old published default
+`change-me-before-production`, and it refuses to render when the two values
+are equal.
+
+A database whose owner password is still that published default must be changed
+in Postgres first (`ALTER ROLE` for `postgresql.auth.username`). The chart does
+not change the owner password. Set `secrets.postgresPassword` to the new owner
+password and `secrets.vigilAppPassword` to a different value; db-init updates
+`vigil_app`.
 
 ## MCP runner
 

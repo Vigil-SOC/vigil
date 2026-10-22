@@ -57,8 +57,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "vigil.postgres.passwordSecret" . }}
-                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
             - name: AGENT_HTTP_PORT
               value: {{ .Values.agentServe.service.port | toString | quote }}
             {{- /* vigil.env supplies POSTGRES_* and REDIS_URL. Serve ignores

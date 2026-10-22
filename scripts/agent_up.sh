@@ -32,7 +32,10 @@ export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 export POSTGRES_DB="${POSTGRES_DB:-deeptempo_soc}"
 export POSTGRES_USER="${POSTGRES_USER:-vigil_app}"
-export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}"
+# vigil_app's password. POSTGRES_PASSWORD in .env is the owner password; this
+# process logs in as vigil_app and must not take it.
+_app_pw="$(env_file_value POSTGRES_APP_PASSWORD)"
+export POSTGRES_PASSWORD="${POSTGRES_APP_PASSWORD:-${_app_pw:-vigil_app_password_change_me}}"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 
 # All four, because each defaults to this process rather than the backend.

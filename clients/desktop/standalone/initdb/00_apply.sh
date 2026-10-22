@@ -25,12 +25,20 @@ for f in /db-init/*.sql; do
     psql -v ON_ERROR_STOP=0 -q -f "$f" || true
 done
 
-# vigil_app logs in with the password the apps already hold; the SQL file
-# cannot contain a literal. :'pw' is interpolated from --set, not -c.
-pw="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"
-if [ -n "$pw" ]; then
-    echo "setting vigil_app password"
-    printf '%s\n' "ALTER ROLE vigil_app PASSWORD :'pw';" \
-        | psql -v ON_ERROR_STOP=0 --set=pw="$pw" || true
+# vigil_app's password is POSTGRES_APP_PASSWORD, never the owner's. App
+# processes log in as vigil_app; the owner password stays on the database
+# server and this init step. :'pw' is interpolated from --set, not -c.
+app_pw="${POSTGRES_APP_PASSWORD:-}"
+owner_pw="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
+if [ -z "$app_pw" ]; then
+    echo "ERROR: POSTGRES_APP_PASSWORD is empty; refusing to give vigil_app the database owner password." >&2
+    exit 1
 fi
+if [ -n "$owner_pw" ] && [ "$app_pw" = "$owner_pw" ]; then
+    echo "ERROR: POSTGRES_APP_PASSWORD must differ from the database owner password." >&2
+    exit 1
+fi
+echo "setting vigil_app password"
+printf '%s\n' "ALTER ROLE vigil_app PASSWORD :'pw';" \
+    | psql -v ON_ERROR_STOP=1 --set=pw="$app_pw"
 echo "apply complete"

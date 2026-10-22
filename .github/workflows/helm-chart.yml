@@ -49,7 +49,7 @@ jobs:
       # secrets.postgresPassword has no default, so every default-values
       # render sets a test one.
       - name: helm lint (default values)
-        run: helm lint infra/helm/vigil --set secrets.postgresPassword=test-password
+        run: helm lint infra/helm/vigil --set secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password
 
       - name: helm lint (dev values)
         run: helm lint infra/helm/vigil -f infra/helm/vigil/values-dev.yaml
@@ -59,13 +59,13 @@ jobs:
           helm lint infra/helm/vigil \
             --set postgresql.enabled=false --set postgresql.bitnami.enabled=true \
             --set redis.enabled=false --set redis.bitnami.enabled=true \
-            --set secrets.postgresPassword=test-password
+            --set secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password
 
       - name: helm template (default values)
         run: |
           helm template release-check infra/helm/vigil \
             --set secrets.anthropicApiKey=test-key \
-            --set secrets.postgresPassword=test-password \
+            --set secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password \
             > /tmp/manifest-default.yaml
           echo "Rendered $(grep -c '^kind:' /tmp/manifest-default.yaml) resources."
 
@@ -80,7 +80,7 @@ jobs:
         run: |
           helm template release-check infra/helm/vigil \
             --set secrets.anthropicApiKey=test-key \
-            --set secrets.postgresPassword=test-password \
+            --set secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password \
             --set postgresql.enabled=false --set postgresql.bitnami.enabled=true \
             --set redis.enabled=false --set redis.bitnami.enabled=true \
             > /tmp/manifest-bitnami.yaml

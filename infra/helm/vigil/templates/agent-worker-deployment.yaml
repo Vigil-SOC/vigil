@@ -53,8 +53,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "vigil.postgres.passwordSecret" . }}
-                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
             {{- /* The worker reads the discrete parts, not a DSN or a URL: a
                    $(VAR) substituted into either is not URL-encoded. */}}
             {{- include "vigil.env" . | nindent 12 }}

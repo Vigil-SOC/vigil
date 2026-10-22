@@ -42,6 +42,7 @@ OTHER_CONSUMERS = {
     "KAFKA_SASL_USERNAME": "services/daemon/config.py",
     "OPENAI_API_KEY": "core.llm.bifrost.admin",
     "POSTGRES_PASSWORD": "core.storage.connection, agent db.ts",
+    "POSTGRES_APP_PASSWORD": "db-init Job and initdb/00_apply.sh (vigil_app password)",
     "SMTP_PASSWORD": "core.platform.email_service",
     "VSTRIKE_API_KEY": "vstrike client and router",
     "VSTRIKE_INBOUND_API_KEY": "vstrike router",

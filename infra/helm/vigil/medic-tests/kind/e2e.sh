@@ -141,7 +141,7 @@ helm --kube-context "kind-$CLUSTER" install "$REL" "$chart" -n "$NS" \
   --set dbInit.enabled=false \
   --set postgresql.enabled=false --set postgresql.external.host=none \
   --set redis.enabled=false --set redis.external.url=redis://none:6379/0 \
-  --set secrets.postgresPassword=unused >/dev/null
+  --set secrets.postgresPassword=unused --set secrets.vigilAppPassword=unused-app >/dev/null
 api_cidrs=$($K -n "$NS" get networkpolicy "$FN-medic" -o jsonpath='{.spec.egress[*].to[*].ipBlock.cidr}')
 api_ep=$($K get endpointslice kubernetes -n default -o jsonpath='{.endpoints[0].addresses[0]}')
 api_port=$($K get endpointslice kubernetes -n default -o jsonpath='{.ports[0].port}')

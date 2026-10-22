@@ -9,7 +9,7 @@ x-agent-env: &agent-env
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
   - POSTGRES_USER=vigil_app
-  - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+  - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
   - REDIS_URL=redis://redis:6379/0
   # The four /internal endpoints. Each defaults to localhost:6987 in-process,
   # which is the agent container itself here, so all four have to be named.
@@ -79,6 +79,8 @@ services:
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      # First-boot init sets vigil_app's password from this. Not the owner password.
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
       # Loopback-only. A bare "5432:5432" publishes on 0.0.0.0, which put the
@@ -123,6 +125,7 @@ services:
       PGUSER: deeptempo
       PGDATABASE: deeptempo_soc
       PGPASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
     volumes:
       - ../database/init:/db-init:ro
       - ./initdb/00_apply.sh:/apply.sh:ro
@@ -189,7 +192,7 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: vigil_app
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Pushed to Bifrost at startup (core/llm/bifrost/admin.py sync_env_provider_keys).
@@ -380,7 +383,7 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: vigil_app
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
       # AI
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -508,7 +511,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
       - POSTGRES_USER=vigil_app
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}

@@ -45,6 +45,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "vigil.postgres.passwordSecret" . }}
                   key: {{ include "vigil.postgres.passwordSecretKey" . }}
+            - name: POSTGRES_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
           command:
             - /bin/sh
             - -ec
@@ -129,15 +134,19 @@ spec:
               apply {{ . | quote }}
               {{- end }}
 
-              # vigil_app logs in with the password the apps already hold; the
-              # SQL file cannot contain a literal.
-              pw="${PGPASSWORD:-}"
-              if [ -z "$pw" ]; then
-                echo "ERROR: PGPASSWORD is empty; cannot set vigil_app password." >&2
+              # vigil_app's password is not the owner's. PGPASSWORD is the owner
+              # credential this Job connects with; apps never receive it.
+              app_pw="${POSTGRES_APP_PASSWORD:-}"
+              if [ -z "$app_pw" ]; then
+                echo "ERROR: POSTGRES_APP_PASSWORD is empty; refusing to give vigil_app the database owner password." >&2
+                exit 1
+              fi
+              if [ "$app_pw" = "${PGPASSWORD:-}" ]; then
+                echo "ERROR: POSTGRES_APP_PASSWORD must differ from the database owner password." >&2
                 exit 1
               fi
               echo "setting vigil_app password"
-              printf '%s\n' "ALTER ROLE vigil_app PASSWORD :'pw';" | psql -v ON_ERROR_STOP=1 --set=pw="$pw"
+              printf '%s\n' "ALTER ROLE vigil_app PASSWORD :'pw';" | psql -v ON_ERROR_STOP=1 --set=pw="$app_pw"
 
               echo "Database initialization complete."
           volumeMounts:

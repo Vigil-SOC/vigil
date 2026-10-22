@@ -67,8 +67,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "vigil.postgres.passwordSecret" . }}
-                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
             {{- include "vigil.env" . | nindent 12 }}
             {{- include "vigil.stateEnv" . | nindent 12 }}
             {{- include "vigil.caBundleEnv" . | nindent 12 }}

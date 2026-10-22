@@ -154,6 +154,24 @@ read-only on the runner. Nothing when detectionRules.volume is unset.
 {{- end -}}
 
 {{/*
+Owner password only. Not the app Secret: that one is envFrom'd into every
+workload, and the owner password must not ride along.
+*/}}
+{{- define "vigil.postgres.ownerSecret" -}}
+{{- printf "%s-postgres" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "vigil.postgres.usesChartOwnerSecret" -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- else if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled -}}
+{{- else if and .Values.postgresql.enabled .Values.postgresql.auth.existingSecret -}}
+{{- else if and (not .Values.postgresql.enabled) .Values.postgresql.external.existingSecret -}}
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
 Per-component selector labels. Usage:
   {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "backend") | nindent 4 }}
 */}}
@@ -304,9 +322,9 @@ Postgres host/port/database resolution. Three modes:
 {{- end -}}
 
 {{/*
-Name of the secret holding POSTGRES_PASSWORD. Bitnami emits its own secret
-(<release>-postgresql) with key `password` for the non-superuser; the backend
-needs to pick that up.
+Name of the secret holding the database owner password. The database server
+and the db-init Job read it. App workloads do not. Bitnami emits its own
+secret (<release>-postgresql) with key `password`.
 */}}
 {{- define "vigil.postgres.passwordSecret" -}}
 {{- if .Values.postgresql.bitnami.enabled -}}
@@ -318,14 +336,18 @@ needs to pick that up.
 {{- else if .Values.postgresql.enabled -}}
 {{- if .Values.postgresql.auth.existingSecret -}}
 {{- .Values.postgresql.auth.existingSecret -}}
-{{- else -}}
+{{- else if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled -}}
 {{- include "vigil.secret.fullname" . -}}
+{{- else -}}
+{{- include "vigil.postgres.ownerSecret" . -}}
 {{- end -}}
 {{- else -}}
 {{- if .Values.postgresql.external.existingSecret -}}
 {{- .Values.postgresql.external.existingSecret -}}
-{{- else -}}
+{{- else if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled -}}
 {{- include "vigil.secret.fullname" . -}}
+{{- else -}}
+{{- include "vigil.postgres.ownerSecret" . -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -339,6 +361,24 @@ needs to pick that up.
 {{- else -}}
 {{- .Values.postgresql.external.existingSecretKey | default "POSTGRES_PASSWORD" -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+vigil_app's password. App workloads receive this value as POSTGRES_PASSWORD.
+The owner password (vigil.postgres.passwordSecret) stays on the database
+server and the db-init Job. Same Secret as the chart's other keys, including
+when the operator brings their own: that Secret must also hold this key.
+*/}}
+{{- define "vigil.postgres.appPasswordSecret" -}}
+{{- if .Values.secrets.existingSecret -}}
+{{- .Values.secrets.existingSecret -}}
+{{- else -}}
+{{- include "vigil.secret.fullname" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "vigil.postgres.appPasswordSecretKey" -}}
+POSTGRES_APP_PASSWORD
 {{- end -}}
 
 {{/*

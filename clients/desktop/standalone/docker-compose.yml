@@ -5,8 +5,9 @@
 # Its own project name and unnamed containers keep it isolated from a dev stack
 # (project "docker", containers deeptempo-*) so both can coexist on one machine.
 # Only the backend publishes a port; everything else stays on the internal
-# network. The postgres password is minted per install by the app, which also
-# resets it in the database on every start, so older volumes pick it up too.
+# network. The app mints two Postgres passwords per install: the owner password,
+# and a different one for vigil_app. It resets both on every start, so older
+# volumes pick them up too. App containers receive only the vigil_app password.
 name: vigil
 
 # Both agent processes take the same environment (see x-agent-env in
@@ -17,7 +18,7 @@ x-agent-env: &agent-env
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
   - POSTGRES_USER=vigil_app
-  - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set by the desktop app}
+  - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:?set by the desktop app}
   - REDIS_URL=redis://redis:6379/0
   # Each defaults to localhost:6987, which is the agent container itself here.
   - VIGIL_PLAYBOOKS_URL=http://backend:6987/internal/playbooks
@@ -35,6 +36,7 @@ services:
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set by the desktop app}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -106,7 +108,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
       - POSTGRES_USER=vigil_app
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set by the desktop app}
+      - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:?set by the desktop app}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=http://bifrost:8080
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set by the desktop app}
@@ -204,6 +206,7 @@ services:
       PGUSER: deeptempo
       PGDATABASE: deeptempo_soc
       PGPASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set by the desktop app}
     volumes:
       - ./db-init:/db-init:ro
       - ./initdb/00_apply.sh:/apply.sh:ro

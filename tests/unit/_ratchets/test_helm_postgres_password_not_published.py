@@ -2,7 +2,7 @@
 
 values.yaml shipped postgresPassword "change-me-before-production", and an
 install that never set one ran its Postgres superuser on it. The default is now
-empty so templates/secret.yaml's `required` refuses to render.
+empty so the chart's `required` refuses to render.
 
 Static parse of values.yaml; no helm binary.
 """

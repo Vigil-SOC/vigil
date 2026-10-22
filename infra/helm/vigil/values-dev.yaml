@@ -79,3 +79,4 @@ redis:
 
 secrets:
   postgresPassword: "dev_password_change_me"
+  vigilAppPassword: "dev_app_password_change_me"

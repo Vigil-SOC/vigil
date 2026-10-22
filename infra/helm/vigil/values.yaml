@@ -642,11 +642,18 @@ secrets:
   # Required (at least one of these must be set for the backend to do useful work).
   anthropicApiKey: ""
 
-  # DB password. Materialized as POSTGRES_PASSWORD; db-init and app pods
-  # consume the discrete POSTGRES_* parts, not an assembled DSN. Required unless
-  # existingSecret or externalSecret is set. Generate with:
+  # Owner password (postgresql.auth.username). Materialized as POSTGRES_PASSWORD
+  # for the database server and the db-init Job only. App pods do not receive it.
+  # Required unless existingSecret or externalSecret is set. Generate with:
   #   openssl rand -hex 24
   postgresPassword: ""
+
+  # vigil_app password. Materialized as POSTGRES_APP_PASSWORD and given to app
+  # pods as the POSTGRES_PASSWORD they log in with. Must differ from
+  # postgresPassword. With existingSecret or externalSecret, that Secret must
+  # contain the key POSTGRES_APP_PASSWORD. Generate with:
+  #   openssl rand -hex 24
+  vigilAppPassword: ""
 
   # Required when DEV_MODE=false (see env.example). Generate with:
   #   python -c "import secrets; print(secrets.token_urlsafe(64))"

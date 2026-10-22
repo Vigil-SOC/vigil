@@ -26,8 +26,11 @@ MEDIC_ON = {
     "medic.gateway.viewer.username": "medic-viewer",
     "medic.gateway.viewer.passwordSecret.name": "medic-viewer",
 }
-# secrets.postgresPassword has no default; every render here sets one.
-PG = {"secrets.postgresPassword": "test-password"}
+# Neither password has a default; every render here sets both, and they differ.
+PG = {
+    "secrets.postgresPassword": "test-password",
+    "secrets.vigilAppPassword": "test-app-password",
+}
 
 
 @pytest.fixture(scope="session")

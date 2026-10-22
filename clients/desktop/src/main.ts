@@ -82,6 +82,7 @@ interface Config {
   jwtSecret?: string;
   agentInternalToken?: string;
   postgresPassword?: string;
+  postgresAppPassword?: string;
   bifrostAdminPassword?: string;
 }
 
@@ -124,13 +125,26 @@ function agentInternalToken(): string {
   return token;
 }
 
-// Postgres superuser and vigil_app password. Postgres is unreachable from the
-// host, but a published default is open to any container on the stack network.
+// Postgres superuser password. Postgres is unreachable from the host, but a
+// published default is open to any container on the stack network.
 function postgresPassword(): string {
   const saved = readConfig().postgresPassword;
   if (saved) return saved;
   const pw = crypto.randomBytes(32).toString("base64url");
   writeConfig({ postgresPassword: pw });
+  return pw;
+}
+
+// vigil_app's password. Distinct from the superuser password: app containers
+// log in as vigil_app, and that credential must not also authenticate as the
+// owner. Minted once per install, like the owner password.
+function postgresAppPassword(): string {
+  const owner = postgresPassword();
+  const saved = readConfig().postgresAppPassword;
+  if (saved && saved !== owner) return saved;
+  let pw = crypto.randomBytes(32).toString("base64url");
+  while (pw === owner) pw = crypto.randomBytes(32).toString("base64url");
+  writeConfig({ postgresAppPassword: pw });
   return pw;
 }
 
@@ -492,6 +506,7 @@ const spawnCompose = (args: string[]) =>
       JWT_SECRET_KEY: jwtSecret(),
       AGENT_INTERNAL_TOKEN: agentInternalToken(),
       POSTGRES_PASSWORD: postgresPassword(),
+      POSTGRES_APP_PASSWORD: postgresAppPassword(),
       BIFROST_ADMIN_PASSWORD: bifrostAdminPassword(),
     },
   });

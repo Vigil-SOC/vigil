@@ -56,7 +56,10 @@ def test_dsn_password_is_not_subject_to_the_missing_check(monkeypatch):
     assert config.password == "s3cret"
 
 
-@pytest.mark.parametrize("password", [SHIPPED, "change-me-before-production"])
+@pytest.mark.parametrize(
+    "password",
+    [SHIPPED, "vigil_app_password_change_me", "change-me-before-production"],
+)
 def test_shipped_default_is_logged_once_and_not_refused(monkeypatch, caplog, password):
     _dev_mode(monkeypatch, False)
     monkeypatch.setenv("POSTGRES_PASSWORD", password)
