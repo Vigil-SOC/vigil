@@ -33,6 +33,7 @@ ADMIN = SimpleNamespace(
     full_name="Admin",
     role_id="role-admin",
     is_active=True,
+    service_account=False,
 )
 
 

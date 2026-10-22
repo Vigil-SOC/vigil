@@ -23,10 +23,10 @@ from core.auth.auth_cookies import (
 )
 from core.auth.auth_service import (
     PASSWORD_HISTORY_LIMIT,
-    AccountLockedError,
     AuthService,
     _is_service_account,
     password_matches_any,
+    raise_if_locked,
 )
 from core.auth.bootstrap_code import setup_code_matches
 from core.auth.password_reset import (
@@ -141,20 +141,6 @@ ADMIN_ROLE_ID = "role-admin"
 
 # Arbitrary constant identifying the bootstrap advisory lock.
 _BOOTSTRAP_LOCK = 8_274_119
-
-
-def _reject_if_locked(user: User) -> None:
-    """423 when the account is already locked. A missing attribute (tests
-    that build a stand-in user) is not a lock."""
-    until = getattr(user, "locked_until", None)
-    if until is None or until <= utcnow():
-        return
-    retry_after = max(1, int((until - utcnow()).total_seconds()))
-    raise HTTPException(
-        status_code=status.HTTP_423_LOCKED,
-        detail="Account locked due to repeated failed login attempts",
-        headers={"Retry-After": str(retry_after)},
-    )
 
 
 # Request/Response Models
@@ -405,18 +391,9 @@ def login(
     Returns:
         Access and refresh tokens with user info
     """
-    # Authenticate user
-    try:
-        user = AuthService.authenticate_user(
-            payload.username_or_email, payload.password, session
-        )
-    except AccountLockedError as exc:
-        retry_after = max(1, int((exc.locked_until - utcnow()).total_seconds()))
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail="Account locked due to repeated failed login attempts",
-            headers={"Retry-After": str(retry_after)},
-        )
+    user = AuthService.authenticate_user(
+        payload.username_or_email, payload.password, session
+    )
 
     if not user:
         raise _invalid_credentials()
@@ -928,7 +905,7 @@ def verify_mfa(
     Returns:
         Success message and one-time recovery codes (shown only once).
     """
-    _reject_if_locked(current_user)
+    raise_if_locked(current_user)
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
@@ -985,7 +962,7 @@ def disable_mfa(
     Returns:
         Success message
     """
-    _reject_if_locked(current_user)
+    raise_if_locked(current_user)
     if not AuthService.disable_mfa(current_user.user_id, body.code, session):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
