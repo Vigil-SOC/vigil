@@ -1,0 +1,4 @@
+ok core.auth.bootstrap_code
+ok core.auth.service_account
+ok services.api.routers.auth
+ok services.api.main

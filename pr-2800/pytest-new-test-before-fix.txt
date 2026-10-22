@@ -1,0 +1,5 @@
+E       AssertionError: assert [] == ['First-run s...b6394ed3a1ed']
+E         
+E         Right contains one more item: 'First-run setup code: 8d4d89a4c2e4c8398b6cb6394ed3a1ed'
+E         Use -v to get more diff
+========================= 1 failed, 6 passed in 1.75s ==========================

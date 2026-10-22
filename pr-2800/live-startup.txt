@@ -1,0 +1,6 @@
+users in vigil_scratch_announce [('medic-a1b2c3d4e5f6', True)]
+fixed: GET /api/auth/bootstrap -> {"required":true}
+fixed: log lines with mark: 1
+{"ts": "2026-10-22T16:37:31.009162+00:00", "level": "WARNING", "logger": "core.auth.bootstrap_code", "message": "First-run setup code: <code>", "msg_template": "First-run setup code: %s", "trace_id": "", "span_id": ""}
+main-before-fix: GET /api/auth/bootstrap -> {"required":true}
+main-before-fix: log lines with mark: 0
