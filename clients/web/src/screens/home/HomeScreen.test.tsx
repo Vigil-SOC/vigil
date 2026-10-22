@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomeScreen, { parseCreatedAt } from './HomeScreen'
 import homeCss from './home.css?inline'
@@ -261,7 +261,10 @@ describe('Home', () => {
 
       const more = renderHome({}, '/home?section=setup')
       await screen.findByText('Nothing to suggest right now.')
-      expect(scrolled).toEqual([screen.getByRole('region', { name: 'Setup' })])
+      // The scroll runs in an effect after the steps commit, so the text can land first.
+      await waitFor(() => {
+        expect(scrolled).toEqual([screen.getByRole('region', { name: 'Setup' })])
+      })
       more.unmount()
 
       scrolled.length = 0
@@ -270,7 +273,9 @@ describe('Home', () => {
       } as never)
       renderHome({}, '/home?section=setup')
       const ready = (await screen.findByRole('heading', { name: 'Get Vigil ready' })).closest('.home-ready')
-      expect(scrolled).toEqual([ready])
+      await waitFor(() => {
+        expect(scrolled).toEqual([ready])
+      })
     } finally {
       Element.prototype.scrollIntoView = original
     }
