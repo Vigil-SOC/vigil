@@ -1089,8 +1089,9 @@ export interface paths {
         /**
          * Password Reset Confirm
          * @description Complete a password reset. Validates the signed token, enforces the
-         *     password strength policy + reuse check, rotates the hash, and
-         *     revokes every outstanding token so any existing sessions die.
+         *     password strength policy + reuse check, consumes the token, rotates
+         *     the hash, and revokes every outstanding token so any existing
+         *     sessions die. A rejected password leaves the token usable.
          */
         post: operations["post_api_auth_password-reset_confirm"];
         delete?: never;
