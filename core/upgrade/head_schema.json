@@ -3763,7 +3763,7 @@
    "PUBLIC:EXECUTE",
    "owner:EXECUTE"
   ],
-  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_assign()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public'\nAS $function$\nBEGIN\n  -- 0x766967696C415544, \"vigilAUD\": the trail's own key.\n  PERFORM pg_advisory_xact_lock(8532464671515563332);\n  SELECT t.seq, t.entry_hash INTO NEW.seq, NEW.prev_hash\n    FROM audit_trail t ORDER BY t.seq DESC LIMIT 1;\n  IF NOT FOUND THEN\n    SELECT a.seq, a.entry_hash INTO NEW.seq, NEW.prev_hash FROM audit_trail_anchor a;\n  END IF;\n  NEW.seq := NEW.seq + 1;\n  NEW.entry_hash := audit_trail_hash(\n    NEW.prev_hash, NEW.seq, NEW.occurred_at, NEW.late, NEW.payload);\n  RETURN NEW;\nEND;\n$function$\n",
+  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_assign()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\nBEGIN\n  -- 0x766967696C415544, \"vigilAUD\": the trail's own key.\n  PERFORM pg_advisory_xact_lock(8532464671515563332);\n  SELECT t.seq, t.entry_hash INTO NEW.seq, NEW.prev_hash\n    FROM public.audit_trail t ORDER BY t.seq DESC LIMIT 1;\n  IF NOT FOUND THEN\n    SELECT a.seq, a.entry_hash INTO NEW.seq, NEW.prev_hash FROM public.audit_trail_anchor a;\n  END IF;\n  NEW.seq := NEW.seq + 1;\n  NEW.entry_hash := public.audit_trail_hash(\n    NEW.prev_hash, NEW.seq, NEW.occurred_at, NEW.late, NEW.payload);\n  RETURN NEW;\nEND;\n$function$\n",
   "owner": "owner"
  },
  "function audit_trail_delete_prefix(bigint)": {
@@ -3771,7 +3771,7 @@
    "app:EXECUTE",
    "owner:EXECUTE"
   ],
-  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_delete_prefix(through bigint)\n RETURNS bigint\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\nDECLARE\n  last_hash text;\n  removed bigint;\nBEGIN\n  PERFORM pg_advisory_xact_lock(8532464671515563332);\n  SELECT entry_hash INTO last_hash FROM audit_trail WHERE seq = through;\n  IF NOT FOUND THEN\n    RAISE EXCEPTION 'audit trail has no entry %', through;\n  END IF;\n  DELETE FROM audit_trail WHERE seq <= through;\n  GET DIAGNOSTICS removed = ROW_COUNT;\n  UPDATE audit_trail_anchor SET seq = through, entry_hash = last_hash;\n  RETURN removed;\nEND;\n$function$\n",
+  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_delete_prefix(through bigint)\n RETURNS bigint\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\nDECLARE\n  last_hash text;\n  removed bigint;\nBEGIN\n  PERFORM pg_advisory_xact_lock(8532464671516545614);\n  PERFORM pg_advisory_xact_lock(8532464671515563332);\n  SELECT entry_hash INTO last_hash FROM public.audit_trail WHERE seq = through;\n  IF NOT FOUND THEN\n    RAISE EXCEPTION 'audit trail has no entry %', through;\n  END IF;\n  DELETE FROM public.audit_trail WHERE seq <= through;\n  GET DIAGNOSTICS removed = ROW_COUNT;\n  UPDATE public.audit_trail_anchor SET seq = through, entry_hash = last_hash;\n  RETURN removed;\nEND;\n$function$\n",
   "owner": "owner"
  },
  "function audit_trail_hash(text,bigint,timestamp with time zone,boolean,jsonb)": {
@@ -3779,7 +3779,7 @@
    "PUBLIC:EXECUTE",
    "owner:EXECUTE"
   ],
-  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_hash(prev_hash text, seq bigint, occurred_at timestamp with time zone, late boolean, payload jsonb)\n RETURNS text\n LANGUAGE sql\n STABLE\n SET search_path TO 'public'\nAS $function$\n  SELECT agent_event_hash(prev_hash, payload || jsonb_build_object(\n    'seq', seq,\n    'late', late,\n    -- UTC text, so the hash does not depend on the session's TimeZone.\n    'occurred_at',\n    to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')\n  ));\n$function$\n",
+  "definition": "CREATE OR REPLACE FUNCTION public.audit_trail_hash(prev_hash text, seq bigint, occurred_at timestamp with time zone, late boolean, payload jsonb)\n RETURNS text\n LANGUAGE sql\n STABLE\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\n  SELECT public.agent_event_hash(prev_hash, payload || jsonb_build_object(\n    'seq', seq,\n    'late', late,\n    -- UTC text, so the hash does not depend on the session's TimeZone.\n    'occurred_at',\n    to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')\n  ));\n$function$\n",
   "owner": "owner"
  },
  "function update_ai_model_configs_timestamp()": {

@@ -60,9 +60,9 @@ CREATE FUNCTION public.audit_trail_hash(
     late boolean, payload jsonb
 ) RETURNS text
 LANGUAGE sql STABLE
-SET search_path = public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
-  SELECT agent_event_hash(prev_hash, payload || jsonb_build_object(
+  SELECT public.agent_event_hash(prev_hash, payload || jsonb_build_object(
     'seq', seq,
     'late', late,
     -- UTC text, so the hash does not depend on the session's TimeZone.
@@ -71,20 +71,22 @@ AS $$
   ));
 $$;
 
+-- Every function here names its tables in full and searches pg_temp last, so
+-- a temporary table cannot stand in for the trail or its anchor.
 CREATE FUNCTION public.audit_trail_assign() RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
   -- 0x766967696C415544, "vigilAUD": the trail's own key.
   PERFORM pg_advisory_xact_lock(8532464671515563332);
   SELECT t.seq, t.entry_hash INTO NEW.seq, NEW.prev_hash
-    FROM audit_trail t ORDER BY t.seq DESC LIMIT 1;
+    FROM public.audit_trail t ORDER BY t.seq DESC LIMIT 1;
   IF NOT FOUND THEN
-    SELECT a.seq, a.entry_hash INTO NEW.seq, NEW.prev_hash FROM audit_trail_anchor a;
+    SELECT a.seq, a.entry_hash INTO NEW.seq, NEW.prev_hash FROM public.audit_trail_anchor a;
   END IF;
   NEW.seq := NEW.seq + 1;
-  NEW.entry_hash := audit_trail_hash(
+  NEW.entry_hash := public.audit_trail_hash(
     NEW.prev_hash, NEW.seq, NEW.occurred_at, NEW.late, NEW.payload);
   RETURN NEW;
 END;
@@ -96,24 +98,26 @@ CREATE TRIGGER audit_trail_assign
   EXECUTE FUNCTION public.audit_trail_assign();
 
 -- The only delete: a whole oldest prefix, through seq ``through``, with the
--- anchor moved to it in the same transaction.
+-- anchor moved to it in the same transaction. It also takes the prune key
+-- ("vigilPRN") that verify holds shared, so a running verify sees no rows vanish.
 CREATE FUNCTION public.audit_trail_delete_prefix(through bigint) RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   last_hash text;
   removed bigint;
 BEGIN
+  PERFORM pg_advisory_xact_lock(8532464671516545614);
   PERFORM pg_advisory_xact_lock(8532464671515563332);
-  SELECT entry_hash INTO last_hash FROM audit_trail WHERE seq = through;
+  SELECT entry_hash INTO last_hash FROM public.audit_trail WHERE seq = through;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'audit trail has no entry %', through;
   END IF;
-  DELETE FROM audit_trail WHERE seq <= through;
+  DELETE FROM public.audit_trail WHERE seq <= through;
   GET DIAGNOSTICS removed = ROW_COUNT;
-  UPDATE audit_trail_anchor SET seq = through, entry_hash = last_hash;
+  UPDATE public.audit_trail_anchor SET seq = through, entry_hash = last_hash;
   RETURN removed;
 END;
 $$;

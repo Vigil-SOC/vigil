@@ -5,7 +5,9 @@ supply seq or hash: the trigger assigns both under the trail's transaction
 advisory lock, so an append belongs to the caller's transaction and the lock
 is held until that transaction ends. The functions here take a SQLAlchemy
 ``Session`` or ``Connection`` and never commit, except ``append_or_hold``,
-which runs its own.
+which runs its own. Call them under READ COMMITTED (the default): a
+REPEATABLE READ snapshot predates the lock, so its append fails on a duplicate
+seq rather than chaining.
 
 Callers check ``trail_ready()`` first: a database the upgrade has not reached
 keeps today's write path.
@@ -33,10 +35,15 @@ ATTEMPTED_NAME_MAX = 200
 # Columns beside the hashed payload: erasure blanks them, the chain still verifies.
 BESIDE = ("source_ip", "actor_text", "operator_text", "attempted_name", "personal")
 SYSTEM = "system"
+# Fields the hash adds to the payload; a payload may not carry them itself.
+RESERVED = frozenset({"seq", "occurred_at", "late"})
 _VERIFY_BATCH = 5000
+# The trigger's lock, and the one prefix delete takes and verify holds shared.
+_LOCK = 0x7669_6769_6C41_5544  # "vigilAUD"
+_PRUNE_LOCK = 0x7669_6769_6C50_524E  # "vigilPRN"
 
 _INSERT = text("""
-    INSERT INTO audit_trail
+    INSERT INTO public.audit_trail
         (occurred_at, late, payload,
          source_ip, actor_text, operator_text, attempted_name, personal)
     VALUES (coalesce(:occurred_at, now()), :late, CAST(:payload AS jsonb),
@@ -65,10 +72,16 @@ class Verification:
         return self.first_bad is None
 
 
-def _beside(beside: dict[str, Any]) -> dict[str, Any]:
+def _check(payload: dict[str, Any], beside: dict[str, Any]) -> None:
+    """What the table would refuse, raised before anything is held."""
+    if not isinstance(payload, dict) or RESERVED & payload.keys():
+        raise ValueError(f"a payload is an object without {sorted(RESERVED)}")
     unknown = set(beside) - set(BESIDE)
     if unknown:
         raise TypeError(f"not a beside-column: {sorted(unknown)}")
+
+
+def _beside(beside: dict[str, Any]) -> dict[str, Any]:
     values = {k: beside.get(k) for k in BESIDE}
     if values["personal"] is not None:
         values["personal"] = json.dumps(values["personal"])
@@ -76,6 +89,7 @@ def _beside(beside: dict[str, Any]) -> dict[str, Any]:
 
 
 def _insert(session, payload, occurred_at, late, beside) -> Entry:
+    _check(payload, beside)
     row = session.execute(
         _INSERT,
         {
@@ -118,9 +132,10 @@ def hold(
     session, payload: dict[str, Any], occurred_at: datetime, **beside: Any
 ) -> None:
     """Keep an entry the trail would not take, to be recorded late."""
+    _check(payload, beside)
     session.execute(
         text("""
-            INSERT INTO audit_trail_held (occurred_at, payload, beside)
+            INSERT INTO public.audit_trail_held (occurred_at, payload, beside)
             VALUES (:occurred_at, CAST(:payload AS jsonb), CAST(:beside AS jsonb))
         """),
         {
@@ -140,6 +155,7 @@ def append_or_hold(payload: dict[str, Any], **beside: Any) -> Optional[Entry]:
     """
     from core.storage.connection import get_db_session
 
+    _check(payload, beside)  # a bad entry is the caller's bug, never held
     occurred_at = datetime.now(timezone.utc)
     try:
         with get_db_session() as session, session.begin():
@@ -158,21 +174,32 @@ def append_or_hold(payload: dict[str, Any], **beside: Any) -> Optional[Entry]:
 
 
 def drain_late(session, limit: int = 100) -> int:
-    """Record held entries with their original time and the late flag."""
+    """Record held entries with their original time and the late flag.
+
+    Each in a savepoint: one the trail refuses stays held and is logged, and
+    the rest are still recorded.
+    """
     rows = session.execute(
         text("""
-            SELECT id, occurred_at, payload, beside FROM audit_trail_held
+            SELECT id, occurred_at, payload, beside FROM public.audit_trail_held
             WHERE window_key IS NULL ORDER BY id LIMIT :limit
             FOR UPDATE SKIP LOCKED
         """),
         {"limit": limit},
     ).all()
+    recorded = 0
     for row_id, occurred_at, payload, beside in rows:
-        append(session, payload, occurred_at=occurred_at, late=True, **beside)
-        session.execute(
-            text("DELETE FROM audit_trail_held WHERE id = :id"), {"id": row_id}
-        )
-    return len(rows)
+        try:
+            with session.begin_nested():
+                append(session, payload, occurred_at=occurred_at, late=True, **beside)
+                session.execute(
+                    text("DELETE FROM public.audit_trail_held WHERE id = :id"),
+                    {"id": row_id},
+                )
+            recorded += 1
+        except Exception:  # noqa: BLE001 - the rest still go in
+            logger.exception("held audit entry %s could not be recorded", row_id)
+    return recorded
 
 
 def failure_key(source_ip: Optional[str], attempted_name: Optional[str]) -> str:
@@ -184,6 +211,12 @@ def failure_key(source_ip: Optional[str], attempted_name: Optional[str]) -> str:
 def refusal_key(run_id: str, reason: str) -> str:
     """Collapse key for a refusal inside one run."""
     return json.dumps(["refusal", run_id, reason])
+
+
+def _lock(session) -> None:
+    """The trail lock, before any window row: append takes it after, and the
+    opposite order deadlocks with a transaction that appended first."""
+    session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK})
 
 
 def _now(session) -> datetime:
@@ -223,7 +256,10 @@ def collapse(
 
     ``key`` is ``failure_key`` or ``refusal_key``; it is stored hashed, since
     it holds an attacker-chosen name. Returns the entry, or None when counted.
+    Holds the trail lock to the end of the transaction, counted or not.
     """
+    _check(payload, beside)
+    _lock(session)
     now = now or _now(session)
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     params = {
@@ -236,7 +272,7 @@ def collapse(
     while window is None:  # close_windows may delete it between the two
         session.execute(
             text("""
-                INSERT INTO audit_trail_held
+                INSERT INTO public.audit_trail_held
                     (window_key, occurred_at, last_at, count, payload, beside)
                 VALUES (:key, :now, :now, 0,
                         CAST(:payload AS jsonb), CAST(:beside AS jsonb))
@@ -246,7 +282,7 @@ def collapse(
         )
         window = session.execute(
             text(
-                f"SELECT {_WINDOW_COLUMNS} FROM audit_trail_held "
+                f"SELECT {_WINDOW_COLUMNS} FROM public.audit_trail_held "
                 "WHERE window_key = :key FOR UPDATE"
             ),
             params,
@@ -255,7 +291,7 @@ def collapse(
     if window.count and window.occurred_at + WINDOW > now:
         session.execute(
             text(
-                "UPDATE audit_trail_held SET count = count + 1, last_at = :now "
+                "UPDATE public.audit_trail_held SET count = count + 1, last_at = :now "
                 "WHERE id = :id"
             ),
             {"now": now, "id": window.id},
@@ -266,7 +302,7 @@ def collapse(
     entry = append(session, payload, occurred_at=now, **beside)
     session.execute(
         text("""
-            UPDATE audit_trail_held
+            UPDATE public.audit_trail_held
             SET occurred_at = :now, last_at = :now, count = 1, first_seq = :seq,
                 payload = CAST(:payload AS jsonb), beside = CAST(:beside AS jsonb)
             WHERE id = :id
@@ -280,10 +316,11 @@ def close_windows(
     session, *, now: Optional[datetime] = None, everything: bool = False
 ) -> int:
     """Close windows past 60 seconds, or every open one (the leader's start)."""
+    _lock(session)
     cutoff = (now or _now(session)) - WINDOW
     windows = session.execute(
         text(f"""
-            SELECT {_WINDOW_COLUMNS} FROM audit_trail_held
+            SELECT {_WINDOW_COLUMNS} FROM public.audit_trail_held
             WHERE window_key IS NOT NULL AND count > 0
               AND (:everything OR occurred_at <= :cutoff)
             ORDER BY id FOR UPDATE SKIP LOCKED
@@ -293,7 +330,8 @@ def close_windows(
     for window in windows:
         _close(session, window)
         session.execute(
-            text("DELETE FROM audit_trail_held WHERE id = :id"), {"id": window.id}
+            text("DELETE FROM public.audit_trail_held WHERE id = :id"),
+            {"id": window.id},
         )
     return len(windows)
 
@@ -301,11 +339,16 @@ def close_windows(
 def verify(
     session, first: Optional[int] = None, last: Optional[int] = None
 ) -> Verification:
-    """Check seq ``first``..``last`` (default: anchor to tip) for gaps and hashes."""
+    """Check seq ``first``..``last`` (default: anchor to tip) for gaps and hashes.
+
+    Holds the prune lock shared to the end of the transaction, so a prefix
+    delete cannot remove rows between its reads and look like a gap.
+    """
+    session.execute(text("SELECT pg_advisory_xact_lock_shared(:k)"), {"k": _PRUNE_LOCK})
     anchor_seq, anchor_hash = session.execute(
-        text("SELECT seq, entry_hash FROM audit_trail_anchor")
+        text("SELECT seq, entry_hash FROM public.audit_trail_anchor")
     ).one()
-    tip = session.execute(text("SELECT max(seq) FROM audit_trail")).scalar()
+    tip = session.execute(text("SELECT max(seq) FROM public.audit_trail")).scalar()
     first = max(first if first is not None else 0, anchor_seq + 1)
     last = min(last if last is not None else tip or anchor_seq, tip or anchor_seq)
     if first > last:
@@ -315,7 +358,8 @@ def verify(
         expected = anchor_hash
     else:
         expected = session.execute(
-            text("SELECT entry_hash FROM audit_trail WHERE seq = :s"), {"s": first - 1}
+            text("SELECT entry_hash FROM public.audit_trail WHERE seq = :s"),
+            {"s": first - 1},
         ).scalar()
         if expected is None:
             return Verification(first, last, first - 1, "missing")
@@ -326,8 +370,8 @@ def verify(
         rows = session.execute(
             text("""
                 SELECT seq, prev_hash, entry_hash,
-                       audit_trail_hash(prev_hash, seq, occurred_at, late, payload)
-                FROM audit_trail WHERE seq BETWEEN :a AND :b ORDER BY seq
+                       public.audit_trail_hash(prev_hash, seq, occurred_at, late, payload)
+                FROM public.audit_trail WHERE seq BETWEEN :a AND :b ORDER BY seq
             """),
             {"a": seq, "b": through},
         ).all()

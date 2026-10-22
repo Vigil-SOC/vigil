@@ -147,6 +147,49 @@ def test_app_cannot_update_hashed_columns_or_delete(db):
     assert result.ok and (result.first, result.last) == (2, 3)
 
 
+def test_a_temp_table_cannot_stand_in_for_the_trail(db):
+    with _app(db) as conn:
+        trail.append(conn, {"action": "real"})
+        conn.commit()
+        conn.execute(
+            text("CREATE TEMP TABLE audit_trail (seq bigint, entry_hash text)")
+        )
+        conn.execute(text("INSERT INTO pg_temp.audit_trail VALUES (500, 'forged')"))
+        with pytest.raises(DBAPIError, match="no entry 500"):
+            conn.execute(text("SELECT audit_trail_delete_prefix(500)"))
+        conn.rollback()
+        conn.execute(
+            text("CREATE TEMP TABLE audit_trail (seq bigint, entry_hash text)")
+        )
+        conn.execute(text("INSERT INTO pg_temp.audit_trail VALUES (500, 'forged')"))
+        conn.execute(
+            text("""INSERT INTO public.audit_trail (payload) VALUES ('{"a": 1}')""")
+        )
+        conn.commit()
+        conn.execute(text("DROP TABLE pg_temp.audit_trail"))  # pooled
+        conn.commit()
+    assert _seqs(db) == [1, 2]
+    assert _verify(db).ok
+
+
+def test_a_held_row_the_trail_refuses_does_not_block_the_rest(db):
+    with db.begin() as owner:  # bypasses hold()'s check, as a bad row would
+        owner.execute(
+            text(
+                "INSERT INTO audit_trail_held (occurred_at, payload) "
+                """VALUES (now(), '{"seq": 7}'), (now(), '{"action": "ok"}')"""
+            )
+        )
+    with _app(db) as conn:
+        assert trail.drain_late(conn) == 1
+        conn.commit()
+        left = (
+            conn.execute(text("SELECT payload FROM audit_trail_held")).scalars().all()
+        )
+    assert left == [{"seq": 7}]
+    assert _seqs(db) == [1]
+
+
 def test_late_row_promotes_once_with_its_original_time(db):
     then = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=timezone.utc)
     with _app(db) as conn:
