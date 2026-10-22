@@ -1,0 +1,2 @@
+FAILED tests/unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+======= 1 failed, 591 passed, 8 skipped, 3 warnings in 160.45s (0:02:40) =======

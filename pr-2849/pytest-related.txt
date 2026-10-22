@@ -1,0 +1,4 @@
+ERROR tests/medic_compose/test_start_path_live.py - Failed: 'slow' not found ...
+ERROR tests/unit/backup/test_preupgrade_restore.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 7 errors during collection !!!!!!!!!!!!!!!!!!!!
+================ 5699 deselected, 1 warning, 7 errors in 37.98s ================
