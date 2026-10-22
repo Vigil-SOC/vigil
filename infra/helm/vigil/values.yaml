@@ -492,6 +492,7 @@ dbInit:
     - 41_workflow_runs_progress.sql
     - 42_drop_finding_status.sql
     - 43_users_service_account.sql
+    - 44_medic_last_seen.sql
   resources:
     requests:
       cpu: 50m

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -89,13 +90,16 @@ print(json.dumps(codes))
 
 
 class Stack:
-    def __init__(self, home: Path) -> None:
+    def __init__(
+        self, home: Path, project: str = PROJECT, files: tuple[Path, ...] = (OVERRIDE,)
+    ) -> None:
+        self.project, self.files = project, files
         self.secrets_dir = home / "medic-secrets"
         self.env = clean_env(
             home,
-            COMPOSE_PROJECT_NAME=PROJECT,
+            COMPOSE_PROJECT_NAME=project,
             VIGIL_MEDIC_SECRETS_DIR=str(self.secrets_dir),
-            VIGIL_MEDIC_COMPOSE_OVERRIDE=str(OVERRIDE),
+            VIGIL_MEDIC_COMPOSE_OVERRIDE=":".join(str(f) for f in files),
             MEDIC_V1_STUB_DIR=str(HERE),
             JWT_SECRET_KEY="V1JWT" + secrets.token_hex(24),
             AGENT_INTERNAL_TOKEN="V1TOKEN" + secrets.token_hex(8),
@@ -105,12 +109,13 @@ class Stack:
             self.env["VIGIL_MEDIC_DOCKER_GID"] = os.environ["VIGIL_MEDIC_DOCKER_GID"]
 
     def compose(self, *args: str, medic: bool = False, check: bool = True, **kw):
-        files = (OVERRIDE,)
-        cmd = compose_cmd(*(("medic",) if medic else ()), overlay=medic, files=files)
+        cmd = compose_cmd(
+            *(("medic",) if medic else ()), overlay=medic, files=self.files
+        )
         if medic:
             cmd[2:4] = ["--env-file", str(self.secrets_dir / "compose.env")]
         return subprocess.run(
-            [*cmd, "-p", PROJECT, *args],
+            [*cmd, "-p", self.project, *args],
             env=self.env,
             capture_output=True,
             text=True,
@@ -303,12 +308,14 @@ def test_rerun_is_idempotent(stack, enabled) -> None:
 
 
 def test_canary_no_secret_in_output_config_or_logs(stack, enabled) -> None:
-    values = [stack.secret("viewer_password"), stack.secret("api_key")]
+    password, api_key = stack.secret("viewer_password"), stack.secret("api_key")
+    # V2: the API key is X2's X-Medic-Key (32 bytes, base64url), not hex.
+    assert re.fullmatch(r"[0-9a-f]{64}", password)
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", api_key)
     config = stack.compose("config", medic=True).stdout
     logs = stack.compose("logs", "--no-color", medic=True).stdout
     settings = (stack.secrets_dir / "compose.env").read_text()
-    for value in values:
-        assert len(value) == 64
+    for value in (password, api_key):
         for where, text in [
             ("script stdout", enabled.stdout),
             ("script stderr", enabled.stderr),
