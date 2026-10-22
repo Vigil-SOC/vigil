@@ -1,0 +1,14 @@
+"{\"disabled\":false,\"wrapperTitle\":\"\"}"
+    - region "How alerts flow through Vigil" [ref=e11]
+      - heading "How alerts flow through Vigil" [level=2, ref=e15]
+        - StaticText "Today (UTC). Thicker lines carry more alerts; each alert is counted once, at the outcome it reached. Hover a source or an outcome to follow it."
+          - StaticText "alerts in"
+        - link "Splunk 2 alerts" [ref=e31]
+          - StaticText "2 alerts"
+          - StaticText "alerts waiting on a person"
+    - complementary "Incoming alerts"
+      - heading "Incoming alerts" [level=2, ref=e20]
+      - button "About incoming alerts" [expanded=false, ref=e21]
+      - StaticText "Click an alert to send it to triage or open its case"
+        - button "The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it." [ref=e47]
+          - StaticText "Created SOC-7"
