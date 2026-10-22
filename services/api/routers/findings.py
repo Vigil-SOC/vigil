@@ -204,4 +204,3 @@ def launch_finding_into_intake(
         already_queued=trigger_id is None,
         trigger_id=trigger_id,
     )
-

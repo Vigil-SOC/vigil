@@ -3,7 +3,7 @@
 The read and record-update routes an external consumer relies on: list, get,
 summary, and the enrich-metadata PATCH. Enrichment *generation*
 (``/{id}/enrich``) and the destructive ``/all`` wipe stay on the unversioned
-router in ``services/api/routers/findings.py`` — they are operator/console
+router in ``services/api/routers/findings.py``. They are operator/console
 actions, not part of the frozen surface.
 """
 
