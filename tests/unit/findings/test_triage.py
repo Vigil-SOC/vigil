@@ -427,7 +427,7 @@ def test_finding_only_source_has_null_lag_and_is_not_quiet():
     assert sources["tr-hook"]["quiet"] is None
 
 
-def test_route_returns_the_strip(client):
+def test_route_returns_the_arrival_info(client):
     response = client.get("/api/triage")
     assert response.status_code == 200
     body = response.json()
