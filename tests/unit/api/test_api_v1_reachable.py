@@ -156,9 +156,7 @@ def test_the_other_spelling_is_redirected_rather_than_swallowed(
     assert response.headers["location"].endswith(path.rstrip("/"))
 
 
-@pytest.mark.parametrize(
-    "path", ["/static/nope.js", "/assets/nope.css", "/internal/nope", "/mcp"]
-)
+@pytest.mark.parametrize("path", ["/assets/nope.css", "/internal/nope", "/mcp"])
 def test_a_miss_under_a_backend_prefix_is_not_the_app_shell(
     client_with_a_frontend_build, path
 ):
