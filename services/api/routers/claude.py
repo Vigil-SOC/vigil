@@ -17,6 +17,7 @@ from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
 from core.cases.case_brief import case_brief
+from core.chat import conversation_service
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import (
@@ -90,16 +91,14 @@ def _persist_chat_turn(
 
     Sync — invoked via ``asyncio.to_thread`` from the SSE generator. Persists
     the user turn (always complete) and the assistant turn (``complete=False``
-    on abort/error). Each ``conversation_service`` call is itself fail-open;
-    this wrapper adds a final guard so nothing here can surface into the
-    request path. The authoritative per-iteration record (including full tool
+    on abort/error), or nothing when another user owns the conversation. Each
+    ``conversation_service`` call is itself fail-open; this wrapper adds a
+    final guard so nothing here can surface into the request path. The authoritative per-iteration record (including full tool
     calls / results) remains in ``llm_interaction_logs`` keyed by the same
     ``session_id``.
     """
     try:
-        from core.chat import conversation_service
-
-        conversation_service.ensure_conversation(
+        if not conversation_service.ensure_conversation(
             session_id=session_id,
             user_id=user_id,
             agent_id=agent_id,
@@ -107,7 +106,8 @@ def _persist_chat_turn(
             first_user_text=user_text,
             case_id=case_id,
             page_context=page_context,
-        )
+        ):
+            return
         conversation_service.append_message(
             session_id=session_id,
             role="user",
@@ -338,6 +338,13 @@ async def chat_stream(
     workflows: WorkflowsService = Depends(provide_workflows),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
+    user_id = getattr(current_user, "user_id", None)
+    if request.session_id and await asyncio.to_thread(
+        conversation_service.held_by_another, request.session_id, user_id
+    ):
+        raise HTTPException(
+            status_code=403, detail="This conversation belongs to another user."
+        )
     # Before model resolution, whose agent lookup swallows errors.
     if request.agent_id and request.agent_id in disabled_agent_ids():
         raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
@@ -424,7 +431,7 @@ async def chat_stream(
             payload,
             request,
             session_id,
-            getattr(current_user, "user_id", None),
+            user_id,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
