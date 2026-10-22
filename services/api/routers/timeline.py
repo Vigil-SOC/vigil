@@ -37,7 +37,6 @@ def normalize_timestamp(timestamp_str: str) -> datetime:
 
 
 def _aware(dt: datetime) -> datetime:
-    """``dt``, read as UTC when it carries no time zone."""
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
