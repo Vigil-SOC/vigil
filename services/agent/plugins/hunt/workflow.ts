@@ -25,6 +25,7 @@ export interface HuntOptions {
   actions: readonly string[];
   queue: DirectiveQueue;
   started_by?: string;
+  principal?: string;
   announce?: Announce;
   // Told the moment a handoff is journaled, not held back to the terminal. A hunt
   // escalates and keeps hunting, so its terminal can be far off or never come; the
@@ -77,6 +78,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
     hooks,
     tools: toolsFrom(options.spec.tools),
     started_by: options.started_by ?? "worker",
+    ...(options.principal === undefined ? {} : { principal: options.principal }),
     // The hunt's own: declared subjects first, else what its statements name.
     recall_keys: recallKeysOf(huntSpec(options.spec)),
     ...(options.announce === undefined ? {} : { announce: options.announce }),

@@ -100,6 +100,7 @@ export async function startHunt(
   // What the agent needs, as its plugin declares it: one nothing here answers is
   // journalled as a blind spot.
   needs: readonly string[] = [],
+  principal?: string,
 ): Promise<Journal> {
   const now = new Date().toISOString();
   const huntId = newId("hunt");
@@ -132,6 +133,7 @@ export async function startHunt(
     seed: runId,
     tenant_id: null,
     started_by: startedBy,
+    ...(principal === undefined ? {} : { principal }),
   });
 
   for (const statement of spec.hypotheses) {

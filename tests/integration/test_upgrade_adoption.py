@@ -16,11 +16,12 @@ from sqlalchemy import text
 
 from core.storage.connection import _stamp_schema_version
 from core.upgrade import command
-from core.upgrade.adopt import BASELINE, read_stamp
+from core.upgrade.adopt import read_stamp
 from core.upgrade.schema import compare, schema_state
 from tests.integration.test_upgrade_command import (
     HEAD,
     REVISIONS,
+    _app_can_move_revision,
     _rows,
     _run,
     _scratch,
@@ -35,7 +36,11 @@ TAGS = ("v0.7.0", "v0.8.0")
 
 @pytest.fixture(scope="module")
 def baseline(tmp_path_factory):
-    """A fresh 0001_baseline's schema and seeded rows; the database is gone after."""
+    """An empty database upgraded to head: its schema and seeded rows.
+
+    Adoption stamps 0001_baseline (checked against baseline_schema.json) and the
+    later revisions follow, so an adopted install must end here.
+    """
     with _scratch(False) as engine:
         code, report = _run(
             engine, tmp_path_factory.mktemp("fresh"), restore_point="rp"
@@ -107,20 +112,8 @@ def _adopted(engine, baseline, tag: str = "v0.7.0", unowned=()) -> dict:
         diff = compare(baseline[0], schema_state(conn))
         assert [e for e in diff if e["object"] not in unowned] == []
         assert read_stamp(conn) == tag.lstrip("v"), "adoption wrote schema_version"
-        assert not conn.execute(
-            text(
-                "SELECT has_table_privilege('vigil_app', 'public.alembic_version', "
-                "'SELECT, INSERT, UPDATE, DELETE')"
-            )
-        ).scalar(), "the app role can move the schema revision"
+        assert not _app_can_move_revision(conn), "the app role can move the revision"
         return _operator_rows(_rows(conn))
-
-
-def test_baseline_schema_is_the_fresh_baseline(baseline):
-    # Checkable only while 0001 is the head; then baseline_schema.json is frozen.
-    if command.script_directory().get_current_head() != BASELINE:
-        pytest.skip("a later revision is the head")
-    assert json.loads(command.BASELINE_SCHEMA.read_text()) == baseline[0]
 
 
 @pytest.mark.parametrize("tag", TAGS)
