@@ -4,6 +4,7 @@ import { format } from 'date-fns'
 import Chat from './Chat'
 import type { Citation } from './citations'
 import api, { conversationsApi, reasoningApi, streamFetch } from '../services/api'
+import { saveHistory, setKeymapEntry } from './chatCache'
 
 const historyState = vi.hoisted(() => ({
   items: [] as Array<{
@@ -16,10 +17,25 @@ const historyState = vi.hoisted(() => ({
     case_id: string | null
     page_context: string | null
   }>,
+  phase: 'ready' as 'loading' | 'ready' | 'error',
+  offline: false,
+  reload: vi.fn(),
+}))
+
+const authUser = vi.hoisted(() => ({ user_id: 'user-1' as string | null }))
+
+vi.mock('../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: authUser.user_id ? { user_id: authUser.user_id } : null }),
 }))
 
 vi.mock('./useConversations', () => ({
-  useConversations: () => ({ items: historyState.items, phase: 'ready', error: null, reload: vi.fn() }),
+  useConversations: () => ({
+    items: historyState.items,
+    phase: historyState.phase,
+    error: null,
+    reload: historyState.reload,
+    offline: historyState.offline,
+  }),
 }))
 
 vi.mock('../services/notifications', () => ({
@@ -46,7 +62,12 @@ vi.mock('../services/api', () => ({
 }))
 
 beforeEach(() => {
+  localStorage.clear()
+  authUser.user_id = 'user-1'
   historyState.items = []
+  historyState.phase = 'ready'
+  historyState.offline = false
+  historyState.reload.mockReset()
   vi.mocked(api.get).mockReset()
   vi.mocked(streamFetch).mockReset()
   vi.mocked(conversationsApi.update).mockReset()
@@ -268,6 +289,110 @@ describe('Ask Vigil dock', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New conversation' }))
     expect(screen.queryByText('All quiet.')).toBeNull()
     expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
+    const cached = JSON.parse(localStorage.getItem('soc.chat.history.user-1') || '[]')
+    expect(cached[0]?.messages?.some((m: { text: string }) => m.text === 'All quiet.')).toBe(true)
+    expect(localStorage.getItem('soc.chat.history')).toBeNull()
+  })
+
+  it('imports only this user\'s cache, and drops an unscoped history instead of uploading it', async () => {
+    localStorage.setItem(
+      'soc.chat.history',
+      JSON.stringify([{ id: 'legacy', title: 'Legacy', ts: 1, messages: [{ role: 'user', text: 'legacy secret' }] }]),
+    )
+    saveHistory('user-2', [
+      { id: 'bob', title: 'Bob', ts: 1, messages: [{ role: 'user', text: 'bob secret' }] },
+    ])
+    saveHistory('user-1', [
+      { id: 'mine', title: 'Mine', ts: 1, messages: [{ role: 'vigil', text: 'my note' }, { role: 'error', text: 'failed' }], key: 'seed-1' },
+    ])
+    vi.mocked(conversationsApi.importHistory).mockResolvedValue({ data: {} } as never)
+    renderChat()
+    await waitFor(() => expect(conversationsApi.importHistory).toHaveBeenCalledTimes(1))
+    expect(conversationsApi.importHistory).toHaveBeenCalledWith([
+      { id: 'mine', title: 'Mine', messages: [{ role: 'assistant', content: 'my note', thinking: null }] },
+    ])
+    expect(localStorage.getItem('soc.chat.history')).toBeNull()
+    expect(localStorage.getItem('soc.chat.history.user-2')).toBeNull()
+    expect(JSON.parse(localStorage.getItem('soc.chat.keymap.user-1') || '{}')).toEqual({ 'seed-1': 'mine' })
+  })
+
+  it.each([404, 403, 401])(
+    'does not open a cached conversation when the server answers %i',
+    async (status) => {
+      const prompt = 'Investigate finding F-1'
+      saveHistory('user-1', [
+        {
+          id: 'other-user',
+          title: 'Not yours',
+          ts: Date.now(),
+          messages: [
+            { role: 'user', text: prompt },
+            { role: 'vigil', text: 'cached secret' },
+          ],
+          key: prompt,
+        },
+      ])
+      setKeymapEntry('user-1', prompt, 'other-user')
+      vi.mocked(conversationsApi.get).mockRejectedValue({ response: { status } })
+      vi.mocked(streamFetch).mockResolvedValue(replyStream('Fresh start.'))
+      render(<Chat open seed={prompt} onClose={vi.fn()} pageKey="overview" pageTitle="Overview" />)
+      await screen.findByText('Fresh start.')
+      expect(conversationsApi.get).toHaveBeenCalledWith('other-user')
+      expect(screen.queryByText('cached secret')).toBeNull()
+    },
+  )
+
+  it('clears the open transcript when a different user is signed in', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(replyStream('All quiet.'))
+    const view = renderChat()
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'status?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('All quiet.')
+    authUser.user_id = 'user-2'
+    view.rerender(<Chat open onClose={vi.fn()} pageKey="overview" pageTitle="Overview" />)
+    await waitFor(() => expect(screen.queryByText('All quiet.')).toBeNull())
+    expect(localStorage.getItem('soc.chat.history.user-1')).toBeNull()
+    expect(localStorage.getItem('soc.chat.history.user-2')).toBeNull()
+  })
+
+  it('reopens the cached conversation when the server cannot be reached', async () => {
+    const prompt = 'Investigate finding F-1'
+    saveHistory('user-1', [
+      {
+        id: 'mine',
+        title: 'Mine',
+        ts: Date.now(),
+        messages: [
+          { role: 'user', text: prompt },
+          { role: 'vigil', text: 'cached secret' },
+        ],
+        key: prompt,
+      },
+    ])
+    setKeymapEntry('user-1', prompt, 'mine')
+    vi.mocked(conversationsApi.get).mockRejectedValue(new Error('Network Error'))
+    render(<Chat open seed={prompt} onClose={vi.fn()} pageKey="overview" pageTitle="Overview" />)
+    expect(await screen.findByText('cached secret')).toBeInTheDocument()
+    expect(streamFetch).not.toHaveBeenCalled()
+  })
+
+  it('lists the cache only when the history request never reached the server', () => {
+    saveHistory('user-1', [
+      { id: 'mine', title: 'Cached title', ts: Date.now(), messages: [{ role: 'user', text: 'body' }] },
+    ])
+    historyState.phase = 'error'
+    historyState.offline = false
+    const refused = renderChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.queryByText('Cached title')).toBeNull()
+    expect(screen.queryByText('Offline — showing cached conversations.')).toBeNull()
+    refused.unmount()
+
+    historyState.offline = true
+    renderChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.getByText('Cached title')).toBeInTheDocument()
+    expect(screen.getByText('Offline — showing cached conversations.')).toBeInTheDocument()
   })
 })
 

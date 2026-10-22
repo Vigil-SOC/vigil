@@ -22,7 +22,20 @@ import api, {
   type ImportConversationInput,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
+import { useAuth } from '../contexts/AuthContext'
 import { useConversations } from './useConversations'
+import {
+  chatCacheEpoch,
+  chatWasImported,
+  loadHistory,
+  loadKeymap,
+  markChatImported,
+  CHAT_HISTORY_MAX,
+  retainChatCache,
+  saveHistory,
+  serverUnreachable,
+  setKeymapEntry,
+} from './chatCache'
 import { Popup } from '../shared/ui'
 import { LATER_RELEASE } from '../shared/later'
 
@@ -94,47 +107,6 @@ interface Conversation {
    *  re-opening the same finding restores the thread instead of duplicating it */
   key?: string
 }
-const HISTORY_KEY = 'soc.chat.history'
-const HISTORY_MAX = 30
-function loadHistory(): Conversation[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
-    return Array.isArray(raw) ? raw : []
-  } catch {
-    return []
-  }
-}
-function saveHistory(list: Conversation[]) {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)))
-  } catch {
-    /* empty */
-  }
-}
-
-/* Investigation dedup: key (seed prompt) → conversation/session id. The server
-   conversation store has no "key" column, so this small localStorage map
-   preserves the "reopen the same finding's thread" behavior. */
-const KEYMAP_KEY = 'soc.chat.keymap'
-function loadKeymap(): Record<string, string> {
-  try {
-    const m = JSON.parse(localStorage.getItem(KEYMAP_KEY) || '{}')
-    return m && typeof m === 'object' ? (m as Record<string, string>) : {}
-  } catch {
-    return {}
-  }
-}
-function setKeymapEntry(key: string, sid: string) {
-  try {
-    const m = loadKeymap()
-    m[key] = sid
-    localStorage.setItem(KEYMAP_KEY, JSON.stringify(m))
-  } catch {
-    /* ignore */
-  }
-}
-
-const IMPORT_MARKER_KEY = 'soc.chat.imported'
 
 interface HistRow {
   id: string
@@ -350,6 +322,7 @@ export default function Chat({
   /** When this changes (the case tab), a pinned thread folds to its last exchange. */
   collapseKey?: string
 }) {
+  const userId = useAuth().user?.user_id ?? null
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
@@ -359,13 +332,14 @@ export default function Chat({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [histQuery, setHistQuery] = useState('')
   // the server is the source of truth; this shows when it can't be reached
-  const [history, setHistory] = useState<Conversation[]>(() => loadHistory())
+  const [history, setHistory] = useState<Conversation[]>(() => loadHistory<Conversation>(userId))
   const [showArchived, setShowArchived] = useState(false)
   const {
     items: serverConvos,
     phase: histPhase,
     reload: reloadHistory,
-  } = useConversations(showArchived, histQuery)
+    offline: historyOffline,
+  } = useConversations(showArchived, histQuery, userId)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   // null: the field is omitted. "" clears a case already stored on the row.
@@ -406,6 +380,34 @@ export default function Chat({
   }
   // true once this session id has a conversation row, so an @ attach can PATCH
   const persistedRef = useRef(false)
+
+  // Drop every other user's copy as soon as this dock knows who is signed in.
+  // A new id without an unmount (session replaced in place) must not keep the
+  // previous transcript, or the next archive would store it under the new id.
+  const seenUser = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const previous = seenUser.current
+    seenUser.current = userId
+    const switched = previous !== undefined && previous !== userId
+    if (switched) {
+      messagesRef.current = []
+      setMessages([])
+      sessionRef.current = newSessionId()
+      currentKeyRef.current = null
+      persistedRef.current = false
+      setSessionSummary(null)
+      setHistoryOpen(false)
+    }
+    if (!userId) {
+      if (switched) setHistory([])
+      return
+    }
+    retainChatCache(userId)
+    setHistory(loadHistory<Conversation>(userId))
+    if (switched) reloadHistory()
+    // reloadHistory's identity is not a reason to rewrite the cache
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
 
   useEffect(() => {
     if (pinned) return
@@ -695,8 +697,8 @@ export default function Chat({
       key: currentKeyRef.current || undefined,
     }
     setHistory((h) => {
-      const next = [convo, ...h.filter((c) => c.id !== convo.id)].slice(0, HISTORY_MAX)
-      saveHistory(next)
+      const next = [convo, ...h.filter((c) => c.id !== convo.id)].slice(0, CHAT_HISTORY_MAX)
+      saveHistory(userId, next)
       return next
     })
   }
@@ -734,9 +736,11 @@ export default function Chat({
       rememberCase(lockedCaseId ?? detail.case_id ?? null)
       setSessionSummary(null)
       return true
-    } catch {
+    } catch (error) {
       if (gen !== loadGen.current || (lockedCaseId && localTurn.current)) return false
-      const cached = loadHistory().find((c) => c.id === id)
+      // 401/403/404 is the server refusing this id. Only a dead backend may use the cache.
+      if (!serverUnreachable(error)) return false
+      const cached = loadHistory<Conversation>(userId).find((c) => c.id === id)
       if (cached) {
         putMessages(cached.messages)
         if (lockedCaseId) setThreadOpen(cached.messages.length > 0)
@@ -757,7 +761,7 @@ export default function Chat({
     setHistoryOpen(false)
     if (loading) return
     if (currentKeyRef.current === prompt && messages.length > 0) return // already here
-    const mapped = loadKeymap()[prompt]
+    const mapped = loadKeymap(userId)[prompt]
     if (mapped) {
       const opened = await openConversation(mapped, prompt)
       if (opened) return // reopened the existing thread for this finding/case
@@ -767,7 +771,7 @@ export default function Chat({
     currentKeyRef.current = prompt
     persistedRef.current = false
     rememberCase(null)
-    setKeymapEntry(prompt, sessionRef.current) // so re-opening this finding restores it
+    setKeymapEntry(userId, prompt, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
     send(prompt, { fresh: true })
   }
@@ -806,7 +810,7 @@ export default function Chat({
     }
     setHistory((h) => {
       const next = h.filter((c) => c.id !== id)
-      saveHistory(next)
+      saveHistory(userId, next)
       return next
     })
   }
@@ -832,16 +836,17 @@ export default function Chat({
     }
   }
 
-  // the marker is only set on success, so a failed import retries next mount
-  const migratedRef = useRef(false)
+  // the marker is only set on success, so a failed import retries next mount.
+  // Only this user's scoped cache is imported; unscoped leftovers are not theirs to upload.
+  const migratedFor = useRef<string | null>(null)
   useEffect(() => {
-    if (lockedCaseId || migratedRef.current) return
-    migratedRef.current = true
+    if (!userId || lockedCaseId || migratedFor.current === userId) return
+    migratedFor.current = userId
     try {
-      if (localStorage.getItem(IMPORT_MARKER_KEY)) return
-      const local = loadHistory()
+      if (chatWasImported(userId)) return
+      const local = loadHistory<Conversation>(userId)
       if (local.length === 0) {
-        localStorage.setItem(IMPORT_MARKER_KEY, '1')
+        markChatImported(userId)
         return
       }
       const payload: ImportConversationInput[] = local.map((c) => ({
@@ -851,25 +856,28 @@ export default function Chat({
           .filter((m) => m.role !== 'error')
           .map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text, thinking: null })),
       }))
-      // preserve investigation dedup keys across the migration
-      for (const c of local) if (c.key) setKeymapEntry(c.key, c.id)
+      for (const c of local) if (c.key) setKeymapEntry(userId, c.key, c.id)
+      const epoch = chatCacheEpoch()
+      let cancelled = false
       conversationsApi
         .importHistory(payload)
         .then(() => {
-          try {
-            localStorage.setItem(IMPORT_MARKER_KEY, '1')
-          } catch {
-            /* ignore */
-          }
+          // Sign-out and a user switch bump the epoch; don't recreate a key they removed.
+          if (cancelled || epoch !== chatCacheEpoch()) return
+          markChatImported(userId)
           reloadHistory()
         })
         .catch(() => {
+          if (!cancelled) migratedFor.current = null
           /* retry next mount */
         })
+      return () => {
+        cancelled = true
+      }
     } catch {
       /* empty */
     }
-  }, [reloadHistory, lockedCaseId])
+  }, [reloadHistory, lockedCaseId, userId])
 
   // going back to a tab folds the thread to its last exchange; a case switch resets that below
   const seenKey = useRef(collapseKey)
@@ -1098,8 +1106,8 @@ export default function Chat({
     </div>
   )
 
-  // history view rows: the server list, or the localStorage cache when offline
-  const offline = histPhase === 'error'
+  // history view rows: the server list, or this user's cache when the server can't be reached
+  const offline = histPhase === 'error' && historyOffline
   const histRows: HistRow[] = offline
     ? history.map((c) => ({
         id: c.id,

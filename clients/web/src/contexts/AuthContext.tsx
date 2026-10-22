@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import api from '../services/api';
+import { clearChatCache, retainChatCache } from '../shell/chatCache';
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
 
@@ -91,6 +92,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const loadUser = useCallback(async () => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Using mock dev user');
+      retainChatCache(DEV_USER.user_id);
       setUser(DEV_USER);
       setIsLoading(false);
       return;
@@ -99,12 +101,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setBackendUnreachable(false);
     try {
       const response = await api.get('/auth/me');
+      if (response.data?.user_id) retainChatCache(response.data.user_id);
       setUser(response.data);
     } catch (error: any) {
       // /auth/me also seeds the csrf_token cookie, so the login POST works
       const status: number | undefined = error?.response?.status;
       if (status === undefined || status >= 500) {
         setBackendUnreachable(true);
+      } else {
+        // A definite signed-out answer. Leave the cache in place only when the
+        // session state is unknown, so an outage does not wipe this browser's copy.
+        clearChatCache();
       }
     }
     setIsLoading(false);
@@ -119,6 +126,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (DEV_MODE) return;
     try {
       const response = await api.get('/auth/me');
+      if (response.data?.user_id) retainChatCache(response.data.user_id);
       setUser(response.data);
     } catch {
       // keep the current user; a real sign-out is handled by the next request's 401
@@ -143,6 +151,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const login = async (usernameOrEmail: string, password: string, mfaCode?: string) => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Bypassing login, using mock user');
+      retainChatCache(DEV_USER.user_id);
       setUser(DEV_USER);
       return;
     }
@@ -155,6 +164,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         mfa_code: mfaCode,
       });
 
+      if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
       setUser(response.data.user);
     } catch (error: any) {
       const isMfaRequired =
@@ -170,6 +180,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const logout = async () => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Mock logout');
+      clearChatCache();
       setUser(null);
       return;
     }
@@ -180,6 +191,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      clearChatCache();
       setUser(null);
     }
   };
@@ -188,6 +200,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       // the refresh cookie is HttpOnly; the browser sends it automatically
       const response = await api.post('/auth/refresh');
+      if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
       setUser(response.data.user);
     } catch (error) {
       console.error('Token refresh failed:', error);
