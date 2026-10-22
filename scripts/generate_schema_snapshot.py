@@ -21,9 +21,11 @@ import os
 import secrets
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
 
@@ -43,7 +45,13 @@ from scripts.generate_api_v1_contract import serialize  # noqa: E402
 
 # CREATE/DROP is only safe against a loopback server. Same set as
 # tests/integration/test_schema_drift_upgrade.py.
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "0.0.0.0"}  # nosec B104 - connect allowlist, not a bind
+_LOCAL_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "postgres",
+    "0.0.0.0",
+}  # nosec B104 - connect allowlist, not a bind
 _CONNECT_ARGS = {"connect_timeout": 5}
 
 
@@ -208,8 +216,13 @@ def _init_on(engine) -> None:
             replaced.dispose()
 
 
-def build_listing() -> dict:
-    """Provision a scratch database in compose order and list its columns."""
+@contextmanager
+def scratch_database(provision: bool = True) -> Iterator[tuple[str, Engine]]:
+    """A throwaway local database, dropped on exit: its name and an engine.
+
+    With ``provision`` it is built in compose order (SQL, ``init_database()``,
+    SQL again); without, it is empty.
+    """
     reason = postgres_skip_reason()
     if reason:
         raise ScratchDatabaseUnavailable(reason)
@@ -223,17 +236,23 @@ def build_listing() -> dict:
             conn.execute(text(f"DROP DATABASE IF EXISTS {ident} WITH (FORCE)"))
             conn.execute(text(f"CREATE DATABASE {ident}"))
         engine = create_engine(_url(name), connect_args=_CONNECT_ARGS)
-        _apply_init_sql(name)
-        _init_on(engine)
-        _apply_init_sql(name)
-        with engine.connect() as conn:
-            return column_listing(conn)
+        if provision:
+            _apply_init_sql(name)
+            _init_on(engine)
+            _apply_init_sql(name)
+        yield name, engine
     finally:
         if engine is not None:
             engine.dispose()
         with admin.connect() as conn:
             conn.execute(text(f"DROP DATABASE IF EXISTS {ident} WITH (FORCE)"))
         admin.dispose()
+
+
+def build_listing() -> dict:
+    """Provision a scratch database in compose order and list its columns."""
+    with scratch_database() as (_, engine), engine.connect() as conn:
+        return column_listing(conn)
 
 
 def main() -> int:

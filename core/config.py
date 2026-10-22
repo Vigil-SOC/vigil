@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     # and written by the skills API. Unset (None) is the State Directory's
     # skills/ folder; empty turns operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
+    # python -m core.upgrade: run history directory (unset = none kept), and
+    # the version-bound acknowledgement that stands in for a restore point.
+    vigil_upgrade_dir: Optional[str] = None
+    vigil_upgrade_ack_version: str = ""
+    vigil_upgrade_ack_reason: str = ""
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
     # agent and scripts/migrate_schema.py can keep it in the environment.
