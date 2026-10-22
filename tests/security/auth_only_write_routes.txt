@@ -30,7 +30,6 @@ POST /api/cases/{case_id}/generate-report
 POST /api/conversations/import
 POST /api/exclusions
 POST /api/exclusions/{exclusion_id}/remove
-POST /api/findings/export
 POST /api/findings/{finding_id}/enrich
 POST /api/findings/{finding_id}/intake
 POST /api/findings/{finding_id}/noise

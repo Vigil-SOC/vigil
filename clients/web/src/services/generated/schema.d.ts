@@ -3538,23 +3538,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/findings/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Export Findings */
-        post: operations["post_api_findings_export"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/findings/stats/summary": {
         parameters: {
             query?: never;
@@ -17625,39 +17608,6 @@ export interface operations {
     delete_api_findings_all: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_findings_export: {
-        parameters: {
-            query?: {
-                output_format?: string;
-            };
             header?: {
                 authorization?: string | null;
             };

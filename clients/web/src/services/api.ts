@@ -206,11 +206,6 @@ export const findingsApi = {
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
   
-  export: (format: 'json' | 'jsonl' = 'json') =>
-    api.post('/findings/export', null, { params: { output_format: format } }),
-  
-  update: (id: string, data: any) => api.patch(`/findings/${id}`, data),
-  
   delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
