@@ -91,6 +91,8 @@ describe('UserMenu', () => {
     renderMenu()
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
     const menu = await screen.findByRole('menu', { name: 'Account' })
+    // The version arrives on the health read, after the menu is already open.
+    await screen.findByText('About Vigil · 9.9.9')
     const rows = screen.getAllByRole('menuitem').map((row) => row.textContent?.trim())
     expect(rows).toEqual([
       'Setup guide',
