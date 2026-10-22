@@ -1,0 +1,3 @@
+openapi /api/claude paths: ['/api/claude/chat/stream']
+GET /api/claude/models -> 404 {"detail":"Not Found"}
+OK
