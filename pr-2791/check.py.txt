@@ -1,0 +1,18 @@
+import os, sys
+sys.path.insert(0, os.getcwd())
+from fastapi.testclient import TestClient
+from services.api.main import app, _CONTEXT_PATH
+c = TestClient(app)
+fav = open("clients/web/public/favicon.ico","rb").read()
+p = _CONTEXT_PATH
+r = c.get(f"{p}/favicon.ico")
+print("GET favicon", r.status_code, r.headers["content-type"], r.content == fav)
+assert r.status_code == 200 and r.content == fav and not r.headers["content-type"].startswith("text/html")
+h = c.head(f"{p}/favicon.ico"); print("HEAD favicon", h.status_code); assert h.status_code == 200
+for path in ("/index.html", "/static/x.js", "/assets/nope.css"):
+    r = c.get(p + path); print("GET", path, r.status_code, r.headers["content-type"])
+r = c.get(f"{p}/assets/app.js"); print("GET /assets/app.js", r.status_code); assert r.status_code == 200
+r = c.get(f"{p}/cases/abc"); print("GET /cases/abc", r.status_code, r.headers["content-type"]); assert "text/html" in r.headers["content-type"]
+paths = c.get(app.openapi_url).json()["paths"]
+print("favicon in openapi:", any("favicon" in k for k in paths)); assert not any("favicon" in k for k in paths)
+print("OK")

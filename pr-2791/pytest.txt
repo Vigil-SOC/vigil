@@ -1,0 +1,4 @@
+1.93s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/findings/]
+1.92s setup    unit/api/test_api_v1_reachable.py::test_the_app_shell_still_answers_a_path_that_is_not_the_api
+1.83s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/cases/]
+=================== 11 passed, 1 warning in 65.11s (0:01:05) ===================

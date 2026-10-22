@@ -1,0 +1,10 @@
+{"ts": "2026-10-22T15:23:19.145995+00:00", "level": "ERROR", "logger": "core.storage.config_service", "message": "Error getting system config 'cloudflare.cloudy.enabled': (psycopg2.errors.UndefinedTable) relation \"system_config\" does not exist\nLINE 2: FROM system_config \n             ^\n\n[SQL: SELECT system_config.key AS system_config_key, system_config.value AS system_config_value, system_config.description AS system_config_description, system_config.config_type AS system_config_config_type, system_config.updated_by AS system_config_updated_by, system_config.created_at AS system_config_created_at, system_config.updated_at AS system_config_updated_at \nFROM system_config \nWHERE system_config.key = %(key_1)s \n LIMIT %(param_1)s]\n[parameters: {'key_1': 'cloudflare.cloudy.enabled', 'param_1': 1}]\n(Background on this error at: https://sqlalche.me/e/21/f405)", "msg_template": "Error getting system config 'cloudflare.cloudy.enabled': (psycopg2.errors.UndefinedTable) relation \"system_config\" does not exist\nLINE 2: FROM system_config \n             ^\n\n[SQL: SELECT system_config.key AS system_config_key, system_config.value AS system_config_value, system_config.description AS system_config_description, system_config.config_type AS system_config_config_type, system_config.updated_by AS system_config_updated_by, system_config.created_at AS system_config_created_at, system_config.updated_at AS system_config_updated_at \nFROM system_config \nWHERE system_config.key = %(key_1)s \n LIMIT %(param_1)s]\n[parameters: {'key_1': 'cloudflare.cloudy.enabled', 'param_1': 1}]\n(Background on this error at: https://sqlalche.me/e/21/f405)", "trace_id": "", "span_id": ""}
+GET favicon 200 image/vnd.microsoft.icon True
+HEAD favicon 200
+GET /index.html 200 text/html; charset=utf-8
+GET /static/x.js 200 text/html; charset=utf-8
+GET /assets/nope.css 404 application/json
+GET /assets/app.js 200
+GET /cases/abc 200 text/html; charset=utf-8
+favicon in openapi: False
+OK

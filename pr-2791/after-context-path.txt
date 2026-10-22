@@ -1,0 +1,9 @@
+GET favicon 200 image/vnd.microsoft.icon True
+HEAD favicon 200
+GET /index.html 200 text/html; charset=utf-8
+GET /static/x.js 200 text/html; charset=utf-8
+GET /assets/nope.css 404 application/json
+GET /assets/app.js 200
+GET /cases/abc 200 text/html; charset=utf-8
+favicon in openapi: False
+OK
