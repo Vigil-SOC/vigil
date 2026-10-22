@@ -764,8 +764,6 @@ async def change_password(
             detail="Failed to change password",
         )
 
-    # Invalidate every outstanding token for this user. The current
-    # session is effectively logged out; the client should re-login.
     await revoke_all_for_user(current_user.user_id)
 
     clear_auth_cookies(response)

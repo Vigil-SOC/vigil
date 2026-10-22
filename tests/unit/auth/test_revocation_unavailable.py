@@ -1,6 +1,3 @@
-"""A credential or claims change that cannot revoke old tokens is a 503, and the
-request's unit of work rolls the change back so a retry starts clean."""
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 

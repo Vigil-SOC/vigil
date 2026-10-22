@@ -402,8 +402,6 @@ async def update_user(
             detail="Failed to update user",
         )
 
-    # Sign the user out everywhere so their next session carries the new
-    # email or role, not the claims and permissions cached at login.
     if stale_reason:
         await revoke_all_for_user(user.user_id)
 
