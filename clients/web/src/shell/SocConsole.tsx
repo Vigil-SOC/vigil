@@ -14,6 +14,7 @@ import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvide
 import ExtensionHost from '../extensions/ExtensionHost'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 import CaseDrawer from './CaseDrawer'
+import { heldCase, holdCase } from './heldCase'
 import Chat from './Chat'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
@@ -158,20 +159,17 @@ function SocConsoleInner() {
   )
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [caseSeed, setCaseSeed] = useState<string | null>(null)
-  const [drawerCase, setDrawerCase] = useState<string | null>(null)
-  // The drawer is held on the history entry it is open over, so browser Back from a page it led to
-  // (Watch it run, Replay) comes back to the case rather than to the bare page under it.
-  const heldDrawer = (location.state as { drawerCase?: unknown } | null)?.drawerCase
-  useEffect(() => {
-    if (typeof heldDrawer === 'string') setDrawerCase(heldDrawer)
-  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if ((typeof heldDrawer === 'string' ? heldDrawer : null) === drawerCase) return
-    navigate(
-      { pathname: location.pathname, search: location.search, hash: location.hash },
-      { replace: true, state: { ...((location.state as object | null) ?? {}), drawerCase } },
-    )
-  }, [drawerCase]) // eslint-disable-line react-hooks/exhaustive-deps
+  const drawerCase = heldCase(location.state)
+  // A case opened after an await writes to the entry the user is on by then.
+  const here = useRef(location)
+  here.current = location
+  const setDrawerCase = useCallback(
+    (id: string | null) => {
+      const { pathname, search, hash, state } = here.current
+      navigate({ pathname, search, hash }, { replace: true, state: holdCase(state, id) })
+    },
+    [navigate],
+  )
   const [fill, setFill] = useState<{ text: string; seq: number } | null>(null)
   const fillCommand = useCallback((text: string) => setFill((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 })), [])
   // One bar. Its DOM holder moves between the header and Home; the component does not remount.
@@ -234,10 +232,10 @@ function SocConsoleInner() {
       // Compare the query too, not just the screen: a repeat badged click is a
       // no-op that used to push a duplicate history entry, and an unbadged
       // click from ?tab=approvals is a real move that used to be swallowed.
-      if (valid && next === current && search === location.search) return
+      if (valid && next === current && search === location.search && drawerCase === null) return
       navigate({ pathname: `/${next}`, search }, { replace: options?.replace })
     },
-    [valid, current, navigate, location.search],
+    [valid, current, navigate, location.search, drawerCase],
   )
   const goSettings = useCallback(
     (section: SettingsSectionKey) => {
@@ -508,10 +506,7 @@ function SocConsoleInner() {
       onOpenChat={askVigil}
       caseOpen={openCaseId !== null}
       onOpenCase={setDrawerCase}
-      onGo={(next, options) => {
-        setDrawerCase(null) // the drawer would sit over the next screen
-        go(next, options)
-      }}
+      onGo={go}
       fill={fill}
     />
   )

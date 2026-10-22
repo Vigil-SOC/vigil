@@ -38,10 +38,7 @@ export default function CaseDrawer({
         <CasesDetail
           id={caseId}
           onBack={onClose}
-          onExpand={() => {
-            navigate({ pathname: '/cases', search: `?case=${encodeURIComponent(caseId)}` })
-            onClose()
-          }}
+          onExpand={() => navigate({ pathname: '/cases', search: `?case=${encodeURIComponent(caseId)}` })}
           pageKey={pageKey}
           seed={seed}
           onSeedConsumed={onSeedConsumed}
