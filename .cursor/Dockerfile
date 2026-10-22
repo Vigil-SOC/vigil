@@ -45,8 +45,11 @@ RUN ARCH="$(dpkg --print-architecture)" \
 
 # test-agent-layer pins Node 22 because services/agent/eval/estate.ts imports
 # node:sqlite, which Node 20 does not ship. This is the release setup-node
-# resolves for node-version: '22' (npm 10.9.9). It stays off the default PATH;
-# the selector uses it for services/agent only.
+# resolves for node-version: '22' (npm 10.9.9). It stays off the default PATH.
+# The selector uses it for services/agent, and for infra/docker/mcp-packages:
+# Dockerfile.mcp-runner (the MCP Runner Image job) runs `npm install -g
+# npm@10.9.9` on node:22 before `npm ci`. Node 20's npm is 10.8.2, and the
+# ubuntu user cannot upgrade it in place (EACCES on /usr/local/lib/node_modules).
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
          amd64) NARCH=x64; NSUM=1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce ;; \
@@ -64,11 +67,12 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && /usr/local/lib/node-v22/bin/node -e "import('node:sqlite').then(()=>{})"
 
 # `node` / `npm` / `npx` on PATH, and the `node` that `#!/usr/bin/env node`
-# finds, follow CI's split: Node 20 everywhere except services/agent, which is
-# Node 22. Bash functions cover a restored PATH that puts the harness node
-# first again; the directory prepend covers shebangs in start/install, which
-# do not go through that restore. BASH_ENV is how a non-interactive agent
-# shell (bash -c, not a login shell) picks this up.
+# finds, follow CI's split: Node 20 everywhere except services/agent and
+# infra/docker/mcp-packages, which are Node 22 (npm 10.9.9). Bash functions
+# cover a restored PATH that puts the harness node first again; the directory
+# prepend covers shebangs in start/install, which do not go through that
+# restore. BASH_ENV is how a non-interactive agent shell (bash -c, not a login
+# shell) picks this up.
 RUN python3 - <<'PY'
 from pathlib import Path
 import os
@@ -80,14 +84,14 @@ bindir.mkdir(parents=True, exist_ok=True)
 (root / "select.sh").write_text(
     """ci_node_dir() {
   case "${PWD:-}" in
-    */services/agent|*/services/agent/*)
+    */services/agent|*/services/agent/*|*/infra/docker/mcp-packages|*/infra/docker/mcp-packages/*)
       printf '%s\\n' /usr/local/lib/node-v22/bin
       return 0
       ;;
   esac
   for arg in "$@"; do
     case "$arg" in
-      *services/agent*)
+      *services/agent*|*infra/docker/mcp-packages*)
         printf '%s\\n' /usr/local/lib/node-v22/bin
         return 0
         ;;
@@ -138,9 +142,14 @@ corepack() { command /usr/local/lib/ci-node/bin/corepack "$@"; }
 )
 PY
 RUN mkdir -p /tmp/ci-node-smoke/services/agent \
+             /tmp/ci-node-smoke/infra/docker/mcp-packages \
     && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'node --version' | grep -qx 'v20.20.2' \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'npm --version' | grep -qx '10.8.2' \
     && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'cd /tmp/ci-node-smoke/services/agent && node --version' | grep -qx 'v22.23.4' \
     && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'cd /tmp/ci-node-smoke/services/agent && node -e "import(\"node:sqlite\").then(()=>{})"' \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'cd /tmp/ci-node-smoke/infra/docker/mcp-packages && node --version' | grep -qx 'v22.23.4' \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'cd /tmp/ci-node-smoke/infra/docker/mcp-packages && npm --version' | grep -qx '10.9.9' \
+    && BASH_ENV=/usr/local/lib/ci-node/bash-env.sh bash -c 'npm --prefix /tmp/ci-node-smoke/infra/docker/mcp-packages --version' | grep -qx '10.9.9' \
     && rm -rf /tmp/ci-node-smoke
 ENV BASH_ENV=/usr/local/lib/ci-node/bash-env.sh
 
