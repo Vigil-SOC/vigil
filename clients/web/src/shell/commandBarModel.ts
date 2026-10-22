@@ -304,9 +304,7 @@ export function useJiraReadiness(): JiraReadiness {
       .then((res) => {
         if (live) setJira(jiraReadiness(res.data))
       })
-      .catch(() => {
-        if (live) setJira(jiraReadiness(null))
-      })
+      .catch(() => {})
     return () => {
       live = false
     }
