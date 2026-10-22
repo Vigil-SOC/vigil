@@ -1,0 +1,33 @@
+E       AssertionError: {"message":"Password changed successfully. Please log in again."}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+E       AssertionError: {"message":"Password reset successfully"}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+E       AssertionError: {"user_id":"u-1","username":"analyst","email":"ada@example.com","full_name":"Analyst","role_id":"role-analyst","is_active":true,"is_verified":false,"mfa_enabled":false,"last_login":null,"login_count":1,"created_at":null,"updated_at":null}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+E       AssertionError: {}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+E       AssertionError: {"message":"Password changed successfully. Please log in again."}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+ERROR    services.api.routers.auth:auth.py:772 Password changed for analyst but revoke_all_for_user failed: redis down. Old tokens may remain valid until natural expiry.
+E       AssertionError: {"message":"Password reset successfully"}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+ERROR    services.api.routers.auth:auth.py:1038 Password reset for analyst but revoke_all_for_user failed: redis down
+E       AssertionError: {"user_id":"u-1","username":"analyst","email":"ada@example.com","full_name":"Analyst","role_id":"role-analyst","is_active":true,"is_verified":false,"mfa_enabled":false,"last_login":null,"login_count":1,"created_at":null,"updated_at":null}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+ERROR    services.api.routers.auth:auth.py:698 Email changed for analyst but revoke_all_for_user failed: redis down
+E       AssertionError: {}
+tests/unit/auth/test_revocation_unavailable.py:116: AssertionError
+ERROR    services.api.routers.users:users.py:403 Role changed for analyst but revoke_all_for_user failed: redis down
+ERROR    services.api.routers.auth:auth.py:772 Password changed for analyst but revoke_all_for_user failed: redis down. Old tokens may remain valid until natural expiry.
+ERROR    services.api.routers.auth:auth.py:1038 Password reset for analyst but revoke_all_for_user failed: redis down
+ERROR    services.api.routers.auth:auth.py:698 Email changed for analyst but revoke_all_for_user failed: redis down
+ERROR    services.api.routers.users:users.py:403 Role changed for analyst but revoke_all_for_user failed: redis down
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[no-client-change-password]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[no-client-reset-confirm]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[no-client-email-change]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[no-client-admin-role-change]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[down-change-password]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[down-reset-confirm]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[down-email-change]
+FAILED tests/unit/auth/test_revocation_unavailable.py::test_unrevoked_change_is_503_and_rolled_back[down-admin-role-change]
+========================= 8 failed, 4 passed in 38.46s =========================

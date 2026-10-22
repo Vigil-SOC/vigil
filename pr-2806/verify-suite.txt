@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/cce886d7-326d-4c25-b2ba-cea1e509971e/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 52 items
+
+tests/unit/auth/test_revocation_unavailable.py ............              [ 23%]
+tests/unit/auth/test_change_password.py .....                            [ 32%]
+tests/unit/auth/test_user_update_revokes_tokens.py .....                 [ 42%]
+tests/unit/auth/test_profile_email_change.py .........                   [ 59%]
+tests/unit/auth/test_password_reset.py ......                            [ 71%]
+tests/unit/auth/test_password_reset_without_mail.py .......              [ 84%]
+tests/unit/auth/test_token_blacklist_eviction.py ......                  [ 96%]
+tests/unit/auth/test_token_blacklist_outage_logging.py ..                [100%]
+
+============================= slowest 10 durations =============================
+======================== 52 passed in 91.90s (0:01:31) =========================
