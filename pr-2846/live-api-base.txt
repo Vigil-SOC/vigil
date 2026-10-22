@@ -1,0 +1,7 @@
+## BASE CODE (1d0a1ee1), findings table renamed
+GET /api/v1/findings?limit=1
+{"findings":[],"total":0,"offset":0,"limit":1,"has_more":false} HTTP 200
+GET /api/findings?limit=1
+{"findings":[],"total":0,"offset":0,"limit":1,"has_more":false} HTTP 200
+GET /api/v1/findings/f-missing
+{"detail":"Finding not found"} HTTP 404

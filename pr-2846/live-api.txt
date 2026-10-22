@@ -1,0 +1,16 @@
+## healthy, empty DB
+GET /api/v1/findings?limit=1
+{"findings":[],"total":0,"offset":0,"limit":1,"has_more":false} HTTP 200
+GET /api/findings?limit=1
+{"findings":[],"total":0,"offset":0,"limit":1,"has_more":false} HTTP 200
+GET /api/v1/findings/f-missing
+{"detail":"Finding not found"} HTTP 404
+## findings table renamed (query error, connection healthy)
+GET /api/v1/findings?limit=1
+{"detail":"Internal server error","code":"INTERNAL_ERROR"} HTTP 500
+GET /api/findings?limit=1
+{"detail":"Internal server error","code":"INTERNAL_ERROR"} HTTP 500
+GET /api/v1/findings/f-missing
+{"detail":"Internal server error","code":"INTERNAL_ERROR"} HTTP 500
+## table restored
+{"findings":[],"total":0,"offset":0,"limit":1,"has_more":false} HTTP 200

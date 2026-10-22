@@ -1,0 +1,11 @@
+tests/unit/chat/test_chat_failed_turn.py ..                              [ 99%]
+FAILED tests/unit/platform/test_vigil_path.py::test_read_prefers_vigil_dir - ...
+FAILED tests/unit/platform/test_vigil_path.py::test_read_falls_back_to_legacy_dir
+FAILED tests/unit/platform/test_vigil_path.py::test_read_of_missing_file_points_at_vigil_dir
+FAILED tests/unit/platform/test_vigil_path.py::test_write_always_targets_vigil_dir_even_when_legacy_exists
+FAILED tests/unit/platform/test_vigil_path.py::test_write_with_no_parts_creates_the_directory_itself
+FAILED tests/unit/platform/test_vigil_path.py::test_write_failure_raises_rather_than_relocating
+FAILED tests/unit/platform/test_vigil_path.py::test_state_dir_status_reports_path_and_writability
+FAILED tests/unit/platform/test_vigil_path.py::test_state_dir_status_reports_unwritable_without_raising
+FAILED tests/unit/platform/test_vigil_path.py::test_bare_directory_never_resolves_to_legacy
+===== 9 failed, 3502 passed, 6 skipped, 250 warnings in 199.71s (0:03:19) ======
