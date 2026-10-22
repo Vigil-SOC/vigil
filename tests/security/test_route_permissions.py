@@ -54,12 +54,7 @@ GATED_ROUTES = [
     ),
     ("PUT", "/api/cases/templates/t-1", {"name": "n"}, "cases.write"),
     ("DELETE", "/api/cases/templates/t-1", None, "cases.write"),
-    (
-        "POST",
-        "/api/cases/templates/t-1/create-case",
-        {"title": "t"},
-        "cases.write",
-    ),
+    ("POST", "/api/cases/templates/t-1/create-case", {"title": "t"}, "cases.write"),
     ("PATCH", "/api/v1/findings/f-1", {"severity": "low"}, "findings.write"),
     ("POST", "/api/v1/approvals/a-1/approve", {}, "ai_decisions.approve"),
     ("POST", "/api/v1/approvals/a-1/reject", {"reason": "no"}, "ai_decisions.approve"),
