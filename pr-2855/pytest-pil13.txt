@@ -1,0 +1,8 @@
+0.26s call     unit/reporting/test_attack_heatmap_db.py::test_analytics_is_200_with_an_undated_finding
+0.19s call     unit/reporting/test_ai_decision_feedback_reviewer.py::test_the_session_user_is_recorded_and_a_body_reviewer_is_ignored
+0.16s call     unit/documents/test_documents.py::test_document_route_returns_text_and_pages_and_says_why_it_refuses
+0.16s setup    unit/reporting/test_ai_decision_feedback_reviewer.py::test_the_session_user_is_recorded_and_a_body_reviewer_is_ignored
+0.13s call     unit/documents/test_documents.py::test_a_document_alone_is_no_target
+0.12s call     unit/reporting/test_analytics_probe_exclusion_db.py::test_breakdowns_exclude_probes_and_add_up_to_the_total
+0.09s call     unit/documents/test_documents.py::test_a_document_over_the_cap_is_refused_by_execute
+================== 33 passed, 2 warnings in 95.44s (0:01:35) ===================

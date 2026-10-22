@@ -1,0 +1,9 @@
+== old
+Total: 4 (CRITICAL: 4)
+│ pillow  │ CVE-2026-112393 │ CRITICAL │ fixed  │ 12.3.0            │ 13.0.0        │ Pillow is a Python imaging library. From 2.0.0 until 13.0.0, │
+│         │ CVE-2026-112403 │          │        │                   │               │ Pillow is a Python imaging library. Prior to 13.0.0,         │
+│         │ CVE-2026-112900 │          │        │                   │               │ Pillow is a Python imaging library. From 2.6.0 until 13.0.0, │
+│         │ CVE-2026-96639  │          │        │                   │               │ Pillow is a Python imaging library. From 11.0.0 until        │
+== new
+new exit=0
+old exit=1
