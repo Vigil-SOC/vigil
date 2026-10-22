@@ -93,11 +93,7 @@ PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
 
 
 def _is_service_account(user: User) -> bool:
-    """Only an explicit True exempts from lockout; anything else fails closed.
-
-    An attribute read, not a string: the writer scan allows exactly one
-    assignment.
-    """
+    """Only an explicit True exempts from lockout; anything else fails closed."""
     return user.service_account is True
 
 
@@ -110,7 +106,6 @@ class AccountLockedError(Exception):
 
 
 def _account_is_locked(user: User) -> bool:
-    """A lock in force. Service accounts are never refused (D2-17)."""
     until = user.locked_until
     return until is not None and until > utcnow() and not _is_service_account(user)
 

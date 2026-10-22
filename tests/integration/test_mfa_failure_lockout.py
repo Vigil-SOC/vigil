@@ -1,13 +1,5 @@
 """A wrong MFA code counts toward the same lock as a wrong password, and a
-locked account gets 423 from login and from the MFA routes.
-
-The login request rolls back on 401, so the counter commits on its own
-connection after the code check has released the row. ``lock_timeout`` turns a
-counter left waiting on that row into an error instead of a hang.
-
-Runs against a scratch database on a local Postgres; skips without one,
-except under ``CI``.
-"""
+locked account gets 423 from login and from the MFA routes."""
 
 from __future__ import annotations
 
@@ -89,7 +81,6 @@ def engine():
 
 @pytest.fixture
 def db(engine, monkeypatch):
-    """Every session the code opens for itself is a new one on the scratch DB."""
     monkeypatch.setattr(uow_module, "get_db_session", lambda: Session(engine))
     with Session(engine) as s:
         s.add(

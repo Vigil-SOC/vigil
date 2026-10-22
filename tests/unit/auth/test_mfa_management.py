@@ -44,7 +44,6 @@ def client(monkeypatch, user):
     query = session.query.return_value.filter.return_value
     query.populate_existing.return_value.with_for_update.return_value = query
     query.first.return_value = user
-    # A wrong code is counted on a session of its own: same stand-in row.
     monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
     app = FastAPI()
     app.state.limiter = limiter
