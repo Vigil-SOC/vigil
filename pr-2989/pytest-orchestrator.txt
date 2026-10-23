@@ -1,0 +1,15 @@
+2.60s setup    unit/api/test_mcp_surface_gate.py::test_a_caller_on_a_domain_reaches_the_server
+2.56s setup    security/test_unauth_endpoints.py::test_unauthenticated_request_is_rejected[GET-/api/findings-None]
+=========================== short test summary info ============================
+ERROR tests/unit/api/test_api_v1_reachable.py::test_every_frozen_collection_answers_at_the_path_it_promises
+ERROR tests/unit/api/test_api_v1_reachable.py::test_an_api_path_that_matches_no_route_is_a_404
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_app_shell_still_answers_a_path_that_is_not_the_api
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/findings/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/cases/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/findings/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/cases/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/assets/nope.css]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/internal/nope]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/mcp]
+FAILED tests/unit/api/test_api_v1_dual_mount.py::test_both_paths_return_the_same_response
+======= 1 failed, 946 passed, 5 warnings, 10 errors in 277.16s (0:04:37) =======

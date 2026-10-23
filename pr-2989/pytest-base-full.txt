@@ -1,0 +1,15 @@
+ERROR    core.auth.token_blacklist:token_blacklist.py:209 Redis maxmemory-policy is 'allkeys-lru': under memory pressure Redis can evict token-revocation keys, silently re-validating logged-out or reset sessions. Set maxmemory-policy to noeviction.
+        message    = {'type': 'lifespan.startup.failed', 'message': 'Traceback (most recent call last):\n  File "/home/gray/Deeptempo/vigil...0006_audit_feed, this image\'s head is 0006_canonical_finding_ips; run python -m core.upgrade as the database owner\n'}
+ERROR    services.api.errors:errors.py:79 Unhandled error: GET /api/v1/findings
+ERROR tests/unit/api/test_api_v1_reachable.py::test_every_frozen_collection_answers_at_the_path_it_promises
+ERROR tests/unit/api/test_api_v1_reachable.py::test_an_api_path_that_matches_no_route_is_a_404
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_app_shell_still_answers_a_path_that_is_not_the_api
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/findings/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/cases/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/findings/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/cases/]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/assets/nope.css]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/internal/nope]
+ERROR tests/unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/mcp]
+FAILED tests/unit/api/test_api_v1_dual_mount.py::test_both_paths_return_the_same_response
+======= 1 failed, 946 passed, 5 warnings, 10 errors in 174.60s (0:02:54) =======

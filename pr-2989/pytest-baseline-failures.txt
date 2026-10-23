@@ -1,0 +1,4 @@
+2.31s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/cases/]
+2.26s setup    unit/api/test_api_v1_reachable.py::test_a_miss_under_a_backend_prefix_is_not_the_app_shell[/internal/nope]
+2.13s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/findings/]
+================== 13 passed, 2 warnings in 91.68s (0:01:31) ===================
