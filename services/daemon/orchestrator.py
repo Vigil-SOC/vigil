@@ -743,7 +743,7 @@ class Orchestrator:
                 await self._complete_legacy_review_rows()
             except Exception as e:
                 logger.error(
-                    f"Completing legacy review rows failed: {e}", exc_info=True
+                    "Completing legacy review rows failed: %s", e, exc_info=True
                 )
 
             tasks = [
