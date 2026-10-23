@@ -835,6 +835,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Feed
+         * @description Destination (without TLS material) and how far the cursor is behind the tip.
+         */
+        get: operations["get_api_audit_feed"];
+        /**
+         * Update Feed
+         * @description Save host, port, enabled and TLS material. One trail entry, from the config write.
+         */
+        put: operations["put_api_audit_feed"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/feed/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Feed
+         * @description Send one CEF test frame. Does not move the cursor or append a trail entry.
+         */
+        post: operations["post_api_audit_feed_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/poll": {
         parameters: {
             query?: never;
@@ -9059,6 +9103,27 @@ export interface components {
             /** Min Severity */
             min_severity?: string | null;
         };
+        /** FeedIn */
+        FeedIn: {
+            /** Ca Pem */
+            ca_pem?: string | null;
+            /** Client Cert Pem */
+            client_cert_pem?: string | null;
+            /** Client Key Pem */
+            client_key_pem?: string | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Host
+             * @default
+             */
+            host: string;
+            /** Port */
+            port?: number | null;
+        };
         /** FindingListResponse */
         FindingListResponse: {
             /** Findings */
@@ -12962,6 +13027,103 @@ export interface operations {
                 attribution?: string | null;
                 after?: number | null;
             };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_feed: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_feed: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_audit_feed_test: {
+        parameters: {
+            query?: never;
             header?: {
                 authorization?: string | null;
             };

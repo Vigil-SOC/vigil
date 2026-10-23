@@ -18,6 +18,8 @@ import { INTEGRATIONS_DESC } from './integrationsData'
 import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsState'
 import SlaPoliciesSection, { SLA_DESC } from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
+import AuditSection, { AUDIT_DESC } from './AuditSection'
+import { useAuth } from '../../contexts/AuthContext'
 import type { SectionProps } from './types'
 
 const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
@@ -29,6 +31,7 @@ type NavKey =
   | 'sla'
   | 'autoinvestigate'
   | 'data'
+  | 'audit'
   | 'system'
 
 type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users'
@@ -41,6 +44,8 @@ interface NavDef {
   Component: (props: SectionProps) => JSX.Element
   /** the section renders its own PageHead (it has head actions) */
   ownsHead?: boolean
+  /** shown only to holders of this permission */
+  perm?: string
 }
 
 interface SystemTabDef {
@@ -94,16 +99,15 @@ const NAV: NavDef[] = [
   { key: 'sla', label: 'SLA policies', desc: SLA_DESC, icon: 'clock', Component: SlaPoliciesSection, ownsHead: true },
   { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, what they may spend, and which tools may act alone.', icon: 'bolt', Component: AutoInvestigateSection },
   { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection },
+  { key: 'audit', label: 'Audit', desc: AUDIT_DESC, icon: 'shield', Component: AuditSection, ownsHead: true, perm: 'audit.read' },
   { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs },
 ]
 
-const NAV_KEYS = new Set<string>(NAV.map((item) => item.key))
-
-function resolveNav(sectionParam: string | null): NavKey {
+function resolveNav(sectionParam: string | null, nav: NavDef[]): NavKey {
   // Old bookmarks for the panels that now live under System stay on that item.
   if (sectionParam && SYSTEM_KEYS.has(sectionParam)) return 'system'
-  if (sectionParam && NAV_KEYS.has(sectionParam)) return sectionParam as NavKey
-  return NAV[0].key
+  if (sectionParam && nav.some((item) => item.key === sectionParam)) return sectionParam as NavKey
+  return nav[0].key
 }
 
 export default function SettingsScreen(props: ConsoleScreenProps) {
@@ -117,7 +121,9 @@ export default function SettingsScreen(props: ConsoleScreenProps) {
 function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
-  const active = resolveNav(sectionParam)
+  const { hasPermission } = useAuth()
+  const nav = NAV.filter((item) => !item.perm || hasPermission(item.perm))
+  const active = resolveNav(sectionParam, nav)
   const { notify } = useToast()
   const { attention } = useIntegrationsState()
 
@@ -126,14 +132,14 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
     return () => setViewFull(false)
   }, [setViewFull])
 
-  const current = NAV.find((item) => item.key === active) ?? NAV[0]
+  const current = nav.find((item) => item.key === active) ?? nav[0]
   const Section = current.Component
 
   return (
     <div className="settings-wrap">
       <nav className="settings-nav" aria-label="Settings sections">
         <h1 className="settings-nav-title">Settings</h1>
-        {NAV.map((item) => (
+        {nav.map((item) => (
           <button
             key={item.key}
             className={`settings-nav-item${item.key === active ? ' active' : ''}`}
