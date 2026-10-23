@@ -160,7 +160,7 @@ def clock(monkeypatch):
 def login(monkeypatch, user):
     """POST /api/auth/login for `user`, password check and tokens stubbed."""
     monkeypatch.setattr(
-        auth.AuthService, "authenticate_user", staticmethod(lambda *a: user)
+        auth.AuthService, "authenticate_user", staticmethod(lambda *a, **k: user)
     )
     monkeypatch.setattr(
         auth.AuthService, "generate_jwt_token", staticmethod(lambda *a, **k: "tok")
