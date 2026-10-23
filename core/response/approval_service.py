@@ -786,20 +786,6 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
     return {"count": len(items), "items": items}
 
 
-def pending_approval_case_ids() -> set[str]:
-    """Case ids that currently need a person.
-
-    Calls ``list_pending_approvals()`` and does not query ``approval_actions``.
-    A case id resolves from ``parameters.case_id``, then
-    ``workflow_runs.trigger_context.case_id``, then ``investigations.case_id``.
-    """
-    actions = ApprovalService().list_pending_approvals()
-    if not actions:
-        return set()
-    runs, investigations = _case_lookups(actions)
-    found: set[str] = set()
-    for action in actions:
-        resolved = _case_id_for_action(action, runs, investigations)
-        if resolved:
-            found.add(resolved)
-    return found
+def needs_you_case_ids() -> set[str]:
+    """Case ids that need a person, from one ``needs_you()`` read."""
+    return {item["case_id"] for item in needs_you()["items"] if item["case_id"]}

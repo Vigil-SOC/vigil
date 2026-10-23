@@ -200,6 +200,7 @@ def test_role_x_route(role, row, monkeypatch):
 
     user = User(
         user_id=f"u-{role}",
+        principal_id=f"u-{role}",
         username=f"u_{role}",
         email=f"{role}@test.local",
         password_hash="",

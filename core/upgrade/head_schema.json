@@ -2979,6 +2979,31 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column principals.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column principals.deleted_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column principals.kind": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(20)"
+ },
+ "column principals.label": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column principals.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column recent_config_changes.action": {
   "default": null,
   "nullable": true,
@@ -3068,6 +3093,36 @@
   "default": null,
   "nullable": false,
   "type": "character varying(500)"
+ },
+ "column sign_ins.end_reason": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(20)"
+ },
+ "column sign_ins.ended_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column sign_ins.expires_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column sign_ins.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column sign_ins.sign_in_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column sign_ins.started_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
  },
  "column sketch_mappings.case_id": {
   "default": null,
@@ -3404,6 +3459,11 @@
   "nullable": false,
   "type": "jsonb"
  },
+ "column users.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column users.role_id": {
   "default": null,
   "nullable": false,
@@ -3703,15 +3763,20 @@
  "constraint llm_provider_configs.llm_provider_configs_pkey": "PRIMARY KEY (provider_id)",
  "constraint mcp_credentials.mcp_credentials_pkey": "PRIMARY KEY (credential_id)",
  "constraint mcp_credentials.mcp_credentials_token_hash_key": "UNIQUE (token_hash)",
- "constraint mcp_credentials.mcp_credentials_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE",
+ "constraint mcp_credentials.mcp_credentials_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE RESTRICT",
  "constraint medic_last_seen.medic_last_seen_failure_kind": "CHECK (((failure_kind)::text = ANY ((ARRAY['refused'::character varying, 'timeout'::character varying, '401'::character varying, '5xx'::character varying])::text[])))",
  "constraint medic_last_seen.medic_last_seen_one_row": "CHECK ((id = 1))",
  "constraint medic_last_seen.medic_last_seen_pkey": "PRIMARY KEY (id)",
  "constraint medic_last_seen.medic_last_seen_snapshot_typed": "CHECK (((jsonb_typeof(status_snapshot) = 'object'::text) AND (octet_length((status_snapshot)::text) <= 4096)))",
+ "constraint principals.principals_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['person'::character varying, 'service_account'::character varying, 'agent'::character varying, 'system'::character varying])::text[])))",
+ "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
+ "constraint sign_ins.sign_ins_end_reason_check": "CHECK (((end_reason)::text = ANY ((ARRAY['sign_out'::character varying, 'expiry'::character varying, 'revoked'::character varying])::text[])))",
+ "constraint sign_ins.sign_ins_pkey": "PRIMARY KEY (sign_in_id)",
+ "constraint sign_ins.sign_ins_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint sketch_mappings.sketch_mappings_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint sketch_mappings.sketch_mappings_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint sketch_mappings.sketch_mappings_pkey": "PRIMARY KEY (id)",
@@ -3723,6 +3788,8 @@
  "constraint user_preferences.user_preferences_pkey": "PRIMARY KEY (user_id)",
  "constraint users.users_email_key": "UNIQUE (email)",
  "constraint users.users_pkey": "PRIMARY KEY (user_id)",
+ "constraint users.users_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
+ "constraint users.users_principal_id_key": "UNIQUE (principal_id)",
  "constraint users.users_role_id_fkey": "FOREIGN KEY (role_id) REFERENCES roles(role_id)",
  "constraint users.users_username_key": "UNIQUE (username)",
  "constraint workflow_run_phases.workflow_run_phases_pkey": "PRIMARY KEY (run_id, phase_id)",
@@ -4010,6 +4077,7 @@
  "index idx_shared_ioc_investigation": "CREATE INDEX idx_shared_ioc_investigation ON public.shared_iocs USING btree (investigation_id)",
  "index idx_shared_ioc_type": "CREATE INDEX idx_shared_ioc_type ON public.shared_iocs USING btree (ioc_type)",
  "index idx_shared_ioc_value": "CREATE INDEX idx_shared_ioc_value ON public.shared_iocs USING btree (value)",
+ "index idx_sign_ins_principal": "CREATE INDEX idx_sign_ins_principal ON public.sign_ins USING btree (principal_id)",
  "index idx_sketch_case_id": "CREATE INDEX idx_sketch_case_id ON public.sketch_mappings USING btree (case_id)",
  "index idx_sketch_finding_id": "CREATE INDEX idx_sketch_finding_id ON public.sketch_mappings USING btree (finding_id)",
  "index idx_sketch_id": "CREATE INDEX idx_sketch_id ON public.sketch_mappings USING btree (sketch_id)",
@@ -4046,9 +4114,11 @@
  "index mcp_credentials_pkey": "CREATE UNIQUE INDEX mcp_credentials_pkey ON public.mcp_credentials USING btree (credential_id)",
  "index mcp_credentials_token_hash_key": "CREATE UNIQUE INDEX mcp_credentials_token_hash_key ON public.mcp_credentials USING btree (token_hash)",
  "index medic_last_seen_pkey": "CREATE UNIQUE INDEX medic_last_seen_pkey ON public.medic_last_seen USING btree (id)",
+ "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
  "index shared_iocs_pkey": "CREATE UNIQUE INDEX shared_iocs_pkey ON public.shared_iocs USING btree (id)",
+ "index sign_ins_pkey": "CREATE UNIQUE INDEX sign_ins_pkey ON public.sign_ins USING btree (sign_in_id)",
  "index sketch_mappings_pkey": "CREATE UNIQUE INDEX sketch_mappings_pkey ON public.sketch_mappings USING btree (id)",
  "index skill_reads_pkey": "CREATE UNIQUE INDEX skill_reads_pkey ON public.skill_reads USING btree (id)",
  "index sla_policies_pkey": "CREATE UNIQUE INDEX sla_policies_pkey ON public.sla_policies USING btree (policy_id)",
@@ -4063,6 +4133,7 @@
  "index user_preferences_pkey": "CREATE UNIQUE INDEX user_preferences_pkey ON public.user_preferences USING btree (user_id)",
  "index users_email_key": "CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)",
  "index users_pkey": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (user_id)",
+ "index users_principal_id_key": "CREATE UNIQUE INDEX users_principal_id_key ON public.users USING btree (principal_id)",
  "index users_username_key": "CREATE UNIQUE INDEX users_username_key ON public.users USING btree (username)",
  "index workflow_run_phases_pkey": "CREATE UNIQUE INDEX workflow_run_phases_pkey ON public.workflow_run_phases USING btree (run_id, phase_id)",
  "index workflow_runs_pkey": "CREATE UNIQUE INDEX workflow_runs_pkey ON public.workflow_runs USING btree (run_id)",
@@ -5527,6 +5598,28 @@
   ],
   "sequence": null
  },
+ "relation principals": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
  "relation recent_config_changes": {
   "acl": [
    "app:DELETE",
@@ -5608,6 +5701,28 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation sign_ins": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation sketch_mappings": {
   "acl": [

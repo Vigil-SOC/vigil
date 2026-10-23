@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 import core.auth.auth_service as auth_service
 from core.auth.auth_service import AuthService
-from core.storage.models import Base, Role, User
+from core.storage.models import Base, Principal, Role, User
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
 
@@ -87,9 +87,12 @@ def test_concurrent_recovery_code_is_accepted_exactly_once(engine, monkeypatch):
         s.add(
             Role(role_id="role-viewer", name="Viewer", description="", permissions={})
         )
+        s.add(Principal(principal_id="u-race", kind="person"))
+        s.flush()
         s.add(
             User(
                 user_id="u-race",
+                principal_id="u-race",
                 username="race",
                 email="race@example.com",
                 password_hash="x",
