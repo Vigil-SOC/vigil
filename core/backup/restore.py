@@ -134,6 +134,10 @@ def restore_snapshot(
         restic, passphrase, snapshot, priority
     )
     _assert_compatible(manifest)
+    # Before anything is staged. A missing date is not a version mismatch.
+    created_at = manifest.get("created_at")
+    if not isinstance(created_at, str) or not created_at.strip():
+        raise BackupError("manifest has no created_at")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged_name = _suffixed(cfg.database, "_stage_", stamp)
     pre_name = _suffixed(cfg.database, "_pre_restore_", stamp)
@@ -324,9 +328,6 @@ def _load_manifest(
 
 
 def _assert_compatible(manifest: dict) -> None:
-    created_at = manifest.get("created_at")
-    if not isinstance(created_at, str) or not created_at.strip():
-        raise BackupError("manifest has no created_at")
     version = manifest.get("version")
     if not isinstance(version, str) or not version.strip():
         raise BackupError("manifest has no version")
