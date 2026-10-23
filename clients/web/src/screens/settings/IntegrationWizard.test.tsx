@@ -134,13 +134,4 @@ describe('IntegrationWizard drawer', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Automatic investigations/ }))
     expect(screen.getByRole('link', { name: /Limits/ })).toHaveAttribute('href', '/settings?section=autoinvestigate')
   })
-
-  it('setup variant: form only, saves and closes without testing', async () => {
-    const { onSave, onClose } = open({ variant: 'setup' })
-    expect(screen.queryByRole('tab')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Save Configuration/ }))
-    await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(onSave).toHaveBeenCalled()
-    expect(test).not.toHaveBeenCalled()
-  })
 })

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { LevelBadge, type Level } from '../../shared/LevelBadge'
 import { configApi, type IntegrationTestResult } from '../../services/api'
-import { Field, NumberInput, PasswordInput, Popup, Select, TextInput, ToggleRow } from '../../shared/ui'
+import { Field, NumberInput, PasswordInput, Select, TextInput, ToggleRow } from '../../shared/ui'
 import { Banner, extractApiError } from '../../shared/formKit'
 import { relativeTime, type LastTest } from './integrationHealth'
 import {
@@ -20,8 +20,6 @@ interface Props {
   secretsSet?: Record<string, boolean>
   onClose: () => void
   onSave: (id: string, config: Record<string, unknown>) => Promise<void>
-  // 'drawer' is Settings' setup drawer; 'setup' is the first-run popup: fields only.
-  variant?: 'drawer' | 'setup'
   // drawer header: the stored last test, and the category line under the name
   lastTest?: LastTest
   // the Connected table's health for this integration, so the two never disagree
@@ -45,7 +43,6 @@ export default function IntegrationWizard({
   secretsSet = {},
   onClose,
   onSave,
-  variant = 'drawer',
   lastTest,
   health,
   category,
@@ -79,11 +76,10 @@ export default function IntegrationWizard({
   }, [fields])
 
   useEffect(() => {
-    if (variant !== 'drawer') return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [variant, onClose])
+  }, [onClose])
 
   const set = (name: string, val: unknown) => setConfig((c) => ({ ...c, [name]: val }))
 
@@ -165,10 +161,6 @@ export default function IntegrationWizard({
     setError(null)
     try {
       await onSave(integration.id, config)
-      if (variant === 'setup') {
-        onClose()
-        return
-      }
       setSaved(config)
       setStep(1)
       void runTest()
@@ -210,23 +202,6 @@ export default function IntegrationWizard({
       )}
     </>
   )
-
-  if (variant === 'setup') {
-    return (
-      <Popup open onClose={onClose} title={`Configure ${integration.name}`} width={520}>
-        <div className="flex flex-col gap-3.5">
-          {intro}
-          {form}
-          <div className="flex justify-end gap-2.5 mt-1">
-            <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
-            <button className="btn primary" onClick={handleSave} disabled={saving}>
-              <Icon name="check2" /> {saving ? 'Saving…' : 'Save Configuration'}
-            </button>
-          </div>
-        </div>
-      </Popup>
-    )
-  }
 
   const level: Level =
     health !== undefined ? health : tested?.success === true ? 'good' : tested?.success === false ? 'poor' : null
