@@ -8,8 +8,7 @@ from typing import Optional
 
 from core.findings.alert_outcomes import (
     TERMINAL_LABELS,
-    _cases_for,
-    terminal_states_for,
+    finding_states,
     terminal_states_today,
 )
 from core.findings.arrival_counts import arrivals_today_by_source
@@ -18,6 +17,7 @@ from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
+from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
 from core.workflows.workflows_service import WorkflowsService
 
 FEED_LIMIT = 50
@@ -33,8 +33,6 @@ RATE_INFO = (
     "because that is how the row is stored."
 )
 ARRIVAL_SOURCE = "Findings created today (UTC) with this data source."
-OUTCOME_SOURCE = "Alerts that arrived today (UTC) and reached this state. Each alert is counted once."
-ENGINE_SOURCE = "No count. The outcome counts partition today's arrivals."
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
@@ -67,7 +65,6 @@ _LIVE_ORDER = (
 # The board names the dismissed node apart from its pill ("Dropped").
 _NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dropped as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
-_LIVE_STATUSES = ("running", "paused")
 _OPEN_PHASE = ("running", "pending_approval")
 
 
@@ -91,7 +88,6 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
-                "source_text": OUTCOME_SOURCE,
                 "info": NEEDS_YOU_INFO if state == "needs_you" else None,
                 "unmeasured_text": None,
             }
@@ -102,7 +98,6 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": label,
                 "count": None,
-                "source_text": info,
                 "info": info,
                 "unmeasured_text": UNMEASURED_TEXT,
             }
@@ -126,7 +121,7 @@ def _agent_rows(now: datetime) -> list[dict]:
         live = (
             session.query(WorkflowRun)
             .filter(
-                WorkflowRun.status.in_(_LIVE_STATUSES),
+                WorkflowRun.status.in_(IN_FLIGHT_STATUSES),
                 WorkflowRun.deleted_at.is_(None),
             )
             .all()
@@ -218,31 +213,28 @@ def _feed_items(load) -> list[dict]:
                     "noise_marked": finding.noise_marked_at is not None,
                 }
             )
-        linked = _cases_for(session, [row["finding_id"] for row in staged])
+    states = finding_states([row["finding_id"] for row in staged])
     link_configs: dict[str, dict[str, str]] = {}
     items = []
     for row in staged:
         external_id = row.pop("external_id")
-        case = linked.get(row["finding_id"])
+        evidence_links = row.pop("evidence_links")
+        state, case_id = states[row["finding_id"]]
         items.append(
             {
                 **row,
                 "source_link": resolve_source_link(
                     {
-                        "evidence_links": row["evidence_links"],
+                        "evidence_links": evidence_links,
                         "data_source": row["data_source"],
                         "external_id": external_id,
                     },
                     configs=link_configs,
                 ),
-                "case_id": case.case_id if case else None,
+                "case_id": case_id,
+                "terminal_state": state,
             }
         )
-    states = terminal_states_for([item["finding_id"] for item in items])
-    for item in items:
-        state = states[item["finding_id"]]
-        item["terminal_state"] = state
-        item["terminal_label"] = TERMINAL_LABELS[state]
     return items
 
 
@@ -290,7 +282,6 @@ def overview_payload(
         "day": day.isoformat(),
         "empty": enabled_count == 0 and arrival_total == 0,
         "arrivals": arrivals,
-        "engine": {"source_text": ENGINE_SOURCE},
         "outcomes": _outcome_nodes(states),
         "running_source": RUNNING_SOURCE,
         "step_source": STEP_SOURCE,

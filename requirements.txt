@@ -98,9 +98,7 @@ aiokafka>=0.14.0
 taxii2-client>=2.3.0
 stix2>=3.0.2
 
-# PDF report generation (chat reports, case reports). The feature ships in
-# services/api/routers/claude.py → /generate-chat-report; without this dep the endpoint
-# returns 503 even though the feature is wired into the UI.
+# Builds the PDF fixture in tests/unit/documents/test_documents.py.
 reportlab>=5.0.1
 # Transitive via reportlab. 12.3.0 has fixable criticals CVE-2026-112393 and
 # CVE-2026-112900; the image scan fails closed on those.

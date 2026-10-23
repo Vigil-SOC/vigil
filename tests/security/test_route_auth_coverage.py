@@ -114,9 +114,12 @@ def _collect_api_routes(app, auth_deps) -> list[tuple[str, str, bool]]:
 
 
 def _auth_deps():
+    from core.auth.permissions import resolve_signed_in_user
     from services.api.middleware.auth import get_current_active_user, get_current_user
 
-    return {get_current_active_user, get_current_user}
+    # resolve_signed_in_user is the feed gate: it refuses a credential, then
+    # resolves the session. It is the auth dependency on those routes.
+    return {get_current_active_user, get_current_user, resolve_signed_in_user}
 
 
 def _collect_routes(app) -> list:

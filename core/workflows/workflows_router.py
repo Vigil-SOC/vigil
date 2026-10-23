@@ -2,6 +2,7 @@
 
 import logging
 import re
+from contextlib import suppress
 from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
@@ -26,7 +27,7 @@ from core.memory.source_tier import (
     SourceTier,
     resolve_source_tier,
 )
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import AlreadyDecided, ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.workflows import catalog, hunt_preflight
@@ -34,7 +35,10 @@ from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
 from core.workflows.handoff_cases import stamp_handoff_cases
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import (
+    IN_FLIGHT_STATUSES,
+    WorkflowRunService,
+)
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
@@ -700,12 +704,15 @@ async def resume_workflow_run(
             "decide each through /approvals/{action_id}",
         )
 
-    approval_service.approve_action(
-        pending[0].action_id,
-        approved_by=approved_by,
-        approved_by_principal_id=getattr(current_user, "principal_id", None)
-        or getattr(current_user, "user_id", None),
-    )
+    try:
+        approval_service.approve_action(
+            pending[0].action_id,
+            approved_by=approved_by,
+            approved_by_principal_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+        )
+    except AlreadyDecided as e:
+        raise HTTPException(status_code=409, detail=str(e))
     return await resume_run(run_id, pending[0].action_id, approved_by)
 
 
@@ -730,19 +737,25 @@ async def cancel_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run.get("status") not in IN_FLIGHT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} has already finished (status={run.get('status')})",
+        )
 
     rejected_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
     for action in pending:
-        approval_service.reject_action(
-            action.action_id,
-            reason=request.reason,
-            rejected_by=rejected_by,
-            approved_by_principal_id=getattr(current_user, "principal_id", None)
-            or getattr(current_user, "user_id", None),
-        )
+        with suppress(AlreadyDecided):
+            approval_service.reject_action(
+                action.action_id,
+                reason=request.reason,
+                rejected_by=rejected_by,
+                approved_by_principal_id=getattr(current_user, "principal_id", None)
+                or getattr(current_user, "user_id", None),
+            )
 
     # A rejection ends the run, but the agent layer is what ends it: this hands
     # the decision over and that side journals it and stops.
@@ -903,7 +916,7 @@ async def delete_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    if run.get("status") in ("running", "paused"):
+    if run.get("status") in IN_FLIGHT_STATUSES:
         raise HTTPException(
             status_code=409,
             detail="This run has not finished. Cancel it before removing it.",
