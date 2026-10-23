@@ -117,7 +117,6 @@ def _record_status_close(session, case_id: str, closed_by: str) -> None:
 
 
 async def _sync_upstream_status(case_id: str, new_status: str) -> None:
-    """Best-effort sync of case status to the case's Elastic alerts."""
     alert_ids = [
         alert_id
         for finding in data_service.get_findings_by_case(case_id)

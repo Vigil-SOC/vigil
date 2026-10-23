@@ -1,5 +1,3 @@
-"""A case status change is pushed to the Elastic alerts behind its findings."""
-
 import asyncio
 import logging
 from types import SimpleNamespace
