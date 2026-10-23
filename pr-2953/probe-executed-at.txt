@@ -1,0 +1,8 @@
+........................................................................ [ 56%]
+........................................................                 [100%]
+128 passed in 4.63s
+--- CONTROL (APPROVED row forced to carry executed_at) ---
+             "failed": lambda: s.mark_failed(a.action_id, "e")}[op]()
+E               AssertionError: (('approve', 'approve', 'approve'), PendingAction(action_id='action-20261023-091110-872917', action_type='block_ip', t...n=None, parameters={}, workflow_run_id=None, workflow_phase_id=None, reversibility='reversible', idempotency_key=None))
+E               assert '2020-01-01T00:00:00+00:00' is None
+E                +  where '2020-01-01T00:00:00+00:00' = PendingAction(action_id='action-20261023-091110-872917', action_type='block_ip', title='t', description='d', target='1...on=None, parameters={}, workflow_run_id=None, workflow_phase_id=None, reversibility='reversible', idempotency_key=None).executed_at

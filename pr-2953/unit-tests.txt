@@ -1,0 +1,123 @@
+tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_failed_isolation_is_not_counted_as_auto_executed PASSED [  4%]
+tests/unit/daemon/test_daemon.py::TestTriageProviderResolution::test_failed_triage_lands_in_ai_enrichment_without_ai_triage PASSED [ 11%]
+tests/unit/response/test_approval_reversibility.py::TestIdempotencyKey::test_failed_row_may_be_retried PASSED [ 93%]
+tests/unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_auto_approved_isolation_is_recorded_failed PASSED [ 98%]
+tests/unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_analyst_approved_isolation_is_recorded_failed PASSED [100%]
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+__ TestConfiguredFloors.test_failed_isolation_is_not_counted_as_auto_executed __
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+WARNING  services.daemon.responder:responder.py:398 Action creation result: {'status': 'failed', 'action_id': 'action-failed', 'result': {'success': False, 'error': 'unsupported_action_type'}}
+ERROR    services.daemon.processor:outage.py:26 No LLM provider configured, AI triage is skipped until one is set up
+WARNING  services.daemon.intent:intent.py:101 Intent report failed (non-fatal): boom
+______________ TestIdempotencyKey.test_failed_row_may_be_retried _______________
+ERROR    core.response.approval_service:approval_service.py:567 Action action-20261023-091121-436724 failed: containment timed out
+_____ TestUnwiredIsolation.test_auto_approved_isolation_is_recorded_failed _____
+ERROR    core.response.approval_service:approval_service.py:567 Action action-20261023-091121-591456 failed: unsupported_action_type
+ERROR    core.response.approval_service:approval_service.py:567 Action action-20261023-091121-602900 failed: unsupported_action_type
+___ TestUnwiredIsolation.test_analyst_approved_isolation_is_recorded_failed ____
+ERROR    core.response.approval_service:approval_service.py:567 Action action-20261023-091121-626744 failed: unsupported_action_type
+0.04s teardown unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_analyst_approved_isolation_is_recorded_failed
+0.03s call     unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_auto_approved_isolation_is_recorded_failed
+0.03s call     unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_analyst_approved_isolation_is_recorded_failed
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_reason_carries_rule_and_dry_run_logs_it
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_reused_isolation_is_not_counted_as_auto_executed
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_fresh_isolation_is_counted_as_auto_executed
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_failed_isolation_is_not_counted_as_auto_executed
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_processor_queues_at_review_threshold
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_processor_feed_hit_offers_detection_without_response
+PASSED tests/unit/daemon/test_daemon.py::TestConfiguredFloors::test_processor_detection_priority_is_severity_band
+PASSED tests/unit/daemon/test_daemon.py::TestTriageProviderResolution::test_openai_only_install_routes_to_default_provider
+PASSED tests/unit/daemon/test_daemon.py::TestTriageProviderResolution::test_no_provider_records_error
+PASSED tests/unit/daemon/test_daemon.py::TestTriageProviderResolution::test_gateway_gets_resolved_provider_and_worker_error_is_surfaced
+PASSED tests/unit/daemon/test_daemon.py::TestTriageProviderResolution::test_failed_triage_lands_in_ai_enrichment_without_ai_triage
+PASSED tests/unit/daemon/test_daemon.py::TestTriageProviderResolution::test_success_clears_previous_error
+PASSED tests/unit/daemon/test_daemon.py::TestTriageTimeout::test_raised_timeout_triages_on_first_attempt
+PASSED tests/unit/daemon/test_daemon.py::TestTriageTimeout::test_short_timeout_times_out_naming_the_knob
+PASSED tests/unit/daemon/test_intent_replay.py::test_response_action_matches_the_live_branches
+PASSED tests/unit/daemon/test_intent_replay.py::test_raised_floors_move_the_decision
+PASSED tests/unit/daemon/test_intent_replay.py::test_auto_response_off_is_no_action
+PASSED tests/unit/daemon/test_intent_replay.py::test_approval_requirement_matches_the_live_branch
+PASSED tests/unit/daemon/test_intent_replay.py::test_unknown_reversibility_raises
+PASSED tests/unit/daemon/test_intent_replay.py::test_equal_configs_differ_on_nothing
+PASSED tests/unit/daemon/test_intent_replay.py::test_raised_threshold_holds_only_the_confidence_that_crosses
+PASSED tests/unit/daemon/test_intent_replay.py::test_raised_critical_floor_drops_the_finding_action
+PASSED tests/unit/daemon/test_intent_replay.py::test_auto_response_off_reports_the_finding_losing_its_action
+PASSED tests/unit/daemon/test_intent_replay.py::test_loosened_threshold_would_have_run_unattended
+PASSED tests/unit/daemon/test_intent_replay.py::test_same_action_under_a_different_rule_is_not_a_row
+PASSED tests/unit/daemon/test_intent_replay.py::test_effective_force_uses_the_db_overlay_and_declared_can_override
+PASSED tests/unit/daemon/test_intent_replay.py::test_wrong_type_is_skipped_and_a_sibling_key_still_applies
+PASSED tests/unit/daemon/test_intent_replay.py::test_parse_since
+PASSED tests/unit/daemon/test_intent_replay.py::test_main_without_replay_is_the_observe_report
+PASSED tests/unit/daemon/test_intent_replay.py::test_main_without_replay_prints_diffs_unchanged
+PASSED tests/unit/daemon/test_responder_slack_ts.py::test_slack_attachment_ts_is_epoch_on_non_utc_host
+PASSED tests/unit/daemon/test_responder_target.py::test_isolation_target_from_any_source_key[entity_context0]
+PASSED tests/unit/daemon/test_responder_target.py::test_isolation_target_from_any_source_key[entity_context1]
+PASSED tests/unit/daemon/test_responder_target.py::test_isolation_target_from_any_source_key[entity_context2]
+PASSED tests/unit/daemon/test_responder_target.py::test_isolation_target_from_any_source_key[entity_context3]
+PASSED tests/unit/daemon/test_responder_target.py::test_dst_ip_alone_is_not_a_target
+PASSED tests/unit/daemon/test_responder_target.py::test_singular_hostname_is_a_target
+PASSED tests/unit/daemon/test_responder_target.py::test_escalation_message_lists_every_source_key
+PASSED tests/unit/daemon/test_intent.py::test_shipped_manifest_declares_every_field_at_default
+PASSED tests/unit/daemon/test_intent.py::test_every_response_knob_has_a_manifest_key
+PASSED tests/unit/daemon/test_intent.py::test_every_field_names_a_real_setting
+PASSED tests/unit/daemon/test_intent.py::test_fresh_checkout_reports_no_differences
+PASSED tests/unit/daemon/test_intent.py::test_label[higher_tighter-0.95-0.9-tighten]
+PASSED tests/unit/daemon/test_intent.py::test_label[higher_tighter-0.85-0.9-loosen]
+PASSED tests/unit/daemon/test_intent.py::test_label[shorter_tighter-declared2-effective2-tighten]
+PASSED tests/unit/daemon/test_intent.py::test_label[shorter_tighter-declared3-effective3-loosen]
+PASSED tests/unit/daemon/test_intent.py::test_label[lower_tighter-2.0-5.0-tighten]
+PASSED tests/unit/daemon/test_intent.py::test_label[lower_tighter-10.0-5.0-loosen]
+PASSED tests/unit/daemon/test_intent.py::test_label[lower_tighter-False-True-tighten]
+PASSED tests/unit/daemon/test_intent.py::test_label[lower_tighter-True-False-loosen]
+PASSED tests/unit/daemon/test_intent.py::test_label[higher_tighter-True-False-tighten]
+PASSED tests/unit/daemon/test_intent.py::test_label[higher_tighter-False-True-loosen]
+PASSED tests/unit/daemon/test_intent.py::test_label[lower_tighter-0.9-0.9-same]
+PASSED tests/unit/daemon/test_intent.py::test_label[shorter_tighter-declared11-effective11-same]
+PASSED tests/unit/daemon/test_intent.py::test_label[shorter_tighter-declared12-effective12-same]
+PASSED tests/unit/daemon/test_intent.py::test_reordered_or_recased_severities_are_not_a_difference
+PASSED tests/unit/daemon/test_intent.py::test_wrong_type_is_one_warning_and_no_row[triage.auto_triage-1]
+PASSED tests/unit/daemon/test_intent.py::test_wrong_type_is_one_warning_and_no_row[respond.confidence_threshold-0.95]
+PASSED tests/unit/daemon/test_intent.py::test_wrong_type_is_one_warning_and_no_row[escalate.severities-critical]
+PASSED tests/unit/daemon/test_intent.py::test_wrong_type_is_one_warning_and_no_row[investigate.enabled-None]
+PASSED tests/unit/daemon/test_intent.py::test_diff_reports_only_differing_keys_with_source_and_label
+PASSED tests/unit/daemon/test_intent.py::test_diff_source_defaults_when_unrecorded
+PASSED tests/unit/daemon/test_intent.py::test_include_same_emits_equal_keys_without_changing_the_default
+PASSED tests/unit/daemon/test_intent.py::test_intent_report_include_same_lists_every_key
+PASSED tests/unit/daemon/test_intent.py::test_from_env_records_env_and_default_sources
+PASSED tests/unit/daemon/test_intent.py::test_from_env_threads_triage_timeout
+PASSED tests/unit/daemon/test_intent.py::test_db_overlays_report_source_db
+PASSED tests/unit/daemon/test_intent.py::test_missing_file_is_one_warning
+PASSED tests/unit/daemon/test_intent.py::test_malformed_frontmatter_is_one_warning_naming_the_file
+PASSED tests/unit/daemon/test_intent.py::test_manifest_declaring_nothing_is_one_warning
+PASSED tests/unit/daemon/test_intent.py::test_unknown_key_is_dropped_with_warning
+PASSED tests/unit/daemon/test_intent.py::test_report_never_raises
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_holds_the_action[1.01]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_holds_the_action[5.0]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_holds_the_action[42.0]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_holds_the_action[-0.5]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_holds_the_action[nan]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_decides_no_response[1.01]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_decides_no_response[42.0]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_a_confidence_outside_zero_to_one_decides_no_response[nan]
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_an_ordinary_confidence_still_decides_by_the_threshold
+PASSED tests/unit/response/test_approval_confidence_gate.py::test_the_executor_skips_a_row_no_person_decided
+PASSED tests/unit/response/test_approval_reversibility.py::TestReversibilityGate::test_irreversible_high_confidence_stays_pending
+PASSED tests/unit/response/test_approval_reversibility.py::TestReversibilityGate::test_reversible_high_confidence_still_auto_approves
+PASSED tests/unit/response/test_approval_reversibility.py::TestReversibilityGate::test_forced_approval_records_the_force_switch
+PASSED tests/unit/response/test_approval_reversibility.py::TestIdempotencyKey::test_same_key_returns_existing_row
+PASSED tests/unit/response/test_approval_reversibility.py::TestIdempotencyKey::test_failed_row_may_be_retried
+PASSED tests/unit/response/test_approval_reversibility.py::TestIsolationIdempotency::test_same_host_is_not_executed_twice
+PASSED tests/unit/response/test_approval_reversibility.py::TestIsolationIdempotency::test_rejected_isolate_is_not_executed_on_retry
+PASSED tests/unit/response/test_approval_reversibility.py::TestIpLessIsolationKey::test_different_hostnames_with_no_ip_get_distinct_rows
+PASSED tests/unit/response/test_approval_reversibility.py::TestIpLessIsolationKey::test_same_hostname_with_no_ip_reuses_one_row
+PASSED tests/unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_auto_approved_isolation_is_recorded_failed
+PASSED tests/unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_analyst_approved_isolation_is_recorded_failed
+======================== 93 passed, 1 warning in 25.41s ========================
