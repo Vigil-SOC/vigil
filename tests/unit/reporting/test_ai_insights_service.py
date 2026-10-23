@@ -1,4 +1,4 @@
-"""AI insights fall back when the LLM call fails or the reply cannot be parsed."""
+"""AI insights go through the LLM gateway and fall back on a failed call or bad reply."""
 
 import logging
 
@@ -20,14 +20,6 @@ METRICS = {
 }
 
 TIME_SERIES = [{"timestamp": "2026-09-29T00:00:00Z", "findings": 4}]
-
-
-def _service() -> AIInsightsService:
-    # client must be set: None short-circuits to the fallback before the gateway.
-    service = AIInsightsService.__new__(AIInsightsService)
-    service.client = object()
-    service.model = "test-model"
-    return service
 
 
 class _Gateway:
@@ -69,10 +61,10 @@ async def test_error_dict_returns_fallback_and_logs_the_worker_error(
             "error": "RuntimeError: 401 invalid x-api-key",
         },
     )
-    service = _service()
+    service = AIInsightsService()
 
     with caplog.at_level(logging.ERROR, logger="core.reporting.ai_insights_service"):
-        result = await service.generate_insights(None, METRICS, TIME_SERIES, "7d")
+        result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
     assert gateway.calls == 1
     assert _signature(result) == _signature(service._get_fallback_insights(METRICS))
@@ -89,9 +81,9 @@ async def test_error_dict_returns_fallback_and_logs_the_worker_error(
 )
 async def test_unparseable_reply_returns_fallback(monkeypatch, content):
     gateway = _patch_gateway(monkeypatch, {"content": content, "type": "text"})
-    service = _service()
+    service = AIInsightsService()
 
-    result = await service.generate_insights(None, METRICS, TIME_SERIES, "7d")
+    result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
     assert gateway.calls == 1
     assert _signature(result) == _signature(service._get_fallback_insights(METRICS))
@@ -114,9 +106,9 @@ async def test_well_formed_reply_is_parsed(monkeypatch):
             "type": "text",
         },
     )
-    service = _service()
+    service = AIInsightsService()
 
-    result = await service.generate_insights(None, METRICS, TIME_SERIES, "7d")
+    result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
     assert gateway.calls == 1
     assert len(result) == 1
@@ -133,9 +125,24 @@ async def test_well_formed_reply_is_parsed(monkeypatch):
 @pytest.mark.asyncio
 async def test_valid_empty_array_is_returned_as_empty(monkeypatch):
     gateway = _patch_gateway(monkeypatch, {"content": "[]", "type": "text"})
-    service = _service()
+    service = AIInsightsService()
 
-    result = await service.generate_insights(None, METRICS, TIME_SERIES, "7d")
+    result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
     assert gateway.calls == 1
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_is_called_without_an_anthropic_key(monkeypatch):
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "anthropic_api_key"):
+        monkeypatch.delenv(name, raising=False)
+    gateway = _patch_gateway(
+        monkeypatch,
+        {"content": '[{"type": "info", "title": "t", "description": "d"}]'},
+    )
+
+    result = await AIInsightsService().generate_insights(METRICS, TIME_SERIES, "7d")
+
+    assert gateway.calls == 1
+    assert [item["title"] for item in result] == ["t"]
