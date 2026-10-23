@@ -2,7 +2,10 @@
 
 Every function calls ``core.audit.trail``; none writes the trail itself. A
 database the upgrade has not reached keeps today's behaviour: each function
-is a no-op until ``trail.trail_ready`` is true there.
+is a no-op until ``trail.trail_ready`` is true there. A ``create_all``
+database stamped at head has that revision and no ``audit_trail`` table, so
+the table has to be there too; otherwise the insert rolls the caller's
+change back.
 
 ``record`` joins the caller's transaction, so a trail failure rolls the action
 back. ``safety`` is for an action that goes ahead regardless (late hold).
@@ -29,8 +32,9 @@ from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
 
-# Databases seen at the revision. The answer never goes back to false for a
-# database, so only a true one is remembered.
+# Databases whose revision includes the trail and whose table is present.
+# The answer never goes back to false for a database, so only a true one is
+# remembered. A stamp with no table is not remembered: the table may arrive.
 _ready: set[str] = set()
 
 
@@ -43,9 +47,17 @@ def ready(session=None) -> bool:
         if bind.dialect.name != "postgresql":
             return False
         key = str(bind.engine.url)
-        if key not in _ready and trail.trail_ready(session):
+        if key not in _ready and trail.trail_ready(session) and _table_present(session):
             _ready.add(key)
         return key in _ready
+
+
+def _table_present(session) -> bool:
+    """``stamp_schema_head`` names the head revision on a database ``create_all`` built."""
+    return (
+        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
+        is not None
+    )
 
 
 def payload(action: str, **fields: Any) -> dict[str, Any]:
