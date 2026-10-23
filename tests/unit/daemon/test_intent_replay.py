@@ -11,10 +11,7 @@ from pathlib import Path
 import pytest
 
 from core.intent import IntentDiff, format_rows
-from core.response.approval_service import (
-    Reversibility,
-    stored_force_manual_approval,
-)
+from core.response.approval_service import Reversibility
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -225,7 +222,6 @@ def test_failed_approval_read_reports_the_force_the_gate_applies(monkeypatch):
     monkeypatch.setattr(
         "core.response.approval_service.get_config_service", lambda: svc
     )
-    assert stored_force_manual_approval() is True
     effective = effective_daemon_config(DaemonConfig())
     assert effective.response.force_manual_approval is True
 

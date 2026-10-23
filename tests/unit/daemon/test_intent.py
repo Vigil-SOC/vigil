@@ -44,7 +44,6 @@ class _FakeConfigService:
 
 @pytest.fixture
 def offline_config():
-    # A failed approval read forces approval, so that one reads as no row.
     with patch("core.storage.config_service.get_config_service", _no_db), patch(
         "core.response.approval_service.get_config_service",
         return_value=_FakeConfigService({}),
