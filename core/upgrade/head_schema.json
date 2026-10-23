@@ -369,6 +369,46 @@
   "nullable": true,
   "type": "character varying(80)"
  },
+ "column audit_feed_state.checkpoint_through": {
+  "default": "0",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column audit_feed_state.failing": {
+  "default": "false",
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column audit_feed_state.history_offset": {
+  "default": "0",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column audit_feed_state.id": {
+  "default": "1",
+  "nullable": false,
+  "type": "smallint"
+ },
+ "column audit_feed_state.last_checkpoint_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column audit_feed_state.last_delivered_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column audit_feed_state.last_delivered_seq": {
+  "default": null,
+  "nullable": true,
+  "type": "bigint"
+ },
+ "column audit_feed_state.last_error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column audit_trail.actor_text": {
   "acl": [
    "app:UPDATE"
@@ -3693,6 +3733,8 @@
  "constraint approval_actions.approval_actions_reversibility_check": "CHECK (((reversibility)::text = ANY ((ARRAY['reversible'::character varying, 'irreversible'::character varying])::text[])))",
  "constraint approval_actions.approval_actions_status_check": "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'approved'::character varying, 'rejected'::character varying, 'executed'::character varying, 'failed'::character varying])::text[])))",
  "constraint approval_actions.approval_actions_workflow_run_id_fkey": "FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(run_id) ON DELETE SET NULL",
+ "constraint audit_feed_state.audit_feed_state_id_check": "CHECK ((id = 1))",
+ "constraint audit_feed_state.audit_feed_state_pkey": "PRIMARY KEY (id)",
  "constraint audit_trail.audit_trail_payload_check": "CHECK (((jsonb_typeof(payload) = 'object'::text) AND (NOT (payload ?| ARRAY['seq'::text, 'occurred_at'::text, 'late'::text]))))",
  "constraint audit_trail.audit_trail_pkey": "PRIMARY KEY (seq)",
  "constraint audit_trail_anchor.audit_trail_anchor_id_check": "CHECK ((id = 1))",
@@ -3943,6 +3985,7 @@
  "index ai_decision_logs_pkey": "CREATE UNIQUE INDEX ai_decision_logs_pkey ON public.ai_decision_logs USING btree (id)",
  "index ai_model_configs_pkey": "CREATE UNIQUE INDEX ai_model_configs_pkey ON public.ai_model_configs USING btree (component)",
  "index approval_actions_pkey": "CREATE UNIQUE INDEX approval_actions_pkey ON public.approval_actions USING btree (action_id)",
+ "index audit_feed_state_pkey": "CREATE UNIQUE INDEX audit_feed_state_pkey ON public.audit_feed_state USING btree (id)",
  "index audit_trail_anchor_pkey": "CREATE UNIQUE INDEX audit_trail_anchor_pkey ON public.audit_trail_anchor USING btree (id)",
  "index audit_trail_held_pkey": "CREATE UNIQUE INDEX audit_trail_held_pkey ON public.audit_trail_held USING btree (id)",
  "index audit_trail_held_window_key_key": "CREATE UNIQUE INDEX audit_trail_held_window_key_key ON public.audit_trail_held USING btree (window_key)",
@@ -4311,6 +4354,26 @@
   "acl": [
    "app:DELETE",
    "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation audit_feed_state": {
+  "acl": [
    "app:SELECT",
    "app:UPDATE",
    "owner:DELETE",
