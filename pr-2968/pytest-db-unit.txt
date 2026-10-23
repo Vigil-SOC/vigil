@@ -1,0 +1,20 @@
+$ pytest tests/unit/ -m external_service --no-cov -q
+
+============================= slowest 10 durations =============================
+8.47s teardown unit/api/test_stats_summary_sql.py::test_cases_summary_is_not_capped_at_ten_thousand
+8.33s call     unit/storage/test_db_isolation.py::test_throwaway_database_survives_an_engine_left_on_a_blocked_host
+6.98s call     unit/storage/test_finding_mitre_predictions_db.py::test_query_plan_uses_technique_confidence_index
+3.66s call     unit/api/test_stats_summary_sql.py::test_cases_summary_is_not_capped_at_ten_thousand
+3.43s call     unit/auth/test_service_account_cli.py::test_a_new_password_rotates_and_clears_failures
+2.05s call     unit/auth/test_service_account_cli.py::test_output_never_holds_the_password
+1.95s teardown unit/api/test_stats_summary_sql.py::test_findings_summary_is_not_capped_at_ten_thousand
+1.95s setup    unit/agents/test_agent_list_fields.py::test_runs_success_and_level_from_phases_and_chats
+1.82s call     unit/api/test_stats_summary_sql.py::test_findings_summary_is_not_capped_at_ten_thousand
+1.75s call     unit/auth/test_service_account_cli.py::test_ensure_undoes_what_a_stolen_session_could_change
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/storage/test_db_isolation.py:69: child run only
+=== 506 passed, 1 skipped, 4658 deselected, 3 warnings in 144.27s (0:02:24) ====
+$ pytest tests/unit/upgrade tests/unit/findings/test_ip_exclusions_db.py --no-cov -q
+collected 0 items
+
+============================ no tests ran in 0.02s =============================

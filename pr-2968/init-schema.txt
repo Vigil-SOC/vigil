@@ -1,0 +1,10 @@
+== with re-parent (this PR)
+Database already initialized
+schema_head: 0006_audit_feed
+init ok
+== without re-parent (origin/main)
+    raise SchemaRevisionError(
+core.storage.connection.SchemaRevisionError: this image has 2 Alembic heads: ['0006_audit_feed', '0006_canonical_finding_ips']
+== with re-parent, fresh DB
+schema_head: 0006_audit_feed
+init ok

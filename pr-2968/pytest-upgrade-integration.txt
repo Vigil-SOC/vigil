@@ -1,0 +1,2 @@
+$ pytest tests/integration/test_upgrade_adoption.py tests/integration/test_schema_drift_upgrade.py tests/integration/test_audit_trail.py -q --no-cov
+================== 54 passed, 1 warning in 227.65s (0:03:47) ===================
