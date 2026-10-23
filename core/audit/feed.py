@@ -28,6 +28,7 @@ from typing import Iterator, Optional
 from sqlalchemy import text
 
 from core.audit import trail
+from core.config import get_settings
 from core.secrets_manager import delete_secret, get_secret, set_secret
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager, get_db_session
@@ -275,7 +276,7 @@ def _load(session) -> Optional[State]:
 
 
 def _history_file() -> Optional[Path]:
-    raw = os.environ.get("VIGIL_UPGRADE_DIR", "").strip()
+    raw = (get_settings().vigil_upgrade_dir or "").strip()
     if not raw:
         return None
     path = Path(raw) / "history.jsonl"
