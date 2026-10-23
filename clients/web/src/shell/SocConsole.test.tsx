@@ -175,7 +175,7 @@ vi.mock('../services/api', () => ({
   attackApi: {
     getTechniqueRollup: () =>
       Promise.resolve({
-        data: { techniques: [{ technique_id: 'T1567.002', count: 10, severities: { critical: 2, high: 3, medium: 4, low: 1 } }] },
+        data: { techniques: [{ technique_id: 'T1567.002', technique_name: 'Exfiltration to Cloud Storage', tactic: 'Exfiltration', count: 10, severities: { critical: 2, high: 3, medium: 4, low: 1 } }] },
       }),
     getFindingsByTechnique: () => Promise.resolve({ data: { findings: [] } }),
   },
@@ -243,7 +243,6 @@ vi.mock('../services/api', () => ({
           picked_up: { launched_or_merged: 0, created_today: 0, share: null },
           waiting: 0,
           cases_created_today: 0,
-          trust_floor: 'Not measured yet',
         },
         counts: { total: 0, kind: {}, source: {}, state: {} },
         sources: [],
@@ -255,7 +254,6 @@ vi.mock('../services/api', () => ({
           trust_floor: { source: 'Floor source', calculation: 'Floor calc', limit: 'Floor limit' },
         },
         breakdown_info: { trust: 'Trust tip', weight: 'Weight tip', score: 'Score tip' },
-        unmeasured_text: 'Not measured yet',
       },
     }),
   },
