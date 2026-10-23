@@ -30,3 +30,10 @@ export function costAcross(costs: (number | null)[]): { total: string | null; un
   const priced = costs.flatMap((cost) => (cost === null ? [] : [cost]))
   return { total: priced.length ? fmtCost(priced.reduce((a, b) => a + b, 0)) : null, unpriced: costs.length - priced.length }
 }
+
+/** The server's `detail` for a failed case request, else the error's message, else the fallback. */
+export function errorDetail(error: unknown, fallback: string): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  return (error as { message?: string })?.message || fallback
+}

@@ -28,15 +28,10 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
+import { errorDetail } from './caseFormat'
 import { LATER_RELEASE } from '../../shared/later'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
-
-function caseActionError(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  return (error as { message?: string })?.message || fallback
-}
 
 const CASE_PRIO_OPTIONS: { value: CaseRow['prio']; label: string }[] = [
   { value: 'critical', label: 'Critical' },
@@ -458,7 +453,7 @@ function DeleteCaseDialog({
       onClose()
       onDeleted(deleting)
     } catch (cause) {
-      const message = caseActionError(cause, `Failed to delete ${deleting.id}`)
+      const message = errorDetail(cause, `Failed to delete ${deleting.id}`)
       setBusy(false)
       setError(message)
       notify('err', message)
@@ -540,7 +535,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
       const cases = (res.data?.cases || []) as Parameters<typeof mapQueueCase>[0][]
       onResults(cases.map((c) => mapQueueCase(c)))
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Search failed')
+      setErr(errorDetail(e, 'Search failed'))
     } finally {
       setBusy(false)
     }
@@ -660,7 +655,7 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
       onCreated()
       onClose()
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Failed to create case')
+      setErr(errorDetail(e, 'Failed to create case'))
     } finally {
       setBusy(false)
     }
@@ -779,7 +774,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
       onSaved()
       onClose()
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Failed to save changes')
+      setErr(errorDetail(e, 'Failed to save changes'))
     } finally {
       setBusy(false)
     }
@@ -874,7 +869,7 @@ function MergeCaseDialog({ open, c, onClose, onMerged }: { open: boolean; c: Cas
       })
       .catch((e) => {
         if (cancelled) return
-        setLoadError(caseActionError(e, 'Failed to load cases'))
+        setLoadError(errorDetail(e, 'Failed to load cases'))
         setPhase('error')
       })
     return () => { cancelled = true }
@@ -890,7 +885,7 @@ function MergeCaseDialog({ open, c, onClose, onMerged }: { open: boolean; c: Cas
       onMerged()
       onClose()
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Merge failed')
+      setErr(errorDetail(e, 'Merge failed'))
     } finally {
       setBusy(false)
     }
