@@ -9,7 +9,6 @@ DELETE /api/sla-policies/{policy_id}
 DELETE /api/workflows/runs/{run_id}
 PATCH /api/conversations/{conversation_id}
 POST /api/agents/custom/generate
-POST /api/ai/decisions
 POST /api/analytics/estimate-cost
 POST /api/analytics/recalculate-cost
 POST /api/auth/bootstrap

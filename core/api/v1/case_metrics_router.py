@@ -23,6 +23,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from core.auth.permissions import permission_gate
 from core.cases.case_metrics_service import CaseMetricsService
 from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseClosureInfo
 from core.storage.schemas import CaseMetricsSchema
@@ -48,8 +49,6 @@ _BETA = {"openapi_extra": {"x-vigil-beta": True}}
 # deployment. The definitions are the ones ``CaseMetricsService`` uses to fill
 # ``case_metrics``, so the two agree wherever both exist.
 
-_CLOSED_STATUSES = ("resolved", "closed")
-
 # A first-activity timestamp is only cast when it looks like an ISO-8601 date
 # and time and Postgres accepts it as a ``timestamp`` (``pg_input_is_valid``,
 # PG16+, which every shipped Postgres is), so one malformed entry -- "Feb 30",
@@ -62,21 +61,15 @@ _ISO_DATETIME = (
 
 
 def _closed_at() -> ColumnElement:
-    """When a resolved or closed case was closed.
+    """When a closed case was closed.
 
     ``case_closure_info.closed_at`` is stamped by ``close_case``, which every
     close path goes through, and it does not move when the case is edited
-    afterwards. A ``resolved`` case has no closure row (and a reopened one may
-    keep a stale one), so those fall back to ``cases.updated_at`` -- the source
-    ``CaseMetricsService`` uses for ``time_to_resolve``.
+    afterwards. A case closed before closure rows existed falls back to
+    ``cases.updated_at``, the source ``CaseMetricsService`` uses for
+    ``time_to_resolve``.
     """
-    return sql_case(
-        (
-            Case.status == "closed",
-            func.coalesce(CaseClosureInfo.closed_at, Case.updated_at),
-        ),
-        else_=Case.updated_at,
-    )
+    return func.coalesce(CaseClosureInfo.closed_at, Case.updated_at)
 
 
 def _first_activity_at() -> ColumnElement:
@@ -203,7 +196,7 @@ def get_mttr(
     day = func.to_char(Case.created_at, "YYYY-MM-DD")
 
     filters = _created_window(start_date, end_date)
-    filters.append(Case.status.in_(_CLOSED_STATUSES))
+    filters.append(Case.status == CLOSED)
     if priority:
         filters.append(Case.priority == priority)
 
@@ -399,7 +392,7 @@ def get_by_priority(
         session.query(
             priority,
             func.count(),
-            func.count(sql_case((Case.status.in_(_CLOSED_STATUSES), 1))),
+            func.count(sql_case((Case.status == CLOSED, 1))),
         )
         .filter(and_(*_created_window(start_date, end_date)))
         .group_by(priority)
@@ -468,7 +461,7 @@ def get_all_analyst_performance(
         Performance metrics for all analysts
     """
     analyst = func.coalesce(func.nullif(Case.assignee, ""), "unassigned")
-    is_closed = Case.status.in_(_CLOSED_STATUSES)
+    is_closed = Case.status == CLOSED
     resolve = sql_case((is_closed, _seconds_since_created(_closed_at())))
 
     rows = (

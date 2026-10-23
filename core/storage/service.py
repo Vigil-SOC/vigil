@@ -1137,59 +1137,6 @@ class DatabaseService:
 
     # ========== AI Decision Log Operations ==========
 
-    @default_on_error(None)
-    def create_ai_decision(
-        self,
-        decision_id: str,
-        agent_id: str,
-        decision_type: str,
-        confidence_score: float,
-        reasoning: str,
-        recommended_action: str,
-        finding_id: Optional[str] = None,
-        case_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        decision_metadata: Optional[dict] = None,
-    ) -> Optional[AIDecisionLog]:
-        """
-        Log an AI decision for tracking and feedback.
-
-        Args:
-            decision_id: Unique decision identifier
-            agent_id: ID of the agent making the decision
-            decision_type: Type of decision (e.g., 'triage', 'escalate', 'isolate')
-            confidence_score: AI's confidence in the decision (0-1)
-            reasoning: AI's reasoning for the decision
-            recommended_action: Recommended action text
-            finding_id: Optional associated finding ID
-            case_id: Optional associated case ID
-            workflow_id: Optional workflow ID
-            decision_metadata: Optional additional metadata
-
-        Returns:
-            Created AIDecisionLog or None if failed
-        """
-        with self.db_manager.session_scope() as session:
-            decision = AIDecisionLog(
-                decision_id=decision_id,
-                agent_id=agent_id,
-                decision_type=decision_type,
-                confidence_score=confidence_score,
-                reasoning=reasoning,
-                recommended_action=recommended_action,
-                finding_id=finding_id,
-                case_id=case_id,
-                workflow_id=workflow_id,
-                decision_metadata=decision_metadata,
-                timestamp=utcnow(),
-            )
-
-            session.add(decision)
-            session.flush()
-
-            logger.info(f"Created AI decision log: {decision_id} by {agent_id}")
-            return decision
-
     def submit_ai_decision_feedback(
         self,
         decision_id: str,
@@ -1247,23 +1194,6 @@ class DatabaseService:
                 f"Updated AI decision feedback: {decision_id} by {human_reviewer}"
             )
             return decision
-
-    def get_ai_decision(self, decision_id: str) -> Optional[AIDecisionLog]:
-        """
-        Get an AI decision by ID.
-
-        Args:
-            decision_id: Decision ID
-
-        Returns:
-            AIDecisionLog or None if not found
-        """
-        with self.db_manager.session_scope() as session:
-            return (
-                session.query(AIDecisionLog)
-                .filter(AIDecisionLog.decision_id == decision_id)
-                .first()
-            )
 
     def list_ai_decisions(
         self,

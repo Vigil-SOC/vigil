@@ -56,9 +56,10 @@ from sqlalchemy.dialects.postgresql import ARRAY as PGArray
 from sqlalchemy.orm import Session
 
 from core.agents.attribution import column_present, current_claims
-from core.memory.entity_keys import normalise_keys
+from core.memory.entity_keys import normalise_key, normalise_keys
 from core.memory.recall_contract import (
     DROPPED_KINDS,
+    ENTITY_KEY_TYPES,
     RECALL_IGNORED_ARGS,
     RECALL_KEY_ARGS,
     RECALL_ORDER,
@@ -522,6 +523,15 @@ def recall_entity(args: Args) -> Dict[str, Any]:
         keys = [single] if single else []
     if not keys:
         raise _refuse("a call needs " + " or ".join(RECALL_KEY_ARGS))
+    unknown = [
+        key
+        for key in keys
+        if normalise_key(str(key)).partition(":")[0] not in ENTITY_KEY_TYPES
+    ]
+    if unknown:
+        raise _refuse(
+            f"{unknown} are not type:value with a type in {list(ENTITY_KEY_TYPES)}"
+        )
 
     claims = current_claims()
     principal = None if claims is None else (claims.agent_id or claims.person_id)
