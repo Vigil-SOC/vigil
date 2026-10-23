@@ -1190,7 +1190,6 @@ class DatabaseService:
             logger.info(f"Created AI decision log: {decision_id} by {agent_id}")
             return decision
 
-    @default_on_error(None)
     def submit_ai_decision_feedback(
         self,
         decision_id: str,
@@ -1218,7 +1217,7 @@ class DatabaseService:
             time_saved_minutes: Estimated time saved by AI
 
         Returns:
-            Updated AIDecisionLog or None if failed
+            Updated AIDecisionLog, or None if no decision has that ID
         """
         with self.db_manager.session_scope() as session:
             decision = (
@@ -1249,7 +1248,6 @@ class DatabaseService:
             )
             return decision
 
-    @default_on_error(None)
     def get_ai_decision(self, decision_id: str) -> Optional[AIDecisionLog]:
         """
         Get an AI decision by ID.
@@ -1267,7 +1265,6 @@ class DatabaseService:
                 .first()
             )
 
-    @default_on_error(list)
     def list_ai_decisions(
         self,
         agent_id: Optional[str] = None,
@@ -1331,87 +1328,65 @@ class DatabaseService:
         Returns:
             Dictionary with statistics
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                since = utcnow() - timedelta(days=days)
+        with self.db_manager.session_scope() as session:
+            since = utcnow() - timedelta(days=days)
 
-                # One filter set shared by every query below, so the totals,
-                # averages and outcome breakdown all describe the same rows.
-                base_filters = [AIDecisionLog.timestamp >= since]
-                if agent_id:
-                    base_filters.append(AIDecisionLog.agent_id == agent_id)
+            base_filters = [AIDecisionLog.timestamp >= since]
+            if agent_id:
+                base_filters.append(AIDecisionLog.agent_id == agent_id)
 
-                query = session.query(AIDecisionLog).filter(*base_filters)
+            query = session.query(AIDecisionLog).filter(*base_filters)
 
-                # Total decisions
-                total_decisions = query.count()
+            total_decisions = query.count()
 
-                # Decisions with feedback
-                feedback_query = query.filter(AIDecisionLog.human_decision.isnot(None))
-                total_with_feedback = feedback_query.count()
+            feedback_query = query.filter(AIDecisionLog.human_decision.isnot(None))
+            total_with_feedback = feedback_query.count()
 
-                # Agreement rate
-                agree_count = feedback_query.filter(
-                    AIDecisionLog.human_decision == "agree"
-                ).count()
+            agree_count = feedback_query.filter(
+                AIDecisionLog.human_decision == "agree"
+            ).count()
 
-                # Average grades
-                avg_accuracy = (
-                    session.query(func.avg(AIDecisionLog.accuracy_grade))
-                    .filter(*base_filters, AIDecisionLog.accuracy_grade.isnot(None))
-                    .scalar()
-                    or 0
+            avg_accuracy = (
+                session.query(func.avg(AIDecisionLog.accuracy_grade))
+                .filter(*base_filters, AIDecisionLog.accuracy_grade.isnot(None))
+                .scalar()
+                or 0
+            )
+
+            outcomes = {}
+            for outcome, count in (
+                session.query(
+                    AIDecisionLog.actual_outcome, func.count(AIDecisionLog.id)
                 )
+                .filter(*base_filters, AIDecisionLog.actual_outcome.isnot(None))
+                .group_by(AIDecisionLog.actual_outcome)
+                .all()
+            ):
+                outcomes[outcome] = count
 
-                # Outcome counts
-                outcomes = {}
-                for outcome, count in (
-                    session.query(
-                        AIDecisionLog.actual_outcome, func.count(AIDecisionLog.id)
-                    )
-                    .filter(*base_filters, AIDecisionLog.actual_outcome.isnot(None))
-                    .group_by(AIDecisionLog.actual_outcome)
-                    .all()
-                ):
-                    outcomes[outcome] = count
+            total_time_saved = (
+                session.query(func.sum(AIDecisionLog.time_saved_minutes))
+                .filter(*base_filters, AIDecisionLog.time_saved_minutes.isnot(None))
+                .scalar()
+                or 0
+            )
 
-                # Time saved
-                total_time_saved = (
-                    session.query(func.sum(AIDecisionLog.time_saved_minutes))
-                    .filter(*base_filters, AIDecisionLog.time_saved_minutes.isnot(None))
-                    .scalar()
-                    or 0
-                )
-
-                return {
-                    "total_decisions": total_decisions,
-                    "total_with_feedback": total_with_feedback,
-                    "feedback_rate": (
-                        round(total_with_feedback / total_decisions, 3)
-                        if total_decisions > 0
-                        else 0
-                    ),
-                    "agreement_rate": (
-                        round(agree_count / total_with_feedback, 3)
-                        if total_with_feedback > 0
-                        else 0
-                    ),
-                    "avg_accuracy_grade": round(avg_accuracy, 3),
-                    "outcomes": outcomes,
-                    "total_time_saved_minutes": int(total_time_saved),
-                    "total_time_saved_hours": round(total_time_saved / 60, 1),
-                    "period_days": days,
-                }
-        except Exception as e:
-            logger.error(f"Error getting AI decision statistics: {e}")
             return {
-                "total_decisions": 0,
-                "total_with_feedback": 0,
-                "feedback_rate": 0,
-                "agreement_rate": 0,
-                "avg_accuracy_grade": 0,
-                "outcomes": {},
-                "total_time_saved_minutes": 0,
-                "total_time_saved_hours": 0,
+                "total_decisions": total_decisions,
+                "total_with_feedback": total_with_feedback,
+                "feedback_rate": (
+                    round(total_with_feedback / total_decisions, 3)
+                    if total_decisions > 0
+                    else 0
+                ),
+                "agreement_rate": (
+                    round(agree_count / total_with_feedback, 3)
+                    if total_with_feedback > 0
+                    else 0
+                ),
+                "avg_accuracy_grade": round(avg_accuracy, 3),
+                "outcomes": outcomes,
+                "total_time_saved_minutes": int(total_time_saved),
+                "total_time_saved_hours": round(total_time_saved / 60, 1),
                 "period_days": days,
             }
