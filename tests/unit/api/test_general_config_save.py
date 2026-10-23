@@ -50,6 +50,17 @@ def test_general_save_keeps_demo_mode(client, demo):
     assert saved.status_code == 200, saved.text
     assert is_demo_mode() is demo
     assert client.get("/api/config/demo-mode").json()["enabled"] is demo
+    assert _load_json_config(vigil_path("general_config.json"))["demo_mode"] is demo
+
+
+@pytest.mark.parametrize("content", [b"[]", b"null", b'"x"', b"\xff\xfe{"])
+def test_general_save_survives_unusable_config_file(client, content):
+    vigil_path("general_config.json", write=True).write_bytes(content)
+
+    saved = client.post("/api/config/general", json=_GENERAL)
+
+    assert saved.status_code == 200, saved.text
+    assert _load_json_config(vigil_path("general_config.json")) == _GENERAL
 
 
 def test_demo_mode_save_keeps_general_settings(client):
