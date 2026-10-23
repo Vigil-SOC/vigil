@@ -1,0 +1,16 @@
+mcp 2.3.0
+ctor dict -> dict
+wire dict -> dict
+ctor None -> rejected ValidationError
+wire None -> rejected ValidationError
+ctor list -> rejected ValidationError
+wire list -> rejected ValidationError
+ctor str -> rejected ValidationError
+wire str -> rejected ValidationError
+ctor int -> rejected ValidationError
+wire int -> rejected ValidationError
+ctor mappingproxy -> dict
+wire mappingproxy -> dict
+ctor Mapping -> dict
+wire Mapping -> dict
+missing -> rejected ValidationError

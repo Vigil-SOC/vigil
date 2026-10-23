@@ -1,0 +1,15 @@
+0.32s call     unit/agents/test_integration_tools.py::test_a_default_install_declares_a_small_fixed_catalogue
+0.31s call     unit/agents/test_integration_tools.py::test_nothing_connected_declares_neither_tool_nor_line
+0.23s call     unit/integrations/test_mcp_registry_refresh.py::test_dropped_session_still_appears_in_live_mcp_tools
+0.11s setup    unit/agents/test_integration_tools.py::test_call_runs_a_connected_read_tool_under_the_same_bounds
+0.09s setup    unit/mcp_runner/test_backend_client.py::test_env_push_carries_descriptor_fields_and_arg_placeholders
+=========================== short test summary info ============================
+ERROR tests/integration/test_mcp_enable_transactional.py::TestEnableTransactional::test_enable_triggers_connect_and_reports_connected
+ERROR tests/integration/test_mcp_enable_transactional.py::TestEnableTransactional::test_enable_with_missing_creds_reports_error_not_raising
+ERROR tests/integration/test_mcp_enable_transactional.py::TestEnableTransactional::test_disable_triggers_disconnect
+ERROR tests/integration/test_mcp_enable_transactional.py::TestEnableUpdatesRegistry::test_enable_makes_tools_visible_without_refresh
+ERROR tests/integration/test_mcp_enable_transactional.py::TestEnableUpdatesRegistry::test_disable_removes_tools_without_refresh
+ERROR tests/integration/test_mcp_enable_transactional.py::TestEnableUpdatesRegistry::test_registry_write_failure_does_not_change_the_response
+ERROR tests/integration/test_mcp_enable_transactional.py::TestDeadEndpointsGone::test_start_endpoint_is_removed
+ERROR tests/integration/test_mcp_enable_transactional.py::TestDeadEndpointsGone::test_start_all_endpoint_is_removed
+============= 38 passed, 1 warning, 8 errors in 112.19s (0:01:52) ==============
