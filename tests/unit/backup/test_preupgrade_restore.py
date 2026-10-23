@@ -94,7 +94,7 @@ def test_restored_history_is_skipped_without_the_directory(
         get_settings.cache_clear()
 
 
-def test_current_point_is_the_newest_pre_upgrade_snapshot(
+def test_current_point_is_the_first_point_since_the_last_applied_upgrade(
     tmp_path, monkeypatch
 ) -> None:
     from datetime import datetime, timezone
@@ -112,6 +112,9 @@ def test_current_point_is_the_newest_pre_upgrade_snapshot(
         (tmp_path / "passphrase").write_text("p")
         old = _Tagged("old", datetime(2026, 1, 1, tzinfo=timezone.utc))
         new = _Tagged("new", datetime(2026, 2, 1, tzinfo=timezone.utc))
+        # new was taken for the upgrade applied after it.
+        applied = {"outcome": "applied", "time": "2026-02-02T00:00:00+00:00"}
+        (tmp_path / "history.jsonl").write_text(json.dumps(applied) + "\n")
         monkeypatch.setattr(cli, "_tagged", lambda *_a: [new, old])
         seen = []
 
@@ -128,5 +131,11 @@ def test_current_point_is_the_newest_pre_upgrade_snapshot(
             "created_at": "t",
         }
         assert seen == ["new"]
+        # A failed upgrade, then a retry that snapshots the half-migrated
+        # database: the first point after the last applied line is the way back.
+        failed = _Tagged("failed", datetime(2026, 3, 1, tzinfo=timezone.utc))
+        retry = _Tagged("retry", datetime(2026, 3, 2, tzinfo=timezone.utc))
+        monkeypatch.setattr(cli, "_tagged", lambda *_a: [retry, failed, new, old])
+        assert cli.current_point()["snapshot"] == "failed-full"
     finally:
         get_settings.cache_clear()

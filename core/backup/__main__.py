@@ -21,7 +21,12 @@ from core.backup.preupgrade import (
     pre_upgrade_snapshot,
 )
 from core.backup.restore import _load_manifest, _restic, restore_snapshot
-from core.backup.schedule import _configure_logging, _tagged, run_forever
+from core.backup.schedule import (
+    _applied_times,
+    _configure_logging,
+    _tagged,
+    run_forever,
+)
 from core.config import get_settings
 
 
@@ -73,10 +78,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def current_point() -> dict:
-    """The newest pre-upgrade snapshot in the no-setup repo, or {} when none.
+    """The pre-upgrade snapshot to restore, or {} when the no-setup repo has none.
 
-    ``taken_by`` is the release that took it; ``version`` is the release it
-    returns to. Read-only: the repository is opened without a lock.
+    After the last applied upgrade that is the first point taken since: a
+    retry after a failed upgrade snapshots the half-migrated database again,
+    and that later point is not the way back. With none since, it is the
+    newest, the point the last applied upgrade took. ``taken_by`` is the
+    release that took it; ``version`` is the release it returns to.
     """
     raw = (get_settings().vigil_upgrade_dir or "").strip()
     upgrade_dir = Path(raw) if raw else DEFAULT_UPGRADE_DIR
@@ -86,9 +94,14 @@ def current_point() -> dict:
     snaps = _tagged(str(repo), passphrase, None, KIND)
     if not snaps:
         return {}
-    newest = max(snaps, key=lambda snap: snap.taken_at)
+    applied = max(_applied_times(upgrade_dir), default=None)
+    since = [s for s in snaps if applied is None or s.taken_at > applied]
+    if since:
+        point = min(since, key=lambda snap: snap.taken_at)
+    else:
+        point = max(snaps, key=lambda snap: snap.taken_at)
     manifest, _dump, snapshot_id = _load_manifest(
-        _restic(str(repo), True), passphrase, newest.snapshot_id, _priority_prefix()
+        _restic(str(repo), True), passphrase, point.snapshot_id, _priority_prefix()
     )
     return {
         "snapshot": snapshot_id,

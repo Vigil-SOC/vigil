@@ -58,6 +58,7 @@
       <textarea id="ack-reason" maxlength="500"></textarea>
       <div class="acts" style="display: flex; margin-top: 0">
         <button id="ack-go" disabled>Start without a restore point</button>
+        <button id="ack-retry" class="ghost">Retry</button>
         <button id="ack-quit" class="ghost">Quit</button>
       </div>
     </div>
@@ -113,17 +114,23 @@
         ack.style.display = "flex";
         reason.oninput = () => { go.disabled = !reason.value.trim(); };
         reason.focus();
-        go.onclick = () => {
+        const leave = () => {
           ack.style.display = "none";
           stepsEl.style.display = "";
           logEl.style.display = "";
           document.getElementById("sub").textContent = "Retrying…";
-          window.vigil.acknowledge(reason.value);
         };
+        go.onclick = () => { leave(); window.vigil.acknowledge(reason.value); };
+        // A transient failure (a held backup lock, a database blip) needs no reason.
+        document.getElementById("ack-retry").onclick = () => { leave(); window.vigil.retry(); };
         document.getElementById("ack-quit").onclick = () => window.vigil.quit();
       });
       window.vigil.onError((msg) => {
-        document.getElementById("sub").innerHTML = '<span class="err">' + msg + "</span>";
+        // Text, not markup: messages carry exception and container output.
+        const err = document.createElement("span");
+        err.className = "err";
+        err.textContent = msg;
+        document.getElementById("sub").replaceChildren(err);
         const acts = document.querySelector("body > .acts");
         acts.style.display = "flex";
         document.getElementById("retry").onclick = () => {
