@@ -1,0 +1,3 @@
+JWT_SECRET_KEY not set; using deterministic DEV_MODE fallback. Tokens issued in dev are not portable to production.
+core.memory imports ok: ['case_distil', 'distil', 'entity_keys', 'hunt_claim', 'hunt_coverage', 'learning_episodes', 'prior_hunts', 'recall', 'recall_contract', 'source_tier', 'tlds']
+snapshot gone: No module named 'core.memory.snapshot'

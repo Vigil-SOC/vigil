@@ -1,0 +1,4 @@
+8.93s call     unit/_ratchets/test_no_metadata_kwarg.py::test_the_scan_finds_model_constructions
+=========================== short test summary info ============================
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+================== 147 passed, 2 skipped in 243.91s (0:04:03) ==================

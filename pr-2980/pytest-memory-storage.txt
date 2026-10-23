@@ -1,0 +1,5 @@
+0.48s call     unit/memory/test_learning_episodes.py::test_window_bounds_are_inclusive_and_the_limit_reports_what_it_dropped
+0.42s call     unit/memory/test_case_distil.py::TestTheTick::test_a_tick_distils_every_closed_case_and_leaves_none_pending
+0.39s call     unit/memory/test_recall_entity.py::test_more_sightings_than_the_per_key_cap_returns_the_cap_and_says_what_went
+0.38s call     unit/memory/test_source_tier.py::test_every_domain_a_hunt_declares_has_a_tier[shadow-adjudication]
+================== 134 passed, 1 warning in 206.79s (0:03:26) ==================
