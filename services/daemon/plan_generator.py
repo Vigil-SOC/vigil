@@ -1,169 +1,10 @@
-"""Plan generator for autonomous investigations.
+"""Workflow selection and initial workdir files for autonomous investigations."""
 
-Converts workflow definitions and finding context into structured plan.md
-files that sub-agents consume and modify during execution.
-"""
-
-import logging
 from typing import Any, Dict, List, Optional
 
 from core.documents.fence import fenced_document
 from core.time import utcnow
 from core.workflows.routing import FALLBACK_WORKFLOW
-
-logger = logging.getLogger(__name__)
-
-WORKFLOW_STEP_MAP = {
-    "incident-response": [
-        {
-            "title": "Initial Triage",
-            "description": "Retrieve finding details, assess severity, determine if false positive",
-        },
-        {
-            "title": "Deep Investigation",
-            "description": "Gather evidence, correlate related findings, build entity timeline",
-        },
-        {
-            "title": "Correlate & Enrich",
-            "description": "Search for related activity, enrich IOCs with threat intel",
-        },
-        {
-            "title": "Map to MITRE ATT&CK",
-            "description": "Map discovered TTPs to MITRE ATT&CK",
-        },
-        {
-            "title": "Containment & Response",
-            "description": "Assess blast radius, propose containment actions, create approval requests",
-        },
-        {
-            "title": "Case Management",
-            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
-        },
-        {
-            "title": "Document & Report",
-            "description": "Write investigation summary, submit for review",
-        },
-    ],
-    "full-investigation": [
-        {
-            "title": "Evidence Gathering",
-            "description": "Retrieve all related findings, entity context, and evidence",
-        },
-        {
-            "title": "Deep Analysis",
-            "description": "Analyze patterns, identify root cause, build hypotheses",
-        },
-        {
-            "title": "ATT&CK Mapping",
-            "description": "Map all TTPs to MITRE ATT&CK, identify technique chains",
-        },
-        {
-            "title": "Cross-Signal Correlation",
-            "description": "Correlate across data sources, find related campaigns",
-        },
-        {
-            "title": "Response Planning",
-            "description": "Determine response actions, assess risk, create approval requests",
-        },
-        {
-            "title": "Case Management",
-            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
-        },
-        {
-            "title": "Final Report",
-            "description": "Comprehensive report with findings, timeline, and recommendations",
-        },
-    ],
-    "threat-hunt": [
-        {
-            "title": "Hypothesis Formation",
-            "description": "Form hunt hypothesis based on available intelligence",
-        },
-        {
-            "title": "Data Collection",
-            "description": "Gather relevant findings, search for matching patterns",
-        },
-        {
-            "title": "Network Analysis",
-            "description": "Analyze network flows, identify anomalous connections",
-        },
-        {
-            "title": "Artifact Analysis",
-            "description": "Examine suspicious artifacts, file hashes, processes",
-        },
-        {
-            "title": "Intelligence Enrichment",
-            "description": "Enrich discovered IOCs, check threat intel feeds",
-        },
-        {
-            "title": "Case Management",
-            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
-        },
-        {
-            "title": "Hunt Report",
-            "description": "Document findings, update detections, submit report",
-        },
-    ],
-    "forensic-analysis": [
-        {
-            "title": "Evidence Acquisition",
-            "description": "Identify and preserve digital evidence, establish chain of custody",
-        },
-        {
-            "title": "Initial Assessment",
-            "description": "Preliminary analysis of evidence scope and key artifacts",
-        },
-        {
-            "title": "Malware Analysis",
-            "description": "Analyze suspicious files, executables, and scripts",
-        },
-        {
-            "title": "Network Forensics",
-            "description": "Examine network traffic, DNS logs, connection patterns",
-        },
-        {
-            "title": "Timeline Reconstruction",
-            "description": "Build comprehensive event timeline from all sources",
-        },
-        {
-            "title": "Case Management",
-            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
-        },
-        {
-            "title": "Forensic Report",
-            "description": "Detailed forensic report with evidence chain and conclusions",
-        },
-    ],
-}
-
-# Admitted detections always arrive with a Case (#1000). This pending branch
-# remains for hunts (schedule, or a Human Ask with no findings) that launch
-# with no Case: generate_plan writes ``case_id: pending`` — a name, not a row
-# — and the step below tells the agent to mint one instead of attaching to a
-# Case that does not exist.
-_CASE_MANAGEMENT_WHEN_PENDING = (
-    "No case was opened at admission; create one with create_case, then attach "
-    "related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to it"
-)
-
-
-DEFAULT_STEPS = [
-    {
-        "title": "Initial Assessment",
-        "description": "Retrieve and assess the triggering finding(s)",
-    },
-    {
-        "title": "Investigation",
-        "description": "Gather evidence, correlate related activity",
-    },
-    {"title": "Analysis", "description": "Analyze patterns, enrich IOCs, map TTPs"},
-    {"title": "Response", "description": "Propose containment and response actions"},
-    {
-        "title": "Case Management",
-        "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
-    },
-    {"title": "Report", "description": "Document findings and submit for review"},
-]
 
 
 def select_workflow(finding: Dict[str, Any]) -> str:
@@ -186,130 +27,6 @@ def select_workflow(finding: Dict[str, Any]) -> str:
         return "full-investigation"
 
     return FALLBACK_WORKFLOW
-
-
-def _build_entity_section(finding: Dict[str, Any]) -> str:
-    """Build the entity context section from a finding."""
-    ctx = finding.get("entity_context") or {}
-    parts = []
-
-    src_ips = ctx.get("src_ips") or ([ctx["src_ip"]] if ctx.get("src_ip") else [])
-    dst_ips = (
-        ctx.get("dest_ips")
-        or ctx.get("dst_ips")
-        or ([ctx["dst_ip"]] if ctx.get("dst_ip") else [])
-    )
-    hostnames = ctx.get("hostnames") or (
-        [ctx["hostname"]] if ctx.get("hostname") else []
-    )
-    users = (
-        ctx.get("usernames")
-        or ctx.get("users")
-        or ([ctx["user"]] if ctx.get("user") else [])
-    )
-    domains = ctx.get("domains") or []
-    hashes = ctx.get("file_hashes") or []
-
-    if src_ips:
-        parts.append(f"- Source IPs: {', '.join(src_ips[:5])}")
-    if dst_ips:
-        parts.append(f"- Destination IPs: {', '.join(dst_ips[:5])}")
-    if hostnames:
-        parts.append(f"- Hostnames: {', '.join(hostnames[:5])}")
-    if users:
-        parts.append(f"- Users: {', '.join(users[:5])}")
-    if domains:
-        parts.append(f"- Domains: {', '.join(domains[:5])}")
-    if hashes:
-        parts.append(f"- File Hashes: {', '.join(hashes[:3])}")
-
-    return "\n".join(parts) if parts else "- No entity context available"
-
-
-def _format_mitre(finding: Dict[str, Any]) -> str:
-    mitre = finding.get("mitre_predictions") or {}
-    if not mitre:
-        return "None detected"
-    techniques = []
-    for tid, score in sorted(mitre.items(), key=lambda x: -x[1])[:5]:
-        techniques.append(f"{tid} (confidence: {score:.2f})")
-    return ", ".join(techniques)
-
-
-def generate_plan(
-    investigation_id: str,
-    workflow_id: str,
-    findings: List[Dict[str, Any]],
-    case_id: Optional[str] = None,
-    hypothesis: Optional[str] = None,
-) -> str:
-    """Generate a plan.md for an investigation."""
-    steps = WORKFLOW_STEP_MAP.get(workflow_id, DEFAULT_STEPS)
-    primary = findings[0] if findings else {}
-
-    title = _infer_title(primary, workflow_id)
-
-    lines = [
-        "---",
-        f"investigation_id: {investigation_id}",
-        f"case_id: {case_id or 'pending'}",
-        f"workflow: {workflow_id}",
-        f"priority: {primary.get('severity', 'medium')}",
-        f"created: {utcnow().isoformat()}Z",
-        "status: planning",
-        "current_step: 1",
-        "---",
-        "",
-        f"# Investigation Plan: {title}",
-        "",
-        "## Objective",
-    ]
-
-    if hypothesis:
-        lines.append(f"Hunt hypothesis: {hypothesis}")
-        lines.append("")
-
-    if primary:
-        fid = primary.get("finding_id", "unknown")
-        desc = (primary.get("description") or "No description")[:300]
-        lines.append(f"Investigate finding {fid}: {desc}")
-        lines.append("")
-        lines.append("### Entity Context")
-        lines.append(_build_entity_section(primary))
-        lines.append("")
-        lines.append("### MITRE ATT&CK Predictions")
-        lines.append(f"- {_format_mitre(primary)}")
-        lines.append(f"- Anomaly Score: {primary.get('anomaly_score', 'N/A')}")
-    else:
-        lines.append("Investigate based on provided context.")
-
-    if len(findings) > 1:
-        lines.append("")
-        lines.append(f"### Additional Trigger Findings ({len(findings) - 1})")
-        for f in findings[1:5]:
-            lines.append(
-                f"- {f.get('finding_id', '?')}: {(f.get('description') or 'N/A')[:100]}"
-            )
-
-    lines.append("")
-    lines.append("## Steps")
-    lines.append("")
-
-    for i, step in enumerate(steps, 1):
-        description = step["description"]
-        if step["title"] == "Case Management" and not case_id:
-            description = _CASE_MANAGEMENT_WHEN_PENDING
-        lines.append(f"### Step {i}: {step['title']} [pending]")
-        lines.append(f"- {description}")
-        lines.append("")
-
-    lines.append("## Blockers")
-    lines.append("(none)")
-    lines.append("")
-    lines.append("## Notes")
-    lines.append("")
-
-    return "\n".join(lines)
 
 
 def _infer_title(finding: Dict[str, Any], workflow_id: str) -> str:
@@ -354,7 +71,6 @@ def generate_initial_state(
     workflow_id: str,
     case_id: Optional[str],
     findings: List[Dict[str, Any]],
-    total_steps: int,
 ) -> Dict[str, Any]:
     """Generate the initial state.json for an investigation."""
     return {
@@ -363,7 +79,6 @@ def generate_initial_state(
         "case_id": case_id,
         "status": "executing",
         "current_step": 1,
-        "total_steps": total_steps,
         "trigger_finding_ids": [
             f.get("finding_id") for f in findings if f.get("finding_id")
         ],
@@ -408,7 +123,3 @@ def generate_initial_context(
     lines.append("")
 
     return "\n".join(lines)
-
-
-def count_steps(workflow_id: str) -> int:
-    return len(WORKFLOW_STEP_MAP.get(workflow_id, DEFAULT_STEPS))

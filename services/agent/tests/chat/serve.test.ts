@@ -122,9 +122,9 @@ describe("whom the turn's tools act for", () => {
   async function principalsSeen(requests: readonly ChatRequest[]): Promise<(string | undefined)[]> {
     const seen: (string | undefined)[] = [];
     const scripted = scriptedHarness([{ content: "ok" }, { content: "ok" }]);
-    const build: HarnessFactory = (kind, spec, runState, memory, seed, principal) => {
+    const build: HarnessFactory = (spec, runState, memory, seed, principal) => {
       seen.push(principal);
-      return scripted(kind, spec, runState, memory, seed);
+      return scripted(spec, runState, memory, seed);
     };
     for (const request of requests) {
       const res = Object.assign(new EventEmitter(), { write: () => true, end: () => undefined, writableEnded: false, destroyed: false }) as unknown as ServerResponse;
@@ -146,8 +146,8 @@ describe("a reader who leaves mid-step", () => {
     let started!: () => void;
     const inFlight = new Promise<void>((resolve) => (started = resolve));
     const scripted = scriptedHarness([]);
-    const build: HarnessFactory = (kind, spec, runState, memory, seed) => ({
-      ...scripted(kind, spec, runState, memory, seed),
+    const build: HarnessFactory = (spec, runState, memory, seed) => ({
+      ...scripted(spec, runState, memory, seed),
       provider: {
         model: "scripted/model",
         provider_type: "scripted",
@@ -223,6 +223,47 @@ describe("who may call it", () => {
       body: "{not json",
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("a /chat/stream body that is not a chat request", () => {
+  const turns = [{ role: "user", content: "hi" }];
+  for (const [name, body] of [
+    ["null", null],
+    ["an empty object", {}],
+    ["a list", [asked()]],
+    ["no run_id", { turns, system_prompt: "", config: CONFIG }],
+    ["an empty run_id", asked({ run_id: "" })],
+    ["no turns", { run_id: RUN, system_prompt: "", config: CONFIG }],
+    ["turns that are a string", { ...asked(), turns: "nope" }],
+    ["a turn with an unknown role", { ...asked(), turns: [{ role: "system", content: "hi" }] }],
+    ["a turn with no content", { ...asked(), turns: [{ role: "user" }] }],
+    ["no system_prompt", { run_id: RUN, turns, config: CONFIG }],
+    ["a config that is not text", { ...asked(), config: 42 }],
+    ["a principal that is not text", { ...asked(), principal: { sub: "alice" } }],
+    ["an unknown origin", { ...asked(), origin: "cron" }],
+  ] as const) {
+    it(`is refused with 400 before any stream opens: ${name}`, async () => {
+      await listen([{ content: "ok" }]);
+      const res = await post(body);
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).toBe("application/json");
+      expect(await state.read(RUN)).toEqual([]);
+    });
+  }
+
+  it("still streams the request the API sends, every optional field set", async () => {
+    await listen([{ content: "ok" }]);
+    const res = await post({
+      ...asked(),
+      parent_run_id: HUNT,
+      principal: "a.signed.jwt",
+      actor: "agent:chat",
+      origin: "person",
+      agent_id: "malware-analyst",
+    });
+    expect(res.status).toBe(200);
+    expect(framesIn(await res.text())).toEqual([{ type: "text", content: "ok" }]);
   });
 });
 

@@ -127,23 +127,7 @@ export const aiDecisionsApi = {
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
 }
 
-export interface NeedsYouItem {
-  /** `parked`: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. */
-  kind: 'checkpoint' | 'approval' | 'parked'
-  source_id: string
-  title: string
-  reason: string
-  /** '' when nothing recorded when it started waiting. */
-  created_at: string
-  reversibility: string
-  case_id: string | null
-  run_id?: string | null
-  /** The run's own checkpoint this item answers, so a page reading the run can tell it was answered. */
-  checkpoint_id?: string | null
-  checkpoint_class?: string | null
-  /** A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat. */
-  hypotheses?: { hypothesis_id: string; statement: string; provenance: string }[]
-}
+export type NeedsYouItem = Schema<'NeedsYouItem'>
 
 export const approvalsApi = {
   list: (params?: {
@@ -396,13 +380,13 @@ export const slaPoliciesApi = {
 }
 
 export const caseMetricsApi = {
-  getSummary: () => api.get('/cases/metrics/summary'),
+  getSummary: () => api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary'),
   getMTTD: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttd', { params }),
+    api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
   getMTTR: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttr', { params }),
-  getByPriority: () => api.get('/cases/metrics/by-priority'),
-  getByStatus: () => api.get('/cases/metrics/by-status'),
+    api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
+  getByPriority: () => api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority'),
+  getByStatus: () => api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status'),
   getAnalystPerformance: () => api.get('/cases/metrics/analyst-performance'),
 }
 
@@ -557,11 +541,7 @@ export const configApi = {
   getDemoMode: () => api.get('/config/demo-mode'),
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
   getSetupSteps: () =>
-    api.get<{
-      steps: { id: string; title: string; state_line: string; done: boolean; href: string }[]
-      alerts_exist: number
-      demo_enabled: boolean
-    }>('/config/setup-steps'),
+    api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps'),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
@@ -1005,8 +985,8 @@ export const workflowApi = {
 
   // Stop, as opposed to steer. Queues the abort so the run can settle itself and write
   // a report, and escalates behind that: steer('abort') alone leaves a wedged worker running.
-  cancelRun: (runId: string, reason: string, rejectedBy?: string) =>
-    api.post(`/workflows/runs/${runId}/cancel`, { reason, ...(rejectedBy && { rejected_by: rejectedBy }) }),
+  cancelRun: (runId: string, reason: string) =>
+    api.post(`/workflows/runs/${runId}/cancel`, { reason }),
 
   // Another pass over the same ledger, for a finished run whose write-up reads badly.
   // The timeout sits above the backend's own 180s so its answer — the account is still
@@ -1030,7 +1010,6 @@ export const workflowApi = {
     use_case?: string
     trigger_examples?: string[]
     phases: WorkflowPhase[]
-    created_by?: string
   }) => api.post('/workflows/custom', data),
   updateCustom: (id: string, data: Partial<{
     name: string
