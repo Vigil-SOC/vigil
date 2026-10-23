@@ -12,6 +12,7 @@ from services.medic.app import config
 from services.medic.app.cli import main
 from services.medic.app.heartbeat import check_heartbeat
 from services.medic.app.wiring import TICK_S
+from services.medic.store import open_writer
 from services.medic.tests.api.schema import errors, record_errors
 from services.medic.tests.fakes import FakeClock
 
@@ -263,6 +264,19 @@ def test_heartbeat_at_is_the_last_beat_written(tmp_path, monkeypatch) -> None:
 def test_the_decision_log_is_served_while_medic_runs(tmp_path) -> None:
     clock, port = FakeClock(), _free_port()
     seen: dict[str, tuple[int, dict]] = {}
+    with open_writer(tmp_path / "data") as writer:
+        writer.append(
+            {
+                "v": 1,
+                "at": "2026-01-01T00:00:00Z",
+                "type": "gap",
+                "body": {
+                    "from": "2026-01-01T00:00:00Z",
+                    "to": "2026-01-01T00:00:00Z",
+                    "reason": "off",
+                },
+            }
+        )
 
     async def look(seconds: float) -> None:
         seen["list"] = _ask(port, "/v1/decisions")
@@ -278,7 +292,7 @@ def test_the_decision_log_is_served_while_medic_runs(tmp_path) -> None:
     status, page = seen["list"]
     assert status == 200 and errors("DecisionPage", page) == []
     seqs = [item["seq"] for item in page["items"]]
-    assert seqs == sorted(set(seqs))
+    assert seqs and seqs == sorted(set(seqs))
     for item in page["items"]:
         assert record_errors(item) == []
     assert seen["missing"][0] == 404 and seen["missing"][1]["code"] == "not_found"

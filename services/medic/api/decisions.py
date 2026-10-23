@@ -147,7 +147,8 @@ def _parse_list(query: str) -> _Query:
                 raise _Bad("invalid_parameter", "type")
             types.append(value)
         elif name == "from_seq":
-            if _SEQ.fullmatch(value) is None:
+            # Same bound as the path seq: a start past SQLite's range is an empty page.
+            if _SEQ_PATH.fullmatch(value) is None:
                 raise _Bad("invalid_parameter", "from_seq")
             from_seq = int(value)
         elif name == "cursor":

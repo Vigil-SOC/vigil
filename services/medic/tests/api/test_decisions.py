@@ -187,6 +187,9 @@ def test_from_seq_is_inclusive_and_the_cursor_starts_after_the_page(tmp_path) ->
         second, _ = _page(srv, f"cursor={first['next_cursor']}&limit=2")
         assert [item["seq"] for item in second["items"]] == [4, 5]
         assert second["next_cursor"] is None
+        # A start past SQLite's range is an empty page, not a 400.
+        past, _ = _page(srv, "from_seq=100000000000000000000")
+        assert past["items"] == [] and past["next_cursor"] is None
         # The cursor is bound to the filters it was issued with.
         issued, _ = _page(srv, "type=gap&limit=2")
         bad = assert_problem(
@@ -207,7 +210,7 @@ def test_from_seq_is_inclusive_and_the_cursor_starts_after_the_page(tmp_path) ->
 
 def test_pages_each_seq_once_while_a_writer_appends(tmp_path) -> None:
     srv, data = _serve(tmp_path)
-    ready, release = threading.Event(), threading.Event()
+    ready, step, landed = threading.Event(), threading.Event(), threading.Event()
     errors: list[BaseException] = []
 
     def produce() -> None:
@@ -216,12 +219,15 @@ def test_pages_each_seq_once_while_a_writer_appends(tmp_path) -> None:
                 for i in range(3):
                     writer.append(_gap(i))
                 ready.set()
-                assert release.wait(5)
                 for i in range(3, 8):
+                    assert step.wait(5)
+                    step.clear()
                     writer.append(_gap(i))
+                    landed.set()
         except BaseException as exc:  # noqa: BLE001 (reported below)
             errors.append(exc)
             ready.set()
+            landed.set()
 
     thread = threading.Thread(target=produce)
     thread.start()
@@ -230,14 +236,19 @@ def test_pages_each_seq_once_while_a_writer_appends(tmp_path) -> None:
         first, _ = _page(srv, "limit=2")
         assert [item["seq"] for item in first["items"]] == [0, 1]
         assert first["oldest_seq"] == 0
-        release.set()
-        thread.join(5)
-        assert errors == [] and not thread.is_alive()
         seen = [0, 1]
         cursor = first["next_cursor"]
         pages = 1
-        while cursor:
-            doc, _ = _page(srv, f"cursor={cursor}&limit=2")
+        while len(seen) < 8:
+            # One append lands between every two page reads, so each read races a writer.
+            # A null next_cursor means caught up now; the client resumes at from_seq.
+            step.set()
+            assert landed.wait(5)
+            landed.clear()
+            if cursor:
+                doc, _ = _page(srv, f"cursor={cursor}&limit=2")
+            else:
+                doc, _ = _page(srv, f"from_seq={seen[-1] + 1}&limit=2")
             seen.extend(item["seq"] for item in doc["items"])
             assert doc["oldest_seq"] == 0
             cursor = doc["next_cursor"]
@@ -245,7 +256,7 @@ def test_pages_each_seq_once_while_a_writer_appends(tmp_path) -> None:
         assert pages > 1
         assert seen == list(range(8))
     finally:
-        release.set()
+        step.set()
         thread.join(5)
         _stop(srv)
 
