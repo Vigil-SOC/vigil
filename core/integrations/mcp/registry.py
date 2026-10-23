@@ -156,15 +156,10 @@ def _server_config(mcp_client, name: str) -> Dict[str, Any]:
 
 
 def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
-    schema = tool.get("inputSchema", {})
-    if hasattr(schema, "model_dump"):
-        schema = schema.model_dump()
-    elif not isinstance(schema, dict):
-        schema = dict(schema) if schema else {}
     return {
         "name": tool.get("name", "unknown"),
         "description": tool.get("description", ""),
-        "inputSchema": schema,
+        "inputSchema": tool.get("inputSchema", {}),
     }
 
 

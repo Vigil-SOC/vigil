@@ -421,24 +421,11 @@ class MCPClient:
             # Cache tools
             self.tools_cache[server_name] = []
             for tool in tools_result.tools:
-                # Get input schema - handle both dict and object formats
-                input_schema = tool.input_schema
-                if hasattr(input_schema, "model_dump"):
-                    input_schema = input_schema.model_dump()
-                elif hasattr(input_schema, "dict"):
-                    input_schema = input_schema.dict()
-                elif not isinstance(input_schema, dict):
-                    input_schema = dict(input_schema) if input_schema else {}
-
-                # Ensure it's a valid JSON schema
-                if not isinstance(input_schema, dict):
-                    input_schema = {}
-
                 self.tools_cache[server_name].append(
                     {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "inputSchema": input_schema,
+                        "inputSchema": tool.input_schema,
                     }
                 )
 
