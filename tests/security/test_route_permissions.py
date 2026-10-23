@@ -238,7 +238,9 @@ def _write_routes_without_a_guard() -> set[str]:
         if not isinstance(path, str) or not path.startswith("/api/") or not writes:
             return
         if any(
-            getattr(dep.call, "__qualname__", "").startswith("require_permission.")
+            getattr(dep.call, "__qualname__", "").startswith(
+                ("require_permission.", "require_person_permission.")
+            )
             for dep in _dependencies(obj.dependant)
         ):
             return

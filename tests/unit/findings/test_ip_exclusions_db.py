@@ -4,17 +4,20 @@ HTTP surface, and that ingest -- LogLM included -- ignores exclusions entirely.
 Runs on the throwaway database tests/unit/conftest.py provisions per process.
 """
 
+import importlib.util
 from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import insert, select
 
 from core.findings import exclusions as ex
 from core.storage.models import Finding, IpExclusion
 from core.storage.service import DatabaseService
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
+from core.upgrade.command import PACKAGE_DIR
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
@@ -145,6 +148,74 @@ def test_removal_restores_findings_unchanged():
         for f in DatabaseService().get_findings()
     }
     assert after == before
+
+
+IPV6 = "2001:db8::1"
+SPELLINGS = {
+    "ipx-padded": {"dst_ip": f" {SCANNER} "},
+    "ipx-v6-upper": {"dst_ip": "2001:DB8::1"},
+    "ipx-v6-expanded": {"src_ips": [HOST, "2001:db8:0:0::1"]},
+    "ipx-v6-bracketed": {"remote_ip": "[2001:db8::1]"},
+}
+
+
+def test_the_filter_the_label_and_the_counts_agree_on_every_spelling():
+    _seed(**SPELLINGS, **{"ipx-other": {"src_ip": "192.0.2.46"}})
+    _exclude()
+    _exclude(ip=IPV6)
+    active = ex.current_active_ips()
+    labelled = sorted(
+        f.finding_id
+        for f in DatabaseService().get_findings()
+        if f.finding_id.startswith("ipx-")
+        and ex.excluded_ips_of({"entity_context": f.entity_context}, active)
+    )
+    assert labelled == sorted(SPELLINGS)
+    assert _ids("only") == labelled
+    assert _ids("hide") == ["ipx-other"]
+    with unit_of_work() as session:
+        rows, total = ex.list_exclusions_with_total(session)
+    assert {r["ip"]: r["hidden_findings"] for r in rows} == {SCANNER: 1, IPV6: 3}
+    assert total == 4
+
+
+def test_the_revision_rewrites_findings_stored_before_canonical_form():
+    path = PACKAGE_DIR / "versions" / "0006_canonical_finding_ips.py"
+    spec = importlib.util.spec_from_file_location("canonical_finding_ips", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    raw = {
+        **SPELLINGS,
+        "ipx-not-an-ip": {"src_ip": "web-1", "ips": ["10.0.0.0/8", 7]},
+        "ipx-elsewhere": {"hostname": " 2001:DB8::1 "},
+    }
+    with unit_of_work() as session:
+        session.execute(
+            insert(Finding),
+            [
+                {"finding_id": fid, "data_source": "loglm", "entity_context": ctx}
+                for fid, ctx in raw.items()
+            ],
+        )
+    with unit_of_work() as session:
+        assert revision.canonicalize(session.connection()) == len(SPELLINGS)
+    with unit_of_work() as session:
+        assert revision.canonicalize(session.connection()) == 0
+        stored = dict(
+            session.execute(
+                select(Finding.finding_id, Finding.entity_context).where(
+                    Finding.finding_id.in_(raw)
+                )
+            ).all()
+        )
+    assert stored == {
+        "ipx-padded": {"dst_ip": SCANNER},
+        "ipx-v6-upper": {"dst_ip": IPV6},
+        "ipx-v6-expanded": {"src_ips": [HOST, IPV6]},
+        "ipx-v6-bracketed": {"remote_ip": IPV6},
+        "ipx-not-an-ip": raw["ipx-not-an-ip"],
+        "ipx-elsewhere": raw["ipx-elsewhere"],
+    }
 
 
 # --- the store ----------------------------------------------------------------

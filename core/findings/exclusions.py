@@ -32,9 +32,9 @@ from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.findings.ip_address import normalize_ip
 from core.storage import ip_exclusion_repository as repo
-from core.storage.ip_exclusion_repository import EXCLUSION_VIEWS, FINDING_IP_KEYS
+from core.storage.ip_address import FINDING_IP_KEYS, normalize_ip
+from core.storage.ip_exclusion_repository import EXCLUSION_VIEWS
 from core.storage.models import IpExclusion
 from core.storage.models.exclusion import EXCLUSION_ORIGINS
 from core.storage.schemas.base import _iso_utc
