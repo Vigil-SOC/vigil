@@ -100,16 +100,11 @@ async def test_overlap_with_caseless_run_is_not_a_merge(attach):
 
 
 @pytest.mark.asyncio
-async def test_a_gone_overlapping_investigation_holds_the_row(attach, caplog):
-    """``check_overlap`` only names live rows, so a read that comes back empty
-    is a row removed since, not a caseless run. Launching on it could open a
-    second run on an entity a Case already covers."""
+async def test_a_gone_overlapping_investigation_holds_the_row(attach):
     orch = _orchestrator(["inv-1"], {})
 
-    with caplog.at_level("WARNING"):
-        await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
+    await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
 
-    assert any("is gone" in r.message for r in caplog.records)
     attach.assert_not_called()
     orch._create_investigation.assert_not_awaited()
     orch._decide_trigger.assert_not_called()

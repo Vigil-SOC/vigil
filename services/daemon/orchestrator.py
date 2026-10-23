@@ -1049,11 +1049,6 @@ class Orchestrator:
         and none of them is on a Case: not a merge, so the caller goes on to
         Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
         next tick retries.
-
-        ``check_overlap`` names only rows that are live, so a row that is gone
-        by the time it is read was removed since: launching on it could open a
-        second run on an entity a Case already covers, so it holds. A database
-        error raises out of the intake tick.
         """
         for inv_id in overlapping:
             investigation = self.get_investigation(inv_id)
