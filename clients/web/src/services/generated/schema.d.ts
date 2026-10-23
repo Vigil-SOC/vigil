@@ -282,14 +282,7 @@ export interface paths {
          */
         get: operations["get_api_ai_decisions"];
         put?: never;
-        /**
-         * Create Ai Decision
-         * @description Log an AI decision for tracking and feedback.
-         *
-         *     This endpoint should be called by AI agents whenever they make a decision
-         *     that could benefit from human review and feedback.
-         */
-        post: operations["post_api_ai_decisions"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -333,26 +326,6 @@ export interface paths {
          *     Provides metrics on AI accuracy, agreement rates, and time saved.
          */
         get: operations["get_api_ai_decisions_stats"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ai/decisions/{decision_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Ai Decision
-         * @description Get a specific AI decision by ID.
-         */
-        get: operations["get_api_ai_decisions_decision_id"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2153,32 +2126,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/{case_id}/generate-report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate Case Report
-         * @description Generate a PDF report for a case.
-         *
-         *     Args:
-         *         case_id: The case ID
-         *
-         *     Returns:
-         *         Report file information
-         */
-        post: operations["post_api_cases_case_id_generate-report"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/{case_id}/iocs": {
         parameters: {
             query?: never;
@@ -3119,7 +3066,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Conversation
-         * @description Hard-delete a conversation (messages cascade).
+         * @description Hide the conversation and drop its messages. Ledger rows stay.
          */
         delete: operations["delete_api_conversations_conversation_id"];
         options?: never;
@@ -7545,8 +7492,9 @@ export interface components {
             /**
              * Status
              * @default open
+             * @enum {string}
              */
-            status: string;
+            status: "new" | "open" | "investigating" | "closed";
             /** Title */
             title: string;
         };
@@ -8027,17 +7975,6 @@ export interface components {
             /** Relationships */
             relationships: components["schemas"]["CaseRelationshipSchema"][];
         };
-        /** CaseReportResponse */
-        CaseReportResponse: {
-            /** Case Id */
-            case_id: string;
-            /** Filename */
-            filename: string;
-            /** Path */
-            path: string;
-            /** Success */
-            success: boolean;
-        };
         /**
          * CaseSLASchema
          * @description CaseSLA.
@@ -8273,7 +8210,7 @@ export interface components {
             /** Priority */
             priority?: string | null;
             /** Status */
-            status?: string | null;
+            status?: ("new" | "open" | "investigating" | "closed") | null;
             /** Title */
             title?: string | null;
         };
@@ -8500,64 +8437,6 @@ export interface components {
             text?: string | null;
             /** Type */
             type: string;
-        };
-        /**
-         * CreateAIDecisionRequest
-         * @description Request model for creating an AI decision log.
-         */
-        CreateAIDecisionRequest: {
-            /**
-             * Agent Id
-             * @description ID of the agent making the decision
-             */
-            agent_id: string;
-            /**
-             * Case Id
-             * @description Associated case ID
-             */
-            case_id?: string | null;
-            /**
-             * Confidence Score
-             * @description AI's confidence (0-1)
-             */
-            confidence_score: number;
-            /**
-             * Decision Id
-             * @description Unique decision identifier
-             */
-            decision_id: string;
-            /**
-             * Decision Metadata
-             * @description Additional metadata
-             */
-            decision_metadata?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Decision Type
-             * @description Type of decision (e.g., 'triage', 'escalate', 'isolate')
-             */
-            decision_type: string;
-            /**
-             * Finding Id
-             * @description Associated finding ID
-             */
-            finding_id?: string | null;
-            /**
-             * Reasoning
-             * @description AI's reasoning for the decision
-             */
-            reasoning: string;
-            /**
-             * Recommended Action
-             * @description Recommended action
-             */
-            recommended_action: string;
-            /**
-             * Workflow Id
-             * @description Workflow ID
-             */
-            workflow_id?: string | null;
         };
         /**
          * CreateUserRequest
@@ -10016,7 +9895,7 @@ export interface components {
         };
         /**
          * PendingActionResponse
-         * @description Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+         * @description Frozen shape of an approval action.
          *
          *     Value types are permissive where the underlying dataclass carries open JSON
          *     (evidence, parameters, execution_result); the key set is the promise.
@@ -12066,41 +11945,6 @@ export interface operations {
             };
         };
     };
-    post_api_ai_decisions: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateAIDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "get_api_ai_decisions_pending-feedback": {
         parameters: {
             query?: {
@@ -12157,39 +12001,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIDecisionStatsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_ai_decisions_decision_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                decision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -15093,39 +14904,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_cases_case_id_generate-report": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CaseReportResponse"];
                 };
             };
             /** @description Validation Error */

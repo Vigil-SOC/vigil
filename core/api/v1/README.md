@@ -105,7 +105,7 @@ catalog `GET /{workflow_id}` would otherwise shadow `GET /workflows/custom`.)
 |------------|---------------|------------|----------------------------------------------|
 | findings   | done          | 5 / 7      | 2 console routes stay (enrich, wipe) |
 | approvals  | done          | 5 / 5      | whole router is contract; moved wholesale    |
-| cases      | done          | 16 / 40    | record + lifecycle (close/merge) + findings link + evidence + iocs. OUT (ruled): delete-all, delete-case, activities, resolution-steps, generate-report, chain-of-custody, sla ×4, comments ×4, watchers ×3, tasks ×3, relationships ×2, escalate ×2. (40 routes, not 39 — first sweep missed the nested chain-of-custody route.) |
+| cases      | done          | 16 / 39    | record + lifecycle (close/merge) + findings link + evidence + iocs. OUT (ruled): delete-all, delete-case, activities, resolution-steps, chain-of-custody, sla ×4, comments ×4, watchers ×3, tasks ×3, relationships ×2, escalate ×2. |
 | workflows  | done          | 2 / 16     | catalog only (list + get); runs are agent-runs, not workflow runs. Additive v1 + console delegates (see below) |
 | runs (agent-runs) | done   | 4/3       | whole move of the 3 routes (start/get/directives) + built `GET /api/v1/agent-runs` (`list_runs`, reads workflow_runs filtered to source=agent). Frozen run surface = agent runs, not workflow runs or `/internal/runs` |
 | analytics  | deferred      | —          | RULED: not frozen now (routes exist but shape will churn)     |
