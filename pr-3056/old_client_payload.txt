@@ -1,0 +1,4 @@
+tests/unit/api/test_zz_scratch_old_client.py POST 200 {'success': True, 'message': 'General settings saved'}
+stored {'show_notifications': False, 'enable_keyring': True} mirrored {'general_config.json': {'show_notifications': False, 'enable_keyring': True}}
+GET 200 {'show_notifications': True, 'enable_keyring': False}
+======================== 2 passed, 1 warning in 45.20s =========================

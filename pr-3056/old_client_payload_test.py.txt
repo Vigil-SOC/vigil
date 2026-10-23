@@ -1,0 +1,28 @@
+from unittest.mock import MagicMock
+import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+from services.api.middleware.auth import get_current_active_user
+import services.api.routers.config as cfg
+pytestmark = pytest.mark.unit
+
+def test_old_payload_accepted_and_get_shape(authenticate_app, monkeypatch, tmp_path):
+    svc = MagicMock(); svc.set_system_config.return_value = True
+    monkeypatch.setattr(cfg, "_for_user", lambda u: svc)
+    mirrored = {}
+    monkeypatch.setattr(cfg, "_mirror_to_file", lambda f, d: mirrored.update({f: d}))
+    app = FastAPI()
+    app.include_router(cfg.router, prefix="/api/config", dependencies=[Depends(get_current_active_user)])
+    authenticate_app(app)
+    c = TestClient(app)
+    r = c.post("/api/config/general", json={"auto_start_sync": True, "theme": "light", "show_notifications": False, "enable_keyring": True})
+    print("POST", r.status_code, r.json())
+    assert r.status_code == 200, r.text
+    stored = svc.set_system_config.call_args.kwargs["value"]
+    print("stored", stored, "mirrored", mirrored)
+    assert stored == {"show_notifications": False, "enable_keyring": True}
+    get_svc = MagicMock(); get_svc.get_system_config.return_value = None
+    monkeypatch.setattr(cfg, "get_config_service", lambda: get_svc)
+    monkeypatch.setattr(cfg, "vigil_path", lambda *a, **k: tmp_path / "missing.json")
+    g = c.get("/api/config/general"); print("GET", g.status_code, g.json())
+    assert g.json() == {"show_notifications": True, "enable_keyring": False}

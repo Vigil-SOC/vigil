@@ -1,0 +1,2 @@
+0.04s call     unit/api/test_ai_config_api.py::test_fallback_outside_known_catalogue_is_rejected
+=============== 126 passed, 257 deselected, 1 warning in 42.42s ================

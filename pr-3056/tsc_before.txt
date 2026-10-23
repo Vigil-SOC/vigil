@@ -1,0 +1,10 @@
+src/screens/cases/CaseSide.tsx(24,37): error TS2322: Type 'RefObject<HTMLElement | null> | undefined' is not assignable to type 'LegacyRef<HTMLElement> | undefined'.
+  Type 'RefObject<HTMLElement | null>' is not assignable to type 'LegacyRef<HTMLElement> | undefined'.
+    Type 'RefObject<HTMLElement | null>' is not assignable to type 'RefObject<HTMLElement>'.
+      Type 'HTMLElement | null' is not assignable to type 'HTMLElement'.
+        Type 'null' is not assignable to type 'HTMLElement'.
+src/screens/cases/EvidenceTrail.tsx(183,15): error TS2322: Type 'RefObject<HTMLDivElement | null> | undefined' is not assignable to type 'LegacyRef<HTMLDivElement> | undefined'.
+  Type 'RefObject<HTMLDivElement | null>' is not assignable to type 'LegacyRef<HTMLDivElement> | undefined'.
+    Type 'RefObject<HTMLDivElement | null>' is not assignable to type 'RefObject<HTMLDivElement>'.
+      Type 'HTMLDivElement | null' is not assignable to type 'HTMLDivElement'.
+        Type 'null' is not assignable to type 'HTMLDivElement'.
