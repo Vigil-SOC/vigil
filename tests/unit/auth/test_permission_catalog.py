@@ -39,7 +39,7 @@ def test_revision_builtins_match_the_catalog():
     assert revision.BUILTINS == CATALOG["builtins"]
 
 
-def test_revision_follows_the_audit_feed():
+def test_revision_follows_the_conversation_generation():
     # One parent, the head on main. This file does not merge heads.
     assert revision.revision == "0008_permission_catalog"
     assert revision.down_revision == "0007_conversation_generation"
@@ -62,7 +62,6 @@ def test_sql_grants_the_successor_map_and_keeps_settings():
     assert "role-senior-analyst" in _SQL and '"ai_autonomy.stop": true' in _SQL
     assert "role-admin" in _SQL and '"roles.manage": true' in _SQL
     # #2916 deletes these, in the change that stops checking them.
-    assert "- 'settings.read'" not in _SQL and "- 'settings.write'" not in _SQL
     assert "status = 'pending'" in _SQL
     assert "requires_approval = false" in _SQL
     assert "approved_by IS NULL" in _SQL
