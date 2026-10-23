@@ -1039,9 +1039,7 @@ def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
     return "; ".join(parts) or None
 
 
-async def _probe_connector_integration(
-    integration_id: str, status: dict, current_user: User
-) -> dict:
+async def _probe_connector_integration(integration_id: str, current_user: User) -> dict:
     username = getattr(current_user, "username", None) or "unknown"
     try:
         message = await extension_sessions.probe_connector(integration_id, username)
@@ -1054,7 +1052,7 @@ async def _probe_connector_integration(
     )
     if not recorded:
         logger.warning("Integration '%s' test result was not saved", integration_id)
-    return {"success": success, "message": message, "status": status}
+    return {"success": success, "message": message}
 
 
 @router.post("/integrations/{integration_id}/test")
@@ -1081,30 +1079,27 @@ async def test_integration(
     require_integrations_admin(current_user)
 
     server_names = list(bridge.server_names_for(integration_id))
-    status = bridge.get_integration_status(integration_id)
+    integrations = bridge.load_integration_config().get("integrations", {})
     # A UI-extension connector has no MCP server of its own: probe its URL.
-    stored = bridge.get_integration_config(integration_id) or {}
+    stored = integrations.get(integration_id) or {}
     if not server_names and stored.get("connectorUrl"):
-        return await _probe_connector_integration(integration_id, status, current_user)
+        return await _probe_connector_integration(integration_id, current_user)
     if not server_names:
         return {
             "success": False,
             "reason": "not_testable",
             "message": f"Integration '{integration_id}' is not testable.",
-            "status": status,
         }
 
     # Membership, not a non-empty dict. A secret-only row (VirusTotal) is stored
     # as {} after split_secrets and is still configured.
-    if not status["configured"]:
+    if integration_id not in integrations:
         raise HTTPException(status_code=400, detail="Integration not configured")
 
     if mcp_client is None:
         return {
             "success": False,
             "message": "MCP client is not available.",
-            "status": status,
-            "server_names": server_names,
             "servers": [],
         }
 
@@ -1168,8 +1163,6 @@ async def test_integration(
     result = {
         "success": success,
         "message": message,
-        "status": status,
-        "server_names": server_names,
         "servers": servers,
     }
     if credentials is not None:
