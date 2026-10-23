@@ -1189,7 +1189,11 @@ def get_general_config():
         config_value = config_service.get_system_config("general.settings")
 
         if config_value:
-            return config_value
+            # Rows written before the removal still carry the dead keys
+            return {
+                "show_notifications": config_value.get("show_notifications", True),
+                "enable_keyring": config_value.get("enable_keyring", False),
+            }
 
         # Fallback to file-based config
         config_file = vigil_path("general_config.json")
