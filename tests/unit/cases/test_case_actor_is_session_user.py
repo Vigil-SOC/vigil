@@ -40,6 +40,7 @@ def alice(monkeypatch):
     """Signed in as alice, holding cases.write. Records what each service stored."""
     user = User(
         user_id="alice",
+        principal_id="alice",
         username="alice",
         email="alice@test.local",
         password_hash="",

@@ -42,6 +42,7 @@ def session():
     s.add(
         User(
             user_id="u-1",
+            principal_id="u-1",
             username="nestor",
             email="nestor@example.com",
             password_hash="x",

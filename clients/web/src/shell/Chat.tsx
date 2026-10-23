@@ -19,17 +19,13 @@ import api, {
   reasoningApi,
   streamFetch,
   type ConversationDetail,
-  type ImportConversationInput,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
 import { useAuth } from '../contexts/AuthContext'
 import { useConversations } from './useConversations'
 import {
-  chatCacheEpoch,
-  chatWasImported,
   loadHistory,
   loadKeymap,
-  markChatImported,
   CHAT_HISTORY_MAX,
   retainChatCache,
   saveHistory,
@@ -95,7 +91,6 @@ const newSessionId = (): string => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-/** An `{error}` frame the server sent: the backend was reached, so it is not a transport failure. */
 class ServerRefusal extends Error {}
 
 interface Conversation {
@@ -145,8 +140,7 @@ function askedOf(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter((m, i) => m.role !== 'error' && msgs[i + 1]?.role !== 'error')
 }
 
-/** The failure's own words, from a refused response's `detail`. */
-async function refusalOf(res: Response): Promise<string> {
+async function refusalOf(res: Response): Promise<string | null> {
   try {
     const detail = (await res.json())?.detail
     if (typeof detail === 'string' && detail) return detail
@@ -154,7 +148,7 @@ async function refusalOf(res: Response): Promise<string> {
   } catch {
     /* no body */
   }
-  return `Vigil refused the request (HTTP ${res.status})`
+  return null
 }
 
 interface CaseHit {
@@ -586,9 +580,12 @@ export default function Chat({
         body: JSON.stringify(payload),
         signal: ac.signal,
       })
-      if (res.status === 502 || res.status === 503) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const refusal = await refusalOf(res)
+        if (refusal === null && (res.status === 502 || res.status === 503)) throw new Error(`HTTP ${res.status}`)
+        throw new ServerRefusal(refusal ?? `Vigil refused the request (HTTP ${res.status})`)
+      }
       reached = true
-      if (!res.ok) throw new Error(await refusalOf(res))
       accepted = true
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
@@ -835,49 +832,6 @@ export default function Chat({
       /* ignore — server unreachable */
     }
   }
-
-  // the marker is only set on success, so a failed import retries next mount.
-  // Only this user's scoped cache is imported; unscoped leftovers are not theirs to upload.
-  const migratedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!userId || lockedCaseId || migratedFor.current === userId) return
-    migratedFor.current = userId
-    try {
-      if (chatWasImported(userId)) return
-      const local = loadHistory<Conversation>(userId)
-      if (local.length === 0) {
-        markChatImported(userId)
-        return
-      }
-      const payload: ImportConversationInput[] = local.map((c) => ({
-        id: c.id,
-        title: c.title,
-        messages: (c.messages || [])
-          .filter((m) => m.role !== 'error')
-          .map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text, thinking: null })),
-      }))
-      for (const c of local) if (c.key) setKeymapEntry(userId, c.key, c.id)
-      const epoch = chatCacheEpoch()
-      let cancelled = false
-      conversationsApi
-        .importHistory(payload)
-        .then(() => {
-          // Sign-out and a user switch bump the epoch; don't recreate a key they removed.
-          if (cancelled || epoch !== chatCacheEpoch()) return
-          markChatImported(userId)
-          reloadHistory()
-        })
-        .catch(() => {
-          if (!cancelled) migratedFor.current = null
-          /* retry next mount */
-        })
-      return () => {
-        cancelled = true
-      }
-    } catch {
-      /* empty */
-    }
-  }, [reloadHistory, lockedCaseId, userId])
 
   // going back to a tab folds the thread to its last exchange; a case switch resets that below
   const seenKey = useRef(collapseKey)

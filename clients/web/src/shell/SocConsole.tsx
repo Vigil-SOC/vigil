@@ -14,6 +14,7 @@ import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvide
 import ExtensionHost from '../extensions/ExtensionHost'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 import CaseDrawer from './CaseDrawer'
+import { heldCase, holdCase } from './heldCase'
 import Chat from './Chat'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
@@ -43,6 +44,7 @@ import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
 import { VigilLogo } from '../shared/VigilLogo'
 import {
+  authBypassed,
   foldStatus,
   type FederationRead,
   type HealthRead,
@@ -149,6 +151,8 @@ function SocConsoleInner() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
+  const [health, setHealth] = useState<HealthRead | null>(null)
+  const bypassed = authBypassed(health)
   // Home's setup steps; null when unread or failed, so no chip and no menu count
   const [setupSteps, setSetupSteps] = useState<{ id: string; done: boolean }[] | null>(null)
   const [setupHidden, setSetupHidden] = useState<string[]>(() => readSetupHidden())
@@ -158,20 +162,16 @@ function SocConsoleInner() {
   )
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [caseSeed, setCaseSeed] = useState<string | null>(null)
-  const [drawerCase, setDrawerCase] = useState<string | null>(null)
-  // The drawer is held on the history entry it is open over, so browser Back from a page it led to
-  // (Watch it run, Replay) comes back to the case rather than to the bare page under it.
-  const heldDrawer = (location.state as { drawerCase?: unknown } | null)?.drawerCase
-  useEffect(() => {
-    if (typeof heldDrawer === 'string') setDrawerCase(heldDrawer)
-  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if ((typeof heldDrawer === 'string' ? heldDrawer : null) === drawerCase) return
-    navigate(
-      { pathname: location.pathname, search: location.search, hash: location.hash },
-      { replace: true, state: { ...((location.state as object | null) ?? {}), drawerCase } },
-    )
-  }, [drawerCase]) // eslint-disable-line react-hooks/exhaustive-deps
+  const drawerCase = heldCase(location.state)
+  const latestLocation = useRef(location)
+  latestLocation.current = location
+  const setDrawerCase = useCallback(
+    (id: string | null) => {
+      const { pathname, search, hash, state } = latestLocation.current
+      navigate({ pathname, search, hash }, { replace: true, state: holdCase(state, id) })
+    },
+    [navigate],
+  )
   const [fill, setFill] = useState<{ text: string; seq: number } | null>(null)
   const fillCommand = useCallback((text: string) => setFill((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 })), [])
   // One bar. Its DOM holder moves between the header and Home; the component does not remount.
@@ -385,7 +385,9 @@ function SocConsoleInner() {
         settled(consoleApi.getProcesses().then((res) => res.data as ProcessesRead)),
       ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
-        if (live) setStatus(foldStatus({ health, federation, mcp, routability, processes }))
+        if (!live) return
+        setStatus(foldStatus({ health, federation, mcp, routability, processes }))
+        if (health) setHealth(health)
       })
     }
     pollStatus()
@@ -490,7 +492,7 @@ function SocConsoleInner() {
       caseOpen={openCaseId !== null}
       onOpenCase={setDrawerCase}
       onGo={(next, options) => {
-        setDrawerCase(null) // the drawer would sit over the next screen
+        if (drawerCase) setDrawerCase(null)
         go(next, options)
       }}
       fill={fill}
@@ -508,7 +510,7 @@ function SocConsoleInner() {
         {!wallMode && <header className="vg-header">
           <div className="vg-brand">
             <VigilLogo className="vg-logo" />
-            <DevModeWarning />
+            {bypassed && <DevModeWarning />}
           </div>
           <div ref={onHeaderSlot} className="vg-header-center" />
           {createPortal(commandBar, commandHolder)}
@@ -532,7 +534,12 @@ function SocConsoleInner() {
                 />
               </div>
             )}
-            <UserMenu onShowTour={startTour} setupLeft={setupLeft} />
+            <UserMenu
+              onShowTour={startTour}
+              setupLeft={setupLeft}
+              authBypassed={bypassed}
+              version={health?.version ?? ''}
+            />
           </div>
         </header>}
         {!wallMode && <nav className="vg-nav" aria-label="Primary">

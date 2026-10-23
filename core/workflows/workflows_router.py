@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Upload
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
+from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import (
@@ -433,6 +434,7 @@ async def execute_workflow(
     workflow_id: str,
     request: WorkflowExecuteRequest,
     service: WorkflowsService = Depends(provide_workflows),
+    user: User = Depends(get_current_user),
 ):
     """
     Execute a workflow (custom or file-based).
@@ -458,12 +460,14 @@ async def execute_workflow(
             ),
         )
 
-    # Pass the caller as triggered_by so the workflow_runs row has a
-    # useful audit marker. "api" is a safe default when auth isn't
-    # surfacing a concrete user identity here (DEV_MODE / system
-    # triggers). Daemon invocations can override by calling the
-    # service layer directly.
-    result = await service.execute_workflow(workflow_id, parameters, triggered_by="api")
+    # The row names the person. Daemon and handoff starts call the service
+    # directly and pass their own marker; this door always has a session.
+    result = await service.execute_workflow(
+        workflow_id,
+        parameters,
+        triggered_by=user.username,
+        principal=tool_principal.mint(user.username, ttl=tool_principal.RUN_TTL),
+    )
 
     if not result.get("success"):
         error = result.get("error", "Unknown error during workflow execution")

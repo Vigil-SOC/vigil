@@ -112,14 +112,25 @@ export class Registry implements ToolRegistry {
     }
   }
 
+  private reserved = 0; // the last ref handed to a call still running
+  private published: Promise<unknown> = Promise.resolve(); // the last issued call, noted and journaled
+
   // A search the code makes itself (the rare sweep, a story's sweep): takes the next ref and journals the call.
+  // Calls may overlap: the ref is taken when the call starts, and calls are noted and journaled in ref order (a
+  // ref is its position on the ledger), whatever order they finish in.
   async call(name: string, input: unknown, ctx: ToolContext): Promise<ToolCallRecord> {
-    const toolCallId = `${CALL_REF}${this.seq + 1}`;
+    this.reserved = Math.max(this.seq, this.reserved) + 1;
+    const toolCallId = `${CALL_REF}${this.reserved}`;
     const started = Date.now();
-    const result = await this.run(name, input, ctx);
-    this.note(toolCallId, input, result.ok ? result.data ?? "" : "");
-    const record = { toolCallId, tool: name, input, result };
-    await this.journal?.({ ...record, ms: Date.now() - started });
-    return record;
+    // A throw is a failed call, still journaled at its ref, so no ref is left unused.
+    const ran = this.run(name, input, ctx).catch((e: any): ToolResult => ({ ok: false, error: String(e?.message ?? e) })).then((result) => ({ result, ms: Date.now() - started }));
+    const done = this.published.then(() => ran).then(async ({ result, ms }) => {
+      this.note(toolCallId, input, result.ok ? result.data ?? "" : "");
+      const record = { toolCallId, tool: name, input, result };
+      await this.journal?.({ ...record, ms });
+      return record;
+    });
+    this.published = done.catch(() => {}); // a failed journal still lets the next call publish, as when sequential
+    return done;
   }
 }
