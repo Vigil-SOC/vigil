@@ -261,8 +261,8 @@ def test_removal_is_recorded_and_the_address_can_be_excluded_again():
 
     second = _exclude(reason="back again")
     with unit_of_work() as session:
-        history = ex.list_exclusions(session, include_removed=True)
-        current = ex.list_exclusions(session)
+        history, _ = ex.list_exclusions_with_total(session, include_removed=True)
+        current, _ = ex.list_exclusions_with_total(session)
     assert [r["exclusion_id"] for r in history] == [
         second["exclusion_id"],
         first["exclusion_id"],
@@ -276,8 +276,8 @@ def test_list_counts_the_findings_each_exclusion_hides():
     _exclude(ip="198.51.100.1", reason="unused")
     _exclude(ip=HOST, reason="overlaps the scanner on ipx-list")
     with unit_of_work() as session:
-        counts = {r["ip"]: r["hidden_findings"] for r in ex.list_exclusions(session)}
-        total = ex.hidden_findings_total(session)
+        rows, total = ex.list_exclusions_with_total(session)
+    counts = {r["ip"]: r["hidden_findings"] for r in rows}
     # ipx-list names both the scanner and HOST, so the rows overlap by one.
     assert counts == {SCANNER: 2, "198.51.100.1": 0, HOST: 2}
     assert total == 3
@@ -456,7 +456,7 @@ def test_writes_need_findings_write(client):
         assert denied.status_code == 403
         assert client.post("/api/exclusions/excl-x/remove").status_code == 403
     with unit_of_work() as session:
-        assert ex.list_exclusions(session) == []
+        assert ex.list_exclusions_with_total(session) == ([], 0)
 
 
 def test_attack_tab_and_timeline_describe_the_queue():

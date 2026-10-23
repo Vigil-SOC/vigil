@@ -138,6 +138,7 @@ def test_assist_and_act_write_only_the_approval_flag():
     user = MagicMock()
     with (
         patch("services.api.routers.config.get_config_service", return_value=svc),
+        patch("core.response.approval_service.get_config_service", return_value=svc),
         patch(
             "services.api.routers.config.get_settings",
             return_value=_settings(False, True),
@@ -167,6 +168,7 @@ def test_a_failed_approval_read_is_an_error_not_act():
     svc.read_system_config.side_effect = RuntimeError("db down")
     with (
         patch("services.api.routers.config.get_config_service", return_value=svc),
+        patch("core.response.approval_service.get_config_service", return_value=svc),
         patch(
             "services.api.routers.config.get_settings",
             return_value=_settings(False, True),
@@ -188,6 +190,7 @@ def test_act_is_refused_when_the_environment_wins(force, auto):
     user = MagicMock()
     with (
         patch("services.api.routers.config.get_config_service", return_value=svc),
+        patch("core.response.approval_service.get_config_service", return_value=svc),
         patch(
             "services.api.routers.config.get_settings",
             return_value=_settings(force, auto),
