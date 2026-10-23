@@ -59,12 +59,30 @@ async def test_unknown_case_returns_empty_sections(store):
 async def test_returns_the_cases_tasks(store):
     store.add(CaseTask(case_id="c-1", title="Pull logs", priority="high"))
     store.add(CaseTask(case_id="c-2", title="Other case", priority="low"))
+    store.add(
+        CaseEscalation(
+            case_id="c-1",
+            escalated_from="analyst",
+            escalated_to="lead",
+            reason="Own case",
+            urgency_level="high",
+        )
+    )
+    store.add(
+        CaseEscalation(
+            case_id="c-2",
+            escalated_from="analyst",
+            escalated_to="lead",
+            reason="Other case",
+            urgency_level="high",
+        )
+    )
     store.commit()
 
     result, _ = await execute_backend_tool("case_records", {"case_id": "c-1"})
 
     assert [task["title"] for task in result["tasks"]] == ["Pull logs"]
-    assert result["escalations"] == []
+    assert [escalation["reason"] for escalation in result["escalations"]] == ["Own case"]
 
 
 @pytest.mark.asyncio
