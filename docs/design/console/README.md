@@ -1,6 +1,6 @@
 # Vigil Console design reference, phase 1
 
-This folder is what an implementer or groomer needs for console work in phase 1, plus the sessions and sign-in boards for the vigil-mu sessions epic, and nothing else. It is a trimmed copy of the Vigil Console v7 design package (claude.ai/design export of 2026-09-30), limited to the boards, components and assets phase 1 uses.
+This folder is what an implementer or groomer needs for console work in phase 1, plus the sessions and sign-in boards for the vigil-mu sessions epic, and nothing else. It is a trimmed copy of the Vigil Console v7 design package (claude.ai/design export of 2026-09-30), limited to the boards, components and assets phase 1 and the sessions epic use.
 
 ## What is canonical
 
@@ -17,7 +17,7 @@ This folder is what an implementer or groomer needs for console work in phase 1,
 Every app board shares one shell, and that shell was drawn for the full product. The following appear on every board and are **phase 2**; the PRD names the class for each (Omitted, Later, Not measured yet):
 
 - the Needs you island in the header ("6 · Needs you · 214 running");
-- the Pulse, Fleet Wall and Coverage tabs (MainP2 and the sessions boards are drawn with the phase-1 nav);
+- the Pulse, Fleet Wall and Coverage tabs (MainP2, `SettingsSessions` and `AccountSignIns` are drawn with the phase-1 nav);
 - "View as" in the profile menu;
 - slash-command chips beyond the built-in set in PRD SH-P5;
 - on the case page: the tier control, trust strip, "Approve narrower", Hold with duration, Tell and Do modes, revert rows;
