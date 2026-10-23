@@ -47,6 +47,7 @@ async def list_conversations(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     q: Optional[str] = Query(None, description="Match title, case id, or page key"),
+    case_id: Optional[str] = Query(None, description="Exact case id"),
     current_user: User = Depends(get_current_user),
 ):
     """List the current user's conversations, newest activity first."""
@@ -56,6 +57,7 @@ async def list_conversations(
         limit=limit,
         offset=offset,
         q=q,
+        case_id=case_id,
     )
     return {"conversations": items}
 

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
+import type { operations } from './generated/schema'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -1098,6 +1099,75 @@ export const orchestratorApi = {
     }),
 }
 
+/** The trail filter (core.audit.trail.make_query): the list and the export send the same one. */
+export type AuditFilter = Omit<
+  NonNullable<operations['get_api_audit_export']['parameters']['query']>,
+  'after'
+>
+
+export interface AuditEntry {
+  seq: number
+  occurred_at: string
+  late: boolean
+  entry_hash: string
+  payload: Record<string, unknown>
+  source_ip: string | null
+  actor_text: string | null
+  operator_text: string | null
+  attempted_name: string | null
+  personal: unknown
+}
+
+export interface AuditTip { seq: number; hash: string }
+
+export interface AuditVerify {
+  first: number | null
+  last: number | null
+  first_bad: number | null
+  reason: string
+  ok: boolean
+}
+
+export const AUDIT_PAGE = 100
+
+/** The filter as query params, empty ones left out. */
+export function auditParams(filter: AuditFilter): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(filter)) {
+    const text = value == null ? '' : String(value).trim()
+    if (text) out[key] = text
+  }
+  return out
+}
+
+export const auditApi = {
+  entries: (filter: AuditFilter, after?: number, limit = AUDIT_PAGE) =>
+    api.get<{ entries: AuditEntry[]; tip: AuditTip }>('/audit/entries', {
+      params: { ...auditParams(filter), ...(after != null ? { after } : {}), limit },
+    }),
+  exportTrail: (filter: AuditFilter) =>
+    api.get<Blob>('/audit/export', { params: auditParams(filter), responseType: 'blob' }),
+  /** Export the filter and save it as an NDJSON file. */
+  download: async (filter: AuditFilter, filename = 'audit.ndjson') => {
+    const res = await auditApi.exportTrail(filter).catch(async (e) => {
+      // a blob response carries its error body as a Blob; read it so the caller sees the detail
+      const data = e?.response?.data
+      if (data instanceof Blob) {
+        try { e.response.data = JSON.parse(await data.text()) } catch { /* not JSON */ }
+      }
+      throw e
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  verify: (first?: number, last?: number) =>
+    api.get<AuditVerify>('/audit/verify', { params: { first, last } }),
+}
+
 export interface FederationSourceView {
   source_id: string
   enabled: boolean
@@ -1120,6 +1190,32 @@ export interface FederationSourceView {
 interface FederationListResponse {
   sources: FederationSourceView[]
   global: { enabled: boolean }
+}
+
+export interface AuditFeed {
+  enabled: boolean
+  host: string
+  port: number | null
+  ca_set: boolean
+  client_cert_set: boolean
+  last_delivered_at: string | null
+  last_delivered_seq: number | null
+  last_error: string | null
+  behind: number
+  tip_seq: number
+}
+
+export const auditFeedApi = {
+  get: () => api.get<AuditFeed>('/audit/feed'),
+  save: (body: {
+    enabled: boolean
+    host: string
+    port: number | null
+    ca_pem: string | null
+    client_cert_pem: string | null
+    client_key_pem: string | null
+  }) => api.put<AuditFeed>('/audit/feed', body),
+  test: () => api.post<{ ok: boolean }>('/audit/feed/test'),
 }
 
 export const federationApi = {
@@ -1198,7 +1294,7 @@ export interface ConversationDetail extends ConversationSummary {
 
 export const conversationsApi = {
   // trailing slash avoids a 307 to the backend root route
-  list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string }) =>
+  list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string; case_id?: string }) =>
     api.get('/conversations/', { params }),
 
   get: (id: string) => api.get(`/conversations/${encodeURIComponent(id)}`),
@@ -1310,9 +1406,6 @@ export interface TriageRow {
   age_seconds: number
   ttl_seconds: number
   last_quarter: boolean
-  score: null
-  trust: null
-  weight: null
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
@@ -1348,7 +1441,6 @@ export interface TriagePayload {
     }
     waiting: number
     cases_created_today: number
-    trust_floor: string
   }
   /** rows that pass the filters, before the row cap */
   matched: number
@@ -1368,7 +1460,6 @@ export interface TriagePayload {
     trust_floor: TriageInfo & { limit: string }
   }
   breakdown_info: { trust: string; weight: string; score: string }
-  unmeasured_text: string
 }
 
 export interface TriageQuery {

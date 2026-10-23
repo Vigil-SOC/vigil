@@ -219,6 +219,9 @@ services:
       # (C8). Same variable and default as the medic service: on without the
       # Medic profile reads as down, which is loud, never as a silent off.
       VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
+      # Upgrade history the feed leader imports. The upgrade one-shot is the
+      # writer; this process only reads.
+      VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       SSL_CERT_FILE:
@@ -244,6 +247,7 @@ services:
       - vigil_investigations:/app/data/investigations
       - mcp_runner_token:/run/vigil/mcp-runner:ro
       - metrics_token:/run/vigil/metrics:ro
+      - ${VIGIL_UPGRADE_HOST_DIR:-upgrade_state}:/var/lib/vigil-upgrade:ro
     depends_on:
       metrics-token:
         condition: service_completed_successfully
