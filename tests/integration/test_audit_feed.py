@@ -363,10 +363,11 @@ def test_turning_the_feed_on_writes_one_entry(db, client, monkeypatch):
     monkeypatch.setattr(
         feed, "delete_secret", lambda key: store.pop(key, None) is not None
     )
+    admin = _login(client, "ada")
     before = _count(db)
     saved = client.put(
         "/api/audit/feed",
-        headers=_login(client, "ada"),
+        headers=admin,
         json={
             "enabled": True,
             "host": "siem.example",
@@ -391,6 +392,7 @@ def test_a_credential_cannot_turn_the_feed_on(db, client):
     _user("mia", "role-manager")
     minted = mcp_credential_service.mint(admin_id, "ada's script")
     body = {"enabled": True, "host": "siem.example", "port": 6514}
+    manager_headers = _login(client, "mia")
     before = _count(db)
 
     credential = client.put(
@@ -401,7 +403,7 @@ def test_a_credential_cannot_turn_the_feed_on(db, client):
     assert credential.status_code == 403, credential.text
     assert credential.json()["detail"] == MCP_CREDENTIAL_DENIED
 
-    manager = client.put("/api/audit/feed", headers=_login(client, "mia"), json=body)
+    manager = client.put("/api/audit/feed", headers=manager_headers, json=body)
     assert manager.status_code == 403, manager.text
     assert manager.json()["detail"] == "Permission denied: audit.forward required"
     assert _count(db) == before
@@ -418,6 +420,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
         feed, "get_secret", lambda key, default=None: store.get(key, default)
     )
     admin = _login(client, "ada")
+    manager_headers = _login(client, "mia")
     saved = client.put(
         "/api/audit/feed",
         headers=admin,
@@ -438,7 +441,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
     client.app.state.integration_bridge = _Bridge()
     posted = client.post(
         "/api/config/integrations",
-        headers=_login(client, "mia"),
+        headers=manager_headers,
         json={
             "enabled_integrations": [],
             "integrations": {

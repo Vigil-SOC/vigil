@@ -175,7 +175,7 @@ vi.mock('../services/api', () => ({
   attackApi: {
     getTechniqueRollup: () =>
       Promise.resolve({
-        data: { techniques: [{ technique_id: 'T1567.002', count: 10, severities: { critical: 2, high: 3, medium: 4, low: 1 } }] },
+        data: { techniques: [{ technique_id: 'T1567.002', technique_name: 'Exfiltration to Cloud Storage', tactic: 'Exfiltration', count: 10, severities: { critical: 2, high: 3, medium: 4, low: 1 } }] },
       }),
     getFindingsByTechnique: () => Promise.resolve({ data: { findings: [] } }),
   },

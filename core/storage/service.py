@@ -460,7 +460,6 @@ class DatabaseService:
             session.flush()
             return len(new_rows)
 
-    @default_on_error(None)
     def get_finding(self, finding_id: str) -> Optional[Finding]:
         """
         Get a finding by ID.
@@ -508,7 +507,6 @@ class DatabaseService:
                 session.expunge(finding)
             return finding
 
-    @default_on_error(list)
     def get_findings(
         self,
         severity: Optional[str] = None,
@@ -639,7 +637,6 @@ class DatabaseService:
             query = query.order_by(Finding.created_at.asc()).limit(limit)
             return FindingSchema.dump_many(session.execute(query).scalars().all())
 
-    @default_on_error(0)
     def count_findings(
         self,
         severity: Optional[str] = None,
