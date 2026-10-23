@@ -3,7 +3,8 @@ import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
@@ -14,6 +15,7 @@ import { pluginFor } from "../../plugins/registry.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
+import type { ProviderEvent, TurnRequest } from "../../core/provider.js";
 
 const TOKEN = "a-shared-secret";
 const RUN = "5a2c2d3e-0000-4000-8000-000000000989";
@@ -125,7 +127,7 @@ describe("whom the turn's tools act for", () => {
       return scripted(kind, spec, runState, memory, seed);
     };
     for (const request of requests) {
-      const res = { write: () => true, end: () => undefined, writableEnded: false, destroyed: false } as unknown as ServerResponse;
+      const res = Object.assign(new EventEmitter(), { write: () => true, end: () => undefined, writableEnded: false, destroyed: false }) as unknown as ServerResponse;
       await streamChat(new InProcessState(), request, res, build);
     }
     return seen;
@@ -133,6 +135,61 @@ describe("whom the turn's tools act for", () => {
 
   it("passes the principal the request carried, and none when it carried none", async () => {
     expect(await principalsSeen([asked({ principal: "signed.by.api" }), asked()])).toEqual(["signed.by.api", undefined]);
+  });
+});
+
+// Stop in the console closes the response; the call in flight is cancelled with it
+// rather than run to the end of the step and billed whole (#3036).
+describe("a reader who leaves mid-step", () => {
+  it("cancels the provider call, journals its spend, dispatches nothing after, and says the reader stopped it", async () => {
+    const requests: TurnRequest[] = [];
+    let started!: () => void;
+    const inFlight = new Promise<void>((resolve) => (started = resolve));
+    const scripted = scriptedHarness([]);
+    const build: HarnessFactory = (kind, spec, runState, memory, seed) => ({
+      ...scripted(kind, spec, runState, memory, seed),
+      provider: {
+        model: "scripted/model",
+        provider_type: "scripted",
+        // A step that queues a tool call, then blocks until the reader goes and dies as the SDK does.
+        stream: async function* (request: TurnRequest): AsyncGenerator<ProviderEvent> {
+          requests.push(request);
+          yield { type: "tool_call", call: { id: "c1-0", tool: "anything", args: "{}" } };
+          started();
+          await new Promise((_, reject) => request.signal?.addEventListener("abort", () => reject(request.signal?.reason)));
+        },
+      },
+    });
+
+    const frames: string[] = [];
+    const res = Object.assign(new EventEmitter(), {
+      writableEnded: false,
+      destroyed: false,
+      write: (frame: string) => frames.push(frame) > 0,
+      end: () => undefined,
+    });
+    const logged = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const runState = new InProcessState();
+    try {
+      const turn = streamChat(runState, asked(), res as unknown as ServerResponse, build);
+      await inFlight;
+      const written = frames.length;
+      res.destroyed = true;
+      res.emit("close");
+      await turn;
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.signal?.aborted).toBe(true);
+      expect(frames).toHaveLength(written);
+      const kinds = (await runState.read(RUN)).map((event) => event.kind);
+      expect(kinds.filter((kind) => kind === "spend")).toHaveLength(1);
+      expect(kinds).not.toContain("call");
+      const stopped = logged.mock.calls.map(([line]) => String(line)).filter((line) => line.includes("chat turn stopped by its reader"));
+      expect(stopped).toHaveLength(1);
+      expect(JSON.parse(stopped[0] as string)).toMatchObject({ run_id: RUN, reason: "the reader stopped the turn" });
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 

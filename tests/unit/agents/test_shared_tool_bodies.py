@@ -123,6 +123,32 @@ async def test_closing_a_case_through_the_backend_records_a_closure(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, args", [("create_case", {"title": "t"}), ("update_case", {"case_id": "c1"})]
+)
+@pytest.mark.parametrize("status", ["resolved", "Closed", ""])
+async def test_a_status_outside_the_vocabulary_is_refused(
+    monkeypatch, tool, args, status
+):
+    class _Cases:
+        def get_case(self, case_id):
+            return {"case_id": case_id, "status": "open", "notes": []}
+
+        def create_case(self, **kwargs):
+            raise AssertionError("refused status was stored")
+
+        def update_case(self, case_id, **updates):
+            raise AssertionError("refused status was stored")
+
+    monkeypatch.setattr(tool_registry, "_data", lambda: _Cases())
+
+    result, handled = await execute_backend_tool(tool, {**args, "status": status})
+
+    assert handled is True
+    assert "Unknown case status" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_a_note_is_stored_where_the_timeline_reads_it(monkeypatch):
     captured = {}
 
