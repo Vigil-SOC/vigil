@@ -1,0 +1,3 @@
+bash: ruff: command not found
+All done! ✨ 🍰 ✨
+2 files would be left unchanged.

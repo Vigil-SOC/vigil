@@ -1,0 +1,8 @@
+=========================== short test summary info ============================
+FAILED tests/integration/test_backup_create.py::test_create_snapshot_lists_state_and_matches_counts
+FAILED tests/integration/test_backup_create.py::test_missing_locations_are_skipped
+FAILED tests/integration/test_backup_create.py::test_wrong_passphrase_does_not_dump
+FAILED tests/integration/test_backup_create.py::test_large_dump_still_verifies
+FAILED tests/integration/test_backup_create.py::test_concurrent_create_skips
+FAILED tests/integration/test_backup_create.py::test_owner_override_skips_stored_dsn
+========================= 6 failed, 1 passed in 37.82s =========================

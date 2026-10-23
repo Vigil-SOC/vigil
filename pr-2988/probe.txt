@@ -1,0 +1,4 @@
+files: ['context.md', 'log.jsonl', 'plan.md', 'state.json']
+dirs: []
+after writes: ['context.md', 'hypotheses.txt', 'log.jsonl', 'plan.md', 'recall_keys.json', 'state.json']
+OK
