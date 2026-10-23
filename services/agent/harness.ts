@@ -15,10 +15,8 @@ import { httpVirtualKey } from "./core/vk.js";
 import { openAiSurface } from "./core/wire.js";
 import { toolsFrom } from "./tools/remote.js";
 
-// One name for the shared secret on both sides of the boundary — Python reads it
-// as AGENT_INTERNAL_TOKEN. VIGIL_TOOLS_TOKEN is the older spelling, still read.
 export function internalToken(): string {
-  return process.env["AGENT_INTERNAL_TOKEN"] ?? process.env["VIGIL_TOOLS_TOKEN"] ?? "";
+  return process.env["AGENT_INTERNAL_TOKEN"] ?? "";
 }
 
 // One per process, not one per run. A client per run opens its own connection pool

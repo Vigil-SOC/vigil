@@ -17,7 +17,7 @@ import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
 import { chatEvents, sse } from "./plugins/chat/sse.js";
 import { runChat, type Turn } from "./plugins/chat/workflow.js";
-import { harnessFor, type HarnessFactory } from "./harness.js";
+import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import type { ProjectionOptions } from "./plugins/hunt/projection.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
@@ -150,7 +150,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
 // Hashed because timingSafeEqual throws on a length mismatch, and the throw would
 // leak the length.
 function authorised(req: IncomingMessage): boolean {
-  const expected = process.env["AGENT_INTERNAL_TOKEN"] ?? process.env["VIGIL_TOOLS_TOKEN"] ?? "";
+  const expected = internalToken();
   if (expected === "") return false;
   const digest = (value: string): Buffer => createHash("sha256").update(value).digest();
   return timingSafeEqual(digest(req.headers.authorization ?? ""), digest(`Bearer ${expected}`));
