@@ -363,10 +363,15 @@ async def chat_stream(
         system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
-    # Read before the payload: a deleted row's generation must not reuse its run.
-    run_key = await asyncio.to_thread(
-        conversation_service.ledger_session_key, session_id
-    )
+    # A client that did not send an id is a new session: there is no row to read.
+    # A sent id is read before the payload, so a deleted row's generation is not
+    # reused.
+    if request.session_id:
+        run_key = await asyncio.to_thread(
+            conversation_service.ledger_session_key, session_id
+        )
+    else:
+        run_key = session_id
     run_id = run_id_for(run_key)
     payload = {
         "run_id": run_id,
