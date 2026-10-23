@@ -577,37 +577,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/recalculate-cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Recalculate Cost Endpoint
-         * @description Trigger Bifrost's batch cost-recompute against current pricing.
-         *
-         *     Admin operation. When Anthropic or OpenAI publishes new pricing,
-         *     Bifrost's catalog updates automatically — but historical log rows
-         *     keep the cost they were billed at the time. This endpoint asks
-         *     Bifrost to re-cost a batch of rows so the time-series and
-         *     histograms reflect the new pricing without a redeploy.
-         *
-         *     NOTE: this is a *cumulative* operation. Bifrost caps each call at
-         *     1000 rows; the response's ``remaining`` field tells the caller how
-         *     many rows still need processing. The UI button loops until
-         *     ``remaining == 0`` (or fails fast on a 5xx).
-         */
-        post: operations["post_api_analytics_recalculate-cost"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/approvals": {
         parameters: {
             query?: never;
@@ -10151,36 +10120,6 @@ export interface components {
             max_cost_usd: number;
         };
         /**
-         * RecalculateCostRequest
-         * @description Body for POST /analytics/recalculate-cost.
-         *
-         *     Optional filters scope which Bifrost log rows get re-costed. The
-         *     common case (no filters) only touches rows where Bifrost recorded
-         *     ``missing_cost`` — i.e. calls that happened before pricing data
-         *     was available. After a known repricing event, scope by model or
-         *     time window to reprice only the affected rows.
-         */
-        RecalculateCostRequest: {
-            /** End Time */
-            end_time?: string | null;
-            /**
-             * Limit
-             * @default 200
-             */
-            limit: number;
-            /**
-             * Missing Cost Only
-             * @default true
-             */
-            missing_cost_only: boolean | null;
-            /** Models */
-            models?: string[] | null;
-            /** Providers */
-            providers?: string[] | null;
-            /** Start Time */
-            start_time?: string | null;
-        };
-        /**
          * RecoveryCodesResponse
          * @description One-time MFA recovery codes (shown once, cannot be retrieved again).
          */
@@ -12487,43 +12426,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_analytics_recalculate-cost": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["RecalculateCostRequest"] | null;
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {

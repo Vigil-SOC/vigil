@@ -15,8 +15,6 @@ What's wrapped (verified against docs.getbifrost.ai):
   * ``GET /api/logs/histogram/token-usage``
   * ``GET /api/logs/stats``            — aggregate totals (cost, tokens,
                                           requests, latency, success rate)
-  * ``POST /api/logs/recalculate-cost``— batch recompute against current
-                                          pricing (admin operation)
 
 What's *not* wrapped here: provider config (``core.llm.bifrost.admin``
 already owns provider key/model writes) and governance/budget endpoints
@@ -162,38 +160,6 @@ def stats(
 
 
 # ---------------------------------------------------------------------------
-# Recalculate cost — admin operation, the lever that fixes pricing rot
-# ---------------------------------------------------------------------------
-
-
-def recalculate_cost(
-    *,
-    filters: Optional[Dict[str, Any]] = None,
-    limit: int = 200,
-) -> Optional[Dict[str, Any]]:
-    """Reprice historical logs against Bifrost's current pricing data.
-
-    The default behavior (no filters, limit=200) re-costs the next 200
-    rows that have ``missing_cost`` set. Pass ``filters`` to scope to a
-    specific window/model after a known repricing event.
-
-    Response (``RecalculateCostResponse``):
-
-    - ``total_matched``: rows meeting the filter
-    - ``updated``: rows successfully recalculated
-    - ``skipped``: rows not processed (e.g. invalid token data)
-    - ``remaining``: rows beyond the limit
-
-    Hard-capped at 1000 per call by Bifrost; callers that need to
-    reprice a larger backlog should loop on ``remaining``.
-    """
-    body: Dict[str, Any] = {"limit": max(1, min(int(limit), 1000))}
-    if filters:
-        body["filters"] = filters
-    return _post_json("/api/logs/recalculate-cost", body=body)
-
-
-# ---------------------------------------------------------------------------
 # Internal HTTP helpers
 # ---------------------------------------------------------------------------
 
@@ -257,23 +223,4 @@ def _get_json(
             return r.json()
     except Exception as e:
         logger.warning("bifrost_cost_client: GET %s failed: %s", path, e)
-        return None
-
-
-def _post_json(path: str, *, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    url = f"{_bifrost_base_url()}{path}"
-    try:
-        with httpx.Client(timeout=_DEFAULT_TIMEOUT, auth=management_auth()) as client:
-            r = client.post(url, json=body)
-            if r.status_code >= 400:
-                logger.warning(
-                    "bifrost_cost_client: POST %s returned %s: %s",
-                    path,
-                    r.status_code,
-                    r.text[:200],
-                )
-                return None
-            return r.json()
-    except Exception as e:
-        logger.warning("bifrost_cost_client: POST %s failed: %s", path, e)
         return None
