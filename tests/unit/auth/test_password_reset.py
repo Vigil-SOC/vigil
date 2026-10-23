@@ -89,6 +89,7 @@ class TestConfirm:
     def user(self):
         return SimpleNamespace(
             user_id="u-1",
+            principal_id="u-1",
             username="analyst",
             email="a@example.com",
             is_active=True,

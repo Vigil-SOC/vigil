@@ -297,8 +297,14 @@ class AuthService:
 
     @staticmethod
     def authenticate_user(
-        username_or_email: str, password: str, session: Optional[Session] = None
+        username_or_email: str,
+        password: str,
+        session: Optional[Session] = None,
+        refusal: Optional[dict] = None,
     ) -> Optional[User]:
+        """The user, or None (or AccountLockedError). On a refusal, ``refusal``
+        gets its ``reason`` and, for a known account, its ``principal``."""
+        refusal = {} if refusal is None else refusal
         # The unit of work must see any failure, so it sits inside the try —
         # the handlers below swallow the exception and would otherwise let a
         # failed attempt commit.
@@ -316,24 +322,30 @@ class AuthService:
 
                 if not user:
                     logger.warning("Login attempt for unknown identifier")
+                    refusal["reason"] = "unknown"
                     return None
+                refusal["principal"] = user.principal_id
 
                 if not user.is_active:
                     logger.warning(
                         "Login attempt for inactive account: %s", user.username
                     )
+                    refusal["reason"] = "inactive"
                     return None
 
                 # Reject while locked. Lockout is authoritative even over a
                 # correct password — otherwise an attacker who eventually
                 # guesses right would bypass the wait.
                 now = utcnow()
+                if _account_is_locked(user):
+                    refusal["reason"] = "locked"
                 raise_if_locked(user)
 
                 # Verify password
                 if not AuthService.verify_password(password, user.password_hash):
                     AuthService._record_failed_attempt(user.user_id, now)
                     logger.warning("Invalid password for user: %s", user.username)
+                    refusal["reason"] = "bad_password"
                     return None
 
                 # Success — reset lockout state and update session tracking
@@ -349,6 +361,7 @@ class AuthService:
             raise
         except Exception as e:
             logger.error(f"Authentication error: {e}")
+            refusal["reason"] = "error"
             return None
 
     @staticmethod

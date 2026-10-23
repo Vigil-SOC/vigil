@@ -34,6 +34,7 @@ def hashes():
 def user(hashes):
     return SimpleNamespace(
         user_id="u-1",
+        principal_id="u-1",
         username="analyst",
         email="a@example.com",
         password_hash=hashes[0],

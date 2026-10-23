@@ -25,31 +25,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, array
 from sqlalchemy.orm import Session
 
+from core.storage.ip_address import FINDING_IP_KEYS
 from core.storage.models import Finding, IpExclusion
-
-# Top-level entity_context keys ingest writes addresses under. Each holds a
-# string or a list of strings.
-FINDING_IP_KEYS = (
-    "src_ip",
-    "src_ips",
-    "source_ip",
-    "source_ips",
-    "srcip",
-    "dst_ip",
-    "dst_ips",
-    "dest_ip",
-    "dest_ips",
-    "destination_ip",
-    "destination_ips",
-    "dstip",
-    "ip",
-    "ips",
-    "ip_address",
-    "ip_addresses",
-    "local_ip",
-    "remote_ip",
-    "client_ip",
-)
 
 # How a findings query treats findings that name an excluded address.
 EXCLUSION_VIEWS = ("include", "hide", "only")
