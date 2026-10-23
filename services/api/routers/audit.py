@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from core.audit import trail
 from core.auth import current_user as current_user_module
+from core.auth import principals
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
 from core.auth.permissions import require_permission
@@ -33,6 +34,14 @@ ROUTER_META = RouterMeta(
 
 _READ = require_permission("audit.read")
 _SIGN_IN_REQUIRED = "A person sign-in is required"
+_KINDS = frozenset(
+    {
+        principals.PERSON,
+        principals.SERVICE_ACCOUNT,
+        principals.AGENT,
+        principals.SYSTEM,
+    }
+)
 
 
 def _filters(
@@ -47,6 +56,9 @@ def _filters(
     attribution: Optional[str] = None,
     after: Optional[int] = Query(None, ge=0),
 ) -> trail.TrailQuery:
+    kind_c = (kind or "").strip()
+    if kind_c and kind_c not in _KINDS:
+        raise HTTPException(status_code=422, detail=f"unknown principal kind: {kind_c}")
     try:
         return trail.make_query(
             since=since,
@@ -73,19 +85,20 @@ def _require_sign_in(request: Request) -> None:
         raise HTTPException(status_code=401, detail=_SIGN_IN_REQUIRED)
 
 
-def require_forward(request: Request, user: User = Depends(get_current_user)) -> User:
+def require_forward():
     """Person sign-in, then the kind check, then ``audit.forward``."""
-    _require_sign_in(request)
-    if not AuthService.check_permission(user.user_id, "audit.forward"):
-        raise HTTPException(
-            status_code=403, detail="Permission denied: audit.forward required"
-        )
-    return user
 
+    def _check(request: Request, user: User = Depends(get_current_user)) -> User:
+        _require_sign_in(request)
+        if not AuthService.check_permission(user.user_id, "audit.forward"):
+            raise HTTPException(
+                status_code=403, detail="Permission denied: audit.forward required"
+            )
+        return user
 
-# The role x route matrix reads these off the dependency, as require_permission does.
-require_forward.permission = "audit.forward"
-require_forward.unsafe_only = False
+    # The role x route matrix reads these off the dependency.
+    _check.permission, _check.unsafe_only = "audit.forward", False
+    return _check
 
 
 def _ndjson(rows: list[dict], tip: trail.Tip):
@@ -130,7 +143,7 @@ def poll_entries(
     session: UnitOfWorkSession,
     query: trail.TrailQuery = Depends(_filters),
     limit: int = Query(trail.POLL_LIMIT, ge=1, le=trail.POLL_LIMIT),
-    _: User = Depends(require_forward),
+    _: User = Depends(require_forward()),
 ):
     """Entries after ``after``. A cursor past the tip is a reset, not an empty page."""
     if query.after is None:
