@@ -1,5 +1,3 @@
-"""The session user, never the request body, is who created a workflow or cancelled a run."""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
