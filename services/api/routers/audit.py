@@ -9,8 +9,8 @@ sign-in is refused before the role check, and a non-person is refused inside
 from __future__ import annotations
 
 import hashlib
-import logging
 import json
+import logging
 import ssl
 from datetime import datetime
 from typing import Optional
