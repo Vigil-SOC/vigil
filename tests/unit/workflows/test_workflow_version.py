@@ -75,7 +75,7 @@ class TestVersionOf:
 
 class TestAgentRunPath:
     @staticmethod
-    def _begin(playbook, run_kind="compose", versions=None):
+    def _begin(playbook, run_kind="compose", lookup=None):
         request = agent_runs_router.StartRunRequest(
             run_kind=run_kind, playbook=playbook, config="", prompt="p"
         )
@@ -84,7 +84,7 @@ class TestAgentRunPath:
             "core.workflows.workflow_run_service.WorkflowRunService", return_value=runs
         ), patch(
             "core.workflows.workflows_service.WorkflowsService.get_workflow",
-            side_effect=versions
+            side_effect=lookup
             or (lambda self, wid: WorkflowDefinition(wid, None, {"version": 4}, "")),
             autospec=True,
         ):
@@ -103,7 +103,7 @@ class TestAgentRunPath:
         def boom(self, wid):
             raise RuntimeError("no db")
 
-        assert self._begin("workflow:x", versions=boom)["workflow_version"] is None
+        assert self._begin("workflow:x", lookup=boom)["workflow_version"] is None
 
 
 @pytest.mark.database

@@ -238,7 +238,6 @@ def _begin_run_row(
         named if request.playbook.startswith(WORKFLOW_SCHEME) else request.run_kind
     )
     phases: Dict[str, str] = {}
-    # A bare run_kind names no definition, so it has no version to record.
     version: Optional[int] = None
     if request.playbook.startswith(WORKFLOW_SCHEME):
         try:
