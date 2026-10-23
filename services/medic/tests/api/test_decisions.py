@@ -353,6 +353,16 @@ def test_get_decision_errors_and_the_wrong_method(tmp_path) -> None:
             assert doc["field"] == field
             if hidden:
                 assert hidden not in json.dumps(doc)
+        # A well-formed seq past SQLite's range is absent, not malformed.
+        for target in (
+            "/v1/decisions/9223372036854775808",
+            "/v1/decisions/" + "9" * 40,
+        ):
+            assert_problem(
+                *call(srv, target=target, headers={"X-Medic-Key": KEY}),
+                404,
+                "not_found",
+            )
         for target in ("/v1/decisions", "/v1/decisions/0"):
             assert_problem(
                 *call(srv, method="POST", target=target, headers={"X-Medic-Key": KEY}),

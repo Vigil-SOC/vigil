@@ -30,6 +30,8 @@ _INCIDENT = re.compile(_SCHEMA["$defs"]["incident_id"]["pattern"])
 
 # OpenAPI: seq is an integer >= 0; limit defaults to 50 and stops at 100.
 _SEQ = re.compile(r"0|[1-9][0-9]{0,18}")
+# The path seq has no upper bound: a well-formed seq too big for SQLite is absent (404).
+_SEQ_PATH = re.compile(r"0|[1-9][0-9]*")
 _LIMIT = re.compile(r"[1-9][0-9]?|100")
 _CURSOR = re.compile(r"[A-Za-z0-9_-]{1,256}")
 # Error.field. A name that doesn't fit is omitted rather than echoed.
@@ -234,10 +236,12 @@ def list_page(data_dir: Path | None, query: str) -> dict | Problem:
 def get_decision(data_dir: Path | None, seq_text: str, query: str) -> dict | Problem:
     try:
         _reject_query(query)
-        if _SEQ.fullmatch(seq_text) is None:
+        if _SEQ_PATH.fullmatch(seq_text) is None:
             raise _Bad("invalid_parameter", "seq")
     except _Bad as bad:
         return bad.problem
+    if len(seq_text) > 19:  # at least 10**19, past _SQL_MAX
+        return Problem(404, "not_found")
     seq = int(seq_text)
 
     def read(conn: sqlite3.Connection) -> dict | Problem:
