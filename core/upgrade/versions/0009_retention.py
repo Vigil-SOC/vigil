@@ -1,12 +1,12 @@
 """Which retention and erasure announcements have not left the box (#2769).
 
-Follows ``0008_permission_catalog``. One chain: main has a single Alembic head.
+Continues the single chain at ``0006_audit_feed``.
 """
 
 from core.upgrade.revision import run_sql
 
 revision = "0009_retention"
-down_revision = "0008_permission_catalog"
+down_revision = "0006_audit_feed"
 
 
 def upgrade() -> None:
