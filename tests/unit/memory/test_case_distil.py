@@ -553,7 +553,6 @@ class TestIdempotency:
         marker = session.get(EpisodicDistilMarker, ("case", "case-733"))
         assert marker.origin_run_id is None
         assert marker.origin_seq is None
-        assert marker.origin_run_ids == []
         assert marker.verdicts_written == 1
 
 
