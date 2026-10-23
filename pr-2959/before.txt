@@ -1,0 +1,15 @@
+
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+0.08s call     unit/agents/test_case_records.py::test_unknown_case_returns_empty_sections
+0.05s setup    unit/agents/test_case_records.py::test_schema_names_case_records
+0.04s setup    unit/agents/test_case_records.py::test_unknown_case_returns_empty_sections
+0.01s call     unit/agents/test_case_records.py::test_returns_the_cases_tasks
+0.01s setup    unit/agents/test_case_records.py::test_returns_the_cases_tasks
+
+(5 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/agents/test_case_records.py::test_store_failure_is_backend_error
+========================= 1 failed, 3 passed in 28.39s =========================

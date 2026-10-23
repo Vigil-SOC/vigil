@@ -1,0 +1,6 @@
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  10:43:26
+   Duration  332ms (transform 104ms, setup 0ms, collect 0ms, tests 0ms, environment 0ms, prepare 68ms)
+

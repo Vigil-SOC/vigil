@@ -1,0 +1,15 @@
+...............                                                          [ 67%]
+tests/unit/agents/test_mcp_tools.py ........................             [ 98%]
+tests/integration/test_mcp_case_tools_persistence.py .                   [100%]
+============================= slowest 10 durations =============================
+0.66s setup    integration/test_mcp_case_tools_persistence.py::test_case_tools_commit_and_serialize
+0.17s call     integration/test_mcp_case_tools_persistence.py::test_case_tools_commit_and_serialize
+0.05s call     unit/agents/test_mcp_tools.py::TestReachingTheClient::test_names_the_accessor_the_client_module_actually_exports
+0.05s call     unit/agents/test_case_records.py::test_unknown_case_returns_empty_sections
+0.03s setup    unit/agents/test_case_records.py::test_schema_names_case_records
+0.02s call     unit/agents/test_tools_router.py::TestBoundsAtTheSource::test_a_tool_over_its_timeout_reports_timeout
+0.02s teardown integration/test_mcp_case_tools_persistence.py::test_case_tools_commit_and_serialize
+0.02s call     unit/agents/test_tools_router.py::TestPrincipal::test_a_chat_turn_records_the_person_driving_it
+0.01s call     unit/agents/test_mcp_tools.py::TestIndicatorLookup::test_returns_what_the_feeds_know
+0.01s setup    unit/agents/test_case_records.py::test_unknown_case_returns_empty_sections
+======================== 77 passed, 2 warnings in 3.34s ========================
