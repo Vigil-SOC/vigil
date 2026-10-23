@@ -8,7 +8,6 @@ vi.mock('../../services/api', () => ({
   findingsApi: {
     getById: vi.fn(),
     getEnrichment: vi.fn(),
-    delete: vi.fn(),
     launchIntake: vi.fn(),
     markNoise: vi.fn(),
     clearNoise: vi.fn(),
