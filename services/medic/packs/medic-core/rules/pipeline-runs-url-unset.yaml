@@ -1,0 +1,33 @@
+# P-1.g · agent-worker started without VIGIL_RUNS_URL: run progress isn't mirrored
+# and checkpoints can't be answered, so a run that stops for a human parks until
+# it's abandoned. Logged once at start (services/agent/worker.ts:657-661); the
+# worker logs no start line otherwise, so nothing can clear it: the incident
+# holds for 24 h after the line. Agent lines are never catalog-trusted (D3).
+# Outsider: no (agent-worker's environment).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.runs-url-unset
+title: The agent worker can't report run progress (VIGIL_RUNS_URL unset)
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1.g]}
+lane: 2
+detection: event
+input_trust: untrusted
+signals:
+  unset:
+    log:
+      signal: log_agent_worker
+      logger: {eq: agent.worker}
+      level: [ERROR]
+      template: {prefix: 'VIGIL_RUNS_URL is unset: '}
+      trusted_only: false
+when: {fn: count, signal: unset, window: 24h, op: ">=", value: 1}
+for: 0s
+keep_firing_for: 5m
+advice:
+  summary: The agent worker started without VIGIL_RUNS_URL, so run progress never reaches the console and checkpoints can't be answered.
+  fix: >-
+    Set VIGIL_RUNS_URL on agent-worker to the backend's internal runs address
+    (for example http://backend:6987/internal/runs on Compose) and restart
+    agent-worker. This incident closes 24 hours after the last start that
+    logged the problem.

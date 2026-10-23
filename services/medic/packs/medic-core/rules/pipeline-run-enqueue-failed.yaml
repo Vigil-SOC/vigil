@@ -1,0 +1,30 @@
+# P-1.f · the orchestrator couldn't put an investigation on the run queue
+# (services/daemon/orchestrator.py:1344, %-style) and marked it failed. It isn't
+# retried. Usually Redis (a blip or an outage); also a missing workflow or an
+# unknown run_kind. Lane 2 by ownership of Redis (as F7a-3 for the database): the
+# fix text sends a Vigil-side cause to Support.
+# Outsider: no (needs Redis or the workflow config to fail).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.run-enqueue-failed
+title: Investigations failed because they couldn't be queued to run
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1.f]}
+lane: 2
+detection: event
+signals:
+  failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.orchestrator}
+      level: [ERROR]
+      template: {eq: 'could not enqueue %s: %s'}
+when: {fn: count, signal: failed, window: 30m, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: soc-daemon couldn't queue at least one investigation to run and marked it failed; it is not retried.
+  fix: >-
+    Check that Redis is running and that soc-daemon can reach it. Once it can,
+    re-run the failed investigations from the console. If Redis is healthy, send
+    this incident to DeepTempo Support with the evidence report.

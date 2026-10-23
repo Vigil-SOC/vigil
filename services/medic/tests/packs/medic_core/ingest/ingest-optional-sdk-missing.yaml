@@ -1,0 +1,29 @@
+rule: ingest.optional-sdk-missing
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-on-the-missing-sdk-line
+    title: Every Security Hub poll fails on the missing boto3 import
+    end: +15m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: core.integrations.aws_security_hub.ingestion,
+         template: 'boto3 not installed. Install: pip install boto3', message: 'boto3 not installed. Install: pip install boto3',
+         repeat: {every: 5m, until: +15m}}
+    expect:
+      - {at: +1m, rule: ingest.optional-sdk-missing, eval: true, state: pending}
+      - {at: +3m, rule: ingest.optional-sdk-missing, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.optional-sdk-missing, active_since: +1m, opened_at: +3m, resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-other-security-hub-errors
+    title: An untrusted Security Hub API error isn't the SDK line; quiet is decided only once the hour is watched
+    end: +65m
+    logs:
+      - {at: +5m, signal: log_soc_daemon, level: ERROR, logger: core.integrations.aws_security_hub.ingestion, trusted: false,
+         template: 'AWS Security Hub API error: AccessDenied', message: 'AWS Security Hub API error: AccessDenied'}
+    expect:
+      - {at: +10m, rule: ingest.optional-sdk-missing, eval: unknown, state: inactive, note: 0 lines in 10 of 60 minutes decides nothing}
+      - {at: +65m, rule: ingest.optional-sdk-missing, eval: false, state: inactive}
+    incidents: {}

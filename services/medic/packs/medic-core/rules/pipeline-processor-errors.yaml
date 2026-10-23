@@ -1,0 +1,28 @@
+# P-4.d / P-4.e · the processor keeps failing items: worker errors and
+# per-finding errors (f-strings, processor.py:273,337) and triage results it
+# can't persist (549) all add to /status processor.errors. LLM failures count
+# too; suppression.yaml makes this a child of class-2 incidents. requires: D6
+# daemon_status.processor errors.
+# Outsider: partly; malformed pushed findings (a valid webhook token or a
+# monitored SIEM) raise errors. Lane 3, ≥ 10 in 15 min.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.processor-errors
+title: The soc-daemon processor keeps failing findings
+revision: 1
+fault: {class: pipeline, mode: P-4, causes: [P-4.d, P-4.e]}
+lane: 3
+detection: event
+signals:
+  errors: {sample: {signal: daemon_status.processor, key: errors}}
+when: {fn: increase, signal: errors, window: 15m, op: ">=", value: {param: min_errors}}
+for: 10m
+keep_firing_for: 15m
+params:
+  min_errors: {type: number, default: 10, min: 1, max: 10000}
+advice:
+  summary: The soc-daemon processor has failed at least 10 findings in 15 minutes; failed findings are not triaged or stored correctly.
+  fix: >-
+    Check that Postgres is healthy and has free disk. If it is, send this
+    incident to DeepTempo Support with the evidence report and the soc-daemon
+    log.

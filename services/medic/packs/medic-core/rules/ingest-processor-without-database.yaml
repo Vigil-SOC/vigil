@@ -1,0 +1,36 @@
+# I-3.e · the processor started without its database service, so every finding
+# takes the drop path (processor.py:316-323) and federation records each tick as a
+# failure. Set by the start-up failure (an f-string, so untrusted), cleared by the
+# next start that connects (each start logs exactly one of the two).
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.processor-without-database
+title: Daemon processor is running without its database
+revision: 1
+fault: {class: ingest, mode: I-3, causes: [I-3.e]}
+lane: 2
+detection: event
+input_trust: untrusted
+signals:
+  failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [ERROR]
+      template: {prefix: 'Failed to initialize database service: '}
+      trusted_only: false
+  ready:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [INFO]
+      template: {eq: Database service initialized}
+when: {fn: latch, set: failed, clear: ready}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: soc-daemon started without reaching the database, so new findings are processed but never stored.
+  fix: >-
+    Check that Postgres is running and reachable from soc-daemon with the
+    configured credentials, then restart soc-daemon. If Vigil runs its own
+    bundled Postgres and it is healthy, send this incident to DeepTempo Support.

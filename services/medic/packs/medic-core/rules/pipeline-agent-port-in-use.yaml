@@ -1,0 +1,42 @@
+# P-1.b · host-native: an orphaned agent process still holds :6990 or :6989, so the
+# freshly started one dies on EADDRINUSE. Node prints a plain-text stack to stderr
+# (no 'error' listener on the servers), which agent_up.sh sends to
+# logs/agent-<name>.log; the old process keeps answering /healthz and /readyz,
+# so the readiness probes can't corroborate it. One log line, so not lane 1
+# (ENGINE_API §5): lane 2, the admin frees the port (F7b-5 precedent).
+# Outsider: no; any process printing the same text to the agent log could match,
+# hence untrusted and lane 2.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-port-in-use
+title: An agent process couldn't start because its port is taken
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1.b]}
+lane: 2
+detection: event
+shapes: [start_sh]
+input_trust: untrusted
+signals:
+  worker:
+    log:
+      signal: log_agent_worker
+      message: {re2: 'EADDRINUSE.*:(6989|6990)\b'}
+      trusted_only: false
+  serve:
+    log:
+      signal: log_agent_serve
+      message: {re2: 'EADDRINUSE.*:(6989|6990)\b'}
+      trusted_only: false
+when:
+  any:
+    - {fn: count, signal: worker, window: 30m, op: ">=", value: 1}
+    - {fn: count, signal: serve, window: 30m, op: ">=", value: 1}
+for: 0s
+keep_firing_for: 5m
+advice:
+  summary: A restarted agent process exited because an older one still holds its port, so the old code keeps running.
+  fix: >-
+    Stop Vigil with shutdown_all.sh, then check that nothing still listens on
+    ports 6989 and 6990 (lsof -i :6989 -i :6990) and stop any leftover agent
+    process. Start Vigil again with start.sh. If it happens after every restart,
+    send this incident to DeepTempo Support.

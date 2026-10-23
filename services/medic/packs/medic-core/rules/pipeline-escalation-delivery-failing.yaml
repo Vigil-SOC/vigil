@@ -1,0 +1,30 @@
+# P-5.a · a Slack or PagerDuty escalation failed, but the responder still counts
+# it as escalated (responder.py:198, 274-321). All four failure lines are
+# f-strings carrying the provider's reply, so untrusted.
+# Outsider: no (the reply text is Slack's or PagerDuty's).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.escalation-delivery-failing
+title: Escalations to Slack or PagerDuty are not delivered
+revision: 1
+fault: {class: pipeline, mode: P-5, causes: [P-5.a]}
+lane: 2
+detection: event
+input_trust: untrusted
+signals:
+  failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.responder}
+      level: [ERROR]
+      template: {re2: '^(Slack alert failed|Slack escalation error|PagerDuty alert failed|PagerDuty escalation error): '}
+      trusted_only: false
+when: {fn: count, signal: failed, window: 6h, op: ">=", value: 1}
+for: 0s
+keep_firing_for: 5m
+advice:
+  summary: At least one escalation to Slack or PagerDuty failed in the last 6 hours, although Vigil counts it as escalated.
+  fix: >-
+    Check the Slack bot token and channel, or the PagerDuty routing key, in
+    Settings, Integrations, and that the Vigil host can reach Slack or
+    PagerDuty. Send a test escalation after fixing it.

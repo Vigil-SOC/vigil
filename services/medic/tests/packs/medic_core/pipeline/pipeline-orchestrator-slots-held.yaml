@@ -1,0 +1,56 @@
+rule: pipeline.orchestrator-slots-held
+defaults:
+  sensors:
+    - {id: http.orchestrator-status, covers: [orchestrator_status], interval: 60s, service: backend, states: [[+0s, ok]]}
+    - {id: http.daemon-status, covers: [daemon_status.orchestrator], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    orchestrator_status: {enabled: bool, queued: gauge}
+    daemon_status.orchestrator: {free_slots: gauge, investigations_created: counter, investigations_completed: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-parked-runs-hold-every-slot
+    title: Three runs wait for an answer; intake work queues and nothing starts or finishes (site window 30 min)
+    params: {stalled_for: 30m}
+    end: +50m
+    series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, true]]}
+      - {signal: orchestrator_status, key: queued, steps: [[+0s, 4]]}
+      - {signal: daemon_status.orchestrator, key: free_slots, steps: [[+0s, 0]]}
+      - {signal: daemon_status.orchestrator, key: investigations_created, steps: [[+0s, 12]]}
+      - {signal: daemon_status.orchestrator, key: investigations_completed, steps: [[+0s, 9]]}
+    expect:
+      - {at: +10m, rule: pipeline.orchestrator-slots-held, eval: unknown, state: inactive, note: 30 min not watched yet}
+      - {at: +30m, rule: pipeline.orchestrator-slots-held, eval: true, state: pending}
+      - {at: +45m, rule: pipeline.orchestrator-slots-held, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.orchestrator-slots-held, active_since: +30m, opened_at: +45m, resolving_since: null, resolved_at: null, routed_at: +50m}
+  - kind: silent
+    id: v02-silent-while-runs-finish
+    title: Work queues but runs keep finishing, and with the orchestrator off nothing is expected
+    params: {stalled_for: 30m}
+    end: +50m
+    series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, true], [+40m, false]]}
+      - {signal: orchestrator_status, key: queued, steps: [[+0s, 4]]}
+      - {signal: daemon_status.orchestrator, key: free_slots, steps: [[+0s, 0]]}
+      - {signal: daemon_status.orchestrator, key: investigations_created, steps: [[+0s, 12], [+20m, 13]]}
+      - {signal: daemon_status.orchestrator, key: investigations_completed, steps: [[+0s, 9], [+20m, 10]]}
+    expect:
+      - {at: +35m, rule: pipeline.orchestrator-slots-held, eval: false, state: inactive}
+      - {at: +50m, rule: pipeline.orchestrator-slots-held, eval: false, state: inactive}
+    incidents: {}
+  - kind: silent
+    id: v03-silent-when-a-parked-hunt-blocks-only-hunts
+    title: One parked scheduled hunt holds the next hunt back; 2 of 3 slots are free and nothing else arrives
+    params: {stalled_for: 30m}
+    end: +50m
+    series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, true]]}
+      - {signal: orchestrator_status, key: queued, steps: [[+0s, 1]]}
+      - {signal: daemon_status.orchestrator, key: free_slots, steps: [[+0s, 2]]}
+      - {signal: daemon_status.orchestrator, key: investigations_created, steps: [[+0s, 12]]}
+      - {signal: daemon_status.orchestrator, key: investigations_completed, steps: [[+0s, 9]]}
+    expect:
+      - {at: +35m, rule: pipeline.orchestrator-slots-held, eval: false, state: inactive}
+      - {at: +50m, rule: pipeline.orchestrator-slots-held, eval: false, state: inactive}
+    incidents: {}

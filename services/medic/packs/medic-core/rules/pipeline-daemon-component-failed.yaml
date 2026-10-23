@@ -1,0 +1,41 @@
+# P-3.a / P-3.b · a top-level soc-daemon task died (crashed or stopped), e.g. the
+# scheduler raising at start-up. Since D1 (76abec1a) /health says 503 then, but
+# an unconfigured optional component ("not_initialized") does too, so the rule
+# reads the per-component state, not the overall status. requires: D6
+# daemon_health components.<name> as an enum with "failed: <Exc>" folded to
+# "failed" (the raw value isn't label-safe).
+# Outsider: no.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.daemon-component-failed
+title: A soc-daemon component has stopped
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b]}
+lane: 3
+detection: event
+signals:
+  processor:    {sample: {signal: daemon_health, key: components.processor}}
+  scheduler:    {sample: {signal: daemon_health, key: components.scheduler}}
+  orchestrator: {sample: {signal: daemon_health, key: components.orchestrator}}
+  responder:    {sample: {signal: daemon_health, key: components.responder}}
+  poller:       {sample: {signal: daemon_health, key: components.poller}}
+when:
+  any:
+    - {fn: latest, signal: processor, op: "==", value: failed}
+    - {fn: latest, signal: processor, op: "==", value: stopped}
+    - {fn: latest, signal: scheduler, op: "==", value: failed}
+    - {fn: latest, signal: scheduler, op: "==", value: stopped}
+    - {fn: latest, signal: orchestrator, op: "==", value: failed}
+    - {fn: latest, signal: orchestrator, op: "==", value: stopped}
+    - {fn: latest, signal: responder, op: "==", value: failed}
+    - {fn: latest, signal: responder, op: "==", value: stopped}
+    - {fn: latest, signal: poller, op: "==", value: failed}
+    - {fn: latest, signal: poller, op: "==", value: stopped}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: A soc-daemon component (processor, scheduler, orchestrator, responder or poller) has stopped while the daemon keeps running.
+  fix: >-
+    Restart soc-daemon; the component starts again with it. Send this incident to
+    DeepTempo Support with the evidence report and the soc-daemon log from
+    before the restart, and record that you restarted it.
