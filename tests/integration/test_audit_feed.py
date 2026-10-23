@@ -31,6 +31,7 @@ from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 from core.upgrade import command
 from services.api.routers import audit_feed, auth
+from services.api.routers import config as config_router
 from tests.integration.test_upgrade_command import _run, _scratch
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
@@ -91,6 +92,7 @@ def client(db, monkeypatch):
     app = FastAPI()
     app.include_router(auth.router, prefix="/api/auth")
     app.include_router(audit_feed.router, prefix="/api/audit/feed")
+    app.include_router(config_router.router, prefix="/api/config")
     with TestClient(app) as test_client:
         yield test_client
 
@@ -403,6 +405,59 @@ def test_a_credential_cannot_turn_the_feed_on(db, client):
     assert manager.status_code == 403, manager.text
     assert manager.json()["detail"] == "Permission denied: audit.forward required"
     assert _count(db) == before
+
+
+def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
+    _user("ada", "role-admin")
+    _user("mia", "role-manager")
+    store: dict[str, str] = {}
+    monkeypatch.setattr(
+        feed, "set_secret", lambda key, value: store.__setitem__(key, value) or True
+    )
+    monkeypatch.setattr(
+        feed, "get_secret", lambda key, default=None: store.get(key, default)
+    )
+    admin = _login(client, "ada")
+    saved = client.put(
+        "/api/audit/feed",
+        headers=admin,
+        json={
+            "enabled": True,
+            "host": "siem.example",
+            "port": 6514,
+            "ca_pem": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    before = _count(db)
+
+    class _Bridge:
+        def derive_remote_mcp_env(self):
+            return {}
+
+    client.app.state.integration_bridge = _Bridge()
+    posted = client.post(
+        "/api/config/integrations",
+        headers=_login(client, "mia"),
+        json={
+            "enabled_integrations": [],
+            "integrations": {
+                feed.INTEGRATION_ID: {
+                    "host": "evil.example",
+                    "port": 9,
+                    "enabled": False,
+                }
+            },
+        },
+    )
+    assert posted.status_code == 200, posted.text
+    assert _count(db) == before
+    again = client.get("/api/audit/feed", headers=admin)
+    assert again.json()["enabled"] is True
+    assert again.json()["host"] == "siem.example"
+    listed = client.get("/api/config/integrations", headers=admin)
+    assert feed.INTEGRATION_ID not in listed.json()["integrations"]
+    assert feed.INTEGRATION_ID not in listed.json()["enabled_integrations"]
 
 
 def test_importing_upgrade_history_twice_records_it_once(db, monkeypatch, tmp_path):
