@@ -1,0 +1,9 @@
+     × sends the CSRF header on generate, save and validate 1314ms
+     × shows the detail the server refused with 1084ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/screens/settings/CustomIntegrationBuilder.test.tsx > CustomIntegrationBuilder > sends the CSRF header on generate, save and validate
+TestingLibraryElementError: Unable to find an element with the text: Acme. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+ FAIL  src/screens/settings/CustomIntegrationBuilder.test.tsx > CustomIntegrationBuilder > shows the detail the server refused with
+Error: [2mexpect([22m[31melement[39m[2m).toHaveTextContent()[22m
+ ❯ runWithExpensiveErrorDiagnosticsDisabled ../../../../agent-vigil-state/deslop-agents-3996197/tmp/web3018/node_modules/@testing-library/dom/dist/config.js:47:12
+      Tests  2 failed (2)

@@ -1,0 +1,4 @@
+/api/custom-integrations/generate bare 403 header 200
+./api/custom-integrations/save bare 403 header 200
+./api/custom-integrations/a/validate bare 403 header 200
+3 passed in 2.76s
