@@ -1,0 +1,5 @@
+tests/unit/reporting/test_time_series_buckets_db.py::test_buckets_cover_the_window_and_count_a_recent_finding[24h-24-width0] PASSED [ 25%]
+tests/unit/reporting/test_time_series_buckets_db.py::test_buckets_cover_the_window_and_count_a_recent_finding[7d-28-width1] PASSED [ 50%]
+tests/unit/reporting/test_time_series_buckets_db.py::test_buckets_cover_the_window_and_count_a_recent_finding[30d-30-width2] PASSED [ 75%]
+tests/unit/reporting/test_time_series_buckets_db.py::test_buckets_cover_the_window_and_count_a_recent_finding[all-30-None] PASSED [100%]
+============================== 4 passed in 3.62s ===============================

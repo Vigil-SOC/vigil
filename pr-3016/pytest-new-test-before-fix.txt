@@ -1,0 +1,5 @@
+E       assert datetime.timedelta(days=9437, seconds=24545, microseconds=576596) < datetime.timedelta(seconds=1)
+E        +  where datetime.timedelta(days=9437, seconds=24545, microseconds=576596) = abs(((datetime.datetime(2026, 10, 23, 16, 59, 3, 699927) - datetime.datetime(2000, 1, 30, 0, 0)) - ((datetime.datetime(2026, 10, 23, 16, 59, 3, 699927) - datetime.datetime(2000, 1, 1, 0, 0)) / 30)))
+E        +  and   datetime.timedelta(seconds=1) = timedelta(seconds=1)
+FAILED tests/unit/reporting/test_time_series_buckets_db.py::test_buckets_cover_the_window_and_count_a_recent_finding[all-30-None]
+========================= 1 failed, 3 passed in 2.59s ==========================
