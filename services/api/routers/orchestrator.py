@@ -599,7 +599,6 @@ def get_cost_summary():
 # the run was opened to test sat unread in the file beside it. An audit document
 # that says "no hypotheses" is worse than one that says nothing.
 _COC_WORKDIR_FILES = [
-    "plan.md",
     "state.json",
     "context.md",
     "iocs.json",

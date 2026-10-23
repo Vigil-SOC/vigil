@@ -384,3 +384,22 @@ def test_setting_the_current_state_writes_nothing(session):
     assert set_workflow_enabled(SCHEDULED_WORKFLOW, True, "u") is True
     assert session.rows == []
     assert is_enabled(SCHEDULED_WORKFLOW)
+
+
+# The route is now the only place these ceilings are enforced: the service passes
+# the validated values through, so the bounds must hold here.
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"iterations": 41},
+        {"iterations": 0},
+        {"max_cost_usd": 100.0001},
+        {"max_cost_usd": 0},
+    ],
+)
+def test_the_execute_route_refuses_what_the_ceilings_refuse(client, body):
+    response = client.post(
+        f"/api/workflows/{SCHEDULED_WORKFLOW}/execute",
+        json={"hypothesis": "x", **body},
+    )
+    assert response.status_code == 422, response.text
