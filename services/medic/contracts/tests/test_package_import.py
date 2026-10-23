@@ -15,6 +15,7 @@ MODULES = [
     "pack_build",
     "pack_check",
     "rule_check",
+    "trace_check",
     "trust_check",
     "vector_expand",
 ]

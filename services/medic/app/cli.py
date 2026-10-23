@@ -486,6 +486,7 @@ class _Status:
                 board=self.board,
                 wall=clock.wall,
                 monotonic=clock.monotonic,
+                data_dir=data_dir,
                 bind_peer=api.bind_peer,
             )
         self._failing = self._api_failed = False

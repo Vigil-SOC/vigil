@@ -362,8 +362,8 @@ describe("a run the gateway refuses because its budget is spent", () => {
   const REASON = "402 Payment Required: budget exceeded";
 
   function exhausted(): HarnessFactory {
-    return (kind, spec, state, memory, seed) => {
-      const harness = scriptedHarness([])(kind, spec, state, memory, seed);
+    return (spec, state, memory, seed) => {
+      const harness = scriptedHarness([])(spec, state, memory, seed);
       return {
         ...harness,
         provider: {

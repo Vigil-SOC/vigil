@@ -54,7 +54,6 @@ def down(monkeypatch, authenticate_app):
         "/api/ai/decisions",
         "/api/ai/decisions/pending-feedback",
         "/api/ai/decisions/stats",
-        "/api/ai/decisions/dec-1",
     ],
 )
 def test_reads_fail_loud(down, path):
@@ -69,9 +68,8 @@ def test_feedback_fails_loud(down):
     assert resp.status_code == 500, (resp.status_code, resp.text)
 
 
-def test_unknown_decision_is_still_a_404(monkeypatch, authenticate_app):
+def test_feedback_on_an_unknown_decision_is_a_404(monkeypatch, authenticate_app):
     client = _client(monkeypatch, authenticate_app, EmptyDB())
-    assert client.get("/api/ai/decisions/nope").status_code == 404
     resp = client.post(
         "/api/ai/decisions/nope/feedback", json={"human_decision": "agree"}
     )

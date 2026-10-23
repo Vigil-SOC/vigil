@@ -1994,11 +1994,6 @@
   "nullable": true,
   "type": "uuid"
  },
- "column episodic_distil_markers.origin_run_ids": {
-  "default": "ARRAY[]::uuid[]",
-  "nullable": false,
-  "type": "uuid[]"
- },
  "column episodic_distil_markers.origin_seq": {
   "default": null,
   "nullable": true,
@@ -4117,7 +4112,6 @@
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
- "index idx_episodic_markers_origin": "CREATE INDEX idx_episodic_markers_origin ON public.episodic_distil_markers USING gin (origin_run_ids)",
  "index idx_episodic_read_log_keys": "CREATE INDEX idx_episodic_read_log_keys ON public.episodic_read_log USING gin (keys)",
  "index idx_episodic_read_log_ts": "CREATE INDEX idx_episodic_read_log_ts ON public.episodic_read_log USING btree (ts)",
  "index idx_episodic_sightings_investigation": "CREATE INDEX idx_episodic_sightings_investigation ON public.episodic_sightings USING btree (investigation_kind, investigation_id)",
