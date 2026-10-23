@@ -1,0 +1,4 @@
+0.12s setup    unit/memory/test_snapshot.py::test_the_copy_is_taken_at_one_instant
+0.11s call     unit/memory/test_snapshot.py::test_an_eval_reads_a_named_snapshot_without_changing_a_query
+0.11s call     unit/memory/test_snapshot.py::test_a_snapshot_owns_its_sequences
+======================== 190 passed, 1 warning in 6.43s ========================

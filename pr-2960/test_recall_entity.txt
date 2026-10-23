@@ -1,0 +1,3 @@
+0.02s call     unit/memory/test_recall_entity.py::test_an_entity_with_history_returns_its_sightings_verdicts_and_gaps
+0.01s call     unit/memory/test_recall_entity.py::test_the_bridge_resolves_recall_entity_without_reaching_mcp
+============================== 26 passed in 1.89s ==============================

@@ -1,0 +1,13 @@
+IP:Value -> accepted
+DOMAIN:Value -> accepted
+HOST:Value -> accepted
+URL:Value -> accepted
+EMAIL:Value -> accepted
+HASH:Value -> accepted
+ARN:Value -> accepted
+AWS_KEY:Value -> accepted
+USER:Value -> accepted
+PROCESS:Value -> accepted
+ip:2001:db8::1 -> accepted
+url:https://a.b/c:d -> accepted
+domain:evil[.]com -> accepted
