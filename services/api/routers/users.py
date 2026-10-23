@@ -12,11 +12,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
+from core.auth import mcp_credential_service, principals, sign_ins
 from core.auth.auth_service import AuthService
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
 from core.auth.token_blacklist import revoke_all_for_user
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import Role, User
+from core.storage.models import Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
 from services.api.middleware.auth import get_current_user
 
@@ -110,6 +111,23 @@ def _require_privileges_cover_target(
         )
 
 
+def _not_deleted(query):
+    """Accounts whose principal is not deleted. A deleted one keeps its row
+    for the record but is not managed through this API again."""
+    return query.join(Principal, Principal.principal_id == User.principal_id).filter(
+        Principal.deleted_at.is_(None)
+    )
+
+
+def _live_user(session: Session, user_id: str) -> User:
+    user = _not_deleted(session.query(User)).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+    return user
+
+
 @router.get("/")
 def list_users(
     skip: int = Query(0, ge=0),
@@ -144,7 +162,7 @@ def list_users(
         )
 
     try:
-        query = session.query(User)
+        query = _not_deleted(session.query(User))
 
         # Apply filters
         if role_id:
@@ -207,12 +225,7 @@ def get_user(
                 detail="Permission denied: users.read required",
             )
 
-    user = session.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
+    user = _live_user(session, user_id)
     user_dict = UserSchema.dump(user)
 
     # Add role information
@@ -307,12 +320,7 @@ def _apply_user_update(
             detail="Permission denied: users.write required",
         )
 
-    user = session.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
+    user = _live_user(session, user_id)
     _require_privileges_cover_target(current_user, user, session, action="update")
 
     stale_reason = None
@@ -420,14 +428,39 @@ async def update_user(
         )
 
 
+def _delete_user(session: Session, current_user: User, user_id: str) -> User:
+    """Sync half of delete_user: the account row stays, so its principal and
+    its credentials still resolve; everything that could act as it stops."""
+    # Prevent self-deletion
+    if user_id == current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account",
+        )
+
+    user = _live_user(session, user_id)
+    _require_privileges_cover_target(current_user, user, session, action="delete")
+
+    principals.mark_deleted(session, user.principal_id)
+    user.is_active = False
+    for credential in mcp_credential_service.list_for_user(user_id, session=session):
+        mcp_credential_service.revoke(credential.credential_id, session=session)
+    sign_ins.end_all_for_user(user_id, sign_ins.REVOKED, session=session)
+    session.flush()
+    return user
+
+
 @router.delete("/{user_id}")
-def delete_user(
+async def delete_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
 ):
     """
     Delete a user (requires users.delete permission).
+
+    The username and email stay taken: the row is kept so its principal, and
+    the credentials it minted, still resolve on old records.
 
     Args:
         user_id: User ID to delete
@@ -437,42 +470,24 @@ def delete_user(
     Returns:
         Success message
     """
-    # Check permission
-    if not AuthService.check_permission(current_user.user_id, "users.delete"):
+    if not await asyncio.to_thread(
+        AuthService.check_permission, current_user.user_id, "users.delete"
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: users.delete required",
         )
 
-    # Prevent self-deletion
-    if user_id == current_user.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete your own account",
-        )
-
-    # Get user
-    user = session.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-    _require_privileges_cover_target(current_user, user, session, action="delete")
-
+    user = await asyncio.to_thread(_delete_user, session, current_user, user_id)
     try:
-        username = user.username
-        session.delete(user)
+        await revoke_all_for_user(user.user_id, session=session)
+    except Exception as exc:
+        # The account is inactive and its sign-ins ended, so no refresh and no
+        # new login succeeds; an access token already out lives until expiry.
+        logger.error("User %s deleted but revoke_all_for_user failed: %s", user_id, exc)
 
-        logger.info(f"User deleted by {current_user.username}: {username}")
-        return {"message": "User deleted successfully"}
-
-    except Exception as e:
-        logger.error(f"Delete user error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete user",
-        )
+    logger.info(f"User deleted by {current_user.username}: {user.username}")
+    return {"message": "User deleted successfully"}
 
 
 @router.get("/roles/list")

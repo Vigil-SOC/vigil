@@ -10,10 +10,12 @@ from datetime import datetime
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.auth import sign_ins
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -24,6 +26,7 @@ from core.auth.auth_service import (
     PASSWORD_HISTORY_LIMIT,
     AccountLockedError,
     AuthService,
+    _is_service_account,
     password_matches_any,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
@@ -43,9 +46,9 @@ from core.auth.token_blacklist import (
     revoke_all_for_user,
 )
 from core.config import get_settings
-from core.platform.email_service import send_email
+from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import User
+from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
@@ -61,7 +64,44 @@ from services.api.middleware.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# A service account (Medic's gateway, D2-17b) may log in and refresh through the
+# API and nothing else here, so a leaked password can't become a console session.
+SERVICE_ACCOUNT_DETAIL = "Service accounts can't use this endpoint"
+_INVALID_REFRESH_TOKEN = "Invalid refresh token"
+_INVALID_RESET_TOKEN = "Invalid or expired reset token"
+
+
+def _bearer_token(request: Request) -> Optional[str]:
+    parts = (request.headers.get("authorization") or "").split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
+async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
+    """Refuse a service account's token on every route but login and refresh.
+
+    On the whole router, so a route added later can't leave it out. It never
+    authenticates: a missing or invalid token passes, and the route's own
+    dependency (or none, for the public routes) decides as before. Both the
+    access cookie and the bearer are checked, whichever the route would use.
+    The header is read off the request so it stays out of the OpenAPI schema.
+    """
+    if request.scope.get("endpoint") in _SERVICE_ACCOUNT_ENDPOINTS:
+        return
+    for raw in {request.cookies.get(ACCESS_COOKIE_NAME), _bearer_token(request)}:
+        payload = AuthService.verify_jwt_token(raw) if raw else None
+        user_id = payload.get("user_id") if payload else None
+        if not user_id:
+            continue
+        user = await asyncio.to_thread(_get_user, session, user_id)
+        if user is not None and _is_service_account(user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=SERVICE_ACCOUNT_DETAIL
+            )
+
+
+router = APIRouter(dependencies=[Depends(_refuse_service_account)])
 
 ROUTER_META = RouterMeta(
     prefix="/api/auth",
@@ -75,6 +115,27 @@ ROUTER_META = RouterMeta(
         "dependency here would break login."
     ),
 )
+
+
+def _is_browser_request(request: Request) -> bool:
+    """Whether a page in a browser sent this, rather than a program.
+
+    A browser always sends ``Origin`` on a cross- or same-origin POST from page
+    JS (fetch or a form), and current browsers add ``Sec-Fetch-Site`` to every
+    request; page JS can remove neither. Medic's gateway sends neither, so its
+    login is unchanged. This is only ever used to refuse: a client that forges
+    one of these headers can only make its own login fail.
+    """
+    return "origin" in request.headers or "sec-fetch-site" in request.headers
+
+
+def _invalid_credentials() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid username/email or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
 
 # The role the first account gets: it has to be able to create every other one.
 ADMIN_ROLE_ID = "role-admin"
@@ -224,6 +285,15 @@ def _get_user(session: Session, user_id: str) -> Optional[User]:
     return session.query(User).filter(User.user_id == user_id).first()
 
 
+def _open_sign_in(session: Session, sid: str, user: User) -> Optional[SignIn]:
+    """The sign-in a refresh continues, or None if it has ended or is not
+    this user's. Locked so a concurrent logout cannot end it mid-refresh."""
+    row = session.get(SignIn, sid, with_for_update=True)
+    if row is None or row.ended_at is not None or row.principal_id != user.principal_id:
+        return None
+    return row
+
+
 def _user_payload(user: User, session: Session) -> dict:
     """User dict plus resolved permissions — the shape the SPA gates on.
     Login/refresh must include it, not just /me: the client stores the user
@@ -349,11 +419,17 @@ def login(
         )
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username/email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _invalid_credentials()
+
+    service_account = _is_service_account(user)
+    if service_account and _is_browser_request(request):
+        # Exactly a wrong password, so the console can't tell the account apart.
+        # Not a login either: drop authenticate_user's pending last_login /
+        # login_count / lockout reset (the 401 also rolls the request back).
+        if user in session:
+            session.expire(user)
+        logger.warning("Refused console sign-in for service account %s", user.username)
+        raise _invalid_credentials()
 
     # Check MFA if enabled
     if user.mfa_enabled:
@@ -384,11 +460,34 @@ def login(
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
 
-    # Generate tokens
+    # Generate tokens. One sign-in, named on both, kept through every refresh.
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
-    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
+    sid = sign_ins.new_id()
+    access_token = AuthService.generate_jwt_token(
+        user, "access", user_agent=_ua, sid=sid
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", user_agent=_ua, sid=sid
+    )
 
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    sign_ins.start(
+        session, sid, user.principal_id, _exp_datetime(refresh_payload.get("exp"))
+    )
+    # A service account gets body tokens only: a cookie is a console session.
+    if not service_account:
+        _set_cookies_for(response, access_token, refresh_token)
+
+    logger.info(f"User logged in: {user.username}")
+
+    return LoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_user_payload(user, session),
+    )
+
+
+def _set_cookies_for(response: Response, access_token: str, refresh_token: str):
     # Extract exp claims so the cookie Max-Age matches the JWT lifetime.
     access_payload = AuthService.verify_jwt_token(access_token) or {}
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
@@ -400,33 +499,28 @@ def login(
         refresh_exp=refresh_payload.get("exp"),
     )
 
-    logger.info(f"User logged in: {user.username}")
 
-    return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=_user_payload(user, session),
-    )
+def _exp_datetime(exp_ts) -> Optional[datetime]:
+    return datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
 
 
-async def _revoke_token(raw: str, owner: User, kind: str) -> None:
-    """Blacklist a token's JTI for its remaining life. Another user's token is
-    left alone, so a body field cannot be used to revoke someone else's session."""
+async def _revoke_token(raw: str, owner: User, kind: str) -> Optional[str]:
+    """Blacklist a token's JTI for its remaining life and return its sign-in id.
+    Another user's token is left alone, so a body field cannot be used to
+    revoke someone else's session."""
     payload = AuthService.verify_jwt_token(raw)
     jti = payload.get("jti") if payload else None
     if not jti or payload.get("user_id") != owner.user_id:
-        return
-    exp_ts = payload.get("exp")
+        return None
     try:
-        await blacklist_jti(
-            jti, datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
-        )
+        await blacklist_jti(jti, _exp_datetime(payload.get("exp")))
     except Exception as exc:
         # Redis down: logout still "succeeds" client-side (cookies cleared,
         # client discards its tokens), but the server-side failure is logged.
         logger.error(
             "Failed to blacklist %s token for %s: %s", kind, owner.username, exc
         )
+    return payload.get("sid")
 
 
 @router.post("/logout")
@@ -460,8 +554,9 @@ async def logout(
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
+    sids = set()
     if raw_token:
-        await _revoke_token(raw_token, current_user, "access")
+        sids.add(await _revoke_token(raw_token, current_user, "access"))
 
     # A captured refresh token must not mint new access tokens after logout.
     # The cookie and the body field can differ (a Bearer client next to a
@@ -471,7 +566,15 @@ async def logout(
         body.refresh_token if body else None,
     }
     for raw in refresh_tokens - {None, ""}:
-        await _revoke_token(raw, current_user, "refresh")
+        sids.add(await _revoke_token(raw, current_user, "refresh"))
+
+    # Ended in the database whatever Redis did: refresh refuses an ended
+    # sign-in, so the blacklist is not the only thing standing in the way.
+    for sid in sids - {None}:
+        try:
+            await asyncio.to_thread(sign_ins.end, sid, sign_ins.SIGN_OUT)
+        except Exception as exc:
+            logger.error("Failed to end sign-in for %s: %s", current_user.username, exc)
 
     clear_auth_cookies(response)
 
@@ -506,6 +609,7 @@ async def refresh_token(
         New access and refresh tokens.
     """
     raw_refresh: Optional[str] = request.cookies.get(REFRESH_COOKIE_NAME)
+    from_cookie = bool(raw_refresh)
     if not raw_refresh and body is not None:
         raw_refresh = body.refresh_token
     if not raw_refresh:
@@ -515,10 +619,19 @@ async def refresh_token(
         )
 
     payload = AuthService.verify_jwt_token(raw_refresh)
+    if not payload:
+        # A sign-in whose refresh token ran out ends here, in its own
+        # transaction: the request's rolls back with the 401.
+        expired = AuthService.expired_refresh_payload(raw_refresh)
+        if expired and expired.get("sid"):
+            try:
+                await asyncio.to_thread(sign_ins.end, expired["sid"], sign_ins.EXPIRY)
+            except Exception as exc:
+                logger.error("Failed to end an expired sign-in: %s", exc)
     if not payload or payload.get("token_type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail=_INVALID_REFRESH_TOKEN,
         )
 
     if await is_token_revoked(payload):
@@ -534,31 +647,52 @@ async def refresh_token(
             detail="User not found or inactive",
         )
 
+    service_account = _is_service_account(user)
+    if service_account and (from_cookie or _is_browser_request(request)):
+        # A service account never held a cookie, and a console refresh is a
+        # console session: answer as a bad token and clear what the browser has.
+        logger.warning("Refused console refresh for service account %s", user.username)
+        refused = JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": _INVALID_REFRESH_TOKEN},
+        )
+        clear_auth_cookies(refused)
+        return refused
+
+    # A token minted before sign-ins existed carries no sid and starts none.
+    sid = payload.get("sid")
+    sign_in = None
+    if sid:
+        sign_in = await asyncio.to_thread(_open_sign_in, session, sid, user)
+        if sign_in is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sign-in has ended",
+            )
+
     # Refresh tokens rotate: each one mints a single successor.
-    refresh_exp = payload.get("exp")
     if not payload.get("jti") or not await consume_refresh_jti(
-        payload["jti"],
-        datetime.utcfromtimestamp(refresh_exp) if refresh_exp is not None else None,
+        payload["jti"], _exp_datetime(payload.get("exp"))
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has already been used",
         )
 
-    # Generate new tokens
+    # Generate new tokens: the same sign-in, new jtis.
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
-    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
-
-    access_payload = AuthService.verify_jwt_token(access_token) or {}
-    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
-    set_auth_cookies(
-        response,
-        access_token,
-        refresh_token,
-        access_exp=access_payload.get("exp"),
-        refresh_exp=refresh_payload.get("exp"),
+    access_token = AuthService.generate_jwt_token(
+        user, "access", user_agent=_ua, sid=sid
     )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", user_agent=_ua, sid=sid
+    )
+
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    if sign_in is not None:
+        sign_in.expires_at = _exp_datetime(refresh_payload.get("exp"))
+    if not service_account:
+        _set_cookies_for(response, access_token, refresh_token)
 
     return LoginResponse(
         access_token=access_token,
@@ -931,7 +1065,8 @@ def password_reset_request(
     """
     settings = get_settings()
     user = session.query(User).filter(User.email == body.email).first()
-    if user and user.is_active:
+    # A service account's password belongs to its program: no reset mail.
+    if user and user.is_active and not _is_service_account(user):
         token = generate_reset_token(user.user_id)
         frontend_base = settings.vigil_frontend_url
         if frontend_base:
@@ -952,7 +1087,7 @@ def password_reset_request(
         send_email(to=user.email, subject=subject, body=body_text)
         logger.info("Password reset requested for %s", user.user_id)
     else:
-        # Unknown address or inactive user — log for ops visibility but
+        # Unknown address, inactive user or service account — log for ops visibility but
         # return the same response. Constant-time comparison isn't needed
         # here because the DB lookup already dominates the timing.
         logger.info("Password reset requested for unknown/inactive email")
@@ -963,8 +1098,7 @@ def password_reset_request(
 def _reset_request_message(settings) -> str:
     """What the requester is told. Depends only on how mail is configured,
     never on the account, so the reply still can't enumerate emails."""
-    # Any value but smtp falls back to the console backend (get_email_backend).
-    if settings.vigil_email_backend.strip().lower() == "smtp":
+    if mail_is_configured():
         return "If that email matches an active account, a reset link has been sent."
     if settings.dev_mode:
         return (
@@ -994,10 +1128,16 @@ async def password_reset_confirm(
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
+            detail=_INVALID_RESET_TOKEN,
         )
 
     user = await asyncio.to_thread(_get_user, session, user_id)
+    if user is not None and _is_service_account(user):
+        logger.warning("Refused password reset for service account %s", user.username)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_INVALID_RESET_TOKEN,
+        )
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1041,3 +1181,7 @@ async def password_reset_confirm(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password",
         )
+
+
+# Read by _refuse_service_account at request time; the endpoints are defined above.
+_SERVICE_ACCOUNT_ENDPOINTS = frozenset({login, refresh_token})

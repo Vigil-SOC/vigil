@@ -6,6 +6,7 @@ from typing import List, Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -21,6 +22,65 @@ from core.storage.models.base import Base
 from core.time import utcnow
 
 
+class Principal(Base):
+    """Whoever or whatever acts: a person, a service account, an agent, or the
+    system. The id never changes and is never reused, and the row outlives the
+    account: deleting one sets ``deleted_at``. For a person or a service account
+    the id is the ``user_id``; an agent's is ``agent:<key>``; the system's is
+    ``system``. Built by ``core/upgrade/versions/0003_principals_sign_ins.sql``.
+    """
+
+    __tablename__ = "principals"
+
+    principal_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    # What to call it. Erasure may blank it; the id stays.
+    label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('person', 'service_account', 'agent', 'system')",
+            name="principals_kind_check",
+        ),
+    )
+
+
+class SignIn(Base):
+    """One sign-in, from login to sign-out, expiry or revocation.
+
+    Its id rides on both tokens as ``sid`` and survives every refresh. It is a
+    reference, never a credential: nothing authenticates by it.
+    """
+
+    __tablename__ = "sign_ins"
+
+    sign_in_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    principal_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("principals.principal_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    # The current refresh token's expiry; each refresh moves it.
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    end_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "end_reason IN ('sign_out', 'expiry', 'revoked')",
+            name="sign_ins_end_reason_check",
+        ),
+        Index("idx_sign_ins_principal", "principal_id"),
+    )
+
+
 class User(Base):
     """
     User Model - System users with authentication and authorization.
@@ -32,6 +92,13 @@ class User(Base):
 
     # Primary key
     user_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    # Equal to user_id. The account is deleted by marking this principal.
+    principal_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("principals.principal_id", ondelete="RESTRICT"),
+        unique=True,
+        nullable=False,
+    )
 
     # Authentication
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
@@ -150,14 +217,15 @@ class McpCredential(Base):
 
     Tied to a user and carrying no permissions of its own: what the holder may
     do is what that user may do. See ``infra/database/init/34_mcp_credentials.sql``
-    for why it is a table of its own rather than columns on ``users``.
+    for why it is a table of its own rather than columns on ``users``. Deleting
+    the user revokes it and keeps the row, so the foreign key restricts.
     """
 
     __tablename__ = "mcp_credentials"
 
     credential_id: Mapped[str] = mapped_column(String(50), primary_key=True)
     user_id: Mapped[str] = mapped_column(
-        String(50), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+        String(50), ForeignKey("users.user_id", ondelete="RESTRICT"), nullable=False
     )
 
     # SHA-256 of a token this never stores. The token is 256 bits from a

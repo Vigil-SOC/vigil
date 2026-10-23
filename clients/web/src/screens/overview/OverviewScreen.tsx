@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import AgentCards from './AgentCards'
 import AlertRail, { SevMark } from './AlertRail'
@@ -14,6 +14,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
 import { jiraReadiness, type JiraReadiness } from '../../shell/commandBarModel'
+import { holdCase } from '../../shell/heldCase'
 import api, {
   configApi,
   findingsApi,
@@ -78,6 +79,7 @@ function EvidenceBody({ item }: { item: OverviewFeedItem }) {
 
 export default function OverviewScreen({ go, openCase, setViewFull, setWallMode, chatOpen }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const alertId = searchParams.get('alert') || null // an empty value is no alert
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -109,7 +111,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const readStatus = read?.id === alertId ? read.status : 'loading'
   const feedSettled = phase !== 'loading'
 
-  const setAlert = (id: string | null) =>
+  const setAlert = (id: string | null, state?: unknown) =>
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -117,7 +119,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
         else next.delete('alert')
         return next
       },
-      { replace: id === null },
+      { replace: id === null, state },
     )
 
   const load = useCallback(() => {
@@ -215,10 +217,9 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
 
   const sourceLabel = open ? badgeOf(open.data_source).label : ''
 
-  const openCaseFromPopup = (id: string) => {
-    setAlert(null) // one overlay at a time
-    openCase(id)
-  }
+  // One overlay at a time, in one navigation: a second navigate in the same click starts from the
+  // location this render saw, so it would undo the first.
+  const openCaseFromPopup = (id: string) => setAlert(null, holdCase(location.state, id))
 
   const stillOpen = (findingId: string) => openId.current === findingId
 

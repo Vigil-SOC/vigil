@@ -182,10 +182,33 @@ describe('workflow reader pane', () => {
     expect(within(strip).getByText('Approval required')).toBeInTheDocument()
     expect(within(panel('Who does it')).queryByText('Claude Sonnet 5')).toBeNull()
     expect(within(panel('Stops when')).getByText('Approval required · Check')).toBeInTheDocument()
+    expect(within(panel('Stops when')).queryByText(/Direct-action calls/)).toBeNull()
 
     fireEvent.click(within(strip).getByRole('button', { name: /Write/ }))
     expect(within(panel('What it may do on its own')).queryByText('get_finding')).toBeNull()
     expect(within(panel('Stops when')).getByText('No pause at this stage.')).toBeInTheDocument()
+  })
+
+  it('says a compose phase that holds a direct-action tool pauses on the call', async () => {
+    serve({
+      definition: { run_kind: 'compose', hunt_like: false, objectives: [], phases: [] },
+      preflight: {
+        roles: { lead: null, reviewer: null, helpers: [
+          { agent: 'auto_responder', name: 'Contain', tools: ['cf_waf_block_ip', 'get_finding'], approval_required: false },
+        ] },
+        roles_note: null, model: null, model_source: null, skills: [], skills_note: null,
+        permissions: [
+          { name: 'cf_waf_block_ip', changes: 'asks_you' },
+          { name: 'get_finding', changes: 'on_its_own' },
+        ],
+        permissions_note: null, budgets: { max_calls: 10, max_cost_usd: 5, max_wall_ms: 1_800_000 },
+        checkpoints: {}, checkpoints_note: 'Direct-action calls pause for approval before they run.',
+      },
+    })
+    renderPane(<WorkflowReaderPane wf={row({ id: 'contain', name: 'Contain' })} {...actions} />)
+    expect(await screen.findByText('Direct-action calls pause for approval before they run.')).toBeInTheDocument()
+    expect(screen.queryByText('This definition declares no pause.')).toBeNull()
+    expect(within(panel('What it may do on its own')).getByText('Asks you')).toBeInTheDocument()
   })
 
   it('shows a single-agent kind as one agent with its instructions and no helper panels', async () => {
@@ -229,7 +252,10 @@ describe('workflow reader pane', () => {
 describe('the enable switch and header', () => {
   it('turns a workflow off optimistically, and puts it back with the reason when the server refuses', async () => {
     serve(hunt)
-    api.setEnabled.mockRejectedValueOnce({ response: { data: { detail: 'it cannot be turned off' } } })
+    // Held open so the optimistic off is still on screen when the click returns.
+    // A rejection that settles inside the click rolls the switch back first.
+    let refuse: (reason: unknown) => void = () => {}
+    api.setEnabled.mockReturnValueOnce(new Promise((_ok, reject) => { refuse = reject }))
     renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
     const toggle = await screen.findByRole('switch', { name: 'Threat hunt on' })
     expect(screen.getByText('Built in · version 3')).toBeInTheDocument()
@@ -237,6 +263,7 @@ describe('the enable switch and header', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'false')
     expect(screen.getByRole('button', { name: /Run workflow/ })).toBeDisabled()
     expect(api.setEnabled).toHaveBeenCalledWith('threat-hunt', false)
+    refuse({ response: { data: { detail: 'it cannot be turned off' } } })
     expect(await screen.findByRole('alert')).toHaveTextContent('it cannot be turned off')
     expect(toggle).toHaveAttribute('aria-checked', 'true')
     expect(actions.onToggled).not.toHaveBeenCalled()

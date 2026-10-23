@@ -122,7 +122,15 @@ def test_start_sh_overrides_the_loop_with_one_create_or_restore() -> None:
 
 def test_pre_upgrade_one_shot_gates_everything_that_provisions_the_schema() -> None:
     services = _compose()["services"]
-    for name in ("backend", "soc-daemon", "llm-worker", "db-seed", "backup"):
+    for name in (
+        "backend",
+        "soc-daemon",
+        "llm-worker",
+        "upgrade",
+        "backup",
+        "agent-worker",
+        "agent-serve",
+    ):
         depends = services[name]["depends_on"]
         assert depends["backup-pre-upgrade"] == {
             "condition": "service_completed_successfully"
@@ -140,19 +148,22 @@ def test_pre_upgrade_one_shot_gates_everything_that_provisions_the_schema() -> N
     assert one_shot_env["VIGIL_BACKUP_OWNER_CONNECTION"] == "1"
 
 
-def test_start_sh_backs_up_before_schema_init_and_shutdown_stops_the_loop() -> None:
-    text = (REPO / "start.sh").read_text(encoding="utf-8")
-    pre = text.index("backup_pre_upgrade || exit 1")
-    init = text.index("python3 scripts/init_schema.py")
-    loop = text.index("\nstart_backup_loop\n")
-    assert pre < init < loop
-    assert "VIGIL_SKIP_PREUPGRADE_BACKUP" not in text
-    assert "--target-version" not in text
-    pre_fn = text.split("backup_pre_upgrade()", 1)[1].split("\nstart_backup_loop", 1)[0]
+def test_start_sh_backs_up_before_the_upgrade_and_shutdown_stops_the_loop() -> None:
+    lib = (REPO / "scripts" / "lib.sh").read_text(encoding="utf-8")
+    pre = lib.index("backup_pre_upgrade || return 1")
+    upgrade = lib.index('dc run --rm --no-deps "${BACKUP_RUN_ARGS[@]}" upgrade')
+    assert pre < upgrade
+    assert "--no-deps" in lib.split("run_schema_upgrade()", 1)[1].split("\n}", 1)[0]
+    pre_fn = lib.split("backup_pre_upgrade()", 1)[1].split("\nrun_schema_upgrade", 1)[0]
     assert '[ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0' not in pre_fn
-    assert ".vigil-upgrade" in text
-    assert "VIGIL_UPGRADE_HOST_DIR" in text
-    assert "backup-pre-upgrade" in text
+    assert ".vigil-upgrade" in lib
+    assert "VIGIL_UPGRADE_HOST_DIR" in lib
+    text = (REPO / "start.sh").read_text(encoding="utf-8")
+    assert text.index("run_schema_upgrade || exit 1") < text.index("\nstart_backup_loop\n")
+    assert "VIGIL_SKIP_PREUPGRADE_BACKUP" not in text
+    assert "init_schema.py" not in text
+    assert "--target-version" not in text
+    assert "backup-pre-upgrade" in lib
     shutdown = (REPO / "shutdown_all.sh").read_text(encoding="utf-8")
     loop_name = "vigil-backup-loop"
     assert f'BACKUP_LOOP_CONTAINER="{loop_name}"' in text

@@ -7,13 +7,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.api.v1.approvals_router import router as approvals_router
+from core.findings.alert_outcomes import finding_states
 from core.response.approval_service import _row_to_pending
 from core.storage.models import (
     ApprovalAction,
     Case,
+    Finding,
     IntakeTrigger,
     Investigation,
     WorkflowRun,
+    case_findings,
 )
 from core.storage.unit_of_work import unit_of_work
 
@@ -306,6 +309,42 @@ def test_a_hunt_stopped_at_a_limit_needs_a_person(client, hunts):
         "/api/approvals/needs-you", params={"case_id": "case-ny-capped"}
     ).json()
     assert [item["source_id"] for item in one_case["items"]] == ["ny-capped"]
+
+
+@pytest.fixture
+def capped_finding(hunts):
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                Case(case_id="case-ny-capped", title="capped", status="open"),
+                Finding(finding_id="ny-capped-finding", data_source="ny-src"),
+            ]
+        )
+        session.flush()
+        session.execute(
+            case_findings.insert().values(
+                case_id="case-ny-capped", finding_id="ny-capped-finding"
+            )
+        )
+    yield
+    with unit_of_work() as session:
+        session.execute(
+            case_findings.delete().where(
+                case_findings.c.finding_id == "ny-capped-finding"
+            )
+        )
+        session.query(Finding).filter(Finding.finding_id == "ny-capped-finding").delete(
+            synchronize_session=False
+        )
+        session.query(Case).filter(Case.case_id == "case-ny-capped").delete(
+            synchronize_session=False
+        )
+
+
+def test_a_finding_on_a_hunt_stopped_at_a_limit_needs_you(capped_finding):
+    assert finding_states(["ny-capped-finding"]) == {
+        "ny-capped-finding": ("needs_you", "case-ny-capped")
+    }
 
 
 def test_a_hypothesis_approval_carries_what_is_being_approved(client, hunts):

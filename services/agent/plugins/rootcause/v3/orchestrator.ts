@@ -54,7 +54,7 @@ export async function run(alert: Alert, cfg: AgentConfig, deps: Deps, o: RunOpts
   const graph = o.graph ?? seedFromAlert(createGraph(o.runId), alert, cfg);
   // Rare activity per source, once per run (kept in the graph, so a resume reuses it), into the cached context.
   if (graph.rare === undefined && cfg.rareSweep) {
-    graph.rare = await rareSweep({ tools: deps.tools, trace: deps.trace.forTurn(0, undefined, "rare"), index: o.index, range: o.range, domains: deps.domains, timeoutMs: cfg.toolTimeoutMs }).catch((e) => { log(`rare sweep failed: ${e}`); return ""; });
+    graph.rare = await rareSweep({ tools: deps.tools, trace: deps.trace.forTurn(0, undefined, "rare"), index: o.index, range: o.range, domains: deps.domains, timeoutMs: cfg.toolTimeoutMs, signal: o.signal }).catch((e) => { log(`rare sweep failed: ${e}`); return ""; });
     log(`rare sweep: ${graph.rare.split("\n").length} lines`);
   }
   if (graph.rare) deps.model.addContext?.(graph.rare);

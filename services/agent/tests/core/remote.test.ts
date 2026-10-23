@@ -77,6 +77,17 @@ describe("a tool that runs in the other process", () => {
     expect(hunt).not.toHaveProperty("principal");
   });
 
+  it("sends the approval only when the call was parked for one", async () => {
+    const { fetch, sent } = answering({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "vigil" });
+    await dispatchTo(fetch).invoke(TOOL, { machine_id: "h" }, undefined, undefined, { runId: "run-1", checkpointId: "apr-1" });
+    await dispatchTo(fetch).invoke(TOOL, {});
+
+    const [gated, plain] = await Promise.all(sent.map((request) => request.json() as Promise<Record<string, unknown>>));
+    expect(gated).toMatchObject({ run_id: "run-1", checkpoint_id: "apr-1" });
+    expect(plain).not.toHaveProperty("run_id");
+    expect(plain).not.toHaveProperty("checkpoint_id");
+  });
+
   it("carries the shared secret and nothing else identifying", async () => {
     const { fetch, sent } = answering({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "vigil" });
     await dispatchTo(fetch).invoke(TOOL, {});
