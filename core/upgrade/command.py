@@ -165,6 +165,31 @@ def _previous_version(upgrade_dir: Optional[Path]) -> Optional[str]:
     return None
 
 
+def _current_heads(
+    script: ScriptDirectory, revisions: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Drop a stamped revision that is an ancestor of another stamped one.
+
+    A database upgraded while two heads were open has a row for each. Once one
+    revision follows the other, only the later row is the head. Asking Alembic
+    to walk both raises RevisionError because they overlap.
+    """
+    heads: list[str] = []
+    for rev in revisions:
+        ancestor = False
+        for other in revisions:
+            if other == rev:
+                continue
+            if any(
+                item.revision == rev for item in script.iterate_revisions(other, "base")
+            ):
+                ancestor = True
+                break
+        if not ancestor:
+            heads.append(rev)
+    return tuple(heads)
+
+
 def plan(
     conn,
     script: ScriptDirectory,
@@ -180,8 +205,7 @@ def plan(
             conn, opts={"version_table_schema": "public"}
         ).get_current_heads()
     )
-    # A database upgraded while this image had two heads has one row per head.
-    # The merge revision joins them; refuse only a head this image does not know.
+    # Refuse a head this image does not know before walking the chain.
     unknown = []
     for rev in current:
         try:
@@ -197,6 +221,9 @@ def plan(
             "or install a release at least as new as the database.",
             revision=unknown[0],
         )
+    # A database upgraded while this image had two heads has one row per head.
+    # Once one follows the other, the earlier row is not a head.
+    current = _current_heads(script, current)
     revision = current[0] if len(current) == 1 else None
     if current:
         older = adopt.restamped(conn)
@@ -318,6 +345,33 @@ def check_report(
     return report
 
 
+def _retire_ancestor_rows(engine: Engine, script: ScriptDirectory) -> None:
+    """Delete a version row that is an ancestor of another row.
+
+    Alembic refuses to upgrade from two rows when one revision now follows
+    the other. The later row is the head; the earlier one is bookkeeping.
+    """
+    with engine.begin() as conn:
+        if (
+            conn.execute(text("SELECT to_regclass('public.alembic_version')")).scalar()
+            is None
+        ):
+            return
+        rows = [
+            rev
+            for (rev,) in conn.execute(text("SELECT version_num FROM alembic_version"))
+        ]
+        if len(rows) < 2:
+            return
+        keep = set(_current_heads(script, tuple(rows)))
+        for rev in rows:
+            if rev not in keep:
+                conn.execute(
+                    text("DELETE FROM alembic_version WHERE version_num = :v"),
+                    {"v": rev},
+                )
+
+
 def _migrate(engine: Engine, script: ScriptDirectory) -> None:
     """Every pending revision, each in its own transaction."""
 
@@ -417,6 +471,7 @@ def run(
                     # Repairs and the stamp commit together or not at all.
                     with engine.connect() as conn, conn.begin():
                         adoption = _adopt(conn, current.adoption.stamp, script)
+                _retire_ancestor_rows(engine, script)
                 _migrate(engine, script)
             except UnknownDrift as e:
                 emit(_record(upgrade_dir, current, "refused", str(e), e.adoption))
