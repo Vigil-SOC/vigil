@@ -16814,6 +16814,8 @@ export interface operations {
                 offset?: number;
                 /** @description Match title, case id, or page key */
                 q?: string | null;
+                /** @description Exact case id */
+                case_id?: string | null;
             };
             header?: {
                 authorization?: string | null;

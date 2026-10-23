@@ -33,6 +33,7 @@ from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.password_reset import (
     consume_reset_token,
     decode_reset_token,
+    default_base_url,
     generate_reset_token,
     reset_link,
 )
@@ -1102,13 +1103,7 @@ def password_reset_request(
     # A service account's password belongs to its program: no reset mail.
     if user and user.is_active and not _is_service_account(user):
         token = generate_reset_token(user.user_id)
-        frontend_base = settings.vigil_frontend_url
-        if frontend_base:
-            link = reset_link(frontend_base, token)
-        else:
-            # Fall back to a raw token so a dev console backend still shows
-            # something actionable when VIGIL_FRONTEND_URL isn't set.
-            link = f"(token) {token}"
+        link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
         body_text = (
             f"Hello {user.full_name or user.username},\n\n"
