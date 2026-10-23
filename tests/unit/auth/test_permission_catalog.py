@@ -39,10 +39,10 @@ def test_revision_builtins_match_the_catalog():
     assert revision.BUILTINS == CATALOG["builtins"]
 
 
-def test_revision_follows_conversation_generation():
-    # One parent. #2856's revision is that parent; this file does not merge heads.
+def test_revision_follows_the_audit_feed():
+    # One parent, the head on main. This file does not merge heads.
     assert revision.revision == "0008_permission_catalog"
-    assert revision.down_revision == "0007_conversation_generation"
+    assert revision.down_revision == "0006_audit_feed"
     assert isinstance(revision.down_revision, str)
 
 
