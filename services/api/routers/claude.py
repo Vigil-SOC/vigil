@@ -1,4 +1,4 @@
-"""Claude endpoints: model listing and the chat stream the console uses."""
+"""Claude endpoints: the chat stream the console uses."""
 
 import asyncio
 import json
