@@ -159,7 +159,7 @@ jobs:
         run: LIVE_ENV_FILE="$GITHUB_ENV" bash tests/live/ci/mcp_runner.sh up
       - name: Log in to AWS
         if: env.LIVE_AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.LIVE_AWS_ROLE_ARN }}
           aws-region: us-east-1
@@ -197,7 +197,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: live-*
           merge-multiple: true
@@ -222,7 +222,7 @@ jobs:
       - name: Mint docs-repo token
         id: app-token
         if: steps.reports.outputs.complete == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
