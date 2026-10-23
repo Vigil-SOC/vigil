@@ -108,24 +108,25 @@ def test_get_active_vk_returns_none_when_db_unavailable():
         assert get_active_vk() is None
 
 
-def test_internal_get_settings_raises_and_public_readers_do_not():
-    """_get_settings surfaces a DB failure so a read error is distinguishable
-    from "no row"; nothing raises into the LLM path or the Budgets UI."""
+def test_settings_readers_raise_and_dispatch_fails_open():
+    """A DB failure reaches the Budgets UI readers as an error, never as
+    "no key configured"; the LLM dispatch path still fails open."""
     with patch(
         "core.llm.cost.budget.get_session", side_effect=RuntimeError("DB exploded")
     ):
         from core.llm.cost.budget import (
-            _get_settings,
             get_active_vk,
             get_settings,
+            read_vk,
             should_enforce,
         )
 
         with pytest.raises(RuntimeError):
-            _get_settings()
+            get_settings()
+        with pytest.raises(RuntimeError):
+            read_vk()
         assert get_active_vk() is None
         assert should_enforce() is False
-        assert get_settings()["default_vk"] == ""
 
 
 # ---------------------------------------------------------------------------
