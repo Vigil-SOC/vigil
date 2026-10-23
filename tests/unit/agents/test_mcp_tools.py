@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from core.agents.mcp_tools import rows_from, split_tool_name
+from core.agents.tool_errors import InvalidToolArgs
 
 pytestmark = pytest.mark.unit
 
@@ -120,10 +121,10 @@ class TestIndicatorLookup:
         )
 
     # invalid_args at the bridge rather than an empty answer: a call with nothing
-    # to look up is a defect, and the router reads a TypeError as exactly that.
+    # to look up is a defect.
     def test_refuses_a_call_with_nothing_to_look_up(self, monkeypatch):
         run = self._lookup(monkeypatch, {})
-        with pytest.raises(TypeError):
+        with pytest.raises(InvalidToolArgs):
             run({"indicator_type": "ip"})
 
 
