@@ -28,7 +28,7 @@ import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
-import { costAcross, runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, errorDetail, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -110,13 +110,7 @@ function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
 }
 
-function detailOf(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  return (error as { message?: string })?.message || fallback
-}
-
-const decisionFailText = (error: unknown) => detailOf(error, 'Could not update that decision')
+const decisionFailText = (error: unknown) => errorDetail(error, 'Could not update that decision')
 
 /** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
 function waiting(since: string): string {
@@ -424,7 +418,7 @@ function KeepGoingRow({ runId }: { runId: string }) {
     setSaid(null)
     extendRun(runId, '', amount)
       .then(() => setSaid({ ok: true, text: `Keep going sent: ${label}. The hunt carries on from where it stopped at its next turn.` }))
-      .catch((e) => setSaid({ ok: false, text: detailOf(e, 'Could not send Keep going') }))
+      .catch((e) => setSaid({ ok: false, text: errorDetail(e, 'Could not send Keep going') }))
       .finally(() => setBusy(false))
   }
   if (said?.ok) return <p className="needs-sent" role="status">{said.text}</p>
@@ -1248,7 +1242,7 @@ export function CasePage({
       .catch((e) => {
         if (cancelled || quiet) return
         setRows([])
-        setRecordError(detailOf(e, 'Couldn’t load the record'))
+        setRecordError(errorDetail(e, 'Couldn’t load the record'))
         setRecordPhase('error')
       })
     return () => {
@@ -1288,7 +1282,7 @@ export function CasePage({
           : { level: 'poor', text: `Chain break${data.reason ? `: ${data.reason}` : ''}` },
       )
     } catch (e) {
-      report({ level: 'poor', text: detailOf(e, 'Verify failed') })
+      report({ level: 'poor', text: errorDetail(e, 'Verify failed') })
     } finally {
       setBusy(false)
     }
@@ -1302,7 +1296,7 @@ export function CasePage({
     try {
       await auditApi.download({ object: id }, `audit-${id}.ndjson`)
     } catch (e) {
-      if (ticket === recStatusTicket.current) setRecStatus({ level: 'poor', text: detailOf(e, 'Export failed') })
+      if (ticket === recStatusTicket.current) setRecStatus({ level: 'poor', text: errorDetail(e, 'Export failed') })
     } finally {
       setBusy(false)
     }
@@ -1345,7 +1339,7 @@ export function CasePage({
         act(served)
       } else setDecisionError('This decision has not reached the approvals queue yet. Try again in a moment.')
     } catch (e) {
-      if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
+      if (seenCase.current === forCase) setDecisionError(errorDetail(e, 'Could not update that decision'))
     }
   }
 
@@ -1380,7 +1374,7 @@ export function CasePage({
         onChanged()
       }
     } catch (e) {
-      if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
+      if (seenCase.current === forCase) setDecisionError(errorDetail(e, 'Could not update that decision'))
     } finally {
       if (seenCase.current === forCase && decisionBusyRef.current === sourceId) {
         decisionBusyRef.current = null
@@ -1396,7 +1390,7 @@ export function CasePage({
       await casesApi.update(id, { status: 'open' })
       onChanged()
     } catch (e) {
-      setNote(detailOf(e, 'Couldn’t reopen the case'))
+      setNote(errorDetail(e, 'Couldn’t reopen the case'))
     } finally {
       setBusy(false)
     }

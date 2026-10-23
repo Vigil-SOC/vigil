@@ -1,9 +1,7 @@
-import json
 import logging
 import time
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import is_demo_mode
@@ -544,23 +542,3 @@ class DatabaseDataService:
                 logger.error(f"Error adding finding to case in DB: {e}")
                 return False
         return False
-
-    # The formats this knows how to write. Named here rather than at the route,
-    # because the branch below is what decides them: a route that keeps its own
-    # list can come to disagree with the writer, and answer 200 for a format
-    # that silently lands as JSON.
-    EXPORT_FORMATS = ("json", "jsonl")
-
-    def export_findings(self, output_path: Path, fmt: str = "json") -> bool:
-        findings = self.get_findings()
-        try:
-            with open(output_path, "w") as f:
-                if fmt == "jsonl":
-                    for finding in findings:
-                        f.write(json.dumps(finding) + "\n")
-                else:
-                    json.dump({"findings": findings}, f, indent=2)
-            return True
-        except Exception as e:
-            logger.error(f"Error exporting findings: {e}")
-            return False
