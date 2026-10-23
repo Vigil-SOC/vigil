@@ -228,7 +228,7 @@ def _begin_run_row(
     run_id: str,
     request: StartRunRequest,
     triggered_by: str,
-    person_id: Optional[str],
+    person_id: Optional[str] = None,
 ) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService

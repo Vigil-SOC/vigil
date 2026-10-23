@@ -657,7 +657,10 @@ def approve_action(*, action_id: str) -> Args:
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
     return _decided(
-        _approvals().approve_action(action_id, actor(), principal), "approved"
+        _approvals().approve_action(
+            action_id, actor(), approved_by_principal_id=principal
+        ),
+        "approved",
     )
 
 
@@ -669,7 +672,10 @@ def reject_action(*, action_id: str, reason: str) -> Args:
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
     return _decided(
-        _approvals().reject_action(action_id, reason, actor(), principal), "rejected"
+        _approvals().reject_action(
+            action_id, reason, actor(), approved_by_principal_id=principal
+        ),
+        "rejected",
     )
 
 
