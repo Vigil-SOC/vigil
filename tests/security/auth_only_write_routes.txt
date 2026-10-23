@@ -3,7 +3,6 @@
 # analyst workflow). Enforced by test_route_permissions.py, so a new write route
 # must either ask for a permission or be added here on review.
 DELETE /api/auth/mfa
-DELETE /api/cases/templates/{template_id}
 DELETE /api/conversations/{conversation_id}
 DELETE /api/findings/{finding_id}/noise
 DELETE /api/sla-policies/{policy_id}
@@ -24,8 +23,6 @@ POST /api/auth/password-reset/confirm
 POST /api/auth/password-reset/request
 POST /api/auth/refresh
 POST /api/cases/search
-POST /api/cases/templates/
-POST /api/cases/templates/{template_id}/create-case
 POST /api/cases/{case_id}/generate-report
 POST /api/exclusions
 POST /api/exclusions/{exclusion_id}/remove
@@ -45,6 +42,5 @@ POST /api/workflows/generate
 POST /api/workflows/runs/{run_id}/narrate
 POST /api/workflows/threat-hunt/coverage
 PUT /api/auth/me
-PUT /api/cases/templates/{template_id}
 PUT /api/sla-policies/{policy_id}
 PUT /api/users/{user_id}

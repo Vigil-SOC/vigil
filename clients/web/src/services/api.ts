@@ -212,8 +212,6 @@ export const findingsApi = {
   
   update: (id: string, data: any) => api.patch(`/findings/${id}`, data),
   
-  delete: (id: string) => api.delete(`/findings/${id}`),
-  
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
     // may restart the Bifrost gateway, then wait on the configured model
     api.post(`/findings/${id}/enrich`, null, {
