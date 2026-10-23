@@ -10,6 +10,7 @@ from mcp.server.mcpserver import MCPServer
 from core.agents import tool_registry
 from core.auth.permissions import permission_refusal
 from core.cases.agent_closure import service_session
+from core.cases.case_status import CaseStatus
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
@@ -252,7 +253,7 @@ def create_case(
     severity: Optional[str] = None,
     priority: Optional[str] = None,
     finding_ids: Optional[list] = None,
-    status: str = "new",
+    status: CaseStatus = "new",
     assignee: Optional[str] = None,
     tags: Optional[list] = None,
 ) -> str:
@@ -287,7 +288,7 @@ def update_case(
     case_id: str,
     title: Optional[str] = None,
     description: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[CaseStatus] = None,
     priority: Optional[str] = None,
     assignee: Optional[str] = None,
     add_note: Optional[str] = None,
