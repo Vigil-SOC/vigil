@@ -259,7 +259,12 @@ async def approve_action(
 
     # The body field is kept for the frozen contract; the record names the session user.
     approved_by = current_user.username
-    updated = service.approve_action(action_id, approved_by=approved_by)
+    updated = service.approve_action(
+        action_id,
+        approved_by=approved_by,
+        approved_by_principal_id=getattr(current_user, "principal_id", None)
+        or getattr(current_user, "user_id", None),
+    )
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to approve action")
 
@@ -300,7 +305,11 @@ async def reject_action(
 
     rejected_by = current_user.username
     updated = service.reject_action(
-        action_id, reason=request.reason, rejected_by=rejected_by
+        action_id,
+        reason=request.reason,
+        rejected_by=rejected_by,
+        approved_by_principal_id=getattr(current_user, "principal_id", None)
+        or getattr(current_user, "user_id", None),
     )
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to reject action")

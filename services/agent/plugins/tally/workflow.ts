@@ -1,4 +1,4 @@
-import type { RunOutcome } from "../../contracts/events.js";
+import type { RunOutcome, RunPayload } from "../../contracts/events.js";
 import { runAgent, type AgentKinds } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
 import { DEFAULT_BUDGETS, type RunSpec } from "../../core/spec.js";
@@ -11,6 +11,8 @@ export interface TallyOptions {
   max_turns: number;
   approvals?: ReadonlySet<string>;
   started_by?: string;
+  principal?: string;
+  origin?: RunPayload["origin"];
 }
 
 export interface TallyReport {
@@ -33,6 +35,8 @@ export async function runTally(harness: Harness<TallyKinds>, options: TallyOptio
     ...(hooks === undefined ? {} : { hooks }),
     tools: [],
     started_by: options.started_by ?? "tally",
+    ...(options.principal === undefined ? {} : { principal: options.principal }),
+    ...(options.origin === undefined ? {} : { origin: options.origin }),
   });
   const events = await harness.state.read(options.run_id);
   const last = events.filter((event) => event.kind === "tally").at(-1);

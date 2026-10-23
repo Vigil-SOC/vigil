@@ -25,6 +25,7 @@ import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
 import type { Harness, Outcome, TurnConfig } from "./loop.js";
 import type { Message } from "./provider.js";
 import { registryOf, type Registry } from "./registry.js";
+import { logger } from "./log.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
 import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
@@ -155,11 +156,15 @@ export interface AgentOptions {
   // The Vigil agent this run's skill reads are credited to (#1560). Absent records
   // them unattributed.
   agent_id?: string;
-  // API-signed name of the person who started the run. Journaled on the run
-  // event so a resume still binds them. Absent for a system run.
+  // API-signed token for the run. Journaled on the run event so a resume still
+  // carries it. Absent for a system run that predates one.
   principal?: string;
+  // What started the run, in the clear. The token is not decoded here.
+  origin?: RunPayload["origin"];
   signal?: AbortSignal;
 }
+
+const log = logger("agent.core");
 
 export interface Conversation {
   task: string;
@@ -508,6 +513,7 @@ async function* work(ctx: PluginContext, held: Ledger, clock: { turn: number }):
           ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
           ...(seen.attempt.shown === undefined ? {} : { shown: seen.attempt.shown, read: seen.attempt.read }),
           ...(options.conversation === undefined ? {} : { exchange: exchangeOf(options.conversation) }),
+          ...actorOf(options.started_by),
         };
         first = false;
         await harness.state.append(options.run_id, [event(options, "call", call)]);
@@ -845,6 +851,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
       class: classify(seen.attempt.result),
       role: sub.role,
       ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
+      ...actorOf(options.started_by),
     };
     await harness.state.append(options.run_id, [event(options, "call", call)]);
     framer.note(call.ref);
@@ -861,7 +868,7 @@ export const CHILD_KIND: RunKind = "subagent";
 // What a child needs of its parent: the harness and the run. A hook passes its context.
 export interface ParentRun {
   harness: Harness<Kinds>;
-  options: Pick<AgentOptions, "run_id" | "run_kind">;
+  options: Pick<AgentOptions, "run_id" | "run_kind" | "started_by" | "origin">;
 }
 
 export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig): Promise<Outcome<T> & { child_run_id: string }> {
@@ -876,18 +883,23 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
     await linkChild(ctx, child, turn.role, key, ended.outcome, ended.reason, held);
     return { ...storedOutcome<T>(held, ended), child_run_id: child };
   }
+  const spec = { role: turn.role, key, system: turn.system, schema: turn.schema };
   if (held.length === 0) {
     const opening: RunPayload = {
       run_kind: CHILD_KIND,
-      spec: { role: turn.role, key, system: turn.system, schema: turn.schema },
+      spec,
       budgets: harness.budget.limits,
       seed: child,
       tenant_id: null,
-      started_by: options.run_id,
+      started_by: options.started_by ?? options.run_id,
+      ...(options.origin === undefined ? {} : { origin: "parent" as const }),
       parent: { run_id: options.run_id, run_kind: options.run_kind, role: turn.role, key },
     };
     await harness.state.append(child, [at("run", opening)]);
   }
+  // Retried until the backend has the row. A resume otherwise never reports a
+  // child whose first post failed, and the backend ignores a second one.
+  await reportChild(options.run_id, child, turn.role, spec);
 
   const framer = await Framer.open(harness.state, child, CHILD_KIND, [], []);
   const cfg: TurnConfig = { ...turn, run_id: child, run_kind: CHILD_KIND, spend_to: { run_id: options.run_id, run_kind: options.run_kind } };
@@ -1244,6 +1256,31 @@ export function heldBecause(review: ReviewPayload): string | null {
 
 // NewEvent is an Omit over a union, which keeps no link between a kind and its
 // payload; the payload types above are what hold each call to the right shape.
+function actorOf(startedBy: string | undefined): { actor: string } | Record<string, never> {
+  if (startedBy === "system" || (typeof startedBy === "string" && startedBy.startsWith("agent:"))) {
+    return { actor: startedBy };
+  }
+  return {};
+}
+
+// The backend writes the trail. This process does not. A deployment with no
+// mirror keeps today's path: the child still runs on the parent's token.
+async function reportChild(parentRunId: string, childRunId: string, role: string, spec: unknown): Promise<void> {
+  const url = process.env["VIGIL_RUNS_URL"];
+  if (url === undefined || url === "") return;
+  const token = process.env["AGENT_INTERNAL_TOKEN"] ?? process.env["VIGIL_TOOLS_TOKEN"] ?? "";
+  try {
+    const response = await fetch(`${url.replace(/\/+$/, "")}/${encodeURIComponent(parentRunId)}/children`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ child_run_id: childRunId, role, spec }),
+    });
+    if (!response.ok) log.warn("child run was not recorded", { parent: parentRunId, child: childRunId, status: response.status });
+  } catch (error) {
+    log.warn("child run was not recorded", { parent: parentRunId, child: childRunId, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 function event(options: AgentOptions, kind: AgentEvent<Kinds>["kind"], payload: unknown): Event {
   return { run_id: options.run_id, run_kind: options.run_kind, kind, payload } as unknown as Event;
 }
@@ -1274,6 +1311,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       tenant_id: null,
       started_by: options.started_by ?? "worker",
       ...(options.principal === undefined ? {} : { principal: options.principal }),
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
     };
     await options.hooks.open({ harness, options, turn: () => 0 }, base);
     return;
@@ -1290,6 +1328,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       tenant_id: null,
       started_by: options.started_by ?? "worker",
       ...(options.principal === undefined ? {} : { principal: options.principal }),
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
     }),
     ...unbound,
   ]);

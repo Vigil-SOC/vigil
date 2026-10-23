@@ -12,7 +12,6 @@ export function useConversations(includeArchived = false, query = '', userId: st
   const [items, setItems] = useState<ConversationSummary[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [offline, setOffline] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
   const [q, setQ] = useState(query)
@@ -36,7 +35,6 @@ export function useConversations(includeArchived = false, query = '', userId: st
 
   useEffect(() => {
     let cancelled = false
-    setError(null)
     const needle = q.trim()
     conversationsApi
       .list({ archived: includeArchived, q: needle || undefined })
@@ -48,7 +46,6 @@ export function useConversations(includeArchived = false, query = '', userId: st
       })
       .catch((e) => {
         if (cancelled) return
-        setError((e as { message?: string })?.message || 'Failed to load history')
         setOffline(serverUnreachable(e))
         setPhase('error')
       })
@@ -57,6 +54,6 @@ export function useConversations(includeArchived = false, query = '', userId: st
     }
   }, [includeArchived, q, reloadKey, userId])
 
-  return { items, phase, error, reload, offline }
+  return { items, phase, reload, offline }
 }
 

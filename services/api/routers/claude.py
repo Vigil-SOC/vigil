@@ -1,4 +1,4 @@
-"""Claude endpoints: model listing and the chat stream the console uses."""
+"""Claude endpoints: the chat stream the console uses."""
 
 import asyncio
 import json
@@ -16,6 +16,7 @@ from core.agents.projections import agent_route
 from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
+from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
 from core.cases.case_brief import case_brief
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
@@ -26,9 +27,8 @@ from core.llm.chat_layers import (
     run_id_for,
 )
 from core.llm.defaults import DEFAULT_MODEL
-from core.llm.providers.registry import get_registry, is_chat_model
+from core.llm.providers.registry import get_registry
 from core.llm.router.router import get_provider_spec
-from core.llm.system_prompt import validate_system_prompt
 from core.llm.target import (
     component_fallback,
     first_servable,
@@ -130,9 +130,6 @@ def _persist_chat_turn(
 logger = logging.getLogger(__name__)
 
 
-# Structured payload returned when no Anthropic provider is configured.
-# The chat drawer matches on ``code`` and renders a "Configure a provider"
-# CTA instead of a generic ``Error: ...`` bubble.
 NO_PROVIDER_DETAIL: Dict[str, str] = {
     "code": "no_llm_provider_configured",
     "message": (
@@ -143,26 +140,9 @@ NO_PROVIDER_DETAIL: Dict[str, str] = {
 }
 
 
-def _raise_no_provider() -> None:
-    """Raise the canonical 503 for an unconfigured chat backend."""
-    raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-
-
 def _resolve_provider_model_for_request(
-    requested_model: Optional[str], agent_id: Optional[str]
+    agent_id: Optional[str],
 ) -> Tuple[Optional[str], str]:
-    """Resolve provider + model for chat requests.
-
-    Older Chat UI state can persist model ids as ``provider_id::model_id``.
-    Keep accepting that shape so a stale localStorage value does not route an
-    Ollama/OpenAI model through the wrong provider.
-    """
-    if requested_model:
-        if "::" in requested_model:
-            provider_id, model_id = requested_model.split("::", 1)
-            return (provider_id or None, model_id or requested_model)
-        return (None, requested_model)
-
     registry = get_registry()
     agent = None
     category: str = "chat_default"
@@ -263,11 +243,6 @@ class ChatRequest(BaseModel):
     """Chat request model."""
 
     messages: List[ChatMessage]
-    system_prompt: Optional[str] = None
-    # None means "resolve via ai_model_configs" (GH #89). Callers may still
-    # override with an explicit model id.
-    model: Optional[str] = None
-    max_tokens: int = 4096
     agent_id: Optional[str] = None
     session_id: Optional[str] = (
         None  # Chat session identifier for reasoning-trace persistence (GH #79)
@@ -279,11 +254,6 @@ class ChatRequest(BaseModel):
     # ``page_context`` is the route key and is stored only while still null.
     case_id: Optional[str] = None
     page_context: Optional[str] = None
-
-    @field_validator("system_prompt")
-    @classmethod
-    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
-        return validate_system_prompt(v, source="chat")
 
 
 LATEST_ONLY = (
@@ -343,12 +313,9 @@ async def chat_stream(
         raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
     # Resolved here because this is the side that knows what an agent is: the
     # harness is handed a prompt, a model and a tool list, never an agent id.
-    provider_id, resolved_model = _resolve_provider_model_for_request(
-        request.model, request.agent_id
-    )
-    request.model = resolved_model
+    provider_id, resolved_model = _resolve_provider_model_for_request(request.agent_id)
 
-    system_prompt = request.system_prompt
+    system_prompt: Optional[str] = None
     tools: Optional[List[str]] = None
     if request.agent_id:
         from core.agents.manager import AgentManager
@@ -376,8 +343,8 @@ async def chat_stream(
 
     active_provider = provider_for(provider_id)
     if active_provider is None:
-        _raise_no_provider()
-    model = request.model = model_for(active_provider, request.model)
+        raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
+    model = model_for(active_provider, resolved_model)
     provider_type = active_provider.provider_type
 
     # Whatever MCP integrations are connected right now (VirusTotal, OTX, MISP,
@@ -406,7 +373,16 @@ async def chat_stream(
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
-        "principal": tool_principal.mint(current_user.username),
+        "principal": tool_principal.mint(
+            current_user.username,
+            person_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+            agent_id=agent_principal_id(CHAT_PLUGIN_ID),
+            run_id=run_id_for(session_id),
+            origin="person",
+        ),
+        "actor": agent_principal_id(CHAT_PLUGIN_ID),
+        "origin": "person",
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id
@@ -423,6 +399,7 @@ async def chat_stream(
         _relay(
             payload,
             request,
+            model,
             session_id,
             getattr(current_user, "user_id", None),
         ),
@@ -454,6 +431,7 @@ def _turns_of(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 async def _relay(
     payload: Dict[str, Any],
     request: ChatRequest,
+    model: str,
     session_id: str,
     user_id: Optional[str],
 ):
@@ -497,7 +475,7 @@ async def _relay(
                 session_id=session_id,
                 user_id=user_id,
                 agent_id=request.agent_id,
-                model=request.model,
+                model=model,
                 # The question as asked: the agent turns merge consecutive user messages.
                 user_text=_user_text_from_content(request.messages[-1].content).strip()
                 or payload["turns"][-1]["content"],
@@ -540,85 +518,3 @@ def _internal_headers() -> Dict[str, str]:
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-
-
-@router.get("/models")
-async def get_models():
-    """List available models for the Chat UI model picker.
-
-    Backward-compatible alias for `/api/ai/models` (GH #89). Returns every
-    model across all *active* providers (Anthropic, Ollama, OpenAI, …) so the
-    picker reflects what the instance can actually run: an Ollama-only
-    deployment shows its Ollama models instead of Claude models it will never
-    call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-    selection still matches a menu entry; the chat send path resolves the
-    provider from the active default when no `provider_id::` prefix is present
-    (see `_resolve_provider_model_for_request`).
-    """
-    registry = get_registry()
-    try:
-        all_models = await registry.list_available_models()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("get_models: registry lookup failed: %s", exc)
-        all_models = []
-
-    if not all_models:
-        # Live discovery returned nothing. Before rendering anything, reflect
-        # the providers the instance actually has configured — an Ollama-only
-        # deployment must not be shown Claude models it can't call (#409).
-        try:
-            all_models = await registry.fallback_models()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("get_models: provider fallback failed: %s", exc)
-            all_models = []
-
-    if not all_models:
-        # Genuinely nothing configured (fresh install / no DB). Last-resort
-        # default so the Chat UI still renders a picker.
-        return {
-            "models": [
-                {
-                    "id": "claude-sonnet-4-5-20250929",
-                    "name": "Claude Sonnet 4.5",
-                    "description": "Most intelligent model, best for complex tasks",
-                },
-                {
-                    "id": "claude-sonnet-4-6",
-                    "name": "Claude Sonnet 4.6",
-                    "description": "Balanced speed and intelligence",
-                },
-                {
-                    "id": "claude-haiku-4-5-20251001",
-                    "name": "Claude Haiku 4.5",
-                    "description": "Fastest model, good for simple tasks",
-                },
-            ]
-        }
-
-    # Dedupe by bare model_id: the picker uses it as both the menu key and the
-    # stored value, and two providers can advertise the same id. First wins.
-    # Embedding-only models (e.g. nomic-embed-text) are dropped here: they show
-    # up in provider discovery but can't hold a chat, so they must not appear in
-    # the chat picker. Kept even though fetch_provider_models() now filters too,
-    # because pinned embedding models still arrive as deprecated orphans and
-    # fallback_models() never passes through that reader.
-    seen: set = set()
-    models = []
-    for m in all_models:
-        if m.is_embedding or not is_chat_model(m.provider_type, m.model_id):
-            continue
-        if m.model_id in seen:
-            continue
-        seen.add(m.model_id)
-        models.append(
-            {
-                "id": m.model_id,
-                "name": m.display_name,
-                "description": (
-                    f"{m.context_window // 1000}K context, "
-                    f"${m.input_cost_per_1k:.4f}/1K in / "
-                    f"${m.output_cost_per_1k:.4f}/1K out"
-                ),
-            }
-        )
-    return {"models": models}

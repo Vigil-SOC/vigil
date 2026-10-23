@@ -150,6 +150,13 @@ spec:
               value: {{ printf "%s:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.inPort" .) | quote }}
             - name: VIGIL_MEDIC_POLICY_CONTROL_ADDR
               value: {{ printf "%s:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.outPort" .) | quote }}
+            # Sensors read the backend through this listener (D6-7). The same
+            # Service:port as the control above. One variable, not envFrom:
+            # the chart's shared env would hand Medic every secret.
+            - name: VIGIL_MEDIC_GATEWAY_ADDR
+              value: {{ printf "%s:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.outPort" .) | quote }}
+            - name: DEV_MODE
+              value: {{ .Values.config.DEV_MODE | default "false" | quote }}
             # The key its API checks (X2), re-read per request. In the pod Medic
             # listens on every address (S9): its NetworkPolicy admits only the
             # gateway.

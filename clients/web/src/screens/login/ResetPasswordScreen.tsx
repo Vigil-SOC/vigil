@@ -19,9 +19,6 @@ export default function ResetPasswordScreen() {
   const [error, setError] = useState(
     token ? '' : 'This reset link is missing its token. Request a new link.',
   )
-  // The server consumes the token before checking the password, so any 400
-  // (bad token or policy failure) leaves this link unusable.
-  const [spent, setSpent] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,7 +32,6 @@ export default function ResetPasswordScreen() {
       })
     } catch (err: any) {
       setError(requestErrorMessage(err, 'Could not reset your password. Please try again.'))
-      setSpent(err?.response?.status === 400)
       setLoading(false)
     }
   }
@@ -45,17 +41,15 @@ export default function ResetPasswordScreen() {
   return (
     <AuthLayout
       screenLabel="Reset password"
-      title={!token ? 'Reset link incomplete' : spent ? 'Reset link used' : 'Choose a new password'}
+      title={token ? 'Choose a new password' : 'Reset link incomplete'}
       subtitle={
-        !token
-          ? 'Open the full link from your reset email, or request another.'
-          : spent
-            ? "This link can't be used again. Request a new one to try again."
-            : 'This signs out every existing session.'
+        token
+          ? 'This signs out every existing session.'
+          : 'Open the full link from your reset email, or request another.'
       }
       message={{ text: error }}
     >
-      {token && !spent ? (
+      {token ? (
         <form onSubmit={handleSubmit} autoComplete="on" noValidate>
           <div className="field">
             <label htmlFor="reset-pass">New password</label>

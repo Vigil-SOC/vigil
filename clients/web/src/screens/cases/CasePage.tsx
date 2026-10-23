@@ -641,7 +641,7 @@ function spentLine(run: CaseRun): string {
 }
 
 /** The other runs on the case, one head line each, under the primary run's cards. */
-function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<string, string>; onFollow: () => void }) {
+function OtherRuns({ runs, names }: { runs: CaseRun[]; names: Record<string, string> }) {
   if (runs.length === 0) return null
   return (
     <section className="case-other-runs" aria-label="Other runs on this case">
@@ -652,7 +652,7 @@ function OtherRuns({ runs, names, onFollow }: { runs: CaseRun[]; names: Record<s
           const state = run.phase === 'loading' ? 'Loading…' : run.phase === 'error' ? 'Couldn’t read the run' : wordDisplay(run.fold?.outcome || run.fold?.run.status || run.ref.status || '—')
           return (
             <li key={run.ref.run_id}>
-              <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runLabel(run.ref, names)} onClick={onFollow}>{runLabel(run.ref, names)}</Link>
+              <Link className="case-other-name" to={`/workflows?run=${encodeURIComponent(run.ref.run_id)}`} title={runLabel(run.ref, names)}>{runLabel(run.ref, names)}</Link>
               <span className="case-other-state">
                 {state}
                 {word && <> · <b>{wordDisplay(word)}</b></>}
@@ -675,7 +675,7 @@ function howStarted(runs: CaseRun[]): { run: CaseRun; chain: ChainStep[] } | 'er
 }
 
 /** Where the incident started and how far the trace proved it: the root-cause run's chain, first and last links only. */
-function HowStarted({ started, names, onFollow }: { started: NonNullable<ReturnType<typeof howStarted>>; names: Record<string, string>; onFollow: () => void }) {
+function HowStarted({ started, names }: { started: NonNullable<ReturnType<typeof howStarted>>; names: Record<string, string> }) {
   if (started === 'error') {
     return (
       <section className="case-card" aria-label="How it started">
@@ -720,7 +720,7 @@ function HowStarted({ started, names, onFollow }: { started: NonNullable<ReturnT
           })}
         </ul>
       )}
-      <Link className="how-all" to={to} title={runLabel(run.ref, names)} onClick={onFollow}>
+      <Link className="how-all" to={to} title={runLabel(run.ref, names)}>
         {chain.length > 2 ? `Show all ${chain.length}` : 'Open the trace'}
       </Link>
     </section>
@@ -765,11 +765,11 @@ function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; line
   )
 }
 
-/** The way into Watch a run for the run this card describes; the drawer closes on follow, as Replay's does. */
-function WatchLink({ runId, onFollow }: { runId: string | null; onFollow: () => void }) {
+/** The way into Watch a run for the run this card describes. */
+function WatchLink({ runId }: { runId: string | null }) {
   if (!runId) return null
   return (
-    <Link className="rec-btn watch-link" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={onFollow}>
+    <Link className="rec-btn watch-link" to={`/workflows?run=${encodeURIComponent(runId)}`}>
       Watch it run
     </Link>
   )
@@ -1464,7 +1464,7 @@ export function CasePage({
     return () => window.removeEventListener('keydown', onKey)
   }, [onExpand, onBack])
 
-  const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
+  const watch = <WatchLink runId={runId} />
   const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsShown > 0).tone
   // Running furniture needs a run: a run-less case, or one whose needs item sits in the undo fuse, shows none.
@@ -1482,7 +1482,7 @@ export function CasePage({
   )
   // A case with several runs can ask where they part ways; the brief carries every run.
   const started = howStarted(runs)
-  const startedCard = started && <HowStarted started={started} names={workflowNames} onFollow={() => onExpand && onBack()} />
+  const startedCard = started && <HowStarted started={started} names={workflowNames} />
   const disagree = investigations.length > 1 && (
     <div className="case-disagree">
       <button type="button" className="btn" onClick={() => setAskSeed({ id, text: DISAGREE_ASK })}>
@@ -1607,7 +1607,7 @@ export function CasePage({
                     </div>
                   </section>
                 )}
-                <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} onFollow={() => onExpand && onBack()} />
+                <OtherRuns runs={runs.filter((one) => one.ref !== latest)} names={workflowNames} />
                 {runId !== null && (
                   <section className="case-card" aria-label="Findings so far">
                     <h3>Findings so far</h3>
@@ -1687,7 +1687,7 @@ export function CasePage({
                     )}
                   </span>
                   {runId ? (
-                    <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
+                    <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`}>
                       Replay
                     </Link>
                   ) : (
