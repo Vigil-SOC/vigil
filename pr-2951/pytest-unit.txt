@@ -1,0 +1,5 @@
+1.77s call     unit/findings/test_overview.py::test_rate_includes_deleted_rows_and_phase_falls_back
+1.72s call     unit/response/test_needs_you.py::test_needs_you_is_oldest_pending_approvals_only
+1.49s call     unit/findings/test_overview.py::test_overview_route_marks_unmeasured_nodes
+1.40s call     unit/response/test_needs_you.py::test_case_id_filter_uses_the_resolved_id
+================== 31 passed, 1 warning in 438.30s (0:07:18) ===================

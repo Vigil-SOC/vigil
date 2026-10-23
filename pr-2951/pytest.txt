@@ -1,0 +1,8 @@
+0.85s call     unit/findings/test_overview.py::test_feed_skips_noise_before_the_limit_and_clear_restores_the_row
+0.80s call     unit/findings/test_overview.py::test_alert_read_matches_the_feed_item_and_reaches_past_the_feed
+0.46s call     unit/response/test_needs_you.py::test_a_hunt_stopped_at_a_limit_needs_a_person
+0.31s call     unit/findings/test_overview.py::test_feed_source_link_and_case_follow_the_existing_resolvers
+0.29s teardown unit/findings/test_overview.py::test_overview_route_marks_unmeasured_nodes
+0.29s call     unit/findings/test_overview.py::test_overview_route_marks_unmeasured_nodes
+0.27s call     unit/response/test_needs_you.py::test_needs_you_is_oldest_pending_approvals_only
+=================== 31 passed, 1 warning in 83.33s (0:01:23) ===================

@@ -1,0 +1,2 @@
+200 ['connect_tools', 'notify', 'rules', 'per_agent'] 0 False
+AssertionError: ({'steps': [{'id': 'connect_tools', 'title': 'Connect more tools', 'state_line': '1 of 3 integrations connected', 'done': True}, {'id': 'notify', 'title': 'Where Vigil pings you', 'sta
