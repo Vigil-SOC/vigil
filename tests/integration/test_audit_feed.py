@@ -420,6 +420,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
         feed, "get_secret", lambda key, default=None: store.get(key, default)
     )
     admin = _login(client, "ada")
+    manager_headers = _login(client, "mia")
     saved = client.put(
         "/api/audit/feed",
         headers=admin,
@@ -431,7 +432,6 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
         },
     )
     assert saved.status_code == 200, saved.text
-    manager = _login(client, "mia")
     before = _count(db)
 
     class _Bridge:
@@ -441,7 +441,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
     client.app.state.integration_bridge = _Bridge()
     posted = client.post(
         "/api/config/integrations",
-        headers=manager,
+        headers=manager_headers,
         json={
             "enabled_integrations": [],
             "integrations": {
