@@ -1017,7 +1017,6 @@ export function useIntegrationsConfig() {
     [config],
   )
 
-  // a write changes only the list: no phase flip, so the page does not blank
   const reloadCustom = () => loadCustomIntegrations().then(setCustom)
 
   return { config, custom, reloadCustom, phase, reload, saveIntegration, setIntegrationEnabled }
