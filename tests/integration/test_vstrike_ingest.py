@@ -280,3 +280,21 @@ def test_auth_accepts_correct_token(monkeypatch):
     monkeypatch.setattr(vstrike_module, "_expected_inbound_key", lambda: "secret-key")
     # Should not raise
     vstrike_module.verify_inbound_key(authorization="Bearer secret-key")
+
+
+def test_auth_rejects_non_ascii_token_with_401(monkeypatch):
+    """A bearer token carrying non-ASCII characters is a 401, not an error.
+
+    compare_digest refuses a str holding non-ASCII, so the comparison has
+    to run on encoded bytes — on the encoded form this is simply a wrong
+    token, while a str comparison would raise and surface as a 500.
+    """
+    from fastapi import HTTPException
+
+    from services.api.routers import vstrike as vstrike_module
+
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setattr(vstrike_module, "_expected_inbound_key", lambda: "secret-key")
+    with pytest.raises(HTTPException) as excinfo:
+        vstrike_module.verify_inbound_key(authorization="Bearer s\u00e9cret-k\u00e9y")
+    assert excinfo.value.status_code == 401
