@@ -1,5 +1,3 @@
-/* The custody load is best-effort: a failure leaves that section
-   empty rather than failing the whole detail view. */
 import { useCallback, useEffect, useState } from 'react'
 import { orchestratorApi } from '../../services/api'
 import type { Phase } from '../cases/useCases'
