@@ -4538,7 +4538,7 @@ export interface paths {
         put?: never;
         /**
          * Kill Investigation
-         * @description Kill a specific running investigation.
+         * @description Fail one live investigation; a finished or unknown one is left as it is.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_kill"];
         delete?: never;
@@ -8545,8 +8545,6 @@ export interface components {
         };
         /** CustomWorkflowCreate */
         CustomWorkflowCreate: {
-            /** Created By */
-            created_by?: string | null;
             /** Description */
             description: string;
             /** Name */
@@ -9669,18 +9667,34 @@ export interface components {
             case_id?: string | null;
             /** Checkpoint Class */
             checkpoint_class?: string | null;
-            /** Checkpoint Id */
+            /**
+             * Checkpoint Id
+             * @description The run's own checkpoint this item answers, so a page reading the run can tell it was answered.
+             */
             checkpoint_id?: string | null;
-            /** Created At */
+            /**
+             * Created At
+             * @description '' when nothing recorded when it started waiting.
+             */
             created_at: string;
-            /** Hypotheses */
+            /**
+             * Hypotheses
+             * @description A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.
+             */
             hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
-            /** Kind */
-            kind: string;
+            /**
+             * Kind
+             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.
+             * @enum {string}
+             */
+            kind: "approval" | "checkpoint" | "parked";
             /** Reason */
             reason: string;
-            /** Reversibility */
-            reversibility: string;
+            /**
+             * Reversibility
+             * @enum {string}
+             */
+            reversibility: "reversible" | "irreversible";
             /** Run Id */
             run_id?: string | null;
             /** Source Id */
@@ -10399,6 +10413,28 @@ export interface components {
         ServerEnabledRequest: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** SetupStep */
+        SetupStep: {
+            /** Done */
+            done: boolean;
+            /** Href */
+            href: string;
+            /** Id */
+            id: string;
+            /** State Line */
+            state_line: string;
+            /** Title */
+            title: string;
+        };
+        /** SetupStepsResponse */
+        SetupStepsResponse: {
+            /** Alerts Exist */
+            alerts_exist: number;
+            /** Demo Enabled */
+            demo_enabled: boolean;
+            /** Steps */
+            steps: components["schemas"]["SetupStep"][];
         };
         /** SkillCaseResult */
         SkillCaseResult: {
@@ -11223,8 +11259,6 @@ export interface components {
         WorkflowRunCancelRequest: {
             /** Reason */
             reason: string;
-            /** Rejected By */
-            rejected_by?: string | null;
         };
         /**
          * WorkflowRunResumeRequest
@@ -16540,7 +16574,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SetupStepsResponse"];
                 };
             };
             /** @description Validation Error */
