@@ -97,14 +97,15 @@ def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
 class CustomWorkflowService:
     """Persistence service for database-backed custom workflows."""
 
-    def create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def create(self, payload: Dict[str, Any], created_by: str) -> Dict[str, Any]:
         """
         Create a new custom workflow.
 
         Args:
             payload: Dict with keys matching CustomWorkflow columns. Required:
                 name, description, phases. Optional: use_case, trigger_examples,
-                created_by, workflow_id.
+                workflow_id.
+            created_by: Username of the session user creating the workflow.
 
         Returns:
             The created workflow as a dict.
@@ -130,7 +131,7 @@ class CustomWorkflowService:
                 trigger_examples=payload.get("trigger_examples") or [],
                 phases=payload.get("phases") or [],
                 is_active=payload.get("is_active", True),
-                created_by=payload.get("created_by"),
+                created_by=created_by,
                 version=1,
             )
             session.add(wf)
