@@ -1,4 +1,4 @@
-"""The listener: `X-Medic-Key` first, then exactly one route (X2; the other 8 are G3's)."""
+"""The listener: `X-Medic-Key` first, then status and the decision log (X2)."""
 
 from __future__ import annotations
 
@@ -140,8 +140,9 @@ def test_401_comes_before_routing(server) -> None:
 @pytest.mark.parametrize(
     "target",
     [
-        "/v1/incidents",  # G3's, not served yet
-        "/v1/decisions/1",
+        "/v1/incidents",  # later G3, not served yet
+        "/v1/export",  # #2111; this listener leaves it 404
+        "/v1/export?from=2026-10-01T00:00:00Z&to=2026-10-08T00:00:00Z",
         "/v1/status/",
         "/v1/status?x=1",
         "/v2/status",
