@@ -41,6 +41,9 @@ HELM_SKIPS = (
     "28_case_closure_actor.sql",
     "39_case_findings_finding_index.sql",
     "34_drop_skills.sql",
+    # create_all builds conversations. A new install already has these columns;
+    # a 0.7 or 0.8 database does not, and the baseline expects them.
+    "47_conversation_generation.sql",
 )
 MCP_CREDENTIALS = "34_mcp_credentials.sql"
 # Helm never re-ran 06, so a Helm install can lack this column.

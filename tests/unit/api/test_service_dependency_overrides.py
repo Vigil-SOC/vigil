@@ -2,18 +2,17 @@
 # through a Depends provider, so a test swaps in a stub via
 # app.dependency_overrides and never touches a database, an LLM or an MCP process.
 
-from types import SimpleNamespace
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.deps import provide_approvals, provide_workflows
 from core.api.v1.approvals_router import router as approvals_router
+from core.response.approval_service import PendingAction
 
 
 def _action(action_id="ACT-1", workflow_run_id=None):
-    return SimpleNamespace(
+    return PendingAction(
         action_id=action_id,
         action_type="isolate_host",
         title="Isolate host",
@@ -26,16 +25,8 @@ def _action(action_id="ACT-1", workflow_run_id=None):
         created_by="pytest",
         requires_approval=True,
         status="pending",
-        approved_at=None,
-        approved_by=None,
-        executed_at=None,
-        execution_result=None,
-        rejection_reason=None,
         parameters={},
         workflow_run_id=workflow_run_id,
-        workflow_phase_id=None,
-        reversibility="reversible",
-        idempotency_key=None,
     )
 
 
