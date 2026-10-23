@@ -308,15 +308,11 @@ def get_investigation(investigation_id: str):
 
         files = orch.workdir.list_files(investigation_id)
         log = orch.workdir.get_log(investigation_id, tail=20)
-        state = orch.workdir.read_state(investigation_id)
-        disk_usage = orch.workdir.get_disk_usage(investigation_id)
 
         return {
             **inv,
             "files": files,
             "recent_log": log,
-            "state": state,
-            "disk_usage_bytes": disk_usage,
         }
     except HTTPException:
         raise
@@ -593,20 +589,12 @@ def get_cost_summary():
 # ---- Chain of Custody ----
 
 # Workdir files to include in the chain-of-custody package.
-#
-# `hypotheses.txt`, not `.json`: WorkdirManager scaffolds an empty `hypotheses.json`
-# and nothing ever writes it, so the export carried a truthy "[]" while the claims
-# the run was opened to test sat unread in the file beside it. An audit document
-# that says "no hypotheses" is worse than one that says nothing.
 _COC_WORKDIR_FILES = [
     "state.json",
     "context.md",
-    "iocs.json",
-    "timeline.json",
     "hypotheses.txt",
     "hypothesis_subjects.json",
     "recall_keys.json",
-    "review.md",
 ]
 
 

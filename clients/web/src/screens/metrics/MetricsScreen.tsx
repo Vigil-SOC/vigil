@@ -26,8 +26,9 @@ const STATUS_COLOR: Record<string, string> = {
   unknown: 'var(--tx-faint)',
 }
 
-function formatDuration(hours: number): string {
-  if (!hours || hours <= 0) return '0m'
+function formatDuration(hours: number | null): string {
+  if (hours === null) return '—'
+  if (hours <= 0) return '0m'
   if (hours < 1) return `${Math.round(hours * 60)}m`
   if (hours < 24) return `${hours.toFixed(1)}h`
   return `${(hours / 24).toFixed(1)}d`
@@ -114,7 +115,7 @@ function MetricsBody({ data }: { data: CaseMetricsData }) {
         <Kpi label="MTTD" note="mean time to detect">
           <span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{formatDuration(mttdHours)}</span>
         </Kpi>
-        <Kpi label="MTTR" note="mean time to respond">
+        <Kpi label="MTTR" note="mean time to resolve">
           <span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{formatDuration(mttrHours)}</span>
         </Kpi>
       </div>
