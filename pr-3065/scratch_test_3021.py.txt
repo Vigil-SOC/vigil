@@ -1,0 +1,43 @@
+from tests.unit.api.test_integration_test_endpoint import *  # noqa
+from tests.unit.api.test_integration_test_endpoint import _bridge, _post, _Client, _connector_probe
+
+
+def _counting(integrations):
+    b = _bridge(integrations)
+    inner = b.load_integration_config
+    b.loads = 0
+    def load():
+        b.loads += 1
+        return inner()
+    b.load_integration_config = load
+    return b
+
+
+CASES = [
+    ("virustotal", {"virustotal": {}}, "mcp_ok", 200, {"success", "message", "servers"}),
+    ("virustotal", {"virustotal": None}, "mcp_ok", 200, {"success", "message", "servers"}),
+    ("virustotal", {"virustotal": {}}, None, 200, {"success", "message", "servers"}),
+    ("virustotal", {}, "mcp_ok", 400, {"detail"}),
+    ("virustotal", {"other": {}}, None, 400, {"detail"}),
+    ("github", {}, "mcp_ok", 200, {"success", "reason", "message"}),
+    ("github", {"github": {"x": 1}}, "mcp_ok", 200, {"success", "reason", "message"}),
+]
+
+
+@pytest.mark.parametrize("iid,integ,mcp,code,keys", CASES)
+def test_shape(client, saved, iid, integ, mcp, code, keys):
+    m = _Client({"virustotal": (True, None, None)}, enabled=("virustotal",)) if mcp else None
+    b = _counting(integ)
+    r = _post(client, iid, b, m, saved)
+    print(iid, integ, mcp, r.status_code, r.json(), "loads=", b.loads)
+    assert r.status_code == code
+    assert set(r.json()) == keys
+    assert b.loads == 1
+
+
+def test_connector_shape(client, saved, monkeypatch):
+    _connector_probe(monkeypatch, manifest=200, session=200)
+    b = _counting({"loglm": {"connectorUrl": "https://loglm.example"}})
+    r = _post(client, "loglm", b, _Client({}), saved)
+    print("loglm", r.status_code, r.json(), "loads=", b.loads)
+    assert set(r.json()) == {"success", "message"} and b.loads == 1

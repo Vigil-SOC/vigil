@@ -1,0 +1,15 @@
+15.30s call     unit/_ratchets/test_config_audit_actor.py::test_no_placeholder_or_anonymous_config_actor
+8.62s call     unit/_ratchets/test_one_egress.py::test_no_provider_host_is_dialled_directly
+8.08s call     unit/_ratchets/test_no_import_time_db_connection.py::test_importing_every_router_opens_no_database_connection
+8.00s call     unit/_ratchets/test_one_loop_gate.py::test_fails_on_a_planted_loop[\nasync def investigate(client, messages, tools):\n    for _ in range(10):\n        response = await client.messages.create(model="m", messages=messages, tools=tools)\n        calls = [b for b in response.content if b.type == "tool_use"]\n        if not calls:\n            return response\n        messages.append({"role": "assistant", "content": response.content})\n]
+7.56s call     unit/_ratchets/test_one_loop_gate.py::test_the_tree_is_clean
+7.34s call     unit/_ratchets/test_no_metadata_kwarg.py::test_the_scan_finds_model_constructions
+6.75s call     unit/_ratchets/test_no_metadata_kwarg.py::test_no_model_is_constructed_with_a_metadata_kwarg
+6.59s call     unit/_ratchets/test_one_loop_gate.py::test_fails_on_a_planted_loop[\nasync def investigate(client, messages, tools):\n    while True:\n        response = await client.chat.completions.create(model="m", messages=messages)\n        if not response.choices[0].message.tool_calls:\n            return response\n        messages.append(response.choices[0].message)\n]
+6.53s call     unit/_ratchets/test_one_egress.py::test_no_provider_client_is_built_outside_the_sanctioned_sites
+6.32s call     unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 261 passed, 6 skipped, 2 warnings in 159.11s (0:02:39) ============

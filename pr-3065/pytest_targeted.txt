@@ -1,0 +1,4 @@
+ERROR tests/security/test_unauth_endpoints.py::test_vstrike_inbound_without_bearer_uses_api_key_gate
+ERROR tests/security/test_unauth_endpoints.py::test_an_mcp_credential_does_not_authenticate_the_api
+ERROR tests/security/test_unauth_endpoints.py::test_the_api_says_why_rather_than_calling_it_invalid
+============ 84 passed, 15 warnings, 42 errors in 278.54s (0:04:38) ============

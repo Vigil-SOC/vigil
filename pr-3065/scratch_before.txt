@@ -1,0 +1,54 @@
+virustotal {'virustotal': {}} mcp_ok 200 {'success': True, 'message': "Integration 'virustotal' connected.", 'status': {'enabled': False, 'configured': True, 'server_available': True, 'ready': False, 'server_names': ['virustotal']}, 'server_names': ['virustotal'], 'servers': [{'name': 'virustotal', 'success': True}]} loads= 2
+virustotal {'virustotal': None} mcp_ok 200 {'success': True, 'message': "Integration 'virustotal' connected.", 'status': {'enabled': False, 'configured': True, 'server_available': True, 'ready': False, 'server_names': ['virustotal']}, 'server_names': ['virustotal'], 'servers': [{'name': 'virustotal', 'success': True}]} loads= 2
+virustotal {'virustotal': {}} None 200 {'success': False, 'message': 'MCP client is not available.', 'status': {'enabled': False, 'configured': True, 'server_available': True, 'ready': False, 'server_names': ['virustotal']}, 'server_names': ['virustotal'], 'servers': []} loads= 2
+virustotal {} mcp_ok 400 {'detail': 'Integration not configured'} loads= 2
+virustotal {'other': {}} None 400 {'detail': 'Integration not configured'} loads= 2
+github {} mcp_ok 200 {'success': False, 'reason': 'not_testable', 'message': "Integration 'github' is not testable.", 'status': {'enabled': False, 'configured': False, 'server_available': False, 'ready': False}} loads= 2
+github {'github': {'x': 1}} mcp_ok 200 {'success': False, 'reason': 'not_testable', 'message': "Integration 'github' is not testable.", 'status': {'enabled': False, 'configured': True, 'server_available': False, 'ready': False}} loads= 2
+loglm 200 {'success': True, 'message': 'Connector reachable and it accepted the session secret. The agent access token was not checked.', 'status': {'enabled': False, 'configured': True, 'server_available': False, 'ready': False}} loads= 2
+E       AssertionError: assert {'message', '...s', 'success'} == {'message', '...s', 'success'}
+E         
+E         Extra items in the left set:
+E         'server_names'
+E         'status'
+E         Use -v to get more diff
+E       AssertionError: assert {'message', '...s', 'success'} == {'message', '...s', 'success'}
+E         
+E         Extra items in the left set:
+E         'server_names'
+E         'status'
+E         Use -v to get more diff
+E       AssertionError: assert {'message', '...s', 'success'} == {'message', '...s', 'success'}
+E         
+E         Extra items in the left set:
+E         'server_names'
+E         'status'
+E         Use -v to get more diff
+E       assert 2 == 1
+E        +  where 2 = <core.integrations.integration_bridge_service.IntegrationBridgeService object at 0x7fa3b3270dd0>.loads
+E       assert 2 == 1
+E        +  where 2 = <core.integrations.integration_bridge_service.IntegrationBridgeService object at 0x7fa3b32e33e0>.loads
+E       AssertionError: assert {'message', '...s', 'success'} == {'message', '...n', 'success'}
+E         
+E         Extra items in the left set:
+E         'status'
+E         Use -v to get more diff
+E       AssertionError: assert {'message', '...s', 'success'} == {'message', '...n', 'success'}
+E         
+E         Extra items in the left set:
+E         'status'
+E         Use -v to get more diff
+E       AssertionError: assert ({'message', '...s', 'success'} == {'message', 'success'}
+E         
+E         Extra items in the left set:
+E         'status'
+E         Use -v to get more diff)
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[virustotal-integ0-mcp_ok-200-keys0]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[virustotal-integ1-mcp_ok-200-keys1]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[virustotal-integ2-None-200-keys2]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[virustotal-integ3-mcp_ok-400-keys3]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[virustotal-integ4-None-400-keys4]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[github-integ5-mcp_ok-200-keys5]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_shape[github-integ6-mcp_ok-200-keys6]
+FAILED tests/unit/api/test_zz_scratch_3021.py::test_connector_shape - Asserti...
+8 failed, 25 deselected, 1 warning in 3.12s ==================

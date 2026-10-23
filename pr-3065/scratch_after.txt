@@ -1,0 +1,9 @@
+virustotal {'virustotal': {}} mcp_ok 200 {'success': True, 'message': "Integration 'virustotal' connected.", 'servers': [{'name': 'virustotal', 'success': True}]} loads= 1
+virustotal {'virustotal': None} mcp_ok 200 {'success': True, 'message': "Integration 'virustotal' connected.", 'servers': [{'name': 'virustotal', 'success': True}]} loads= 1
+virustotal {'virustotal': {}} None 200 {'success': False, 'message': 'MCP client is not available.', 'servers': []} loads= 1
+virustotal {} mcp_ok 400 {'detail': 'Integration not configured'} loads= 1
+virustotal {'other': {}} None 400 {'detail': 'Integration not configured'} loads= 1
+github {} mcp_ok 200 {'success': False, 'reason': 'not_testable', 'message': "Integration 'github' is not testable."} loads= 1
+github {'github': {'x': 1}} mcp_ok 200 {'success': False, 'reason': 'not_testable', 'message': "Integration 'github' is not testable."} loads= 1
+loglm 200 {'success': True, 'message': 'Connector reachable and it accepted the session secret. The agent access token was not checked.'} loads= 1
+8 passed, 25 deselected, 1 warning in 3.56s ==================
