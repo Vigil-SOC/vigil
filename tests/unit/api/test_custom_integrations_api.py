@@ -85,7 +85,6 @@ def test_save_oversize_code_is_400(client):
     [
         ("post", "/api/custom-integrations/acme/validate"),
         ("delete", "/api/custom-integrations/acme"),
-        # The old router chose 400 when the error text contained "integration_id".
         ("delete", "/api/custom-integrations/integration_id"),
     ],
 )

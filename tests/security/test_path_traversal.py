@@ -81,8 +81,8 @@ def test_server_path_stays_in_base(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_save_integration_refuses_traversal(tmp_path):
-    """Round-trip through ``save_integration`` to confirm the validation
-    error propagates."""
+    """Round-trip through ``save_integration`` to confirm error
+    propagates from the validation layer."""
     svc = CustomIntegrationService.__new__(CustomIntegrationService)
     svc.custom_integrations_dir = tmp_path.resolve()
     svc.metadata_file = svc.custom_integrations_dir / "metadata.json"

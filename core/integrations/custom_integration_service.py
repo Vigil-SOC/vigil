@@ -534,7 +534,6 @@ Only generate the JSON response when you have enough information to create a com
                 f"server_code exceeds {_MAX_SERVER_CODE_BYTES} byte limit"
             )
 
-        # Save metadata
         all_metadata = self._load_metadata()
         all_metadata[integration_id] = {
             **metadata,
@@ -543,10 +542,8 @@ Only generate the JSON response when you have enough information to create a com
         }
         self._save_metadata(all_metadata)
 
-        # Save server code
         server_file.write_text(server_code)
 
-        # Create __init__.py if it doesn't exist
         init_file = self.custom_integrations_dir / "__init__.py"
         if not init_file.exists():
             init_file.write_text('"""Custom integrations directory."""\n')
@@ -555,7 +552,7 @@ Only generate the JSON response when you have enough information to create a com
 
         return {
             "success": True,
-            "message": (f"Custom integration '{integration_id}' saved successfully"),
+            "message": f"Custom integration '{integration_id}' saved successfully",
             "integration_id": integration_id,
         }
 
@@ -577,7 +574,6 @@ Only generate the JSON response when you have enough information to create a com
         """Delete a custom integration."""
         server_file = self._server_path_for(integration_id)
 
-        # Remove from metadata
         all_metadata = self._load_metadata()
 
         if integration_id not in all_metadata:
@@ -586,7 +582,6 @@ Only generate the JSON response when you have enough information to create a com
         del all_metadata[integration_id]
         self._save_metadata(all_metadata)
 
-        # Remove server file
         if server_file.exists():
             server_file.unlink()
 
@@ -603,7 +598,6 @@ Only generate the JSON response when you have enough information to create a com
         if not server_file.exists():
             raise IntegrationNotFoundError(f"Integration '{integration_id}' not found")
 
-        # Try to compile the code
         code = server_file.read_text()
         try:
             compile(code, str(server_file), "exec")
@@ -613,7 +607,6 @@ Only generate the JSON response when you have enough information to create a com
             syntax_valid = False
             syntax_error = str(e)
 
-        # Check for required components
         has_server_init = "Server(" in code
         has_list_tools = "on_list_tools" in code
         has_call_tool = "on_call_tool" in code
