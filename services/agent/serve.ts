@@ -107,6 +107,12 @@ export async function memoryFor(state: State, parentRunId: string | undefined): 
 }
 
 export async function streamChat(state: State, request: ChatRequest, res: ServerResponse, build: HarnessFactory = harnessFor): Promise<void> {
+  // The reader leaving cancels the call in flight rather than waiting out the step:
+  // the wire buffers a step whole, so the check between events comes after the bill.
+  const reader = new AbortController();
+  const leave = () => reader.abort(new Error("the reader stopped the turn"));
+  res.on("close", leave);
+  const write = (frame: string) => void (res.writableEnded || res.destroyed || res.write(frame));
   // Assembling the spec is inside the try because it is the likeliest thing to
   // refuse: the headers are already sent, so a refusal is a frame or it is nothing.
   try {
@@ -116,6 +122,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
       run_id: request.run_id,
       spec,
       turns: request.turns,
+      signal: reader.signal,
       ...(request.principal === undefined ? {} : { principal: request.principal }),
       ...(request.actor === undefined ? {} : { started_by: request.actor }),
       ...(request.origin === undefined ? {} : { origin: request.origin }),
@@ -124,16 +131,21 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
 
     for (;;) {
       const next = await stream.next();
-      if (next.done) break;
-      for (const event of chatEvents(next.value)) res.write(sse(event));
-      // The reader is gone, so the generator is finalised here rather than after
-      // a whole answer nobody will read: its finally still journals the spend.
-      if (res.writableEnded || res.destroyed) return void (await stream.return(undefined as never));
+      if (next.done) {
+        if (reader.signal.aborted) log.info("chat turn stopped by its reader", { run_id: request.run_id, reason: next.value.reason });
+        break;
+      }
+      // Drained even once the reader is gone: the abort ends the turn within the
+      // call in flight, and return() here would abandon a step before its spend.
+      for (const event of chatEvents(next.value)) write(sse(event));
     }
   } catch (error) {
     log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
     failed(error);
-    res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
+    write(sse({ error: error instanceof Error ? error.message : String(error) }));
+  } finally {
+    // close also fires after a clean end(), which is not the reader stopping anything.
+    res.off("close", leave);
   }
   res.end();
 }

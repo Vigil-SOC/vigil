@@ -183,6 +183,12 @@ export interface AgentReport {
 
 const LOST_LEASE = "the worker lost its lease";
 
+// A conversation is aborted by its reader leaving, not a lease, so it says so.
+function abortReason(options: AgentOptions): string {
+  const reason: unknown = options.signal?.reason;
+  return options.conversation !== undefined && reason instanceof Error ? reason.message : LOST_LEASE;
+}
+
 // How often an operator's stop is looked for while a call is in flight.
 const STOP_POLL_MS = 500;
 
@@ -264,7 +270,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   const ctx: PluginContext = { harness: equipped(harness, options, turn), options, turn };
   // The lease went to another worker, which is driving the run now: hand it back
   // untouched. A terminal written here would end the run it is in the middle of.
-  if (options.signal?.aborted === true) return report(ctx, "aborted", LOST_LEASE, null);
+  if (options.signal?.aborted === true) return report(ctx, "aborted", abortReason(options), null);
   const ended = await terminalOf(harness, run_id);
   if (ended !== null) return report(ctx, ended.outcome, ended.reason, null);
 
@@ -285,7 +291,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     if (loop.kind === "stopped") return stopped(ctx, loop.directive);
     if (loop.kind === "waiting") return wait(ctx, loop.parked);
     if (loop.kind === "exhausted") return report(ctx, "budget_exhausted", loop.reason, null);
-    if (loop.kind === "lost") return report(ctx, "aborted", LOST_LEASE, null);
+    if (loop.kind === "lost") return report(ctx, "aborted", abortReason(options), null);
     if (loop.kind === "halted") return report(ctx, "completed", "the plugin ended the turn", null);
     const status = loop.outcome.status === "completed" ? "completed" : "failed";
     return { ...(await report(ctx, status, loop.outcome.reason, null)), value: loop.outcome.value };

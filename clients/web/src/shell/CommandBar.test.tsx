@@ -9,7 +9,7 @@ import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 import shellCss from './shell.css?inline'
 
-const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, findFindings, getIntegrations, apiGet, apiPost } = vi.hoisted(() => ({
+const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, findFindings, getIntegrations, exportJira, apiGet } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
   deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
@@ -20,8 +20,8 @@ const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument,
   getFinding: vi.fn(),
   findFindings: vi.fn(),
   getIntegrations: vi.fn(),
+  exportJira: vi.fn(),
   apiGet: vi.fn(),
-  apiPost: vi.fn(),
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -44,6 +44,7 @@ vi.mock('../services/api', () => ({
     create: (data: unknown) => createCase(data),
     delete: (id: string) => deleteCase(id),
     attachDocument: (id: string, file: File, opts: unknown) => attachDocument(id, file, opts),
+    exportJira: (id: string, projectKey: string) => exportJira(id, projectKey),
     getSLA: () => Promise.resolve({ data: {} }),
     getRecord: () => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } }),
     getComments: () => Promise.resolve({ data: { comments: [] } }),
@@ -88,7 +89,6 @@ vi.mock('../services/api', () => ({
   },
   default: {
     get: (path: string, config?: unknown) => apiGet(path, config),
-    post: (path: string, body?: unknown) => apiPost(path, body),
   },
 }))
 
@@ -146,7 +146,7 @@ beforeEach(() => {
   attachDocument.mockReset()
   attachDocument.mockResolvedValue({ data: {} })
   createCase.mockResolvedValue({ data: { case_id: 'case-new' } })
-  apiPost.mockReset()
+  exportJira.mockReset()
   getIntegrations.mockResolvedValue({ data: { enabled_integrations: [], integrations: {}, secrets_set: {} } })
   getCase.mockImplementation((id: string) => {
     if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', priority: 'high', status: 'open', finding_ids: [] } })
@@ -531,10 +531,9 @@ describe('CommandBar', () => {
     }
     await runCommand('/investigate f-1', 'Started Incident response workflow')
     await runCommand('/hunt rare beacon', 'Hunt started on case "rare beacon"')
-    apiPost.mockResolvedValueOnce({ data: { success: true, issue_key: 'SOC-12' } })
+    exportJira.mockResolvedValueOnce('Created SOC-12')
     await runCommand('/ticket case-9', 'Created SOC-12')
-    apiPost.mockResolvedValueOnce({ data: { success: true } })
-    await runCommand('/ticket case-9', 'Ticket created')
+    expect(exportJira).toHaveBeenCalledWith('case-9', 'SOC')
   })
 
   it('opens the case drawer from /replay, expands to the cases route, and closes in place', async () => {
