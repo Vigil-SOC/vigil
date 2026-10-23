@@ -1,0 +1,2 @@
+0.04s call     unit/storage/test_session_timeouts.py::test_pgoptions_is_carried_after_the_timeouts
+================== 12 passed, 2 warnings in 96.76s (0:01:36) ===================
