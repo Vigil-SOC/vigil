@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import WorkflowReaderPane from './WorkflowReaderPane'
+import { AgentRowsProvider } from './useWorkflowsData'
+import { mapApiAgent } from '../../data/mappers'
 import type { Workflow } from '../../data/appData'
 
 const api = vi.hoisted(() => ({
@@ -14,14 +16,13 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../services/api', () => ({
   workflowApi: api,
-  agentsApi: {
-    listAgents: vi.fn(() => Promise.resolve({ data: { agents: [
-      { id: 'threat_hunter', name: 'Threat hunter', color: '#0a0' },
-      { id: 'reporter', name: 'Reporter' },
-      { id: 'triage', name: 'Triage' },
-    ] } })),
-  },
 }))
+
+const agents = [
+  { id: 'threat_hunter', name: 'Threat hunter', color: '#0a0' },
+  { id: 'reporter', name: 'Reporter' },
+  { id: 'triage', name: 'Triage' },
+].map(mapApiAgent)
 
 const row = (over: Partial<Workflow>): Workflow => ({
   id: 'x', icon: 'flow', name: 'X', desc: '', agents: [], cmds: [], source: 'file', useCase: '',
@@ -32,7 +33,8 @@ const actions = { onBack: vi.fn(), onHistory: vi.fn(), onRun: vi.fn(), onEdit: v
 function Search() {
   return <span data-testid="search">{useLocation().search}</span>
 }
-const renderPane = (ui: React.ReactElement) => render(<MemoryRouter>{ui}<Search /></MemoryRouter>)
+const tree = (ui: React.ReactElement, rows = agents) => <MemoryRouter><AgentRowsProvider value={rows}>{ui}</AgentRowsProvider><Search /></MemoryRouter>
+const renderPane = (ui: React.ReactElement) => render(tree(ui))
 
 const checkpoints = { hypothesis_approval: 'ask', scope_extension: 'auto', verdict_review: 'auto', budget_anomaly: 'ask' }
 const hunt = {
@@ -149,6 +151,31 @@ describe('workflow reader pane', () => {
     await screen.findByRole('region', { name: 'How it runs' })
     expect(await within(panel('Who does it')).findByText('Threat hunter')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText(note)).toBeInTheDocument()
+  })
+
+  it('names a phase agent from the agents it is given, and follows a rename', async () => {
+    serve({
+      definition: { run_kind: 'compose', hunt_like: false, objectives: [], phases: [] },
+      preflight: {
+        ...hunt.preflight,
+        roles: { lead: null, reviewer: null, helpers: [
+          { agent: 'custom-a', name: 'A', tools: [], approval_required: false },
+          { agent: 'custom-new_one', name: 'B', tools: [], approval_required: false },
+        ] },
+        roles_note: null, checkpoints: {},
+      },
+    })
+    const pane = <WorkflowReaderPane wf={row({ id: 'custom', name: 'Custom' })} {...actions} />
+    const before = [{ id: 'custom-a', name: 'Old name', color: '#111' }].map(mapApiAgent)
+    const { rerender } = render(tree(pane, before))
+    expect(await within(await screen.findByRole('region', { name: 'Who does it' })).findByText('Old name')).toBeInTheDocument()
+    expect(within(panel('Who does it')).getByText('Custom New One')).toBeInTheDocument()
+
+    const after = [{ id: 'custom-a', name: 'New name', color: '#222' }, { id: 'custom-new_one', name: 'Fresh' }].map(mapApiAgent)
+    rerender(tree(pane, after))
+    expect(within(panel('Who does it')).getByText('New name')).toBeInTheDocument()
+    expect(within(panel('Who does it')).getByText('Fresh')).toBeInTheDocument()
+    expect(within(panel('Who does it')).queryByText('Old name')).toBeNull()
   })
 
   it('says an adjudication hands off nothing, and draws one stage per phase for a compose', async () => {
