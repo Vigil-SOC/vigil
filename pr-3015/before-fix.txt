@@ -1,0 +1,12 @@
+0.02s call     unit/api/test_budget_read_error.py::test_budget_reads_answer_5xx_when_settings_read_fails[/api/analytics/budget/quota]
+0.02s call     unit/api/test_budget_read_error.py::test_budget_reads_answer_5xx_when_settings_read_fails[/api/analytics/budget]
+
+(3 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/api/test_budget_read_error.py::test_budget_reads_answer_5xx_when_settings_read_fails[/api/analytics/budget]
+FAILED tests/unit/api/test_budget_read_error.py::test_budget_reads_answer_5xx_when_settings_read_fails[/api/analytics/budget/quota]
+============================== 2 failed in 3.00s ===============================
+E       AssertionError: answered 200 {"default_vk":""}
+tests/unit/api/test_budget_read_error.py:23: AssertionError
+E       AssertionError: answered 200 {"configured":false,"message":"No Bifrost virtual key configured. Set one in Settings › AI models to enable spend tracking."}
+tests/unit/api/test_budget_read_error.py:23: AssertionError

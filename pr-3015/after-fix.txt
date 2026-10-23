@@ -1,0 +1,3 @@
+0.02s call     unit/llm/test_llm_interaction_log.py::TestSpendFigureFreezesItsRates::test_priced_call_keeps_its_rates_and_unpriced_stores_nulls
+0.02s call     unit/llm/test_claude_service.py::TestChatVirtualKeyHeader::test_messages_create_headers[off-bifrost]
+============================== 77 passed in 9.67s ==============================
