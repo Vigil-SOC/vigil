@@ -1,6 +1,4 @@
-import { useEffect, useState } from 'react'
 import { Icon } from '../shared/icons'
-import { basePath } from '../config/basePath'
 
 /**
  * The header item that says this console is not authenticated.
@@ -13,8 +11,8 @@ import { basePath } from '../config/basePath'
  * The build flag alone cannot answer the question. VITE_DEV_MODE is frozen into
  * the bundle, while DEV_MODE is read by the backend at runtime — a prebuilt
  * image deployed with the bypass on (values-dev.yaml) would show nothing, which
- * is the deployment where an outsider can reach it. So the component asks the
- * backend as well, and warns if either says so.
+ * is the deployment where an outsider can reach it. So the shell renders this
+ * when either says so (authBypassed in statusLine.ts).
  *
  * It lives in the header rather than as a bar across the page because a warning
  * that hides the thing you are working on gets removed, and a removed warning
@@ -25,33 +23,7 @@ import { basePath } from '../config/basePath'
  * weeks ago.
  */
 
-const BUILT_WITH_BYPASS = import.meta.env.VITE_DEV_MODE === 'true'
-
 export default function DevModeWarning() {
-  const [backendBypassed, setBackendBypassed] = useState(false)
-
-  useEffect(() => {
-    // A failed probe leaves the indicator as it is. It says "auth is off", and
-    // a backend we cannot reach has told us nothing that justifies saying that.
-    let live = true
-    // Bounded: a backend that accepts the connection and never answers would
-    // otherwise leave this request pending for the life of the session.
-    fetch(`${basePath}/api/health`, {
-      credentials: 'include',
-      signal: AbortSignal.timeout(15_000),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => {
-        if (live && body?.auth_bypassed === true) setBackendBypassed(true)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [])
-
-  if (!BUILT_WITH_BYPASS && !backendBypassed) return null
-
   // tabIndex so the warning is reachable without a mouse.
   return (
     <div

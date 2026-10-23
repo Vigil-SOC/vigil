@@ -534,6 +534,9 @@ class WorkflowsService:
         # a root-cause run's is the handoff it traces back from, which is a join
         # key and reads as nonsense in the "started by" an operator is shown.
         actor: Optional[str] = None,
+        # Signed name of the person, when a person started it. The worker carries
+        # it opaquely; the invoke endpoint verifies it before binding the caller.
+        principal: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Start a workflow as a compose run on the agent layer.
 
@@ -637,6 +640,7 @@ class WorkflowsService:
                 }
             ),
             enqueued_by=actor or triggered_by or "api",
+            principal=principal,
         )
         try:
             job_id = await enqueue_run(job)

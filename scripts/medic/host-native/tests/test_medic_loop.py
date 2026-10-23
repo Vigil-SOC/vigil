@@ -130,6 +130,8 @@ def test_child_env_is_an_allowlist(box: Path) -> None:
     # L49: a host-native Medic says so, and reads the worker on loopback.
     assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "start_sh"
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "127.0.0.1:6990"
+    # Unset stays unset. A DEV_MODE already in this process is forwarded, which
+    # is the point of the allowlist entry.
     assert set(env) <= {
         "PATH",
         "HOME",
@@ -141,6 +143,8 @@ def test_child_env_is_an_allowlist(box: Path) -> None:
         "VIGIL_MEDIC_DATA_DIR",
         "VIGIL_MEDIC_INSTALL_SHAPE",
         "VIGIL_MEDIC_AGENT_WORKER_ADDR",
+        "VIGIL_MEDIC_GATEWAY_ADDR",
+        "DEV_MODE",
         # Set by the shells themselves, not passed through.
         "PWD",
         "SHLVL",
@@ -163,6 +167,26 @@ def _child_env(box: Path, *extra: str) -> dict[str, str]:
         )
     finally:
         _stop(proc)
+
+
+def test_unset_gateway_address_and_dev_mode_stay_unset(box: Path, monkeypatch) -> None:
+    """Host-native has no gateway. Inventing either would register the sensor."""
+    monkeypatch.delenv("VIGIL_MEDIC_GATEWAY_ADDR", raising=False)
+    monkeypatch.delenv("DEV_MODE", raising=False)
+    env = _child_env(box)
+    assert "VIGIL_MEDIC_GATEWAY_ADDR" not in env
+    assert "DEV_MODE" not in env
+
+
+def test_gateway_address_and_dev_mode_reach_medic(box: Path, monkeypatch) -> None:
+    """Passed in, both survive env -i. Unset, they are absent (host-native default)."""
+    monkeypatch.setenv("VIGIL_MEDIC_GATEWAY_ADDR", "127.0.0.1:8471")
+    monkeypatch.setenv("DEV_MODE", "true")
+    monkeypatch.setenv("JWT_SECRET_KEY", "leak-me")
+    env = _child_env(box)
+    assert env["VIGIL_MEDIC_GATEWAY_ADDR"] == "127.0.0.1:8471"
+    assert env["DEV_MODE"] == "true"
+    assert "JWT_SECRET_KEY" not in env
 
 
 def test_agent_worker_address_is_passed_through(box: Path) -> None:

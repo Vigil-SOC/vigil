@@ -155,6 +155,9 @@ export interface AgentOptions {
   // The Vigil agent this run's skill reads are credited to (#1560). Absent records
   // them unattributed.
   agent_id?: string;
+  // API-signed name of the person who started the run. Journaled on the run
+  // event so a resume still binds them. Absent for a system run.
+  principal?: string;
   signal?: AbortSignal;
 }
 
@@ -1270,6 +1273,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       seed: options.run_id,
       tenant_id: null,
       started_by: options.started_by ?? "worker",
+      ...(options.principal === undefined ? {} : { principal: options.principal }),
     };
     await options.hooks.open({ harness, options, turn: () => 0 }, base);
     return;
@@ -1285,6 +1289,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       seed: options.run_id,
       tenant_id: null,
       started_by: options.started_by ?? "worker",
+      ...(options.principal === undefined ? {} : { principal: options.principal }),
     }),
     ...unbound,
   ]);

@@ -148,6 +148,146 @@
    "input": "reset Token canary-0018-reset-value",
    "secret": "canary-0018-reset-value",
    "expected": "reset Token [REDACTED]"
+  },
+  {
+   "id": "cookie-header",
+   "family": "cookie",
+   "input": "Cookie: session=canaryCookie0001; theme=dark",
+   "secret": "canaryCookie0001",
+   "expected": "Cookie: [REDACTED]"
+  },
+  {
+   "id": "set-cookie-header",
+   "family": "cookie",
+   "input": "Set-Cookie: session=canarySetCookie0002; Path=/; HttpOnly",
+   "secret": "canarySetCookie0002",
+   "expected": "Set-Cookie: [REDACTED]"
+  },
+  {
+   "id": "set-cookie-httpcore",
+   "family": "cookie",
+   "input": "receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'set-cookie', b'session=canaryHttpcore0003; Path=/')])",
+   "secret": "canaryHttpcore0003",
+   "expected": "receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'set-cookie', b'[REDACTED]')])"
+  },
+  {
+   "id": "redis-auth",
+   "family": "redis_auth",
+   "input": "redis command AUTH canaryRedisAuth0004",
+   "secret": "canaryRedisAuth0004",
+   "expected": "redis command AUTH [REDACTED]"
+  },
+  {
+   "id": "redis-auth-acl",
+   "family": "redis_auth",
+   "input": "AUTH appuser canaryRedisAuth0005",
+   "secret": "canaryRedisAuth0005",
+   "expected": "AUTH [REDACTED] [REDACTED]"
+  },
+  {
+   "id": "key-url-encoded",
+   "family": "key_name",
+   "input": "GET /login?password%3DcanaryPct3D0006&next=/",
+   "secret": "canaryPct3D0006",
+   "expected": "GET /login?password%3D[REDACTED]&next=/"
+  },
+  {
+   "id": "token-jwt-no-eyj",
+   "family": "token_shape",
+   "input": "jwt hdr_noteyJ.payloadCanary0007.sigCanary0007abcd",
+   "secret": "payloadCanary0007",
+   "expected": "jwt [REDACTED]"
+  },
+  {
+   "id": "client-secret-space",
+   "family": "key_name",
+   "input": "login client_secret canaryClientSecret0008 extra",
+   "secret": "canaryClientSecret0008",
+   "expected": "login client_secret [REDACTED] extra"
+  },
+  {
+   "id": "flag-mysql-p",
+   "family": "flag",
+   "input": "mysql -u root -p canaryMysqlP0009 -h db",
+   "secret": "canaryMysqlP0009",
+   "expected": "mysql -u root -p [REDACTED] -h db"
+  },
+  {
+   "id": "flag-mysql-p-twice",
+   "family": "flag",
+   "input": "mysql -p canaryMysqlP0015 -p canaryMysqlP0016 -h db",
+   "secret": "canaryMysqlP0016",
+   "expected": "mysql -p [REDACTED] -p [REDACTED] -h db"
+  },
+  {
+   "id": "flag-mysqladmin-p",
+   "family": "flag",
+   "input": "mysqladmin -p canaryMysqlAdmin0010 ping",
+   "secret": "canaryMysqlAdmin0010",
+   "expected": "mysqladmin -p [REDACTED] ping"
+  },
+  {
+   "id": "flag-redis-cli-p",
+   "family": "flag",
+   "input": "redis-cli -p canaryRedisCli0011 INFO",
+   "secret": "canaryRedisCli0011",
+   "expected": "redis-cli -p [REDACTED] INFO"
+  },
+  {
+   "id": "token-bearer-short",
+   "family": "token_shape",
+   "input": "sent header Bearer canaryB12",
+   "secret": "canaryB12",
+   "expected": "sent header Bearer [REDACTED]"
+  },
+  {
+   "id": "token-bearer-tiny",
+   "family": "token_shape",
+   "input": "sent header Bearer a1b",
+   "secret": "a1b",
+   "expected": "sent header Bearer [REDACTED]"
+  },
+  {
+   "id": "token-bearer-short-hex",
+   "family": "token_shape",
+   "input": "sent header Bearer deadbeef",
+   "secret": "deadbeef",
+   "expected": "sent header Bearer [REDACTED]"
+  },
+  {
+   "id": "url-credential-space",
+   "family": "url_credential",
+   "input": "redis url redis://default:canary pass0012@redis:6379/0",
+   "secret": "canary pass0012",
+   "expected": "redis url redis://default:[REDACTED]@redis:6379/0"
+  },
+  {
+   "id": "flag-requirepass",
+   "family": "flag",
+   "input": "redis-server --requirepass canaryRequire0013 --port 6379",
+   "secret": "canaryRequire0013",
+   "expected": "redis-server --requirepass [REDACTED] --port 6379"
+  },
+  {
+   "id": "key-requirepass",
+   "family": "key_name",
+   "input": "requirepass=canaryRequire0014",
+   "secret": "canaryRequire0014",
+   "expected": "requirepass=[REDACTED]"
+  },
+  {
+   "id": "ref-default-colon",
+   "family": "variable_reference",
+   "input": "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunter2hunter2}",
+   "secret": "hunter2hunter2",
+   "expected": "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-[REDACTED]}"
+  },
+  {
+   "id": "ref-default-dash",
+   "family": "variable_reference",
+   "input": "- POSTGRES_PASSWORD=${POSTGRES_PASSWORD-hunter2hunter2}",
+   "secret": "hunter2hunter2",
+   "expected": "- POSTGRES_PASSWORD=${POSTGRES_PASSWORD-[REDACTED]}"
   }
  ],
  "must_keep": [
@@ -164,6 +304,19 @@
   "/usr/bin/vigil --port 6987 --log-level info --workers 4",
   "token_count=1200",
   "password: null",
-  "Splunk configuration incomplete: missing password"
+  "Splunk configuration incomplete: missing password",
+  "ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}",
+  "API_TOKEN: ${API_TOKEN-}",
+  "API_TOKEN: ${API_TOKEN:?must be set}",
+  "API_TOKEN: ${API_TOKEN:+optional}",
+  "mkdir -p /x",
+  "docker run -p 8080:80",
+  "ssh -p 22 host",
+  "vigil -p hunter2hunter2",
+  "WWW-Authenticate: Bearer realm=\"api\"",
+  "Using Bearer authentication for upstream",
+  "1.2.3",
+  "api.example.com",
+  "INFO:     10.0.0.5:4242 - \"GET /api/health HTTP/1.1\" 200 OK"
  ]
 }

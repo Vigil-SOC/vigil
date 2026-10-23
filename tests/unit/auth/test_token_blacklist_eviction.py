@@ -43,6 +43,7 @@ async def test_noeviction_or_blocked_config_is_silent(monkeypatch, caplog, polic
 async def test_user_cutoff_expires_with_the_longest_token(monkeypatch):
     client = _Redis("noeviction")
     monkeypatch.setattr(tb, "_get_client", lambda: client)
+    monkeypatch.setattr(tb.sign_ins, "end_all_for_user", lambda *a: 0)
     await tb.revoke_all_for_user("u-1")
     assert client.sets == [
         (

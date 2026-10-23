@@ -35,6 +35,7 @@ export interface V3Options {
   run_id: string;
   spec: RunSpec;
   started_by?: string;
+  principal?: string;
   // The lease: aborted when this worker may no longer write the run.
   signal?: AbortSignal;
   stop?: StopSource;
@@ -76,6 +77,7 @@ export async function runRootCauseV3(harness: Harness<V3Kinds>, options: V3Optio
         seed: run_id,
         tenant_id: null,
         started_by: options.started_by ?? "worker",
+        ...(options.principal === undefined ? {} : { principal: options.principal }),
       }),
     ]);
   }
