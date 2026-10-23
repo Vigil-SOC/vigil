@@ -1,5 +1,0 @@
-INFO core.secrets_manager Secrets manager initialized: backend=encrypted, keyring=False
-ERROR core.cases.case_sla_service Could not assign an SLA to case c-probe
-Traceback (most recent call last):
-RuntimeError: Database not initialized. Call initialize() first.
-RETURNED c-probe
