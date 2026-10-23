@@ -112,9 +112,8 @@ COPY --from=python-deps /install/deps /usr/local
 COPY --chown=vigil:vigil core/        ./core/
 COPY --chown=vigil:vigil services/    ./services/
 COPY --chown=vigil:vigil tools/       ./tools/
-# Schema init SQL: source moved to infra/database/init (R6). Keep the in-image
-# path /app/database/init stable so desktop packaging (`docker cp
-# <cid>:/app/database/init`) and the initdb mount are unaffected.
+# Schema SQL the process reads at runtime (adoption, the reference seeder).
+# Desktop packaging does not copy this tree out of the image.
 COPY --chown=vigil:vigil infra/database/init/ ./database/init/
 COPY --chown=vigil:vigil data/        ./data/
 COPY --chown=vigil:vigil VERSION      ./VERSION

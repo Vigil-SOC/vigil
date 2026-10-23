@@ -8,9 +8,12 @@ Ranking, TTL and slot-wait live in test_orchestrator_rank.py (#922).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from core.auth import tool_principal
 
 # Imported at load, while core.config.is_demo_mode is still the real function.
 # database_data_service binds that name at import; importing it after a test
@@ -360,23 +363,25 @@ async def test_post_investigations_inserts_a_human_ask_the_tick_launches(
             workflow_id="threat-hunt",
             hypothesis="T1071 on FYODOR-L",
             priority="low",
-        )
+        ),
+        user=SimpleNamespace(username="nestor"),
     )
 
     assert result["success"] is True
-    assert captured == [
-        {
-            "kind": "human_ask",
-            "priority": "low",
-            "payload": {
-                "workflow_id": "threat-hunt",
-                "finding_ids": [],
-                "case_id": None,
-                "hypothesis": "T1071 on FYODOR-L",
-                "hypothesis_subjects": None,
-            },
-        }
-    ]
+    assert len(captured) == 1
+    row = captured[0]
+    payload = dict(row["payload"])
+    assert tool_principal.verify(payload.pop("principal")) == "nestor"
+    assert row["kind"] == "human_ask"
+    assert row["priority"] == "low"
+    assert payload == {
+        "workflow_id": "threat-hunt",
+        "finding_ids": [],
+        "case_id": None,
+        "hypothesis": "T1071 on FYODOR-L",
+        "hypothesis_subjects": None,
+        "started_by": "nestor",
+    }
 
     orch = _orchestrator()
     orch._queued_intake_triggers = MagicMock(

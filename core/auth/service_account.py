@@ -23,8 +23,8 @@ holds the password.
 
 Exit codes (sysexits, so a caller can tell them from ``docker compose exec``'s
 own failures): 0 done · 64 bad input · 70 database error · 77 refused · 75
-database not ready (no ``users.service_account`` column or no Viewer role yet;
-the caller retries). Errors print their type only: SQLAlchemy's carry the
+database not ready (no ``users.service_account`` or ``users.principal_id``
+column, or no Viewer role yet; the caller retries). Errors print their type only: SQLAlchemy's carry the
 statement's parameters, which include the password hash.
 """
 
@@ -38,9 +38,10 @@ from typing import Optional, TextIO
 from sqlalchemy import inspect
 from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
+from core.auth import principals
 from core.auth.auth_service import AuthService
 from core.storage.connection import get_db_manager
-from core.storage.models import Role, User
+from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -74,13 +75,14 @@ def _email(username: str) -> str:
 
 
 def schema_ready(conn) -> bool:
-    """Whether ``users.service_account`` exists (create_all, 43_*.sql or migration)."""
+    """Whether ``users.service_account`` and ``users.principal_id`` exist
+    (create_all, or ``python -m core.upgrade``)."""
     try:
         columns = inspect(conn).get_columns("users")
     except NoSuchTableError:
         return False  # create_all hasn't run yet
 
-    return any(c["name"] == "service_account" for c in columns)
+    return {"service_account", "principal_id"} <= {c["name"] for c in columns}
 
 
 def ensure(username: str, password: str) -> tuple[str, int]:
@@ -94,7 +96,7 @@ def ensure(username: str, password: str) -> tuple[str, int]:
 
     with get_db_manager().engine.connect() as conn:
         if not schema_ready(conn):
-            raise NotReady("users.service_account is missing")
+            raise NotReady("users.service_account or users.principal_id is missing")
 
     with unit_of_work() as session:
         if not session.query(Role).filter(Role.role_id == VIEWER_ROLE_ID).first():
@@ -104,24 +106,29 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         now = utcnow()
         if user is None:
             outcome = "created"
-            session.add(
-                User(
-                    user_id=f"user-{uuid.uuid4().hex[:12]}",
-                    username=username,
-                    email=_email(username),
-                    password_hash=AuthService.hash_password(password),
-                    full_name="Medic gateway (service account)",
-                    role_id=VIEWER_ROLE_ID,
-                    is_active=True,
-                    is_verified=True,
-                    service_account=True,
-                    password_changed_at=now,
-                )
+            user = User(
+                user_id=f"user-{uuid.uuid4().hex[:12]}",
+                username=username,
+                email=_email(username),
+                password_hash=AuthService.hash_password(password),
+                full_name="Medic gateway (service account)",
+                role_id=VIEWER_ROLE_ID,
+                is_active=True,
+                is_verified=True,
+                service_account=True,
+                password_changed_at=now,
             )
+            principals.add_for_user(session, user)
+            session.add(user)
         else:
             if user.service_account is not True:
                 raise ServiceAccountError(
                     f"{username} exists and is not a service account"
+                )
+            # A deleted account stays deleted; the name is not reused either.
+            if session.get(Principal, user.principal_id).deleted_at is not None:
+                raise ServiceAccountError(
+                    f"{username} was deleted; enable with a new name"
                 )
             if user.role_id != VIEWER_ROLE_ID:
                 raise ServiceAccountError(
@@ -133,6 +140,9 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 outcome = "rotated"
                 user.password_hash = AuthService.hash_password(password)
                 user.password_changed_at = now
+                # After bcrypt, which can cross a second. A login with the
+                # old password during the hash is then still before the cutoff.
+                user.tokens_valid_after = utcnow()
             user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None

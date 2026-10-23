@@ -12,6 +12,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from core.agents import run_limits
+from core.agents.attribution import (
+    TrailWriteError,
+    note_run_start,
+    note_terminal,
+    phase_actors,
+    plugin_actor,
+)
 from core.agents.directives import (
     DIRECTIVE_FIELDS,
     DIRECTIVE_KINDS,
@@ -26,11 +33,13 @@ from core.agents.queue import (
     enqueue_run,
     new_run_id,
 )
+from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.workflows.enablement import disabled_message, is_enabled
+from core.workflows.workflow_run_service import WorkflowRunService
 
 router = APIRouter()
 
@@ -131,7 +140,9 @@ def list_runs(
 @router.post(
     "", dependencies=_RUN_AGENTS, response_model=StartRunResponse, status_code=202
 )
-async def start_run(request: StartRunRequest) -> StartRunResponse:
+async def start_run(
+    request: StartRunRequest, user: User = Depends(get_current_user)
+) -> StartRunResponse:
     if request.run_kind not in RUN_KINDS:
         raise HTTPException(
             status_code=400, detail=f"unknown run_kind: {request.run_kind}"
@@ -157,21 +168,55 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.overrides is not None:
         payload["overrides"] = request.overrides
 
+    raw_person = getattr(user, "principal_id", None) or getattr(user, "user_id", None)
+    person_id = raw_person if isinstance(raw_person, str) and raw_person else None
+    actor = plugin_actor(request.run_kind)
     # Best-effort: without a workflow_runs row a parked run cannot raise an
     # answerable checkpoint. Like every write to that table, the ledger is truth.
-    _begin_run_row(run_id, request)
+    _begin_run_row(run_id, request, user.username, person_id)
+
+    try:
+        note_run_start(
+            run_id=run_id,
+            actor=actor,
+            origin_kind="person",
+            origin=person_id or "",
+            spec=payload,
+        )
+    except TrailWriteError as exc:
+        logger.error("run %s was not recorded on the trail: %s", run_id, exc)
+        WorkflowRunService().finalize_run(
+            run_id, status="failed", error="the action could not be recorded"
+        )
+        raise HTTPException(
+            status_code=503, detail="the action could not be recorded"
+        ) from exc
 
     job = build_start_job(
         run_id=run_id,
         run_kind=request.run_kind,
         request=payload,
-        enqueued_by="api",
+        enqueued_by=user.username,
         tenant_id=request.tenant_id,
+        principal=tool_principal.mint(
+            user.username,
+            person_id=person_id,
+            agent_id=actor,
+            run_id=run_id,
+            origin="person",
+            ttl=tool_principal.RUN_TTL,
+        ),
+        actor=actor,
+        origin="person",
     )
     try:
         job_id = await enqueue_run(job)
     except Exception as exc:  # the queue is the only thing this endpoint can fail on
         logger.error("failed to enqueue agent run %s: %s", run_id, exc)
+        WorkflowRunService().finalize_run(
+            run_id, status="failed", error="run queue unavailable"
+        )
+        note_terminal(run_id, "failed", "")
         raise HTTPException(status_code=503, detail="run queue unavailable") from exc
 
     return StartRunResponse(run_id=run_id, job_id=job_id)
@@ -179,7 +224,12 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
 
 # The playbook reference names the workflow when there is one; a run started from
 # file paths is named for the loop it runs, which is all the console needs to list it.
-def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
+def _begin_run_row(
+    run_id: str,
+    request: StartRunRequest,
+    triggered_by: str,
+    person_id: Optional[str] = None,
+) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService
 
@@ -187,6 +237,15 @@ def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
     workflow_id = (
         named if request.playbook.startswith(WORKFLOW_SCHEME) else request.run_kind
     )
+    phases: Dict[str, str] = {}
+    if request.playbook.startswith(WORKFLOW_SCHEME):
+        try:
+            workflow = WorkflowsService().get_workflow(workflow_id)
+        except Exception as exc:  # noqa: BLE001 — the row is best-effort
+            logger.warning("no playbook phases for %s: %s", workflow_id, exc)
+            workflow = None
+        if workflow is not None:
+            phases = phase_actors(workflow.phases)
     # A bare run_kind names no definition, so it has no version to record.
     try:
         version = (
@@ -202,8 +261,13 @@ def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
         workflow_name=workflow_id,
         workflow_source="agent",
         workflow_version=version,
-        trigger_context={"run_kind": request.run_kind, "prompt": request.prompt},
-        triggered_by="api",
+        trigger_context={
+            "run_kind": request.run_kind,
+            "prompt": request.prompt,
+            **({"phase_agents": phases} if phases else {}),
+        },
+        triggered_by=triggered_by,
+        triggered_by_principal_id=person_id,
         run_id=run_id,
     )
 
@@ -303,6 +367,8 @@ def queue_directive(
             body=body.text,
             actor=current_user.username,
             fields=body.fields,
+            actor_principal_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
         )
     except UnknownRun as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
@@ -310,6 +376,10 @@ def queue_directive(
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except InvalidDirective as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    except TrailWriteError as exc:
+        raise HTTPException(
+            status_code=503, detail="the action could not be recorded"
+        ) from exc
 
     return DirectiveResponse(
         directive_id=directive["directive_id"],

@@ -1,7 +1,6 @@
 """Password reset without a mail backend (#2247): the request reply is honest
 about the backend, and an operator can issue a link from the host."""
 
-import asyncio
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.auth import password_reset
+from core.platform import email_service
 from core.routing import request_unit_of_work
 from services.api.middleware.rate_limit import limiter
 from services.api.routers import auth
@@ -56,8 +56,8 @@ def _request(user, settings):
     app.dependency_overrides[request_unit_of_work] = lambda: _session(user)
     limiter.reset()
     with patch.object(auth, "get_settings", return_value=settings), patch.object(
-        auth, "send_email"
-    ):
+        email_service, "get_settings", return_value=settings
+    ), patch.object(auth, "send_email"):
         resp = TestClient(app).post(
             "/api/auth/password-reset/request", json={"email": "admin@example.com"}
         )
@@ -106,7 +106,7 @@ def test_link_carries_a_token_for_that_user(capsys):
     parsed = urlparse(url)
     assert parsed.path == "/vigil/reset-password"
     token = parse_qs(parsed.query)["token"][0]
-    assert asyncio.run(password_reset.verify_reset_token(token)) == "u-admin"
+    assert password_reset.decode_reset_token(token) == "u-admin"
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,4 @@
+import type { RunPayload } from "../../contracts/events.js";
 import { streamAgent, type AgentKinds, type AgentReport } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
 import type { Message } from "../../core/provider.js";
@@ -18,6 +19,8 @@ export interface ChatOptions {
   spec: RunSpec;
   turns: readonly Turn[];
   started_by?: string;
+  principal?: string;
+  origin?: RunPayload["origin"];
   // The agent this conversation belongs to, when it belongs to one (#1560):
   // its skill reads are credited to it. Absent for a plain chat.
   agent_id?: string;
@@ -59,6 +62,8 @@ export async function* runChat(harness: Harness, options: ChatOptions): AsyncGen
     ...(hooks === undefined ? {} : { hooks }),
     tools: toolsFrom(options.spec.tools),
     started_by: options.started_by ?? "console",
+    ...(options.principal === undefined ? {} : { principal: options.principal }),
+    ...(options.origin === undefined ? {} : { origin: options.origin }),
     conversation,
     ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
   });
