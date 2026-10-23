@@ -362,7 +362,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
             <EvidenceBody item={open} />
             <div className="flex items-center gap-2 flex-wrap">
               <button type="button" className="btn ghost" onClick={markNoise} disabled={marking}>
-                {marked ? 'Undo' : 'Mark as noise (teaches triage)'}
+                {marked ? 'Undo' : 'Mark as noise'}
               </button>
               <button type="button" className="btn ghost icon" aria-label={NOISE_INFO} title={NOISE_INFO}>
                 <Icon name="info" size={14} />

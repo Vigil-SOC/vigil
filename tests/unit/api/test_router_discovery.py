@@ -169,8 +169,8 @@ def test_gated_webhook_receivers_are_off_by_default(monkeypatch):
     describe the shipped default rather than whatever the ambient environment
     happens to be.
     """
-    from core.routing import Auth
     from core.config import get_settings
+    from core.routing import Auth
 
     for var in GATE_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -241,21 +241,24 @@ def test_required_auth_rejects_a_reason():
 
 
 def test_every_non_required_router_has_a_reason():
-    """The live tree, not just the validator: all 9 deviations are justified.
+    """The live tree, not just the validator: all 10 deviations are justified.
 
     ``pricing`` is the fourth of the agent layer's internal endpoints, on the
     same terms as ``tools``, ``playbooks`` and ``run_bridge``: the shared secret,
     because the caller is the worker rather than a session. Reachability is the
     NetworkPolicy's job since ADR 0014 -- these were loopback-gated until the
     agent layer became its own Deployments.
+
+    ``audit_feed`` refuses an MCP credential with 403 before the session
+    dependency would turn it into a 401, and requires a person principal.
     """
     from core.routing import Auth
 
     deviations = [
         (name, meta) for name, _r, meta in _specs() if meta.auth is not Auth.REQUIRED
     ]
-    assert len(deviations) == 9, (
-        f"expected 9 non-REQUIRED routers, found {len(deviations)}: "
+    assert len(deviations) == 10, (
+        f"expected 10 non-REQUIRED routers, found {len(deviations)}: "
         f"{sorted(n for n, _ in deviations)}. A new one needs review."
     )
     for name, meta in deviations:
