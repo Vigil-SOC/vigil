@@ -6879,56 +6879,11 @@
    background: var(--hover);
 }
 
-.auth .row-between {
+.auth .row-end {
    display: flex;
    align-items: center;
-   justify-content: space-between;
+   justify-content: flex-end;
    margin: 2px 0 22px;
-}
-
-.auth .remember {
-   display: inline-flex;
-   align-items: center;
-   gap: 9px;
-   font-size: 13px;
-   color: var(--tx-2);
-   cursor: pointer;
-   user-select: none;
-}
-
-.auth .remember input {
-   position: absolute;
-   opacity: 0;
-   width: 0;
-   height: 0;
-}
-
-.auth .remember .box {
-   display: inline-flex;
-   align-items: center;
-   justify-content: center;
-   width: 18px;
-   height: 18px;
-   border: 1px solid var(--line-strong);
-   border-radius: 5px;
-   color: transparent;
-   background: var(--bg-2);
-   transition: all .14s;
-}
-
-.auth .remember .box svg {
-   width: 12px;
-   height: 12px;
-}
-
-.auth .remember input:checked+.box {
-   color: var(--ac-tx);
-   background: var(--accent);
-   border-color: var(--accent);
-}
-
-.auth .remember input:focus-visible+.box {
-   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .auth .link {
