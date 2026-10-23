@@ -273,9 +273,14 @@ RUN ARCH="$(dpkg --print-architecture)" \
 # browser where there is a UI. agent-browser is a native binary; the release
 # asset is used rather than the npm package, whose wrapper wants Node 24 while
 # this repo's CI pins Node 20. Pinned like Helm above.
-# `install --with-deps` is run as root for Chrome's shared libraries; the
-# browser download itself lands per-user under ~/.agent-browser, so the ubuntu
-# user fetches its own copy below and root's is discarded.
+# On amd64, `install --with-deps` is run as root for Chrome's shared libraries;
+# the browser download itself lands per-user under ~/.agent-browser, so the
+# ubuntu user fetches its own copy below and root's is discarded.
+# Chrome for Testing has no linux-arm64 build (and apt's chromium is a snap
+# stub), so arm64 gets Playwright's Chromium in a shared /opt/ms-playwright.
+# agent-browser falls back to $PLAYWRIGHT_BROWSERS_PATH/chromium-*/chrome-linux
+# when no Chrome for Testing is installed; Playwright now names that directory
+# chrome-linux-arm64, hence the symlink.
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in amd64) AB_ARCH=x64 ;; arm64) AB_ARCH=arm64 ;; *) echo "unsupported arch $ARCH" && exit 1 ;; esac \
     && AB_VERSION=v0.36.0 \
@@ -284,8 +289,16 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && chmod +x /usr/local/bin/agent-browser \
     && agent-browser --version \
     && apt-get update \
-    && agent-browser install --with-deps \
+    && if [ "$ARCH" = arm64 ]; then \
+         PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright npx -y playwright@1.64.1 install --with-deps --no-shell chromium \
+         && for d in /opt/ms-playwright/chromium-*; do ln -s chrome-linux-arm64 "$d/chrome-linux"; done \
+         && chmod -R a+rX /opt/ms-playwright \
+         && rm -rf /root/.npm; \
+       else \
+         agent-browser install --with-deps; \
+       fi \
     && rm -rf /root/.agent-browser /var/lib/apt/lists/*
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
 # The CLI serves its own usage guide via `agent-browser skills get core`, which
 # its discovery stub tells agents to read first. The binary finds that content
@@ -368,5 +381,6 @@ ENV POSTGRES_PASSWORD=deeptempo_secure_password_change_me
 # so the live app still connects to its integrations.
 ENV TESTING=true
 
-# Chrome for Testing, into /home/ubuntu/.agent-browser (system libraries are already in place).
-RUN agent-browser install
+# Chrome for Testing, into /home/ubuntu/.agent-browser (system libraries are
+# already in place). arm64 uses the Playwright Chromium installed above.
+RUN if [ "$(dpkg --print-architecture)" != arm64 ]; then agent-browser install; fi

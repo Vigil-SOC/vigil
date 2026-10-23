@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { requestErrorMessage } from '../screens/login/requestErrorMessage'
 import { authApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { Field, PasswordInput, Popup } from '../shared/ui'
@@ -24,19 +25,6 @@ function passwordProblems({ current, next, confirm }: PasswordForm): PasswordPro
   else if (next === current) problems.next = 'Choose a password different from your current one.'
   if (confirm !== next) problems.confirm = 'This does not match the new password.'
   return problems
-}
-
-function serverMessage(e: unknown): string {
-  const err = e as { response?: { status?: number; data?: { detail?: unknown } } }
-  const res = err?.response
-  if (!res) return "Couldn't reach Vigil. Check your connection and try again."
-  if (res.status === 429) return 'Too many attempts. Wait a minute, then try again.'
-  const detail = res.data?.detail
-  // a 422's detail is a list of {loc, msg}
-  const text = Array.isArray(detail)
-    ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('; ')
-    : detail
-  return (typeof text === 'string' && text) || "Couldn't change your password. Try again."
 }
 
 /**
@@ -111,7 +99,7 @@ export default function ChangePasswordDialog({
       setForm({ current: '', next: '', confirm: '' })
       setDone(true)
     } catch (err) {
-      setError(serverMessage(err))
+      setError(requestErrorMessage(err, "Couldn't change your password. Try again."))
     } finally {
       setBusy(false)
     }

@@ -5,7 +5,9 @@ Two revocation strategies, used together:
 
 1. **Per-JTI blacklist** — `blacklist:jti:{jti}` keys. Set on logout so that
    specific token (and only that token) is rejected going forward. Key TTL
-   matches the token's remaining lifetime so entries self-expire.
+   matches the token's remaining lifetime so entries self-expire. Logout also
+   ends the token's sign-in (`core/auth/sign_ins.py`), so its refresh is refused
+   even if this write fails.
 
 2. **Per-user cutoff** — `user_revoked_before:{user_id}` stores a unix
    timestamp. Any token whose `iat` claim is earlier than the cutoff is
@@ -24,6 +26,9 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
+from core.auth import sign_ins
 from core.config import get_settings
 from core.redis_client import get_async_redis
 
@@ -150,11 +155,22 @@ async def consume_refresh_jti(jti: str, expires_at: Optional[datetime]) -> bool:
         return _FAIL_OPEN
 
 
-async def revoke_all_for_user(user_id: str) -> None:
+async def revoke_all_for_user(user_id: str, session: Optional[Session] = None) -> None:
     """
     Invalidate every outstanding token for a user by moving the cutoff
-    timestamp forward.
+    timestamp forward, and end that user's open sign-ins.
+
+    Pass ``session`` when the caller's transaction already holds those rows;
+    without it the sign-ins end in a transaction of their own.
     """
+    try:
+        await asyncio.to_thread(
+            sign_ins.end_all_for_user, user_id, sign_ins.REVOKED, session
+        )
+    except Exception:
+        # The cutoff below is what refuses the tokens; it must not wait on this.
+        logger.exception("revoke_all_for_user: could not end sign-ins for %s", user_id)
+
     client = _get_client()
     if client is None:
         logger.warning("revoke_all_for_user: redis client unavailable; skipping")

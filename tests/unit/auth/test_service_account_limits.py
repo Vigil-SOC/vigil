@@ -21,6 +21,7 @@ pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parents[3]
 WRITER = REPO / "core" / "auth" / "service_account.py"
+PRINCIPALS = REPO / "core" / "auth" / "principals.py"
 
 
 def _python_files():
@@ -53,7 +54,12 @@ def test_only_the_service_account_module_writes_the_flag():
             # User(service_account=...) or .update({"service_account": ...})
             if isinstance(node, ast.keyword) and node.arg == "service_account":
                 writers.append(f"{path.relative_to(REPO)}:{node.value.lineno}")
-            if isinstance(node, ast.Constant) and node.value == "service_account":
+            # principals.py names the principal kind, which is not the flag.
+            if (
+                isinstance(node, ast.Constant)
+                and node.value == "service_account"
+                and path != PRINCIPALS
+            ):
                 writers.append(f"{path.relative_to(REPO)}:{node.lineno}")
     allowed = str(WRITER.relative_to(REPO))
     assert writers, "the scan found nothing: it no longer sees the writer"
@@ -97,9 +103,8 @@ def _session_with(user, role_id: str):
 
     def query(model):
         q = MagicMock()
-        q.filter.return_value.first.return_value = (
-            user if model is users_router.User else role
-        )
+        q.join.return_value = q.filter.return_value = q
+        q.first.return_value = user if model is users_router.User else role
         return q
 
     session.query.side_effect = query
@@ -120,6 +125,7 @@ def admin(monkeypatch):
 def _target(service_account: bool):
     return users_router.User(
         user_id="user-1",
+        principal_id="user-1",
         username="medic-a1b2c3d4e5f6" if service_account else "someone",
         email="someone@example.com",
         full_name="x",

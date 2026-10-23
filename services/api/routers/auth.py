@@ -15,6 +15,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.auth import sign_ins
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -46,9 +47,9 @@ from core.auth.token_blacklist import (
     revoke_all_for_user,
 )
 from core.config import get_settings
-from core.platform.email_service import send_email
+from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import User
+from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
@@ -285,6 +286,15 @@ def _get_user(session: Session, user_id: str) -> Optional[User]:
     return session.query(User).filter(User.user_id == user_id).first()
 
 
+def _open_sign_in(session: Session, sid: str, user: User) -> Optional[SignIn]:
+    """The sign-in a refresh continues, or None if it has ended or is not
+    this user's. Locked so a concurrent logout cannot end it mid-refresh."""
+    row = session.get(SignIn, sid, with_for_update=True)
+    if row is None or row.ended_at is not None or row.principal_id != user.principal_id:
+        return None
+    return row
+
+
 def _has_any_user(session: Session) -> bool:
     # A service account (Medic's gateway) can't sign anyone in, so it must not
     # close bootstrap: enabling Medic before the first sign-in would otherwise
@@ -461,11 +471,20 @@ def login(
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
 
-    # Generate tokens
+    # Generate tokens. One sign-in, named on both, kept through every refresh.
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
-    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
+    sid = sign_ins.new_id()
+    access_token = AuthService.generate_jwt_token(
+        user, "access", user_agent=_ua, sid=sid
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", user_agent=_ua, sid=sid
+    )
 
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    sign_ins.start(
+        session, sid, user.principal_id, _exp_datetime(refresh_payload.get("exp"))
+    )
     # A service account gets body tokens only: a cookie is a console session.
     if not service_account:
         _set_cookies_for(response, access_token, refresh_token)
@@ -492,24 +511,27 @@ def _set_cookies_for(response: Response, access_token: str, refresh_token: str):
     )
 
 
-async def _revoke_token(raw: str, owner: User, kind: str) -> None:
-    """Blacklist a token's JTI for its remaining life. Another user's token is
-    left alone, so a body field cannot be used to revoke someone else's session."""
+def _exp_datetime(exp_ts) -> Optional[datetime]:
+    return datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
+
+
+async def _revoke_token(raw: str, owner: User, kind: str) -> Optional[str]:
+    """Blacklist a token's JTI for its remaining life and return its sign-in id.
+    Another user's token is left alone, so a body field cannot be used to
+    revoke someone else's session."""
     payload = AuthService.verify_jwt_token(raw)
     jti = payload.get("jti") if payload else None
     if not jti or payload.get("user_id") != owner.user_id:
-        return
-    exp_ts = payload.get("exp")
+        return None
     try:
-        await blacklist_jti(
-            jti, datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
-        )
+        await blacklist_jti(jti, _exp_datetime(payload.get("exp")))
     except Exception as exc:
         # Redis down: logout still "succeeds" client-side (cookies cleared,
         # client discards its tokens), but the server-side failure is logged.
         logger.error(
             "Failed to blacklist %s token for %s: %s", kind, owner.username, exc
         )
+    return payload.get("sid")
 
 
 @router.post("/logout")
@@ -543,8 +565,9 @@ async def logout(
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
+    sids = set()
     if raw_token:
-        await _revoke_token(raw_token, current_user, "access")
+        sids.add(await _revoke_token(raw_token, current_user, "access"))
 
     # A captured refresh token must not mint new access tokens after logout.
     # The cookie and the body field can differ (a Bearer client next to a
@@ -554,7 +577,15 @@ async def logout(
         body.refresh_token if body else None,
     }
     for raw in refresh_tokens - {None, ""}:
-        await _revoke_token(raw, current_user, "refresh")
+        sids.add(await _revoke_token(raw, current_user, "refresh"))
+
+    # Ended in the database whatever Redis did: refresh refuses an ended
+    # sign-in, so the blacklist is not the only thing standing in the way.
+    for sid in sids - {None}:
+        try:
+            await asyncio.to_thread(sign_ins.end, sid, sign_ins.SIGN_OUT)
+        except Exception as exc:
+            logger.error("Failed to end sign-in for %s: %s", current_user.username, exc)
 
     clear_auth_cookies(response)
 
@@ -599,6 +630,15 @@ async def refresh_token(
         )
 
     payload = AuthService.verify_jwt_token(raw_refresh)
+    if not payload:
+        # A sign-in whose refresh token ran out ends here, in its own
+        # transaction: the request's rolls back with the 401.
+        expired = AuthService.expired_refresh_payload(raw_refresh)
+        if expired and expired.get("sid"):
+            try:
+                await asyncio.to_thread(sign_ins.end, expired["sid"], sign_ins.EXPIRY)
+            except Exception as exc:
+                logger.error("Failed to end an expired sign-in: %s", exc)
     if not payload or payload.get("token_type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -630,21 +670,38 @@ async def refresh_token(
         clear_auth_cookies(refused)
         return refused
 
+    # A token minted before sign-ins existed carries no sid and starts none.
+    sid = payload.get("sid")
+    sign_in = None
+    if sid:
+        sign_in = await asyncio.to_thread(_open_sign_in, session, sid, user)
+        if sign_in is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sign-in has ended",
+            )
+
     # Refresh tokens rotate: each one mints a single successor.
-    refresh_exp = payload.get("exp")
     if not payload.get("jti") or not await consume_refresh_jti(
-        payload["jti"],
-        datetime.utcfromtimestamp(refresh_exp) if refresh_exp is not None else None,
+        payload["jti"], _exp_datetime(payload.get("exp"))
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has already been used",
         )
 
-    # Generate new tokens
+    # Generate new tokens: the same sign-in, new jtis.
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
-    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
+    access_token = AuthService.generate_jwt_token(
+        user, "access", user_agent=_ua, sid=sid
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", user_agent=_ua, sid=sid
+    )
+
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    if sign_in is not None:
+        sign_in.expires_at = _exp_datetime(refresh_payload.get("exp"))
     if not service_account:
         _set_cookies_for(response, access_token, refresh_token)
 
@@ -1052,8 +1109,7 @@ def password_reset_request(
 def _reset_request_message(settings) -> str:
     """What the requester is told. Depends only on how mail is configured,
     never on the account, so the reply still can't enumerate emails."""
-    # Any value but smtp falls back to the console backend (get_email_backend).
-    if settings.vigil_email_backend.strip().lower() == "smtp":
+    if mail_is_configured():
         return "If that email matches an active account, a reset link has been sent."
     if settings.dev_mode:
         return (

@@ -310,7 +310,10 @@ def _load(
         }
     rows = []
     for row in triggers:
-        payload = row.payload if isinstance(row.payload, dict) else {}
+        raw = row.payload if isinstance(row.payload, dict) else {}
+        # The signed tool principal is for the worker, not the queue. A reader of
+        # this row is not a holder of the internal token, and does not need it.
+        payload = {key: value for key, value in raw.items() if key != "principal"}
         rows.append(
             {
                 "id": row.id,
