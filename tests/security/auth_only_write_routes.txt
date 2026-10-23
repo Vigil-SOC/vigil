@@ -24,8 +24,6 @@ POST /api/auth/password-reset/request
 POST /api/auth/refresh
 POST /api/cases/search
 POST /api/cases/{case_id}/generate-report
-POST /api/exclusions
-POST /api/exclusions/{exclusion_id}/remove
 POST /api/findings/export
 POST /api/findings/{finding_id}/enrich
 POST /api/findings/{finding_id}/intake
