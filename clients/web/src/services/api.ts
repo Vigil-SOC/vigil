@@ -1122,6 +1122,32 @@ interface FederationListResponse {
   global: { enabled: boolean }
 }
 
+export interface AuditFeed {
+  enabled: boolean
+  host: string
+  port: number | null
+  ca_set: boolean
+  client_cert_set: boolean
+  last_delivered_at: string | null
+  last_delivered_seq: number | null
+  last_error: string | null
+  behind: number
+  tip_seq: number
+}
+
+export const auditFeedApi = {
+  get: () => api.get<AuditFeed>('/audit/feed'),
+  save: (body: {
+    enabled: boolean
+    host: string
+    port: number | null
+    ca_pem: string | null
+    client_cert_pem: string | null
+    client_key_pem: string | null
+  }) => api.put<AuditFeed>('/audit/feed', body),
+  test: () => api.post<{ ok: boolean }>('/audit/feed/test'),
+}
+
 export const federationApi = {
   setSettings: (enabled: boolean) =>
     api.put<{ enabled: boolean }>('/federation/settings', { enabled }),
