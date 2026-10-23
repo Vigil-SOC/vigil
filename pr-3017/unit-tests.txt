@@ -1,0 +1,25 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/7ca00be8-3ca4-492d-a7d6-233037a8793f/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 24 items
+
+tests/unit/api/test_general_config_save.py ...                           [ 12%]
+tests/unit/api/test_config_audit_actor.py .                              [ 16%]
+tests/unit/api/test_integrations_config_save.py .......                  [ 45%]
+tests/unit/api/test_setup_steps.py .............                         [100%]
+
+============================= slowest 10 durations =============================
+0.98s call     unit/api/test_config_audit_actor.py::test_signed_in_user_is_who_changed_the_config
+0.83s setup    unit/api/test_general_config_save.py::test_general_save_keeps_demo_mode[True]
+0.16s call     unit/api/test_general_config_save.py::test_general_save_keeps_demo_mode[False]
+0.15s call     unit/api/test_general_config_save.py::test_general_save_keeps_demo_mode[True]
+0.15s call     unit/api/test_general_config_save.py::test_demo_mode_save_keeps_general_settings
+0.04s call     unit/api/test_setup_steps.py::test_endpoint_uses_the_existing_reads
+0.01s setup    unit/api/test_general_config_save.py::test_general_save_keeps_demo_mode[False]
+0.01s call     unit/api/test_integrations_config_save.py::test_moving_the_server_url_with_the_credential_is_saved
+0.01s call     unit/api/test_integrations_config_save.py::test_failed_secret_write_is_not_success
+0.01s call     unit/api/test_integrations_config_save.py::test_empty_secret_is_not_a_failure
+======================== 24 passed, 1 warning in 5.76s =========================

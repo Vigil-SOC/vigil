@@ -1,0 +1,4 @@
+Config load error /home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-3276711/tmp/tmpmmj5mrom/.vigil/general_config.json: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+legacy-only start; new file: {'demo_mode': True, 'enable_keyring': True, 'auto_start_sync': False, 'show_notifications': True, 'theme': 'dark'}
+is_demo_mode: True
+corrupt start; file: {'auto_start_sync': False, 'show_notifications': True, 'theme': 'dark', 'enable_keyring': False}

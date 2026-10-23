@@ -1,0 +1,11 @@
+E       assert False is True
+E        +  where False = is_demo_mode()
+E       AssertionError: assert {'auto_start_...eyring': True} == {'auto_start_...g': True, ...}
+E         
+E         Omitting 4 identical items, use -vv to show
+E         Right contains 1 more item:
+E         {'demo_mode': True}
+E         Use -v to get more diff
+FAILED tests/unit/api/test_general_config_save.py::test_general_save_keeps_demo_mode[True]
+FAILED tests/unit/api/test_general_config_save.py::test_demo_mode_save_keeps_general_settings
+==================== 2 failed, 1 passed, 1 warning in 4.21s ====================
