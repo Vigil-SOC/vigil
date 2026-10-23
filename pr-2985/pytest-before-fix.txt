@@ -1,0 +1,15 @@
+______ test_kill_leaves_a_finished_investigation_and_its_verdict[failed] _______
+status = 'failed'
+    @pytest.mark.parametrize("status", ["completed", "failed"])
+>       assert err.status_code == 409
+status     = 'failed'
+>       assert err.status_code == 404
+0.01s call     unit/api/test_orchestrator_kill_one.py::test_kill_leaves_a_finished_investigation_and_its_verdict[failed]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_fails_a_live_investigation[assigned]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_fails_a_live_investigation[executing]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_fails_a_live_investigation[waiting_approval]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_fails_a_live_investigation[paused]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_leaves_a_finished_investigation_and_its_verdict[completed]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_leaves_a_finished_investigation_and_its_verdict[failed]
+FAILED tests/unit/api/test_orchestrator_kill_one.py::test_kill_of_an_unknown_id_is_404_and_writes_no_workdir
+========================= 7 failed in 62.03s (0:01:02) =========================

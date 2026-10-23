@@ -1,0 +1,6 @@
+     × inv-waiting_approval offers Kill true and Restart false 99ms
+     × inv-paused offers Kill true and Restart false 97ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/screens/autoops/AutoOpsScreen.test.tsx > autoops investigation rows > inv-waiting_approval offers Kill true and Restart false
+ FAIL  src/screens/autoops/AutoOpsScreen.test.tsx > autoops investigation rows > inv-paused offers Kill true and Restart false
+      Tests  2 failed | 7 passed (9)

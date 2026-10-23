@@ -1,0 +1,8 @@
+1.04s setup    unit/api/test_orchestrator_kill_one.py::test_kill_fails_a_live_investigation[assigned]
+0.35s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/workflows/runs/r-1/resume-body22-ai_decisions.approve]
+0.25s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/approvals/a-1/approve-body20-ai_decisions.approve]
+0.23s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases-body16-cases.write]
+0.11s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[PATCH-/api/v1/findings/f-1-body19-findings.write]
+0.10s call     security/test_route_permissions.py::test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list
+0.09s teardown security/test_route_permissions.py::test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list
+=================== 97 passed, 1 warning in 94.22s (0:01:34) ===================
