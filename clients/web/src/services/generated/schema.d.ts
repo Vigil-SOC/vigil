@@ -795,6 +795,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Entries
+         * @description The trail, oldest sequence first, under the shared filter.
+         */
+        get: operations["get_api_audit_entries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Entries
+         * @description NDJSON of the filter, closed by a checkpoint line. Writes one export entry.
+         */
+        get: operations["get_api_audit_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Poll Entries
+         * @description Entries after ``after``. A cursor past the tip is a reset, not an empty page.
+         */
+        get: operations["get_api_audit_poll"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Verify Range
+         * @description ``trail.verify`` over a sequence range. The first break, when there is one.
+         */
+        get: operations["get_api_audit_verify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/bootstrap": {
         parameters: {
             query?: never;
@@ -904,8 +984,11 @@ export interface paths {
         /**
          * Logout
          * @description Logout user: blacklist the current access token and the refresh token so
-         *     replaying either returns 401 for the rest of its lifetime, and clear the
-         *     HttpOnly auth cookies from the browser.
+         *     replaying either returns 401 for the rest of its lifetime, end their
+         *     sign-in, and clear the HttpOnly auth cookies. An ended sign-in cannot be
+         *     refreshed even when the blacklist write did not happen. A token with no
+         *     sign-in is revoked only by that write, so if it fails the cookies stay
+         *     and the response is 503.
          *
          *     Args:
          *         request: FastAPI request (used to read the auth cookies).
@@ -1089,8 +1172,9 @@ export interface paths {
         /**
          * Password Reset Confirm
          * @description Complete a password reset. Validates the signed token, enforces the
-         *     password strength policy + reuse check, rotates the hash, and
-         *     revokes every outstanding token so any existing sessions die.
+         *     password strength policy + reuse check, consumes the token, rotates
+         *     the hash, and revokes every outstanding token so any existing
+         *     sessions die. A rejected password leaves the token usable.
          */
         post: operations["post_api_auth_password-reset_confirm"];
         delete?: never;
@@ -2391,35 +2475,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Models
-         * @description List available models for the Chat UI model picker.
-         *
-         *     Backward-compatible alias for `/api/ai/models` (GH #89). Returns every
-         *     model across all *active* providers (Anthropic, Ollama, OpenAI, …) so the
-         *     picker reflects what the instance can actually run: an Ollama-only
-         *     deployment shows its Ollama models instead of Claude models it will never
-         *     call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-         *     selection still matches a menu entry; the chat send path resolves the
-         *     provider from the active default when no `provider_id::` prefix is present
-         *     (see `_resolve_provider_model_for_request`).
-         */
-        get: operations["get_api_claude_models"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/ai-operations": {
         parameters: {
             query?: never;
@@ -2998,29 +3053,6 @@ export interface paths {
         get: operations["get_api_conversations"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/conversations/import": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import Conversations
-         * @description One-time best-effort import of browser localStorage history.
-         *
-         *     Idempotent — conversations whose id already exists are skipped. Returns
-         *     ``{"imported": n, "skipped": m}``.
-         */
-        post: operations["post_api_conversations_import"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5599,6 +5631,9 @@ export interface paths {
          * Delete User
          * @description Delete a user (requires users.delete permission).
          *
+         *     The username and email stay taken: the row is kept so its principal, and
+         *     the credentials it minted, still resolve on old records.
+         *
          *     Args:
          *         user_id: User ID to delete
          *         current_user: Current authenticated user
@@ -6984,6 +7019,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/runs/{run_id}/children": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Child
+         * @description A child run's start. The actor is the parent's agent; the origin is this run.
+         */
+        post: operations["post_internal_runs_run_id_children"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/runs/{run_id}/decisions": {
         parameters: {
             query?: never;
@@ -8346,23 +8401,14 @@ export interface components {
             agent_id?: string | null;
             /** Case Id */
             case_id?: string | null;
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
-            /** Model */
-            model?: string | null;
             /** Page Context */
             page_context?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Session Id */
             session_id?: string | null;
-            /** System Prompt */
-            system_prompt?: string | null;
         };
         /** CheckpointRaised */
         CheckpointRaised: {
@@ -8386,6 +8432,20 @@ export interface components {
              * @default
              */
             run_kind: string;
+        };
+        /** ChildStart */
+        ChildStart: {
+            /** Child Run Id */
+            child_run_id: string;
+            /**
+             * Role
+             * @default
+             */
+            role: string;
+            /** Spec */
+            spec?: {
+                [key: string]: unknown;
+            };
         };
         /** CitedFindings */
         CitedFindings: {
@@ -9256,19 +9316,6 @@ export interface components {
         IOCBulkAdd: {
             /** Iocs */
             iocs: {
-                [key: string]: unknown;
-            }[];
-        };
-        /**
-         * ImportConversationsRequest
-         * @description POST /import body — best-effort bulk import of localStorage history.
-         */
-        ImportConversationsRequest: {
-            /**
-             * Conversations
-             * @default []
-             */
-            conversations: {
                 [key: string]: unknown;
             }[];
         };
@@ -12858,6 +12905,168 @@ export interface operations {
             };
         };
     };
+    get_api_audit_entries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_export: {
+        parameters: {
+            query?: {
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_poll: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: string | null;
+                until?: string | null;
+                actor?: string | null;
+                person?: string | null;
+                kind?: string | null;
+                area?: string | null;
+                object?: string | null;
+                outcome?: string | null;
+                attribution?: string | null;
+                after?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_verify: {
+        parameters: {
+            query?: {
+                first?: number | null;
+                last?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_auth_bootstrap: {
         parameters: {
             query?: never;
@@ -15577,37 +15786,6 @@ export interface operations {
             };
         };
     };
-    get_api_claude_models: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "get_api_config_ai-operations": {
         parameters: {
             query?: never;
@@ -16636,6 +16814,8 @@ export interface operations {
                 offset?: number;
                 /** @description Match title, case id, or page key */
                 q?: string | null;
+                /** @description Exact case id */
+                case_id?: string | null;
             };
             header?: {
                 authorization?: string | null;
@@ -16644,41 +16824,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_conversations_import: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ImportConversationsRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -23452,6 +23597,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CheckpointRaised"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_children: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChildStart"];
             };
         };
         responses: {

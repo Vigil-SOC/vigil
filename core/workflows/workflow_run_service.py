@@ -59,6 +59,7 @@ class WorkflowRunService:
         workflow_version: Optional[int] = None,
         trigger_context: Optional[Dict[str, Any]] = None,
         triggered_by: Optional[str] = None,
+        triggered_by_principal_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> Optional[str]:
         """Create a ``workflow_runs`` row with ``status='running'``.
@@ -82,6 +83,7 @@ class WorkflowRunService:
                     workflow_name=workflow_name,
                     status="running",
                     triggered_by=triggered_by,
+                    triggered_by_principal_id=triggered_by_principal_id,
                     trigger_context=trigger_context or {},
                     started_at=utcnow(),
                 )

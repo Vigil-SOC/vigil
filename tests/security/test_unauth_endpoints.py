@@ -100,14 +100,10 @@ PROTECTED_ROUTES = [
     ("GET", "/api/orchestrator/status", None),
     ("POST", "/api/orchestrator/investigations/purge", None),
     ("GET", "/api/approvals/pending", None),
-    ("GET", "/api/claude/models", None),
     (
         "POST",
         "/api/claude/chat/stream",
-        {
-            "messages": [{"role": "user", "content": "auth gate test"}],
-            "max_tokens": 1,
-        },
+        {"messages": [{"role": "user", "content": "auth gate test"}]},
     ),
     ("GET", "/api/integrations/vstrike/health", None),
     ("GET", "/api/integrations/vstrike/topology/asset/test-asset", None),
@@ -246,6 +242,7 @@ def test_authenticated_non_admin_is_rejected(method, path, body, monkeypatch):
 
     fake_user = User(
         user_id="non-admin",
+        principal_id="non-admin",
         username="non-admin",
         email="user@test.local",
         password_hash="",

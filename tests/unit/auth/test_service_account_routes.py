@@ -33,7 +33,7 @@ from core.auth import current_user as current_user_module
 from core.auth import password_reset
 from core.auth.auth_service import AuthService
 from core.routing import request_unit_of_work
-from core.storage.models import Role, User
+from core.storage.models import Principal, Role, SignIn, User
 from core.storage.models.base import Base
 from services.api import main as backend_main
 from services.api.middleware.rate_limit import limiter
@@ -63,7 +63,15 @@ def maker(password_hash):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    Base.metadata.create_all(engine, tables=[Role.__table__, User.__table__])
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            Role.__table__,
+            Principal.__table__,
+            User.__table__,
+            SignIn.__table__,
+        ],
+    )
     maker = sessionmaker(bind=engine)
     with maker() as s:
         s.add(
@@ -79,8 +87,16 @@ def maker(password_hash):
             ("u-viewer", "viewer", False),
         ):
             s.add(
+                Principal(
+                    principal_id=user_id,
+                    kind="service_account" if service else "person",
+                    label=username,
+                )
+            )
+            s.add(
                 User(
                     user_id=user_id,
+                    principal_id=user_id,
                     username=username,
                     email=f"{username}@example.com",
                     password_hash=password_hash,
@@ -371,6 +387,7 @@ def _stand_in(flag):
         is_active=True,
         mfa_enabled=False,
         service_account=flag,
+        principal_id="u-viewer",
     )
 
 

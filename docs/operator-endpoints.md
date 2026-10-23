@@ -142,6 +142,5 @@ A `200` response also carries the schema report: `state`, `missing_tables`, `mis
 Things to know:
 
 - `empty` means no table with a Vigil name. Tables with other names do not count. A database that holds only another application's tables is `empty`, and Vigil's tables are created next to them. Check the target before you call this.
-- It creates tables only. It does not seed roles or other reference data. Run `python scripts/seed_reference_data.py` afterwards.
-- Your login and permission are checked against the same database. If it has no Vigil tables, it has no `users` table either, and the request can fail before the handler runs. For a brand-new database, `python scripts/init_schema.py` runs the same create step from a shell without a login.
+- Your login and permission are checked against the same database. If it has no Vigil tables, it has no `users` table either, and the request can fail before the handler runs. For a brand-new database, `python -m core.upgrade` as the database owner is what creates the schema. See [upgrading](upgrading.md).
 - The `drifted` error message lists missing columns only. Call `POST /api/storage/reconnect` to see `missing_tables` too.

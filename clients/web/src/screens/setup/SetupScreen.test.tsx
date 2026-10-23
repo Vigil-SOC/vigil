@@ -16,7 +16,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 }))
 
 vi.mock('../../contexts/ColorSchemeContext', () => ({
-  useColorScheme: () => ({ scheme: 'dark', setScheme: vi.fn(), toggleScheme: vi.fn() }),
+  useColorScheme: () => ({ scheme: 'dark', setScheme: vi.fn() }),
 }))
 
 vi.mock('../../services/api', () => ({

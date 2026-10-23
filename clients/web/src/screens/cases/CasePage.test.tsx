@@ -55,9 +55,9 @@ vi.mock('../../services/api', () => ({
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   conversationsApi: {
-    list: vi.fn((params?: { q?: string }) => {
-      const q = params?.q
-      const conversations = testState.convos.filter((row) => !q || row.case_id === q)
+    list: vi.fn((params?: { case_id?: string }) => {
+      const caseId = params?.case_id
+      const conversations = testState.convos.filter((row) => !caseId || row.case_id === caseId)
       return Promise.resolve({ data: { conversations } })
     }),
     get: vi.fn((id: string) => {
@@ -66,7 +66,6 @@ vi.mock('../../services/api', () => ({
     }),
     update: vi.fn(() => Promise.resolve({ data: {} })),
     delete: vi.fn(),
-    importHistory: vi.fn(() => Promise.resolve({ data: {} })),
   },
   reasoningApi: {
     getSessionSummary: vi.fn(() => Promise.resolve(null)),
@@ -1280,14 +1279,14 @@ describe('case page', () => {
       expect(screen.getByRole('tooltip')).toHaveTextContent('Only run rows are hash-chained. Case audit and activity rows are not.')
     })
 
-    it('Replay links to the run on Workflows, and closes the drawer', async () => {
+    it('Replay links to the run on Workflows, and leaves the drawer held for Back', async () => {
       testState.recordRows = rows
       const onBack = vi.fn()
       await openRecord(async () => renderDetail('case-rec', { onBack, onExpand: vi.fn() }))
       const link = await screen.findByRole('link', { name: 'Replay' })
       expect(link).toHaveAttribute('href', '/workflows?run=run%2F1')
       fireEvent.click(link)
-      expect(onBack).toHaveBeenCalled()
+      expect(onBack).not.toHaveBeenCalled()
     })
 
     it('shows Replay disabled, with an ⓘ saying why, without a run', async () => {
@@ -2980,13 +2979,13 @@ describe('watching a run, its cost and its agents', () => {
   }
   const side = async () => within(await screen.findByRole('complementary', { name: 'Case details' }))
 
-  it('links the Now card and the stopped card to Watch a run, and closes the drawer', async () => {
+  it('links the Now card and the stopped card to Watch a run, and leaves the drawer held for Back', async () => {
     const onBack = vi.fn()
     await open('case-w', { status: 'running', hunt: hunt() }, {}, { onBack, onExpand: vi.fn() })
     const link = await within(await screen.findByRole('region', { name: 'Now' })).findByRole('link', { name: 'Watch it run' })
     expect(link).toHaveAttribute('href', '/workflows?run=run-case-w')
     fireEvent.click(link)
-    expect(onBack).toHaveBeenCalled()
+    expect(onBack).not.toHaveBeenCalled()
     cleanup()
 
     await open('case-w2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
