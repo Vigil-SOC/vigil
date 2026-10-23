@@ -1,0 +1,5 @@
+/api/mcp/servers/status no auth -> 401
+/api/mcp/servers/enabled no auth -> 404
+/api/mcp/connections/status no auth -> 404
+mcp credential -> 401 An MCP credential does not authenticate this API; sign in instead
+bad jwt -> 401 Invalid or expired token

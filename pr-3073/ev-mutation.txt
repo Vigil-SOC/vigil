@@ -1,0 +1,4 @@
+>           raise AssertionError(msg)
+E           AssertionError: Expected connect to have been awaited.
+/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2325: AssertionError
+====================== 1 passed, 13 deselected in 42.39s =======================

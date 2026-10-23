@@ -1,0 +1,4 @@
+0.67s call     test_inbound.py::test_inbound_parameters_match_the_x2_spec[GET /v1/export]
+0.64s call     test_inbound.py::test_inbound_parameters_match_the_x2_spec[GET /v1/sensors]
+0.64s call     test_inbound.py::test_inbound_parameters_match_the_x2_spec[GET /v1/decisions/{seq}]
+======================== 301 passed in 98.68s (0:01:38) ========================
