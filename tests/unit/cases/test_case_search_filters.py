@@ -1,5 +1,3 @@
-"""POST /api/cases/search with the body the Cases screen's Advanced Search sends (#2829)."""
-
 from datetime import datetime
 
 import pytest
