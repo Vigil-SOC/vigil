@@ -459,12 +459,15 @@ def test_a_rogue_connection_cannot_interleave_with_an_append(data_dir: Path) -> 
 
 def test_readers_are_separate_read_only_connections(data_dir: Path) -> None:
     from services.medic.store import open_reader
+    from services.medic.store.writer import READER_BUSY_MS
 
     day = load("chain-01-pilot-day.jsonl")
     with open_writer(data_dir) as w:
         w.append(draft(day[0]))
         with open_reader(data_dir) as reader:
             assert reader.execute("SELECT count(*) FROM records").fetchone() == (1,)
+            assert reader.execute("PRAGMA query_only").fetchone() == (1,)
+            assert reader.execute("PRAGMA busy_timeout").fetchone() == (READER_BUSY_MS,)
             with pytest.raises(sqlite3.OperationalError, match="readonly"):
                 reader.execute("DELETE FROM records")
         w.append(draft(day[1]))

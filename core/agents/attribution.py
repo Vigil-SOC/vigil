@@ -22,9 +22,8 @@ from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
 from core.auth.tool_principal import Claims
 from core.llm.chat_layers import _READONLY_LEADS
-from core.response.approval_service import APPROVAL_CONFIG_KEY
+from core.response.approval_service import stored_force_manual_approval
 from core.response.config import ResponseConfig
-from core.storage.config_service import get_config_service
 
 logger = logging.getLogger(__name__)
 
@@ -95,22 +94,10 @@ def phase_actors(phases: Any) -> dict[str, str]:
     return found
 
 
-def _stored_force_manual() -> bool:
-    """The Settings row, OR'd with the env flag the way the console chip is.
-
-    A database that cannot be read adds nothing: the env flag still stands.
-    """
-    try:
-        row = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
-    except Exception:  # noqa: BLE001 - no row is not a force
-        return False
-    return bool(row.get("enabled")) if isinstance(row, dict) else False
-
-
 def autonomy_label() -> str:
     """Assist when approval is forced or auto-response is off, otherwise Act."""
     config = ResponseConfig.from_settings()
-    forced = config.force_manual_approval or _stored_force_manual()
+    forced = config.force_manual_approval or stored_force_manual_approval()
     return "Assist" if forced or not config.auto_response_enabled else "Act"
 
 
