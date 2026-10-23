@@ -1,0 +1,1216 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1838d7e9-251c-48cf-9c34-45d62f701da1/tests
+configfile: pytest.ini
+plugins: anyio-4.14.2, Faker-40.43.0, respx-0.23.1, asyncio-1.4.0, cov-7.1.0, mock-3.15.1, platformdirs-4.13.5
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items
+
+tests/unit/cases/test_case_search_filters.py FF                          [100%]
+
+=================================== FAILURES ===================================
+_________________ test_the_console_body_matches_on_every_field _________________
+
+client = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+
+    def test_the_console_body_matches_on_every_field(client):
+        _case("cs-match", datetime(2026, 6, 30, 23, 30))
+        _case("cs-next-day", datetime(2026, 7, 1, 0, 30))
+        _case("cs-before", datetime(2026, 5, 31, 23, 0))
+        _case("cs-other-owner", datetime(2026, 6, 10), assignee="someone")
+        _case("cs-one-tag", datetime(2026, 6, 10), tags=["c2"])
+        _case("cs-other-text", datetime(2026, 6, 10), description="phishing")
+    
+>       assert _search(
+            client,
+            query_text="beacon",
+            priority=["high"],
+            status=["open"],
+            assignee=["analyst"],
+            tags=["c2", "dns"],
+            created_after="2026-06-01",
+            created_before="2026-06-30T23:59:59",
+        ) == ["cs-match"]
+
+client     = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+
+tests/unit/cases/test_case_search_filters.py:68: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/cases/test_case_search_filters.py:55: in _search
+    response = client.post("/api/cases/search", json={**body, "limit": 50, "offset": 0})
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        body       = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        client     = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:556: in post
+    return super().post(
+        __class__  = <class 'starlette.testclient.TestClient'>
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        params     = None
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = '/api/cases/search'
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1204: in post
+    return self.request(
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        params     = None
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = '/api/cases/search'
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:455: in request
+    return super().request(
+        __class__  = <class 'starlette.testclient.TestClient'>
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        method     = 'POST'
+        params     = None
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = URL('http://testserver/api/cases/search')
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:797: in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        method     = 'POST'
+        params     = None
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = URL('http://testserver/api/cases/search')
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:980: in send
+    response = self._send_handling_auth(
+        auth       = <httpx2.Auth object at 0x7f52e2d43ad0>
+        follow_redirects = True
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+        stream     = False
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1008: in _send_handling_auth
+    response = self._send_handling_redirects(
+        auth       = <httpx2.Auth object at 0x7f52e2d43ad0>
+        auth_flow  = <generator object Auth.sync_auth_flow at 0x7f52e438f060>
+        follow_redirects = True
+        history    = []
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1043: in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        follow_redirects = True
+        history    = []
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1076: in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e0d829f0>
+        start      = 158498.690675298
+        transport  = <starlette.testclient._TestClientTransport object at 0x7f52e0d82cf0>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:354: in handle_request
+    raise exc
+        debug_info = None
+        default_port = 80
+        headers    = [(b'host', b'testserver'), (b'accept', b'*/*'), (b'accept-encoding', b'gzip, deflate'), (b'connection', b'keep-alive'), (b'user-agent', b'testclient'), (b'content-length', b'194'), ...]
+        host       = 'testserver'
+        netloc     = 'testserver'
+        path       = '/api/cases/search'
+        port       = 80
+        portal     = <anyio.from_thread.BlockingPortal object at 0x7f52e0db4200>
+        query      = ''
+        raw_kwargs = {'stream': <_io.BytesIO object at 0x7f52e0dbcb80>, 'status_code': 500, 'headers': [('content-length', '21'), ('content-type', 'text/plain; charset=utf-8')]}
+        raw_path   = b'/api/cases/search'
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        request_complete = True
+        response_complete = <anyio._backends._asyncio.Event object at 0x7f52e0dd2350>
+        response_started = True
+        scheme     = 'http'
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.testclient._TestClientTransport object at 0x7f52e0d82cf0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:351: in handle_request
+    portal.call(self.app, scope, receive, send)
+        debug_info = None
+        default_port = 80
+        headers    = [(b'host', b'testserver'), (b'accept', b'*/*'), (b'accept-encoding', b'gzip, deflate'), (b'connection', b'keep-alive'), (b'user-agent', b'testclient'), (b'content-length', b'194'), ...]
+        host       = 'testserver'
+        netloc     = 'testserver'
+        path       = '/api/cases/search'
+        port       = 80
+        portal     = <anyio.from_thread.BlockingPortal object at 0x7f52e0db4200>
+        query      = ''
+        raw_kwargs = {'stream': <_io.BytesIO object at 0x7f52e0dbcb80>, 'status_code': 500, 'headers': [('content-length', '21'), ('content-type', 'text/plain; charset=utf-8')]}
+        raw_path   = b'/api/cases/search'
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        request_complete = True
+        response_complete = <anyio._backends._asyncio.Event object at 0x7f52e0dd2350>
+        response_started = True
+        scheme     = 'http'
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.testclient._TestClientTransport object at 0x7f52e0d82cf0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>
+/tmp/venv2829/lib/python3.12/site-packages/anyio/from_thread.py:338: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        args       = ({'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}, <function _TestClientTra...st.<locals>.receive at 0x7f52e0d871a0>, <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>)
+        func       = <fastapi.applications.FastAPI object at 0x7f52e2d914c0>
+        self       = <anyio.from_thread.BlockingPortal object at 0x7f52e0db4200>
+/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+        self       = None
+        timeout    = None
+/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+        self       = None
+/tmp/venv2829/lib/python3.12/site-packages/anyio/from_thread.py:263: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+        args       = ({'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}, <function _TestClientTra...st.<locals>.receive at 0x7f52e0d871a0>, <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>)
+        callback   = <function BlockingPortal._call_func.<locals>.callback at 0x7f52e0dca660>
+        event_loop_thread_id = 139993935771328
+        func       = <fastapi.applications.FastAPI object at 0x7f52e2d914c0>
+        future     = <Future at 0x7f52e0d83050 state=finished raised NotImplementedError>
+        kwargs     = {}
+        retval_or_awaitable = <coroutine object FastAPI.__call__ at 0x7f52e0de4400>
+        scope      = None
+        self       = <anyio.from_thread.BlockingPortal object at 0x7f52e0db4200>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/applications.py:1163: in __call__
+    await super().__call__(scope, receive, send)
+        __class__  = <class 'fastapi.applications.FastAPI'>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.applications.FastAPI object at 0x7f52e2d914c0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/applications.py:96: in __call__
+    await self.middleware_stack(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.applications.FastAPI object at 0x7f52e2d914c0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+    raise exc
+        _send      = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52e0dca520>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        request    = <starlette.requests.Request object at 0x7f52e0db6420>
+        response   = <starlette.responses.PlainTextResponse object at 0x7f52e0db5400>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f52e0db5190>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+        _send      = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52e0dca520>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        request    = <starlette.requests.Request object at 0x7f52e0db6420>
+        response   = <starlette.responses.PlainTextResponse object at 0x7f52e0db5400>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f52e0db5190>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52e0d87740>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/middleware/exceptions.py:63: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+        conn       = <starlette.requests.Request object at 0x7f52e0db5d30>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.middleware.exceptions.ExceptionMiddleware object at 0x7f52e0db6540>
+        send       = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52e0dca520>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+        app        = <fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware object at 0x7f52e0db5d90>
+        conn       = <starlette.requests.Request object at 0x7f52e0db5d30>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52e0dca520>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+        app        = <fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware object at 0x7f52e0db5d90>
+        conn       = <starlette.requests.Request object at 0x7f52e0db5d30>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52e0dca520>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py:18: in __call__
+    await self.app(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware object at 0x7f52e0db5d90>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+        stack      = <contextlib.AsyncExitStack object at 0x7f52e0db6630>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/routing.py:670: in __call__
+    await self.middleware_stack(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.routing.APIRouter object at 0x7f52e0fc0dd0>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:2734: in app
+    await route.handle(scope, receive, send)
+        child_scope = {}
+        match      = <Match.FULL: 2>
+        partial    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        route      = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.routing.APIRouter object at 0x7f52e0fc0dd0>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:1780: in handle
+    await self.original_router.handle(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:2789: in handle
+    await included_router._handle_selected(scope, receive, send)
+        included_router = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.routing.APIRouter object at 0x7f52e1d60e30>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:1800: in _handle_selected
+    await original_route.handle(scope, receive, send)
+        child_scope = {'endpoint': <function search_cases at 0x7f52e0d84a40>, 'path_params': {}, 'route': APIRoute(path='/search', name='search_cases', methods=['POST'])}
+        effective_context = _EffectiveRouteContext(original_route=APIRoute(path='/search', name='search_cases', methods=['POST']), starlette_route..._info=Body(PydanticUndefined), name='data', mode='validation', config=None), is_sse_stream=False, is_json_stream=False)
+        match      = <Match.FULL: 2>
+        original_route = APIRoute(path='/search', name='search_cases', methods=['POST'])
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        route      = APIRoute(path='/search', name='search_cases', methods=['POST'])
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:1279: in handle
+    await app(scope, receive, send)
+        __class__  = <class 'fastapi.routing.APIRoute'>
+        app        = <function request_response.<locals>.app at 0x7f52e0dc8d60>
+        effective_context = _EffectiveRouteContext(original_route=APIRoute(path='/search', name='search_cases', methods=['POST']), starlette_route..._info=Body(PydanticUndefined), name='data', mode='validation', config=None), is_sse_stream=False, is_json_stream=False)
+        methods    = {'POST'}
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = APIRoute(path='/search', name='search_cases', methods=['POST'])
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+        token      = <Token used var=<ContextVar name='fastapi_effective_route_context' default=None at 0x7f52e6284f90> at 0x7f52e041f980>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:158: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+        app        = <function request_response.<locals>.app.<locals>.app at 0x7f52e0dc91c0>
+        f          = <function get_request_handler.<locals>.app at 0x7f52e0dc9760>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        request    = <starlette.requests.Request object at 0x7f52e0406210>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+        app        = <function request_response.<locals>.app.<locals>.app at 0x7f52e0dc91c0>
+        conn       = <starlette.requests.Request object at 0x7f52e0406210>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dca980>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+        app        = <function request_response.<locals>.app.<locals>.app at 0x7f52e0dc91c0>
+        conn       = <starlette.requests.Request object at 0x7f52e0406210>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dc9080>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dca980>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:144: in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+        f          = <function get_request_handler.<locals>.app at 0x7f52e0dc9760>
+        function_stack = <contextlib.AsyncExitStack object at 0x7f52e04067e0>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e0d871a0>
+        request    = <starlette.requests.Request object at 0x7f52e0406210>
+        request_stack = <contextlib.AsyncExitStack object at 0x7f52e04067b0>
+        response_awaited = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52e0dca980>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:706: in app
+    raw_response = await run_endpoint_function(
+        _serialize_data = <function get_request_handler.<locals>.app.<locals>._serialize_data at 0x7f52e0dca700>
+        actual_response_class = <class 'starlette.responses.JSONResponse'>
+        actual_strict_content_type = True
+        async_exit_stack = <contextlib.AsyncExitStack object at 0x7f52e04067b0>
+        body       = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        body_bytes = b'{"query_text":"beacon","priority":["high"],"status":["open"],"assignee":["analyst"],"tags":["c2","dns"],"created_after":"2026-06-01","created_before":"2026-06-30T23:59:59","limit":50,"offset":0}'
+        body_field = ModelField(field_info=Body(PydanticUndefined), name='data', mode='validation', config=None)
+        content_type_value = 'application/json'
+        dependant  = Dependant(path_params=[], query_params=[], header_params=[], cookie_params=[], body_params=[ModelField(field_info=Body...name=None, own_oauth_scopes=None, parent_oauth_scopes=None, use_cache=True, path='/api/cases/search', scope='function')
+        dependency_overrides_provider = <fastapi.applications.FastAPI object at 0x7f52e2d914c0>
+        embed_body_fields = False
+        endpoint_ctx = {'file': '/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1838d7e9-251c-48cf-9c34-45d62f701da1/core/api/v1/cases_router.py', 'line': 792, 'function': 'search_cases', 'path': 'POST /api/cases/search'}
+        errors     = []
+        file_stack = <contextlib.AsyncExitStack object at 0x7f52e0db6630>
+        is_body_form = False
+        is_coroutine = False
+        is_json_stream = False
+        is_sse_stream = False
+        json_body  = {'query_text': 'beacon', 'priority': ['high'], 'status': ['open'], 'assignee': ['analyst'], ...}
+        message    = <email.message.Message object at 0x7f52e04074d0>
+        mount_path = ''
+        request    = <starlette.requests.Request object at 0x7f52e0406210>
+        response   = None
+        response_class = <fastapi.datastructures.DefaultPlaceholder object at 0x7f52e60c8f80>
+        response_field = ModelField(field_info=FieldInfo(annotation=CaseSearchResponse, required=True), name='Response_search_cases_api_cases_search_post', mode='serialization', config=None)
+        response_model_by_alias = True
+        response_model_exclude = None
+        response_model_exclude_defaults = False
+        response_model_exclude_none = False
+        response_model_exclude_unset = False
+        response_model_include = None
+        solved_result = SolvedDependency(values={'data': SearchRequest(query_text='beacon', status=['open'], priority=['high'], assignee=['ana...rrors=[], background_tasks=None, response=<starlette.responses.Response object at 0x7f52e0407020>, dependency_cache={})
+        status_code = None
+        stream_item_field = None
+        subtype    = 'json'
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:354: in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        dependant  = Dependant(path_params=[], query_params=[], header_params=[], cookie_params=[], body_params=[ModelField(field_info=Body...name=None, own_oauth_scopes=None, parent_oauth_scopes=None, use_cache=True, path='/api/cases/search', scope='function')
+        is_coroutine = False
+        values     = {'data': SearchRequest(query_text='beacon', status=['open'], priority=['high'], assignee=['analyst'], tags=['c2', 'dns...er=datetime.datetime(2026, 6, 1, 0, 0), created_before=datetime.datetime(2026, 6, 30, 23, 59, 59), limit=50, offset=0)}
+/tmp/venv2829/lib/python3.12/site-packages/starlette/concurrency.py:34: in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        args       = ()
+        func       = functools.partial(<function search_cases at 0x7f52e0d84a40>, data=SearchRequest(query_text='beacon', status=['open'], ...er=datetime.datetime(2026, 6, 1, 0, 0), created_before=datetime.datetime(2026, 6, 30, 23, 59, 59), limit=50, offset=0))
+        kwargs     = {'data': SearchRequest(query_text='beacon', status=['open'], priority=['high'], assignee=['analyst'], tags=['c2', 'dns...er=datetime.datetime(2026, 6, 1, 0, 0), created_before=datetime.datetime(2026, 6, 30, 23, 59, 59), limit=50, offset=0)}
+/tmp/venv2829/lib/python3.12/site-packages/anyio/to_thread.py:65: in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+        abandon_on_cancel = False
+        args       = ()
+        cancellable = None
+        func       = functools.partial(<function search_cases at 0x7f52e0d84a40>, data=SearchRequest(query_text='beacon', status=['open'], ...er=datetime.datetime(2026, 6, 1, 0, 0), created_before=datetime.datetime(2026, 6, 30, 23, 59, 59), limit=50, offset=0))
+        limiter    = None
+/tmp/venv2829/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2641: in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+        abandon_on_cancel = False
+        args       = ()
+        cls        = <class 'anyio._backends._asyncio.AsyncIOBackend'>
+        context    = <_contextvars.Context object at 0x7f52e0d3b580>
+        func       = functools.partial(<function search_cases at 0x7f52e0d84a40>, data=SearchRequest(query_text='beacon', status=['open'], ...er=datetime.datetime(2026, 6, 1, 0, 0), created_before=datetime.datetime(2026, 6, 30, 23, 59, 59), limit=50, offset=0))
+        future     = <Future finished exception=NotImplementedError('ARRAY.contains() not implemented for the base ARRAY type; please use the dialect-specific ARRAY type')>
+        idle_workers = deque([])
+        limiter    = None
+        root_task  = <Task finished name='anyio.from_thread.start_blocking_portal.<locals>.run_portal' coro=<start_blocking_portal.<locals>.run_portal() done, defined at /tmp/venv2829/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2457> result=None>
+        scope      = <anyio._backends._asyncio.CancelScope object at 0x7f52e0dca350>
+        worker     = <WorkerThread(AnyIO worker thread, stopped daemon 139993855030976)>
+        worker_scope = <anyio._backends._asyncio.CancelScope object at 0x7f52e0dca850>
+        workers    = set()
+/tmp/venv2829/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:1033: in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+        item       = None
+        self       = <WorkerThread(AnyIO worker thread, stopped daemon 139993855030976)>
+core/api/v1/cases_router.py:799: in search_cases
+    results = search_service.search_cases(
+        CaseSearchService = <class 'core.cases.case_search_service.CaseSearchService'>
+        data       = SearchRequest(query_text='beacon', status=['open'], priority=['high'], assignee=['analyst'], tags=['c2', 'dns'], mitre...ter=datetime.datetime(2026, 6, 1, 0, 0), created_before=datetime.datetime(2026, 6, 30, 23, 59, 59), limit=50, offset=0)
+        search_service = <core.cases.case_search_service.CaseSearchService object at 0x7f52e0d576e0>
+core/cases/case_search_service.py:75: in search_cases
+    cases, total_count = CaseRepository(session).search(
+        assignee   = ['analyst']
+        created_after = datetime.datetime(2026, 6, 1, 0, 0)
+        created_before = datetime.datetime(2026, 6, 30, 23, 59, 59)
+        has_sla_breach = None
+        limit      = 50
+        mitre_techniques = None
+        offset     = 0
+        priority   = ['high']
+        query_text = 'beacon'
+        self       = <core.cases.case_search_service.CaseSearchService object at 0x7f52e0d576e0>
+        session    = <sqlalchemy.orm.session.Session object at 0x7f52e0db70e0>
+        status     = ['open']
+        tags       = ['c2', 'dns']
+        updated_after = None
+        updated_before = None
+core/storage/case_repository.py:467: in search
+    stmt = self._build(**filters)
+           ^^^^^^^^^^^^^^^^^^^^^^
+        filters    = {'query_text': 'beacon', 'status': ['open'], 'priority': ['high'], 'assignee': ['analyst'], ...}
+        limit      = 50
+        offset     = 0
+        order_by   = 'updated_at'
+        self       = <core.storage.case_repository.CaseRepository object at 0x7f52e0db42f0>
+core/storage/case_repository.py:418: in _build
+    conditions.append(Case.tags.contains([tag]))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+        assignee   = ['analyst']
+        closed     = None
+        column     = <sqlalchemy.orm.attributes.InstrumentedAttribute object at 0x7f52e59dbb00>
+        conditions = [<sqlalchemy.sql.elements.BooleanClauseList object at 0x7f52e0407710>, <sqlalchemy.sql.elements.BinaryExpression objec...ements.BinaryExpression object at 0x7f52e0407740>, <sqlalchemy.sql.elements.BinaryExpression object at 0x7f52e04077d0>]
+        created_after = datetime.datetime(2026, 6, 1, 0, 0)
+        created_before = datetime.datetime(2026, 6, 30, 23, 59, 59)
+        data_source = None
+        has_sla_breach = None
+        mitre_techniques = None
+        now        = None
+        open_only  = False
+        pattern    = '%beacon%'
+        priority   = ['high']
+        query_text = 'beacon'
+        self       = <core.storage.case_repository.CaseRepository object at 0x7f52e0db42f0>
+        sla_at_risk = False
+        state      = None
+        status     = ['open']
+        stmt       = <sqlalchemy.sql.selectable.Select object at 0x7f52e0407650>
+        tag        = 'c2'
+        tags       = ['c2', 'dns']
+        updated_after = None
+        updated_before = None
+        value      = ['analyst']
+        values     = ['analyst']
+        workflow   = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:1706: in contains
+    return self.operate(contains_op, other, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kw         = {}
+        other      = ['c2']
+        self       = <sqlalchemy.orm.attributes.InstrumentedAttribute object at 0x7f52e59dbe20>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/orm/attributes.py:459: in operate
+    return op(self.comparator, *other, **kwargs)  # type: ignore[no-any-return]  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kwargs     = {}
+        op         = <function contains_op at 0x7f52e70edee0>
+        other      = (['c2'],)
+        self       = <sqlalchemy.orm.attributes.InstrumentedAttribute object at 0x7f52e59dbe20>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2474: in contains_op
+    return _escaped_like_impl(a.contains, b, escape, autoescape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        a          = <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5ad0>
+        autoescape = False
+        b          = ['c2']
+        escape     = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2378: in _escaped_like_impl
+    return fn(other, escape=escape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+        autoescape = False
+        escape     = None
+        fn         = <bound method ColumnOperators.contains of <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5ad0>>
+        other      = ['c2']
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:1706: in contains
+    return self.operate(contains_op, other, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kw         = {'escape': None}
+        other      = ['c2']
+        self       = <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5ad0>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/orm/properties.py:484: in operate
+    return op(self.__clause_element__(), *other, **kwargs)  # type: ignore[no-any-return]  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kwargs     = {'escape': None}
+        op         = <function contains_op at 0x7f52e70edee0>
+        other      = (['c2'],)
+        self       = <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5ad0>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2474: in contains_op
+    return _escaped_like_impl(a.contains, b, escape, autoescape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        a          = Column('tags', ARRAY(String()), table=<cases>, default=CallableColumnDefault(<function list at 0x7f52e59da980>))
+        autoescape = False
+        b          = ['c2']
+        escape     = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2378: in _escaped_like_impl
+    return fn(other, escape=escape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+        autoescape = False
+        escape     = None
+        fn         = <bound method ColumnOperators.contains of Column('tags', ARRAY(String()), table=<cases>, default=CallableColumnDefault(<function list at 0x7f52e59da980>))>
+        other      = ['c2']
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:1706: in contains
+    return self.operate(contains_op, other, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kw         = {'escape': None}
+        other      = ['c2']
+        self       = Column('tags', ARRAY(String()), table=<cases>, default=CallableColumnDefault(<function list at 0x7f52e59da980>))
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:1598: in operate
+    return op(self.comparator, *other, **kwargs)  # type: ignore[no-any-return]  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kwargs     = {'escape': None}
+        op         = <function contains_op at 0x7f52e70edee0>
+        other      = (['c2'],)
+        self       = Column('tags', ARRAY(String()), table=<cases>, default=CallableColumnDefault(<function list at 0x7f52e59da980>))
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2474: in contains_op
+    return _escaped_like_impl(a.contains, b, escape, autoescape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        a          = <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398a60>
+        autoescape = False
+        b          = ['c2']
+        escape     = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2378: in _escaped_like_impl
+    return fn(other, escape=escape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+        autoescape = False
+        escape     = None
+        fn         = <bound method ARRAY.Comparator.contains of <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398a60>>
+        other      = ['c2']
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398a60>
+arg = (['c2'],), kw = {'escape': None}
+
+    def contains(self, *arg: Any, **kw: Any) -> ColumnElement[bool]:
+        """``ARRAY.contains()`` not implemented for the base ARRAY type.
+        Use the dialect-specific ARRAY type.
+    
+        .. seealso::
+    
+            :class:`_postgresql.ARRAY` - PostgreSQL specific version.
+        """
+>       raise NotImplementedError(
+            "ARRAY.contains() not implemented for the base "
+            "ARRAY type; please use the dialect-specific ARRAY type"
+        )
+E       NotImplementedError: ARRAY.contains() not implemented for the base ARRAY type; please use the dialect-specific ARRAY type
+
+arg        = (['c2'],)
+kw         = {'escape': None}
+self       = <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398a60>
+
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/sqltypes.py:3251: NotImplementedError
+________________ test_mitre_techniques_filter_matches_the_array ________________
+
+client = <starlette.testclient.TestClient object at 0x7f52e048f620>
+
+    def test_mitre_techniques_filter_matches_the_array(client):
+        _case("cs-t1071", datetime(2026, 6, 10))
+        _case("cs-t1059", datetime(2026, 6, 10), mitre_techniques=["T1059"])
+    
+>       assert _search(client, mitre_techniques=["T1059"]) == ["cs-t1059"]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+client     = <starlette.testclient.TestClient object at 0x7f52e048f620>
+
+tests/unit/cases/test_case_search_filters.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/cases/test_case_search_filters.py:55: in _search
+    response = client.post("/api/cases/search", json={**body, "limit": 50, "offset": 0})
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        body       = {'mitre_techniques': ['T1059']}
+        client     = <starlette.testclient.TestClient object at 0x7f52e048f620>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:556: in post
+    return super().post(
+        __class__  = <class 'starlette.testclient.TestClient'>
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'mitre_techniques': ['T1059'], 'limit': 50, 'offset': 0}
+        params     = None
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = '/api/cases/search'
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1204: in post
+    return self.request(
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'mitre_techniques': ['T1059'], 'limit': 50, 'offset': 0}
+        params     = None
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = '/api/cases/search'
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:455: in request
+    return super().request(
+        __class__  = <class 'starlette.testclient.TestClient'>
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'mitre_techniques': ['T1059'], 'limit': 50, 'offset': 0}
+        method     = 'POST'
+        params     = None
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = URL('http://testserver/api/cases/search')
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:797: in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        auth       = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        content    = None
+        cookies    = None
+        data       = None
+        extensions = None
+        files      = None
+        follow_redirects = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        headers    = None
+        json       = {'mitre_techniques': ['T1059'], 'limit': 50, 'offset': 0}
+        method     = 'POST'
+        params     = None
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+        timeout    = <httpx2._client.UseClientDefault object at 0x7f52e60cb860>
+        url        = URL('http://testserver/api/cases/search')
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:980: in send
+    response = self._send_handling_auth(
+        auth       = <httpx2.Auth object at 0x7f52e2d43bc0>
+        follow_redirects = True
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+        stream     = False
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1008: in _send_handling_auth
+    response = self._send_handling_redirects(
+        auth       = <httpx2.Auth object at 0x7f52e2d43bc0>
+        auth_flow  = <generator object Auth.sync_auth_flow at 0x7f52e0daa6c0>
+        follow_redirects = True
+        history    = []
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1043: in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        follow_redirects = True
+        history    = []
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+/tmp/venv2829/lib/python3.12/site-packages/httpx2/_client.py:1076: in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        self       = <starlette.testclient.TestClient object at 0x7f52e048f620>
+        start      = 158500.238638504
+        transport  = <starlette.testclient._TestClientTransport object at 0x7f52e04049e0>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:354: in handle_request
+    raise exc
+        debug_info = None
+        default_port = 80
+        headers    = [(b'host', b'testserver'), (b'accept', b'*/*'), (b'accept-encoding', b'gzip, deflate'), (b'connection', b'keep-alive'), (b'user-agent', b'testclient'), (b'content-length', b'52'), ...]
+        host       = 'testserver'
+        netloc     = 'testserver'
+        path       = '/api/cases/search'
+        port       = 80
+        portal     = <anyio.from_thread.BlockingPortal object at 0x7f52e04d5d00>
+        query      = ''
+        raw_kwargs = {'stream': <_io.BytesIO object at 0x7f52da445d50>, 'status_code': 500, 'headers': [('content-length', '21'), ('content-type', 'text/plain; charset=utf-8')]}
+        raw_path   = b'/api/cases/search'
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        request_complete = True
+        response_complete = <anyio._backends._asyncio.Event object at 0x7f52d98c0e50>
+        response_started = True
+        scheme     = 'http'
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.testclient._TestClientTransport object at 0x7f52e04049e0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/testclient.py:351: in handle_request
+    portal.call(self.app, scope, receive, send)
+        debug_info = None
+        default_port = 80
+        headers    = [(b'host', b'testserver'), (b'accept', b'*/*'), (b'accept-encoding', b'gzip, deflate'), (b'connection', b'keep-alive'), (b'user-agent', b'testclient'), (b'content-length', b'52'), ...]
+        host       = 'testserver'
+        netloc     = 'testserver'
+        path       = '/api/cases/search'
+        port       = 80
+        portal     = <anyio.from_thread.BlockingPortal object at 0x7f52e04d5d00>
+        query      = ''
+        raw_kwargs = {'stream': <_io.BytesIO object at 0x7f52da445d50>, 'status_code': 500, 'headers': [('content-length', '21'), ('content-type', 'text/plain; charset=utf-8')]}
+        raw_path   = b'/api/cases/search'
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        request    = <Request('POST', 'http://testserver/api/cases/search')>
+        request_complete = True
+        response_complete = <anyio._backends._asyncio.Event object at 0x7f52d98c0e50>
+        response_started = True
+        scheme     = 'http'
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.testclient._TestClientTransport object at 0x7f52e04049e0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>
+/tmp/venv2829/lib/python3.12/site-packages/anyio/from_thread.py:338: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        args       = ({'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}, <function _TestClientTra...st.<locals>.receive at 0x7f52e04af6a0>, <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>)
+        func       = <fastapi.applications.FastAPI object at 0x7f52e2d43860>
+        self       = <anyio.from_thread.BlockingPortal object at 0x7f52e04d5d00>
+/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+        self       = None
+        timeout    = None
+/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+        self       = None
+/tmp/venv2829/lib/python3.12/site-packages/anyio/from_thread.py:263: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+        args       = ({'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}, <function _TestClientTra...st.<locals>.receive at 0x7f52e04af6a0>, <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>)
+        callback   = <function BlockingPortal._call_func.<locals>.callback at 0x7f52e0d87560>
+        event_loop_thread_id = 139993935771328
+        func       = <fastapi.applications.FastAPI object at 0x7f52e2d43860>
+        future     = <Future at 0x7f52e048e270 state=finished raised NotImplementedError>
+        kwargs     = {}
+        retval_or_awaitable = <coroutine object FastAPI.__call__ at 0x7f52e0de75b0>
+        scope      = None
+        self       = <anyio.from_thread.BlockingPortal object at 0x7f52e04d5d00>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/applications.py:1163: in __call__
+    await super().__call__(scope, receive, send)
+        __class__  = <class 'fastapi.applications.FastAPI'>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.applications.FastAPI object at 0x7f52e2d43860>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/applications.py:96: in __call__
+    await self.middleware_stack(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.applications.FastAPI object at 0x7f52e2d43860>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+    raise exc
+        _send      = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52db192d40>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        request    = <starlette.requests.Request object at 0x7f52e04d4500>
+        response   = <starlette.responses.PlainTextResponse object at 0x7f52e04d4560>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f52e04d79b0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+        _send      = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52db192d40>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        request    = <starlette.requests.Request object at 0x7f52e04d4500>
+        response   = <starlette.responses.PlainTextResponse object at 0x7f52e04d4560>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.middleware.errors.ServerErrorMiddleware object at 0x7f52e04d79b0>
+        send       = <function _TestClientTransport.handle_request.<locals>.send at 0x7f52db192340>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/middleware/exceptions.py:63: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+        conn       = <starlette.requests.Request object at 0x7f52e04d49b0>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <starlette.middleware.exceptions.ExceptionMiddleware object at 0x7f52e04d6030>
+        send       = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52db192d40>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+        app        = <fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware object at 0x7f52e04d42f0>
+        conn       = <starlette.requests.Request object at 0x7f52e04d49b0>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52db192d40>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+        app        = <fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware object at 0x7f52e04d42f0>
+        conn       = <starlette.requests.Request object at 0x7f52e04d49b0>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function ServerErrorMiddleware.__call__.<locals>._send at 0x7f52db192d40>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py:18: in __call__
+    await self.app(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware object at 0x7f52e04d42f0>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+        stack      = <contextlib.AsyncExitStack object at 0x7f52e04d44a0>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/routing.py:670: in __call__
+    await self.middleware_stack(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.routing.APIRouter object at 0x7f52e04417f0>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:2734: in app
+    await route.handle(scope, receive, send)
+        child_scope = {}
+        match      = <Match.FULL: 2>
+        partial    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        route      = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.routing.APIRouter object at 0x7f52e04417f0>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:1780: in handle
+    await self.original_router.handle(scope, receive, send)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:2789: in handle
+    await included_router._handle_selected(scope, receive, send)
+        included_router = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = <fastapi.routing.APIRouter object at 0x7f52e1d60e30>
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:1800: in _handle_selected
+    await original_route.handle(scope, receive, send)
+        child_scope = {'endpoint': <function search_cases at 0x7f52e0d84a40>, 'path_params': {}, 'route': APIRoute(path='/search', name='search_cases', methods=['POST'])}
+        effective_context = _EffectiveRouteContext(original_route=APIRoute(path='/search', name='search_cases', methods=['POST']), starlette_route..._info=Body(PydanticUndefined), name='data', mode='validation', config=None), is_sse_stream=False, is_json_stream=False)
+        match      = <Match.FULL: 2>
+        original_route = APIRoute(path='/search', name='search_cases', methods=['POST'])
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        route      = APIRoute(path='/search', name='search_cases', methods=['POST'])
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = _IncludedRouter(original_router=<fastapi.routing.APIRouter object at 0x7f52e1d60e30>, include_context=_RouterIncludeCo...se)], _effective_candidates_version=16, _effective_low_priority_routes=[], _effective_low_priority_routes_version=None)
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:1279: in handle
+    await app(scope, receive, send)
+        __class__  = <class 'fastapi.routing.APIRoute'>
+        app        = <function request_response.<locals>.app at 0x7f52db192200>
+        effective_context = _EffectiveRouteContext(original_route=APIRoute(path='/search', name='search_cases', methods=['POST']), starlette_route..._info=Body(PydanticUndefined), name='data', mode='validation', config=None), is_sse_stream=False, is_json_stream=False)
+        methods    = {'POST'}
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        self       = APIRoute(path='/search', name='search_cases', methods=['POST'])
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+        token      = <Token used var=<ContextVar name='fastapi_effective_route_context' default=None at 0x7f52e6284f90> at 0x7f52da230900>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:158: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+        app        = <function request_response.<locals>.app.<locals>.app at 0x7f52db1925c0>
+        f          = <function get_request_handler.<locals>.app at 0x7f52db192f20>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        request    = <starlette.requests.Request object at 0x7f52e04bd640>
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+        app        = <function request_response.<locals>.app.<locals>.app at 0x7f52db1925c0>
+        conn       = <starlette.requests.Request object at 0x7f52e04bd640>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1923e0>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+        app        = <function request_response.<locals>.app.<locals>.app at 0x7f52db1925c0>
+        conn       = <starlette.requests.Request object at 0x7f52e04bd640>
+        exception_handlers = {<class 'starlette.exceptions.HTTPException'>: <function http_exception_handler at 0x7f52e6280180>, <class 'starlette....eptions.WebSocketRequestValidationError'>: <function websocket_request_validation_exception_handler at 0x7f52e60cc400>}
+        handler    = None
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        response_started = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1918a0>
+        sender     = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1923e0>
+        status_handlers = {}
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:144: in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+        f          = <function get_request_handler.<locals>.app at 0x7f52db192f20>
+        function_stack = <contextlib.AsyncExitStack object at 0x7f52e04bdca0>
+        receive    = <function _TestClientTransport.handle_request.<locals>.receive at 0x7f52e04af6a0>
+        request    = <starlette.requests.Request object at 0x7f52e04bd640>
+        request_stack = <contextlib.AsyncExitStack object at 0x7f52e04bdc70>
+        response_awaited = False
+        scope      = {'type': 'http', 'http_version': '1.1', 'method': 'POST', 'path': '/api/cases/search', ...}
+        send       = <function wrap_app_handling_exceptions.<locals>.wrapped_app.<locals>.sender at 0x7f52db1923e0>
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:706: in app
+    raw_response = await run_endpoint_function(
+        _serialize_data = <function get_request_handler.<locals>.app.<locals>._serialize_data at 0x7f52db192b60>
+        actual_response_class = <class 'starlette.responses.JSONResponse'>
+        actual_strict_content_type = True
+        async_exit_stack = <contextlib.AsyncExitStack object at 0x7f52e04bdc70>
+        body       = {'mitre_techniques': ['T1059'], 'limit': 50, 'offset': 0}
+        body_bytes = b'{"mitre_techniques":["T1059"],"limit":50,"offset":0}'
+        body_field = ModelField(field_info=Body(PydanticUndefined), name='data', mode='validation', config=None)
+        content_type_value = 'application/json'
+        dependant  = Dependant(path_params=[], query_params=[], header_params=[], cookie_params=[], body_params=[ModelField(field_info=Body...name=None, own_oauth_scopes=None, parent_oauth_scopes=None, use_cache=True, path='/api/cases/search', scope='function')
+        dependency_overrides_provider = <fastapi.applications.FastAPI object at 0x7f52e2d43860>
+        embed_body_fields = False
+        endpoint_ctx = {'file': '/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1838d7e9-251c-48cf-9c34-45d62f701da1/core/api/v1/cases_router.py', 'line': 792, 'function': 'search_cases', 'path': 'POST /api/cases/search'}
+        errors     = []
+        file_stack = <contextlib.AsyncExitStack object at 0x7f52e04d44a0>
+        is_body_form = False
+        is_coroutine = False
+        is_json_stream = False
+        is_sse_stream = False
+        json_body  = {'mitre_techniques': ['T1059'], 'limit': 50, 'offset': 0}
+        message    = <email.message.Message object at 0x7f52e04bde20>
+        mount_path = ''
+        request    = <starlette.requests.Request object at 0x7f52e04bd640>
+        response   = None
+        response_class = <fastapi.datastructures.DefaultPlaceholder object at 0x7f52e60c8f80>
+        response_field = ModelField(field_info=FieldInfo(annotation=CaseSearchResponse, required=True), name='Response_search_cases_api_cases_search_post', mode='serialization', config=None)
+        response_model_by_alias = True
+        response_model_exclude = None
+        response_model_exclude_defaults = False
+        response_model_exclude_none = False
+        response_model_exclude_unset = False
+        response_model_include = None
+        solved_result = SolvedDependency(values={'data': SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, ...rrors=[], background_tasks=None, response=<starlette.responses.Response object at 0x7f52e04bdf10>, dependency_cache={})
+        status_code = None
+        stream_item_field = None
+        subtype    = 'json'
+/tmp/venv2829/lib/python3.12/site-packages/fastapi/routing.py:354: in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        dependant  = Dependant(path_params=[], query_params=[], header_params=[], cookie_params=[], body_params=[ModelField(field_info=Body...name=None, own_oauth_scopes=None, parent_oauth_scopes=None, use_cache=True, path='/api/cases/search', scope='function')
+        is_coroutine = False
+        values     = {'data': SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, mitre_techniques=['T1059'], created_after=None, created_before=None, limit=50, offset=0)}
+/tmp/venv2829/lib/python3.12/site-packages/starlette/concurrency.py:34: in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        args       = ()
+        func       = functools.partial(<function search_cases at 0x7f52e0d84a40>, data=SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, mitre_techniques=['T1059'], created_after=None, created_before=None, limit=50, offset=0))
+        kwargs     = {'data': SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, mitre_techniques=['T1059'], created_after=None, created_before=None, limit=50, offset=0)}
+/tmp/venv2829/lib/python3.12/site-packages/anyio/to_thread.py:65: in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+        abandon_on_cancel = False
+        args       = ()
+        cancellable = None
+        func       = functools.partial(<function search_cases at 0x7f52e0d84a40>, data=SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, mitre_techniques=['T1059'], created_after=None, created_before=None, limit=50, offset=0))
+        limiter    = None
+/tmp/venv2829/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2641: in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+        abandon_on_cancel = False
+        args       = ()
+        cls        = <class 'anyio._backends._asyncio.AsyncIOBackend'>
+        context    = <_contextvars.Context object at 0x7f52e0d7dc00>
+        func       = functools.partial(<function search_cases at 0x7f52e0d84a40>, data=SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, mitre_techniques=['T1059'], created_after=None, created_before=None, limit=50, offset=0))
+        future     = <Future finished exception=NotImplementedError('ARRAY.contains() not implemented for the base ARRAY type; please use the dialect-specific ARRAY type')>
+        idle_workers = deque([])
+        limiter    = None
+        root_task  = <Task finished name='anyio.from_thread.start_blocking_portal.<locals>.run_portal' coro=<start_blocking_portal.<locals>.run_portal() done, defined at /tmp/venv2829/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2457> result=None>
+        scope      = <anyio._backends._asyncio.CancelScope object at 0x7f52e0dcb070>
+        worker     = <WorkerThread(AnyIO worker thread, stopped daemon 139993855030976)>
+        worker_scope = <anyio._backends._asyncio.CancelScope object at 0x7f52db192a30>
+        workers    = set()
+/tmp/venv2829/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:1033: in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+        item       = None
+        self       = <WorkerThread(AnyIO worker thread, stopped daemon 139993855030976)>
+core/api/v1/cases_router.py:799: in search_cases
+    results = search_service.search_cases(
+        CaseSearchService = <class 'core.cases.case_search_service.CaseSearchService'>
+        data       = SearchRequest(query_text=None, status=None, priority=None, assignee=None, tags=None, mitre_techniques=['T1059'], created_after=None, created_before=None, limit=50, offset=0)
+        search_service = <core.cases.case_search_service.CaseSearchService object at 0x7f52e0db4350>
+core/cases/case_search_service.py:75: in search_cases
+    cases, total_count = CaseRepository(session).search(
+        assignee   = None
+        created_after = None
+        created_before = None
+        has_sla_breach = None
+        limit      = 50
+        mitre_techniques = ['T1059']
+        offset     = 0
+        priority   = None
+        query_text = None
+        self       = <core.cases.case_search_service.CaseSearchService object at 0x7f52e0db4350>
+        session    = <sqlalchemy.orm.session.Session object at 0x7f52e04be240>
+        status     = None
+        tags       = None
+        updated_after = None
+        updated_before = None
+core/storage/case_repository.py:467: in search
+    stmt = self._build(**filters)
+           ^^^^^^^^^^^^^^^^^^^^^^
+        filters    = {'query_text': None, 'status': None, 'priority': None, 'assignee': None, ...}
+        limit      = 50
+        offset     = 0
+        order_by   = 'updated_at'
+        self       = <core.storage.case_repository.CaseRepository object at 0x7f52e04be210>
+core/storage/case_repository.py:420: in _build
+    conditions.append(Case.mitre_techniques.contains([technique]))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        assignee   = None
+        closed     = None
+        column     = <sqlalchemy.orm.attributes.InstrumentedAttribute object at 0x7f52e59dbb00>
+        conditions = []
+        created_after = None
+        created_before = None
+        data_source = None
+        has_sla_breach = None
+        mitre_techniques = ['T1059']
+        now        = None
+        open_only  = False
+        priority   = None
+        query_text = None
+        self       = <core.storage.case_repository.CaseRepository object at 0x7f52e04be210>
+        sla_at_risk = False
+        state      = None
+        status     = None
+        stmt       = <sqlalchemy.sql.selectable.Select object at 0x7f52e04be270>
+        tags       = None
+        technique  = 'T1059'
+        updated_after = None
+        updated_before = None
+        value      = None
+        values     = []
+        workflow   = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:1706: in contains
+    return self.operate(contains_op, other, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kw         = {}
+        other      = ['T1059']
+        self       = <sqlalchemy.orm.attributes.InstrumentedAttribute object at 0x7f52e5a10180>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/orm/attributes.py:459: in operate
+    return op(self.comparator, *other, **kwargs)  # type: ignore[no-any-return]  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kwargs     = {}
+        op         = <function contains_op at 0x7f52e70edee0>
+        other      = (['T1059'],)
+        self       = <sqlalchemy.orm.attributes.InstrumentedAttribute object at 0x7f52e5a10180>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2474: in contains_op
+    return _escaped_like_impl(a.contains, b, escape, autoescape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        a          = <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5c60>
+        autoescape = False
+        b          = ['T1059']
+        escape     = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2378: in _escaped_like_impl
+    return fn(other, escape=escape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+        autoescape = False
+        escape     = None
+        fn         = <bound method ColumnOperators.contains of <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5c60>>
+        other      = ['T1059']
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:1706: in contains
+    return self.operate(contains_op, other, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kw         = {'escape': None}
+        other      = ['T1059']
+        self       = <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5c60>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/orm/properties.py:484: in operate
+    return op(self.__clause_element__(), *other, **kwargs)  # type: ignore[no-any-return]  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kwargs     = {'escape': None}
+        op         = <function contains_op at 0x7f52e70edee0>
+        other      = (['T1059'],)
+        self       = <sqlalchemy.orm.properties.ColumnProperty.Comparator object at 0x7f52e59e5c60>
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2474: in contains_op
+    return _escaped_like_impl(a.contains, b, escape, autoescape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        a          = Column('mitre_techniques', ARRAY(String()), table=<cases>)
+        autoescape = False
+        b          = ['T1059']
+        escape     = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2378: in _escaped_like_impl
+    return fn(other, escape=escape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+        autoescape = False
+        escape     = None
+        fn         = <bound method ColumnOperators.contains of Column('mitre_techniques', ARRAY(String()), table=<cases>)>
+        other      = ['T1059']
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:1706: in contains
+    return self.operate(contains_op, other, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kw         = {'escape': None}
+        other      = ['T1059']
+        self       = Column('mitre_techniques', ARRAY(String()), table=<cases>)
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:1598: in operate
+    return op(self.comparator, *other, **kwargs)  # type: ignore[no-any-return]  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kwargs     = {'escape': None}
+        op         = <function contains_op at 0x7f52e70edee0>
+        other      = (['T1059'],)
+        self       = Column('mitre_techniques', ARRAY(String()), table=<cases>)
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2474: in contains_op
+    return _escaped_like_impl(a.contains, b, escape, autoescape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        a          = <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398c10>
+        autoescape = False
+        b          = ['T1059']
+        escape     = None
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/operators.py:2378: in _escaped_like_impl
+    return fn(other, escape=escape)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+        autoescape = False
+        escape     = None
+        fn         = <bound method ARRAY.Comparator.contains of <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398c10>>
+        other      = ['T1059']
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398c10>
+arg = (['T1059'],), kw = {'escape': None}
+
+    def contains(self, *arg: Any, **kw: Any) -> ColumnElement[bool]:
+        """``ARRAY.contains()`` not implemented for the base ARRAY type.
+        Use the dialect-specific ARRAY type.
+    
+        .. seealso::
+    
+            :class:`_postgresql.ARRAY` - PostgreSQL specific version.
+        """
+>       raise NotImplementedError(
+            "ARRAY.contains() not implemented for the base "
+            "ARRAY type; please use the dialect-specific ARRAY type"
+        )
+E       NotImplementedError: ARRAY.contains() not implemented for the base ARRAY type; please use the dialect-specific ARRAY type
+
+arg        = (['T1059'],)
+kw         = {'escape': None}
+self       = <sqlalchemy.sql.sqltypes.ARRAY.Comparator object at 0x7f52e4398c10>
+
+/tmp/venv2829/lib/python3.12/site-packages/sqlalchemy/sql/sqltypes.py:3251: NotImplementedError
+============================= slowest 10 durations =============================
+1.65s setup    unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+0.16s call     unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+0.15s teardown unit/cases/test_case_search_filters.py::test_mitre_techniques_filter_matches_the_array
+0.13s call     unit/cases/test_case_search_filters.py::test_mitre_techniques_filter_matches_the_array
+0.02s teardown unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+
+(1 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+FAILED tests/unit/cases/test_case_search_filters.py::test_mitre_techniques_filter_matches_the_array
+========================= 2 failed, 1 warning in 6.93s =========================

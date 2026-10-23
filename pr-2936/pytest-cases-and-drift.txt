@@ -1,0 +1,51 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1838d7e9-251c-48cf-9c34-45d62f701da1/tests
+configfile: pytest.ini
+plugins: anyio-4.14.2, Faker-40.43.0, respx-0.23.1, asyncio-1.4.0, cov-7.1.0, mock-3.15.1, platformdirs-4.13.5
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 208 items
+
+tests/integration/test_schema_drift_upgrade.py ......................... [ 12%]
+........                                                                 [ 15%]
+tests/unit/_ratchets/test_init_sql_model_indexes.py ..                   [ 16%]
+tests/unit/cases/test_case_actor_is_session_user.py .................    [ 25%]
+tests/unit/cases/test_case_close_records_actor.py ............           [ 30%]
+tests/unit/cases/test_case_collaboration_seam.py ...                     [ 32%]
+tests/unit/cases/test_case_delete_guards.py ............                 [ 37%]
+tests/unit/cases/test_case_evidence_paths.py .....                       [ 40%]
+tests/unit/cases/test_case_evidence_store.py ..                          [ 41%]
+tests/unit/cases/test_case_finding_link.py ....                          [ 43%]
+tests/unit/cases/test_case_metrics_aggregates.py ..................      [ 51%]
+tests/unit/cases/test_case_notes_append.py ....                          [ 53%]
+tests/unit/cases/test_case_record.py ..............                      [ 60%]
+tests/unit/cases/test_case_record_endpoint.py ...                        [ 62%]
+tests/unit/cases/test_case_report_findings_query.py .                    [ 62%]
+tests/unit/cases/test_case_search_by_entity_db.py ....                   [ 64%]
+tests/unit/cases/test_case_search_filters.py ..                          [ 65%]
+tests/unit/cases/test_case_source_links.py .                             [ 65%]
+tests/unit/cases/test_case_state.py ...............                      [ 73%]
+tests/unit/cases/test_case_template_finding_lookup.py ...                [ 74%]
+tests/unit/cases/test_case_update_assignee.py ....                       [ 76%]
+tests/unit/cases/test_cases_clear_permission.py ..                       [ 77%]
+tests/unit/cases/test_cases_response_models.py ..                        [ 78%]
+tests/unit/cases/test_combined_state.py ......                           [ 81%]
+tests/unit/cases/test_get_cases_needs_you.py ...                         [ 82%]
+tests/unit/cases/test_merge_priority.py .......                          [ 86%]
+tests/unit/cases/test_sandbox_correlation.py ................            [ 93%]
+tests/unit/cases/test_sla_policy_delete.py .....                         [ 96%]
+tests/unit/cases/test_sla_policy_inactive.py ....                        [ 98%]
+tests/unit/cases/test_sla_policy_usage_since.py ....                     [100%]
+
+============================= slowest 10 durations =============================
+2.56s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_accepts_pydantics_truthy_spellings[1]
+2.31s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_refuses_every_time_not_just_once
+2.29s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_accepts_pydantics_truthy_spellings[yes]
+2.22s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_accepts_pydantics_truthy_spellings[on]
+2.09s setup    integration/test_schema_drift_upgrade.py::test_orm_read_raises_even_when_the_table_is_empty
+2.08s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_accepts_pydantics_truthy_spellings[TRUE]
+2.07s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_refuses_to_start
+2.04s setup    integration/test_schema_drift_upgrade.py::test_serving_continues_by_default
+1.86s setup    integration/test_schema_drift_upgrade.py::test_drift_is_logged_at_error_with_the_exact_columns
+1.65s setup    integration/test_schema_drift_upgrade.py::test_strict_mode_off_for_falsey_spellings[0]
+================== 208 passed, 1 warning in 80.00s (0:01:20) ===================

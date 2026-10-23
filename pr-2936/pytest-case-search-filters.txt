@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1838d7e9-251c-48cf-9c34-45d62f701da1/tests
+configfile: pytest.ini
+plugins: anyio-4.14.2, Faker-40.43.0, respx-0.23.1, asyncio-1.4.0, cov-7.1.0, mock-3.15.1, platformdirs-4.13.5
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items
+
+tests/unit/cases/test_case_search_filters.py ..                          [100%]
+
+============================= slowest 10 durations =============================
+1.93s setup    unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+0.24s call     unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+0.15s call     unit/cases/test_case_search_filters.py::test_mitre_techniques_filter_matches_the_array
+0.11s teardown unit/cases/test_case_search_filters.py::test_mitre_techniques_filter_matches_the_array
+0.05s teardown unit/cases/test_case_search_filters.py::test_the_console_body_matches_on_every_field
+0.01s setup    unit/cases/test_case_search_filters.py::test_mitre_techniques_filter_matches_the_array
+========================= 2 passed, 1 warning in 4.57s =========================

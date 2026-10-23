@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1838d7e9-251c-48cf-9c34-45d62f701da1/tests
+configfile: pytest.ini
+plugins: anyio-4.14.2, Faker-40.43.0, respx-0.23.1, asyncio-1.4.0, cov-7.1.0, mock-3.15.1, platformdirs-4.13.5
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests/unit/cases/test_zz_tmp_search_2829.py /api/case-search/ 404 {"detail":"Not Found"}
+/api/cases/search 200 {"results":[{"case_id":"s-in-last-hour","title":"s-in-last-hour","description":"beacon to rare domain","status":"open","priority":"high","assignee":"analyst","tags":["c2","dns"],"notes":[],"timeline":[{"event":"Case created","timestamp":"2026-10-23T06:50:56.244957Z"}],"activities":[],"resolution_ste
+ids ['s-in-last-hour'] total 1
+.
+
+============================= slowest 10 durations =============================
+4.61s setup    unit/cases/test_zz_tmp_search_2829.py::test_console_body
+1.70s call     unit/cases/test_zz_tmp_search_2829.py::test_console_body
+0.10s teardown unit/cases/test_zz_tmp_search_2829.py::test_console_body
+========================= 1 passed, 1 warning in 7.89s =========================
