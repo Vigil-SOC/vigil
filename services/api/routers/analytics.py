@@ -132,7 +132,6 @@ async def get_analytics_insights(
             metrics, time_series = await collect_insights_inputs(db, time_range)
             asyncio.create_task(
                 ai_insights_service.trigger_regeneration(
-                    db=db,
                     metrics=metrics,
                     time_series=time_series,
                     time_range=time_range,

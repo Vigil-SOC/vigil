@@ -380,13 +380,13 @@ export const slaPoliciesApi = {
 }
 
 export const caseMetricsApi = {
-  getSummary: () => api.get('/cases/metrics/summary'),
+  getSummary: () => api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary'),
   getMTTD: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttd', { params }),
+    api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
   getMTTR: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttr', { params }),
-  getByPriority: () => api.get('/cases/metrics/by-priority'),
-  getByStatus: () => api.get('/cases/metrics/by-status'),
+    api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
+  getByPriority: () => api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority'),
+  getByStatus: () => api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status'),
   getAnalystPerformance: () => api.get('/cases/metrics/analyst-performance'),
 }
 
