@@ -37,6 +37,16 @@ _FIELD = re.compile(r"[A-Za-z0-9_/.-]{1,64}")
 _DEFAULT_LIMIT = 50
 _SQL_MAX = 2**63 - 1
 _REPEATS = {"incident_id": 1, "type": 8, "from_seq": 1, "cursor": 1, "limit": 1}
+# One statement, placeholders only. Unused type slots are NULL, which IN
+# never matches; a zero count skips the type test. Eight slots is the
+# contract's maxItems for `type`.
+_TYPE_SLOTS = _REPEATS["type"]
+_PAGE = (
+    "SELECT seq, record FROM records WHERE seq >= ?"
+    " AND (? IS NULL OR json_extract(record, '$.body.incident_id') = ?)"
+    " AND (? = 0 OR json_extract(record, '$.type') IN (?,?,?,?,?,?,?,?))"
+    " ORDER BY seq LIMIT ?"
+)
 
 
 @dataclass(frozen=True)
@@ -182,23 +192,19 @@ def _page(conn: sqlite3.Connection, query: _Query) -> dict[str, Any]:
     if query.start > _SQL_MAX:
         rows: list[tuple[Any, str]] = []
     else:
-        where = ["seq >= ?"]
-        args: list[Any] = [query.start]
         # `type` is the record's top-level field. `incident_id` is inside `body`;
         # a record with no body.incident_id does not match that filter.
-        if query.incident_id is not None:
-            where.append("json_extract(record, '$.body.incident_id') = ?")
-            args.append(query.incident_id)
-        if query.types:
-            marks = ",".join("?" * len(query.types))
-            where.append(f"json_extract(record, '$.type') IN ({marks})")
-            args.extend(query.types)
-        args.append(query.limit + 1)
+        slots = (list(query.types) + [None] * _TYPE_SLOTS)[:_TYPE_SLOTS]
         rows = conn.execute(
-            "SELECT seq, record FROM records WHERE "
-            + " AND ".join(where)
-            + " ORDER BY seq LIMIT ?",
-            args,
+            _PAGE,
+            (
+                query.start,
+                query.incident_id,
+                query.incident_id,
+                len(query.types),
+                *slots,
+                query.limit + 1,
+            ),
         ).fetchall()
     (oldest,) = conn.execute("SELECT MIN(seq) FROM records").fetchone()
     extra = len(rows) > query.limit
