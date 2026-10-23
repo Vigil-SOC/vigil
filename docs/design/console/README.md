@@ -19,7 +19,7 @@ Every app board shares one shell, and that shell was drawn for the full product.
 - "View as" in the profile menu;
 - slash-command chips beyond the built-in set in PRD SH-P5;
 - on the case page: the tier control, trust strip, "Approve narrower", Hold with duration, Tell and Do modes, revert rows;
-- in the Settings sidebar: Team & access and Feedback & usage data (phase 2), Notifications (no board exists; not in the PRD), Appearance (removed per PRD D7).
+- in the Settings sidebar: Feedback & usage data (phase 2), Notifications (no board exists; not in the PRD), Appearance (removed per PRD D7).
 
 Numbers on the boards are sample data (1,284 alerts, 73 cases, 214 agents, 34 decisions) and are never defaults. PRD PF7 in rev 1.1 still applies: no policy number is hard-coded in the UI.
 
@@ -35,10 +35,10 @@ Numbers on the boards are sample data (1,284 alerts, 73 cases, 214 agents, 34 de
 | 10 Cases | `Cases`, `CaseDetail` (moods needs, act, closed in `png/`), `CaseInvestigation`, `CaseComments` |
 | 11 Ask Vigil | `PulseChat` for the dock layout only (Pulse itself is phase 2), `ChatHistory`, `TourAsk` |
 | 12 Agents & workflows | `Agents`, `AgentEditor`, `SkillEditor`, `WorkflowRun` (`ToolPermissions` is phase 2 and not included) |
-| 13 Settings | `Settings`, `SettingsIntegrations`, `SettingsCustom`, `SettingsCollection`, `SettingsSLA`, `SettingsLimits`, `SettingsData` (`SettingsTeam`, `SettingsFeedback` are phase 2 and not included) |
+| 13 Settings | `Settings`, `SettingsIntegrations`, `SettingsCustom`, `SettingsCollection`, `SettingsSLA`, `SettingsLimits`, `SettingsData`, `SettingsTeam` (Team & access; scenes in `png/` as `SettingsTeam.<scene>.dark.png`) (`SettingsFeedback` is phase 2 and not included) |
 | reference | `DesignSystem` (tokens, type, Good/Fair/Poor, components, shadcn/ui mapping in section 08), `Logo` |
 
-Not included on purpose: `Pulse*`, `FleetWall`, `Coverage`, `ToolPermissions`, `Main`, `HomeBusy`, `TourIsland`, `SettingsTeam`, `SettingsFeedback`, the `*V1` case boards (deprecated), `Handoff`, `HandoffData`, `Index`, and the five component specs for phase-2 components.
+Not included on purpose: `Pulse*`, `FleetWall`, `Coverage`, `ToolPermissions`, `Main`, `HomeBusy`, `TourIsland`, `SettingsFeedback`, the `*V1` case boards (deprecated), `Handoff`, `HandoffData`, `Index`, and the five component specs for phase-2 components.
 
 ## Assets
 
