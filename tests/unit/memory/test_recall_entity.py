@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.agents.tool_errors import InvalidToolArgs
+from core.agents.mcp_tools import MCPFailure
 from core.memory.recall import expire_read_log, recall, recall_entity
 from core.memory.recall_contract import (
     RECALL_OVERALL_CAP,
@@ -464,8 +464,9 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
     ids=["no key named", "unreadable as_of"],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
-    with pytest.raises(InvalidToolArgs):
+    with pytest.raises(MCPFailure) as raised:
         recall_entity(args)
+    assert raised.value.kind == "invalid_args"
 
 
 def test_the_bridge_resolves_recall_entity_without_reaching_mcp(

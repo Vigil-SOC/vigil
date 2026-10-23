@@ -36,8 +36,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
+from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import parse_window_instant, read_projection
-from core.agents.tool_errors import InvalidToolArgs
 from core.config import vigil_path
 from core.detections.reconstruction import (
     _EVIDENCE_KEYS,
@@ -73,8 +73,8 @@ DEFAULT_LIMIT = 200
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
-def _refuse(tool: str, detail: str) -> InvalidToolArgs:
-    return InvalidToolArgs(f"{tool}: {detail}")
+def _refuse(tool: str, detail: str) -> MCPFailure:
+    return MCPFailure("invalid_args", f"{tool}: {detail}")
 
 
 def _bound(tool: str, value: Any, *, end: bool) -> datetime:

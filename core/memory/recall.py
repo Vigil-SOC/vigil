@@ -56,7 +56,7 @@ from sqlalchemy.dialects.postgresql import ARRAY as PGArray
 from sqlalchemy.orm import Session
 
 from core.agents.attribution import column_present, current_claims
-from core.agents.tool_errors import InvalidToolArgs
+from core.agents.mcp_tools import MCPFailure
 from core.memory.entity_keys import normalise_keys
 from core.memory.recall_contract import (
     DROPPED_KINDS,
@@ -219,8 +219,8 @@ def _iso(value: Any) -> Any:
     return value
 
 
-def _refuse(detail: str) -> InvalidToolArgs:
-    return InvalidToolArgs(f"{RECALL_TOOL}: {detail}")
+def _refuse(detail: str) -> MCPFailure:
+    return MCPFailure("invalid_args", f"{RECALL_TOOL}: {detail}")
 
 
 def _as_of(raw: Any) -> datetime:

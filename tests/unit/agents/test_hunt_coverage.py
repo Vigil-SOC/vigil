@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from core.agents.builtins import BUILTIN_AGENTS
-from core.agents.tool_errors import InvalidToolArgs
+from core.agents.mcp_tools import MCPFailure
 from core.agents.tool_registry import execute_backend_tool
 from core.llm.tool_schemas import ALL_TOOLS
 from core.memory import hunt_coverage
@@ -163,7 +163,7 @@ async def test_backend_tool_dispatches_the_check(monkeypatch, no_hunt_started):
 async def test_backend_tool_refuses_an_empty_ask(monkeypatch):
     _install(monkeypatch)
 
-    with pytest.raises(InvalidToolArgs, match="nothing to check"):
+    with pytest.raises(MCPFailure, match="nothing to check"):
         await execute_backend_tool("check_hunt_coverage", {})
 
 

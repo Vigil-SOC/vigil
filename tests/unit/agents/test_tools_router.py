@@ -15,7 +15,6 @@ from sqlalchemy.pool import StaticPool
 
 from core.agents import internal_auth, tool_registry, tools_router
 from core.agents.mcp_tools import MCPFailure
-from core.agents.tool_errors import InvalidToolArgs
 from core.auth import tool_principal
 from core.auth.auth_service import AuthService
 from core.cases.case_workflow_service import CaseWorkflowService
@@ -197,7 +196,9 @@ class TestFailureKinds:
         assert _invoke(client).json()["failure"]["kind"] == "invalid_args"
 
     def test_a_refusal_in_any_words_is_invalid_args(self, client, monkeypatch):
-        _raises(monkeypatch, InvalidToolArgs("step must be a whole step number"))
+        _raises(
+            monkeypatch, MCPFailure("invalid_args", "step must be a whole step number")
+        )
         failure = _invoke(client).json()["failure"]
         assert failure == {
             "kind": "invalid_args",

@@ -23,7 +23,6 @@ from core.agents.attribution import (
 from core.agents.integration_tools import resolve_integration_call
 from core.agents.internal_auth import authorise
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
-from core.agents.tool_errors import InvalidToolArgs
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
 from core.auth import tool_principal
 from core.auth.tool_principal import Claims
@@ -145,9 +144,7 @@ _SIGNATURE_MISMATCH = (
 
 
 def _is_bad_arguments(exc: TypeError) -> bool:
-    return isinstance(exc, InvalidToolArgs) or any(
-        phrase in str(exc) for phrase in _SIGNATURE_MISMATCH
-    )
+    return any(phrase in str(exc) for phrase in _SIGNATURE_MISMATCH)
 
 
 # The names a row cap travels under: "limit" alone misses splunk_execute's max_results,
