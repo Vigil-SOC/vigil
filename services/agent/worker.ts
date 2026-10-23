@@ -201,14 +201,14 @@ async function drive(
   };
   // A caller that already bound someone wins. Otherwise every call this run
   // makes carries the person the job or the ledger named.
-  const build: HarnessFactory = (k, s, st, memory, seed, given) => factory(k, s, st, memory, seed, given ?? principal);
+  const build: HarnessFactory = (s, st, memory, seed, given) => factory(s, st, memory, seed, given ?? principal);
   // Folded off the ledger, so a resumed run continues its allowance instead of
   // starting one. Without this, a run killed near its ceiling comes back with a
   // full budget, and a watchdog that resumes it automatically makes that a loop.
   const seed = seedFrom(await state.read(run_id));
 
   if (kind === "compose") {
-    await runCompose(build(kind, spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
+    await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
     return null;
   }
   const entry = archFor(kind);
@@ -216,7 +216,7 @@ async function drive(
   // plugin through the wrappers below, which carry what each one reports out.
   if (entry.plugin !== undefined) {
     const { manifest, hooks } = loadPlugin(entry.plugin);
-    const harness = build(kind, spec, as<AgentKinds>(state), undefined, seed);
+    const harness = build(spec, as<AgentKinds>(state), undefined, seed);
     // The plugin's grants, not the arch's: the kernel registers the deployment's
     // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
     const done = await runAgent(harness, {
@@ -226,17 +226,31 @@ async function drive(
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "hunt") {
-    const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
+    const harness = build(spec, as<HuntKinds>(state), undefined, seed);
     const mirror = mirrorFor();
-    // Only a forward hunt files its handoffs and findings early: it escalates and keeps hunting, so its case must not wait on a terminal that may be far off or never come.
+    // Only a forward hunt files its handoffs and findings early: it escalates and
+    // keeps hunting, so its case must not wait on a terminal that may be far off
+    // or never come.
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
-    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, ...named, announce: announceFor(), ...(kind === "hunt" ? { onHandoff: (runId, handoff) => mirror.handoff(runId, handoff), onFindings: (runId, findingIds) => mirror.findings(runId, findingIds) } : {}), onCost, onProgress: async (runId, iteration, max_cost_usd) => void (await mirror.progress(runId, { iteration, max_cost_usd })), signal });
+    const done = await runHunt(harness, {
+      run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, ...named,
+      announce: announceFor(),
+      ...(kind === "hunt"
+        ? {
+            onHandoff: (runId: string, handoff) => mirror.handoff(runId, handoff),
+            onFindings: (runId: string, findingIds) => mirror.findings(runId, findingIds),
+          }
+        : {}),
+      onCost,
+      onProgress: async (runId, iteration, max_cost_usd) => void (await mirror.progress(runId, { iteration, max_cost_usd })),
+      signal,
+    });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {
-    const harness = build(kind, spec, as<V3Kinds>(state), undefined, seed);
+    const harness = build(spec, as<V3Kinds>(state), undefined, seed);
     await runRootCauseV3(harness, { run_id, spec, started_by, ...named, signal, stop: stopFrom(directives, run_id), log: (line) => log.info(line, { run_id }) });
     return null;
   }

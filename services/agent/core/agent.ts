@@ -1274,7 +1274,7 @@ function actorOf(startedBy: string | undefined): { actor: string } | Record<stri
 async function reportChild(parentRunId: string, childRunId: string, role: string, spec: unknown): Promise<void> {
   const url = process.env["VIGIL_RUNS_URL"];
   if (url === undefined || url === "") return;
-  const token = process.env["AGENT_INTERNAL_TOKEN"] ?? process.env["VIGIL_TOOLS_TOKEN"] ?? "";
+  const token = process.env["AGENT_INTERNAL_TOKEN"] ?? "";
   try {
     const response = await fetch(`${url.replace(/\/+$/, "")}/${encodeURIComponent(parentRunId)}/children`, {
       method: "POST",
