@@ -7,6 +7,7 @@ the paused run; rejecting cancels it with the supplied reason.
 """
 
 import logging
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -57,7 +58,7 @@ class RejectRequest(BaseModel):
 
 
 class PendingActionResponse(BaseModel):
-    """Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+    """Frozen shape of an approval action.
 
     Value types are permissive where the underlying dataclass carries open JSON
     (evidence, parameters, execution_result); the key set is the promise.
@@ -125,39 +126,6 @@ class NeedsYouResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _pending_to_dict(action: Any) -> Dict[str, Any]:
-    """Normalise a ``PendingAction`` dataclass to a response dict."""
-    return {
-        "action_id": action.action_id,
-        "action_type": action.action_type,
-        "title": action.title,
-        "description": action.description,
-        "target": action.target,
-        "confidence": action.confidence,
-        "reason": action.reason,
-        "evidence": action.evidence,
-        "created_at": action.created_at,
-        "created_by": action.created_by,
-        "requires_approval": action.requires_approval,
-        "status": action.status,
-        "approved_at": action.approved_at,
-        "approved_by": action.approved_by,
-        "executed_at": action.executed_at,
-        "execution_result": action.execution_result,
-        "rejection_reason": action.rejection_reason,
-        "parameters": action.parameters,
-        "workflow_run_id": action.workflow_run_id,
-        "workflow_phase_id": action.workflow_phase_id,
-        "reversibility": action.reversibility,
-        "idempotency_key": action.idempotency_key,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -194,7 +162,7 @@ async def list_approvals(
     )
     return {
         "count": len(actions),
-        "actions": [_pending_to_dict(a) for a in actions],
+        "actions": [asdict(a) for a in actions],
     }
 
 
@@ -205,7 +173,7 @@ async def list_pending_approvals(
     """Shortcut: only actions with ``status=pending`` and
     ``requires_approval=True``. Used by the AI Decisions approvals tab."""
     actions = service.list_pending_approvals()
-    return {"actions": [_pending_to_dict(a) for a in actions]}
+    return {"actions": [asdict(a) for a in actions]}
 
 
 @router.get("/approvals/needs-you", response_model=NeedsYouResponse)
@@ -232,7 +200,7 @@ async def get_approval(
     action = service.get_action(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
-    return _pending_to_dict(action)
+    return asdict(action)
 
 
 @router.post(
@@ -272,7 +240,7 @@ async def approve_action(
         raise HTTPException(status_code=500, detail="Failed to approve action")
 
     response: Dict[str, Any] = {
-        "action": _pending_to_dict(updated),
+        "action": asdict(updated),
         "resume_result": None,
     }
 
@@ -321,7 +289,7 @@ async def reject_action(
         raise HTTPException(status_code=500, detail="Failed to reject action")
 
     response: Dict[str, Any] = {
-        "action": _pending_to_dict(updated),
+        "action": asdict(updated),
         "resume_result": None,
     }
 

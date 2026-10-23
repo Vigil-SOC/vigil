@@ -353,30 +353,19 @@ def update_case(
     return {"success": True, "case_id": case_id}
 
 
-# Missing case or empty records must still be a result: an error here parks the
-# lead before it can start. Empty sections are the answer, not refused.
 def _case_records(args: Args) -> Args:
-    from core.cases.case_records_service import list_escalations, list_tasks
+    from core.cases.case_records_service import list_escalations, tasks_on_case
     from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
-    try:
-        tasks = CaseTaskSchema.dump_many(list_tasks(case_id))
-    except Exception:
-        logger.exception("Listing tasks for case %s failed; reporting none", case_id)
-        tasks = []
-    try:
-        with unit_of_work() as session:
-            escalations = CaseEscalationSchema.dump_many(
+    with unit_of_work() as session:
+        return {
+            "tasks": CaseTaskSchema.dump_many(tasks_on_case(session, case_id)),
+            "escalations": CaseEscalationSchema.dump_many(
                 list_escalations(session, case_id)
-            )
-    except Exception:
-        logger.exception(
-            "Listing escalations for case %s failed; reporting none", case_id
-        )
-        escalations = []
-    return {"tasks": tasks, "escalations": escalations}
+            ),
+        }
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
