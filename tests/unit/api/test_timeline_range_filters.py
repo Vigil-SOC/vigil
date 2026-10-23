@@ -137,3 +137,25 @@ def test_data_source_is_filtered_before_the_limit(client):
     r = client.get("/api/timeline/range", params=_window(data_source="loglm"))
 
     assert _ids(r) == ["tlr-loglm"]
+
+
+@pytest.mark.parametrize("param", ["start", "end"])
+def test_an_unparsable_bound_is_a_422(client, param):
+    r = client.get("/api/timeline/range", params=_window(**{param: "not-a-date"}))
+
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"][0]["loc"] == ["query", param]
+
+
+def test_a_bound_without_a_time_zone_is_read_as_utc(client):
+    _seed(
+        _finding("tlr-inside", T0 + timedelta(minutes=1)),
+        _finding("tlr-before", T0 - timedelta(minutes=1)),
+    )
+
+    r = client.get(
+        "/api/timeline/range",
+        params=_window(start=T0.isoformat(), end=(T0 + timedelta(hours=1)).isoformat()),
+    )
+
+    assert _ids(r) == ["tlr-inside"]
