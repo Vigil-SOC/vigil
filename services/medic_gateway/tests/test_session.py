@@ -230,3 +230,18 @@ def test_backend_clock_skew_does_not_force_a_login_per_call(env):
         env.clock.offset = 120 * i  # well inside the token's 30 minutes
         assert get(env) == 200
     assert len(logins(env)) == 1 and refreshes(env) == 0
+
+
+def test_login_and_refresh_carry_no_browser_markers(env):
+    """Vigil treats Origin or Sec-Fetch-Site as a console request and refuses it
+    for a service account (D2-17b). Stricter here: no Sec-Fetch-* header at all."""
+    env.backend.access_ttl = 60
+    assert get(env) == 200
+    env.clock.offset = 60 - 15 + 1
+    assert get(env) == 200
+    auth = [s for s in env.backend.seen if s["target"].startswith("/api/auth/")]
+    assert {s["target"] for s in auth} == {"/api/auth/login", "/api/auth/refresh"}
+    for sent in auth:
+        names = {k.lower() for k in sent["headers"]}
+        assert "origin" not in names, sent["target"]
+        assert not {n for n in names if n.startswith("sec-fetch-")}, sent["target"]

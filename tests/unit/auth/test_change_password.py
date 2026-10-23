@@ -76,6 +76,43 @@ def test_fresh_password_still_changes(client, user):
     assert resp.status_code == 200
     assert AuthService.verify_password(NEW, user.password_hash)
     assert len(user.password_history) == 2
+    assert user.tokens_valid_after is not None
+
+
+def test_password_change_stands_when_redis_revocation_fails(client, user):
+    with patch.object(
+        auth, "revoke_all_for_user", new=AsyncMock(side_effect=ConnectionError("OOM"))
+    ):
+        resp = _change(client, NEW)
+    assert resp.status_code == 200
+    assert resp.json()["message"] == (
+        "Password changed successfully. Please log in again."
+    )
+    assert AuthService.verify_password(NEW, user.password_hash)
+    assert user.tokens_valid_after is not None
+
+
+def test_password_reset_stands_when_redis_revocation_fails(client, user):
+    user.is_active = True
+    with (
+        patch.object(
+            auth, "verify_reset_token", new=AsyncMock(return_value=user.user_id)
+        ),
+        patch.object(auth, "_get_user", return_value=user),
+        patch.object(
+            auth,
+            "revoke_all_for_user",
+            new=AsyncMock(side_effect=ConnectionError("OOM")),
+        ),
+    ):
+        resp = client.post(
+            "/api/auth/password-reset/confirm",
+            json={"token": "reset-token", "new_password": NEW},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["message"] == "Password reset successfully"
+    assert AuthService.verify_password(NEW, user.password_hash)
+    assert user.tokens_valid_after is not None
 
 
 def test_wrong_current_password_is_400_and_leaves_hash(client, user):

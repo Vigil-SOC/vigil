@@ -26,6 +26,7 @@ from core.agents.queue import (
     enqueue_run,
     new_run_id,
 )
+from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -131,7 +132,9 @@ def list_runs(
 @router.post(
     "", dependencies=_RUN_AGENTS, response_model=StartRunResponse, status_code=202
 )
-async def start_run(request: StartRunRequest) -> StartRunResponse:
+async def start_run(
+    request: StartRunRequest, user: User = Depends(get_current_user)
+) -> StartRunResponse:
     if request.run_kind not in RUN_KINDS:
         raise HTTPException(
             status_code=400, detail=f"unknown run_kind: {request.run_kind}"
@@ -159,14 +162,15 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
 
     # Best-effort: without a workflow_runs row a parked run cannot raise an
     # answerable checkpoint. Like every write to that table, the ledger is truth.
-    _begin_run_row(run_id, request)
+    _begin_run_row(run_id, request, user.username)
 
     job = build_start_job(
         run_id=run_id,
         run_kind=request.run_kind,
         request=payload,
-        enqueued_by="api",
+        enqueued_by=user.username,
         tenant_id=request.tenant_id,
+        principal=tool_principal.mint(user.username, ttl=tool_principal.RUN_TTL),
     )
     try:
         job_id = await enqueue_run(job)
@@ -179,7 +183,7 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
 
 # The playbook reference names the workflow when there is one; a run started from
 # file paths is named for the loop it runs, which is all the console needs to list it.
-def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
+def _begin_run_row(run_id: str, request: StartRunRequest, triggered_by: str) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService
 
@@ -203,7 +207,7 @@ def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
         workflow_source="agent",
         workflow_version=version,
         trigger_context={"run_kind": request.run_kind, "prompt": request.prompt},
-        triggered_by="api",
+        triggered_by=triggered_by,
         run_id=run_id,
     )
 

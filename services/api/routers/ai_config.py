@@ -27,7 +27,8 @@ from core.llm.providers.registry import (
     is_valid_component,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import AIModelConfig, ConfigAuditLog, LLMProviderConfig, User
+from core.storage.config_service import write_config_audit
+from core.storage.models import AIModelConfig, LLMProviderConfig, User
 from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
@@ -139,17 +140,16 @@ def _audit(
     after: Optional[Dict[str, str]],
     actor: str,
 ) -> None:
-    """One config_audit_log row on the request's session, so it commits or rolls
-    back with the change (ConfigService.record_audit opens its own session)."""
-    db.add(
-        ConfigAuditLog(
-            config_type="ai_model",
-            config_key=component,
-            action=action,
-            old_value=before,
-            new_value=after,
-            changed_by=actor,
-        )
+    """One audit entry on the request's session, so it commits or rolls back
+    with the change (ConfigService.record_audit opens its own session)."""
+    write_config_audit(
+        db,
+        config_type="ai_model",
+        config_key=component,
+        action=action,
+        old_value=before,
+        new_value=after,
+        changed_by=actor,
     )
 
 

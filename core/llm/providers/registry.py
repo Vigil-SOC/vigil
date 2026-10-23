@@ -764,8 +764,7 @@ class ModelRegistry:
         """Return active ``LLMProviderConfig`` rows.
 
         Isolated (and overridable) so the aggregation logic in
-        ``list_available_models`` / ``fallback_models`` can be unit-tested
-        without a live Postgres.
+        ``list_available_models`` can be unit-tested without a live Postgres.
         """
         try:
             from core.storage.connection import get_db_session
@@ -883,41 +882,6 @@ class ModelRegistry:
                     )
                 )
 
-        return out
-
-    async def fallback_models(self) -> List[ModelInfo]:
-        """Provider-aware bootstrap list for the picker.
-
-        Used when live discovery yields nothing at all. Reflects the
-        *configured* providers (their bootstrap lists, extras and
-        ``default_model``) instead of hardcoding Claude, so an Ollama-only
-        instance never shows Anthropic models it can't call (#409). Returns
-        ``[]`` when no provider is configured — the caller then applies its
-        own last-resort default.
-        """
-        out: List[ModelInfo] = []
-        seen: set = set()
-        for p in self._active_providers():
-            ids = list(_FALLBACK_MODELS_BY_PROVIDER.get(p.provider_type, ()))
-            for mid in get_extra_model_ids(p.provider_type):
-                if mid not in ids:
-                    ids.append(mid)
-            default_model = getattr(p, "default_model", None)
-            if default_model and default_model not in ids:
-                ids.insert(0, default_model)
-            for mid in ids:
-                key = (p.provider_id, mid)
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(
-                    self.get_model_info(
-                        provider_id=p.provider_id,
-                        provider_type=p.provider_type,
-                        model_id=mid,
-                        deprecated=is_extra_model(p.provider_type, mid),
-                    )
-                )
         return out
 
 

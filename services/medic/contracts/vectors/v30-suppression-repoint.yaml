@@ -1,0 +1,206 @@
+id: v30-suppression-repoint
+title: 'Two open parents: the child re-points at the one still open when the named parent resolves'
+covers:
+- §6 suppression
+start: '2026-10-07T10:00:00Z'
+end: +20m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: llm.parent-early
+    title: Vector rule llm.parent-early
+    revision: 1
+    fault:
+      class: llm
+      mode: L-1
+      causes:
+      - L-1.a
+    lane: 2
+    signals:
+      down:
+        sample:
+          signal: daemon_status.kafka
+          key: connected
+    when:
+      fn: latest
+      signal: down
+      op: ==
+      value: true
+    for: 2m
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: llm.parent-late
+    title: Vector rule llm.parent-late
+    revision: 1
+    fault:
+      class: llm
+      mode: L-2
+      causes:
+      - L-2.a
+    lane: 2
+    signals:
+      down:
+        sample:
+          signal: daemon_status.processor
+          key: connected
+    when:
+      fn: latest
+      signal: down
+      op: ==
+      value: true
+    for: 2m
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: pipeline.child-held
+    title: Vector rule pipeline.child-held
+    revision: 1
+    fault:
+      class: pipeline
+      mode: P-4
+      causes:
+      - P-4.a
+    lane: 3
+    signals:
+      down:
+        sample:
+          signal: daemon_status.poller
+          key: connected
+    when:
+      fn: latest
+      signal: down
+      op: ==
+      value: true
+    for: 2m
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+suppression:
+- parent:
+    class: llm
+  children:
+    mode: P-4
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_status.kafka:
+    connected: bool
+  daemon_status.processor:
+    connected: bool
+  daemon_status.poller:
+    connected: bool
+series:
+- signal: daemon_status.kafka
+  key: connected
+  steps:
+  - - +0s
+    - true
+  - - +10m
+    - false
+- signal: daemon_status.processor
+  key: connected
+  steps:
+  - - +0s
+    - false
+  - - +1m
+    - true
+  - - +14m
+    - false
+- signal: daemon_status.poller
+  key: connected
+  steps:
+  - - +0s
+    - false
+  - - +4m
+    - true
+  - - +16m
+    - false
+expect:
+- at: +2m
+  rule: llm.parent-early
+  eval: true
+  state: firing
+  incident: E
+- at: +3m
+  rule: llm.parent-late
+  eval: true
+  state: firing
+  incident: L
+- at: +6m
+  rule: pipeline.child-held
+  eval: true
+  state: firing
+  incident: C
+  suppressed: true
+- at: +10m
+  rule: llm.parent-early
+  eval: false
+  state: inactive
+- at: +10m
+  rule: pipeline.child-held
+  eval: true
+  state: firing
+  incident: C
+  suppressed: true
+  note: named parent resolved; the child now names L
+- at: +14m
+  rule: llm.parent-late
+  eval: false
+  state: inactive
+- at: +15m
+  rule: pipeline.child-held
+  eval: true
+  state: firing
+  incident: C
+  suppressed: true
+- at: +16m
+  rule: pipeline.child-held
+  eval: false
+  state: inactive
+incidents:
+  E:
+    rule: llm.parent-early
+    active_since: +0s
+    opened_at: +2m
+    resolving_since: +10m
+    resolved_at: +10m
+    reason: cleared
+    routed_at: +2m
+  L:
+    rule: llm.parent-late
+    active_since: +1m
+    opened_at: +3m
+    resolving_since: +14m
+    resolved_at: +14m
+    reason: cleared
+    routed_at: +3m
+  C:
+    rule: pipeline.child-held
+    active_since: +4m
+    opened_at: +6m
+    resolving_since: +16m
+    resolved_at: +16m
+    reason: closed_quietly
+    suppressed_by: L
+    routed_at: null

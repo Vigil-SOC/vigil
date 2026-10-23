@@ -43,18 +43,9 @@ def _row(case_id: str) -> CaseQueueRow:
 def test_get_cases_passes_one_needs_you_read_into_the_page(monkeypatch):
     seen = {"calls": 0, "ids": None}
 
-    def fake_needs_you(case_id=None):
+    def fake_needs_you_case_ids():
         seen["calls"] += 1
-        return {
-            "count": 4,
-            "items": [
-                {"case_id": "waiting"},
-                {"case_id": ""},
-                {"case_id": None},
-                {"case_id": "sooner"},
-                "not-a-row",
-            ],
-        }
+        return {"waiting", "sooner"}
 
     class Repo:
         def __init__(self, session):
@@ -78,7 +69,7 @@ def test_get_cases_passes_one_needs_you_read_into_the_page(monkeypatch):
         yield object()
 
     monkeypatch.setattr(cases_router.data_service, "is_using_database", lambda: True)
-    monkeypatch.setattr(cases_router, "needs_you", fake_needs_you)
+    monkeypatch.setattr(cases_router, "needs_you_case_ids", fake_needs_you_case_ids)
     monkeypatch.setattr(cases_router, "CaseRepository", Repo)
     monkeypatch.setattr(cases_router, "unit_of_work", uow)
 
@@ -126,11 +117,7 @@ def _patched(monkeypatch, seen, needs_you_ids=()):
         yield object()
 
     monkeypatch.setattr(cases_router.data_service, "is_using_database", lambda: True)
-    monkeypatch.setattr(
-        cases_router,
-        "needs_you",
-        lambda case_id=None: {"items": [{"case_id": c} for c in needs_you_ids]},
-    )
+    monkeypatch.setattr(cases_router, "needs_you_case_ids", lambda: set(needs_you_ids))
     monkeypatch.setattr(cases_router, "CaseRepository", Repo)
     monkeypatch.setattr(cases_router, "unit_of_work", uow)
 

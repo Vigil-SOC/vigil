@@ -164,6 +164,8 @@ def test_module_entry_point_check_without_heartbeat(tmp_path: Path) -> None:
         ("VIGIL_MEDIC_AGENT_WORKER_ADDR", "user:hunter2secret@agent-worker:6990"),
         ("VIGIL_MEDIC_AGENT_WORKER_ADDR", "agent-worker:70000"),
         ("VIGIL_MEDIC_AGENT_SERVE_ADDR", "user:hunter2secret@agent-serve:6989"),
+        ("VIGIL_MEDIC_GATEWAY_ADDR", "http://medic-gateway-out:8471/api/health"),
+        ("VIGIL_MEDIC_GATEWAY_ADDR", "user:hunter2secret@medic-gateway-out:8471"),
     ],
 )
 def test_a_setting_medic_cant_use_stops_it_without_echoing_the_value(
