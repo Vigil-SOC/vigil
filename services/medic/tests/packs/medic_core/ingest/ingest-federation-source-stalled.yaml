@@ -1,0 +1,74 @@
+rule: ingest.federation-source-stalled
+defaults:
+  sensors:
+    - {id: http.federation, covers: [federation_sources], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    federation_sources: {global.enabled: bool, sources.enabled: bool, sources.consecutive_errors: gauge, sources.last_success_at: timestamp}
+cases:
+  - kind: fires
+    id: v01-fires-when-polling-stops-without-an-error
+    title: Elastic's last success stops moving and no failure is recorded (site-shortened to 15 minutes)
+    params: {stall_after: 900, never_polled_for: 15m}
+    end: +30m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: elastic}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: elastic}, steps: [[+0s, 0]]}
+      - {signal: federation_sources, key: sources.last_success_at, labels: {source: elastic}, steps: [[+0s, '2026-10-08T00:00:00Z']]}
+    expect:
+      - {at: +15m, rule: ingest.federation-source-stalled, group: {source: elastic}, eval: false, state: inactive, note: age 900 is not > 900}
+      - {at: +16m, rule: ingest.federation-source-stalled, group: {source: elastic}, eval: true, state: pending}
+      - {at: +26m, rule: ingest.federation-source-stalled, group: {source: elastic}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.federation-source-stalled, group: {source: elastic}, active_since: +15m15s, opened_at: +25m15s,
+          resolving_since: null, resolved_at: null}
+  - kind: fires
+    id: v02-fires-when-an-enabled-source-was-never-polled
+    title: CrowdStrike is enabled but has never had a successful poll, and no failure either
+    params: {stall_after: 900, never_polled_for: 15m}
+    end: +30m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: crowdstrike}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: crowdstrike}, steps: [[+0s, 0]]}
+      - {signal: federation_sources, key: sources.last_success_at, labels: {source: crowdstrike}, steps: [[+0s, null]]}
+    expect:
+      - {at: +5m, rule: ingest.federation-source-stalled, group: {source: crowdstrike}, eval: unknown, state: inactive, note: not watched for the window yet}
+      - {at: +29m, rule: ingest.federation-source-stalled, group: {source: crowdstrike}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.federation-source-stalled, group: {source: crowdstrike}, active_since: +13m, opened_at: +23m,
+          resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v03-silent-while-polling-or-failing
+    title: A source that keeps succeeding, and one that keeps failing (another rule's job), stay quiet
+    params: {stall_after: 900, never_polled_for: 15m}
+    end: +30m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: splunk}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: splunk}, steps: [[+0s, 0]]}
+      - signal: federation_sources
+        key: sources.last_success_at
+        labels: {source: splunk}
+        steps: [[+0m, '2026-10-08T00:00:00Z'], [+10m, '2026-10-08T00:10:00Z'], [+20m, '2026-10-08T00:20:00Z']]
+      - {signal: federation_sources, key: sources.enabled, labels: {source: elastic}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: elastic}, steps: [[+0s, 4]]}
+      - {signal: federation_sources, key: sources.last_success_at, labels: {source: elastic}, steps: [[+0s, '2026-10-07T20:00:00Z']]}
+    expect:
+      - {at: +25m, rule: ingest.federation-source-stalled, group: {source: splunk}, eval: false, state: inactive}
+      - {at: +25m, rule: ingest.federation-source-stalled, group: {source: elastic}, eval: false, state: inactive}
+    incidents: {}
+  - kind: silent
+    id: v04-silent-when-federation-is-off-globally
+    title: With federation off the legacy poller owns the source, so its row's last success stalls by design
+    params: {stall_after: 900, never_polled_for: 15m}
+    end: +30m
+    series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, false]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: elastic}, steps: [[+0s, true]]}
+      - {signal: federation_sources, key: sources.consecutive_errors, labels: {source: elastic}, steps: [[+0s, 0]]}
+      - {signal: federation_sources, key: sources.last_success_at, labels: {source: elastic}, steps: [[+0s, '2026-10-07T20:00:00Z']]}
+    expect:
+      - {at: +5m, rule: ingest.federation-source-stalled, group: {source: elastic}, eval: false, state: inactive}
+      - {at: +25m, rule: ingest.federation-source-stalled, group: {source: elastic}, eval: false, state: inactive}
+    incidents: {}

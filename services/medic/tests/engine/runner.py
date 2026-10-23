@@ -95,6 +95,12 @@ def run(vector: dict, *, refeed_history: bool = True) -> Run:
     restarts = {secs(r) for r in vector.get("engine_restarts", [])}
     checkpoints = {secs(c["at"]) for c in vector["expect"]}
     rules = rules_of(vector)
+    # The install shape is the one the vector's sensors name (pack cases for
+    # start_sh-only rules, F7c); E3's vectors name none, so Compose.
+    named = {s["shape"] for s in vector["sensors"] if "shape" in s}
+    if len(named) > 1:
+        raise ValueError(f"sensors name more than one install shape: {sorted(named)}")
+    shape = named.pop() if named else "compose"
     observations = expand(vector)
     observed = [
         (datetime.fromisoformat(o["observed_at"]) - start).total_seconds()
@@ -105,7 +111,7 @@ def run(vector: dict, *, refeed_history: bool = True) -> Run:
         return Engine(
             rules,
             instance_id=INSTANCE,
-            install_shape="compose",
+            install_shape=shape,
             state=state,
             suppression=vector.get("suppression", []),
             group_cap=vector.get("limits", {}).get("group_cap", 64),

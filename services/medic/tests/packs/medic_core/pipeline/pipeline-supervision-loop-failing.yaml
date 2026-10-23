@@ -1,0 +1,29 @@
+rule: pipeline.supervision-loop-failing
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-while-every-pass-raises
+    title: The supervision loop raises every 30 s
+    end: +20m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.orchestrator, trusted: false,
+         template: "Supervision loop error: 'NoneType' object has no attribute 'get'",
+         message: "Supervision loop error: 'NoneType' object has no attribute 'get'", repeat: {every: 30s, until: +20m}}
+    expect:
+      - {at: +5m30s, rule: pipeline.supervision-loop-failing, eval: true, state: pending}
+      - {at: +10m30s, rule: pipeline.supervision-loop-failing, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.supervision-loop-failing, active_since: +5m30s, opened_at: +10m30s, resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-one-bad-pass
+    title: One pass fails during a database restart
+    end: +20m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.orchestrator, trusted: false,
+         template: 'Supervision loop error: connection refused', message: 'Supervision loop error: connection refused'}
+    expect:
+      - {at: +30s, rule: pipeline.supervision-loop-failing, eval: unknown, state: inactive, note: the window is not watched yet}
+      - {at: +20m, rule: pipeline.supervision-loop-failing, eval: false, state: inactive}
+    incidents: {}

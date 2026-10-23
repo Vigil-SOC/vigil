@@ -1,0 +1,70 @@
+# Trusted template catalog (D3 §2): the only (logger, template) pairs that earn
+# template_trust=catalog. Hand-written from Vigil source for now; F5 generates it
+# from an AST scan at each release. Entries are grouped by the batch whose rules
+# need them; keep each batch's entries under its heading when merging.
+apiVersion: medic.catalog/v1
+kind: TemplateCatalog
+vigil_commit: 8f98bdf6
+entries:
+  # --- ingest (F7a) ---
+  # core/integrations/_base/config_gap.py:24-38, called with each integration's logger
+  - {logger: core.integrations.elastic.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.elastic.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.opensearch.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.opensearch.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  # core/integrations/aws_security_hub/ingestion.py:115, azure_sentinel/ingestion.py:173 (constant text)
+  - {logger: core.integrations.aws_security_hub.ingestion, template: 'boto3 not installed. Install: pip install boto3'}
+  - {logger: core.integrations.azure_sentinel.ingestion, template: 'Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity'}
+  # core/federation/adapters/_siem_base.py:154
+  - {logger: core.federation.adapters._siem_base, template: '%s dropped %d of %d alert(s) that failed to transform%s'}
+  # core/federation/adapters/_base.py:88
+  - {logger: core.federation.adapters._base, template: "Federation %s: newest alert time %s is ahead of this host's clock (window end %s); capping the cursor there"}
+  # core/ingestion/kafka_consumer_service.py:115
+  - {logger: core.ingestion.kafka_consumer_service, template: 'Kafka consumer failed to start: %s'}
+  # services/daemon/processor.py:168 (constant text; the failure line beside it is an f-string)
+  - {logger: services.daemon.processor, template: 'Database service initialized'}
+  # services/daemon/processor.py:494
+  - {logger: services.daemon.processor, template: 'Dropped finding %s: database store failed'}
+  # --- llm (F7b) ---
+  # services/daemon/processor.py:645-700 via core/llm/outage.py:19-41 (#1689)
+  - {logger: services.daemon.processor, template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'}
+  - {logger: services.daemon.processor, template: 'No LLM provider configured, AI triage is skipped until one is set up'}
+  - {logger: services.daemon.processor, template: '%s; recovered after %d failures'}
+  - {logger: services.daemon.processor, template: '%s (still failing, %d failures)'}
+  - {logger: services.daemon.processor, template: 'LLM gateway connected for AI triage'}
+  # services/daemon/main.py:63 (the daemon runs as a script: CMD python services/daemon/main.py)
+  - {logger: __main__, template: 'SOC Daemon initialized'}
+  # services/api/main.py:337,494; core/llm/gateway/gateway.py:143
+  - {logger: services.api.main, template: 'Starting Vigil SOC Backend'}
+  - {logger: services.api.main, template: 'LLM Gateway not available, LLM calls will fail until Redis and the ARQ worker are up: %s'}
+  - {logger: core.llm.gateway.gateway, template: 'LLMGateway initialized (connected to Redis)'}
+  # core/llm/bifrost/mirror.py:268-275 via core/llm/outage.py (#1689)
+  - {logger: core.llm.bifrost.mirror, template: 'Mirror reconcile skipped — Bifrost unreachable: %s'}
+  - {logger: core.llm.bifrost.mirror, template: '%s; recovered after %d failures'}
+  - {logger: core.llm.bifrost.mirror, template: '%s (still failing, %d failures)'}
+  # core/llm/bifrost/admin.py:147,202
+  - {logger: core.llm.bifrost.admin, template: 'Bifrost: provider %s key stored but reports status=%s (%s)'}
+  - {logger: core.llm.bifrost.admin, template: 'Bifrost: %s %s returned %s: %s'}
+  # services/worker/jobs.py:81,103,135
+  - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): %s'}
+  - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): Empty response (model=%s; ClaudeService returned None - is an API key configured?)'}
+  - {logger: services.worker.jobs, template: 'Provider %s not found; falling back to ClaudeService'}
+  # core/llm/target.py:53,64
+  - {logger: core.llm.target, template: "Provider %s cannot serve its own default_model %s — sending it anyway; the gateway's error is the only signal left"}
+  - {logger: core.llm.target, template: 'Provider %s cannot serve %s — falling back to %s'}
+  # core/llm/gateway_retry.py:107
+  - {logger: core.llm.gateway_retry, template: 'gateway retries exhausted: last status %s after %d attempts'}
+  # --- pipeline (F7c) ---
+  # services/daemon/orchestrator.py:1344
+  - {logger: services.daemon.orchestrator, template: 'could not enqueue %s: %s'}
+  # core/agents/projections.py:44-75 (_note_read: ERROR on the first failure, INFO on recovery)
+  - {logger: core.agents.projections, template: 'could not read the %s for %s: %s'}
+  - {logger: core.agents.projections, template: '%s for %s answered %s'}
+  - {logger: core.agents.projections, template: 'agent service reads recovered'}
+  # services/daemon/main.py:63 'SOC Daemon initialized' (__main__): listed under llm (F7b)
+  # services/daemon/metrics.py:167 (constant text, logger.exception)
+  - {logger: services.daemon.metrics, template: 'Health/Prometheus server failed'}

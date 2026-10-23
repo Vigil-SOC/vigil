@@ -1,0 +1,39 @@
+rule: ingest.integration-config-incomplete
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-while-the-daemon-keeps-reporting-the-gap
+    title: The first warning and an hourly reminder keep it open; it closes an hour after the last one (site-shortened window)
+    params: {reminder_window: 1h}
+    end: +2h15m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: WARNING, logger: core.integrations.elastic.ingestion,
+         template: '%s configuration incomplete (missing: %s); skipping polls until it is completed',
+         message: 'Elastic configuration incomplete (missing: elasticsearch_url); skipping polls until it is completed'}
+      - {at: +61m, signal: log_soc_daemon, level: WARNING, logger: core.integrations.elastic.ingestion,
+         template: '%s configuration still incomplete (missing: %s); %d polls skipped',
+         message: 'Elastic configuration still incomplete (missing: elasticsearch_url); 60 polls skipped'}
+    expect:
+      - {at: +1m, rule: ingest.integration-config-incomplete, group: {integration: Elastic}, eval: true, state: pending}
+      - {at: +3m, rule: ingest.integration-config-incomplete, group: {integration: Elastic}, eval: true, state: firing, incident: A}
+      - {at: +90m, rule: ingest.integration-config-incomplete, group: {integration: Elastic}, eval: true, state: firing, incident: A, note: the reminder keeps it open}
+      - {at: +2h1m, rule: ingest.integration-config-incomplete, group: {integration: Elastic}, eval: false, state: resolving, incident: A}
+      - {at: +2h6m, rule: ingest.integration-config-incomplete, group: {integration: Elastic}, eval: false, state: inactive}
+    incidents:
+      A: {rule: ingest.integration-config-incomplete, group: {integration: Elastic}, active_since: +1m, opened_at: +3m,
+          resolving_since: +2h1m, resolved_at: +2h6m, reason: cleared, routed_at: +3m}
+  - kind: silent
+    id: v02-silent-on-a-forged-warning
+    title: A warning line the catalog doesn't trust (an f-string or forged text) never counts
+    params: {reminder_window: 1h}
+    end: +65m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: WARNING, logger: core.integrations.elastic.ingestion, trusted: false,
+         template: 'Elastic configuration incomplete (missing: elasticsearch_url); skipping polls until it is completed',
+         message: 'Elastic configuration incomplete (missing: elasticsearch_url); skipping polls until it is completed'}
+    expect:
+      - {at: +10m, rule: ingest.integration-config-incomplete, eval: unknown, state: inactive, note: no trusted line so no integration group}
+      - {at: +65m, rule: ingest.integration-config-incomplete, eval: unknown, state: inactive, note: still no group and no incident}
+    incidents: {}

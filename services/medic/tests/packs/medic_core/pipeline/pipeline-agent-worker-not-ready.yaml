@@ -1,0 +1,44 @@
+rule: pipeline.agent-worker-not-ready
+defaults:
+  sensors:
+    - {id: http_ready.agent_worker, covers: [agent_worker_readyz], interval: 30s, service: agent-worker, states: [[+0s, ok]]}
+  types:
+    agent_worker_readyz: {ready: bool}
+cases:
+  - kind: fires
+    id: v01-fires-while-not-ready-and-clears
+    title: /readyz on :6990 answers 503 from +1m until +10m
+    end: +20m
+    series:
+      - {signal: agent_worker_readyz, key: ready, steps: [[+0s, true], [+1m, false], [+10m, true]]}
+    expect:
+      - {at: +1m, rule: pipeline.agent-worker-not-ready, eval: true, state: pending}
+      - {at: +3m, rule: pipeline.agent-worker-not-ready, eval: true, state: firing, incident: A}
+      - {at: +10m, rule: pipeline.agent-worker-not-ready, eval: false, state: resolving, incident: A}
+      - {at: +15m, rule: pipeline.agent-worker-not-ready, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.agent-worker-not-ready, active_since: +1m, opened_at: +3m, resolving_since: +10m,
+          resolved_at: +15m, reason: cleared, routed_at: +3m}
+  - kind: silent
+    id: v02-silent-on-a-restart-blip
+    title: A restart makes /readyz say no for one minute; nothing opens
+    end: +10m
+    series:
+      - {signal: agent_worker_readyz, key: ready, steps: [[+0s, true], [+1m, false], [+2m, true]]}
+    expect:
+      - {at: +1m, rule: pipeline.agent-worker-not-ready, eval: true, state: pending}
+      - {at: +2m, rule: pipeline.agent-worker-not-ready, eval: false, state: inactive}
+      - {at: +10m, rule: pipeline.agent-worker-not-ready, eval: false, state: inactive}
+    incidents: {}
+  - kind: silent
+    id: v03-unknown-not-firing-when-medic-cannot-read
+    title: Medic's own reads fail for 90 s (no route, DNS); that is unknown, not a not-ready
+    end: +10m
+    sensors:
+      - {id: http_ready.agent_worker, covers: [agent_worker_readyz], interval: 30s, service: agent-worker, states: [[+0s, ok], [+1m, error], [+2m30s, ok]]}
+    series:
+      - {signal: agent_worker_readyz, key: ready, steps: [[+0s, true]]}
+    expect:
+      - {at: +2m, rule: pipeline.agent-worker-not-ready, eval: unknown, state: inactive}
+      - {at: +10m, rule: pipeline.agent-worker-not-ready, eval: false, state: inactive}
+    incidents: {}

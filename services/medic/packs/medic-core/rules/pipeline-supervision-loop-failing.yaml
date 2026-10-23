@@ -1,0 +1,31 @@
+# P-2.a · the orchestrator's supervision loop raises every tick (30 s at the
+# default loop_interval 60), so no stale or cost kill runs. The line is an
+# f-string with the exception text (orchestrator.py:1194), so untrusted.
+# ≥ 10 in 10 min assumes ORCHESTRATOR_LOOP_INTERVAL ≤ 120 s (default 60).
+# Outsider: no.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.supervision-loop-failing
+title: The orchestrator's run supervisor keeps failing
+revision: 1
+fault: {class: pipeline, mode: P-2, causes: [P-2.a]}
+lane: 3
+detection: event
+input_trust: untrusted
+signals:
+  failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.orchestrator}
+      level: [ERROR]
+      template: {prefix: 'Supervision loop error: '}
+      trusted_only: false
+when: {fn: count, signal: failed, window: 10m, op: ">=", value: 10}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: The orchestrator's run supervisor fails on every pass, so stuck or over-budget runs are never stopped.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report and the
+    soc-daemon log. Until it's fixed, check the console for runs that have been
+    executing for a long time and cancel them by hand.

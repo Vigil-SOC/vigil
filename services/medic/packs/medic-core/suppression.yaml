@@ -1,0 +1,66 @@
+# Dependency suppression (E3 §6). Entries are grouped by the class that owns the
+# child; keep each batch's entries under its heading when merging.
+apiVersion: medic.suppression/v1
+kind: Suppression
+entries:
+  # --- ingest (F7a) ---
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: ingest.source-polls-failing}
+    why: With no database every finding is dropped and federation records each tick as a failure. Show the database fault, not a credential fault per source.
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: ingest.processor-store-dropped}
+    why: Each dropped finding is a symptom of the processor having no database.
+  - parent: {rule: ingest.federation-integration-disabled}
+    children: {rule: ingest.federation-source-stalled}
+    match: [source]
+    why: A source whose integration is off is skipped, so its last success stalls with no error. Show the configuration fault.
+  # --- llm (F7b) ---
+  - parent: {rule: llm.budget-exhausted}
+    children: {rule: llm.calls-failing}
+    why: Budget errors are LLM call failures too. Show the budget, not the generic failure count.
+  - parent: {rule: llm.provider-key-unusable}
+    children: {rule: llm.calls-failing}
+    why: Rejected-key errors are LLM call failures too. Show the key, not the generic failure count.
+  - parent: {rule: llm.model-unservable}
+    children: {rule: llm.calls-failing}
+    why: Unservable-model errors are LLM call failures too. Show the model, not the generic failure count.
+  - parent: {rule: llm.rate-limited}
+    children: {rule: llm.calls-failing}
+    why: Rate-limit errors are LLM call failures too. Show the quota, not the generic failure count.
+  - parent: {rule: llm.gateway-unreachable}
+    children: {rule: llm.calls-failing}
+    why: With Bifrost unreachable every call fails. Show the gateway, not the generic failure count.
+  # --- pipeline (F7b: children of llm parents; F7c) ---
+  - parent: {class: llm}
+    children: {mode: P-4}
+    why: Triage stalls whenever the LLM path is down (B5 P-4.a). Show the LLM fault, not the stall.
+  - parent: {mode: L-5}
+    children: {cause: P-2.e}
+    why: A spent budget abandons runs (B5 P-2.e).
+  - parent: {mode: L-3}
+    children: {cause: P-2.e}
+    why: LLM jobs with no consumer stall runs (B5 P-2.e).
+  - parent: {rule: pipeline.agent-serve-not-ready}
+    children: {rule: pipeline.agent-reads-failing}
+    why: With agent-serve down every projection read fails; show agent-serve.
+  - parent: {mode: L-5}
+    children: {rule: pipeline.orchestrator-slots-held}
+    why: A spend cap or exhausted budget holds new runs too; show the budget fault.
+  - parent: {rule: pipeline.agent-serve-not-ready}
+    children: {rule: pipeline.runs-stale}
+    why: Run progress comes from agent-serve's projections; with it down every run looks stale.
+  - parent: {rule: pipeline.agent-worker-not-ready}
+    children: {rule: pipeline.runs-stale}
+    why: Runs queued while the worker isn't ready are never picked up; show the worker.
+  - parent: {rule: pipeline.agent-reads-failing}
+    children: {rule: pipeline.runs-stale}
+    why: Runs whose progress can't be read never record activity; show the read fault.
+  - parent: {rule: pipeline.supervision-loop-failing}
+    children: {rule: pipeline.runs-stale}
+    why: A failing supervisor stops reconciling run progress; show the supervisor.
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: pipeline.daemon-component-hung}
+    why: With no database nothing is processed while findings still arrive; show the database fault, not a hung processor.
+  - parent: {rule: ingest.processor-store-dropped}
+    children: {rule: pipeline.daemon-component-hung}
+    why: Findings that fail to store aren't processed; show the store fault, not a hung processor.
