@@ -105,7 +105,19 @@ def test_correct_password_changes_email_and_revokes_sessions(client, user):
     assert resp.json()["full_name"] == "Ada Lovelace"
     assert user.email == NEW_EMAIL
     assert user.is_verified is False
+    assert user.tokens_valid_after is not None
     revoke.assert_awaited_once_with(user.user_id)
+
+
+def test_email_change_stands_when_redis_revocation_fails(client, user):
+    http, _revoke = client
+    with patch.object(
+        auth, "revoke_all_for_user", new=AsyncMock(side_effect=ConnectionError("OOM"))
+    ):
+        resp = _put(http, email=NEW_EMAIL, current_password=CURRENT)
+    assert resp.status_code == 200, resp.text
+    assert user.email == NEW_EMAIL
+    assert user.tokens_valid_after is not None
 
 
 def test_same_mailbox_does_not_require_a_password_or_revoke(client, user):
