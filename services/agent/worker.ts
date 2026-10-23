@@ -228,6 +228,7 @@ async function drive(
   if (entry.workflow === "hunt") {
     const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
     const mirror = mirrorFor();
+    // Only a forward hunt files its handoffs and findings early: it escalates and keeps hunting, so its case must not wait on a terminal that may be far off or never come.
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });

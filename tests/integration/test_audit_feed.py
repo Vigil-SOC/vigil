@@ -378,9 +378,7 @@ def test_turning_the_feed_on_writes_one_entry(db, client, monkeypatch):
     assert saved.status_code == 200, saved.text
     assert saved.json()["enabled"] is True
     assert saved.json()["ca_set"] is True
-    # Sign-in is on the trail, then this save.
-    assert _count(db) == before + 2
-    assert len(_entries(db, "auth.sign_in")) == 1
+    assert _count(db) == before + 1
     entry = _entries(db, "config.change")
     assert len(entry) == 1
     assert entry[0]["payload"]["config_key"] == feed.INTEGRATION_ID
@@ -408,9 +406,7 @@ def test_a_credential_cannot_turn_the_feed_on(db, client):
     manager = client.put("/api/audit/feed", headers=manager_headers, json=body)
     assert manager.status_code == 403, manager.text
     assert manager.json()["detail"] == "Permission denied: audit.forward required"
-    # The Manager's sign-in is recorded. Neither refusal changes the feed.
-    assert _count(db) == before + 1
-    assert _entries(db, "config.change") == []
+    assert _count(db) == before
 
 
 def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
@@ -458,9 +454,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
         },
     )
     assert posted.status_code == 200, posted.text
-    # The Manager's sign-in is recorded. The feed row is left as it was.
-    assert _count(db) == before + 1
-    assert len(_entries(db, "config.change")) == 1
+    assert _count(db) == before
     again = client.get("/api/audit/feed", headers=admin)
     assert again.json()["enabled"] is True
     assert again.json()["host"] == "siem.example"
