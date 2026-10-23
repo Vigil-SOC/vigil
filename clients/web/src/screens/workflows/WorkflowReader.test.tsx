@@ -16,7 +16,6 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../services/api', () => ({
   workflowApi: api,
-  agentsApi: {},
 }))
 
 const agents = [
@@ -34,7 +33,8 @@ const actions = { onBack: vi.fn(), onHistory: vi.fn(), onRun: vi.fn(), onEdit: v
 function Search() {
   return <span data-testid="search">{useLocation().search}</span>
 }
-const renderPane = (ui: React.ReactElement) => render(<MemoryRouter><AgentRowsProvider value={agents}>{ui}</AgentRowsProvider><Search /></MemoryRouter>)
+const tree = (ui: React.ReactElement, rows = agents) => <MemoryRouter><AgentRowsProvider value={rows}>{ui}</AgentRowsProvider><Search /></MemoryRouter>
+const renderPane = (ui: React.ReactElement) => render(tree(ui))
 
 const checkpoints = { hypothesis_approval: 'ask', scope_extension: 'auto', verdict_review: 'auto', budget_anomaly: 'ask' }
 const hunt = {
@@ -167,12 +167,12 @@ describe('workflow reader pane', () => {
     })
     const pane = <WorkflowReaderPane wf={row({ id: 'custom', name: 'Custom' })} {...actions} />
     const before = [{ id: 'custom-a', name: 'Old name', color: '#111' }].map(mapApiAgent)
-    const { rerender } = render(<MemoryRouter><AgentRowsProvider value={before}>{pane}</AgentRowsProvider></MemoryRouter>)
+    const { rerender } = render(tree(pane, before))
     expect(await within(await screen.findByRole('region', { name: 'Who does it' })).findByText('Old name')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText('Custom New One')).toBeInTheDocument()
 
     const after = [{ id: 'custom-a', name: 'New name', color: '#222' }, { id: 'custom-new_one', name: 'Fresh' }].map(mapApiAgent)
-    rerender(<MemoryRouter><AgentRowsProvider value={after}>{pane}</AgentRowsProvider></MemoryRouter>)
+    rerender(tree(pane, after))
     expect(within(panel('Who does it')).getByText('New name')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText('Fresh')).toBeInTheDocument()
     expect(within(panel('Who does it')).queryByText('Old name')).toBeNull()
