@@ -1,0 +1,4 @@
+FAILED tests/integration/test_audit_feed.py::test_turning_the_feed_on_writes_one_entry
+FAILED tests/integration/test_audit_feed.py::test_a_credential_cannot_turn_the_feed_on
+FAILED tests/integration/test_audit_feed.py::test_the_integrations_save_cannot_change_the_feed
+====== 3 failed, 349 passed, 7 skipped, 17 warnings in 170.53s (0:02:50) =======

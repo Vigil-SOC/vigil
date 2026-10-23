@@ -1,0 +1,1 @@
+core.storage.connection.SchemaRevisionError: this image has 2 Alembic heads: ['0006_audit_feed', '0006_canonical_finding_ips']

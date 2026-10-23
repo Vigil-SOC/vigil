@@ -1,0 +1,5 @@
+{"time": "2026-10-23T10:49:05.382948+00:00", "from": null, "to": "0.8.0", "outcome": "applied", "restore_point": "overridden", "reason": "throwaway local test db", "discarded": []}
+ 0006_audit_feed
+
+     1
+

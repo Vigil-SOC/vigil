@@ -1,0 +1,2 @@
+Database already initialized
+alembic_version: 0006_audit_feed
