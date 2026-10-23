@@ -4100,29 +4100,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/mcp/connections/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Connections Status
-         * @description Get persistent connection status for all MCP servers.
-         *
-         *     Returns:
-         *         Connection status for each server
-         */
-        get: operations["get_api_mcp_connections_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/mcp/servers": {
         parameters: {
             query?: never;
@@ -4138,29 +4115,6 @@ export interface paths {
          *         List of server names
          */
         get: operations["get_api_mcp_servers"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/servers/enabled": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Enabled States
-         * @description Get enabled/disabled state for all MCP servers.
-         *
-         *     Returns:
-         *         Dictionary of server_name -> enabled boolean
-         */
-        get: operations["get_api_mcp_servers_enabled"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4227,8 +4181,6 @@ export interface paths {
          *       another worker). Not down;
          *     * ``disconnected`` otherwise. With no MCP client every server is: the
          *       catalog has no session state of its own.
-         *
-         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
@@ -18625,69 +18577,7 @@ export interface operations {
             };
         };
     };
-    get_api_mcp_connections_status: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_mcp_servers: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_mcp_servers_enabled: {
         parameters: {
             query?: never;
             header?: {
