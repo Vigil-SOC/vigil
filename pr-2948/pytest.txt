@@ -1,0 +1,15 @@
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+17.94s call     security/test_route_auth_coverage.py::test_route_inventory_reaches_every_documented_path
+2.59s setup    unit/reporting/test_analytics_probe_exclusion_db.py::test_breakdowns_exclude_probes_and_add_up_to_the_total
+2.24s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+2.06s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+1.80s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.80s setup    security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+0.70s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/workflows/runs/r-1/resume-body22-ai_decisions.approve]
+0.51s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases-body16-cases.write]
+0.43s call     unit/storage/test_ai_decision_stats_db.py::test_outcome_breakdown_is_scoped_to_the_requested_agent
+0.41s call     unit/reporting/test_analytics_probe_exclusion_db.py::test_breakdowns_exclude_probes_and_add_up_to_the_total
+================== 82 passed, 3 warnings in 162.51s (0:02:42) ==================

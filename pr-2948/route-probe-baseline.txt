@@ -1,0 +1,13 @@
+/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/fastapi/openapi/utils.py:303: UserWarning: Duplicate Operation ID proxy_api_bifrost__path__post for function proxy at /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/df90f673-ac55-41b8-837c-3914e6dc2958/services/api/routers/bifrost_config.py
+GET /api/ai/decisions
+GET /api/ai/decisions/pending-feedback
+GET /api/ai/decisions/stats
+GET /api/ai/decisions/{decision_id}
+POST /api/ai/decisions
+POST /api/ai/decisions/{decision_id}/feedback
+POST /api/ai/decisions 500 WANTED 405
+GET /api/ai/decisions/dec-1 500 WANTED 404
+GET /api/ai/decisions/stats 200 ok
+GET /api/ai/decisions/pending-feedback 200 ok
+GET /api/ai/decisions 200 ok
+exit=2

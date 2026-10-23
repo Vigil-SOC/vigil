@@ -1,0 +1,9 @@
+=== baseline (main) ===
+Error loading custom integrations: [TypeError: Failed to parse URL from /api/custom-integrations/list] {
+  [cause]: TypeError: Invalid URL
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/shell/SocConsole.test.tsx > SocConsole > navigates primary screens and the More menu
+Error: Test timed out in 5000ms.
+ FAIL  src/shell/SocConsole.test.tsx > SocConsole > leaves an open decision detail when the badge sends it to approvals
+Error: Test timed out in 5000ms.
+      Tests  2 failed | 73 passed (75)
