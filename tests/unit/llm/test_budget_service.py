@@ -109,8 +109,6 @@ def test_get_active_vk_returns_none_when_db_unavailable():
 
 
 def test_settings_readers_raise_and_dispatch_fails_open():
-    """A DB failure reaches the Budgets UI readers as an error, never as
-    "no key configured"; the LLM dispatch path still fails open."""
     with patch(
         "core.llm.cost.budget.get_session", side_effect=RuntimeError("DB exploded")
     ):
