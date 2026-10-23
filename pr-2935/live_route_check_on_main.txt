@@ -1,0 +1,4 @@
+  File "/tmp/check2832.py", line 16, in <module>
+    assert not hits and not routes, "route still live"
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: route still live

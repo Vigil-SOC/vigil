@@ -1,0 +1,7 @@
+{"ts": "2026-10-23T06:50:58.532686+00:00", "level": "INFO", "logger": "httpx2", "message": "HTTP Request: POST http://testserver/api/cases/c-1/no-such-route \"HTTP/1.1 403 Forbidden\"", "msg_template": "HTTP Request: %s %s \"%s %d %s\"", "trace_id": "", "span_id": ""}
+case report paths in spec: []
+TestOutputs paths: []
+mounts: ['/mcp']
+registered generate-report routes: []
+POST generate-report -> 403 | POST nonsense path -> 403
+reportlab still importable: 5.0.1

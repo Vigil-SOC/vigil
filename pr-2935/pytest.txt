@@ -1,0 +1,15 @@
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+10.83s call     security/test_route_auth_coverage.py::test_route_inventory_reaches_every_documented_path
+2.44s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+2.34s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+1.89s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+1.64s call     unit/documents/test_documents.py::test_a_pdf_with_a_text_layer_is_read
+1.51s setup    unit/cases/test_case_delete_guards.py::test_delete_case_with_live_investigation_is_409
+0.86s call     unit/cases/test_case_template_finding_lookup.py::test_finding_lookup_is_one_query_whatever_the_count
+0.78s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases-body16-cases.write]
+0.76s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/workflows/runs/r-1/resume-body22-ai_decisions.approve]
+0.61s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[PATCH-/api/v1/findings/f-1-body19-findings.write]
+================= 256 passed, 2 warnings in 146.88s (0:02:26) ==================
