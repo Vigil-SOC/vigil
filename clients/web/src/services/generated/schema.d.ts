@@ -11432,8 +11432,6 @@ export interface components {
              * @default false
              */
             approval_required: boolean;
-            /** Conditions */
-            conditions?: unknown | null;
             /**
              * Expected Output
              * @default
@@ -11443,8 +11441,6 @@ export interface components {
             name: string;
             /** Order */
             order?: number | null;
-            /** Parallel Group */
-            parallel_group?: string | null;
             /** Phase Id */
             phase_id?: string | null;
             /**
@@ -11454,11 +11450,6 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
-            /**
-             * Timeout Seconds
-             * @default 300
-             */
-            timeout_seconds: number | null;
             /** Tools */
             tools?: string[];
         };
