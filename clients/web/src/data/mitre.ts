@@ -1,6 +1,3 @@
-/* The backend leaves `tactic`/`technique_name` unresolved ("Unknown" / == id),
-   so resolve them here. Lookups fall back to the base technique
-   (T1059.001 -> T1059), then to the id, then an em-dash. */
 const DASH = '—'
 
 interface Meta {

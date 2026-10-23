@@ -32,9 +32,9 @@ from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.findings.ip_address import normalize_ip
 from core.storage import ip_exclusion_repository as repo
-from core.storage.ip_exclusion_repository import EXCLUSION_VIEWS, FINDING_IP_KEYS
+from core.storage.ip_address import FINDING_IP_KEYS, normalize_ip
+from core.storage.ip_exclusion_repository import EXCLUSION_VIEWS
 from core.storage.models import IpExclusion
 from core.storage.models.exclusion import EXCLUSION_ORIGINS
 from core.storage.schemas.base import _iso_utc
@@ -50,9 +50,7 @@ __all__ = [
     "current_active_ips",
     "excluded_ips_of",
     "finding_ips",
-    "hidden_findings_total",
     "invalidate_cache",
-    "list_exclusions",
     "list_exclusions_with_total",
     "normalize_ip",
     "remove_exclusion",
@@ -115,33 +113,17 @@ def serialize(
 def list_exclusions_with_total(
     session: Session, *, include_removed: bool = False
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """:func:`list_exclusions` and :func:`hidden_findings_total` from one pass
-    over the findings table."""
+    """Rows newest first, and the findings the queue hides counted once.
+
+    Active rows carry ``hidden_findings``: how many stored findings name the
+    address, which is what removing it would bring back. The per-row counts
+    overlap when one finding names two excluded addresses; the total does not."""
     per_ip, total = repo.count_findings_per_active_ip(session)
     rows = [
         serialize(row, per_ip.get(row.ip, 0) if row.removed_at is None else None)
         for row in repo.list_rows(session, include_removed=include_removed)
     ]
     return rows, total
-
-
-def list_exclusions(
-    session: Session, *, include_removed: bool = False, with_counts: bool = True
-) -> List[Dict[str, Any]]:
-    """Newest first. Active rows carry ``hidden_findings``: how many stored
-    findings name the address, which is what removing it would bring back."""
-    if not with_counts:
-        return [
-            serialize(row)
-            for row in repo.list_rows(session, include_removed=include_removed)
-        ]
-    return list_exclusions_with_total(session, include_removed=include_removed)[0]
-
-
-def hidden_findings_total(session: Session) -> int:
-    """Findings the queue is hiding, each counted once -- the per-row counts
-    overlap when one finding names two excluded addresses."""
-    return repo.count_findings_per_active_ip(session)[1]
 
 
 def _clean_reason(reason: Any, *, required: bool) -> Optional[str]:

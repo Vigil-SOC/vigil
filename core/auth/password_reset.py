@@ -22,6 +22,7 @@ confirm handler rejects.
 
 import hashlib
 import logging
+import os
 from typing import Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -61,6 +62,15 @@ def _redis_client():
 
 def generate_reset_token(user_id: str) -> str:
     return _get_serializer().dumps({"user_id": user_id})
+
+
+def default_base_url(settings) -> str:
+    """Console URL for reset links: VIGIL_FRONTEND_URL, else this host's console.
+    Never derived from the request, whose Host header the client controls."""
+    if settings.vigil_frontend_url:
+        return settings.vigil_frontend_url
+    port = 6987 if os.path.exists("/.dockerenv") else 6988
+    return f"http://localhost:{port}{settings.vigil_context_path.rstrip('/')}"
 
 
 def reset_link(base_url: str, token: str) -> str:

@@ -9,29 +9,39 @@ import pyotp
 import pytest
 
 import core.auth.auth_service as auth_service
+import core.storage.unit_of_work as uow_module
 from core.auth.auth_service import AuthService
 
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 RECOVERY_CODE = "ABCD1234"
 
 
-def _session(user):
-    session = MagicMock()
-    query = session.query.return_value.filter.return_value
-    query.populate_existing.return_value.with_for_update.return_value = query
-    query.first.return_value = user
-    return session
+@pytest.fixture
+def session_for(monkeypatch):
+    def build(user):
+        session = MagicMock()
+        query = session.query.return_value.filter.return_value
+        query.populate_existing.return_value.with_for_update.return_value = query
+        query.first.return_value = user
+        monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
+        return session
+
+    return build
 
 
 def _user(mfa_secret):
     hashed = bcrypt.hashpw(RECOVERY_CODE.encode(), bcrypt.gensalt()).decode()
     return SimpleNamespace(
+        user_id="u",
         username="ada",
         email="ada@example.com",
         mfa_secret=mfa_secret,
         mfa_enabled=True,
         mfa_recovery_codes=[hashed],
         mfa_last_totp_step=None,
+        locked_until=None,
+        failed_login_count=0,
+        service_account=False,
     )
 
 
@@ -50,11 +60,12 @@ def rekeyed_user(monkeypatch):
 
 
 def test_undecryptable_secret_is_reported_not_treated_as_plaintext(
-    rekeyed_user, caplog
+    rekeyed_user, session_for, caplog
 ):
     with caplog.at_level(logging.ERROR, logger=auth_service.logger.name):
         assert (
-            AuthService.verify_mfa_code("u", "123456", _session(rekeyed_user)) is False
+            AuthService.verify_mfa_code("u", "123456", session_for(rekeyed_user))
+            is False
         )
 
     assert "cannot be decrypted with the current JWT_SECRET_KEY" in caplog.text
@@ -63,18 +74,18 @@ def test_undecryptable_secret_is_reported_not_treated_as_plaintext(
     assert rekeyed_user.mfa_secret not in caplog.text
 
 
-def test_undecryptable_secret_logs_once_per_interval(rekeyed_user, caplog):
+def test_undecryptable_secret_logs_once_per_interval(rekeyed_user, session_for, caplog):
     with caplog.at_level(logging.ERROR, logger=auth_service.logger.name):
         for _ in range(5):
-            AuthService.verify_mfa_code("u", "123456", _session(rekeyed_user))
+            AuthService.verify_mfa_code("u", "123456", session_for(rekeyed_user))
 
     assert caplog.text.count("cannot be decrypted") == 1
 
 
 def test_enable_mfa_and_qr_uri_fail_cleanly_on_undecryptable_secret(
-    rekeyed_user, caplog
+    rekeyed_user, session_for, caplog
 ):
-    session = _session(rekeyed_user)
+    session = session_for(rekeyed_user)
     with caplog.at_level(logging.ERROR, logger=auth_service.logger.name):
         assert AuthService.enable_mfa("u", "123456", session) is None
         assert AuthService.get_mfa_qr_uri("u", session) is None
@@ -83,8 +94,10 @@ def test_enable_mfa_and_qr_uri_fail_cleanly_on_undecryptable_secret(
     assert "enable_mfa failed" not in caplog.text
 
 
-def test_recovery_code_still_works_after_key_change_and_is_consumed(rekeyed_user):
-    session = _session(rekeyed_user)
+def test_recovery_code_still_works_after_key_change_and_is_consumed(
+    rekeyed_user, session_for
+):
+    session = session_for(rekeyed_user)
 
     assert AuthService.verify_mfa_code("u", "WRONG000", session) is False
     assert len(rekeyed_user.mfa_recovery_codes) == 1
@@ -94,16 +107,16 @@ def test_recovery_code_still_works_after_key_change_and_is_consumed(rekeyed_user
     assert AuthService.verify_mfa_code("u", RECOVERY_CODE, session) is False
 
 
-def test_legacy_plaintext_secret_still_verifies():
+def test_legacy_plaintext_secret_still_verifies(session_for):
     user = _user(TOTP_SECRET)
     code = pyotp.TOTP(TOTP_SECRET).now()
 
-    assert AuthService.verify_mfa_code("u", code, _session(user)) is True
-    assert AuthService.get_mfa_qr_uri("u", _session(user)).startswith("otpauth://")
+    assert AuthService.verify_mfa_code("u", code, session_for(user)) is True
+    assert AuthService.get_mfa_qr_uri("u", session_for(user)).startswith("otpauth://")
 
 
-def test_encrypted_secret_round_trips_under_the_same_key():
+def test_encrypted_secret_round_trips_under_the_same_key(session_for):
     user = _user(AuthService._encrypt_mfa_secret(TOTP_SECRET))
     code = pyotp.TOTP(TOTP_SECRET).now()
 
-    assert AuthService.verify_mfa_code("u", code, _session(user)) is True
+    assert AuthService.verify_mfa_code("u", code, session_for(user)) is True
