@@ -35,6 +35,7 @@ from core.storage.models import (
 pytestmark = [pytest.mark.unit, pytest.mark.database, pytest.mark.external_service]
 
 EPOCH = datetime(2026, 8, 1, tzinfo=timezone.utc)
+HASH = "5d41402abc4b2a76b9719d911017c592"
 
 
 # The clean-table fixture lives in tests/unit/conftest.py: #735's grant test
@@ -459,8 +460,23 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
     [
         {"caller_kind": "worker"},
         {"entity_key": "ip:10.9.0.1", "as_of": "last tuesday"},
+        {"entity_key": f"sha256:{HASH}"},
+        {"entity_key": f"md5:{HASH}"},
+        {"entity_key": HASH},
+        {"entity_key": "10.0.0.7"},
+        {"entity_key": "ip:"},
+        {"entity_keys": [f"hash:{HASH}", "bogus:x"]},
     ],
-    ids=["no key named", "unreadable as_of"],
+    ids=[
+        "no key named",
+        "unreadable as_of",
+        "sha256 type",
+        "md5 type",
+        "bare hash",
+        "bare ip",
+        "empty value",
+        "one unknown type among good keys",
+    ],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
     # Both are the caller's to fix, so both must come back the same way. The
@@ -515,3 +531,19 @@ def test_the_bridge_resolves_recall_entity_without_reaching_mcp(
 
     # Attributed even though it arrived over HTTP, which is what the log is for.
     assert read_log(session)[0]["caller_id"] == "threat_hunter"
+
+
+def test_a_key_memory_cannot_know_is_refused_rather_than_read_as_no_history(
+    invoke, session
+):
+    sighting(session, f"hash:{HASH}", investigation="hunt-a", concluded=EPOCH)
+    session.commit()
+    args = {"caller_kind": "worker", "caller_id": "threat_hunter"}
+
+    good = invoke(RECALL_TOOL, {"entity_keys": [f"hash:{HASH}"], **args}).json()
+    bad = invoke(RECALL_TOOL, {"entity_keys": [f"sha256:{HASH}"], **args}).json()
+
+    assert len(good["rows"][0]["sightings"]) == 1
+    assert bad["ok"] is False
+    assert bad["failure"]["kind"] == "invalid_args"
+    assert f"sha256:{HASH}" in bad["failure"]["detail"]
