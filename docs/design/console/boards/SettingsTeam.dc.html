@@ -1344,7 +1344,7 @@ class Component extends DCLogic {
     'drawer-deleted': { tAll: true, tDrawer: 'gt', dTab: 'life' },
     'person-restored': { tAll: true, tGone: { gt: 'Active' }, tNoPw: { gt: true }, tRestored: 'gt' },
     'drawer-nopw': { tAll: true, tGone: { gt: 'Active' }, tNoPw: { gt: true }, tDrawer: 'gt', dTab: 'overview' },
-    'drawer-guard-nopw': { tGone: { id: 'Active' }, tNoPw: { id: true }, tDrawer: 'dw', dTab: 'life' },
+    'drawer-guard-nopw': { tGone: { gt: 'Active' }, tNoPw: { gt: true }, tRoleOv: { gt: 'Admin' }, tDrawer: 'dw', dTab: 'life' },
     'service': { tTab: 'service' },
     'service-create': { tTab: 'service', tModal: 'svc', svc: { role: 'Viewer' } },
     'service-create-role': { tTab: 'service', tModal: 'svc', svc: { role: 'Senior analyst' } },
@@ -1493,7 +1493,7 @@ class Component extends DCLogic {
         copy: function () { self.toast('Invite link copied · works once, ' + p.exp); },
         revoke: function () { var m = Object.assign({}, self.S().tRevoked || {}); m[p.id] = true; self.setState({ tRevoked: m }); self.toast('Revoked the invite for ' + p.email + ' · the link stops working', function () { var r = Object.assign({}, self.S().tRevoked || {}); delete r[p.id]; self.setState({ tRevoked: r, toast: null }); }); },
         revLabel: self.tReviveCopy(p).label, restore: function () { self.tRevive(p); },
-        noPw: !!(st.tNoPw || {})[p.id] && status === 'Active', sendReset: function () { self.toast('Reset link sent to ' + p.email + ' · works once · expires in 7 days'); },
+        noPw: !!(st.tNoPw || {})[p.id] && status === 'Active', sendReset: function () { self.toast('Reset link sent to ' + p.email + ' · works once · expires in 1 hour'); },
         unlock: function () { var u = Object.assign({}, self.S().tUnlocked || {}); u[p.id] = true; self.setState({ tUnlocked: u }); self.toast('Unlocked ' + p.name + ' · signed out everywhere' + (mail ? ' and emailed' : '')); }
       };
     });
@@ -1570,7 +1570,7 @@ class Component extends DCLogic {
         goneLine: (goneBy[dp.id] || dp.gone || (isDel ? 'Deleted just now by you' : 'Deactivated just now by you')),
         linkLine: 'Any invite or reset link ' + first + ' hasn’t used stops working.',
         deact: deact, restore: restoreD, guardWhy: guard ? this.tGuardWhy(dp) : '',
-        noPw: !!(st.tNoPw || {})[dp.id] && !isGoneD, sendReset: function () { self.toast('Reset link sent to ' + dp.email + ' · works once · expires in 7 days'); }, revLabel: rv.label, revWhat: rv.what,
+        noPw: !!(st.tNoPw || {})[dp.id] && !isGoneD, sendReset: function () { self.toast('Reset link sent to ' + dp.email + ' · works once · expires in 1 hour'); }, revLabel: rv.label, revWhat: rv.what,
         delHold: this.holdVals('del-' + dp.id, 'Hold to delete ' + first, first + ' deleted', function () { var g = Object.assign({}, self.S().tGone || {}); g[dp.id] = 'Deleted'; self.setState({ tGone: g }); self.toast('Deleted ' + dp.name + ' · signed out everywhere, tokens revoked; ' + first + ' stays on every record'); }, 1600),
         close: go({ tDrawer: null }), esc: function (e) { if (e && e.key === 'Escape') { if (e.stopPropagation) e.stopPropagation(); self.setState({ tDrawer: null }); } }
       };
