@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/trace-manifest/v1",
+  "title": "Medic trace manifest v1",
+  "description": "manifest.json at the root of a trace directory <trace-id>/ {manifest.json, labels.json?, observations/<sensor>.jsonl, NOTES.md?}. Structure only: files, hashes, line order and capture span are checked by contracts/trace_check.py. $defs/line is one line of an observations file; its 'observation' is checked against observation.schema.json.",
+  "type": "object",
+  "required": ["schema_version", "trace_id", "provenance", "medic", "capture", "sources"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1"},
+    "trace_id": {"description": "Equals the directory name. With labels: begins with the fault's cause, or 'control' for a control trace.", "$ref": "#/$defs/trace_id"},
+    "provenance": {"enum": ["captured", "synthetic"]},
+    "medic": {
+      "type": "object",
+      "required": ["version", "install_shape", "instance_id", "pack"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {"$ref": "#/$defs/semver"},
+        "install_shape": {"enum": ["start_sh", "compose", "helm"]},
+        "instance_id": {"type": "string", "pattern": "^mi_[0-9a-f]{16}$"},
+        "pack": {
+          "type": "object",
+          "required": ["id", "version"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+            "version": {"$ref": "#/$defs/semver"}
+          }
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "required": ["started_at", "ended_at", "interrupted"],
+      "additionalProperties": false,
+      "properties": {
+        "started_at": {"$ref": "#/$defs/ts"},
+        "ended_at": {"$ref": "#/$defs/ts"},
+        "interrupted": {"description": "Capture stopped before its plan. Still a valid trace; callers read this flag.", "type": "boolean"}
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "required": ["sensor", "file", "sha256", "lines"],
+        "additionalProperties": false,
+        "properties": {
+          "sensor": {"$ref": "#/$defs/sensor_id"},
+          "file": {"description": "observations/<sensor>.jsonl", "type": "string", "pattern": "^observations/[a-z][a-z0-9_.-]{0,63}\\.jsonl$"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "lines": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "trace_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "sensor_id": {"description": "observation.schema.json sensor.id", "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},
+    "semver": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,4})$"},
+    "ts": {"description": "RFC 3339 UTC, as observation.schema.json.", "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"},
+    "line": {
+      "description": "One line of observations/<sensor>.jsonl. 'arrived' is the tick the observation was fed to the engine; replaying by observed_at alone shifts evaluation by one tick.",
+      "type": "object",
+      "required": ["seq", "arrived", "observation"],
+      "additionalProperties": false,
+      "properties": {
+        "seq": {"description": "Strictly increasing within the file.", "type": "integer", "minimum": 0},
+        "arrived": {"$ref": "#/$defs/ts"},
+        "observation": {"description": "observation.schema.json, checked separately.", "type": "object"}
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@ from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
+from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
 from core.workflows.workflows_service import WorkflowsService
 
 FEED_LIMIT = 50
@@ -64,7 +65,6 @@ _LIVE_ORDER = (
 # The board names the dismissed node apart from its pill ("Dropped").
 _NODE_LABELS = {**TERMINAL_LABELS, "dismissed": "Dropped as noise"}
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
-_LIVE_STATUSES = ("running", "paused")
 _OPEN_PHASE = ("running", "pending_approval")
 
 
@@ -121,7 +121,7 @@ def _agent_rows(now: datetime) -> list[dict]:
         live = (
             session.query(WorkflowRun)
             .filter(
-                WorkflowRun.status.in_(_LIVE_STATUSES),
+                WorkflowRun.status.in_(IN_FLIGHT_STATUSES),
                 WorkflowRun.deleted_at.is_(None),
             )
             .all()
