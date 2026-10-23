@@ -1,0 +1,6 @@
+tests/unit/cases/test_zz_old_probe.py OLD SUMMARY {'total_cases': 7, 'open_cases': 2, 'resolved_cases': 4, 'critical_cases': 2, 'status_breakdown': {'closed': 3, 'resolved': 1, 'open': 1, 'investigating': 1, 'new': 1}, 'priority_breakdown': {'high': 3, 'low': 2, 'critical': 2}}
+        print("OLD SUMMARY", s)
+>       assert s["open_cases"] == 3 and s["critical_cases"] == 1
+E       assert (2 == 3)
+FAILED tests/unit/cases/test_zz_old_probe.py::test_old_summary - assert (2 == 3)
+========================= 1 failed in 80.82s (0:01:20) =========================

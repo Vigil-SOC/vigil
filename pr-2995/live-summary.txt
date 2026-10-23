@@ -1,0 +1,1 @@
+{"total_cases":4,"open_cases":2,"resolved_cases":2,"critical_cases":1,"status_breakdown":{"new":1,"open":1,"resolved":1,"closed":1},"priority_breakdown":{"critical":2,"low":1,"high":1}}{"total_cases":0,"open_cases":0,"resolved_cases":0,"critical_cases":0,"status_breakdown":{},"priority_breakdown":{}}

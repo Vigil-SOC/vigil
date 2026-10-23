@@ -1,0 +1,2 @@
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 264 passed, 6 skipped, 1 warning in 176.36s (0:02:56) =============
