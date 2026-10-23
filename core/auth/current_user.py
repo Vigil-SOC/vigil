@@ -200,4 +200,6 @@ async def get_current_user(
             detail="User account is inactive",
         )
 
+    # The audit poll reads this to require a person sign-in before the role check.
+    request.state.access_claims = payload
     return user
