@@ -1,5 +1,5 @@
 // The top-level entity_context keys the backend reads addresses from
-// (core/storage/ip_exclusion_repository.py FINDING_IP_KEYS). Kept in step by hand:
+// (core/storage/ip_address.py FINDING_IP_KEYS). Kept in step by hand:
 // a key missing here only means the popup offers no Exclude button for it.
 const FINDING_IP_KEYS = [
   'src_ip', 'src_ips', 'source_ip', 'source_ips', 'srcip',
