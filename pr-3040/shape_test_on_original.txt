@@ -1,0 +1,12 @@
+E       AssertionError: assert {'window': {'...: 0.01}], ...} == {'totals': {'..._usd': 0.01}]}
+E         
+E         Omitting 2 identical items, use -vv to show
+E         Left contains 4 more items:
+E         {'by_agent': [],
+E          'time_series': None,
+E          'top_investigations': [],
+E          'window': {'end': '2026-10-23T17:39:36.901511',...
+E         
+E         ...Full output truncated (3 lines hidden), use '-vv' to show
+WARNING  core.llm.bifrost.costs:costs.py:259 bifrost_cost_client: GET /api/logs/histogram/cost failed: cost endpoint must not call Bifrost
+============================== 1 failed in 1.06s ===============================

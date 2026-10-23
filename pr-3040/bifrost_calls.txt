@@ -1,0 +1,6 @@
+ORIGINAL (3baab0c8)
+keys: ['by_agent', 'by_model', 'time_series', 'top_investigations', 'totals', 'window']
+bifrost calls: ['http://localhost:8080/api/logs/histogram/cost?start_time=2026-10-22T17%3A39%3A34.327459&end_time=2026-10-23T17%3A39%3A34.327459']
+TRIMMED (this PR)
+keys: ['by_model', 'totals']
+bifrost calls: []
