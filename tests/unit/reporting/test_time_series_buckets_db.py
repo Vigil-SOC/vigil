@@ -1,7 +1,4 @@
-"""The trend buckets split the whole window, so "all" reaches today (#3003).
-
-DB-backed because the bucket counts are SQL queries.
-"""
+"""The trend buckets split the whole window, so "all" reaches today (#3003)."""
 
 from __future__ import annotations
 

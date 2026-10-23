@@ -225,10 +225,7 @@ _BUCKET_COUNTS = {"24h": 24, "7d": 28}
 async def get_time_series_data(
     db: Session, start_time: datetime, end_time: datetime, time_range: str
 ) -> List[Dict[str, Any]]:
-    """Get time series data for findings, cases, and alerts.
-
-    The window is split into equal buckets, so every range covers start to end.
-    """
+    """Get time series data for findings, cases, and alerts."""
     bucket_count = _BUCKET_COUNTS.get(time_range, 30)
     window = end_time - start_time
 
