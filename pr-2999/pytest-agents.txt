@@ -1,0 +1,15 @@
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+2.24s setup    unit/agents/test_agent_list_fields.py::test_runs_success_and_level_from_phases_and_chats
+1.88s call     unit/agents/test_agent_list_fields.py::test_model_source_agent_assignment_default_and_none
+1.76s call     unit/agents/test_agent_list_fields.py::test_skills_count_needs_read_skill
+1.58s call     unit/agents/test_agent_enablement.py::test_profile_for_refuses_a_disabled_agent
+1.44s call     unit/agents/test_integration_tools.py::test_connecting_a_server_changes_what_is_found_not_what_is_declared
+1.17s call     unit/agents/test_agent_list_fields.py::test_tool_changes_marks_each_tool_an_agent_holds
+1.04s call     unit/agents/test_soc_agents_models.py::test_builtin_band_text_is_rendered_from_response_config
+0.83s call     unit/agents/test_agent_list_fields.py::test_runs_success_and_level_from_phases_and_chats
+0.72s call     unit/agents/test_agent_list_fields.py::test_model_label_is_display_name_when_registry_lists_it
+0.66s call     unit/agents/test_integration_tools.py::test_a_default_install_declares_a_small_fixed_catalogue
+================= 357 passed, 2 warnings in 112.36s (0:01:52) ==================
