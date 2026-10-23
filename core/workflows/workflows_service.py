@@ -5,8 +5,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.agents.attribution import (
+    TrailWriteError,
+    note_run_start,
+    note_terminal,
+    phase_actors,
+    plugin_actor,
+    principal_id_for_username,
+)
 from core.agents.queue import new_run_id
 from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.auth import tool_principal
+from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.documents.fence import fenced_document
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
@@ -33,6 +43,54 @@ WORKFLOW_SCHEME = "workflow:"
 def is_hunt_like(run_kind: Optional[str]) -> bool:
     """True when a run_kind drives the hunt hypothesis loop (hunt, adjudicate)."""
     return run_kind in HUNT_LIKE_RUN_KINDS
+
+
+def _model_of(parameters: Optional[Dict[str, Any]]) -> Optional[str]:
+    model = (parameters or {}).get("model")
+    return model if isinstance(model, str) and model else None
+
+
+def _origin_value(
+    origin_kind: str, person_id: Optional[str], origin_id: Optional[str]
+) -> str:
+    if origin_kind == "person":
+        return person_id or ""
+    if origin_kind == "parent":
+        return origin_id or ""
+    return origin_kind
+
+
+def _run_token(
+    principal: Optional[str],
+    *,
+    username: Optional[str],
+    person_id: Optional[str],
+    agent_id: str,
+    run_id: str,
+    origin: str,
+) -> str:
+    """The token the run carries. A token we signed is re-signed with this run.
+
+    A value this process did not sign is kept as it arrived: the caller already
+    decided what the agent layer will carry.
+    """
+    if principal:
+        try:
+            claims = tool_principal.read(principal)
+        except tool_principal.InvalidPrincipal:
+            return principal
+        if claims.run_id and claims.agent_id:
+            return principal
+        username = username or claims.username
+        person_id = person_id or claims.person_id
+    return tool_principal.mint(
+        username,
+        person_id=person_id,
+        agent_id=agent_id,
+        run_id=run_id,
+        origin=origin,
+        ttl=tool_principal.RUN_TTL,
+    )
 
 
 def _objectives(metadata: Dict[str, Any]) -> List[str]:
@@ -537,6 +595,12 @@ class WorkflowsService:
         # Signed name of the person, when a person started it. The worker carries
         # it opaquely; the invoke endpoint verifies it before binding the caller.
         principal: Optional[str] = None,
+        person_id: Optional[str] = None,
+        username: Optional[str] = None,
+        # person, schedule, alert, or parent. Absent is inferred.
+        origin_kind: Optional[str] = None,
+        # The parent run, when origin_kind is parent.
+        origin_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Start a workflow as a compose run on the agent layer.
 
@@ -598,49 +662,107 @@ class WorkflowsService:
         run_service = self._workflow_runs
         # One id for one run: the workflow run record and the agent ledger are two
         # views of the same thing, so a mirrored phase needs no id translation.
-        run_id = run_service.begin_run(
+        run_id = new_run_id()
+        if principal and not person_id:
+            try:
+                carried = tool_principal.read(principal)
+            except tool_principal.InvalidPrincipal:
+                carried = None
+            if carried is not None:
+                person_id = carried.person_id or principal_id_for_username(
+                    carried.username
+                )
+                username = username or carried.username
+        context = {**dict(parameters or {}), "run_kind": workflow.run_kind}
+        agents = phase_actors(workflow.phases)
+        if agents:
+            context["phase_agents"] = agents
+        actor_principal = plugin_actor(workflow.run_kind)
+        resolved_origin = origin_kind or (
+            "person"
+            if person_id or principal or username
+            else ("alert" if (parameters or {}).get("finding_id") else "schedule")
+        )
+        who = (
+            person_id
+            if person_id
+            else (None if resolved_origin == "person" else SYSTEM_PRINCIPAL_ID)
+        )
+        persisted = run_service.begin_run(
             workflow_id=workflow.id,
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
             workflow_version=workflow_dict.get("version"),
             # run_kind rides along so finalize_run can label the outcome without a
             # column: the same value the start job below carries.
-            trigger_context={**dict(parameters or {}), "run_kind": workflow.run_kind},
+            trigger_context=context,
             triggered_by=triggered_by,
-            run_id=new_run_id(),
+            triggered_by_principal_id=who,
+            run_id=run_id,
         )
-        if not run_id:
+        if not persisted:
             return {"success": False, "error": "Could not persist run (DB unavailable)"}
+        run_id = persisted
 
+        principal = _run_token(
+            principal,
+            username=username,
+            person_id=person_id,
+            agent_id=actor_principal,
+            run_id=run_id,
+            origin=resolved_origin,
+        )
+        origin_value = _origin_value(resolved_origin, person_id, origin_id)
         asked = _asked_hypotheses(parameters)
+        spec = _omit_unset(
+            {
+                # A reference, not a path: the layers resolve at run start, so an
+                # edited definition reaches the next run.
+                "arch": "",
+                "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
+                "config": "",
+                "prompt": self._build_target_context(parameters),
+                # On the job, not in the playbook: the reference names a definition
+                # every run of it shares.
+                "hypotheses": asked,
+                "hypothesis_subjects": _asked_hypothesis_subjects(parameters, asked),
+                "iterations": _asked_iterations(parameters),
+                "overrides": _asked_overrides(parameters),
+                # True only: _omit_unset keeps None out, so an unset flag leaves the
+                # config's policy rather than pinning every run to this side's.
+                "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
+                or None,
+            }
+        )
+        try:
+            note_run_start(
+                run_id=run_id,
+                actor=actor_principal,
+                origin_kind=resolved_origin,
+                origin=origin_value,
+                spec=spec,
+                model=_model_of(parameters),
+            )
+        except TrailWriteError as exc:
+            run_service.finalize_run(
+                run_id, status="failed", error="the action could not be recorded"
+            )
+            logger.error("run %s was not recorded on the trail: %s", run_id, exc)
+            return {
+                "success": False,
+                "error": "the action could not be recorded",
+                "run_id": run_id,
+            }
+
         job = build_start_job(
             run_id=run_id,
             # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
-            request=_omit_unset(
-                {
-                    # A reference, not a path: the layers resolve at run start, so an
-                    # edited definition reaches the next run.
-                    "arch": "",
-                    "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
-                    "config": "",
-                    "prompt": self._build_target_context(parameters),
-                    # On the job, not in the playbook: the reference names a definition
-                    # every run of it shares.
-                    "hypotheses": asked,
-                    "hypothesis_subjects": _asked_hypothesis_subjects(
-                        parameters, asked
-                    ),
-                    "iterations": _asked_iterations(parameters),
-                    "overrides": _asked_overrides(parameters),
-                    # True only: _omit_unset keeps None out, so an unset flag leaves the
-                    # config's policy rather than pinning every run to this side's.
-                    "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
-                    or None,
-                }
-            ),
+            request=spec,
             enqueued_by=actor or triggered_by or "api",
             principal=principal,
+            actor=actor_principal,
+            origin=resolved_origin,
         )
         try:
             job_id = await enqueue_run(job)
@@ -648,6 +770,7 @@ class WorkflowsService:
             run_service.finalize_run(
                 run_id, status="failed", error=f"Could not enqueue run: {exc}"
             )
+            note_terminal(run_id, "failed", "")
             logger.error("Could not enqueue workflow run %s: %s", run_id, exc)
             return {
                 "success": False,

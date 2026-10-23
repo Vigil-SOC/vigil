@@ -140,6 +140,9 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 outcome = "rotated"
                 user.password_hash = AuthService.hash_password(password)
                 user.password_changed_at = now
+                # After bcrypt, which can cross a second. A login with the
+                # old password during the hash is then still before the cutoff.
+                user.tokens_valid_after = utcnow()
             user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None

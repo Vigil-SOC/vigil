@@ -1,10 +1,22 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { configApi } from '../services/api'
 
+type Scheme = 'light' | 'dark'
+
+const COLOR_SCHEME_KEY = 'vigil.colorScheme'
+
+function readSavedScheme(): Scheme | null {
+  try {
+    const saved = localStorage.getItem(COLOR_SCHEME_KEY)
+    return saved === 'light' || saved === 'dark' ? saved : null
+  } catch {
+    return null
+  }
+}
+
 interface ColorSchemeContextType {
-  scheme: 'light' | 'dark'
-  toggleScheme: () => void
-  setScheme: (scheme: 'light' | 'dark') => void
+  scheme: Scheme
+  setScheme: (scheme: Scheme) => void
 }
 
 const ColorSchemeContext = createContext<ColorSchemeContextType | undefined>(undefined)
@@ -16,23 +28,26 @@ export const useColorScheme = () => {
 }
 
 export const ColorSchemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [scheme, setSchemeState] = useState<'light' | 'dark'>('dark')
+  const [scheme, setSchemeState] = useState<Scheme>(() => readSavedScheme() ?? 'dark')
 
   useEffect(() => {
+    if (readSavedScheme()) return
     configApi.getTheme()
-      .then(res => res.data.theme && setSchemeState(res.data.theme))
+      .then(res => !readSavedScheme() && res.data.theme && setSchemeState(res.data.theme))
       .catch(() => {})
   }, [])
 
-  const setScheme = (next: 'light' | 'dark') => {
+  const setScheme = (next: Scheme) => {
     setSchemeState(next)
-    configApi.setTheme(next).catch(() => {})
+    try {
+      localStorage.setItem(COLOR_SCHEME_KEY, next)
+    } catch {
+      /* private mode */
+    }
   }
 
-  const toggleScheme = () => setScheme(scheme === 'light' ? 'dark' : 'light')
-
   return (
-    <ColorSchemeContext.Provider value={{ scheme, toggleScheme, setScheme }}>
+    <ColorSchemeContext.Provider value={{ scheme, setScheme }}>
       {children}
     </ColorSchemeContext.Provider>
   )

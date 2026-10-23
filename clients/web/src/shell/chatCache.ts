@@ -2,7 +2,7 @@
 
 Keys include the user id. The old unscoped `soc.chat.history`, `soc.chat.keymap`
 and `soc.chat.imported` entries are not attributable to anyone, so they are
-deleted rather than shown or imported. `soc.chat.threadHeight` and the dock
+deleted rather than shown. `soc.chat.threadHeight` and the dock
 width are layout preferences and stay.
 */
 
@@ -11,18 +11,11 @@ const HISTORY = 'soc.chat.history'
 const KEYMAP = 'soc.chat.keymap'
 const IMPORTED = 'soc.chat.imported'
 
-// Bumped on retain and clear so an in-flight import cannot write a key back afterwards.
-let cacheEpoch = 0
-
-export function chatCacheEpoch(): number {
-  return cacheEpoch
-}
-
 export interface CachedConversation {
   id: string
   title: string
   ts: number
-  messages: Array<{ role: string; text: string; ms?: number }>
+  messages: Array<{ role: string; text: string }>
   key?: string
 }
 
@@ -100,33 +93,10 @@ export function setKeymapEntry(userId: string | null | undefined, key: string, s
   }
 }
 
-export function chatWasImported(userId: string | null | undefined): boolean {
-  if (!usable(userId)) return false
-  try {
-    return localStorage.getItem(scoped(IMPORTED, userId)) === '1'
-  } catch {
-    return false
-  }
-}
-
-export function markChatImported(userId: string | null | undefined) {
-  if (!usable(userId)) return
-  try {
-    localStorage.setItem(scoped(IMPORTED, userId), '1')
-  } catch {
-    /* ignore */
-  }
-}
-
 /** Drop every other user's copy, and the unscoped keys. */
 export function retainChatCache(userId: string) {
   if (!usable(userId)) return
-  cacheEpoch += 1
-  const keep = new Set([
-    scoped(HISTORY, userId),
-    scoped(KEYMAP, userId),
-    scoped(IMPORTED, userId),
-  ])
+  const keep = new Set([scoped(HISTORY, userId), scoped(KEYMAP, userId)])
   for (const key of contentKeys()) {
     if (!keep.has(key)) localStorage.removeItem(key)
   }
@@ -134,6 +104,5 @@ export function retainChatCache(userId: string) {
 
 /** Sign-out: nothing cached should remain for the next person at this browser. */
 export function clearChatCache() {
-  cacheEpoch += 1
   for (const key of contentKeys()) localStorage.removeItem(key)
 }

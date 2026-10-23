@@ -4,6 +4,11 @@
   "nullable": false,
   "type": "text"
  },
+ "column agent_directives.actor_principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column agent_directives.created_at": {
   "default": "now()",
   "nullable": false,
@@ -264,6 +269,11 @@
   "nullable": true,
   "type": "character varying(100)"
  },
+ "column approval_actions.approved_by_principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column approval_actions.confidence": {
   "default": "0",
   "nullable": false,
@@ -278,6 +288,11 @@
   "default": null,
   "nullable": false,
   "type": "character varying(100)"
+ },
+ "column approval_actions.created_by_principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column approval_actions.description": {
   "default": null,
@@ -2009,6 +2024,11 @@
   "nullable": false,
   "type": "text"
  },
+ "column episodic_read_log.caller_principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column episodic_read_log.dropped": {
   "default": null,
   "nullable": false,
@@ -3474,6 +3494,11 @@
   "nullable": false,
   "type": "boolean"
  },
+ "column users.tokens_valid_after": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column users.updated_at": {
   "default": "now()",
   "nullable": false,
@@ -3628,6 +3653,11 @@
   "default": null,
   "nullable": true,
   "type": "character varying(100)"
+ },
+ "column workflow_runs.triggered_by_principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column workflow_runs.workflow_id": {
   "default": null,

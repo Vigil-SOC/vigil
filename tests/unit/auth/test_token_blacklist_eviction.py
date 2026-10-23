@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -51,3 +52,20 @@ async def test_user_cutoff_expires_with_the_longest_token(monkeypatch):
             tb.get_settings().jwt_refresh_expiration_days * 86400,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_missing_redis_does_not_pretend_a_token_was_revoked(monkeypatch):
+    monkeypatch.setattr(tb, "_get_client", lambda: None)
+    future = datetime.now(timezone.utc) + timedelta(minutes=5)
+    with pytest.raises(tb.RevocationWriteError):
+        await tb.blacklist_jti("jti-1", future)
+    with pytest.raises(tb.RevocationWriteError):
+        await tb.revoke_all_for_user("u-1")
+
+
+@pytest.mark.asyncio
+async def test_an_expired_token_needs_no_redis(monkeypatch):
+    monkeypatch.setattr(tb, "_get_client", lambda: None)
+    past = datetime.now(timezone.utc) - timedelta(seconds=5)
+    await tb.blacklist_jti("jti-1", past)

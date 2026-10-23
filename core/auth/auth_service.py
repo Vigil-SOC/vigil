@@ -23,11 +23,31 @@ from core.auth import principals
 from core.config import get_settings
 from core.exceptions import default_on_error
 from core.secrets import get_secret
-from core.storage.models import Role, User
+from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# A person's own act (decision 9). Never held by a service account, token, or agent.
+_PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
+
+
+def _is_person(user_id: str, session: Optional[Session]) -> bool:
+    """Whether that user's principal is a person. No row is not one."""
+    with unit_of_work(session) as session:
+        principal_id = (
+            session.query(User.principal_id).filter(User.user_id == user_id).scalar()
+        )
+        if not principal_id:
+            return False
+        kind = (
+            session.query(Principal.kind)
+            .filter(Principal.principal_id == principal_id)
+            .scalar()
+        )
+        return kind == principals.PERSON
+
 
 # Fernet tokens are urlsafe base64 of a version byte + timestamp, so they start
 # with "gAAAAA". Lowercase "g" is not base32, so legacy plaintext never matches.
@@ -700,6 +720,12 @@ class AuthService:
         Returns:
             True if user has permission
         """
+        # audit.forward and audit.manage are a person's own act. Dev mode grants
+        # every role permission, and this still refuses a non-person, including
+        # a dev user with no principal row.
+        if permission in _PERSON_ONLY and not _is_person(user_id, session):
+            return False
+
         # DEV MODE: Grant all permissions
         if _is_dev_mode():
             return True

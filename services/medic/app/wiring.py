@@ -1,4 +1,4 @@
-"""One Medic, wired: sensors → bus → K2 choke → engine (15 s tick) → router R1 → store.
+"""One Medic, wired: sensors → bus → K2 choke → engine (15 s tick) → router → store.
 
 Each cycle the scheduler starts the sensors that are due, the pipeline hands every
 finished, redacted observation to the engine, and the engine evaluates the tick on
@@ -129,8 +129,10 @@ class Medic:
             return []  # same tick again, or the wall clock stepped back
         self._stepped_back = False
         stored = []
-        for record in self.engine.tick(datetime.fromtimestamp(tick, UTC)):
-            routed = {"v": 1, **self.router.route(record)}
+        records = self.engine.tick(datetime.fromtimestamp(tick, UTC))
+        status = self.engine.status()  # this tick's runtime_untrusted flags (R3)
+        for record in records:
+            routed = {"v": 1, **self.router.route(record, status)}
             try:
                 stored.append(self.writer.append(routed))
             # C5: the loop keeps beating whatever state the store is in (G3 adds

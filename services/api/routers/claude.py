@@ -1,4 +1,4 @@
-"""Claude endpoints: model listing and the chat stream the console uses."""
+"""Claude endpoints: the chat stream the console uses."""
 
 import asyncio
 import json
@@ -16,6 +16,7 @@ from core.agents.projections import agent_route
 from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
+from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
 from core.cases.case_brief import case_brief
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
@@ -26,7 +27,7 @@ from core.llm.chat_layers import (
     run_id_for,
 )
 from core.llm.defaults import DEFAULT_MODEL
-from core.llm.providers.registry import get_registry, is_chat_model
+from core.llm.providers.registry import get_registry
 from core.llm.router.router import get_provider_spec
 from core.llm.target import (
     component_fallback,
@@ -372,7 +373,16 @@ async def chat_stream(
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
-        "principal": tool_principal.mint(current_user.username),
+        "principal": tool_principal.mint(
+            current_user.username,
+            person_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+            agent_id=agent_principal_id(CHAT_PLUGIN_ID),
+            run_id=run_id_for(session_id),
+            origin="person",
+        ),
+        "actor": agent_principal_id(CHAT_PLUGIN_ID),
+        "origin": "person",
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id
@@ -508,83 +518,3 @@ def _internal_headers() -> Dict[str, str]:
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-
-
-@router.get("/models")
-async def get_models():
-    """List available models for the Chat UI model picker.
-
-    Backward-compatible alias for `/api/ai/models` (GH #89). Returns every
-    model across all *active* providers (Anthropic, Ollama, OpenAI, …) so the
-    picker reflects what the instance can actually run: an Ollama-only
-    deployment shows its Ollama models instead of Claude models it will never
-    call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-    selection still matches a menu entry.
-    """
-    registry = get_registry()
-    try:
-        all_models = await registry.list_available_models()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("get_models: registry lookup failed: %s", exc)
-        all_models = []
-
-    if not all_models:
-        # Live discovery returned nothing. Before rendering anything, reflect
-        # the providers the instance actually has configured — an Ollama-only
-        # deployment must not be shown Claude models it can't call (#409).
-        try:
-            all_models = await registry.fallback_models()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("get_models: provider fallback failed: %s", exc)
-            all_models = []
-
-    if not all_models:
-        # Genuinely nothing configured (fresh install / no DB). Last-resort
-        # default so the Chat UI still renders a picker.
-        return {
-            "models": [
-                {
-                    "id": "claude-sonnet-4-5-20250929",
-                    "name": "Claude Sonnet 4.5",
-                    "description": "Most intelligent model, best for complex tasks",
-                },
-                {
-                    "id": "claude-sonnet-4-6",
-                    "name": "Claude Sonnet 4.6",
-                    "description": "Balanced speed and intelligence",
-                },
-                {
-                    "id": "claude-haiku-4-5-20251001",
-                    "name": "Claude Haiku 4.5",
-                    "description": "Fastest model, good for simple tasks",
-                },
-            ]
-        }
-
-    # Dedupe by bare model_id: the picker uses it as both the menu key and the
-    # stored value, and two providers can advertise the same id. First wins.
-    # Embedding-only models (e.g. nomic-embed-text) are dropped here: they show
-    # up in provider discovery but can't hold a chat, so they must not appear in
-    # the chat picker. Kept even though fetch_provider_models() now filters too,
-    # because pinned embedding models still arrive as deprecated orphans and
-    # fallback_models() never passes through that reader.
-    seen: set = set()
-    models = []
-    for m in all_models:
-        if m.is_embedding or not is_chat_model(m.provider_type, m.model_id):
-            continue
-        if m.model_id in seen:
-            continue
-        seen.add(m.model_id)
-        models.append(
-            {
-                "id": m.model_id,
-                "name": m.display_name,
-                "description": (
-                    f"{m.context_window // 1000}K context, "
-                    f"${m.input_cost_per_1k:.4f}/1K in / "
-                    f"${m.output_cost_per_1k:.4f}/1K out"
-                ),
-            }
-        )
-    return {"models": models}

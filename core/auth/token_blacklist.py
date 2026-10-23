@@ -11,9 +11,9 @@ Two revocation strategies, used together:
 
 2. **Per-user cutoff** — `user_revoked_before:{user_id}` stores a unix
    timestamp. Any token whose `iat` claim is earlier than the cutoff is
-   rejected. Set on password change / role change / "log out everywhere" —
-   one write invalidates every token the user holds, without having to
-   enumerate them.
+   rejected. It mirrors ``users.tokens_valid_after``, which is the record
+   authentication enforces when this write does not happen. Set on password
+   change / role change / "log out everywhere".
 
 Verify-path failures (Redis unreachable during `is_token_revoked`) default to
 **fail-closed** (reject the request). Set `REVOCATION_FAIL_OPEN=true` only if
@@ -33,6 +33,10 @@ from core.config import get_settings
 from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
+
+
+class RevocationWriteError(RuntimeError):
+    """A revocation key was not written."""
 
 
 _JTI_PREFIX = "blacklist:jti:"
@@ -104,13 +108,9 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
     """
     Mark a specific token as revoked. Called on /logout.
 
-    Raises on Redis failure so the /logout handler can surface the error.
+    Raises when the key is not written, including when Redis is not installed.
+    A token that has already expired is not stored.
     """
-    client = _get_client()
-    if client is None:
-        logger.warning("blacklist_jti: redis client unavailable; skipping")
-        return
-
     ttl_seconds = 0
     if expires_at is not None:
         if expires_at.tzinfo is None:
@@ -118,6 +118,10 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
         ttl_seconds = int((expires_at - datetime.now(tz=timezone.utc)).total_seconds())
     if ttl_seconds <= 0:
         return
+
+    client = _get_client()
+    if client is None:
+        raise RevocationWriteError("redis client unavailable")
 
     await client.set(f"{_JTI_PREFIX}{jti}", "1", ex=ttl_seconds)
 
@@ -157,11 +161,12 @@ async def consume_refresh_jti(jti: str, expires_at: Optional[datetime]) -> bool:
 
 async def revoke_all_for_user(user_id: str, session: Optional[Session] = None) -> None:
     """
-    Invalidate every outstanding token for a user by moving the cutoff
-    timestamp forward, and end that user's open sign-ins.
+    End the user's open sign-ins and mirror the session cutoff into Redis.
 
-    Pass ``session`` when the caller's transaction already holds those rows;
-    without it the sign-ins end in a transaction of their own.
+    ``users.tokens_valid_after`` is what authentication enforces. This copy
+    rejects a token before that row is loaded. Raises when the copy is not
+    written. Pass ``session`` when the caller's transaction already holds the
+    sign-in rows; without it they end in a transaction of their own.
     """
     try:
         await asyncio.to_thread(
@@ -173,8 +178,7 @@ async def revoke_all_for_user(user_id: str, session: Optional[Session] = None) -
 
     client = _get_client()
     if client is None:
-        logger.warning("revoke_all_for_user: redis client unavailable; skipping")
-        return
+        raise RevocationWriteError("redis client unavailable")
     # Every token older than the cutoff has expired once a refresh token's
     # lifetime has passed, so the key can age out instead of accumulating.
     ttl_seconds = get_settings().jwt_refresh_expiration_days * 86400
