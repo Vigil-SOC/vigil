@@ -17,6 +17,11 @@ Two properties make this safe to hand to a process that is not the API:
   not an input.
 
 Stateless, so a replica other than the one that served the chat can verify it.
+
+A run token also carries the person principal (absent when no person started
+it), the agent principal, the run id and the origin: person, schedule, alert
+or parent. The username stays ``sub``. Nothing here is a ``user_id``, and the
+key is still the derived one, so ``get_current_user`` refuses it.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -35,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 _PURPOSE = "vigil-tool-principal"
 _ALGORITHM = "HS256"
+ORIGINS = frozenset({"person", "schedule", "alert", "parent"})
 
 # One chat turn: its wall budget (core/llm/chat_layers.py, 300s) plus the agent
 # layer's LLM timeout (VIGIL_LLM_TIMEOUT_MS, 600s), since a last call started
@@ -53,22 +60,59 @@ class InvalidPrincipal(Exception):
     """A principal token that is forged, expired or not one of these."""
 
 
+@dataclass(frozen=True)
+class Claims:
+    """What the API signed. ``username`` is absent when no person started it."""
+
+    username: Optional[str]
+    person_id: Optional[str]
+    agent_id: Optional[str]
+    run_id: Optional[str]
+    origin: Optional[str]
+
+
 def _key() -> bytes:
     secret = auth_service.JWT_SECRET_KEY.encode()
     return hmac.new(secret, _PURPOSE.encode(), hashlib.sha256).digest()
 
 
-def mint(username: str, ttl: timedelta = TTL) -> str:
+def _claim(claims: dict, name: str) -> Optional[str]:
+    value = claims.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise InvalidPrincipal(f"bad {name}")
+    return value
+
+
+def mint(
+    username: Optional[str] = None,
+    ttl: timedelta = TTL,
+    *,
+    person_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    origin: Optional[str] = None,
+) -> str:
+    if origin is not None and origin not in ORIGINS:
+        raise ValueError(f"origin must be one of {sorted(ORIGINS)}")
     now = datetime.now(timezone.utc)
-    return jwt.encode(
-        {"sub": username, "aud": _PURPOSE, "iat": now, "exp": now + ttl},
-        _key(),
-        algorithm=_ALGORITHM,
-    )
+    payload: dict = {"aud": _PURPOSE, "iat": now, "exp": now + ttl}
+    if username:
+        payload["sub"] = username
+    if person_id:
+        payload["person_id"] = person_id
+    if agent_id:
+        payload["agent_id"] = agent_id
+    if run_id:
+        payload["run_id"] = run_id
+    if origin:
+        payload["origin"] = origin
+    return jwt.encode(payload, _key(), algorithm=_ALGORITHM)
 
 
-def verify(token: str) -> str:
-    """The username the API signed, or ``InvalidPrincipal``. Never a fallback."""
+def read(token: str) -> Claims:
+    """The signed claims, or ``InvalidPrincipal``. Never a fallback."""
     try:
         claims = jwt.decode(
             token,
@@ -76,12 +120,34 @@ def verify(token: str) -> str:
             algorithms=[_ALGORITHM],
             audience=_PURPOSE,
             leeway=_LEEWAY,
-            options={"require": ["sub", "aud", "exp"]},
+            options={"require": ["aud", "exp"]},
         )
     except jwt.InvalidTokenError as exc:
         logger.warning("tool principal refused: %s", exc)
         raise InvalidPrincipal(str(exc)) from exc
-    subject: Optional[str] = claims.get("sub")
-    if not isinstance(subject, str) or not subject:
+    username = _claim(claims, "sub")
+    agent_id = _claim(claims, "agent_id")
+    if username is None and agent_id is None:
         raise InvalidPrincipal("no subject")
-    return subject
+    origin = _claim(claims, "origin")
+    if origin is not None and origin not in ORIGINS:
+        raise InvalidPrincipal("bad origin")
+    return Claims(
+        username=username,
+        person_id=_claim(claims, "person_id"),
+        agent_id=agent_id,
+        run_id=_claim(claims, "run_id"),
+        origin=origin,
+    )
+
+
+def verify(token: str) -> str:
+    """The username the API signed, or ``InvalidPrincipal``.
+
+    A token no person started has no username; callers that need the agent
+    and the origin use :func:`read`.
+    """
+    username = read(token).username
+    if not username:
+        raise InvalidPrincipal("no subject")
+    return username

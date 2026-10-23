@@ -1,4 +1,4 @@
-"""``python -m core.backup pre-upgrade`` and the schema stamp ``init_database`` writes."""
+"""``python -m core.backup pre-upgrade`` writes the restore-point id it took."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from test_backup_restore import (
 )
 from test_backup_restore import pytestmark as _restore_marks
 
+from core.backup.preupgrade import RESTORE_POINT_NAME
 from core.storage.models.config import SystemConfig
 from core.upgrade.command import script_directory
 from core.version import __version__
@@ -233,6 +234,14 @@ def test_snapshot_records_the_stamp_and_restores_without_create_all(instance):
 
     assert proc.returncode == 0, proc.stderr
     manifest = _manifest(env, repo, passphrase)
+    assert (upgrade / RESTORE_POINT_NAME).read_text(encoding="utf-8").strip() == (
+        json.loads(
+            subprocess.check_output(
+                ["restic", "-r", str(repo), "snapshots", "--json"],
+                env={**env, "RESTIC_PASSWORD_FILE": str(passphrase)},
+            )
+        )[0]["id"]
+    )
     assert manifest["kind"] == "pre-upgrade"
     assert manifest["version"] == STAMPED
     assert manifest["taken_by"] == CURRENT == __version__
@@ -249,13 +258,16 @@ def test_snapshot_records_the_stamp_and_restores_without_create_all(instance):
 
 
 def test_restart_takes_no_point(instance):
-    env, repo, _, _, _ = instance
+    env, repo, _, _, upgrade = instance
     _at_head(DATABASE)
+    stale = upgrade / RESTORE_POINT_NAME
+    stale.write_text("stale\n", encoding="utf-8")
 
     proc = _pre_upgrade(env)
 
     assert proc.returncode == 0, proc.stderr
     assert not repo.exists()
+    assert not stale.exists()
 
 
 def test_refuse_without_alembic_takes_no_point(instance):
@@ -359,24 +371,25 @@ def test_failed_snapshot_refuses_and_ack_takes_none(instance):
     assert snaps == []
 
 
-_INIT = """
-from unittest import mock
-from core.storage.connection import DatabaseManager, init_database
-if {fail}:
-    with mock.patch.object(DatabaseManager, "create_tables", side_effect=RuntimeError("boom")):
-        init_database()
-else:
+_CHECK = """
+from core.storage.connection import SchemaRevisionError, init_database
+try:
     init_database()
+except SchemaRevisionError as exc:
+    print(exc)
+    raise SystemExit(1)
 """
 
 
-def test_init_database_stamps_only_after_create_all(instance):
+def test_init_database_does_not_write_schema_version_and_requires_a_revision(instance):
     env, *_ = instance
 
-    failed = _run([sys.executable, "-c", _INIT.format(fail=True)], env)
-    assert failed.returncode != 0
+    refused = _run([sys.executable, "-c", _CHECK], env)
+    assert refused.returncode != 0
+    assert "alembic_version" in refused.stdout
     assert _stamped(DATABASE) == STAMPED
 
-    ok = _run([sys.executable, "-c", _INIT.format(fail=False)], env)
+    _at_head(DATABASE)
+    ok = _run([sys.executable, "-c", _CHECK], env)
     assert ok.returncode == 0, ok.stderr
-    assert _stamped(DATABASE) == CURRENT
+    assert _stamped(DATABASE) == STAMPED
