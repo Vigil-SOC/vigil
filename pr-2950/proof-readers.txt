@@ -1,0 +1,22 @@
+
+row='NOROW'                gate=False overlay=False report=False label=Act route=False
+.
+row={'enabled': True}      gate=True overlay=True report=True label=Assist route=True
+.
+row={'enabled': False}     gate=False overlay=False report=False label=Act route=False
+.
+row={}                     gate=False overlay=False report=False label=Act route=False
+.
+row=None                   gate=False overlay=False report=False label=Act route=False
+.
+row=[1]                    gate=False overlay=False report=False label=Act route=False
+.
+row='FAIL'                 gate=True overlay=True report=True label=Assist route=503
+.
+=============================== warnings summary ===============================
+core/storage/service.py:124
+  /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/c179440a-5bd3-4a0c-b68c-e2d1660ff616/core/storage/service.py:124: SADeprecationWarning: The noload() option is deprecated and will be removed in a future release.  This option produces incorrect results by returning ``None`` for related items. (deprecated since: 2.1)
+    noload(Finding.cases),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+7 passed, 1 warning in 1.43s

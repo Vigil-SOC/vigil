@@ -1,0 +1,20 @@
+FAILED tests/unit/daemon/test_probes.py::TestTheSweep::test_puts_three_findings_on_the_processor_queue
+FAILED tests/unit/daemon/test_probes.py::TestTheSweep::test_skips_the_probes_that_already_exist_today
+FAILED tests/unit/daemon/test_probes.py::TestTheScheduledTask::test_sweep_injects_onto_the_queue_it_was_handed
+FAILED tests/unit/daemon/test_probes.py::TestTheScheduledTask::test_sweep_scores_before_it_injects
+FAILED tests/unit/daemon/test_probes.py::TestTheProcessorGuard::test_a_probe_never_reaches_response_evaluation
+FAILED tests/unit/daemon/test_probes.py::TestTheProcessorGuard::test_an_ordinary_finding_still_does
+FAILED tests/unit/daemon/test_probes.py::TestTheProcessorGuard::test_guard_holds_when_triage_raises
+FAILED tests/unit/daemon/test_probes.py::TestTheExclusionSkip::test_an_excluded_finding_is_not_triaged
+FAILED tests/unit/daemon/test_probes.py::TestTheExclusionSkip::test_a_probe_naming_an_excluded_ip_is_still_triaged
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestTheScheduledHuntOpensARun::test_puts_a_threat_hunt_on_the_orchestrators_intake
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestTheScheduledHuntOpensARun::test_marks_it_as_scheduled_rather_than_asked_for
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestTheScheduledHuntOpensARun::test_counts_the_hunt_it_opened
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestWhatTheHuntIsSteeredToward::test_asks_about_the_techniques_the_estate_is_showing
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestWhatTheHuntIsSteeredToward::test_falls_back_to_the_definitions_own_hypotheses
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestWhatTheHuntIsSteeredToward::test_still_opens_the_hunt_when_the_findings_cannot_be_read
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestARestartDoesNotRelaunchTheHunt::test_no_hunt_when_one_was_queued_within_the_interval
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestARestartDoesNotRelaunchTheHunt::test_hunts_when_the_last_one_is_older_than_the_interval
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestARestartDoesNotRelaunchTheHunt::test_hunts_when_none_was_ever_queued
+FAILED tests/unit/daemon/test_scheduled_hunt.py::TestARestartDoesNotRelaunchTheHunt::test_hunts_when_the_history_cannot_be_read
+19 failed, 656 passed, 6 skipped, 2 warnings in 176.86s (0:02:56)
