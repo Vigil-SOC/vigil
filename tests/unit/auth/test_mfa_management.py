@@ -13,6 +13,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 import core.auth.auth_service as auth_service
+import core.storage.unit_of_work as uow_module
 from core.routing import request_unit_of_work
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.rate_limit import limiter
@@ -32,15 +33,19 @@ def user():
         mfa_secret=None,
         mfa_recovery_codes=[],
         mfa_last_totp_step=None,
+        locked_until=None,
+        failed_login_count=0,
+        service_account=False,
     )
 
 
 @pytest.fixture
-def client(user):
+def client(monkeypatch, user):
     session = MagicMock()
     query = session.query.return_value.filter.return_value
     query.populate_existing.return_value.with_for_update.return_value = query
     query.first.return_value = user
+    monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

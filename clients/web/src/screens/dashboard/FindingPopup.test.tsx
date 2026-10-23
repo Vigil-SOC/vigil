@@ -9,7 +9,6 @@ vi.mock('../../services/api', () => ({
     getById: vi.fn(),
     getEnrichment: vi.fn(),
     update: vi.fn(),
-    delete: vi.fn(),
     launchIntake: vi.fn(),
     markNoise: vi.fn(),
     clearNoise: vi.fn(),

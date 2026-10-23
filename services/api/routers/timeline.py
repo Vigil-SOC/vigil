@@ -33,14 +33,11 @@ def normalize_timestamp(timestamp_str: str) -> datetime:
     # Remove 'Z' and replace with '+00:00' for proper ISO parsing
     timestamp_str = timestamp_str.replace("Z", "+00:00")
 
-    # Parse the timestamp
-    dt = datetime.fromisoformat(timestamp_str)
+    return _aware(datetime.fromisoformat(timestamp_str))
 
-    # If timezone-naive, assume UTC
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
 
-    return dt
+def _aware(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _dated(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -272,8 +269,8 @@ async def get_finding_context_timeline(
 
 @router.get("/range", response_model=TimelineResponse)
 async def get_timeline_range(
-    start: Optional[str] = Query(None, description="Start time (ISO format)"),
-    end: Optional[str] = Query(None, description="End time (ISO format)"),
+    start: Optional[datetime] = Query(None, description="Start time (ISO format)"),
+    end: Optional[datetime] = Query(None, description="End time (ISO format)"),
     severity: Optional[str] = Query(None, description="Filter by severity"),
     data_source: Optional[str] = Query(None, description="Filter by data source"),
     limit: int = Query(default=500, ge=1, le=5000),
@@ -293,9 +290,8 @@ async def get_timeline_range(
     """
     data_service = DatabaseDataService()
 
-    # Parse time range
-    start_time = normalize_timestamp(start) if start else None
-    end_time = normalize_timestamp(end) if end else None
+    start_time = _aware(start) if start else None
+    end_time = _aware(end) if end else None
 
     # Undated findings are left out in the query rather than skipped after it:
     # timestamp DESC puts NULLs first in Postgres, so a page of them would
