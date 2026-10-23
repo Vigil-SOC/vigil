@@ -83,8 +83,9 @@ class TestAgentRunPath:
         with patch(
             "core.workflows.workflow_run_service.WorkflowRunService", return_value=runs
         ), patch(
-            "core.workflows.workflows_service.WorkflowsService.version_of",
-            side_effect=versions or (lambda self, wid: 1),
+            "core.workflows.workflows_service.WorkflowsService.get_workflow",
+            side_effect=versions
+            or (lambda self, wid: WorkflowDefinition(wid, None, {"version": 4}, "")),
             autospec=True,
         ):
             agent_runs_router._begin_run_row("r-1", request, "api")
@@ -93,7 +94,7 @@ class TestAgentRunPath:
     def test_named_workflow_stores_its_version(self):
         kwargs = self._begin("workflow:incident-response")
         assert kwargs["workflow_id"] == "incident-response"
-        assert kwargs["workflow_version"] == 1
+        assert kwargs["workflow_version"] == 4
 
     def test_bare_run_kind_stores_none(self):
         assert self._begin("")["workflow_version"] is None
