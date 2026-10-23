@@ -1,0 +1,5 @@
+⚠️  DEV_MODE is ENABLED - authentication is BYPASSED. Gates opened: session auth (every request runs as a mock admin with full permissions); vstrike inbound (POST /api/integrations/vstrike/findings accepts pushes without its bearer key). This is for a developer's own machine only; set DEV_MODE=false in .env to require a login.
+reused across 50 calls: True per-call 0.10 ms
+enabled flip rebuilds: True enabled: True
+workdir change rebuilds: True /tmp/ev2897/wd-b
+per_investigation_limit: 2.5

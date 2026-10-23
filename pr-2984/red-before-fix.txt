@@ -1,0 +1,23 @@
+E       AssertionError: assert PosixPath('data/investigations') == PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/pytest-of-gray/pytest-52/test_saved_settings_reach_the_0/saved-in-settings')
+E        +  where PosixPath('data/investigations') = Path(PosixPath('data/investigations'))
+E        +    where PosixPath('data/investigations') = <services.daemon.workdir.WorkdirManager object at 0x7f2f04c3b710>.base_dir
+E        +      where <services.daemon.workdir.WorkdirManager object at 0x7f2f04c3b710> = <services.daemon.orchestrator.Orchestrator object at 0x7f2f04d46660>.workdir
+E       AssertionError: assert PosixPath('data/investigations') == (PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/pytest-of-gray/pytest-52/test_env_workdir_reaches_the_a0') / 'from-env')
+E        +  where PosixPath('data/investigations') = Path(PosixPath('data/investigations'))
+E        +    where PosixPath('data/investigations') = <services.daemon.workdir.WorkdirManager object at 0x7f2f091b3200>.base_dir
+E        +      where <services.daemon.workdir.WorkdirManager object at 0x7f2f091b3200> = <services.daemon.orchestrator.Orchestrator object at 0x7f2f04aeea20>.workdir
+E       AssertionError: assert PosixPath('data/investigations') == (PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/pytest-of-gray/pytest-52/test_a_settings_change_after_f0') / 'after')
+E        +  where PosixPath('data/investigations') = Path(PosixPath('data/investigations'))
+E        +    where PosixPath('data/investigations') = <services.daemon.workdir.WorkdirManager object at 0x7f2f09209880>.base_dir
+E        +      where <services.daemon.workdir.WorkdirManager object at 0x7f2f09209880> = <services.daemon.orchestrator.Orchestrator object at 0x7f2f09209eb0>.workdir
+            cases._mark_workdirs_failed(["inv-1"], "reset")
+>       assert workdir.read_state("inv-1")["status"] == "failed"
+E       AssertionError: assert 'executing' == 'failed'
+E         
+E         - failed
+E         + executing
+FAILED tests/unit/api/test_orchestrator_config_source.py::test_saved_settings_reach_the_api_orchestrator
+FAILED tests/unit/api/test_orchestrator_config_source.py::test_env_workdir_reaches_the_api_orchestrator
+FAILED tests/unit/api/test_orchestrator_config_source.py::test_a_settings_change_after_first_use_is_picked_up
+FAILED tests/unit/api/test_orchestrator_config_source.py::test_case_reset_marks_the_sidecar_under_the_saved_workdir
+======================== 4 failed, 1 warning in 28.55s =========================
