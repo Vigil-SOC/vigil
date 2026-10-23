@@ -790,8 +790,10 @@ export default function Chat({
   }
 
   const deleteConversation = async (id: string) => {
+    let removed = false
     try {
       await conversationsApi.delete(id)
+      removed = true
       reloadHistory()
     } catch {
       /* still drop it from the offline cache below */
@@ -801,6 +803,16 @@ export default function Chat({
       saveHistory(userId, next)
       return next
     })
+    // A failed delete leaves the open session. Deleting some other row does
+    // too. archiveCurrent would write this thread back into the local history.
+    if (removed && id === sessionRef.current) {
+      putMessages([])
+      sessionRef.current = newSessionId()
+      currentKeyRef.current = null
+      persistedRef.current = false
+      setSessionSummary(null)
+      if (!lockedCaseId) rememberCase(null)
+    }
   }
 
   const archiveConversation = async (id: string, archived: boolean) => {
