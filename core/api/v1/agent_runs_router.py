@@ -238,6 +238,7 @@ def _begin_run_row(
         named if request.playbook.startswith(WORKFLOW_SCHEME) else request.run_kind
     )
     phases: Dict[str, str] = {}
+    version: Optional[int] = None
     if request.playbook.startswith(WORKFLOW_SCHEME):
         try:
             workflow = WorkflowsService().get_workflow(workflow_id)
@@ -246,16 +247,7 @@ def _begin_run_row(
             workflow = None
         if workflow is not None:
             phases = phase_actors(workflow.phases)
-    # A bare run_kind names no definition, so it has no version to record.
-    try:
-        version = (
-            WorkflowsService().version_of(workflow_id)
-            if request.playbook.startswith(WORKFLOW_SCHEME)
-            else None
-        )
-    except Exception as exc:  # noqa: BLE001 — the row is best-effort
-        logger.warning("no workflow version for %s: %s", workflow_id, exc)
-        version = None
+            version = workflow.version
     WorkflowRunService().begin_run(
         workflow_id=workflow_id,
         workflow_name=workflow_id,

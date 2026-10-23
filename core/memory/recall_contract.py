@@ -10,15 +10,14 @@ A mismatch between the halves fails as "no history", which is indistinguishable
 from an entity nobody has looked at. The TypeScript half is
 ``services/agent/contracts/memory.ts`` and
 ``tests/unit/_ratchets/test_recall_contract_agrees.py`` fails when they
-disagree — nothing calls either half yet, so a static check is the only one
-available.
+disagree.
 """
 
 from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Any, Dict, Mapping, Tuple
+from typing import Any, Dict, Tuple
 
 
 class Trust(str, Enum):
@@ -119,19 +118,6 @@ class DistilFailureReason(str, Enum):
 
 
 RECALL_TOOL = "recall_entity"
-
-# What the arch asks for; a ToolSpec binds it to the tool id via `provides`.
-RECALL_CAPABILITY = "entity_recall"
-
-# Keyed by what plugins/hunt/plugin.yaml declares: its roles, and "agent" for the
-# one agent that queries, which holds the plugin's top-level `needs`. Empties are
-# decisions: the lead never queries, and narrative search — the lead's alone —
-# ships no tool here.
-RECALL_GRANTS: Mapping[str, Tuple[str, ...]] = {
-    "lead": (),
-    "critic": (),
-    "agent": (RECALL_CAPABILITY,),
-}
 
 # The shape `core/llm/tool_schemas.py` already uses, so #732 registers this
 # rather than transcribing it.
