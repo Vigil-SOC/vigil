@@ -1,12 +1,15 @@
 """The first-run setup code is a pure function of the JWT signing key."""
 
+import io
 import logging
-from contextlib import contextmanager
 
 import pytest
 
-from core.auth import bootstrap_code
+from core.auth import bootstrap_code, service_account
+from core.auth.auth_service import AuthService
 from core.auth.password_reset import RESET_TOKEN_PURPOSE
+from core.storage.models import Role, User
+from core.storage.unit_of_work import unit_of_work
 
 
 def test_code_is_stable_and_not_the_password_reset_purpose(monkeypatch):
@@ -29,48 +32,70 @@ def test_code_is_stable_and_not_the_password_reset_purpose(monkeypatch):
     assert bootstrap_code.setup_code() != first
 
 
-def test_announce_logs_the_code_only_while_users_is_empty(caplog, monkeypatch):
+@pytest.fixture
+def _no_users():
+    with unit_of_work() as session:
+        session.query(User).delete()
+        if not session.query(Role).filter(Role.role_id == "role-viewer").first():
+            session.add(
+                Role(
+                    role_id="role-viewer",
+                    name="Viewer",
+                    description="Read-only",
+                    permissions={"findings.read": True},
+                    is_system_role=True,
+                )
+            )
+    yield
+    with unit_of_work() as session:
+        session.query(User).delete()
+
+
+def _announced(caplog) -> list[logging.LogRecord]:
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        bootstrap_code.announce_setup_code()
+    return [
+        r
+        for r in caplog.records
+        if bootstrap_code.SETUP_CODE_LOG_MARK in r.getMessage()
+    ]
+
+
+@pytest.mark.external_service
+@pytest.mark.database
+def test_announce_logs_the_code_only_while_no_human_user_exists(
+    _no_users, caplog, monkeypatch
+):
     monkeypatch.setattr(
         "core.auth.auth_service.JWT_SECRET_KEY", "test-secret-one", raising=False
     )
-
-    class _Query:
-        def __init__(self, row):
-            self._row = row
-
-        def first(self):
-            return self._row
-
-    class _Session:
-        def __init__(self, row):
-            self._row = row
-
-        def query(self, *_args, **_kwargs):
-            return _Query(self._row)
-
-    def install(row):
-        @contextmanager
-        def uow():
-            yield _Session(row)
-
-        monkeypatch.setattr("core.storage.unit_of_work.unit_of_work", uow)
-
-    install(None)
-    with caplog.at_level(logging.WARNING):
-        bootstrap_code.announce_setup_code()
-    messages = [r.getMessage() for r in caplog.records]
     code = bootstrap_code.setup_code()
-    assert any(m == f"First-run setup code: {code}" for m in messages)
+
+    logged = _announced(caplog)
+    assert [r.getMessage() for r in logged] == [f"First-run setup code: {code}"]
     # The template recorded for grouping does not carry the value.
-    logged = [r for r in caplog.records if code in r.getMessage()]
-    assert logged
     assert all(r.msg == bootstrap_code.SETUP_CODE_LOG_TEMPLATE for r in logged)
 
-    caplog.clear()
-    install(("user-1",))
-    with caplog.at_level(logging.WARNING):
-        bootstrap_code.announce_setup_code()
-    assert not any(bootstrap_code.SETUP_CODE_LOG_MARK in r.getMessage() for r in caplog.records)
+    exit_code = service_account.main(
+        ["ensure", "medic-a1b2c3d4e5f6"],
+        stdin=io.StringIO("d" * 64 + "\n"),
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    assert exit_code == 0
+    assert [r.getMessage() for r in _announced(caplog)] == [
+        f"First-run setup code: {code}"
+    ]
+
+    AuthService.create_user(
+        username="first-admin",
+        email="admin@example.com",
+        password="Correct-Horse-Battery-9",
+        full_name="Admin",
+        role_id="role-viewer",
+    )
+    assert _announced(caplog) == []
 
 
 def test_announce_skips_the_code_when_the_query_fails(caplog, monkeypatch):
@@ -80,7 +105,9 @@ def test_announce_skips_the_code_when_the_query_fails(caplog, monkeypatch):
     monkeypatch.setattr("core.storage.unit_of_work.unit_of_work", boom)
     with caplog.at_level(logging.WARNING):
         bootstrap_code.announce_setup_code()
-    assert not any(bootstrap_code.SETUP_CODE_LOG_MARK in r.getMessage() for r in caplog.records)
+    assert not any(
+        bootstrap_code.SETUP_CODE_LOG_MARK in r.getMessage() for r in caplog.records
+    )
     assert any("database down" in r.getMessage() for r in caplog.records)
 
 

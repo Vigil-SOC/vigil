@@ -40,12 +40,16 @@ def _insert_user(conn, user_id: str) -> None:
         )
     )
     conn.execute(
+        text("INSERT INTO principals (principal_id, kind) VALUES (:id, 'person')"),
+        {"id": user_id},
+    )
+    conn.execute(
         text(
-            "INSERT INTO users (user_id, username, email, password_hash, "
-            "full_name, role_id, is_active, is_verified, mfa_enabled, "
-            "mfa_recovery_codes, login_count) "
-            "VALUES (:id, :id, :email, 'x', 'x', 'role-t', true, false, false, "
-            "'[]', 0)"
+            "INSERT INTO users (user_id, principal_id, username, email, "
+            "password_hash, full_name, role_id, is_active, is_verified, "
+            "mfa_enabled, mfa_recovery_codes, login_count) "
+            "VALUES (:id, :id, :id, :email, 'x', 'x', 'role-t', true, false, "
+            "false, '[]', 0)"
         ),
         {"id": user_id, "email": f"{user_id}@example.test"},
     )

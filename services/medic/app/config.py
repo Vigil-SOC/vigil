@@ -15,6 +15,16 @@ AGENT_SERVE_VAR = "VIGIL_MEDIC_AGENT_SERVE_ADDR"
 # pods on its own, and host-native has no proxy. host:port, like the others.
 DOCKERPROXY_VAR = "VIGIL_MEDIC_DOCKERPROXY_ADDR"
 DOCKERPROXY_DEFAULT = {"compose": "medic-dockerproxy:8472"}
+# Read-only gateway, outbound listener (D6-7). Compose default is the
+# medic-private alias. Helm must name it (the chart does). Host-native has no
+# gateway: unset leaves the sensor unregistered.
+GATEWAY_VAR = "VIGIL_MEDIC_GATEWAY_ADDR"
+GATEWAY_DEFAULT = {"compose": "medic-gateway-out:8471"}
+# Vigil's own flag, not a VIGIL_MEDIC_* setting: the backend's DEV_MODE.
+DEV_MODE_VAR = "DEV_MODE"
+# Same off-set as medic.sh. Anything else is on, so a typo still disables the
+# API sensors (K1 T-37). Unset is off.
+_DEV_OFF = frozenset({"", "false", "0", "no", "off", "f", "n"})
 # A3-3: on Helm, a host:port Medic's egress policy must block (the chart sets it).
 POLICY_PROBE_VAR = "VIGIL_MEDIC_POLICY_PROBE_ADDR"
 # ...and a host:port it allows (the gateway): the positive control.
@@ -92,6 +102,29 @@ def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
 def agent_serve_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
     value = (env.get(AGENT_SERVE_VAR) or AGENT_SERVE_DEFAULT.get(shape, "")).strip()
     return _host_port(AGENT_SERVE_VAR, value) if value else None
+
+
+def dev_mode(env: Mapping[str, str]) -> bool:
+    """True when Vigil is running with DEV_MODE on. Unset is off."""
+    return (env.get(DEV_MODE_VAR) or "").strip().lower() not in _DEV_OFF
+
+
+def gateway_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
+    """Compose default `medic-gateway-out:8471`. Required on Helm. Unset on
+    host-native is fine: that shape has no gateway."""
+    raw = env.get(GATEWAY_VAR)
+    if raw is None or not raw.strip():
+        if shape == "helm":
+            raise ConfigError(
+                f"{GATEWAY_VAR} is required on Helm: it names the gateway's "
+                "outbound listener (the chart sets it)"
+            )
+        value = GATEWAY_DEFAULT.get(shape, "")
+        if not value:
+            return None
+    else:
+        value = raw.strip()
+    return _host_port(GATEWAY_VAR, value)
 
 
 def dockerproxy_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
