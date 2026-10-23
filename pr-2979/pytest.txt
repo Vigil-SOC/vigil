@@ -1,0 +1,5 @@
+0.58s call     unit/agents/test_memory_grant.py::test_a_custom_agent_without_the_grant_is_not_told_to_recall
+0.53s call     unit/memory/test_recall_entity.py::test_a_broad_read_stays_inside_the_overall_budget_and_names_what_it_dropped
+0.29s setup    unit/memory/test_recall_entity.py::test_the_bridge_resolves_recall_entity_without_reaching_mcp
+0.26s setup    unit/_ratchets/test_recall_contract_agrees.py::test_the_enum_vocabularies_hold_the_same_values[TRUST_LEVELS-Trust]
+======================== 60 passed in 161.88s (0:02:41) ========================

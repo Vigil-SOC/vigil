@@ -1,0 +1,5 @@
+     × reads hunt's needs as every capability its querying asks for 80ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/hunt/capabilities.test.ts > unboundCapabilities > reads hunt's needs as every capability its querying asks for
+ Test Files  1 failed (1)
+      Tests  1 failed | 17 passed (18)
