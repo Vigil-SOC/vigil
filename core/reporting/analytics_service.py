@@ -33,12 +33,7 @@ _NOT_PROBE = Finding.data_source != "probe"
 async def collect_insights_inputs(
     db: Session, time_range: str
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """Collect the metrics + time_series inputs that the insights model needs.
-
-    Kept small so both the GET (opportunistic background refresh) and POST
-    (forced refresh) insights endpoints can schedule regeneration without
-    duplicating logic.
-    """
+    """Collect the metrics + time_series inputs that the insights model needs."""
     start_time, end_time = get_time_range(time_range)
     period_duration = end_time - start_time
     prev_start = start_time - period_duration
@@ -219,27 +214,21 @@ async def calculate_metrics(
     }
 
 
+_BUCKET_COUNTS = {"24h": 24, "7d": 28}
+
+
 async def get_time_series_data(
     db: Session, start_time: datetime, end_time: datetime, time_range: str
 ) -> List[Dict[str, Any]]:
     """Get time series data for findings, cases, and alerts."""
-
-    # Determine bucket size based on time range
-    if time_range == "24h":
-        bucket_size = timedelta(hours=1)
-        bucket_count = 24
-    elif time_range == "7d":
-        bucket_size = timedelta(hours=6)
-        bucket_count = 28
-    else:  # 30d
-        bucket_size = timedelta(days=1)
-        bucket_count = 30
+    bucket_count = _BUCKET_COUNTS.get(time_range, 30)
+    window = end_time - start_time
 
     time_series = []
     current_time = start_time
 
-    for _ in range(bucket_count):
-        bucket_end = min(current_time + bucket_size, end_time)
+    for i in range(1, bucket_count + 1):
+        bucket_end = start_time + window * i / bucket_count
 
         findings_count = (
             db.query(func.count(Finding.finding_id))

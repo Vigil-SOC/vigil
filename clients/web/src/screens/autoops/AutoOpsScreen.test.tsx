@@ -5,7 +5,7 @@ import { render, screen, within } from '@testing-library/react'
 import AutoOpsScreen from './AutoOpsScreen'
 
 const inv = (over: Record<string, unknown>) => ({
-  case_id: null, skill_id: 'triage', trigger_type: 'manual', status: 'completed', current_step: 1, total_steps: 1,
+  case_id: null, skill_id: 'triage', trigger_type: 'manual', status: 'completed',
   iteration_count: 3, priority: 'medium', created_at: '2026-09-01T00:00:00Z', last_activity_at: null, summary: null, current_activity: null,
   ...over,
 })
