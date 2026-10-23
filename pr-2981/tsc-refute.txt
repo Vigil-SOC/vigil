@@ -1,0 +1,11 @@
+$ npx tsc --noEmit (fixed)
+exit=0
+$ npx tsc --noEmit (fixed, concluded_at deleted)
+plugins/hunt/distil.ts(206,39): error TS2345: Argument of type '{ investigation_kind: "hunt"; investigation_id: string; outcome: HuntOutcome | null; distil_schema_version: number; sightings: DistilSighting[]; conclusions: DistilConclusion[]; }' is not assignable to parameter of type 'DistilPayload'.
+  Property 'concluded_at' is missing in type '{ investigation_kind: "hunt"; investigation_id: string; outcome: HuntOutcome | null; distil_schema_version: number; sightings: DistilSighting[]; conclusions: DistilConclusion[]; }' but required in type 'DistilPayload'.
+exit=2
+$ npx tsc --noEmit (fixed, extra field stray added)
+plugins/hunt/distil.ts(214,5): error TS2353: Object literal may only specify known properties, and 'stray' does not exist in type 'DistilPayload'.
+exit=2
+$ npx tsc --noEmit (main with as-cast, concluded_at deleted)
+exit=0

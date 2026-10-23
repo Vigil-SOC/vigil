@@ -1,0 +1,13 @@
+
+ RUN  v5.0.5 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/0c0fee7e-51c5-480c-a5e3-1157efd08ad1/services/agent
+
+{"ts":"2026-10-23T11:21:30.138Z","level":"warn","logger":"agent.hunt","msg":"hunt could not report its progress","run_id":"7d3c2d3e-0000-4000-8000-00000000b001","error_type":"Error","error":"the backend is down"}
+
+ Test Files  3 passed (3)
+      Tests  22 passed (22)
+   Start at  12:21:28
+   Duration  2.27s (tests 43%, import 42%, transform 14%, worker 1%)
+
+    Isolate  3 workers spawned · ~160ms startup each (spawn + environment, per file)
+             at least ~319ms faster with isolate: false — reuses workers across files instead of one per file
+
