@@ -171,38 +171,6 @@ export default function IntegrationWizard({
     }
   }
 
-  const form = (
-    <>
-      {error && <Banner kind="err">{error}</Banner>}
-
-      {mainFields.map(renderField)}
-
-      {Object.entries(sections).map(([name, secFields]) => (
-        <div key={name} className="card card-sq shrink-0">
-          <button
-            className="card-h w-full text-left"
-            style={{ cursor: 'pointer' }}
-            onClick={() => setProxyOpen((o) => !o)}
-          >
-            <h3 className="flex-1">{SECTION_LABELS[name] || name}</h3>
-            <Icon name={proxyOpen ? 'chevD' : 'chevR'} size={15} />
-          </button>
-          {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
-        </div>
-      ))}
-    </>
-  )
-  const intro = (
-    <>
-      <p className="text-sm text-tx-3 leading-relaxed">{integration.description}</p>
-      {integration.docs_url && (
-        <a className="text-xs text-accent-2 inline-flex items-center gap-1 -mt-1" href={integration.docs_url} target="_blank" rel="noreferrer">
-          <Icon name="link" size={12} /> Documentation
-        </a>
-      )}
-    </>
-  )
-
   const level: Level =
     health !== undefined ? health : tested?.success === true ? 'good' : tested?.success === false ? 'poor' : null
   const hasSecret = fields.some((f) => f.type === 'password')
@@ -251,8 +219,29 @@ export default function IntegrationWizard({
 
         {step === 0 && (
           <>
-            {intro}
-            {form}
+            <p className="text-sm text-tx-3 leading-relaxed">{integration.description}</p>
+            {integration.docs_url && (
+              <a className="text-xs text-accent-2 inline-flex items-center gap-1 -mt-1" href={integration.docs_url} target="_blank" rel="noreferrer">
+                <Icon name="link" size={12} /> Documentation
+              </a>
+            )}
+            {error && <Banner kind="err">{error}</Banner>}
+
+            {mainFields.map(renderField)}
+
+            {Object.entries(sections).map(([name, secFields]) => (
+              <div key={name} className="card card-sq shrink-0">
+                <button
+                  className="card-h w-full text-left"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setProxyOpen((o) => !o)}
+                >
+                  <h3 className="flex-1">{SECTION_LABELS[name] || name}</h3>
+                  <Icon name={proxyOpen ? 'chevD' : 'chevR'} size={15} />
+                </button>
+                {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
+              </div>
+            ))}
           </>
         )}
         {step === 1 && <VerifyStep probe={probe} onRun={runTest} />}
