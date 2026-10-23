@@ -475,10 +475,6 @@ def load_integrations_config(config_service: Any = None) -> dict[str, Any]:
     return _integrations_from_file()
 
 
-# core.audit.feed.INTEGRATION_ID; that module imports storage, so not from there.
-AUDIT_FEED_INTEGRATION_ID = "audit_feed"
-
-
 def _integration_rows(config_service: Any) -> list:
     # core.storage.connection imports get_settings from this module, so a
     # top-level import of core.storage would cycle.
@@ -491,12 +487,7 @@ def _integration_rows(config_service: Any) -> list:
             # Raised here, not swallowed and logged inside list_integrations.
             get_db_manager()
             config_service = get_config_service()
-        # The audit feed's row is not a tool: only /api/audit/feed reads or sets it.
-        return [
-            row
-            for row in config_service.list_integrations() or []
-            if row.get("integration_id") != AUDIT_FEED_INTEGRATION_ID
-        ]
+        return config_service.list_integrations() or []
     except MissingPostgresPasswordError:
         # No database configured at all, as in an MCP runner child: its settings
         # arrive in its env, which resolve() reads next. Nothing to warn about.

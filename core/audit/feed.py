@@ -1,15 +1,10 @@
-"""The audit leader and the syslog feed (#2767, decisions 7, 10 and 15).
+"""The syslog feed and the one replica that sends it (#2767).
 
-One backend replica leads: it holds a session advisory lock on a connection of
-its own for as long as it lives. Each tick it records held entries late,
-closes collapse windows, writes the 15-minute checkpoint, imports upgrade runs
-from ``$VIGIL_UPGRADE_DIR/history.jsonl``, and, when an admin has turned the
-feed on, sends the trail as CEF in RFC 5425 frames over TLS.
-
-The feed's cursor is ``audit_feed_state`` (revision ``0007_audit_feed``),
-outside the chain. The cursor moves only after a batch is written to the
-socket; a failed batch is sent again from the same sequence. There is no
-queue: the trail is the backlog, so nothing on a request path waits on this.
+One backend task holds a session advisory lock and, each tick, drains late
+entries, closes collapse windows, writes the 15-minute checkpoint, imports
+upgrade history, and sends the trail as CEF over TLS (RFC 5425) when an admin
+has turned the feed on. The cursor is ``audit_feed_state``, outside the chain.
+The trail is the backlog: a failed batch is resent from the same sequence.
 """
 
 from __future__ import annotations
@@ -24,578 +19,723 @@ import ssl
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Iterator, Optional
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from core.audit import trail
-from core.config import AUDIT_FEED_INTEGRATION_ID
+from core.config import get_settings
+from core.secrets_manager import delete_secret, get_secret, set_secret
+from core.storage.config_service import get_config_service
+from core.storage.connection import get_db_manager, get_db_session
 from core.version import __version__
 
 logger = logging.getLogger(__name__)
 
-# The IntegrationConfig row that holds host, port and enabled. Off by default.
-INTEGRATION_ID = AUDIT_FEED_INTEGRATION_ID
-INTEGRATION_NAME = "Audit trail syslog feed"
-# TLS material, in the secrets store.
-SECRET_CA = "AUDIT_FEED_CA_PEM"
-SECRET_CLIENT_CERT = "AUDIT_FEED_CLIENT_CERT_PEM"
-SECRET_CLIENT_KEY = "AUDIT_FEED_CLIENT_KEY_PEM"
-
+INTEGRATION_ID = "audit_syslog"
+CA_SECRET = "audit_syslog_ca"
+CERT_SECRET = "audit_syslog_cert"
+KEY_SECRET = "audit_syslog_key"
 ACTION_FAILED = "audit.feed.failed"
 ACTION_RECOVERED = "audit.feed.recovered"
-ACTION_TEST = "audit.feed.test"
 ACTION_UPGRADE = "upgrade.run"
-# Payload key of an imported history line: the sha256 of the line as written.
-UPGRADE_LINE = "history_line"
-HISTORY = "history.jsonl"
 
-_LEADER_LOCK = 0x7669_6769_6C46_4544  # "vigilFED"
-TICK_SECONDS = 5.0
-CHECKPOINT_INTERVAL = timedelta(minutes=15)
+# "vigilFED". Session lock, held for the life of the leader. Not the trail's
+# transaction lock and not the Medic poller's.
+LOCK_KEY = 0x7669_6769_6C46_4544
 BATCH = 100
-# Batches one tick may send before the next round of housekeeping.
-BATCHES_PER_TICK = 20
-BACKOFF_CAP_SECONDS = 60.0
-CONNECT_TIMEOUT_SECONDS = 10.0
-# Syslog facility 13 (log audit), severity 6 (informational).
-_PRI = 13 * 8 + 6
+TICK_SECONDS = 5.0
+BACKOFF_CAP = 60.0
+CHECKPOINT_INTERVAL = timedelta(minutes=15)
+_CONNECT_TIMEOUT = 10.0
+_PEM_MAX = 64_000
+_MSG_MAX = 4000
+
+_SAVE_MAINT = text("""
+    UPDATE public.audit_feed_state
+    SET last_checkpoint_at = :checkpoint_at,
+        checkpoint_through = :checkpoint_through,
+        history_offset = :history_offset
+    WHERE id = 1
+""")
+_MARK_FAIL = text("""
+    UPDATE public.audit_feed_state
+    SET failing = true, last_error = :error
+    WHERE id = 1
+""")
+_MARK_OK = text("""
+    UPDATE public.audit_feed_state
+    SET failing = false, last_error = NULL,
+        last_delivered_seq = :seq, last_delivered_at = now()
+    WHERE id = 1
+""")
+
+
+class FeedError(ValueError):
+    """The settings are not usable. The router answers 400."""
+
+
+class FeedUnavailable(RuntimeError):
+    """The revision has not been applied."""
+
+
+@dataclass
+class SendClock:
+    """When the next send may run. Tests set ``now``; the loop uses monotonic."""
+
+    backoff: float = 1.0
+    not_before: float = 0.0
+    now: float = 0.0
+
+    def due(self) -> bool:
+        return self.now >= self.not_before
+
+    def failed(self) -> None:
+        self.not_before = self.now + self.backoff
+        self.backoff = min(self.backoff * 2.0, BACKOFF_CAP)
+
+    def ok(self) -> None:
+        self.backoff = 1.0
+        self.not_before = 0.0
 
 
 @dataclass(frozen=True)
 class Destination:
+    enabled: bool
     host: str
-    port: int
-    ca_pem: Optional[str] = None
-    client_cert_pem: Optional[str] = None
-    client_key_pem: Optional[str] = None
+    port: Optional[int]
+    ca_pem: str
+    cert_pem: Optional[str]
+    key_pem: Optional[str]
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.enabled and self.host and self.port and self.ca_pem)
 
 
-# --- the wire ------------------------------------------------------------------
+@dataclass
+class State:
+    last_delivered_seq: Optional[int]
+    failing: bool
+    last_checkpoint_at: datetime
+    checkpoint_through: int
+    history_offset: int
 
 
-def _header(value: Any) -> str:
-    return str(value).replace("\\", "\\\\").replace("|", "\\|")
-
-
-def _ext(value: Any) -> str:
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("=", "\\=")
-        .replace("\r", "\\r")
+def _esc(value: str, header: bool = False) -> str:
+    value = (
+        value.replace("\\", "\\\\")
         .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("|", "\\|")
     )
+    if not header:
+        value = value.replace("=", "\\=")
+    return value
 
 
-def cef(entry: dict[str, Any]) -> str:
-    """One trail entry as CEF: the hashed payload, its seq, time and hash."""
-    payload = entry["payload"]
-    action = payload.get(trail.ACTION) or "audit.entry"
+def _syslog_host() -> str:
+    raw = "".join(c if c.isalnum() or c in "._-" else "_" for c in socket.gethostname())
+    return raw[:255] or "-"
+
+
+def _when(value) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def cef(row: dict) -> bytes:
+    """One RFC 5424 syslog message whose MSG is a CEF record of ``row``."""
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    action = str(payload.get(trail.ACTION) or "audit")
+    when = _when(row.get("occurred_at"))
+    severity = "0" if action == trail.ACTION_CHECKPOINT else "1"
+    if payload.get(trail.OUTCOME) == trail.OUTCOME_DENIED:
+        severity = "6"
+    head = (
+        f"<134>1 {when.strftime('%Y-%m-%dT%H:%M:%S.%fZ')} {_syslog_host()} "
+        f"Vigil - audit - - CEF:0|Vigil|SOC|{_esc(__version__, True)}|"
+        f"{_esc(action, True)}|{_esc(action, True)}|{severity}|"
+    )
     outcome = payload.get(trail.OUTCOME)
-    severity = 7 if action == ACTION_FAILED else 5 if outcome == "denied" else 3
-    occurred = datetime.fromisoformat(entry["occurred_at"])
-    ext = {
-        "rt": int(occurred.timestamp() * 1000),
-        "externalId": entry["seq"],
-        "act": action,
-        "suser": payload.get(trail.ACTOR),
-        "outcome": outcome,
-        "cs1Label": "entryHash",
-        "cs1": entry["entry_hash"],
-        "cs2Label": "payload",
-        "cs2": json.dumps(payload, separators=(",", ":"), sort_keys=True),
-        "cn1Label": "late",
-        "cn1": int(bool(entry["late"])),
-    }
-    body = " ".join(f"{k}={_ext(v)}" for k, v in ext.items() if v is not None)
-    head = "|".join(
-        _header(v) for v in ("DeepTempo", "Vigil", __version__, action, action)
-    )
-    return f"CEF:0|{head}|{severity}|{body}"
+    if row.get("late"):
+        outcome = trail.OUTCOME_RECORDED_LATE
+    parts = [
+        f"externalId={row['seq']}",
+        f"end={int(when.timestamp() * 1000)}",
+        f"suser={_esc(str(payload.get(trail.ACTOR) or ''))}",
+        f"cs1={_esc(str(row.get('entry_hash') or ''))}",
+        "cs1Label=entryHash",
+    ]
+    if outcome:
+        parts.append(f"outcome={_esc(str(outcome))}")
+    if row.get("source_ip"):
+        parts.append(f"src={_esc(str(row['source_ip']))}")
+    if row.get("operator_text"):
+        parts.append(f"cs2={_esc(str(row['operator_text']))}")
+        parts.append("cs2Label=operatorText")
+    msg = json.dumps(payload, separators=(",", ":"), default=str)
+    if len(msg) > _MSG_MAX:
+        msg = msg[: _MSG_MAX - 1] + "…"
+    parts.append(f"msg={_esc(msg)}")
+    return (head + " ".join(parts)).encode("utf-8")
 
 
-def _hostname() -> str:
-    name = "".join(c for c in socket.gethostname() if 33 <= ord(c) <= 126)
-    return name[:255] or "-"
+def frame(message: bytes) -> bytes:
+    """An RFC 5425 octet-counted frame."""
+    return str(len(message)).encode("ascii") + b" " + message
 
 
-def frame(entry: dict[str, Any]) -> bytes:
-    """An RFC 5424 message carrying the CEF, octet-counted as RFC 5425 sends it."""
-    occurred = datetime.fromisoformat(entry["occurred_at"]).astimezone(timezone.utc)
-    stamp = occurred.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    message = f"<{_PRI}>1 {stamp} {_hostname()} vigil - audit - {cef(entry)}"
-    data = message.encode("utf-8")
-    return f"{len(data)} ".encode("ascii") + data
-
-
-def tls_context(dest: Destination) -> ssl.SSLContext:
-    """Verifies the server against the stored CA, or the system's when none is."""
-    context = ssl.create_default_context(cadata=dest.ca_pem or None)
-    # RFC 9662 (syslog over TLS) requires TLS 1.2 or later.
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    if dest.client_cert_pem:
-        # load_cert_chain reads files only: a private directory, removed at once.
-        with tempfile.TemporaryDirectory() as tmp:
-            cert = Path(tmp) / "cert.pem"
-            cert.write_text(dest.client_cert_pem, encoding="utf-8")
-            key = None
-            if dest.client_key_pem:
-                key = Path(tmp) / "key.pem"
-                key.write_text(dest.client_key_pem, encoding="utf-8")
-                os.chmod(key, 0o600)
-            context.load_cert_chain(str(cert), str(key) if key else None)
-    return context
-
-
-def describe(error: BaseException) -> str:
-    """A fixed phrase for a send failure: it reaches the API, the trail and the
-    SIEM, so it never carries exception text. The detail goes to the log."""
-    if isinstance(error, ssl.SSLCertVerificationError):
-        return "the receiver's certificate is not trusted or does not match the host"
-    if isinstance(error, ssl.SSLError):
-        return "the TLS handshake failed"
-    if isinstance(error, socket.gaierror):
-        return "the host name does not resolve"
-    if isinstance(error, ConnectionRefusedError):
-        return "the connection was refused"
-    if isinstance(error, (socket.timeout, TimeoutError)):
-        return "the connection timed out"
-    if isinstance(error, (ConnectionResetError, BrokenPipeError)):
-        return "the receiver closed the connection"
-    return "the receiver could not be reached"
-
-
-def open_tls(dest: Destination) -> ssl.SSLSocket:
-    raw = socket.create_connection(
-        (dest.host, dest.port), timeout=CONNECT_TIMEOUT_SECONDS
-    )
+def _temp_pem(value: str) -> Path:
+    handle = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False)
     try:
-        return tls_context(dest).wrap_socket(raw, server_hostname=dest.host)
-    except BaseException:
-        raw.close()
-        raise
-
-
-Connect = Callable[[Destination], Any]
-
-
-def close(sock) -> None:
-    """close_notify first: a bare close with unread session tickets is a reset,
-    and a reset can drop what the receiver has not yet read."""
-    try:
-        sock.settimeout(2)
-        sock.unwrap()
-    except Exception:  # noqa: BLE001 - the peer may close first; we close anyway
-        pass
+        os.chmod(handle.name, 0o600)
+        handle.write(value)
     finally:
-        sock.close()
+        handle.close()
+    return Path(handle.name)
 
 
-def send_test(dest: Destination, connect: Connect = open_tls) -> None:
-    """One test message to ``dest``; raises what the connection raised. Not an entry."""
-    entry = {
-        "seq": 0,
-        "occurred_at": datetime.now(timezone.utc).isoformat(),
-        "late": False,
-        "entry_hash": "",
-        "payload": {trail.ACTION: ACTION_TEST, trail.ACTOR: trail.SYSTEM},
-    }
-    sock = connect(dest)
+def deliver(dest: Destination, messages: list[bytes]) -> None:
+    """Write ``messages`` as octet-counted frames. Raises if the socket fails."""
+    if not messages or dest.port is None:
+        return
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.load_verify_locations(cadata=dest.ca_pem)
+    paths: list[Path] = []
     try:
-        sock.sendall(frame(entry))
+        if dest.cert_pem and dest.key_pem:
+            cert = _temp_pem(dest.cert_pem)
+            key = _temp_pem(dest.key_pem)
+            paths.extend((cert, key))
+            ctx.load_cert_chain(certfile=str(cert), keyfile=str(key))
+        payload = b"".join(frame(message) for message in messages)
+        with socket.create_connection((dest.host, dest.port), _CONNECT_TIMEOUT) as sock:
+            sock.settimeout(_CONNECT_TIMEOUT)
+            with ctx.wrap_socket(sock, server_hostname=dest.host) as tls:
+                tls.sendall(payload)
     finally:
-        close(sock)
+        for path in paths:
+            path.unlink(missing_ok=True)
 
 
-# --- settings and state ----------------------------------------------------------
+def _safe_error(exc: BaseException) -> str:
+    text_value = str(exc).replace("\n", " ")
+    if "BEGIN " in text_value:
+        return type(exc).__name__
+    return text_value[:300]
 
 
-def settings(session) -> tuple[bool, Optional[str], Optional[int]]:
-    """Enabled, host and port from the integration row; off when there is none."""
-    row = session.execute(
-        text(
-            "SELECT enabled, config FROM integration_configs"
-            " WHERE integration_id = :id"
-        ),
-        {"id": INTEGRATION_ID},
-    ).first()
+@contextmanager
+def _tx() -> Iterator:
+    session = get_db_session()
+    try:
+        with session.begin():
+            yield session
+    finally:
+        session.close()
+
+
+def _table(session) -> bool:
+    return (
+        session.execute(text("SELECT to_regclass('public.audit_feed_state')")).scalar()
+        is not None
+    )
+
+
+def _load(session) -> Optional[State]:
+    row = session.execute(text("""
+                SELECT last_delivered_seq, failing, last_checkpoint_at,
+                       checkpoint_through, history_offset
+                FROM public.audit_feed_state WHERE id = 1 FOR UPDATE
+            """)).mappings().first()
     if row is None:
-        return False, None, None
-    config = row.config or {}
-    return bool(row.enabled), config.get("host"), config.get("port")
-
-
-def destination(session, *, when_off: bool = False) -> Optional[Destination]:
-    """Where to send, or None while the feed is off (unless ``when_off``, for a
-    test) or has no destination."""
-    from core.secrets import get_secret
-
-    enabled, host, port = settings(session)
-    if not ((enabled or when_off) and host and port):
         return None
-    return Destination(
-        host,
-        int(port),
-        get_secret(SECRET_CA) or None,
-        get_secret(SECRET_CLIENT_CERT) or None,
-        get_secret(SECRET_CLIENT_KEY) or None,
+    return State(
+        last_delivered_seq=row["last_delivered_seq"],
+        failing=bool(row["failing"]),
+        last_checkpoint_at=row["last_checkpoint_at"],
+        checkpoint_through=int(row["checkpoint_through"]),
+        history_offset=int(row["history_offset"]),
     )
 
 
-def _state(session, lock: bool = False):
-    sql = "SELECT * FROM public.audit_feed_state WHERE id = 1"
-    return session.execute(text(sql + (" FOR UPDATE" if lock else ""))).mappings().one()
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.astimezone(timezone.utc).isoformat() if value else None
-
-
-def health(session) -> dict[str, Any]:
-    """Last delivered, and how far behind the tip in entries. #2766 reads this too."""
-    state = _state(session)
-    tip = trail.current_tip(session)
-    return {
-        "delivered_seq": state["delivered_seq"],
-        "delivered_at": _iso(state["delivered_at"]),
-        "tip_seq": tip.seq,
-        "behind": max(0, tip.seq - state["delivered_seq"]),
-        "failing": state["failing"],
-        "last_error": state["last_error"],
-        "last_error_at": _iso(state["last_error_at"]),
-    }
-
-
-# --- the leader's housekeeping ------------------------------------------------------
-
-
-def checkpoint(session, now: Optional[datetime] = None) -> Optional[trail.Entry]:
-    """The timed checkpoint, the 1000th-append shape, when entries came since the last."""
-    state = _state(session, lock=True)
-    now = now or session.execute(text("SELECT now()")).scalar_one()
-    due = state["checkpoint_at"] is None or (
-        now - state["checkpoint_at"] >= CHECKPOINT_INTERVAL
-    )
-    tip = trail.current_tip(session)
-    if not due or tip.seq <= state["checkpoint_seq"]:
+def _history_file() -> Optional[Path]:
+    raw = (get_settings().vigil_upgrade_dir or "").strip()
+    if not raw:
         return None
-    entry = trail.append(
+    path = Path(raw) / "history.jsonl"
+    return path if path.is_file() else None
+
+
+def _seen(session, digest: str) -> bool:
+    return (
+        session.execute(
+            text(
+                "SELECT 1 FROM public.audit_trail "
+                "WHERE payload->>'history_line' = :d LIMIT 1"
+            ),
+            {"d": digest},
+        ).first()
+        is not None
+    )
+
+
+def _import_history(session, offset: int) -> int:
+    """New lines of upgrade history, once each. Returns the byte offset consumed."""
+    path = _history_file()
+    if path is None:
+        return offset
+    try:
+        data = path.read_bytes()
+    except OSError:
+        logger.warning("audit feed could not read upgrade history")
+        return offset
+    if offset < 0 or offset > len(data):
+        offset = 0
+    start = offset
+    while start < len(data):
+        end = data.find(b"\n", start)
+        if end < 0:
+            break
+        raw = data[start:end]
+        start = end + 1
+        if not raw.strip():
+            continue
+        digest = hashlib.sha256(raw).hexdigest()
+        if _seen(session, digest):
+            continue
+        try:
+            entry = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            logger.warning("upgrade history line is not json")
+            continue
+        if not isinstance(entry, dict):
+            continue
+        reason = entry.get("reason")
+        operator = (
+            reason.strip() if isinstance(reason, str) and reason.strip() else None
+        )
+        trail.append(
+            session,
+            {
+                trail.ACTION: ACTION_UPGRADE,
+                trail.ACTOR: trail.SYSTEM,
+                "history_line": digest,
+                "outcome": entry.get("outcome"),
+                "from": entry.get("from"),
+                "to": entry.get("to"),
+                "restore_point": entry.get("restore_point"),
+            },
+            operator_text=operator,
+        )
+    return start
+
+
+def _checkpoint(session, state: State) -> None:
+    now = session.execute(text("SELECT now()")).scalar_one()
+    tip = trail.current_tip(session)
+    if tip.seq <= state.checkpoint_through:
+        return
+    last = state.last_checkpoint_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if now - last < CHECKPOINT_INTERVAL:
+        return
+    trail.append(
         session,
         {
             trail.ACTION: trail.ACTION_CHECKPOINT,
             trail.ACTOR: trail.SYSTEM,
-            "checkpoint": tip.public(),
+            "checkpoint": {"seq": tip.seq, "hash": tip.entry_hash},
         },
     )
-    session.execute(
-        text(
-            "UPDATE public.audit_feed_state"
-            " SET checkpoint_seq = :seq, checkpoint_at = :now WHERE id = 1"
-        ),
-        {"seq": entry.seq, "now": now},
+    state.checkpoint_through = trail.current_tip(session).seq
+    state.last_checkpoint_at = now
+
+
+def _destination(session) -> Destination:
+    row = (
+        session.execute(
+            text(
+                "SELECT enabled, config FROM public.integration_configs "
+                "WHERE integration_id = :id"
+            ),
+            {"id": INTEGRATION_ID},
+        )
+        .mappings()
+        .first()
     )
-    return entry
-
-
-def _import_line(session, raw: bytes) -> bool:
-    key = hashlib.sha256(raw).hexdigest()
-    seen = session.execute(
-        text(
-            "SELECT 1 FROM public.audit_trail"
-            f" WHERE payload->>'{trail.ACTION}' = :action"
-            f" AND payload->>'{UPGRADE_LINE}' = :key LIMIT 1"
-        ),
-        {"action": ACTION_UPGRADE, "key": key},
-    ).first()
-    if seen is not None:
-        return False
+    config = {}
+    enabled = False
+    if row is not None:
+        enabled = bool(row["enabled"])
+        if isinstance(row["config"], dict):
+            config = row["config"]
+    host = str(config.get("host") or "").strip()
+    raw_port = config.get("port")
     try:
-        line = json.loads(raw)
-        occurred_at = datetime.fromisoformat(line["time"])
-    except (ValueError, KeyError, TypeError):
-        logger.warning("upgrade history line %s is not a run; skipped", key[:12])
-        return False
-    trail.append(
-        session,
-        {
-            trail.ACTION: ACTION_UPGRADE,
-            trail.ACTOR: trail.SYSTEM,
-            "from": line.get("from"),
-            "to": line.get("to"),
-            "result": line.get("outcome"),
-            "restore_point": line.get("restore_point"),
-            UPGRADE_LINE: key,
-        },
-        occurred_at=occurred_at,
-        late=True,
-        # What the operator gave (an acknowledgement's reason) is never the actor.
-        operator_text=line.get("reason") or None,
+        port = int(raw_port) if raw_port is not None and raw_port != "" else None
+    except (TypeError, ValueError):
+        port = None
+    cert = get_secret(CERT_SECRET) or ""
+    key = get_secret(KEY_SECRET) or ""
+    return Destination(
+        enabled=enabled,
+        host=host,
+        port=port,
+        ca_pem=get_secret(CA_SECRET) or "",
+        cert_pem=cert or None,
+        key_pem=key or None,
     )
+
+
+def _fail(session, state: State, error: str) -> None:
+    if not state.failing:
+        trail.append(
+            session,
+            {trail.ACTION: ACTION_FAILED, trail.ACTOR: trail.SYSTEM, "error": error},
+        )
+        state.failing = True
+    session.execute(_MARK_FAIL, {"error": error})
+
+
+def maintenance_and_send(clock: SendClock) -> None:
+    """One leader tick. Sending is its own transaction, after the socket write."""
+    with _tx() as session:
+        if not trail.trail_ready(session) or not _table(session):
+            return
+        state = _load(session)
+        if state is None:
+            return
+        trail.drain_late(session)
+        trail.close_windows(session)
+        _checkpoint(session, state)
+        state.history_offset = _import_history(session, state.history_offset)
+        session.execute(
+            _SAVE_MAINT,
+            {
+                "checkpoint_at": state.last_checkpoint_at,
+                "checkpoint_through": state.checkpoint_through,
+                "history_offset": state.history_offset,
+            },
+        )
+    _send(clock)
+
+
+def _send(clock: SendClock) -> None:
+    if not clock.due():
+        return
+    with _tx() as session:
+        if not _table(session):
+            return
+        dest = _destination(session)
+        state = _load(session)
+        if state is None or not dest.enabled:
+            return
+        if not dest.ready:
+            _fail(session, state, "the feed is on but the destination is incomplete")
+            clock.failed()
+            return
+        after = state.last_delivered_seq or 0
+        rows = trail.read(session, trail.make_query(after=after), BATCH)
+    if not rows:
+        return
+    try:
+        deliver(dest, [cef(row) for row in rows])
+    except Exception as exc:  # noqa: BLE001 - the next tick resends this batch
+        logger.warning("audit feed send failed: %s", type(exc).__name__)
+        with _tx() as session:
+            state = _load(session)
+            if state is not None:
+                _fail(session, state, _safe_error(exc))
+        clock.failed()
+        return
+    with _tx() as session:
+        state = _load(session)
+        if state is None:
+            return
+        if state.failing:
+            trail.append(
+                session, {trail.ACTION: ACTION_RECOVERED, trail.ACTOR: trail.SYSTEM}
+            )
+        session.execute(_MARK_OK, {"seq": rows[-1]["seq"]})
+    clock.ok()
+
+
+def _try_lock(conn) -> bool:
+    return bool(
+        conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": LOCK_KEY}).scalar()
+    )
+
+
+def attempt(conn, clock: SendClock, leading: bool) -> bool:
+    """Take the lock if ``leading`` is false, then run one tick.
+
+    Returns false when another session holds the lock. The caller keeps the
+    connection, and the lock, until it stops leading.
+    """
+    if not leading:
+        if not _try_lock(conn):
+            return False
+        on_become_leader()
+    maintenance_and_send(clock)
     return True
 
 
-def import_upgrades(session, upgrade_dir: Optional[Path]) -> int:
-    """New ``history.jsonl`` lines as system entries; each line is recorded once."""
-    if upgrade_dir is None:
-        return 0
-    path = Path(upgrade_dir) / HISTORY
+def on_become_leader() -> None:
+    with _tx() as session:
+        if trail.trail_ready(session) and _table(session):
+            trail.close_windows(session, everything=True)
+
+
+def _connect():
+    manager = get_db_manager()
+    if manager.engine is None:
+        manager.initialize()
+    return manager.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+
+
+def _alive(conn) -> bool:
     try:
-        size = path.stat().st_size
-    except OSError:
-        return 0
-    offset = _state(session, lock=True)["upgrade_offset"]
-    if size < offset:  # a replaced file: read it again; the line key dedupes
-        offset = 0
-    if size == offset:
-        return 0
-    with path.open("rb") as f:
-        f.seek(offset)
-        data = f.read(size - offset)
-    end = data.rfind(b"\n") + 1  # a line still being written waits for its newline
-    imported = 0
-    for raw in data[:end].splitlines():
-        if not raw.strip():
-            continue
-        try:
-            with session.begin_nested():
-                imported += _import_line(session, raw)
-        except Exception:  # noqa: BLE001 - one bad line must not block the rest
-            logger.exception("upgrade history line could not be recorded; skipped")
-    session.execute(
-        text("UPDATE public.audit_feed_state SET upgrade_offset = :o WHERE id = 1"),
-        {"o": offset + end},
-    )
-    return imported
-
-
-# --- the leader -------------------------------------------------------------------
-
-
-class Leader:
-    """One per backend process. ``tick`` does nothing unless this one holds the lock."""
-
-    def __init__(
-        self,
-        engine,
-        *,
-        upgrade_dir: Optional[Path] = None,
-        connect: Connect = open_tls,
-        clock: Callable[[], float] = time.monotonic,
-    ):
-        self.engine = engine
-        self.upgrade_dir = upgrade_dir
-        self.connect = connect
-        self.clock = clock
-        self._conn = None
-        self._failures = 0
-        self._retry_at = 0.0
-        self._busy = threading.Lock()
-        self._stopped = False
-
-    @property
-    def leading(self) -> bool:
-        return self._conn is not None
-
-    def tick(self) -> None:
-        with self._busy:
-            if self._stopped or not self._lead():
-                return
-            for step in (
-                lambda s: trail.drain_late(s),
-                lambda s: trail.close_windows(s),
-                checkpoint,
-                lambda s: import_upgrades(s, self.upgrade_dir),
-            ):
-                try:
-                    with Session(self.engine) as session, session.begin():
-                        step(session)
-                except Exception:  # noqa: BLE001 - the next step and tick still run
-                    logger.exception("audit leader step failed")
-            try:
-                self._send()
-            finally:
-                if self._stopped:
-                    self._release()
-
-    def stop(self) -> None:
-        """Give the lock up now, or at the end of a tick that is running."""
-        self._stopped = True
-        if self._busy.acquire(blocking=False):
-            try:
-                self._release()
-            finally:
-                self._busy.release()
-
-    def _ready(self) -> bool:
-        with Session(self.engine) as session:
-            for table in ("audit_trail", "audit_feed_state"):
-                if (
-                    session.execute(
-                        text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}
-                    ).scalar()
-                    is None
-                ):
-                    return False
-            return trail.trail_ready(session)
-
-    def _lead(self) -> bool:
-        if self._conn is not None and self._alive():
-            return True
-        conn = self.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        try:
-            got = conn.execute(
-                text("SELECT pg_try_advisory_lock(:k)"), {"k": _LEADER_LOCK}
-            ).scalar_one()
-        except BaseException:
-            conn.close()
-            raise
-        if not got:
-            conn.close()
-            return False
-        self._conn = conn
-        try:
-            if not self._ready():
-                self._release()
-                return False
-            # A window the last leader left open closes now, not in 60 seconds.
-            with Session(self.engine) as session, session.begin():
-                trail.close_windows(session, everything=True)
-        except BaseException:
-            self._release()
-            raise
-        logger.info("audit leader: this replica leads")
+        conn.execute(text("SELECT 1"))
         return True
-
-    def _alive(self) -> bool:
-        """Whether this replica still holds the lock's session."""
-        try:
-            self._conn.execute(text("SELECT 1"))
-            return True
-        except Exception:  # noqa: BLE001 - the session, and its lock, are gone
-            logger.warning("audit leader lost its connection; taking over again")
-            self._release()
-            return False
-
-    def _release(self) -> None:
-        conn, self._conn = self._conn, None
-        if conn is None:
-            return
-        try:
-            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LEADER_LOCK})
-        except Exception:  # noqa: BLE001 - closing drops a session lock anyway
-            pass
-        conn.close()
-
-    def _send(self) -> None:
-        if self.clock() < self._retry_at:
-            return
-        with Session(self.engine) as session:
-            dest = destination(session)
-        if dest is None:
-            self._failures, self._retry_at = 0, 0.0
-            return
-        sock = None
-        try:
-            for _ in range(BATCHES_PER_TICK):
-                if not self._alive():  # another replica may lead by now
-                    return
-                with Session(self.engine) as session:
-                    after = _state(session)["delivered_seq"]
-                    rows = trail.read(session, trail.TrailQuery(after=after), BATCH)
-                if not rows:
-                    return
-                try:
-                    if sock is None:
-                        sock = self.connect(dest)
-                    sock.sendall(b"".join(frame(r) for r in rows))
-                except (OSError, ValueError) as e:
-                    self._failed(e)
-                    return
-                self._delivered(rows[-1]["seq"])
-                if len(rows) < BATCH:
-                    return
-        finally:
-            if sock is not None:
-                close(sock)
-
-    def _failed(self, error: Exception) -> None:
-        self._failures += 1
-        delay = min(BACKOFF_CAP_SECONDS, 2.0 ** (self._failures - 1))
-        self._retry_at = self.clock() + delay
-        message = describe(error)
-        logger.warning(
-            "audit feed send failed (retry in %ss): %s: %s",
-            delay,
-            type(error).__name__,
-            error,
-        )
-        with Session(self.engine) as session, session.begin():
-            state = _state(session, lock=True)
-            if not state["failing"]:
-                # Once per outage, not per retry; the feed carries it once it is back.
-                trail.append(
-                    session,
-                    {
-                        trail.ACTION: ACTION_FAILED,
-                        trail.ACTOR: trail.SYSTEM,
-                        "error": message,
-                        "delivered_seq": state["delivered_seq"],
-                    },
-                )
-            session.execute(
-                text(
-                    "UPDATE public.audit_feed_state SET failing = true,"
-                    " last_error = :e, last_error_at = now() WHERE id = 1"
-                ),
-                {"e": message},
-            )
-
-    def _delivered(self, seq: int) -> None:
-        self._failures, self._retry_at = 0, 0.0
-        with Session(self.engine) as session, session.begin():
-            state = _state(session, lock=True)
-            if state["failing"]:
-                trail.append(
-                    session,
-                    {
-                        trail.ACTION: ACTION_RECOVERED,
-                        trail.ACTOR: trail.SYSTEM,
-                        "delivered_seq": seq,
-                    },
-                )
-            session.execute(
-                text(
-                    "UPDATE public.audit_feed_state SET delivered_seq ="
-                    " greatest(delivered_seq, :s), delivered_at = now(),"
-                    " failing = false WHERE id = 1"
-                ),
-                {"s": seq},
-            )
+    except Exception:  # noqa: BLE001 - a dead session has lost the lock
+        return False
 
 
-async def run(leader: Leader, interval: float = TICK_SECONDS) -> None:
+def _release(conn, leading: bool) -> None:
     try:
-        while True:
+        if leading and conn is not None:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
+    except Exception:  # noqa: BLE001
+        logger.debug("audit feed lock release failed", exc_info=True)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _ready() -> bool:
+    try:
+        with _tx() as session:
+            return trail.trail_ready(session)
+    except Exception:  # noqa: BLE001
+        logger.debug("audit feed could not read the trail revision", exc_info=True)
+        return False
+
+
+def _loop(stop: threading.Event) -> None:
+    """The lock stays on this thread's connection for as long as we lead."""
+    conn = None
+    leading = False
+    clock = SendClock()
+    try:
+        while not stop.is_set():
             try:
-                await asyncio.to_thread(leader.tick)
-            except Exception:  # noqa: BLE001 - a bad tick must not end the leader
-                logger.exception("audit leader tick failed")
-            await asyncio.sleep(interval)
+                if not _ready():
+                    if leading:
+                        _release(conn, True)
+                        conn = None
+                        leading = False
+                    stop.wait(TICK_SECONDS)
+                    continue
+                if conn is None or not _alive(conn):
+                    _release(conn, leading)
+                    conn = _connect()
+                    leading = False
+                clock.now = time.monotonic()
+                was = leading
+                leading = attempt(conn, clock, leading)
+                if leading and not was:
+                    logger.info("this replica is the audit feed leader")
+            except Exception:  # noqa: BLE001 - the next tick tries again
+                logger.exception("audit feed tick failed")
+                _release(conn, leading)
+                conn = None
+                leading = False
+            stop.wait(TICK_SECONDS)
     finally:
-        leader.stop()
+        _release(conn, leading)
 
 
-def start(upgrade_dir: Optional[str] = None) -> Optional[asyncio.Task]:
-    """Start the leader loop in this backend process; None without Postgres."""
-    from core.storage.connection import get_db_manager
+async def _run() -> None:
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=_loop, args=(stop,), name="audit-feed", daemon=True
+    )
+    thread.start()
+    try:
+        while thread.is_alive():
+            await asyncio.sleep(0.5)
+    finally:
+        stop.set()
+        await asyncio.to_thread(thread.join, 15)
 
-    engine = get_db_manager().engine
-    if engine is None or engine.dialect.name != "postgresql":
+
+def start_leader() -> asyncio.Task:
+    """A task the API cancels on shutdown. The lock lives on the thread it starts."""
+    return asyncio.create_task(_run(), name="audit-feed")
+
+
+def _iso(value) -> Optional[str]:
+    if value is None:
         return None
-    leader = Leader(engine, upgrade_dir=Path(upgrade_dir) if upgrade_dir else None)
-    return asyncio.get_running_loop().create_task(run(leader))
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+    return str(value)
+
+
+def health(session) -> dict:
+    """What the integrations block and, later, the audit screen show."""
+    if not _table(session):
+        raise FeedUnavailable("the audit feed is not available")
+    row = session.execute(text("""
+                SELECT last_delivered_seq, last_delivered_at, last_error
+                FROM public.audit_feed_state WHERE id = 1
+            """)).mappings().first()
+    dest = _destination(session)
+    tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
+    delivered = row["last_delivered_seq"] if row else None
+    behind = max(0, tip.seq - (delivered or 0))
+    return {
+        "enabled": dest.enabled,
+        "host": dest.host,
+        "port": dest.port,
+        "ca_set": bool(dest.ca_pem),
+        "client_cert_set": bool(dest.cert_pem and dest.key_pem),
+        "last_delivered_at": _iso(row["last_delivered_at"]) if row else None,
+        "last_delivered_seq": delivered,
+        "last_error": row["last_error"] if row else None,
+        "behind": behind,
+        "tip_seq": tip.seq,
+    }
+
+
+def _pem(value: Optional[str], label: str) -> Optional[str]:
+    """None keeps the stored secret. A blank string clears it."""
+    if value is None:
+        return None
+    value = value.strip()
+    if len(value) > _PEM_MAX:
+        raise FeedError(f"{label} is too long")
+    return value
+
+
+def _store(key: str, value: str) -> None:
+    if value:
+        if not set_secret(key, value):
+            raise RuntimeError("could not store feed TLS material")
+        return
+    delete_secret(key)
+
+
+def _host_ok(host: str) -> bool:
+    if not host or len(host) > 253 or any(ch.isspace() for ch in host):
+        return False
+    return all(ch.isalnum() or ch in "._:-[]" for ch in host)
+
+
+def save(
+    user_id: str,
+    *,
+    enabled: bool,
+    host: str,
+    port: Optional[int],
+    ca_pem: Optional[str],
+    client_cert_pem: Optional[str],
+    client_key_pem: Optional[str],
+) -> dict:
+    """Host, port and enabled through the integration config; TLS in the secrets store.
+
+    The config write is what records the trail entry. This does not append another.
+    """
+    host = host.strip()
+    ca_pem = _pem(ca_pem, "CA certificate")
+    client_cert_pem = _pem(client_cert_pem, "Client certificate")
+    client_key_pem = _pem(client_key_pem, "Client key")
+    if host and not _host_ok(host):
+        raise FeedError("Host is not a hostname or address")
+    if port is not None and not 1 <= port <= 65535:
+        raise FeedError("Port must be between 1 and 65535")
+
+    with _tx() as session:
+        current = _destination(session)
+    new_ca = current.ca_pem if ca_pem is None else ca_pem
+    new_cert = (current.cert_pem or "") if client_cert_pem is None else client_cert_pem
+    new_key = (current.key_pem or "") if client_key_pem is None else client_key_pem
+    if bool(new_cert) != bool(new_key):
+        raise FeedError("A client certificate and its key are set together")
+    if enabled and (not host or port is None or not new_ca):
+        raise FeedError(
+            "Host, port and a CA certificate are required to turn the feed on"
+        )
+
+    if ca_pem is not None:
+        _store(CA_SECRET, ca_pem)
+    if client_cert_pem is not None:
+        _store(CERT_SECRET, client_cert_pem)
+    if client_key_pem is not None:
+        _store(KEY_SECRET, client_key_pem)
+
+    written = get_config_service(user_id=user_id).set_integration_config(
+        INTEGRATION_ID,
+        {"host": host, "port": port, "enabled": enabled},
+        enabled=enabled,
+        integration_name="Audit trail",
+        integration_type="syslog",
+        description="CEF over TLS syslog",
+        change_reason=(
+            "turned the audit feed on" if enabled else "saved the audit feed"
+        ),
+    )
+    if not written:
+        raise RuntimeError("could not save the audit feed")
+    with _tx() as session:
+        return health(session)
+
+
+def send_test(session) -> dict:
+    """One CEF frame that is not a trail entry and does not move the cursor."""
+    if not _table(session):
+        raise FeedUnavailable("the audit feed is not available")
+    dest = _destination(session)
+    if not dest.ready:
+        raise FeedError("Save a host, port and CA certificate before sending a test")
+    when = datetime.now(timezone.utc)
+    message = (
+        f"<134>1 {when.strftime('%Y-%m-%dT%H:%M:%S.%fZ')} {_syslog_host()} "
+        f"Vigil - audit - - CEF:0|Vigil|SOC|{_esc(__version__, True)}|"
+        f"audit.feed.test|Audit feed test|1|msg=test"
+    ).encode("utf-8")
+    try:
+        deliver(dest, [message])
+    except Exception as exc:  # noqa: BLE001 - the button reports the failure
+        get_config_service(user_id="system").record_integration_test(
+            INTEGRATION_ID, success=False, error=_safe_error(exc), tested_at=when
+        )
+        raise FeedError(_safe_error(exc)) from exc
+    get_config_service(user_id="system").record_integration_test(
+        INTEGRATION_ID, success=True, error=None, tested_at=when
+    )
+    return {"ok": True}

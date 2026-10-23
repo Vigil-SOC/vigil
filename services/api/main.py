@@ -677,7 +677,7 @@ async def _startup(app: FastAPI):
     else:
         await _connect_external_services(app.state.mcp_client, app.state.mcp_registry)
         _start_medic_poller(app)
-        _start_audit_leader(app)
+        _start_audit_feed(app)
 
     # Load custom agents from DB into the AgentManager so built-in + custom
     # agents are visible in one merged list. Lookup misses for "custom-*" IDs
@@ -691,24 +691,16 @@ async def _startup(app: FastAPI):
         logger.warning(f"Could not preload custom agents: {e}")
 
 
-def _start_medic_poller(app) -> None:
-    """Medic's last-seen poller (C5 §5.3): a task in every backend process, of
-    which one polls per minute (an advisory lock). None with Medic off."""
-    from core.platform.medic_last_seen import start_poller
+def _start_audit_feed(app) -> None:
+    """The syslog leader (decision 7). One replica holds the lock; the task
+    exits on shutdown. It does nothing until the trail revision is present."""
+    from core.audit.feed import start_leader
 
-    app.state.medic_poller = start_poller(get_settings())
-
-
-def _start_audit_leader(app) -> None:
-    """The audit trail's leader (#2767): a task in every backend process, of
-    which the one holding its advisory lock drains, checkpoints and sends."""
-    from core.audit.feed import start
-
-    app.state.audit_leader = start(get_settings().vigil_upgrade_dir)
+    app.state.audit_feed = start_leader()
 
 
-async def _stop_task(app, name: str) -> None:
-    task = getattr(app.state, name, None)
+async def _stop_audit_feed(app) -> None:
+    task = getattr(app.state, "audit_feed", None)
     if task is None:
         return
     task.cancel()
@@ -718,14 +710,29 @@ async def _stop_task(app, name: str) -> None:
         pass
 
 
+def _start_medic_poller(app) -> None:
+    """Medic's last-seen poller (C5 §5.3): a task in every backend process, of
+    which one polls per minute (an advisory lock). None with Medic off."""
+    from core.platform.medic_last_seen import start_poller
+
+    app.state.medic_poller = start_poller(get_settings())
+
+
 async def _stop_medic_poller(app) -> None:
-    await _stop_task(app, "medic_poller")
+    task = getattr(app.state, "medic_poller", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 async def _shutdown(app: FastAPI):
     """Clean up LLM gateway and MCP connections on shutdown."""
+    await _stop_audit_feed(app)
     await _stop_medic_poller(app)
-    await _stop_task(app, "audit_leader")
     logger.info("Shutting down LLM Gateway...")
     try:
         from core.llm.gateway.gateway import close_llm_gateway

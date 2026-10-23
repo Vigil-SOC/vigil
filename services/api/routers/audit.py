@@ -1,4 +1,4 @@
-"""Read, export, and poll the audit trail (#2765); set up its syslog feed (#2767).
+"""Read, export, and poll the audit trail (#2765).
 
 One filter, from ``core.audit.trail``. List, export, and range verify need
 ``audit.read``. Poll needs ``audit.forward`` on a person sign-in: a missing
@@ -8,36 +8,22 @@ sign-in is refused before the role check, and a non-person is refused inside
 
 from __future__ import annotations
 
-import hashlib
 import json
-import logging
-import ssl
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
-import core.integrations.integration_secrets  # noqa: F401 - the trail's redactor
-from core.audit import feed, trail
+from core.audit import trail
 from core.auth import current_user as current_user_module
 from core.auth import principals
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
 from core.auth.permissions import require_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.secrets import (
-    SECRET_WRITE_REFUSED_DETAIL,
-    delete_secret,
-    get_secret,
-    secret_writes_refused,
-    set_secret,
-)
-from core.storage.config_service import get_config_service
 from core.storage.models import User
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -47,7 +33,6 @@ ROUTER_META = RouterMeta(
 )
 
 _READ = require_permission("audit.read")
-_PEM_MAX = 64 * 1024
 _SIGN_IN_REQUIRED = "A person sign-in is required"
 _KINDS = frozenset(
     {
@@ -185,156 +170,3 @@ def verify_range(
         "reason": result.reason,
         "ok": result.ok,
     }
-
-
-# --- the syslog feed (#2767) ----------------------------------------------------
-
-
-class FeedSettings(BaseModel):
-    """Host, port and the switch; TLS material goes to the secrets store.
-
-    An empty PEM keeps the stored one.
-    """
-
-    enabled: bool = False
-    host: str = Field("", max_length=253)
-    port: int = Field(6514, ge=1, le=65535)
-    ca_pem: str = Field("", max_length=_PEM_MAX)
-    client_cert_pem: str = Field("", max_length=_PEM_MAX)
-    client_key_pem: str = Field("", max_length=_PEM_MAX)
-    clear_client_cert: bool = False
-
-
-def _stored(key: str) -> Optional[str]:
-    return get_secret(key) or None
-
-
-def _fingerprint(pem: Optional[str]) -> Optional[str]:
-    return hashlib.sha256(pem.encode()).hexdigest() if pem else None
-
-
-def _feed_view(session) -> dict:
-    enabled, host, port = feed.settings(session)
-    return {
-        "enabled": enabled,
-        "host": host,
-        "port": port,
-        "tls": {
-            "ca": bool(_stored(feed.SECRET_CA)),
-            "client_cert": bool(_stored(feed.SECRET_CLIENT_CERT)),
-            "client_key": bool(_stored(feed.SECRET_CLIENT_KEY)),
-        },
-        "health": feed.health(session),
-    }
-
-
-@router.get("/feed")
-def get_feed(session: UnitOfWorkSession, _: User = Depends(require_forward())):
-    """The destination, which TLS material is stored, and the feed's health."""
-    return _feed_view(session)
-
-
-@router.put("/feed")
-def set_feed(
-    body: FeedSettings,
-    session: UnitOfWorkSession,
-    user: User = Depends(require_forward()),
-):
-    """Save the destination and the switch. The config write records the entry."""
-    host = body.host.strip()
-    if body.clear_client_cert and (body.client_cert_pem or body.client_key_pem):
-        raise HTTPException(
-            status_code=422, detail="Clear the client certificate or send a new one"
-        )
-    if body.enabled and not host:
-        raise HTTPException(
-            status_code=422, detail="A host is required to turn the feed on"
-        )
-    _, old_host, old_port = feed.settings(session)
-    cert = (
-        None
-        if body.clear_client_cert
-        else body.client_cert_pem or _stored(feed.SECRET_CLIENT_CERT)
-    )
-    key = (
-        None
-        if body.clear_client_cert
-        else body.client_key_pem or _stored(feed.SECRET_CLIENT_KEY)
-    )
-    # A stored client key is never carried to a destination its owner did not choose.
-    moved = (old_host, old_port) != (host, body.port)
-    if (
-        moved
-        and _stored(feed.SECRET_CLIENT_KEY)
-        and not body.client_key_pem
-        and not body.clear_client_cert
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="The feed connects somewhere new; enter its client key again to save.",
-        )
-    try:
-        feed.tls_context(
-            feed.Destination(
-                host or "-",
-                body.port,
-                body.ca_pem or _stored(feed.SECRET_CA),
-                cert,
-                key,
-            )
-        )
-    except (ssl.SSLError, ValueError, OSError) as exc:
-        raise HTTPException(
-            status_code=422, detail=f"TLS material does not load: {exc}"
-        ) from exc
-
-    writes = {
-        k: v
-        for k, v in (
-            (feed.SECRET_CA, body.ca_pem),
-            (feed.SECRET_CLIENT_CERT, body.client_cert_pem),
-            (feed.SECRET_CLIENT_KEY, body.client_key_pem),
-        )
-        if v
-    }
-    if writes and secret_writes_refused():
-        raise HTTPException(status_code=500, detail=SECRET_WRITE_REFUSED_DETAIL)
-    for name, value in writes.items():
-        if not set_secret(name, value):
-            raise HTTPException(status_code=500, detail=f"{name} was not stored")
-    if body.clear_client_cert:
-        delete_secret(feed.SECRET_CLIENT_CERT)
-        delete_secret(feed.SECRET_CLIENT_KEY)
-
-    saved = get_config_service(user_id=str(user.user_id)).set_integration_config(
-        integration_id=feed.INTEGRATION_ID,
-        # Fingerprints, not PEMs: a CA or certificate swap shows on the entry.
-        config={
-            "host": host or None,
-            "port": body.port,
-            "ca_sha256": _fingerprint(body.ca_pem or _stored(feed.SECRET_CA)),
-            "client_cert_sha256": _fingerprint(cert),
-        },
-        enabled=body.enabled,
-        integration_name=feed.INTEGRATION_NAME,
-        integration_type="audit",
-        change_reason="audit feed turned on" if body.enabled else "audit feed off",
-    )
-    if not saved:
-        raise HTTPException(status_code=500, detail="The feed settings were not saved")
-    session.expire_all()
-    return _feed_view(session)
-
-
-@router.post("/feed/test")
-def test_feed(session: UnitOfWorkSession, _: User = Depends(require_forward())):
-    """One test message to the saved destination. Not a trail entry; moves no cursor."""
-    dest = feed.destination(session, when_off=True)
-    if dest is None:
-        raise HTTPException(status_code=422, detail="Save a host and port first")
-    try:
-        feed.send_test(dest)
-    except (OSError, ValueError) as exc:
-        logger.warning("audit feed test failed: %s: %s", type(exc).__name__, exc)
-        return {"ok": False, "error": feed.describe(exc)}
-    return {"ok": True, "error": None}

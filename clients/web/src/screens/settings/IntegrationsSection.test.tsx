@@ -6,10 +6,6 @@ import { tabFromQuery } from './integrationsData'
 import { IntegrationsStateProvider } from './IntegrationsState'
 import { configApi, detectionRulesApi, mcpApi } from '../../services/api'
 
-vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ hasPermission: () => false }),
-}))
-
 vi.mock('../../services/api', () => ({
   default: {},
   aiConfigApi: {},

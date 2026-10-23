@@ -219,7 +219,8 @@ services:
       # (C8). Same variable and default as the medic service: on without the
       # Medic profile reads as down, which is loud, never as a silent off.
       VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
-      # The audit leader imports upgrade runs from history.jsonl (read-only).
+      # Upgrade history the feed leader imports. The upgrade one-shot is the
+      # writer; this process only reads.
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).

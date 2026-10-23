@@ -1,8 +1,8 @@
-"""The audit leader's state row: the feed cursor, checkpoint and upgrade import (#2767)."""
+"""The syslog feed's cursor, outside the audit chain (#2767)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0007_audit_feed"
+revision = "0006_audit_feed"
 down_revision = "0006_canonical_finding_ips"
 
 

@@ -369,22 +369,7 @@
   "nullable": true,
   "type": "character varying(80)"
  },
- "column audit_feed_state.checkpoint_at": {
-  "default": null,
-  "nullable": true,
-  "type": "timestamp with time zone"
- },
- "column audit_feed_state.checkpoint_seq": {
-  "default": "0",
-  "nullable": false,
-  "type": "bigint"
- },
- "column audit_feed_state.delivered_at": {
-  "default": null,
-  "nullable": true,
-  "type": "timestamp with time zone"
- },
- "column audit_feed_state.delivered_seq": {
+ "column audit_feed_state.checkpoint_through": {
   "default": "0",
   "nullable": false,
   "type": "bigint"
@@ -394,25 +379,35 @@
   "nullable": false,
   "type": "boolean"
  },
+ "column audit_feed_state.history_offset": {
+  "default": "0",
+  "nullable": false,
+  "type": "bigint"
+ },
  "column audit_feed_state.id": {
   "default": "1",
   "nullable": false,
   "type": "smallint"
  },
- "column audit_feed_state.last_error": {
-  "default": null,
-  "nullable": true,
-  "type": "text"
+ "column audit_feed_state.last_checkpoint_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
  },
- "column audit_feed_state.last_error_at": {
+ "column audit_feed_state.last_delivered_at": {
   "default": null,
   "nullable": true,
   "type": "timestamp with time zone"
  },
- "column audit_feed_state.upgrade_offset": {
-  "default": "0",
-  "nullable": false,
+ "column audit_feed_state.last_delivered_seq": {
+  "default": null,
+  "nullable": true,
   "type": "bigint"
+ },
+ "column audit_feed_state.last_error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column audit_trail.actor_text": {
   "acl": [
