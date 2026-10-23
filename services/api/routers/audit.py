@@ -96,11 +96,7 @@ def require_forward():
 
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         _require_sign_in(request)
-        permission = (
-            "audit.read"
-            if _is_service_account(user)
-            else "audit.forward"
-        )
+        permission = "audit.read" if _is_service_account(user) else "audit.forward"
         if not AuthService.check_permission(user.user_id, permission):
             raise HTTPException(
                 status_code=403, detail=f"Permission denied: {permission} required"
