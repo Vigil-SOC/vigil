@@ -1,0 +1,5 @@
+0.06s call     unit/response/test_approval_reversibility.py::TestUnwiredIsolation::test_auto_approved_isolation_is_recorded_failed
+0.06s setup    unit/agents/test_bound_tool_permissions.py::test_demotion_is_read_before_the_next_write
+0.06s call     unit/response/test_approval_reversibility.py::TestIpLessIsolationKey::test_same_hostname_with_no_ip_reuses_one_row
+0.05s call     unit/response/test_approval_reversibility.py::TestIpLessIsolationKey::test_different_hostnames_with_no_ip_get_distinct_rows
+======================= 129 passed, 2 warnings in 38.94s =======================

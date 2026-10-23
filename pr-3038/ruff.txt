@@ -1,0 +1,2 @@
+bash: ruff: command not found
+bash: ruff: command not found
