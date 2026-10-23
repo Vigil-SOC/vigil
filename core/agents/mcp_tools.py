@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# What a failure here is, in the taxonomy contracts/tool.ts declares. unavailable
-# is a visibility gap the hunt reasons over; backend_error is a defect. Keeping
-# them apart is the whole reason this returns a kind rather than a string.
+# What a failure here is, in the taxonomy contracts/tool.ts declares. The kernel
+# records timeout, unavailable and backend_error as visibility gaps
+# (services/agent/core/security.ts isVisibilityGap).
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
 
@@ -75,7 +75,7 @@ def rows_from(result: Dict[str, Any]) -> List[Any]:
 
 
 # A server that answered with an error says which kind it was. "Unknown server"
-# and a failed connect are gaps in what could be reached; the rest are defects.
+# and a failed connect are unavailable; the rest are backend errors.
 def _failure_kind(text: str) -> str:
     lowered = text.lower()
     if "timed out" in lowered or "timeout" in lowered:
