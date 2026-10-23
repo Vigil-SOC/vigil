@@ -1,0 +1,16 @@
+== before (branch head)
+0.86s setup    integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+0.23s call     integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+FAILED tests/integration/test_audit_feed.py::test_turning_the_feed_on_writes_one_entry
+FAILED tests/integration/test_audit_feed.py::test_a_credential_cannot_turn_the_feed_on
+FAILED tests/integration/test_audit_feed.py::test_the_integrations_save_cannot_change_the_feed
+=================== 3 failed, 4 passed, 15 warnings in 4.83s ===================
+== after test fix
+0.85s setup    integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+0.27s call     integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+FAILED tests/integration/test_audit_feed.py::test_turning_the_feed_on_writes_one_entry
+=================== 1 failed, 6 passed, 15 warnings in 4.60s ===================
+== after test fix, without #2943's payload assertion
+0.87s setup    integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+0.34s call     integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+======================== 7 passed, 15 warnings in 4.65s ========================
