@@ -1,6 +1,6 @@
 # Vigil Console · design guide, phase-1 edition
 
-Trimmed from the v7 design package's DESIGN.md for phase 1. Vocabulary, visual system, layout and the component index are kept unchanged. The sections on principles, the autonomy model, the case page and Ask Vigil described phase-2 behaviour and are replaced by `PRD-phase1.md`, which is canonical for what phase 1 builds. When this file and a board disagree on appearance, the board wins; when either disagrees with the PRD on behaviour or scope, the PRD wins.
+Trimmed from the v7 design package's DESIGN.md for phase 1. Vocabulary, visual system and layout are kept unchanged; the component index adds `confirm-you` for the sessions epic. The sections on principles, the autonomy model, the case page and Ask Vigil described phase-2 behaviour and are replaced by `PRD-phase1.md`, which is canonical for what phase 1 builds. When this file and a board disagree on appearance, the board wins; when either disagrees with the PRD on behaviour or scope, the PRD wins (the sessions-epic boards and `confirm-you` are governed by that epic; see README).
 
 ## 1. Principles, 3. Autonomy model, 4. Case page, 5. Ask Vigil
 

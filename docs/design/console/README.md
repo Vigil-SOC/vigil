@@ -1,23 +1,23 @@
 # Vigil Console design reference, phase 1
 
-This folder is what an implementer or groomer needs for console work in phase 1, and nothing else. It is a trimmed copy of the Vigil Console v7 design package (claude.ai/design export of 2026-09-30), limited to the boards, components and assets phase 1 uses.
+This folder is what an implementer or groomer needs for console work in phase 1, plus the sessions and sign-in boards for the vigil-mu sessions epic, and nothing else. It is a trimmed copy of the Vigil Console v7 design package (claude.ai/design export of 2026-09-30), limited to the boards, components and assets phase 1 uses.
 
 ## What is canonical
 
-1. **`PRD-phase1.md`** decides scope and behaviour. When anything in this folder disagrees with it on what to build, the PRD wins. It has no open decisions; section 16 records every decision and its grounds.
-2. **Boards** decide appearance. `boards/png/` holds a render of every phase-1 board in dark and light at the board's own size (1440 × 900 for app boards, so content below the fold is only in the HTML), plus the three case-page moods and dark-only scene renders (`<Board>.<scene>.dark.png`). `boards/*.dc.html` are the interactive originals (open one in a browser with `support.js` beside it); grep them for exact inline styles, spacing and copy. The live canvas is at https://claude.ai/artifact/LfdCAGfXzJaWzDASis8pWP and wins over the PNGs if they ever differ.
+1. **`PRD-phase1.md`** decides scope and behaviour. When anything in this folder disagrees with it on what to build, the PRD wins (except the sessions and sign-in boards; see below). It has no open decisions; section 16 records every decision and its grounds.
+2. **Boards** decide appearance. `boards/png/` holds a render of every board in this folder in dark and light at the board's own size (1440 × 900 for app boards, so content below the fold is only in the HTML), plus the three case-page moods and dark-only scene renders (`<Board>.<scene>.dark.png`). `boards/*.dc.html` are the interactive originals (open one in a browser with `support.js` beside it); grep them for exact inline styles, spacing and copy. The live canvas is at https://claude.ai/artifact/LfdCAGfXzJaWzDASis8pWP and wins over the PNGs if they ever differ.
 3. **`DESIGN.md`** (phase-1 edition) holds vocabulary, the visual system, layout and the component index. **`tokens/`** holds the colour, type, radius, control and motion values for both themes. **`components/`** holds one spec per component phase 1 ships, plus `confirm-you` for the sessions epic.
 
 **`MEDIC.md`** holds the Medic console's requirements (UX-1…UX-30: the Health card, the status-line fact and the `/medic` screen). It isn't phase-1 PRD scope, and no board covers it; it names the tokens and components each Medic surface uses.
 
-**Sessions and sign-in boards** (`SettingsSessions`, `AccountSignIns`, `SignIn`, and `components/confirm-you.md`) belong to the vigil-mu sessions epic, not phase 1. That epic decides their scope and behaviour; the phase-1 PRD doesn't govern them. The Team & access person drawer in the `team-*` scenes of `SettingsSessions` is in scope for the epic, even though the rest of `SettingsTeam` isn't in this folder. `AccountSignIns` is drawn over the phase-2 Home; only the drawer is the design.
+**Sessions and sign-in boards** (`SettingsSessions`, `AccountSignIns`, `SignIn`, and `components/confirm-you.md`) belong to the vigil-mu sessions epic, not phase 1. That epic decides their scope and behaviour; the phase-1 PRD doesn't govern them. The Team & access person drawer in the `team-*` scenes of `SettingsSessions` is in scope for the epic, even though the rest of `SettingsTeam` isn't in this folder. `AccountSignIns` is drawn over the Home (`MainP2`); only the drawer is the design.
 
 ## Read the boards with the PRD open
 
 Every app board shares one shell, and that shell was drawn for the full product. The following appear on every board and are **phase 2**; the PRD names the class for each (Omitted, Later, Not measured yet):
 
 - the Needs you island in the header ("6 · Needs you · 214 running");
-- the Pulse, Fleet Wall and Coverage tabs (MainP2 is the only board drawn with the phase-1 nav);
+- the Pulse, Fleet Wall and Coverage tabs (MainP2 and the sessions boards are drawn with the phase-1 nav);
 - "View as" in the profile menu;
 - slash-command chips beyond the built-in set in PRD SH-P5;
 - on the case page: the tier control, trust strip, "Approve narrower", Hold with duration, Tell and Do modes, revert rows;
