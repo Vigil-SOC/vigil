@@ -1,0 +1,38 @@
+import logging, os
+os.environ["TESTING"] = "false"
+os.environ.pop("SENTRY_DSN", None)
+import sentry_sdk
+from sentry_sdk.transport import Transport
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from fastapi.testclient import TestClient
+from core.platform.monitoring import before_send_filter
+from services.api.main import app
+
+sent = []
+class Capture(Transport):
+    def capture_envelope(self, env):
+        for item in env.items:
+            ev = item.get_event()
+            if ev:
+                sent.append((ev.get("request", {}).get("url"), ev.get("logentry", {}).get("message") or ev.get("message")))
+
+sentry_sdk.init(dsn="https://k@o0.ingest.sentry.io/1", transport=Capture,
+    integrations=[FastApiIntegration(), LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)],
+    before_send=before_send_filter)
+
+class Boom:
+    def probe_connection(self):
+        raise RuntimeError('column "x" does not exist')
+app.state.health_storage = Boom()
+client = TestClient(app)
+for path in ("/api/health", "/api/health/ready", "/api/health/ready?probe=1"):
+    sent.clear()
+    r = client.get(path)
+    sentry_sdk.flush()
+    print(path, r.status_code, r.json()["status"], "sentry_events=", len(sent), sent)
+# control: a non-health logger.error on a request still reaches Sentry
+sent.clear()
+logging.getLogger("probe").error("control error")
+sentry_sdk.flush()
+print("control (no request) sentry_events=", len(sent))

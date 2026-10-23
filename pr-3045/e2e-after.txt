@@ -1,0 +1,4 @@
+/api/health 200 degraded sentry_events= 0 []
+/api/health/ready 503 degraded sentry_events= 0 []
+/api/health/ready?probe=1 503 degraded sentry_events= 0 []
+control (no request) sentry_events= 1

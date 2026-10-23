@@ -1,0 +1,3 @@
+SUBFAILED(url='http://localhost/api/health/ready') tests/unit/platform/test_monitoring.py::TestBeforeSendFilter::test_drops_health_checks
+SUBFAILED(url='http://localhost/vigil/api/health/ready') tests/unit/platform/test_monitoring.py::TestBeforeSendFilter::test_drops_health_checks
+================== 2 failed, 3 passed, 8 deselected in 0.94s ===================

@@ -1,0 +1,3 @@
+0.09s setup    unit/api/test_health_status.py::test_storage_check_failure_is_degraded_and_does_not_leak
+0.04s call     unit/platform/test_monitoring.py::TestGetMetricsResponse::test_serves_default_registry
+======================== 18 passed, 1 warning in 5.65s =========================
