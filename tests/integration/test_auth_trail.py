@@ -82,12 +82,20 @@ def test_refused_logins_write_one_entry_then_a_closing_count(db, client):
     assert first["principal"] == ana and first["reason"] == "bad_password"
     assert "actor" not in first
     assert (first["_attempted_name"], first["_source_ip"]) == ("ana", "testclient")
+    with db() as s:
+        # The upgrade's roles.revised row may already occupy seq 1.
+        first_failure_seq = s.execute(
+            text(
+                "SELECT min(seq) FROM audit_trail "
+                "WHERE payload->>'action' = 'auth.sign_in_failed'"
+            )
+        ).scalar_one()
 
     with db.begin() as s:
         trail.close_windows(s, now=utcnow() + timedelta(minutes=5), everything=True)
     first, closing = _entries(db, "auth.sign_in_failed")
     assert closing["collapsed"]["count"] == 3
-    assert closing["collapsed"]["first_seq"] == 1
+    assert closing["collapsed"]["first_seq"] == first_failure_seq
     # Nothing secret is recorded.
     with db() as s:
         dumped = s.execute(text("SELECT payload::text FROM audit_trail")).scalars()

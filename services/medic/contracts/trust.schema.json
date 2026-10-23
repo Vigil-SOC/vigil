@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deeptempo.ai/system-watcher/contracts/trust/v1",
   "title": "Medic signing: DSSE envelope and trust root v1",
-  "description": "F2. Every signed artefact (pack, trust root, Phase 3 fix plan) travels as a DSSE envelope. The trust root says which keys may sign which payload types. Verification: trust_check.py.",
+  "description": "F2. Every signed artefact (pack, trust root, Phase 3 fix plan) is signed through a DSSE envelope of at most 64 KB. A trust root's envelope signs the root JSON itself. A pack's envelope signs a statement (canonical JSON {payloadType, sha256, size} of the pack bytes, payloadType equal to the envelope's), so a cloud KMS that signs bounded messages can hold the pack key; the pack is imported as one medic.signed-pack/v1 file (at most 4 MB + 64 KB) carrying the envelope and the pack. The trust root says which keys may sign which payload types. Verification: trust_check.py.",
   "$ref": "#/$defs/envelope",
   "$defs": {
     "b64": {"type": "string", "pattern": "^[A-Za-z0-9+/]*={0,2}$"},
@@ -31,6 +31,28 @@
             "properties": {"keyid": {"$ref": "#/$defs/keyid"}, "sig": {"$ref": "#/$defs/b64", "maxLength": 128}}
           }
         }
+      }
+    },
+    "statement": {
+      "description": "A pack envelope's payload: canonical JSON (sorted keys, no whitespace, no trailing newline) describing the exact pack bytes. payloadType must equal the envelope's payloadType.",
+      "type": "object",
+      "required": ["payloadType", "sha256", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "payloadType": {"enum": ["application/vnd.deeptempo.medic.pack.v1+json", "application/vnd.deeptempo.medic.pack-dev.v1+json"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size": {"type": "integer", "minimum": 0, "maximum": 4194304}
+      }
+    },
+    "signed_pack": {
+      "description": "The single-file pack import. pack is a string whose UTF-8 bytes are exactly the pack_build output; its size and sha256 must match the signed statement before it is parsed.",
+      "type": "object",
+      "required": ["format", "envelope", "pack"],
+      "additionalProperties": false,
+      "properties": {
+        "format": {"const": "medic.signed-pack/v1"},
+        "envelope": {"$ref": "#/$defs/envelope"},
+        "pack": {"type": "string"}
       }
     },
     "role": {
