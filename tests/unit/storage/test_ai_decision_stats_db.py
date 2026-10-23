@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 
+from core.storage.models import AIDecisionLog
 from core.storage.service import DatabaseService
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
@@ -15,14 +16,17 @@ pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.databa
 
 def _decide(service: DatabaseService, agent_id: str, outcome: str) -> None:
     decision_id = f"dec-{uuid.uuid4().hex[:12]}"
-    service.create_ai_decision(
-        decision_id=decision_id,
-        agent_id=agent_id,
-        decision_type="triage",
-        confidence_score=0.8,
-        reasoning="test",
-        recommended_action="escalate",
-    )
+    with service.db_manager.session_scope() as session:
+        session.add(
+            AIDecisionLog(
+                decision_id=decision_id,
+                agent_id=agent_id,
+                decision_type="triage",
+                confidence_score=0.8,
+                reasoning="test",
+                recommended_action="escalate",
+            )
+        )
     service.submit_ai_decision_feedback(
         decision_id=decision_id,
         human_reviewer="analyst",

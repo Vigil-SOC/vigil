@@ -35,7 +35,10 @@ from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
 from core.workflows.handoff_cases import stamp_handoff_cases
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import (
+    IN_FLIGHT_STATUSES,
+    WorkflowRunService,
+)
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
@@ -734,6 +737,11 @@ async def cancel_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run.get("status") not in IN_FLIGHT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} has already finished (status={run.get('status')})",
+        )
 
     rejected_by = current_user.username
     pending = approval_service.list_actions(
@@ -908,7 +916,7 @@ async def delete_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    if run.get("status") in ("running", "paused"):
+    if run.get("status") in IN_FLIGHT_STATUSES:
         raise HTTPException(
             status_code=409,
             detail="This run has not finished. Cancel it before removing it.",
