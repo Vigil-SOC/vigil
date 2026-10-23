@@ -1,0 +1,8 @@
+    at listOnTimeout (node:internal/timers:605:17)
+    at processTimers (node:internal/timers:541:7) undefined
+
+ Test Files  6 passed (6)
+      Tests  246 passed (246)
+   Start at  08:33:51
+   Duration  74.28s (transform 6.69s, setup 4.14s, import 17.36s, tests 84.27s, environment 11.13s)
+
