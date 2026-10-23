@@ -120,9 +120,9 @@ describe("whom the turn's tools act for", () => {
   async function principalsSeen(requests: readonly ChatRequest[]): Promise<(string | undefined)[]> {
     const seen: (string | undefined)[] = [];
     const scripted = scriptedHarness([{ content: "ok" }, { content: "ok" }]);
-    const build: HarnessFactory = (kind, spec, runState, memory, seed, principal) => {
+    const build: HarnessFactory = (spec, runState, memory, seed, principal) => {
       seen.push(principal);
-      return scripted(kind, spec, runState, memory, seed);
+      return scripted(spec, runState, memory, seed);
     };
     for (const request of requests) {
       const res = { write: () => true, end: () => undefined, writableEnded: false, destroyed: false } as unknown as ServerResponse;

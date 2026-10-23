@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { budgetOf, FRESH, unmeteredQuota, type Seed } from "./core/budget.js";
 import { httpPrices } from "./core/prices.js";
@@ -61,7 +60,6 @@ function wireModel(spec: { model: string; provider?: string }): string {
 }
 
 export function harnessFor<K extends Record<string, unknown>>(
-  kind: RunKind,
   spec: RunSpec,
   state: State<K>,
   memory: Memory = nullMemory,
@@ -93,7 +91,6 @@ export function harnessFor<K extends Record<string, unknown>>(
 // Injected so a test drives a run without a provider behind it. The seam is the
 // harness itself, which is the only part of a run that reaches outside the process.
 export type HarnessFactory = <K extends Record<string, unknown>>(
-  kind: RunKind,
   spec: RunSpec,
   state: State<K>,
   memory?: Memory,

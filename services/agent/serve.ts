@@ -9,7 +9,6 @@ import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
 import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
-import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
@@ -111,7 +110,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
   // refuse: the headers are already sent, so a refusal is a frame or it is nothing.
   try {
     const spec = chatSpec(request);
-    const harness = build("chat" as RunKind, spec, state, await memoryFor(state, request.parent_run_id), FRESH, request.principal);
+    const harness = build(spec, state, await memoryFor(state, request.parent_run_id), FRESH, request.principal);
     const stream = runChat(harness, {
       run_id: request.run_id,
       spec,

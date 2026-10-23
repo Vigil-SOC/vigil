@@ -68,7 +68,7 @@ function huntHarness(): HarnessFactory {
           : { results: [] },
     ticks: 0,
   });
-  return (_kind, spec, state, memory = nullMemory, seed = FRESH) => ({
+  return (spec, state, memory = nullMemory, seed = FRESH) => ({
     provider,
     registry: registryOf([], {}),
     dispatch: localDispatch,
@@ -81,8 +81,8 @@ function huntHarness(): HarnessFactory {
 // A pool with nothing left, so the first beginCall refuses and no model is reached.
 function spentHarness(): HarnessFactory {
   const base = huntHarness();
-  return (kind, spec, state, memory, seed) => ({
-    ...base(kind, spec, state, memory, seed),
+  return (spec, state, memory, seed) => ({
+    ...base(spec, state, memory, seed),
     budget: budgetOf({ ...spec.budgets, max_calls: 0 }, unmeteredQuota),
   });
 }
@@ -185,7 +185,7 @@ describe("a hunt started through the queue", () => {
     const halted = AbortSignal.abort();
     const build = huntHarness();
 
-    const outcome = await runHunt(build("hunt", spec, ledger, undefined, undefined) as never, {
+    const outcome = await runHunt(build(spec, ledger, undefined, undefined) as never, {
       run_id: runId,
       run_kind: "hunt",
       spec,
@@ -238,7 +238,7 @@ describe("a hunt that parks, as the console's run row sees it", () => {
       },
     };
     const base = huntHarness();
-    return (kind, spec, state, memory, seed) => ({ ...base(kind, spec, state, memory, seed), provider });
+    return (spec, state, memory, seed) => ({ ...base(spec, state, memory, seed), provider });
   }
 
   async function posting<T>(body: () => Promise<T>): Promise<{ status: Record<string, unknown>[]; terminal: number }> {
@@ -284,8 +284,8 @@ describe("a hunt that parks, as the console's run row sees it", () => {
 
   it("is paused with the refusal when the budget refuses another iteration", async () => {
     const base = investigating();
-    const refusing: HarnessFactory = (kind, spec, state, memory, seed) => ({
-      ...base(kind, spec, state, memory, seed),
+    const refusing: HarnessFactory = (spec, state, memory, seed) => ({
+      ...base(spec, state, memory, seed),
       budget: budgetOf({ ...spec.budgets, max_calls: 0 }, unmeteredQuota),
     });
     const sent = await posting(() => advance(ledger, leases, capped(), refusing, new InProcessDirectiveQueue()));
