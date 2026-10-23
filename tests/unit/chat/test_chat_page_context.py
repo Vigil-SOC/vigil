@@ -23,10 +23,10 @@ async def test_turn_without_a_model_names_the_page_and_uses_chat_default(monkeyp
             seen["override"] = agent_override
             return ("gemini", "gemini-flash-latest")
 
-    async def _relay(payload, request, *_args):
+    async def _relay(payload, _request, model, *_args):
         sent["system_prompt"] = payload["system_prompt"]
         sent["config"] = payload["config"]
-        sent["model"] = request.model
+        sent["model"] = model
         yield ""
 
     monkeypatch.setattr(claude, "get_registry", lambda: _Registry())

@@ -98,6 +98,7 @@ export type HarnessFactory = <K extends Record<string, unknown>>(
   state: State<K>,
   memory?: Memory,
   seed?: Seed,
-  // Only chat has a person behind it; the worker and hunts pass none.
+  // The person the run acts for. Chat passes the token the API signed for the
+  // turn; the worker passes the one journaled on the run. Absent for a system hunt.
   principal?: ToolPrincipal,
 ) => Harness<K>;

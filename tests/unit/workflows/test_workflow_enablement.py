@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from core.api.v1 import agent_runs_router
+from core.auth import tool_principal
 from core.storage.models import ConfigAuditLog, SystemConfig
 from core.workflows import catalog, workflows_router
 from core.workflows.enablement import (
@@ -260,6 +262,25 @@ def test_execute_accepts_an_enabled_workflow(client, service):
     assert r.status_code == 200
 
 
+def test_execute_signs_the_signed_in_user_onto_the_run(client, monkeypatch):
+    captured = {}
+
+    async def _execute(
+        self, workflow_id, parameters, triggered_by=None, actor=None, principal=None
+    ):
+        captured["triggered_by"] = triggered_by
+        captured["principal"] = principal
+        return {"success": True, "run_id": "r1"}
+
+    monkeypatch.setattr(WorkflowsService, "execute_workflow", _execute)
+    response = client.post(
+        f"/api/workflows/{SCHEDULED_WORKFLOW}/execute", json={"hypothesis": "x"}
+    )
+    assert response.status_code == 200
+    assert captured["triggered_by"] == "test-admin"
+    assert tool_principal.verify(captured["principal"]) == "test-admin"
+
+
 def _start(playbook):
     return agent_runs_router.StartRunRequest(
         run_kind="hunt", playbook=playbook, config="c"
@@ -274,12 +295,23 @@ async def test_v1_start_refuses_a_disabled_workflow_and_accepts_an_enabled_one(s
     assert exc.value.status_code == 409
     assert SCHEDULED_WORKFLOW in exc.value.detail
 
+    captured = {}
+
+    async def _enqueue(job, job_id=None):
+        captured["job"] = job
+        return "j"
+
+    user = SimpleNamespace(username="nestor")
     with (
         patch.object(agent_runs_router, "_begin_run_row"),
-        patch.object(agent_runs_router, "enqueue_run", AsyncMock(return_value="j")),
+        patch.object(agent_runs_router, "enqueue_run", AsyncMock(side_effect=_enqueue)),
     ):
-        res = await agent_runs_router.start_run(_start(f"workflow:{CUSTOM}"))
+        res = await agent_runs_router.start_run(
+            _start(f"workflow:{CUSTOM}"), user=user
+        )
     assert res.job_id == "j"
+    assert captured["job"]["enqueued_by"] == "nestor"
+    assert tool_principal.verify(captured["job"]["principal"]) == "nestor"
 
 
 # --- the daemon ---------------------------------------------------------------

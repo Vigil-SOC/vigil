@@ -2,15 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
+import { ToastProvider } from './toast'
 import UserMenu from './UserMenu'
+
+const setTheme = vi.hoisted(() => vi.fn())
 
 vi.mock('../services/api', () => ({
   configApi: {
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
-    setTheme: () => Promise.resolve({ data: {} }),
-  },
-  consoleApi: {
-    getHealth: () => Promise.resolve({ data: { version: '9.9.9', status: 'healthy' } }),
+    setTheme,
   },
 }))
 
@@ -23,6 +23,8 @@ const auth = vi.hoisted(() => ({
     mfa_enabled: false,
   },
   logout: vi.fn(),
+  perms: new Set<string>(['settings.write']),
+  hasPermission: (p: string) => auth.perms.has(p),
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -37,13 +39,15 @@ function HomeProbe() {
 function renderMenu(path = '/cases', onShowTour = vi.fn(), setupLeft: number | null = null) {
   return render(
     <ColorSchemeProvider>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/setup" element={<div>setup-route</div>} />
-          <Route path="/home" element={<HomeProbe />} />
-          <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} setupLeft={setupLeft} />} />
-        </Routes>
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/setup" element={<div>setup-route</div>} />
+            <Route path="/home" element={<HomeProbe />} />
+            <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} setupLeft={setupLeft} authBypassed={false} version="9.9.9" />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
     </ColorSchemeProvider>,
   )
 }
@@ -54,6 +58,9 @@ describe('UserMenu', () => {
     auth.user.full_name = 'Test User'
     auth.user.mfa_enabled = false
     auth.logout.mockReset().mockResolvedValue(undefined)
+    auth.perms = new Set(['settings.write'])
+    setTheme.mockReset().mockResolvedValue({ data: {} })
+    localStorage.clear()
   })
 
   it('renders initials and labels from full_name', async () => {
@@ -111,6 +118,29 @@ describe('UserMenu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to light mode' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to dark mode' }))
     expect(screen.getByRole('menuitem', { name: 'Switch to light mode' })).toBeInTheDocument()
+  })
+
+  it('keeps an analyst\'s theme in this browser without touching the server default', async () => {
+    auth.perms = new Set()
+    const { unmount } = renderMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to light mode' }))
+    unmount()
+
+    renderMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(await screen.findByRole('menuitem', { name: 'Switch to dark mode' })).toBeInTheDocument()
+    expect(setTheme).not.toHaveBeenCalled()
+  })
+
+  it('saves the default theme for a settings writer and reports a refusal', async () => {
+    setTheme.mockRejectedValue({ response: { status: 403 } })
+    renderMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to light mode' }))
+    expect(setTheme).toHaveBeenCalledWith('light')
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save the default theme.")
+    expect(screen.getByRole('menuitem', { name: 'Switch to dark mode' })).toBeInTheDocument()
   })
 
   it('folds MFA into the identity line', async () => {
