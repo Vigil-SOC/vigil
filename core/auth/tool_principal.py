@@ -41,6 +41,10 @@ _ALGORITHM = "HS256"
 # inside the budget may run that long before its tool calls go out -- with margin
 # for limiter retries and the tool calls themselves.
 TTL = timedelta(minutes=25)
+# A run may sit parked for the longest park a caller may ask
+# (core/agents/run_limits.py, budgets.max_park_ms, 30 days) and still call a
+# tool when it is picked up again. Chat turns stay on TTL; they do not park.
+RUN_TTL = timedelta(days=31)
 # Clock skew between the replica that minted and the one that verifies.
 _LEEWAY = timedelta(seconds=30)
 

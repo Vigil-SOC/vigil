@@ -30,6 +30,7 @@ pytestmark = pytest.mark.unit
 def _user(**kwargs):
     user = SimpleNamespace(
         user_id="user-1",
+        principal_id="user-1",
         username="victim",
         mfa_secret="secret",
         mfa_enabled=True,
@@ -71,14 +72,18 @@ def _own(monkeypatch, user):
 
 def test_wrong_code_on_a_real_session_locks_at_the_threshold(monkeypatch):
     monkeypatch.setattr(auth_module, "LOCKOUT_THRESHOLD", 3)
-    monkeypatch.setattr(AuthService, "_accept_totp", staticmethod(lambda *a, **k: False))
+    monkeypatch.setattr(
+        AuthService, "_accept_totp", staticmethod(lambda *a, **k: False)
+    )
     caller_user = _user()
     own_user = _user(failed_login_count=2)
     nested = _nested()
     monkeypatch.setattr(AuthService, "_lock_savepoint", staticmethod(lambda s: nested))
     own = _own(monkeypatch, own_user)
 
-    assert AuthService.verify_mfa_code("user-1", "000000", _caller(caller_user)) is False
+    assert (
+        AuthService.verify_mfa_code("user-1", "000000", _caller(caller_user)) is False
+    )
 
     nested.rollback.assert_called_once()
     assert own_user.failed_login_count == 3
@@ -91,7 +96,9 @@ def test_wrong_code_on_a_real_session_locks_at_the_threshold(monkeypatch):
 
 
 def test_wrong_code_on_a_fake_session_does_not_open_a_connection(monkeypatch):
-    monkeypatch.setattr(AuthService, "_accept_totp", staticmethod(lambda *a, **k: False))
+    monkeypatch.setattr(
+        AuthService, "_accept_totp", staticmethod(lambda *a, **k: False)
+    )
 
     def boom():
         raise AssertionError("fake session must not open a lockout connection")
@@ -102,7 +109,9 @@ def test_wrong_code_on_a_fake_session_does_not_open_a_connection(monkeypatch):
 
 
 def test_locked_account_is_not_counted_again(monkeypatch):
-    monkeypatch.setattr(AuthService, "_accept_totp", staticmethod(lambda *a, **k: False))
+    monkeypatch.setattr(
+        AuthService, "_accept_totp", staticmethod(lambda *a, **k: False)
+    )
     nested = _nested()
     monkeypatch.setattr(AuthService, "_lock_savepoint", staticmethod(lambda s: nested))
     user = _user(locked_until=utcnow() + timedelta(minutes=5), failed_login_count=3)
@@ -182,6 +191,9 @@ def test_accepted_login_code_restores_the_reset(monkeypatch):
             obj.locked_until = utcnow()
             obj.login_count = 3
 
+        def add(self, obj):
+            pass
+
     monkeypatch.setattr(
         auth.AuthService, "authenticate_user", staticmethod(lambda *a, **k: user)
     )
@@ -216,7 +228,9 @@ def test_accepted_login_code_restores_the_reset(monkeypatch):
 
 def test_wrong_enable_code_counts(monkeypatch):
     monkeypatch.setattr(auth_module, "LOCKOUT_THRESHOLD", 5)
-    monkeypatch.setattr(AuthService, "_accept_totp", staticmethod(lambda *a, **k: False))
+    monkeypatch.setattr(
+        AuthService, "_accept_totp", staticmethod(lambda *a, **k: False)
+    )
     nested = _nested()
     monkeypatch.setattr(AuthService, "_lock_savepoint", staticmethod(lambda s: nested))
     own_user = _user(failed_login_count=0)

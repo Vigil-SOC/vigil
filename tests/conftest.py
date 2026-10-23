@@ -95,6 +95,7 @@ def authenticate_app():
 
     user = User(
         user_id="test-admin",
+        principal_id="test-admin",
         username="test-admin",
         email="admin@test.local",
         password_hash="",

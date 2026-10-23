@@ -87,7 +87,7 @@ class TestAgentRunPath:
             side_effect=versions or (lambda self, wid: 1),
             autospec=True,
         ):
-            agent_runs_router._begin_run_row("r-1", request)
+            agent_runs_router._begin_run_row("r-1", request, "api")
         return runs.begin_run.call_args.kwargs
 
     def test_named_workflow_stores_its_version(self):

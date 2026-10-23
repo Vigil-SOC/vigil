@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
 def user():
     return SimpleNamespace(
         user_id="u-1",
+        principal_id="u-1",
         username="analyst",
         email="a@example.com",
         mfa_enabled=False,
