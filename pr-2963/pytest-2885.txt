@@ -1,0 +1,15 @@
+tests/unit/workflows/test_workflow_updated_at.py ..                      [ 96%]
+tests/unit/workflows/test_workflow_version.py .............              [100%]
+
+============================= slowest 10 durations =============================
+1.64s call     unit/workflows/test_compose_approvals.py::test_compose_phase_that_grants_execute_puts_it_in_approvals[atomic_red_team_execute]
+0.39s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+0.34s call     unit/workflows/test_rca_handoff_gate.py::TestProcessHandoff::test_a_hunt_started_on_a_case_is_not_refiled
+0.32s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+0.29s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.24s call     unit/workflows/test_compose_approvals.py::test_a_direct_action_tool_is_gated_and_a_read_is_not
+0.24s call     unit/workflows/test_workflow_execution.py::test_the_cost_ceiling_rides_the_job[asked3-None]
+0.24s call     unit/workflows/test_compose_approvals.py::test_compose_phase_that_grants_execute_puts_it_in_approvals[atomic-red-team_atomic_red_team_execute]
+0.23s call     unit/workflows/test_hunt_preflight.py::test_a_compose_lists_its_phases_and_its_skills_when_one_can_read_them
+0.22s call     unit/workflows/test_hunt_resolver.py::test_compose_phases_receive_read_skill_when_the_profile_grants_it
+================ 388 passed, 32 deselected, 1 warning in 22.88s ================

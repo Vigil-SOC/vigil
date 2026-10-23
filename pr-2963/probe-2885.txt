@@ -1,0 +1,4 @@
+GET /api/workflows/custom 404 {"detail":"Workflow not found: custom"}
+GET /api/workflows/custom/x 405 {"detail":"Method Not Allowed"}
+POST /api/workflows/reload 405 {"detail":"Method Not Allowed"}
+POST /api/workflows/runs/r1/resume 404 {"detail":"Not Found"}
