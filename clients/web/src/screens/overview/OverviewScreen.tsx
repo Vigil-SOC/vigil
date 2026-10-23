@@ -13,10 +13,10 @@ import { stateWord } from '../../shared/findingState'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
-import { jiraReadiness, type JiraReadiness } from '../../shell/commandBarModel'
+import { useJiraReadiness } from '../../shell/commandBarModel'
 import { holdCase } from '../../shell/heldCase'
-import api, {
-  configApi,
+import {
+  casesApi,
   findingsApi,
   overviewApi,
   type OverviewFeedItem,
@@ -94,7 +94,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const [launchNote, setLaunchNote] = useState<string | null>(null)
   const [ticketNote, setTicketNote] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
+  const jira = useJiraReadiness()
   // The feed row when there is one; else the single read; else the last item shown, so a poll that
   // drops the alert (marked as noise) does not blank the popup.
   const shown = useRef<OverviewFeedItem | null>(null)
@@ -149,21 +149,6 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
     setViewFull(true)
     return () => setViewFull(false)
   }, [setViewFull])
-
-  useEffect(() => {
-    let live = true
-    configApi
-      .getIntegrations()
-      .then((res) => {
-        if (live) setJira(jiraReadiness(res.data))
-      })
-      .catch(() => {
-        if (live) setJira({ gap: 'Jira configuration could not be read', projectKey: '' })
-      })
-    return () => {
-      live = false
-    }
-  }, [])
 
   // An alert that is not in the feed (older than the cap, or noise-marked) comes from its own read.
   useEffect(() => {
@@ -268,16 +253,8 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
     setActionError(null)
     setTicketNote(null)
     try {
-      const res = await api.post<{ success?: boolean; error?: string; issue_key?: string }>(
-        `/cases/${encodeURIComponent(caseId)}/export/jira`,
-        { project_key: jira.projectKey },
-      )
-      if (!stillOpen(findingId)) return
-      if (res.data?.success === false) {
-        setActionError(res.data.error || 'Jira export failed')
-        return
-      }
-      setTicketNote(res.data.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created')
+      const note = await casesApi.exportJira(caseId, jira.projectKey)
+      if (stillOpen(findingId)) setTicketNote(note)
     } catch (error) {
       if (stillOpen(findingId)) setActionError(errorText(error, 'Jira export failed'))
     }
@@ -374,7 +351,9 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
                 </button>
               )}
               {open.case_id && (
-                <button type="button" className="btn ghost" onClick={createTicket}>Create ticket</button>
+                <span title={jira.gap ?? undefined}>
+                  <button type="button" className="btn ghost" onClick={createTicket} disabled={jira.gap !== null}>Create ticket</button>
+                </span>
               )}
               <span title="Coming in a later release">
                 <button type="button" className="btn ghost" disabled>ServiceNow</button>

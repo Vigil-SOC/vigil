@@ -4,6 +4,7 @@ import { Icon } from '../../shared/icons'
 import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
 import { mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
+import type { Schema } from '../../services/apiTypes'
 import type { ConsoleScreenProps } from '../../shared/types'
 import {
   useCases,
@@ -521,24 +522,24 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
   }, [rows, query])
 
   const run = async () => {
-    const filters: Record<string, unknown> = {}
-    if (priority) filters.priority = priority
-    if (status) filters.status = status
-    if (assignee.trim()) filters.assignee = assignee.trim()
+    const filters: Partial<Schema<'SearchRequest'>> = {}
+    if (query.trim()) filters.query_text = query.trim()
+    if (priority) filters.priority = [priority]
+    if (status) filters.status = [status]
+    if (assignee.trim()) filters.assignee = [assignee.trim()]
     const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean)
     if (tagList.length) filters.tags = tagList
-    if (start) filters.start_date = start
-    if (end) filters.end_date = end
-    if (!query.trim() && Object.keys(filters).length === 0) {
+    if (start) filters.created_after = start
+    if (end) filters.created_before = `${end}T23:59:59`
+    if (Object.keys(filters).length === 0) {
       onResults(null)
       return
     }
     setBusy(true)
     setErr('')
     try {
-      const res = await caseSearchApi.search({ query: query.trim(), filters, limit: 50 })
-      const cases = (res.data?.cases || []) as Parameters<typeof mapQueueCase>[0][]
-      onResults(cases.map((c) => mapQueueCase(c)))
+      const res = await caseSearchApi.search({ ...filters, limit: 50, offset: 0 })
+      onResults(res.data.results.map((c) => mapQueueCase(c)))
     } catch (e) {
       setErr((e as { message?: string })?.message || 'Search failed')
     } finally {

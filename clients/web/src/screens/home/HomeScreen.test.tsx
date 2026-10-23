@@ -194,7 +194,7 @@ describe('Home', () => {
     await act(async () => resolve({ data: { count: 0, items: [] } } as never))
     expect(await screen.findByText(/Nothing waits on you\./)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Needs your attention is calculated' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Pending approvals and checkpoints (B1)')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Pending approvals, checkpoints and hunts stopped at a limit')
     expect(screen.getByRole('tooltip')).toHaveTextContent('Calculation Oldest first, top four shown')
   })
 
@@ -304,7 +304,7 @@ describe('Home', () => {
     )
     expect(screen.getByText('Fixed order · most impact first')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Get more from Vigil is calculated' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Setup steps (B8)')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Setup stepsCalculation')
 
     fireEvent.click(within(rows()[0]).getByRole('button', { name: 'Not now' }))
     expect(rows().map((row) => row.querySelector('h3')?.textContent)).toEqual([
