@@ -131,9 +131,7 @@ class IntegrationsConfig(BaseModel):
 class GeneralConfig(BaseModel):
     """General application settings."""
 
-    auto_start_sync: bool = False
     show_notifications: bool = True
-    theme: str = "dark"
     enable_keyring: bool = False  # Whether to use OS keyring for secrets
 
 
@@ -1183,25 +1181,19 @@ def get_general_config():
             with open(config_file, "r") as f:
                 config = json.load(f)
                 return {
-                    "auto_start_sync": config.get("auto_start_sync", False),
                     "show_notifications": config.get("show_notifications", True),
-                    "theme": config.get("theme", "dark"),
                     "enable_keyring": config.get("enable_keyring", False),
                 }
 
         # Default values
         return {
-            "auto_start_sync": False,
             "show_notifications": True,
-            "theme": "dark",
             "enable_keyring": False,
         }
     except Exception as e:
         logger.error(f"Error getting general config: {e}")
         return {
-            "auto_start_sync": False,
             "show_notifications": True,
-            "theme": "dark",
             "enable_keyring": False,
         }
 
@@ -1221,9 +1213,7 @@ def set_general_config(
         Success status
     """
     config_data = {
-        "auto_start_sync": config.auto_start_sync,
         "show_notifications": config.show_notifications,
-        "theme": config.theme,
         "enable_keyring": config.enable_keyring,
     }
 
