@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -31,12 +30,17 @@ def _ids(svc):
 
 
 def test_crash_mid_metadata_write_keeps_other_entries(service, monkeypatch):
-    def torn_fsync(fd):
-        os.write(fd, b"{trunc")
-        raise OSError("disk full")
+    real_open = open
+
+    def torn_open(path, mode="r", *a, **kw):
+        if "w" in mode and Path(path).name.startswith("metadata.json"):
+            with real_open(path, "w") as f:
+                f.write("{trunc")
+            raise OSError("disk full")
+        return real_open(path, mode, *a, **kw)
 
     with monkeypatch.context() as m:
-        m.setattr(cis.os, "fsync", torn_fsync)
+        m.setattr("builtins.open", torn_open)
         assert _save(service, "custom-c") == {"success": False, "error": "disk full"}
 
     assert _ids(service) == ["custom-a", "custom-b"]
