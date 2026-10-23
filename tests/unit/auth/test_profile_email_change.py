@@ -35,6 +35,7 @@ def password_hash():
 def user(password_hash):
     return SimpleNamespace(
         user_id="u-1",
+        principal_id="u-1",
         username="analyst",
         email="analyst@example.com",
         full_name="Analyst",

@@ -17,6 +17,7 @@ Three gates, in order, because each one's answer means something different:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -132,7 +133,8 @@ class McpSurfaceGate:
         token = _bearer(scope)
         user = _dev_mode_user(token) if token else None
         if user is None and token:
-            user = authenticate(token)
+            # Off the loop: a refusal may wait on the audit trail's lock.
+            user = await asyncio.to_thread(authenticate, token)
         if user is None:
             # One answer for no credential, an unknown one, a revoked one and
             # an expired one. A holder of a working credential learns nothing

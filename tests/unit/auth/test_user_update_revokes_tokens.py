@@ -25,6 +25,7 @@ def _session(user, role):
 def _user(**kw):
     return SimpleNamespace(
         user_id="u-1",
+        principal_id="u-1",
         username="analyst",
         email="a@example.com",
         role_id="role-analyst",
