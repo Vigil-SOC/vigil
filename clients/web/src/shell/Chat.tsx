@@ -795,7 +795,9 @@ export default function Chat({
       await conversationsApi.delete(id)
       removed = true
       reloadHistory()
-    } catch {
+    } catch (err) {
+      // 404: another tab already deleted it, so the row is gone all the same.
+      if ((err as { response?: { status?: number } })?.response?.status === 404) removed = true
       /* still drop it from the offline cache below */
     }
     setHistory((h) => {

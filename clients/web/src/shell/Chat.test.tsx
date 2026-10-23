@@ -451,6 +451,22 @@ describe('deleting the open conversation', () => {
     expect(within(historyList()).getByText('Other thread')).toBeInTheDocument()
   })
 
+  it('starts a new session when the open conversation was already deleted elsewhere', async () => {
+    const openId = await openThread()
+    vi.mocked(conversationsApi.delete).mockRejectedValue({ response: { status: 404 } })
+    deleteRow('Open thread')
+    await waitFor(() => expect(conversationsApi.delete).toHaveBeenCalledWith(openId))
+    await waitFor(() => expect(document.querySelector('.ch-convo')).toHaveTextContent('New conversation'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+    await ask('again?')
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const next = JSON.parse((vi.mocked(streamFetch).mock.calls[1][1] as { body: string }).body)
+    expect(next.session_id).not.toBe(openId)
+    expect(next.messages).toEqual([{ role: 'user', content: 'again?' }])
+  })
+
   it('keeps the open session when the delete fails', async () => {
     vi.mocked(conversationsApi.delete).mockRejectedValue(new Error('nope'))
     const openId = await openThread()
