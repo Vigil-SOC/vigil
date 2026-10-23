@@ -517,10 +517,6 @@ class WorkflowsService:
         self._cache_loaded_at = datetime.now()
         logger.info(f"Loaded {len(self._cache)} workflows from {self.workflows_dir}")
 
-    def reload(self):
-        """Force reload all workflows from disk."""
-        self._load_workflows()
-
     def _get_custom_workflow(self, workflow_id: str) -> Optional[WorkflowDefinition]:
         """Fetch a single custom workflow from the database by ID."""
         try:
