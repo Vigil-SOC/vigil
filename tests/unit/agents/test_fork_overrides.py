@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
-from core.storage.models import Base, ConfigAuditLog, CustomAgent
+from core.storage.models import Base, ConfigAuditLog, CustomAgent, Principal
 from services.api.middleware.auth import get_current_active_user
 from services.api.routers import agents as agents_router
 from services.api.routers import custom_agents
@@ -35,7 +35,8 @@ def db(monkeypatch):
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     Base.metadata.create_all(
-        engine, tables=[CustomAgent.__table__, ConfigAuditLog.__table__]
+        engine,
+        tables=[CustomAgent.__table__, ConfigAuditLog.__table__, Principal.__table__],
     )
     maker = sessionmaker(bind=engine)
 

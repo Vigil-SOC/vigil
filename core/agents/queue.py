@@ -55,6 +55,9 @@ def build_start_job(
     enqueued_by: str,
     tenant_id: Optional[str] = None,
     principal: Optional[str] = None,
+    *,
+    actor: Optional[str] = None,
+    origin: Optional[str] = None,
 ) -> Dict[str, Any]:
     job = {
         "schema_version": JOB_SCHEMA_VERSION,
@@ -69,6 +72,11 @@ def build_start_job(
     # Omitted when there is no person. An empty field would read as one.
     if principal:
         job["principal"] = principal
+    # In the clear: the agent service carries the token and does not read it.
+    if actor:
+        job["actor"] = actor
+    if origin:
+        job["origin"] = origin
     return job
 
 

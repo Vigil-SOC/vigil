@@ -1,7 +1,6 @@
 """Password reset without a mail backend (#2247): the request reply is honest
 about the backend, and an operator can issue a link from the host."""
 
-import asyncio
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -105,7 +104,7 @@ def test_mail_links_to_the_reset_screen(frontend_url, origin):
     assert (url.scheme, url.hostname) == origin
     assert url.path == "/vigil/reset-password"
     token = parse_qs(url.query)["token"][0]
-    assert asyncio.run(password_reset.verify_reset_token(token)) == "u-admin"
+    assert password_reset.decode_reset_token(token) == "u-admin"
 
 
 def test_list_shows_every_account(capsys):
@@ -131,7 +130,7 @@ def test_link_carries_a_token_for_that_user(capsys):
     parsed = urlparse(url)
     assert parsed.path == "/vigil/reset-password"
     token = parse_qs(parsed.query)["token"][0]
-    assert asyncio.run(password_reset.verify_reset_token(token)) == "u-admin"
+    assert password_reset.decode_reset_token(token) == "u-admin"
 
 
 @pytest.mark.parametrize(
