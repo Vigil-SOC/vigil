@@ -717,8 +717,11 @@ backup_pre_upgrade() {
     # An old loop would hold the backup lock, and could snapshot mid-upgrade.
     save_container_logs "$loop"
     docker rm -f "$loop" >/dev/null 2>&1 || true
-    # --build: an image from before this command existed would exit 2.
-    dc run --rm --build "${BACKUP_RUN_ARGS[@]}" backup-pre-upgrade || {
+    # Build first: an image from before this command existed would exit 2.
+    # Kept apart from the run so the message below means the snapshot itself
+    # failed; the desktop app offers its acknowledgement only on that line.
+    dc build backup-pre-upgrade || return 1
+    dc run --rm "${BACKUP_RUN_ARGS[@]}" backup-pre-upgrade || {
         echo "Pre-upgrade backup failed. Set VIGIL_UPGRADE_ACK_VERSION to this" \
             "release and a non-empty VIGIL_UPGRADE_ACK_REASON to start without" \
             "a restore point." >&2

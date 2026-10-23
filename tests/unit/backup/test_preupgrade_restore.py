@@ -92,3 +92,41 @@ def test_restored_history_is_skipped_without_the_directory(
         assert list(tmp_path.iterdir()) == []
     finally:
         get_settings.cache_clear()
+
+
+def test_current_point_is_the_newest_pre_upgrade_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    from datetime import datetime, timezone
+
+    from core.backup import __main__ as cli
+    from core.backup.schedule import _Tagged
+
+    monkeypatch.setenv("VIGIL_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("VIGIL_UPGRADE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        assert cli.current_point() == {}
+        (tmp_path / "repo").mkdir()
+        (tmp_path / "repo" / "config").write_text("x")
+        (tmp_path / "passphrase").write_text("p")
+        old = _Tagged("old", datetime(2026, 1, 1, tzinfo=timezone.utc))
+        new = _Tagged("new", datetime(2026, 2, 1, tzinfo=timezone.utc))
+        monkeypatch.setattr(cli, "_tagged", lambda *_a: [new, old])
+        seen = []
+
+        def manifest(_restic, _pw, snapshot, _prio):
+            seen.append(snapshot)
+            payload = {"taken_by": "0.9.0", "version": "0.8.0", "created_at": "t"}
+            return payload, "", snapshot + "-full"
+
+        monkeypatch.setattr(cli, "_load_manifest", manifest)
+        assert cli.current_point() == {
+            "snapshot": "new-full",
+            "taken_by": "0.9.0",
+            "version": "0.8.0",
+            "created_at": "t",
+        }
+        assert seen == ["new"]
+    finally:
+        get_settings.cache_clear()
