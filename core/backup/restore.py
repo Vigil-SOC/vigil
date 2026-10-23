@@ -982,7 +982,7 @@ def _record_restore(
                 **values,
             }
             if failure is not None:
-                payload[trail.OUTCOME] = "failed"
+                payload[trail.OUTCOME] = trail.OUTCOME_FAILED
                 payload["reason"] = str(failure)
             # Poll's reset returns the newest entry with this action.
             trail.append(session, payload, operator_text=actor)
