@@ -138,6 +138,7 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         ctx.options.run_kind,
         ctx.options.plugin.needs,
         base.principal,
+        base.origin,
       );
     },
 

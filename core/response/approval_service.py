@@ -227,6 +227,7 @@ class ApprovalService:
         reason: str,
         evidence: List[str],
         created_by: str = "system",
+        created_by_principal_id: Optional[str] = None,
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
@@ -258,6 +259,7 @@ class ApprovalService:
             reason=reason,
             evidence=evidence,
             created_by=created_by,
+            created_by_principal_id=created_by_principal_id,
             parameters=parameters,
             workflow_run_id=workflow_run_id,
             workflow_phase_id=workflow_phase_id,
@@ -278,6 +280,7 @@ class ApprovalService:
         reason: str,
         evidence: List[str],
         created_by: str = "system",
+        created_by_principal_id: Optional[str] = None,
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
@@ -322,6 +325,8 @@ class ApprovalService:
                     existing = _nonfailed_by_key(session, key)
                     if existing is not None:
                         return _row_to_pending(existing), False
+                if created_by_principal_id is None and created_by == "system":
+                    created_by_principal_id = "system"
                 row = ApprovalActionRow(
                     action_id=action_id,
                     action_type=action_type.value,
@@ -333,6 +338,7 @@ class ApprovalService:
                     evidence=list(evidence or []),
                     created_at=utcnow(),
                     created_by=created_by,
+                    created_by_principal_id=created_by_principal_id,
                     requires_approval=requires_approval,
                     status=status,
                     parameters=dict(parameters or {}),
@@ -437,6 +443,7 @@ class ApprovalService:
         self,
         action_id: str,
         approved_by: str = "analyst",
+        approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
         """Approve a pending action."""
         try:
@@ -456,6 +463,11 @@ class ApprovalService:
                 row.status = ActionStatus.APPROVED.value
                 row.approved_at = utcnow()
                 row.approved_by = approved_by
+                row.approved_by_principal_id = (
+                    approved_by_principal_id
+                    if approved_by_principal_id is not None
+                    else ("system" if approved_by == "system" else None)
+                )
                 session.flush()
                 pending = _row_to_pending(row)
             logger.info("Action %s approved by %s", action_id, approved_by)
@@ -469,6 +481,7 @@ class ApprovalService:
         action_id: str,
         reason: str,
         rejected_by: str = "analyst",
+        approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
         """Reject a pending action."""
         try:
@@ -488,6 +501,11 @@ class ApprovalService:
                 row.status = ActionStatus.REJECTED.value
                 row.rejection_reason = reason
                 row.approved_by = rejected_by
+                row.approved_by_principal_id = (
+                    approved_by_principal_id
+                    if approved_by_principal_id is not None
+                    else ("system" if rejected_by == "system" else None)
+                )
                 row.approved_at = utcnow()
                 session.flush()
                 pending = _row_to_pending(row)

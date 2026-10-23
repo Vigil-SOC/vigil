@@ -19,17 +19,13 @@ import api, {
   reasoningApi,
   streamFetch,
   type ConversationDetail,
-  type ImportConversationInput,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
 import { useAuth } from '../contexts/AuthContext'
 import { useConversations } from './useConversations'
 import {
-  chatCacheEpoch,
-  chatWasImported,
   loadHistory,
   loadKeymap,
-  markChatImported,
   CHAT_HISTORY_MAX,
   retainChatCache,
   saveHistory,
@@ -43,7 +39,6 @@ type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
   role: Role
   text: string
-  ms?: number
 }
 
 interface SessionSummary {
@@ -95,7 +90,6 @@ const newSessionId = (): string => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-/** An `{error}` frame the server sent: the backend was reached, so it is not a transport failure. */
 class ServerRefusal extends Error {}
 
 interface Conversation {
@@ -145,8 +139,7 @@ function askedOf(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter((m, i) => m.role !== 'error' && msgs[i + 1]?.role !== 'error')
 }
 
-/** The failure's own words, from a refused response's `detail`. */
-async function refusalOf(res: Response): Promise<string> {
+async function refusalOf(res: Response): Promise<string | null> {
   try {
     const detail = (await res.json())?.detail
     if (typeof detail === 'string' && detail) return detail
@@ -154,7 +147,7 @@ async function refusalOf(res: Response): Promise<string> {
   } catch {
     /* no body */
   }
-  return `Vigil refused the request (HTTP ${res.status})`
+  return null
 }
 
 interface CaseHit {
@@ -257,10 +250,8 @@ function VigilMessage({
   onTrace,
 }: {
   text: string
-  ms?: number
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
-  /** dock only: opens the reasoning trace; the case composer keeps its "More" */
   onTrace?: () => void
 }) {
   const copy = (
@@ -271,10 +262,8 @@ function VigilMessage({
       <AnswerText text={text} citations={citations} onCite={onCite} />
       <div className="msg-actions">
         {copy}
-        {onTrace ? (
+        {onTrace && (
           <button title="Reasoning trace" aria-label="Reasoning trace" onClick={onTrace}><Icon name="reason" size={15} /></button>
-        ) : (
-          <button title="More"><Icon name="more" size={15} /></button>
         )}
       </div>
     </>
@@ -558,7 +547,6 @@ export default function Chat({
     setLoading(true)
     setStreamText('')
     setIsProcessingTools(false)
-    const start = Date.now()
 
     const ac = new AbortController()
     abortRef.current = ac
@@ -586,9 +574,12 @@ export default function Chat({
         body: JSON.stringify(payload),
         signal: ac.signal,
       })
-      if (res.status === 502 || res.status === 503) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const refusal = await refusalOf(res)
+        if (refusal === null && (res.status === 502 || res.status === 503)) throw new Error(`HTTP ${res.status}`)
+        throw new ServerRefusal(refusal ?? `Vigil refused the request (HTTP ${res.status})`)
+      }
       reached = true
-      if (!res.ok) throw new Error(await refusalOf(res))
       accepted = true
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
@@ -620,8 +611,6 @@ export default function Chat({
               // separate tool output from the prose preceding it
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
-            } else if (ev.type === 'context_windowed') {
-              // an engine detail: not part of the answer, so it is not written into it
             } else if (ev.type === 'text') {
               setIsProcessingTools(false)
               curText += ev.content || ''
@@ -630,10 +619,9 @@ export default function Chat({
           }
         }
       }
-      const ms = Date.now() - start
       if (gen === turnGen.current) {
         setMessages((m) => {
-          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ms }
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_' }
           const next = [...m, vigil]
           messagesRef.current = next
           return next
@@ -836,49 +824,6 @@ export default function Chat({
     }
   }
 
-  // the marker is only set on success, so a failed import retries next mount.
-  // Only this user's scoped cache is imported; unscoped leftovers are not theirs to upload.
-  const migratedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!userId || lockedCaseId || migratedFor.current === userId) return
-    migratedFor.current = userId
-    try {
-      if (chatWasImported(userId)) return
-      const local = loadHistory<Conversation>(userId)
-      if (local.length === 0) {
-        markChatImported(userId)
-        return
-      }
-      const payload: ImportConversationInput[] = local.map((c) => ({
-        id: c.id,
-        title: c.title,
-        messages: (c.messages || [])
-          .filter((m) => m.role !== 'error')
-          .map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text, thinking: null })),
-      }))
-      for (const c of local) if (c.key) setKeymapEntry(userId, c.key, c.id)
-      const epoch = chatCacheEpoch()
-      let cancelled = false
-      conversationsApi
-        .importHistory(payload)
-        .then(() => {
-          // Sign-out and a user switch bump the epoch; don't recreate a key they removed.
-          if (cancelled || epoch !== chatCacheEpoch()) return
-          markChatImported(userId)
-          reloadHistory()
-        })
-        .catch(() => {
-          if (!cancelled) migratedFor.current = null
-          /* retry next mount */
-        })
-      return () => {
-        cancelled = true
-      }
-    } catch {
-      /* empty */
-    }
-  }, [reloadHistory, lockedCaseId, userId])
-
   // going back to a tab folds the thread to its last exchange; a case switch resets that below
   const seenKey = useRef(collapseKey)
   useEffect(() => {
@@ -1015,7 +960,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} ms={m.ms} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (

@@ -6,16 +6,12 @@ import UserMenu from './UserMenu'
 
 const api = vi.hoisted(() => ({
   changePassword: vi.fn(),
-  health: { version: '9.9.9', status: 'healthy' } as Record<string, unknown>,
 }))
 
 vi.mock('../services/api', () => ({
   configApi: {
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
     setTheme: () => Promise.resolve({ data: {} }),
-  },
-  consoleApi: {
-    getHealth: () => Promise.resolve({ data: api.health }),
   },
   authApi: { changePassword: api.changePassword },
 }))
@@ -38,13 +34,13 @@ vi.mock('../contexts/AuthContext', () => ({
 const CURRENT = 'old-password-1'
 const NEXT = 'correct horse battery staple'
 
-function renderMenu() {
+function renderMenu(authBypassed = false) {
   return render(
     <ColorSchemeProvider>
       <MemoryRouter initialEntries={['/cases']}>
         <Routes>
           <Route path="/login" element={<div>login-route</div>} />
-          <Route path="/:screen" element={<UserMenu onShowTour={vi.fn()} setupLeft={null} />} />
+          <Route path="/:screen" element={<UserMenu onShowTour={vi.fn()} setupLeft={null} authBypassed={authBypassed} version="9.9.9" />} />
         </Routes>
       </MemoryRouter>
     </ColorSchemeProvider>,
@@ -70,7 +66,6 @@ function fillValid() {
 
 describe('ChangePasswordDialog', () => {
   beforeEach(() => {
-    api.health = { version: '9.9.9', status: 'healthy' }
     api.changePassword.mockReset()
     auth.logout.mockReset().mockResolvedValue(undefined)
   })
@@ -213,9 +208,8 @@ describe('ChangePasswordDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Too many attempts. Wait a while and try again.')
   })
 
-  it('leaves the item out when the backend reports auth is bypassed', async () => {
-    api.health = { version: '9.9.9', status: 'healthy', auth_bypassed: true }
-    renderMenu()
+  it('leaves the item out when auth is bypassed', async () => {
+    renderMenu(true)
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
     expect(await screen.findByText('About Vigil · 9.9.9')).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: 'Change password' })).not.toBeInTheDocument()

@@ -15,6 +15,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.auth import sign_ins
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -28,16 +29,18 @@ from core.auth.auth_service import (
     _is_service_account,
     password_matches_any,
 )
-from core.auth.bootstrap_code import setup_code_matches
+from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.password_reset import (
+    consume_reset_token,
+    decode_reset_token,
     generate_reset_token,
     reset_link,
-    verify_reset_token,
 )
 from core.auth.password_validator import (
     PasswordPolicyError,
     validate_password_strength,
 )
+from core.auth.session_cutoff import issued_before_cutoff, stamp_session_cutoff
 from core.auth.token_blacklist import (
     blacklist_jti,
     consume_refresh_jti,
@@ -47,7 +50,7 @@ from core.auth.token_blacklist import (
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import User
+from core.storage.models import SignIn, User
 from core.storage.schemas import UserSchema
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
@@ -284,14 +287,13 @@ def _get_user(session: Session, user_id: str) -> Optional[User]:
     return session.query(User).filter(User.user_id == user_id).first()
 
 
-def _has_any_user(session: Session) -> bool:
-    # A service account (Medic's gateway) can't sign anyone in, so it must not
-    # close bootstrap: enabling Medic before the first sign-in would otherwise
-    # leave the install with no way to make an admin.
-    return (
-        session.query(User.user_id).filter(User.service_account.is_(False)).first()
-        is not None
-    )
+def _open_sign_in(session: Session, sid: str, user: User) -> Optional[SignIn]:
+    """The sign-in a refresh continues, or None if it has ended or is not
+    this user's. Locked so a concurrent logout cannot end it mid-refresh."""
+    row = session.get(SignIn, sid, with_for_update=True)
+    if row is None or row.ended_at is not None or row.principal_id != user.principal_id:
+        return None
+    return row
 
 
 def _user_payload(user: User, session: Session) -> dict:
@@ -311,7 +313,7 @@ def bootstrap_status(session: UnitOfWorkSession):
     an instance with an empty user table cannot be signed into at all. The
     login screen asks this to offer first-account creation instead.
     """
-    return BootstrapStatusResponse(required=not _has_any_user(session))
+    return BootstrapStatusResponse(required=not has_human_user(session))
 
 
 @router.post("/bootstrap", status_code=status.HTTP_201_CREATED)
@@ -336,7 +338,7 @@ def bootstrap_admin(
         text("SELECT pg_advisory_xact_lock(:key)"), {"key": _BOOTSTRAP_LOCK}
     )
 
-    if _has_any_user(session):
+    if has_human_user(session):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="An account already exists. Ask an administrator to create yours.",
@@ -460,11 +462,20 @@ def login(
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
 
-    # Generate tokens
+    # Generate tokens. One sign-in, named on both, kept through every refresh.
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
-    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
+    sid = sign_ins.new_id()
+    access_token = AuthService.generate_jwt_token(
+        user, "access", user_agent=_ua, sid=sid
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", user_agent=_ua, sid=sid
+    )
 
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    sign_ins.start(
+        session, sid, user.principal_id, _exp_datetime(refresh_payload.get("exp"))
+    )
     # A service account gets body tokens only: a cookie is a console session.
     if not service_account:
         _set_cookies_for(response, access_token, refresh_token)
@@ -491,24 +502,28 @@ def _set_cookies_for(response: Response, access_token: str, refresh_token: str):
     )
 
 
-async def _revoke_token(raw: str, owner: User, kind: str) -> None:
-    """Blacklist a token's JTI for its remaining life. Another user's token is
-    left alone, so a body field cannot be used to revoke someone else's session."""
+def _exp_datetime(exp_ts) -> Optional[datetime]:
+    return datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
+
+
+async def _revoke_token(raw: str, owner: User, kind: str) -> tuple[bool, Optional[str]]:
+    """Blacklist a token and return whether that write happened, plus its sign-in id.
+
+    Another user's token is left alone. A token that has already expired counts
+    as revoked.
+    """
     payload = AuthService.verify_jwt_token(raw)
     jti = payload.get("jti") if payload else None
     if not jti or payload.get("user_id") != owner.user_id:
-        return
-    exp_ts = payload.get("exp")
+        return True, None
     try:
-        await blacklist_jti(
-            jti, datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
-        )
+        await blacklist_jti(jti, _exp_datetime(payload.get("exp")))
     except Exception as exc:
-        # Redis down: logout still "succeeds" client-side (cookies cleared,
-        # client discards its tokens), but the server-side failure is logged.
         logger.error(
             "Failed to blacklist %s token for %s: %s", kind, owner.username, exc
         )
+        return False, payload.get("sid")
+    return True, payload.get("sid")
 
 
 @router.post("/logout")
@@ -521,8 +536,11 @@ async def logout(
 ):
     """
     Logout user: blacklist the current access token and the refresh token so
-    replaying either returns 401 for the rest of its lifetime, and clear the
-    HttpOnly auth cookies from the browser.
+    replaying either returns 401 for the rest of its lifetime, end their
+    sign-in, and clear the HttpOnly auth cookies. An ended sign-in cannot be
+    refreshed even when the blacklist write did not happen. A token with no
+    sign-in is revoked only by that write, so if it fails the cookies stay
+    and the response is 503.
 
     Args:
         request: FastAPI request (used to read the auth cookies).
@@ -542,8 +560,12 @@ async def logout(
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
+    revoked = True
+    sids = set()
     if raw_token:
-        await _revoke_token(raw_token, current_user, "access")
+        ok, sid = await _revoke_token(raw_token, current_user, "access")
+        revoked = ok and revoked
+        sids.add(sid)
 
     # A captured refresh token must not mint new access tokens after logout.
     # The cookie and the body field can differ (a Bearer client next to a
@@ -553,7 +575,27 @@ async def logout(
         body.refresh_token if body else None,
     }
     for raw in refresh_tokens - {None, ""}:
-        await _revoke_token(raw, current_user, "refresh")
+        ok, sid = await _revoke_token(raw, current_user, "refresh")
+        revoked = ok and revoked
+        sids.add(sid)
+
+    # Refresh refuses an ended sign-in, so end it even when the blacklist
+    # write did not happen.
+    ended = True
+    for sid in sids - {None}:
+        try:
+            await asyncio.to_thread(sign_ins.end, sid, sign_ins.SIGN_OUT)
+        except Exception as exc:
+            logger.error("Failed to end sign-in for %s: %s", current_user.username, exc)
+            ended = False
+
+    # A token issued before sign-ins carries no sid. Nothing but the blacklist
+    # revokes it, so a missed write must not be reported as success.
+    if not ended or (not revoked and not (sids - {None})):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not revoke this session",
+        )
 
     clear_auth_cookies(response)
 
@@ -598,6 +640,15 @@ async def refresh_token(
         )
 
     payload = AuthService.verify_jwt_token(raw_refresh)
+    if not payload:
+        # A sign-in whose refresh token ran out ends here, in its own
+        # transaction: the request's rolls back with the 401.
+        expired = AuthService.expired_refresh_payload(raw_refresh)
+        if expired and expired.get("sid"):
+            try:
+                await asyncio.to_thread(sign_ins.end, expired["sid"], sign_ins.EXPIRY)
+            except Exception as exc:
+                logger.error("Failed to end an expired sign-in: %s", exc)
     if not payload or payload.get("token_type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -617,6 +668,12 @@ async def refresh_token(
             detail="User not found or inactive",
         )
 
+    if issued_before_cutoff(payload, user.tokens_valid_after):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
+        )
+
     service_account = _is_service_account(user)
     if service_account and (from_cookie or _is_browser_request(request)):
         # A service account never held a cookie, and a console refresh is a
@@ -629,21 +686,38 @@ async def refresh_token(
         clear_auth_cookies(refused)
         return refused
 
+    # A token minted before sign-ins existed carries no sid and starts none.
+    sid = payload.get("sid")
+    sign_in = None
+    if sid:
+        sign_in = await asyncio.to_thread(_open_sign_in, session, sid, user)
+        if sign_in is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sign-in has ended",
+            )
+
     # Refresh tokens rotate: each one mints a single successor.
-    refresh_exp = payload.get("exp")
     if not payload.get("jti") or not await consume_refresh_jti(
-        payload["jti"],
-        datetime.utcfromtimestamp(refresh_exp) if refresh_exp is not None else None,
+        payload["jti"], _exp_datetime(payload.get("exp"))
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has already been used",
         )
 
-    # Generate new tokens
+    # Generate new tokens: the same sign-in, new jtis.
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
-    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
+    access_token = AuthService.generate_jwt_token(
+        user, "access", user_agent=_ua, sid=sid
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", user_agent=_ua, sid=sid
+    )
+
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    if sign_in is not None:
+        sign_in.expires_at = _exp_datetime(refresh_payload.get("exp"))
     if not service_account:
         _set_cookies_for(response, access_token, refresh_token)
 
@@ -773,10 +847,14 @@ async def update_current_user(
                 await revoke_all_for_user(current_user.user_id)
             except Exception as exc:
                 logger.error(
-                    "Email changed for %s but revoke_all_for_user failed: %s",
+                    "Email changed for %s; session cutoff is stored but the "
+                    "Redis copy failed: %s",
                     current_user.username,
                     exc,
                 )
+            # After the Redis round-trip. A refresh during that wait must
+            # still be older than the cutoff this request commits.
+            stamp_session_cutoff(current_user)
 
         logger.info(f"User profile updated: {current_user.username}")
         return payload
@@ -847,11 +925,14 @@ async def change_password(
             await revoke_all_for_user(current_user.user_id)
         except Exception as exc:
             logger.error(
-                "Password changed for %s but revoke_all_for_user failed: %s. "
-                "Old tokens may remain valid until natural expiry.",
+                "Password changed for %s; session cutoff is stored but the "
+                "Redis copy failed: %s",
                 current_user.username,
                 exc,
             )
+        # After the Redis round-trip, so a refresh during that wait is still
+        # older than the cutoff this request commits.
+        stamp_session_cutoff(current_user)
 
         clear_auth_cookies(response)
         logger.info(f"Password changed for user: {current_user.username}")
@@ -1074,10 +1155,11 @@ async def password_reset_confirm(
 ):
     """
     Complete a password reset. Validates the signed token, enforces the
-    password strength policy + reuse check, rotates the hash, and
-    revokes every outstanding token so any existing sessions die.
+    password strength policy + reuse check, consumes the token, rotates
+    the hash, and revokes every outstanding token so any existing
+    sessions die. A rejected password leaves the token usable.
     """
-    user_id = await verify_reset_token(body.token)
+    user_id = decode_reset_token(body.token)
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1111,6 +1193,11 @@ async def password_reset_confirm(
 
     try:
         await asyncio.to_thread(_apply_new_password, user, body.new_password)
+        if not await consume_reset_token(body.token):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_INVALID_RESET_TOKEN,
+            )
         # Clear any active lockout so the user can immediately log in.
         user.failed_login_count = 0
         user.locked_until = None
@@ -1119,10 +1206,14 @@ async def password_reset_confirm(
             await revoke_all_for_user(user.user_id)
         except Exception as exc:
             logger.error(
-                "Password reset for %s but revoke_all_for_user failed: %s",
+                "Password reset for %s; session cutoff is stored but the "
+                "Redis copy failed: %s",
                 user.username,
                 exc,
             )
+        # After the Redis round-trip, so a refresh during that wait is still
+        # older than the cutoff this request commits.
+        stamp_session_cutoff(user)
 
         logger.info("Password reset completed for user: %s", user.username)
         return {"message": "Password reset successfully"}

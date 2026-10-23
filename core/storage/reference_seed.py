@@ -1,11 +1,9 @@
 """Default rows for the tables that only create_all builds.
 
 ``05_case_management_extended.sql`` holds the default SLA policies and case
-templates, and no SQL file creates their tables. compose's db-seed and
-``scripts/seed_reference_data.py`` apply it after create_all. The Helm db-init
-Job cannot: it runs before the backend can log in to create the tables, and
-then records the file as applied, so a Helm install never got either. The
-backend therefore seeds each table the file writes when it finds it empty.
+templates. A fresh install gets those rows from the upgrade baseline. The Helm
+db-init Job cannot apply the file: it runs before the tables exist and then
+records it as applied. ``seed_reference_tables`` fills each empty table.
 """
 
 import re

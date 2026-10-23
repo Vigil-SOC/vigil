@@ -466,7 +466,13 @@ async def execute_workflow(
         workflow_id,
         parameters,
         triggered_by=user.username,
-        principal=tool_principal.mint(user.username, ttl=tool_principal.RUN_TTL),
+        principal=tool_principal.mint(
+            user.username,
+            person_id=getattr(user, "principal_id", None)
+            or getattr(user, "user_id", None),
+            origin="person",
+            ttl=tool_principal.RUN_TTL,
+        ),
     )
 
     if not result.get("success"):
@@ -694,7 +700,12 @@ async def resume_workflow_run(
             "decide each through /approvals/{action_id}",
         )
 
-    approval_service.approve_action(pending[0].action_id, approved_by=approved_by)
+    approval_service.approve_action(
+        pending[0].action_id,
+        approved_by=approved_by,
+        approved_by_principal_id=getattr(current_user, "principal_id", None)
+        or getattr(current_user, "user_id", None),
+    )
     return await resume_run(run_id, pending[0].action_id, approved_by)
 
 
@@ -726,7 +737,11 @@ async def cancel_workflow_run(
     )
     for action in pending:
         approval_service.reject_action(
-            action.action_id, reason=request.reason, rejected_by=rejected_by
+            action.action_id,
+            reason=request.reason,
+            rejected_by=rejected_by,
+            approved_by_principal_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
         )
 
     # A rejection ends the run, but the agent layer is what ends it: this hands

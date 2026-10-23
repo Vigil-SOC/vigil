@@ -1,9 +1,11 @@
 """``python -m core.upgrade`` against scratch databases on one local Postgres.
 
-A fresh init-plus-``create_all`` install must still be ``0001_baseline``'s
-schema, and the empty-database run must end at the committed head schema, by
-``core.upgrade.schema``'s comparison. To rewrite the head schema after adding a
-revision:
+The empty-database run must end where a fresh init-plus-``create_all``
+install does once the revisions after the baseline have run on it, and at
+the committed head schema, by ``core.upgrade.schema``'s comparison. Models
+include tables those revisions also build, so ``create_all`` is no longer
+``0001_baseline``; ``baseline_schema.json`` stays that frozen revision. To
+rewrite the committed head schema after adding a revision:
 
     VIGIL_WRITE_HEAD_SCHEMA=1 pytest tests/integration/test_upgrade_command.py
 """
@@ -40,17 +42,11 @@ SEEDED = (
     "system_config",
     "user_preferences",
 )
-BASELINE = "0001_baseline"
 # Every revision, oldest first: what an empty database has pending.
 REVISIONS = [
     s.revision for s in reversed(list(command.script_directory().walk_revisions()))
 ]
 HEAD = REVISIONS[-1]
-# Role grants later revisions seed onto the baseline's rows.
-LATER_GRANTS = {
-    "role-admin": {"audit.read": True, "audit.forward": True, "audit.manage": True},
-    "role-manager": {"audit.read": True},
-}
 
 
 @contextmanager
@@ -63,19 +59,6 @@ def _scratch(provision: bool):
             yield engine
     except ScratchDatabaseUnavailable as e:
         pytest.skip(str(e))
-
-
-def _granted(rows: dict) -> dict:
-    """A fresh install's seeded rows as they stand at the head revision."""
-    roles = []
-    for line in rows["roles"]:
-        role = json.loads(line)
-        role["permissions"] = {
-            **LATER_GRANTS.get(role["role_id"], {}),
-            **role["permissions"],
-        }
-        roles.append(json.dumps(role, sort_keys=True))
-    return {**rows, "roles": sorted(roles)}
 
 
 def _app_can_move_revision(conn) -> bool:
@@ -132,10 +115,34 @@ def _version(engine):
         return conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
 
 
+def _apply_later_revisions(engine) -> None:
+    """Each revision after the baseline, as SQL, on a create_all-built install:
+    what that install's first upgrade runs once it is adopted.
+
+    ``0002_audit_trail`` grants on ``alembic_version``. ``create_all`` does not
+    build that table; the upgrade command does, before the revisions run.
+    """
+    raw = engine.raw_connection()
+    try:
+        with raw.cursor() as cursor:
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS public.alembic_version "
+                "(version_num VARCHAR(32) NOT NULL)"
+            )
+            for path in sorted((command.PACKAGE_DIR / "versions").glob("*.sql")):
+                if path.stem != "0001_baseline":
+                    cursor.execute(path.read_text())
+        raw.commit()
+    finally:
+        raw.close()
+
+
 @pytest.fixture(scope="module")
 def provisioned():
-    with _scratch(True) as engine, engine.connect() as conn:
-        yield schema_state(conn), _rows(conn)
+    with _scratch(True) as engine:
+        _apply_later_revisions(engine)
+        with engine.connect() as conn:
+            yield schema_state(conn), _rows(conn)
 
 
 @pytest.fixture
@@ -151,13 +158,16 @@ def test_empty_database_matches_fresh_install(provisioned, empty, tmp_path):
     assert report["outcome"] == "applied" and report["restore_point"] == "rp-1"
     assert [h["outcome"] for h in _history(tmp_path)] == ["applied"]
 
-    # The init path is frozen at the baseline; schema changes are revisions.
-    baseline = json.loads(command.BASELINE_SCHEMA.read_text())
-    assert compare(baseline, expected_state) == []
-
     with empty.connect() as conn:
         state = schema_state(conn)
-        assert _rows(conn) == _granted(expected_rows)
+        assert compare(expected_state, state) == []
+        assert _rows(conn) == expected_rows
+        assert conn.execute(
+            text(
+                "SELECT has_table_privilege('vigil_app', 'public.alembic_version', "
+                "'SELECT')"
+            )
+        ).scalar(), "the app role reads the revision at startup"
         assert not _app_can_move_revision(conn), "the app role can move the revision"
 
     if os.environ.get("VIGIL_WRITE_HEAD_SCHEMA"):

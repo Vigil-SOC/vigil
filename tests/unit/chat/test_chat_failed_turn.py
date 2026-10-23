@@ -42,7 +42,7 @@ async def _relay(monkeypatch, lines, messages):
     monkeypatch.setattr(claude, "_persist_chat_turn", lambda **kw: saved.update(kw))
     request = claude.ChatRequest(messages=messages)
     turns = claude._turns_of(request.messages)
-    async for _ in claude._relay({"turns": turns}, request, "s-1", "u-1"):
+    async for _ in claude._relay({"turns": turns}, request, "m", "s-1", "u-1"):
         pass
     return saved
 
@@ -59,6 +59,7 @@ async def test_an_error_frame_is_stored_as_the_incomplete_reply(monkeypatch):
         ],
     )
     assert saved["assistant_text"] == error
+    assert saved["model"] == "m"
     assert saved["complete"] is False
     # Two unanswered questions are two rows, not one merged "first\n\nsecond".
     assert saved["user_text"] == "second"

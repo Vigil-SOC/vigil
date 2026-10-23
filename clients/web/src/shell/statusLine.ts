@@ -9,8 +9,16 @@ export interface StatusFold {
 
 export interface HealthRead {
   status?: string
+  version?: string
+  auth_bypassed?: boolean
   storage?: { database_available?: boolean; demo_mode?: boolean }
   schema?: { state?: string }
+}
+
+/** The build flag is frozen into the bundle and DEV_MODE is the backend's at
+ * runtime, so either one turns auth off. A failed read (null) claims nothing. */
+export function authBypassed(health: HealthRead | null): boolean {
+  return import.meta.env.VITE_DEV_MODE === 'true' || health?.auth_bypassed === true
 }
 
 /** Each running, unhealthy, not_running or unknown; the agent layer also no_token. */

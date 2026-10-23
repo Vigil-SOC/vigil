@@ -193,6 +193,17 @@ export async function principalFor(state: State, job: RunJob): Promise<string | 
   return typeof held === "string" && held !== "" ? held : undefined;
 }
 
+// The actor principal the ledger stores as started_by. A start job names it in
+// the clear. A resume reads the run event: it does not mint a token, and the
+// watchdog's enqueued_by is who requeued, not who started the run.
+export async function startedByFor(state: State, job: RunJob): Promise<string> {
+  if (job.reason === "start" && typeof job.actor === "string" && job.actor !== "") return job.actor;
+  const opened = (await state.read(job.run_id)).find((event) => event.kind === "run");
+  const held = opened === undefined ? undefined : (opened.payload as RunPayload).started_by;
+  if (typeof held === "string" && held !== "") return held;
+  return job.enqueued_by;
+}
+
 // The one place a run kind becomes a loop. A kind with no workflow throws here,
 // before the ledger opens, rather than journalling a run nothing will ever advance.
 async function drive(
@@ -204,8 +215,13 @@ async function drive(
   directives: DirectiveQueue,
   principal: string | undefined,
 ): Promise<string | null> {
-  const { run_kind: kind, run_id, enqueued_by: started_by } = job;
-  const named = principal === undefined ? {} : { principal };
+  const { run_kind: kind, run_id } = job;
+  const started_by = await startedByFor(state, job);
+  const origin = job.reason === "start" ? job.origin : undefined;
+  const named = {
+    ...(principal === undefined ? {} : { principal }),
+    ...(origin === undefined ? {} : { origin }),
+  };
   // A caller that already bound someone wins. Otherwise every call this run
   // makes carries the person the job or the ledger named.
   const build: HarnessFactory = (k, s, st, memory, seed, given) => factory(k, s, st, memory, seed, given ?? principal);
@@ -605,7 +621,7 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
       run_kind: claim.run_kind,
       tenant_id: null,
       enqueued_at: new Date().toISOString(),
-      enqueued_by: "watchdog",
+      enqueued_by: "system",
       reason: "resume",
     };
     await queue.add(RUN_QUEUE, job, { jobId: jobIdFor(job, randomUUID()), attempts: RUN_ATTEMPTS, backoff: { ...RUN_BACKOFF } });
