@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0007_drop_origin_run_ids"
-down_revision = "0006_audit_feed"
+revision = "0009_drop_origin_run_ids"
+down_revision = "0008_permission_catalog"
 
 
 def upgrade() -> None:
