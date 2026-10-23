@@ -19,7 +19,7 @@ from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.integrations.mcp.surface import acting_as
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import AlreadyDecided, ApprovalService
 from core.storage.models import CaseAuditLog, CaseComment, CaseEvidence
 
 pytestmark = pytest.mark.unit
@@ -365,9 +365,9 @@ def test_a_decision_that_does_not_change_the_row_writes_nothing(monkeypatch):
     row = _approvals(monkeypatch, session)
     row.status = "approved"
 
-    updated = ApprovalService().approve_action(
-        "act-1", approved_by="ada", approved_by_principal_id="prin-ada"
-    )
+    with pytest.raises(AlreadyDecided):
+        ApprovalService().approve_action(
+            "act-1", approved_by="ada", approved_by_principal_id="prin-ada"
+        )
 
-    assert updated.status == "approved"
     assert held == {}
