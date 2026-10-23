@@ -337,9 +337,15 @@ def import_upgrades(session, upgrade_dir: Optional[Path]) -> int:
         f.seek(offset)
         data = f.read(size - offset)
     end = data.rfind(b"\n") + 1  # a line still being written waits for its newline
-    imported = sum(
-        _import_line(session, raw) for raw in data[:end].splitlines() if raw.strip()
-    )
+    imported = 0
+    for raw in data[:end].splitlines():
+        if not raw.strip():
+            continue
+        try:
+            with session.begin_nested():
+                imported += _import_line(session, raw)
+        except Exception:  # noqa: BLE001 - one bad line must not block the rest
+            logger.exception("upgrade history line could not be recorded; skipped")
     session.execute(
         text("UPDATE public.audit_feed_state SET upgrade_offset = :o WHERE id = 1"),
         {"o": offset + end},
@@ -390,7 +396,11 @@ class Leader:
                         step(session)
                 except Exception:  # noqa: BLE001 - the next step and tick still run
                     logger.exception("audit leader step failed")
-            self._send()
+            try:
+                self._send()
+            finally:
+                if self._stopped:
+                    self._release()
 
     def stop(self) -> None:
         """Give the lock up now, or at the end of a tick that is running."""
@@ -414,13 +424,8 @@ class Leader:
             return trail.trail_ready(session)
 
     def _lead(self) -> bool:
-        if self._conn is not None:
-            try:
-                self._conn.execute(text("SELECT 1"))
-                return True
-            except Exception:  # noqa: BLE001 - the session, and its lock, are gone
-                logger.warning("audit leader lost its connection; taking over again")
-                self._release()
+        if self._conn is not None and self._alive():
+            return True
         conn = self.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         try:
             got = conn.execute(
@@ -433,14 +438,28 @@ class Leader:
             conn.close()
             return False
         self._conn = conn
-        if not self._ready():
+        try:
+            if not self._ready():
+                self._release()
+                return False
+            # A window the last leader left open closes now, not in 60 seconds.
+            with Session(self.engine) as session, session.begin():
+                trail.close_windows(session, everything=True)
+        except BaseException:
+            self._release()
+            raise
+        logger.info("audit leader: this replica leads")
+        return True
+
+    def _alive(self) -> bool:
+        """Whether this replica still holds the lock's session."""
+        try:
+            self._conn.execute(text("SELECT 1"))
+            return True
+        except Exception:  # noqa: BLE001 - the session, and its lock, are gone
+            logger.warning("audit leader lost its connection; taking over again")
             self._release()
             return False
-        logger.info("audit leader: this replica leads")
-        # A window the last leader left open closes now, not in 60 seconds.
-        with Session(self.engine) as session, session.begin():
-            trail.close_windows(session, everything=True)
-        return True
 
     def _release(self) -> None:
         conn, self._conn = self._conn, None
@@ -463,6 +482,8 @@ class Leader:
         sock = None
         try:
             for _ in range(BATCHES_PER_TICK):
+                if not self._alive():  # another replica may lead by now
+                    return
                 with Session(self.engine) as session:
                     after = _state(session)["delivered_seq"]
                     rows = trail.read(session, trail.TrailQuery(after=after), BATCH)
@@ -524,8 +545,9 @@ class Leader:
                 )
             session.execute(
                 text(
-                    "UPDATE public.audit_feed_state SET delivered_seq = :s,"
-                    " delivered_at = now(), failing = false WHERE id = 1"
+                    "UPDATE public.audit_feed_state SET delivered_seq ="
+                    " greatest(delivered_seq, :s), delivered_at = now(),"
+                    " failing = false WHERE id = 1"
                 ),
                 {"s": seq},
             )

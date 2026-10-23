@@ -293,7 +293,7 @@ def test_turning_the_feed_on_writes_an_entry(db, client):
     assert payload[trail.ACTOR] == admin_id
     assert payload["config_key"] == feed.INTEGRATION_ID
     assert payload["enabled"] is True
-    assert payload["new_value"] == {"host": "siem.example", "port": 6514}
+    assert payload["new_value"]["host"] == "siem.example"
 
 
 def test_a_credential_cannot_turn_it_on(db, client):

@@ -8,6 +8,7 @@ sign-in is refused before the role check, and a non-person is refused inside
 
 from __future__ import annotations
 
+import hashlib
 import json
 import ssl
 from datetime import datetime
@@ -206,6 +207,10 @@ def _stored(key: str) -> Optional[str]:
     return get_secret(key) or None
 
 
+def _fingerprint(pem: Optional[str]) -> Optional[str]:
+    return hashlib.sha256(pem.encode()).hexdigest() if pem else None
+
+
 def _feed_view(session) -> dict:
     enabled, host, port = feed.settings(session)
     return {
@@ -235,6 +240,10 @@ def set_feed(
 ):
     """Save the destination and the switch. The config write records the entry."""
     host = body.host.strip()
+    if body.clear_client_cert and (body.client_cert_pem or body.client_key_pem):
+        raise HTTPException(
+            status_code=422, detail="Clear the client certificate or send a new one"
+        )
     if body.enabled and not host:
         raise HTTPException(
             status_code=422, detail="A host is required to turn the feed on"
@@ -251,7 +260,7 @@ def set_feed(
         else body.client_key_pem or _stored(feed.SECRET_CLIENT_KEY)
     )
     # A stored client key is never carried to a destination its owner did not choose.
-    moved = (old_host, old_port) != (host, body.port) and old_host is not None
+    moved = (old_host, old_port) != (host, body.port)
     if (
         moved
         and _stored(feed.SECRET_CLIENT_KEY)
@@ -297,7 +306,13 @@ def set_feed(
 
     saved = get_config_service(user_id=str(user.user_id)).set_integration_config(
         integration_id=feed.INTEGRATION_ID,
-        config={"host": host or None, "port": body.port},
+        # Fingerprints, not PEMs: a CA or certificate swap shows on the entry.
+        config={
+            "host": host or None,
+            "port": body.port,
+            "ca_sha256": _fingerprint(body.ca_pem or _stored(feed.SECRET_CA)),
+            "client_cert_sha256": _fingerprint(cert),
+        },
         enabled=body.enabled,
         integration_name=feed.INTEGRATION_NAME,
         integration_type="audit",
