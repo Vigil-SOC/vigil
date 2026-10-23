@@ -101,21 +101,6 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
 }
 
 export const aiDecisionsApi = {
-  create: (data: {
-    decision_id: string
-    agent_id: string
-    decision_type: string
-    confidence_score: number
-    reasoning: string
-    recommended_action: string
-    finding_id?: string
-    case_id?: string
-    workflow_id?: string
-    decision_metadata?: any
-  }) => api.post('/ai/decisions', data),
-  
-  getById: (decisionId: string) => api.get(`/ai/decisions/${decisionId}`),
-  
   list: (params?: {
     agent_id?: string
     finding_id?: string
@@ -175,8 +160,6 @@ export const approvalsApi = {
     api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', {
       params: caseId ? { case_id: caseId } : undefined,
     }),
-
-  getById: (actionId: string) => api.get(`/approvals/${actionId}`),
 
   approve: (actionId: string, approved_by?: string) =>
     api.post(`/approvals/${actionId}/approve`, { approved_by }),
