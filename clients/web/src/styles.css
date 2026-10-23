@@ -2793,28 +2793,6 @@
       border-color: var(--accent-line);
    }
 
-   .ev-list {
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
-   }
-
-   .ev-item {
-      display: flex;
-      gap: 9px;
-      font-size: 13px;
-      color: var(--tx-2);
-   }
-
-   .ev-item .ed {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--accent);
-      margin-top: 7px;
-      flex: 0 0 auto;
-   }
-
    /* ---------- Analytics report + insights rail ---------- */
    .report {
       display: flex;
