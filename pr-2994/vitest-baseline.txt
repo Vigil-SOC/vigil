@@ -1,0 +1,48 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/485edc02-35e5-4056-b503-aeb1228a0c77/clients/web
+
+ ❯ src/screens/metrics/MetricsScreen.test.tsx (2 tests | 2 failed) 326ms
+     × shows a dash when the backend measured nothing 241ms
+     × shows the measured mean 76ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/metrics/MetricsScreen.test.tsx > MetricsScreen MTTD/MTTR tiles > shows a dash when the backend measured nothing
+AssertionError: expected 'MTTD0mmean time to detect' to be 'MTTD—mean time to detect' // Object.is equality
+
+Expected: "MTTD—mean time to detect"
+Received: "MTTD0mmean time to detect"
+
+ ❯ src/screens/metrics/MetricsScreen.test.tsx:38:18
+     36|     render(<MetricsScreen />)
+     37|     const { mttd, mttr } = await tiles()
+     38|     expect(mttd).toBe('MTTD—mean time to detect')
+       |                  ^
+     39|     expect(mttr).toBe('MTTR—mean time to resolve')
+     40|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/screens/metrics/MetricsScreen.test.tsx > MetricsScreen MTTD/MTTR tiles > shows the measured mean
+AssertionError: expected 'MTTR1.3dmean time to respond' to be 'MTTR1.3dmean time to resolve' // Object.is equality
+
+Expected: "MTTR1.3dmean time to resolve"
+Received: "MTTR1.3dmean time to respond"
+
+ ❯ src/screens/metrics/MetricsScreen.test.tsx:47:18
+     45|     const { mttd, mttr } = await tiles()
+     46|     expect(mttd).toBe('MTTD30mmean time to detect')
+     47|     expect(mttr).toBe('MTTR1.3dmean time to resolve')
+       |                  ^
+     48|   })
+     49| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  15:24:00
+   Duration  2.95s (transform 500ms, setup 463ms, import 489ms, tests 326ms, environment 1.14s)
+
+rc=1
