@@ -42,13 +42,13 @@ const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval',
 type Pickup = { share: number; launched: number; today: number }
 
 const SETUP_TIP = {
-  source: 'Setup steps (B8)',
+  source: 'Setup steps',
   calculation: 'Fixed order; done steps and steps hidden with Not now are left out',
   limit: 'None',
 }
 
 const NEEDS_TIP = {
-  source: 'Pending approvals and checkpoints (B1)',
+  source: 'Pending approvals, checkpoints and hunts stopped at a limit',
   calculation: 'Oldest first, top four shown',
 }
 
@@ -87,7 +87,7 @@ function errorText(error: unknown, fallback: string): string {
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
 
 /**
- * The ask as verb and object (PRD HM-P4). A hypothesis approval names the explanation it starts
+ * The ask as verb and object. A hypothesis approval names the explanation it starts
  * testing, shortened, with every one it tests in full on hover; the benign one is what they are
  * tested against, not what is approved. Anything else reads as served.
  */
@@ -512,7 +512,6 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
           </div>
             </>
           )}
-          {/* The headline already says "Board clear." (HM-P1); this says what that means. */}
           {boardClear && (
             <div className="home-clear">
               <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>

@@ -13,8 +13,8 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.findings.exclusions import (
     ExclusionConflict,
     ExclusionError,
@@ -26,6 +26,8 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 
 router = APIRouter()
+
+_FINDINGS_WRITE = [permission_gate("findings.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/exclusions",
@@ -72,26 +74,17 @@ class ExclusionRemove(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
 
 
-def _require(user: User, permission: str) -> None:
-    if not AuthService.check_permission(user.user_id, permission):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied: {permission} required",
-        )
-
-
 def _actor(user: User) -> str:
     return user.username or user.user_id
 
 
-@router.get("", response_model=ExclusionListResponse)
-def get_exclusions(
-    session: UnitOfWorkSession,
-    include_removed: bool = False,
-    current_user: User = Depends(get_current_user),
-):
+@router.get(
+    "",
+    response_model=ExclusionListResponse,
+    dependencies=[permission_gate("findings.read")],
+)
+def get_exclusions(session: UnitOfWorkSession, include_removed: bool = False):
     """Active exclusions, newest first; ``include_removed`` adds the history."""
-    _require(current_user, "findings.read")
     rows, hidden_total = list_exclusions_with_total(
         session, include_removed=include_removed
     )
@@ -102,14 +95,18 @@ def get_exclusions(
     }
 
 
-@router.post("", response_model=ExclusionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ExclusionOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_FINDINGS_WRITE,
+)
 def add_exclusion(
     body: ExclusionCreate,
     session: UnitOfWorkSession,
     current_user: User = Depends(get_current_user),
 ):
     """Exclude one address. 409 when it is already actively excluded."""
-    _require(current_user, "findings.write")
     try:
         return create_exclusion(
             session,
@@ -125,7 +122,9 @@ def add_exclusion(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.post("/{exclusion_id}/remove", response_model=ExclusionOut)
+@router.post(
+    "/{exclusion_id}/remove", response_model=ExclusionOut, dependencies=_FINDINGS_WRITE
+)
 def remove(
     exclusion_id: str,
     session: UnitOfWorkSession,
@@ -134,7 +133,6 @@ def remove(
 ):
     """Stop excluding the address. The row is kept, marked removed, so the
     queue's history stays explainable; its findings reappear unchanged."""
-    _require(current_user, "findings.write")
     try:
         row = remove_exclusion(
             session,
