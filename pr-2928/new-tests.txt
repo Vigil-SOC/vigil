@@ -1,0 +1,11 @@
+tests/unit/daemon/test_workdir.py::test_reads_its_own_files_including_nested_ones PASSED [ 10%]
+tests/unit/daemon/test_workdir.py::test_cannot_reach_a_sibling_whose_id_shares_the_prefix PASSED [ 20%]
+tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[..] PASSED [ 30%]
+tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[.] PASSED [ 40%]
+tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[inv-1/..] PASSED [ 50%]
+tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[inv-1/evidence] PASSED [ 60%]
+tests/unit/daemon/test_workdir.py::test_plain_traversal_out_of_the_base_is_refused PASSED [ 70%]
+tests/unit/api/test_orchestrator_files.py::test_serves_the_investigations_own_file PASSED [ 80%]
+tests/unit/api/test_orchestrator_files.py::test_serves_nothing_outside_the_investigation[/api/orchestrator/investigations/%2E%2E/files/secret.env] PASSED [ 90%]
+tests/unit/api/test_orchestrator_files.py::test_serves_nothing_outside_the_investigation[/api/orchestrator/investigations/inv-1/files/..%2Finv-10%2Fcontext.md] PASSED [100%]
+============================== 10 passed in 3.23s ==============================

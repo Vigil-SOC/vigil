@@ -1,0 +1,8 @@
+FAILED tests/unit/daemon/test_workdir.py::test_cannot_reach_a_sibling_whose_id_shares_the_prefix
+FAILED tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[..]
+FAILED tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[.]
+FAILED tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[inv-1/..]
+FAILED tests/unit/daemon/test_workdir.py::test_an_id_that_is_not_one_directory_under_the_base_is_refused[inv-1/evidence]
+FAILED tests/unit/api/test_orchestrator_files.py::test_serves_nothing_outside_the_investigation[/api/orchestrator/investigations/%2E%2E/files/secret.env]
+FAILED tests/unit/api/test_orchestrator_files.py::test_serves_nothing_outside_the_investigation[/api/orchestrator/investigations/inv-1/files/..%2Finv-10%2Fcontext.md]
+7 failed, 3 passed in 2.06s
