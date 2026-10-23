@@ -5,7 +5,7 @@ One filter, from ``core.audit.trail``. List, export, and range verify need
 ``audit.read``, and anyone else needs ``audit.forward``. A missing sign-in is
 refused before that check. ``audit.forward`` and ``audit.manage`` stay a
 person's own act inside ``check_permission``, including in dev mode. A poll
-writes nothing.
+adds no trail row.
 """
 
 from __future__ import annotations

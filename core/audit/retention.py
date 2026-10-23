@@ -387,8 +387,10 @@ def _managers(session, *, active_only: bool) -> set[str]:
 def _load(session) -> dict[str, list]:
     if not _table(session, "system_config"):
         return {"periods": [], "erasures": []}
+    # Locked for the caller's transaction, so two writers cannot each save a
+    # list that lacks the other's change.
     value = session.execute(
-        text("SELECT value FROM public.system_config WHERE key = :key"),
+        text("SELECT value FROM public.system_config WHERE key = :key FOR UPDATE"),
         {"key": CONFIG_KEY},
     ).scalar()
     if not isinstance(value, dict):
@@ -482,7 +484,10 @@ def _announcements(session) -> list[int]:
     if not _table(session, "audit_feed_state"):
         return []
     row = session.execute(
-        text("SELECT pending_announcements FROM public.audit_feed_state WHERE id = 1")
+        text(
+            "SELECT pending_announcements FROM public.audit_feed_state"
+            " WHERE id = 1 FOR UPDATE"
+        )
     ).scalar()
     return [int(seq) for seq in (row or [])]
 

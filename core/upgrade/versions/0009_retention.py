@@ -1,6 +1,6 @@
 """Which retention and erasure announcements have not left the box (#2769).
 
-Continues the single chain at ``0007_conversation_generation``.
+Continues the single chain at ``0008_permission_catalog``.
 """
 
 from core.upgrade.revision import run_sql

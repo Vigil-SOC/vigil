@@ -182,6 +182,7 @@ def restore_snapshot(
             # Resolved before the swap: an unknown operator refuses the restore
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
+            _check_erasure_list(root, dump_in_snapshot)
             swap_lines, abandoned = _swap(cfg, staged_name, pre_name, placed, stamp)
             lines.extend(swap_lines)
             swapped = True
@@ -620,6 +621,18 @@ def _check_secrets(placed: list[_Placed]) -> str:
     if key_path.read_bytes() != key_bytes:
         raise BackupError("secrets check failed: master.key was rewritten")
     return "ok"
+
+
+def _check_erasure_list(root: Path, dump_in_snapshot: str) -> None:
+    """Refuse before the swap when the snapshot's erasures could not be re-applied."""
+    from core.audit.retention import LIST_NAME, outside_path, read_ids
+
+    path = _under_target(root, str(Path(dump_in_snapshot).parent / LIST_NAME))
+    if path.is_file() and read_ids(path) and outside_path() is None:
+        raise BackupError(
+            "the snapshot erases principals and VIGIL_UPGRADE_DIR is unset; "
+            "set it, then restore again"
+        )
 
 
 def _reapply_erased(root: Path, dump_in_snapshot: str) -> None:
