@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen from './CasesScreen'
 import { ToastProvider } from '../../shell/toast'
-import { casesApi, workflowApi } from '../../services/api'
+import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
 import { EMPTY_STRIP, notifyCasesChanged } from './useCases'
 
 const testState = vi.hoisted(() => ({
@@ -487,6 +487,38 @@ describe('page head', () => {
     await screen.findByText(CASE.title)
     fireEvent.click(chip('Advanced'))
     expect(screen.getByText('Full-text query')).toBeInTheDocument()
+  })
+
+  it('posts the advanced search as a SearchRequest and lists its results', async () => {
+    vi.mocked(caseSearchApi.search).mockResolvedValue({
+      data: {
+        results: [{ ...CASE, case_id: 'case-2026-0200', title: 'Beaconing to rare domain' }],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        has_more: false,
+      },
+    } as never)
+    renderCases()
+    await screen.findByText(CASE.title)
+    fireEvent.click(chip('Advanced'))
+    fireEvent.change(screen.getByPlaceholderText(/Search title, description/), { target: { value: ' beacon ' } })
+    fireEvent.change(screen.getByLabelText('Assignee'), { target: { value: 'analyst' } })
+    fireEvent.change(screen.getByLabelText('Tags'), { target: { value: 'c2, dns' } })
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-06-01' } })
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-06-30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+
+    expect(await screen.findByText('Beaconing to rare domain')).toBeInTheDocument()
+    expect(caseSearchApi.search).toHaveBeenCalledWith({
+      query_text: 'beacon',
+      assignee: ['analyst'],
+      tags: ['c2', 'dns'],
+      created_after: '2026-06-01',
+      created_before: '2026-06-30T23:59:59',
+      limit: 50,
+      offset: 0,
+    })
   })
 
   it('keeps the Filters panel to Priority, Assignee, Workflow and Data source', async () => {
