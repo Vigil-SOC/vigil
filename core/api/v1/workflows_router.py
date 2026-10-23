@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth.permissions import permission_gate
 from core.deps import provide_workflows
 from core.routing import Auth, RouterMeta
 from core.workflows import catalog
@@ -63,6 +64,7 @@ class WorkflowDetailResponse(BaseModel):
 
 
 router = APIRouter()
+router.dependencies.append(permission_gate("automation.read"))
 
 ROUTER_META = RouterMeta(
     # Additive, NOT legacy-mounted. The catalog read is GET /{workflow_id}, and

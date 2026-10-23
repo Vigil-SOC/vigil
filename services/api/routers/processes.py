@@ -12,11 +12,13 @@ from typing import Dict
 
 from fastapi import APIRouter, Depends
 
+from core.auth.permissions import permission_gate
 from core.deps import provide_process_health
 from core.platform.process_health import ProcessHealth
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/processes",

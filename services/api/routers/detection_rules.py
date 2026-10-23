@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Sources are what the security-detections server indexes, and reload restarts it.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_WRITE = [permission_gate("detections.write")]
+router.dependencies.append(permission_gate("detections.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/detection-rules",

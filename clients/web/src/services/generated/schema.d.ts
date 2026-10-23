@@ -4676,6 +4676,9 @@ export interface paths {
         /**
          * Get Overview
          * @description Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
+         *
+         *     A missing read leaves that part empty and names the permission. The keys
+         *     stay arrays: the console calls ``feed.find``.
          */
         get: operations["get_api_overview"];
         put?: never;

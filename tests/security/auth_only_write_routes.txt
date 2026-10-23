@@ -1,42 +1,10 @@
-# Write routes that make no permission check a test can see: some check inside a
-# helper the handler calls, some are login-only on purpose (own-account actions,
-# analyst workflow). Enforced by test_route_permissions.py, so a new write route
-# must either ask for a permission or be added here on review.
+# The caller's own session. A data route is not an entry. Paths on
+# PUBLIC_API_PATHS (login, refresh, logout, password reset, bootstrap POST,
+# health, the VStrike inbound push) are skipped by the test and not listed.
 DELETE /api/auth/mfa
-DELETE /api/conversations/{conversation_id}
-DELETE /api/findings/{finding_id}/noise
-DELETE /api/sla-policies/{policy_id}
-DELETE /api/workflows/runs/{run_id}
-PATCH /api/conversations/{conversation_id}
-POST /api/agents/custom/generate
-POST /api/ai/decisions
-POST /api/analytics/estimate-cost
-POST /api/analytics/recalculate-cost
-POST /api/auth/bootstrap
+GET /api/auth/me
 POST /api/auth/change-password
-POST /api/auth/login
-POST /api/auth/logout
 POST /api/auth/mfa/recovery-codes
 POST /api/auth/mfa/setup
 POST /api/auth/mfa/verify
-POST /api/auth/password-reset/confirm
-POST /api/auth/password-reset/request
-POST /api/auth/refresh
-POST /api/cases/search
-POST /api/findings/{finding_id}/enrich
-POST /api/findings/{finding_id}/intake
-POST /api/findings/{finding_id}/noise
-POST /api/integrations/vstrike/findings
-POST /api/services/{name}/restart
-POST /api/services/{name}/stop
-POST /api/skills/{name}/test
-POST /api/sla-policies/
-POST /api/sla-policies/{policy_id}/set-default
-POST /api/users/
-POST /api/v1/cases/search
-POST /api/workflows/generate
-POST /api/workflows/runs/{run_id}/narrate
-POST /api/workflows/threat-hunt/coverage
 PUT /api/auth/me
-PUT /api/sla-policies/{policy_id}
-PUT /api/users/{user_id}

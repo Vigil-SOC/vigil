@@ -32,6 +32,7 @@ from core.storage.models import User
 # home for mount metadata across all 42 routers. This module was the sole
 # exception, which is why its include_router call passed no tags (issue #478).
 router = APIRouter()
+router.dependencies.append(permission_gate("integrations.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/kafka",
@@ -42,7 +43,7 @@ ROUTER_META = RouterMeta(
 logger = logging.getLogger(__name__)
 
 # The daemon applies these values. Same class of change as the S3 settings route.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_WRITE = [permission_gate("integrations.write")]
 
 SYSTEMCONFIG_KEY = "kafka.settings"
 DAEMON_STATUS_TIMEOUT_SECONDS = 2.0

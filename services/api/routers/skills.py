@@ -47,7 +47,8 @@ router = APIRouter()
 
 # A saved skill's description reaches every agent's system prompt, so writing
 # one is a settings change, not an analyst action. Reads and tests stay open.
-_SKILLS_WRITE = [permission_gate("settings.write")]
+_SKILLS_WRITE = [permission_gate("automation.write")]
+router.dependencies.append(permission_gate("automation.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/skills",
@@ -260,7 +261,9 @@ async def remove_skill(name: str):
     return {"deleted": name}
 
 
-@router.post("/{name}/test", response_model=SkillTestResponse)
+@router.post(
+    "/{name}/test", response_model=SkillTestResponse, dependencies=_SKILLS_WRITE
+)
 async def test_skill(name: str):
     """Run the saved skill's ``evals/cases.json`` through the chat model.
 

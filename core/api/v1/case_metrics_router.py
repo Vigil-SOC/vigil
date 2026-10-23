@@ -29,6 +29,7 @@ from core.storage.models import Case, CaseClosureInfo
 from core.storage.schemas import CaseMetricsSchema
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/cases/metrics",

@@ -25,6 +25,8 @@ router = APIRouter()
 # Grading a decision is deciding on it, so it takes the approvals right: the
 # console gates the AI Decisions screen on the same permission.
 _DECIDE = [permission_gate("ai_decisions.approve")]
+_LOG = [permission_gate("ai_chat.use")]
+router.dependencies.append(permission_gate("ai_decisions.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/ai",
@@ -128,7 +130,9 @@ class AIDecisionStatsResponse(BaseModel):
 # ========== API Endpoints ==========
 
 
-@router.post("/decisions", response_model=AIDecisionResponse, status_code=201)
+@router.post(
+    "/decisions", response_model=AIDecisionResponse, status_code=201, dependencies=_LOG
+)
 async def create_ai_decision(request: CreateAIDecisionRequest):
     """
     Log an AI decision for tracking and feedback.

@@ -26,6 +26,7 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 
 router = APIRouter()
+router.dependencies.append(permission_gate("findings.read"))
 
 _FINDINGS_WRITE = [permission_gate("findings.write")]
 

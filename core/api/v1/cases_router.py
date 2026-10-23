@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from core.auth.current_user import get_current_user
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
@@ -69,6 +69,7 @@ from core.time import utcnow
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 _CASES_WRITE = [permission_gate("cases.write")]
 
@@ -452,6 +453,8 @@ def update_case(
     if case_data.priority is not None:
         updates["priority"] = case_data.priority
     if case_data.assignee is not None:
+        # The case owner. Task assignee stays cases.write.
+        deny_unless(current_user.user_id, "cases.assign")
         # Empty or whitespace unassigns.
         updates["assignee"] = case_data.assignee.strip() or None
     if case_data.notes is not None:

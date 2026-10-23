@@ -19,6 +19,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from core.auth.permissions import permission_gate
 from core.config import get_settings
 from core.integrations.vstrike.client import (
     get_vstrike_service,
@@ -47,7 +48,12 @@ ROUTER_META = RouterMeta(
         "carries its own dependency."
     ),
 )
-authenticated_router = APIRouter(dependencies=[Depends(get_current_active_user)])
+authenticated_router = APIRouter(
+    dependencies=[
+        Depends(get_current_active_user),
+        permission_gate("integrations.read"),
+    ]
+)
 logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
 

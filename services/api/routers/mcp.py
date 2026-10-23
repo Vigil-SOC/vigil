@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth import trail_events
+from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
 from core.integrations.mcp.service import MCPService
@@ -26,6 +27,7 @@ from services.api.middleware.auth import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+router.dependencies.append(permission_gate("integrations.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/mcp",

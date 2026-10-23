@@ -39,9 +39,10 @@ ROUTER_META = RouterMeta(
 )
 service = CustomAgentService()
 
-# A saved custom agent's prompt and tools are loaded into workflow runs, so
-# writing one is a settings change. Generating a draft does not save it.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+# A saved custom agent's prompt and tools are loaded into workflow runs.
+# Generating a draft does not save it; both are automation.
+_SETTINGS_WRITE = [permission_gate("automation.write")]
+router.dependencies.append(permission_gate("automation.read"))
 
 
 def _refresh_manager() -> None:
@@ -201,7 +202,7 @@ def list_available_tools(
     }
 
 
-@router.post("/agents/custom/generate")
+@router.post("/agents/custom/generate", dependencies=_SETTINGS_WRITE)
 async def generate_custom_agent(
     payload: GenerateAgentRequest,
     generator: AgentAIGenerator = Depends(provide_agent_ai),

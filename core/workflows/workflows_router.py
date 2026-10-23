@@ -42,7 +42,9 @@ router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
 # Enabling, reloading, or saving a workflow changes what every run can do.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_WRITE = [permission_gate("automation.write")]
+_CHAT = [permission_gate("ai_chat.use")]
+router.dependencies.append(permission_gate("automation.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api",
@@ -297,7 +299,7 @@ async def delete_custom_workflow(
 # -----------------------------------------------------------------------------
 
 
-@router.post("/workflows/generate")
+@router.post("/workflows/generate", dependencies=_SETTINGS_WRITE)
 async def generate_workflow(
     payload: WorkflowGenerateRequest,
     generator: WorkflowAIGenerator = Depends(provide_workflow_ai),
@@ -321,7 +323,7 @@ async def generate_workflow(
 # -----------------------------------------------------------------------------
 
 
-@router.post("/workflows/threat-hunt/coverage")
+@router.post("/workflows/threat-hunt/coverage", dependencies=_CHAT)
 async def check_hunt_coverage(payload: HuntCoverageRequest):
     """Say whether a threat report is already hunted: ``running``, ``concluded``
     or ``uncovered``. Read-only -- the caller decides whether to POST the
@@ -772,7 +774,7 @@ async def cancel_workflow_run(
     }
 
 
-@router.post("/workflows/runs/{run_id}/narrate")
+@router.post("/workflows/runs/{run_id}/narrate", dependencies=_CHAT)
 async def narrate_workflow_run(
     run_id: str,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
@@ -893,7 +895,7 @@ async def _restate_summary(run_id: str, run_service: WorkflowRunService) -> None
         logger.warning("could not restate the stored summary of %s: %s", run_id, exc)
 
 
-@router.delete("/workflows/runs/{run_id}")
+@router.delete("/workflows/runs/{run_id}", dependencies=_SETTINGS_WRITE)
 async def delete_workflow_run(
     run_id: str,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),

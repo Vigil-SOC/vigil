@@ -44,6 +44,7 @@ from core.workflows.workflow_run_service import WorkflowRunService
 router = APIRouter()
 
 _RUN_AGENTS = [permission_gate("ai_chat.use")]
+router.dependencies.append(permission_gate("ai_chat.use"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/agent-runs",
