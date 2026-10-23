@@ -10,6 +10,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from core.cases.case_status import CLOSED
 from core.storage.models import Case, CaseMetrics, CaseSLA, CaseTask
 from core.storage.unit_of_work import unit_of_work
 
@@ -68,8 +69,7 @@ class CaseMetricsService:
                         (first_activity_dt - case_created).total_seconds()
                     )
 
-                # Time to resolve (case closed/resolved)
-                if case.status in ["resolved", "closed"]:
+                if case.status == CLOSED:
                     if case.updated_at:
                         metrics.time_to_resolve = int(
                             (case.updated_at - case_created).total_seconds()

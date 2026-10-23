@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from core.cases.case_status import CLOSED
 from core.storage.models.workflow import LIVE_CASE_STATES
 
 # Fractions of the clock, matching ``get_sla_status`` (warning at 75%, critical
@@ -18,8 +19,6 @@ from core.storage.models.workflow import LIVE_CASE_STATES
 # ``get_sla_status`` once per case.
 HEALTH_WARNING = 0.75
 HEALTH_CRITICAL = 0.90
-
-CLOSED = "closed"
 
 
 def combined_state(case_status: str | None, investigation_status: str | None) -> str:
