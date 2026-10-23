@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Upload
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
+from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -82,10 +83,10 @@ class WorkflowExecuteRequest(BaseModel):
     # sentence, so a subject is declared or a Verdict is recalled by nobody.
     hypothesis_subjects: Optional[Dict[str, List[str]]] = None
     # Turns, not model calls. Bounded so a typo cannot enqueue an hour of spend.
-    iterations: Optional[int] = Field(default=None, ge=1, le=40)
+    iterations: Optional[int] = Field(default=None, ge=1, le=MAX_ITERATIONS)
     # What the caller will spend on this question, which is not a property of the
     # definition. Bounded because a mistyped ceiling is money.
-    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=100)
+    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=MAX_COST_USD)
     # Whether the hunt stops and asks before it spends. The policy defaults to auto,
     # so a headless run advances with nobody at a terminal.
     approve_hypotheses: Optional[bool] = None

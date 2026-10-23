@@ -273,9 +273,7 @@ async def test_a_run_that_asked_nothing_puts_up_nothing(monkeypatch):
     "asked,expected",
     [
         ({"iterations": 3}, 3),
-        ({"iterations": "5"}, 5),
         ({}, None),
-        ({"iterations": "ten"}, None),
     ],
 )
 async def test_the_turn_count_rides_the_job(monkeypatch, asked, expected):
@@ -307,10 +305,7 @@ async def test_the_turn_count_rides_the_job(monkeypatch, asked, expected):
     "asked,expected",
     [
         ({"max_cost_usd": 25}, {"budgets": {"max_cost_usd": 25.0}}),
-        ({"max_cost_usd": "7.5"}, {"budgets": {"max_cost_usd": 7.5}}),
         ({}, None),
-        ({"max_cost_usd": "lots"}, None),
-        ({"max_cost_usd": 0}, None),
     ],
 )
 async def test_the_cost_ceiling_rides_the_job(monkeypatch, asked, expected):

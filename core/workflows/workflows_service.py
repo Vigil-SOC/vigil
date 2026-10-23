@@ -14,7 +14,6 @@ from core.agents.attribution import (
     principal_id_for_username,
 )
 from core.agents.queue import new_run_id
-from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.auth import tool_principal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.documents.fence import fenced_document
@@ -98,31 +97,6 @@ def _objectives(metadata: Dict[str, Any]) -> List[str]:
     if not isinstance(raw, list):
         return []
     return [str(item) for item in raw if str(item).strip()]
-
-
-# None rather than a number, so a caller that says nothing leaves the definition's
-# count rather than pinning every run to whatever this file thinks.
-def _asked_iterations(parameters: Optional[Dict[str, Any]]) -> Optional[int]:
-    stated = (parameters or {}).get("iterations")
-    try:
-        return min(int(stated), MAX_ITERATIONS) if stated is not None else None
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-
-# The harness already takes an overrides block naming budgets or runtime, so a cost
-# ceiling needs no new contract. None leaves the resolver's, which is the shipped one.
-def _asked_overrides(parameters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    stated = (parameters or {}).get("max_cost_usd")
-    if stated is None:
-        return None
-    try:
-        ceiling = float(stated)
-    except (TypeError, ValueError):
-        return None
-    if not 0 < ceiling < float("inf"):
-        return None
-    return {"budgets": {"max_cost_usd": min(ceiling, MAX_COST_USD)}}
 
 
 # A key carrying None is not an absent key: JSON null reaches TypeScript as a value,
@@ -714,6 +688,7 @@ class WorkflowsService:
         )
         origin_value = _origin_value(resolved_origin, person_id, origin_id)
         asked = _asked_hypotheses(parameters)
+        ceiling = (parameters or {}).get("max_cost_usd")
         spec = _omit_unset(
             {
                 # A reference, not a path: the layers resolve at run start, so an
@@ -726,8 +701,10 @@ class WorkflowsService:
                 # every run of it shares.
                 "hypotheses": asked,
                 "hypothesis_subjects": _asked_hypothesis_subjects(parameters, asked),
-                "iterations": _asked_iterations(parameters),
-                "overrides": _asked_overrides(parameters),
+                "iterations": (parameters or {}).get("iterations"),
+                "overrides": (
+                    {"budgets": {"max_cost_usd": ceiling}} if ceiling else None
+                ),
                 # True only: _omit_unset keeps None out, so an unset flag leaves the
                 # config's policy rather than pinning every run to this side's.
                 "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
