@@ -99,13 +99,6 @@ def _objectives(metadata: Dict[str, Any]) -> List[str]:
     return [str(item) for item in raw if str(item).strip()]
 
 
-# The harness already takes an overrides block naming budgets or runtime, so a cost
-# ceiling needs no new contract. None leaves the resolver's, which is the shipped one.
-def _asked_overrides(parameters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    ceiling = (parameters or {}).get("max_cost_usd")
-    return {"budgets": {"max_cost_usd": ceiling}} if ceiling else None
-
-
 # A key carrying None is not an absent key: JSON null reaches TypeScript as a value,
 # which a reader checking `=== undefined` takes as one.
 def _omit_unset(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -695,6 +688,7 @@ class WorkflowsService:
         )
         origin_value = _origin_value(resolved_origin, person_id, origin_id)
         asked = _asked_hypotheses(parameters)
+        ceiling = (parameters or {}).get("max_cost_usd")
         spec = _omit_unset(
             {
                 # A reference, not a path: the layers resolve at run start, so an
@@ -708,7 +702,9 @@ class WorkflowsService:
                 "hypotheses": asked,
                 "hypothesis_subjects": _asked_hypothesis_subjects(parameters, asked),
                 "iterations": (parameters or {}).get("iterations"),
-                "overrides": _asked_overrides(parameters),
+                "overrides": (
+                    {"budgets": {"max_cost_usd": ceiling}} if ceiling else None
+                ),
                 # True only: _omit_unset keeps None out, so an unset flag leaves the
                 # config's policy rather than pinning every run to this side's.
                 "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
