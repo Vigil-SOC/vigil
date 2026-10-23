@@ -100,10 +100,8 @@ from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
     _infer_title,
-    count_steps,
     generate_initial_context,
     generate_initial_state,
-    generate_plan,
     select_workflow,
 )
 from services.daemon.shared_intel import SharedIntelligence
@@ -1149,16 +1147,9 @@ class Orchestrator:
             raise ValueError("a run opened on findings needs a case")
 
         inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
-        total_steps = count_steps(workflow_id)
-
         workdir = self.workdir.create(inv_id)
 
-        plan_md = generate_plan(inv_id, workflow_id, findings, case_id, hypothesis)
-        self.workdir.write_file(inv_id, "plan.md", plan_md)
-
-        state = generate_initial_state(
-            inv_id, workflow_id, case_id, findings, total_steps
-        )
+        state = generate_initial_state(inv_id, workflow_id, case_id, findings)
         self.workdir.write_state(inv_id, state)
 
         self.workdir.write_file(
@@ -1233,7 +1224,6 @@ class Orchestrator:
             "status": "assigned",
             "workdir": str(workdir),
             "current_step": 1,
-            "total_steps": total_steps,
             "priority": priority,
             "max_iterations": self.config.max_iterations_per_agent,
             "max_cost_usd": self.config.max_cost_per_investigation,
@@ -1278,7 +1268,7 @@ class Orchestrator:
         )
 
         logger.info(
-            f"Created investigation {inv_id} (workflow={workflow_id}, priority={priority}, steps={total_steps})"
+            f"Created investigation {inv_id} (workflow={workflow_id}, priority={priority})"
         )
 
         await self._check_cross_correlations(inv_id)
@@ -2174,31 +2164,6 @@ class Orchestrator:
                         f"Failed to link cases {case_a} <-> {case_b}", exc_info=True
                     )
 
-            cross_note = (
-                f"\n\n## Cross-Investigation Note\n"
-                f"Related investigation {other_id} shares IOCs: {', '.join(shared_keys[:10])}. "
-                f"Review for campaign correlation.\n"
-            )
-            other_note = (
-                f"\n\n## Cross-Investigation Note\n"
-                f"Related investigation {inv_id} shares IOCs: {', '.join(shared_keys[:10])}. "
-                f"Review for campaign correlation.\n"
-            )
-
-            try:
-                plan_a = self.workdir.read_file(inv_id, "plan.md")
-                if f"Related investigation {other_id}" not in plan_a:
-                    self.workdir.append_file(inv_id, "plan.md", cross_note)
-            except Exception:
-                pass
-
-            try:
-                plan_b = self.workdir.read_file(other_id, "plan.md")
-                if f"Related investigation {inv_id}" not in plan_b:
-                    self.workdir.append_file(other_id, "plan.md", other_note)
-            except Exception:
-                pass
-
             self.workdir.append_log(
                 inv_id,
                 {
@@ -2336,7 +2301,6 @@ class Orchestrator:
                     status=inv_record.get("status", "assigned"),
                     workdir=inv_record["workdir"],
                     current_step=inv_record.get("current_step", 0),
-                    total_steps=inv_record.get("total_steps", 0),
                     priority=inv_record.get("priority", "medium"),
                     max_iterations=inv_record.get(
                         "max_iterations", self.config.max_iterations_per_agent

@@ -14,11 +14,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from sqlalchemy.orm import Session
-
 from core.llm.defaults import DEFAULT_MODEL
-from core.llm.providers.clients import create_anthropic_client
-from core.secrets_manager import get_secret
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -32,19 +28,6 @@ class AIInsightsService:
     """Service for generating AI-powered insights from SOC data."""
 
     def __init__(self):
-        """Initialize the AI insights service with Claude API client."""
-        api_key = (
-            get_secret("ANTHROPIC_API_KEY")
-            or get_secret("CLAUDE_API_KEY")
-            or get_secret("anthropic_api_key")
-        )
-        if not api_key:
-            logger.warning(
-                "No Anthropic API key found - AI insights will use fallback mode"
-            )
-            self.client = None
-        else:
-            self.client = create_anthropic_client(api_key)
         self.model = DEFAULT_MODEL
 
         # In-memory cache of insights keyed by time_range.
@@ -89,7 +72,6 @@ class AIInsightsService:
 
     async def trigger_regeneration(
         self,
-        db: Session,
         metrics: Dict[str, Any],
         time_series: List[Dict[str, Any]],
         time_range: str,
@@ -117,7 +99,6 @@ class AIInsightsService:
 
         try:
             insights = await self.generate_insights(
-                db=db,
                 metrics=metrics,
                 time_series=time_series,
                 time_range=time_range,
@@ -138,7 +119,6 @@ class AIInsightsService:
 
     async def generate_insights(
         self,
-        db: Session,
         metrics: Dict[str, Any],
         time_series: List[Dict[str, Any]],
         time_range: str,
@@ -147,7 +127,6 @@ class AIInsightsService:
         Generate AI-powered insights from analytics data.
 
         Args:
-            db: Database session
             metrics: Key SOC metrics
             time_series: Time series data for trends
             time_range: Time range for the analysis
@@ -156,11 +135,6 @@ class AIInsightsService:
             List of insights with recommendations, warnings, and anomalies
         """
         try:
-            # If no API client available, use fallback insights
-            if not self.client:
-                logger.info("No Claude API client - using fallback insights")
-                return self._get_fallback_insights(metrics)
-
             # Prepare context for Claude
             context = self._prepare_context(metrics, time_series, time_range)
 
@@ -246,20 +220,6 @@ Provide ONLY the JSON array, no other text."""
                     raise RuntimeError(result.get("error") or "LLM call failed")
                 return result.get("content", "")
             return str(result)
-        except ImportError:
-            if not self.client:
-                raise ValueError("Claude API client not initialized")
-            loop = asyncio.get_running_loop()
-            message = await loop.run_in_executor(
-                None,
-                lambda: self.client.messages.create(
-                    model=self.model,
-                    max_tokens=2000,
-                    temperature=0.3,
-                    messages=[{"role": "user", "content": context}],
-                ),
-            )
-            return message.content[0].text
         except Exception as e:
             logger.error(f"Error calling Claude API: {str(e)}")
             raise
