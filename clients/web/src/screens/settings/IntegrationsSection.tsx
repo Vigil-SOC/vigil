@@ -28,6 +28,8 @@ import { buildCatalog } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
+import AuditFeedPanel from './AuditFeedPanel'
+import { useAuth } from '../../contexts/AuthContext'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { SectionProps } from './types'
 
@@ -47,6 +49,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const [tab, setTab] = useState<IntegrationsTab>(requested)
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
+  // audit.forward: the feed's own tab; the server also requires a person sign-in
+  const canForward = useAuth().hasPermission('audit.forward')
   const [busy, setBusy] = useState<string | null>(null)
   const [reloadingServers, setReloadingServers] = useState(false)
   // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
@@ -170,6 +174,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     ['add', 'Add integration', ready ? available : null],
     ['custom', 'Custom', customCount],
     ['surface', 'Vigil MCP server', null],
+    ...(canForward ? [['audit-feed', 'Audit feed', null] as [IntegrationsTab, string, null]] : []),
   ]
   const first = attention[0]
   const tiles: [string, number, string][] = [
@@ -354,6 +359,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
       </div>
 
       {tab === 'surface' && <McpSurfacePanel notify={notify} />}
+
+      {tab === 'audit-feed' && canForward && <AuditFeedPanel notify={notify} />}
 
       {wizardFor && (
         <IntegrationWizard

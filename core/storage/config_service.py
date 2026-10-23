@@ -260,6 +260,7 @@ class ConfigService:
                 old_value=old_value,
                 new_value=config,
                 change_reason=change_reason,
+                enabled=enabled,
             )
 
             session.commit()
@@ -344,6 +345,7 @@ class ConfigService:
         old_value: Optional[Dict[str, Any]],
         new_value: Optional[Dict[str, Any]],
         change_reason: Optional[str] = None,
+        enabled: Optional[bool] = None,
     ):
         """Record one config change on the caller's session.
 
@@ -360,6 +362,7 @@ class ConfigService:
             new_value=new_value,
             changed_by=self.user_id,
             change_reason=change_reason,
+            enabled=enabled,
         )
 
     def record_audit(
@@ -451,27 +454,29 @@ def write_config_audit(
     new_value: Optional[Dict[str, Any]],
     changed_by: str,
     change_reason: Optional[str] = None,
+    enabled: Optional[bool] = None,
 ) -> None:
     """Append a trail entry, or insert ``config_audit_log`` when the trail is absent.
 
     One or the other, never both. The trail path does not catch ``append``:
     a failure rolls the caller's transaction back. Secret copies are redacted
-    before they reach a trail column.
+    before they reach a trail column. ``enabled`` is an integration's switch
+    after the write; the trail entry carries it, so turning one on is recorded.
     """
     if _trail_ready(session):
-        trail.append(
-            session,
-            {
-                "action": CONFIG_CHANGE,
-                "actor": changed_by,
-                "verb": action,
-                "config_type": config_type,
-                "config_key": config_key,
-                "change_reason": change_reason,
-                "old_value": redacted_config_copy(config_type, config_key, old_value),
-                "new_value": redacted_config_copy(config_type, config_key, new_value),
-            },
-        )
+        payload = {
+            "action": CONFIG_CHANGE,
+            "actor": changed_by,
+            "verb": action,
+            "config_type": config_type,
+            "config_key": config_key,
+            "change_reason": change_reason,
+            "old_value": redacted_config_copy(config_type, config_key, old_value),
+            "new_value": redacted_config_copy(config_type, config_key, new_value),
+        }
+        if enabled is not None:
+            payload["enabled"] = enabled
+        trail.append(session, payload)
         return
     session.add(
         ConfigAuditLog(

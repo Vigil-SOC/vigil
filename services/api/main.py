@@ -677,6 +677,7 @@ async def _startup(app: FastAPI):
     else:
         await _connect_external_services(app.state.mcp_client, app.state.mcp_registry)
         _start_medic_poller(app)
+        _start_audit_leader(app)
 
     # Load custom agents from DB into the AgentManager so built-in + custom
     # agents are visible in one merged list. Lookup misses for "custom-*" IDs
@@ -698,8 +699,16 @@ def _start_medic_poller(app) -> None:
     app.state.medic_poller = start_poller(get_settings())
 
 
-async def _stop_medic_poller(app) -> None:
-    task = getattr(app.state, "medic_poller", None)
+def _start_audit_leader(app) -> None:
+    """The audit trail's leader (#2767): a task in every backend process, of
+    which the one holding its advisory lock drains, checkpoints and sends."""
+    from core.audit.feed import start
+
+    app.state.audit_leader = start(get_settings().vigil_upgrade_dir)
+
+
+async def _stop_task(app, name: str) -> None:
+    task = getattr(app.state, name, None)
     if task is None:
         return
     task.cancel()
@@ -709,9 +718,14 @@ async def _stop_medic_poller(app) -> None:
         pass
 
 
+async def _stop_medic_poller(app) -> None:
+    await _stop_task(app, "medic_poller")
+
+
 async def _shutdown(app: FastAPI):
     """Clean up LLM gateway and MCP connections on shutdown."""
     await _stop_medic_poller(app)
+    await _stop_task(app, "audit_leader")
     logger.info("Shutting down LLM Gateway...")
     try:
         from core.llm.gateway.gateway import close_llm_gateway

@@ -4389,6 +4389,20 @@
       color: var(--tx2);
    }
 
+   /* Audit feed: two health tiles, the destination in pairs, PEM in mono. */
+   .feed-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+   .feed-dest {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+   }
+   .feed-pem {
+      min-height: 72px;
+      resize: vertical;
+      font-family: var(--font-mono);
+      font-size: 12px;
+   }
+
    .mcp-onoff {
       display: flex;
       align-items: center;

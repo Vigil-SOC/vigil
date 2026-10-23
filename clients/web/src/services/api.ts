@@ -475,6 +475,42 @@ export const mcpApi = {
     api.delete(`/mcp/surface/credentials/${credentialId}`),
 }
 
+export type AuditFeedHealth = {
+  delivered_seq: number
+  delivered_at: string | null
+  tip_seq: number
+  behind: number
+  failing: boolean
+  last_error: string | null
+  last_error_at: string | null
+}
+
+export type AuditFeed = {
+  enabled: boolean
+  host: string | null
+  port: number | null
+  tls: { ca: boolean; client_cert: boolean; client_key: boolean }
+  health: AuditFeedHealth
+}
+
+export type AuditFeedSettings = {
+  enabled: boolean
+  host: string
+  port: number
+  // An empty PEM keeps the stored one.
+  ca_pem?: string
+  client_cert_pem?: string
+  client_key_pem?: string
+  clear_client_cert?: boolean
+}
+
+// The audit trail's syslog feed (CEF over TLS). Needs audit.forward and a person sign-in.
+export const auditFeedApi = {
+  get: () => api.get<AuditFeed>('/audit/feed'),
+  save: (body: AuditFeedSettings) => api.put<AuditFeed>('/audit/feed', body),
+  test: () => api.post<{ ok: boolean; error: string | null }>('/audit/feed/test'),
+}
+
 export const agentsApi = {
   listAgents: () => api.get('/agents/agents'),
   // the router prefix and the route path both say "agents"

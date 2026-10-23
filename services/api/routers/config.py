@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, create_model
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.auth.permissions import permission_gate
 from core.config import (
+    AUDIT_FEED_INTEGRATION_ID,
     get_settings,
     is_demo_mode,
     load_integrations_config,
@@ -848,6 +849,15 @@ def set_integrations_config(
     Returns:
         Success status
     """
+    if (
+        AUDIT_FEED_INTEGRATION_ID in config.integrations
+        or AUDIT_FEED_INTEGRATION_ID in config.enabled_integrations
+    ):
+        # A person with audit.forward sets the feed, through /api/audit/feed only.
+        raise HTTPException(
+            status_code=403, detail="The audit feed is set from /api/audit/feed"
+        )
+
     config_service = _for_user(current_user)
 
     # A stored credential is sent to whatever destination is saved, so moving
