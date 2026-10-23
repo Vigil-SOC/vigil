@@ -2693,10 +2693,7 @@ export interface paths {
         };
         /**
          * Get General Config
-         * @description Get general application settings.
-         *
-         *     Returns:
-         *         General configuration
+         * @description Get general application settings; 503 when the database read fails.
          */
         get: operations["get_api_config_general"];
         put?: never;
@@ -3033,10 +3030,7 @@ export interface paths {
         };
         /**
          * Get Theme Config
-         * @description Get theme configuration.
-         *
-         *     Returns:
-         *         Theme configuration
+         * @description Get theme configuration; 503 when the database read fails.
          */
         get: operations["get_api_config_theme"];
         put?: never;
