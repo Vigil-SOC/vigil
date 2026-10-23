@@ -1,0 +1,7 @@
+$ python3 probe.py
+force_flush -> True
+breadcrumbs: ['bad'] set_tag calls: 2
+calls: ['on_start', 'on_end', 'on_start', 'on_end', 'force_flush', 'shutdown']
+$ SENTRY_DSN=... python3 wire.py
+dsn set: True
+processors: ['SensitiveAttributeScrubber', 'BatchSpanProcessor', 'SentrySpanProcessor']

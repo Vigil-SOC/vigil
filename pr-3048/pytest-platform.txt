@@ -1,0 +1,3 @@
+0.08s call     unit/platform/test_telemetry.py::TestTelemetryDisabled::test_init_returns_false_when_unset
+0.07s call     unit/platform/test_telemetry.py::TestConfigHelpers::test_is_otel_enabled_true
+================= 108 passed, 2 warnings in 158.61s (0:02:38) ==================
