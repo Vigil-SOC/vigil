@@ -1,0 +1,4 @@
+     × skips a blank detail rather than showing an empty line 14ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 2 passed (3)
+      Tests  3 passed (3)
