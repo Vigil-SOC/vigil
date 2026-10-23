@@ -43,7 +43,7 @@ const provider = respondingProvider({
   ticks: 0,
 });
 
-const build: HarnessFactory = (_kind, spec, state, memory = nullMemory, seed = FRESH) =>
+const build: HarnessFactory = (spec, state, memory = nullMemory, seed = FRESH) =>
   ({
     provider,
     registry: registryOf([], {}),
