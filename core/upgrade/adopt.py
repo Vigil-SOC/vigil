@@ -64,12 +64,13 @@ FORWARD = (
     "44_medic_last_seen.sql",
     "45_medic_permissions.sql",
     "46_users_tokens_valid_after.sql",
+    "47_conversation_generation.sql",
 )
 # The stamps adoption accepts, and the suffix each one runs. A 0.8.0 stamp
 # can be a 0.7 install upgraded in place, which never got the two columns
 # only 06 and create_all build; both steps are no-ops where they exist.
 # 0.8.0 already applied everything before the mfa step.
-_FROM_0_8 = FORWARD[-5:]
+_FROM_0_8 = FORWARD[-6:]
 FORWARD_BY_STAMP = {"0.7.0": FORWARD, "0.8.0": _FROM_0_8}
 # Waits for a lock longer than this fail the run instead of queueing the app
 # behind an ALTER.
