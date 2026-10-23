@@ -32,8 +32,6 @@ RATE_INFO = (
     "because that is how the row is stored."
 )
 ARRIVAL_SOURCE = "Findings created today (UTC) with this data source."
-OUTCOME_SOURCE = "Alerts that arrived today (UTC) and reached this state. Each alert is counted once."
-ENGINE_SOURCE = "No count. The outcome counts partition today's arrivals."
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."
 STEP_SOURCE = "The open phase on the newest live run, or that run's status when it has no phase row."
 UNMEASURED_TEXT = "Not measured yet"
@@ -90,7 +88,6 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": _NODE_LABELS[state],
                 "count": counts.get(state, 0),
-                "source_text": OUTCOME_SOURCE,
                 "info": NEEDS_YOU_INFO if state == "needs_you" else None,
                 "unmeasured_text": None,
             }
@@ -101,7 +98,6 @@ def _outcome_nodes(states: list[dict]) -> list[dict]:
                 "state": state,
                 "label": label,
                 "count": None,
-                "source_text": info,
                 "info": info,
                 "unmeasured_text": UNMEASURED_TEXT,
             }
@@ -222,13 +218,14 @@ def _feed_items(load) -> list[dict]:
     items = []
     for row in staged:
         external_id = row.pop("external_id")
+        evidence_links = row.pop("evidence_links")
         state, case_id = states[row["finding_id"]]
         items.append(
             {
                 **row,
                 "source_link": resolve_source_link(
                     {
-                        "evidence_links": row["evidence_links"],
+                        "evidence_links": evidence_links,
                         "data_source": row["data_source"],
                         "external_id": external_id,
                     },
@@ -236,7 +233,6 @@ def _feed_items(load) -> list[dict]:
                 ),
                 "case_id": case_id,
                 "terminal_state": state,
-                "terminal_label": TERMINAL_LABELS[state],
             }
         )
     return items
@@ -286,7 +282,6 @@ def overview_payload(
         "day": day.isoformat(),
         "empty": enabled_count == 0 and arrival_total == 0,
         "arrivals": arrivals,
-        "engine": {"source_text": ENGINE_SOURCE},
         "outcomes": _outcome_nodes(states),
         "running_source": RUNNING_SOURCE,
         "step_source": STEP_SOURCE,

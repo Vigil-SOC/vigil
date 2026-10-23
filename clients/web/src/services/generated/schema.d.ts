@@ -2153,32 +2153,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/{case_id}/generate-report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate Case Report
-         * @description Generate a PDF report for a case.
-         *
-         *     Args:
-         *         case_id: The case ID
-         *
-         *     Returns:
-         *         Report file information
-         */
-        post: operations["post_api_cases_case_id_generate-report"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/{case_id}/iocs": {
         parameters: {
             query?: never;
@@ -8026,17 +8000,6 @@ export interface components {
         CaseRelationshipsResponse: {
             /** Relationships */
             relationships: components["schemas"]["CaseRelationshipSchema"][];
-        };
-        /** CaseReportResponse */
-        CaseReportResponse: {
-            /** Case Id */
-            case_id: string;
-            /** Filename */
-            filename: string;
-            /** Path */
-            path: string;
-            /** Success */
-            success: boolean;
         };
         /**
          * CaseSLASchema
@@ -15093,39 +15056,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_cases_case_id_generate-report": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CaseReportResponse"];
                 };
             };
             /** @description Validation Error */
