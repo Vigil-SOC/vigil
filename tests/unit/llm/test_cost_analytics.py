@@ -50,7 +50,6 @@ class TestCacheHitRate:
 
 @pytest.mark.asyncio
 async def test_get_cost_analytics_response_shape(monkeypatch):
-    """The endpoint returns what the Health spend panel reads and never calls Bifrost."""
     import httpx
 
     from core.reporting import analytics_service as svc
