@@ -373,8 +373,8 @@ export const casesApi = {
     const res = await api.post<Schema<'JiraExportResponse'>>(`/cases/${encodeURIComponent(id)}/export/jira`, {
       project_key: projectKey,
     })
-    if (!res.data.success) throw new Error(res.data.error || 'Jira export failed')
-    return res.data.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created'
+    if (res.data?.success === false) throw new Error(res.data.error || 'Jira export failed')
+    return res.data?.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created'
   },
 }
 
