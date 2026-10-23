@@ -121,6 +121,7 @@ def maker():
             s.add(
                 User(
                     user_id=f"u-{role_id}",
+                    principal_id=f"u-{role_id}",
                     username=role_id,
                     email=f"{role_id}@example.com",
                     password_hash="x",

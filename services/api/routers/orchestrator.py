@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from core.auth import tool_principal
+from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
@@ -342,8 +344,16 @@ def get_investigation_file(investigation_id: str, filename: str):
         raise
 
 
+def _person(user: User) -> Dict[str, str]:
+    """Who a Human Ask runs as: a name for the row, a signed token for the tools."""
+    return {
+        "started_by": user.username,
+        "principal": tool_principal.mint(user.username, ttl=tool_principal.RUN_TTL),
+    }
+
+
 @router.post("/investigations/{investigation_id}/wake", dependencies=_RUN_AGENTS)
-def wake_investigation(investigation_id: str):
+def wake_investigation(investigation_id: str, user: User = Depends(get_current_user)):
     """Restart a finished investigation by queueing a new one on the same case.
 
     A run's id is derived from its investigation id and its ledger is terminal
@@ -379,6 +389,7 @@ def wake_investigation(investigation_id: str):
                 "finding_ids": inv.get("trigger_ids") or [],
                 "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
                 or None,
+                **_person(user),
             },
         )
 
@@ -421,7 +432,9 @@ def kill_investigation(investigation_id: str):
 
 
 @router.post("/investigations", dependencies=_RUN_AGENTS)
-def create_investigation(request: InvestigationCreateRequest):
+def create_investigation(
+    request: InvestigationCreateRequest, user: User = Depends(get_current_user)
+):
     """Manually create a new investigation."""
     from services.daemon.orchestrator import insert_intake_trigger
 
@@ -434,6 +447,9 @@ def create_investigation(request: InvestigationCreateRequest):
     }
     if request.document:
         payload["document"] = request.document
+    # The daemon copies these onto the run. The token is not a session, and the
+    # triage read drops it; the username is what the run row is attributed to.
+    payload.update(_person(user))
 
     insert_intake_trigger(
         kind="human_ask",

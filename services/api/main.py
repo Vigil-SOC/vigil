@@ -27,7 +27,7 @@ validate_settings_or_exit()
 from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -450,7 +450,7 @@ def _build_services(app: FastAPI):
     set_process_mcp_client(app.state.mcp_client)
 
     # Long-lived, so its reconnect throttle applies across health probes; a fresh
-    # service per probe would re-run init_database(create_tables=True) each time.
+    # service per probe would re-run init_database() each time.
     app.state.health_storage = DatabaseDataService()
     # One HTTP client and one cached answer for every caller of GET /api/processes.
     app.state.process_health = ProcessHealth()
@@ -610,19 +610,20 @@ async def _startup(app: FastAPI):
     logger.info("Initializing data storage...")
     try:
         from core.config import is_demo_mode
+        from core.storage.connection import SchemaRevisionError
         from core.storage.database_data_service import DatabaseDataService
 
-        # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
-        # any endpoint tries to query it. start.sh runs scripts/init_schema.py
-        # first, but this covers environments that launch uvicorn directly
-        # (e.g. Docker, systemd, CI). A failure here is fatal — some endpoints
-        # use get_db_session() directly (see core/cases/case_metrics_router.py).
+        # The upgrade one-shot is what creates the schema. This only checks
+        # that alembic_version is this image's head, so a process started
+        # without that one-shot does not serve a database it cannot use.
         if not is_demo_mode():
             try:
                 from core.storage.connection import init_database
 
-                init_database(echo=False, create_tables=True)
-                logger.info("✓ Database schema ensured (create_all)")
+                init_database(echo=False)
+                logger.info("✓ Database schema revision matches this image")
+            except SchemaRevisionError:
+                raise
             except Exception as schema_err:
                 logger.error(
                     "Fatal: could not initialize database schema: %s",
@@ -657,6 +658,8 @@ async def _startup(app: FastAPI):
 
     except MissingPostgresPasswordError:
         raise  # fail closed: no database credentials, nothing to serve
+    except SchemaRevisionError:
+        raise  # the schema cannot serve this image
     except ImportError as e:
         logger.warning(f"Database modules not available: {e}")
     except Exception as e:
@@ -873,13 +876,12 @@ async def health_ready(request: Request):
 # Everything this process serves itself. A 404 under one of these is a miss,
 # not a client-side route: the SPA's router knows nothing about them, so
 # answering with the app shell hands a caller HTML where it asked for an API
-# result -- or, for a bundle under /static, HTML the browser then refuses to
+# result -- or, for a bundle under /assets, HTML the browser then refuses to
 # execute as a module.
 _SERVED_BY_THE_BACKEND = (
     "/api",
     "/internal",
     "/mcp",
-    "/static",
     "/assets",
     "/metrics",
     "/docs",
@@ -936,26 +938,7 @@ _mcp_gate = McpSurfaceGate()
 serve_at(app, _mcp_gate, _CONTEXT_PATH)
 
 
-# Serve React static files in production
 frontend_build_dir = _repo_root / "clients" / "web" / "build"
-static_dir = frontend_build_dir / "static"
-
-# Only mount static files if the build directory exists
-# This prevents errors during development when frontend hasn't been built
-if frontend_build_dir.exists() and static_dir.exists():
-    try:
-        app.mount(
-            f"{_CONTEXT_PATH}/static", StaticFiles(directory=static_dir), name="static"
-        )
-        logger.info(f"Serving static files from: {static_dir}")
-    except Exception as e:
-        logger.warning(f"Failed to mount static files: {e}")
-else:
-    logger.info("Frontend build directory not found - static file serving disabled")
-    logger.info(f"  Expected: {frontend_build_dir}")
-    logger.info(
-        "  Run 'npm run build' in the frontend directory to enable production mode"
-    )
 
 # Vite emits hashed JS/CSS bundles under build/assets and references them as
 # /assets/* from index.html. Mount that directory explicitly; otherwise the
@@ -970,6 +953,24 @@ if frontend_build_dir.exists() and assets_dir.exists():
         logger.info(f"Serving frontend assets from: {assets_dir}")
     except Exception as e:
         logger.warning(f"Failed to mount frontend assets: {e}")
+
+
+def _serve_file(path: Path):
+    async def serve(request: Request) -> FileResponse:
+        return FileResponse(path)
+
+    return serve
+
+
+# Vite copies public/ (favicon.ico) to the build root, beside index.html.
+if frontend_build_dir.exists():
+    for root_file in frontend_build_dir.iterdir():
+        if root_file.is_file() and root_file.name != "index.html":
+            app.add_route(
+                f"{_CONTEXT_PATH}/{root_file.name}",
+                _serve_file(root_file),
+                include_in_schema=False,
+            )
 
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
     # index.html is served with the active context path injected as a

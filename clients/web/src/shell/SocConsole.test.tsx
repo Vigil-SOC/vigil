@@ -9,7 +9,7 @@ import { SETUP_HIDDEN_KEY } from '../screens/home/setupHidden'
 import { NAV } from '../data/data'
 import { notifyAutonomyChanged } from '../screens/settings/useSettings'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
+import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, casesApi, configApi, consoleApi, overviewApi, timelineApi } from '../services/api'
 
 const authState = vi.hoisted(() => ({
   allow: (_permission: string): boolean => true,
@@ -285,7 +285,6 @@ vi.mock('../services/api', () => ({
     get: () => Promise.resolve({ data: { messages: [] } }),
     update: () => Promise.resolve({ data: {} }),
     delete: () => Promise.resolve({ data: {} }),
-    importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
   },
   // the spending card shows its own error state; budgets aren't under test here
   budgetsApi: {
@@ -830,9 +829,7 @@ describe('SocConsole', () => {
     it('comes back to the case on Back from a page the drawer led to, as Watch it run and Replay do', async () => {
       renderWithHistory()
       await openDrawer()
-      // Watch it run: the drawer closes as the link takes the page to the run.
       act(() => navigate('/workflows?run=run-1'))
-      fireEvent.keyDown(window, { key: 'Escape' })
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
       act(() => navigate(-1))
       const back = await screen.findByRole('dialog', { name: 'Case' })
@@ -854,6 +851,61 @@ describe('SocConsole', () => {
         expect((view.querySelector('.screen') as HTMLElement).style.height).toBe('100%')
         expect(view.querySelector('.case-page > .case-composer')).not.toBeNull()
       })
+    })
+
+    it('closes on Back to an entry it was never open over', async () => {
+      renderWithHistory()
+      await openDrawer()
+      act(() => navigate(-1))
+      await screen.findByRole('heading', { name: 'Dashboard' })
+      expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+    })
+
+    it('opens the case from an Overview alert in place of the alert, and Back leaves both closed', async () => {
+      const base = (await overviewApi.get()).data
+      const alert = {
+        finding_id: 'f-1', severity: 'high', data_source: 'splunk', terminal_state: 'working', terminal_label: 'Still working',
+        title: null, description: 'Odd login', created_at: '2026-10-01T00:01:00', evidence_links: [], source_link: null,
+        case_id: 'case-2026-0142', noise_marked: false,
+      }
+      const get = vi.spyOn(overviewApi, 'get').mockResolvedValue({ data: { ...base, empty: false, feed: [alert] } } as never)
+      renderWithHistory()
+      act(() => navigate('/overview?alert=f-1'))
+      const popup = await screen.findByRole('dialog', { name: /f-1/ })
+      fireEvent.click(await within(popup).findByRole('button', { name: 'Open case' }))
+      const drawer = await screen.findByRole('dialog', { name: 'Case' })
+      expect(within(drawer).getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: /f-1/ })).not.toBeInTheDocument()
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '')
+      fireEvent.click(within(drawer).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      get.mockRestore()
+    })
+
+    it('closes on a ⌘K jump to the screen it is open over', async () => {
+      renderWithHistory()
+      await openDrawer()
+      const input = screen.getByRole('combobox', { name: /Find a case/ })
+      fireEvent.change(input, { target: { value: 'Cases' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument())
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/cases')
+    })
+
+    it('opens a case that resolves after a move over the page moved to', async () => {
+      let resolve: (value: unknown) => void = () => {}
+      const getById = vi.spyOn(casesApi, 'getById').mockImplementationOnce(() => new Promise((r) => { resolve = r }) as never)
+      renderWithHistory()
+      const input = screen.getByRole('combobox', { name: /Find a case/ })
+      fireEvent.change(input, { target: { value: '/replay case-2026-0142' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+      act(() => navigate('/cases'))
+      await screen.findByRole('button', { name: 'New case' })
+      await act(async () => resolve({ data: { case_id: 'case-2026-0142', investigations: [] } }))
+      await screen.findByRole('dialog', { name: 'Case' })
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/cases')
+      getById.mockRestore()
     })
 
     it('stays closed on Back once the case was closed where it was open', async () => {
@@ -1312,6 +1364,28 @@ describe('SocConsole', () => {
     expect(poor).toHaveAttribute('data-level', 'poor')
     expect(poor).toHaveTextContent('Health is degraded.')
     expect(poor).toHaveClass('is-poor')
+  })
+
+  it('reads health once and shows the backend bypass in the header and the account menu', async () => {
+    vi.mocked(consoleApi.getHealth).mockClear()
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: { status: 'healthy', version: '4.5.6', auth_bypassed: true, storage: { database_available: true } },
+    } as never)
+    renderConsole()
+    expect(await screen.findByRole('status', { name: /Authentication bypassed/ })).toHaveTextContent('NO AUTH')
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByText('About Vigil · 4.5.6')).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Change password' })).not.toBeInTheDocument()
+    expect(consoleApi.getHealth).toHaveBeenCalledTimes(1)
+  })
+
+  it('claims no bypass when the health read fails', async () => {
+    vi.mocked(consoleApi.getHealth).mockRejectedValue(new Error('down'))
+    renderConsole()
+    await screen.findByRole('status', { name: 'System status' })
+    expect(screen.queryByRole('status', { name: /Authentication bypassed/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByRole('menuitem', { name: 'Change password' })).toBeInTheDocument()
   })
 
   it('re-reads the status sources every 30 seconds and turns Poor when one degrades later', async () => {

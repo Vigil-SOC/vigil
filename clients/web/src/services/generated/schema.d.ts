@@ -904,8 +904,11 @@ export interface paths {
         /**
          * Logout
          * @description Logout user: blacklist the current access token and the refresh token so
-         *     replaying either returns 401 for the rest of its lifetime, and clear the
-         *     HttpOnly auth cookies from the browser.
+         *     replaying either returns 401 for the rest of its lifetime, end their
+         *     sign-in, and clear the HttpOnly auth cookies. An ended sign-in cannot be
+         *     refreshed even when the blacklist write did not happen. A token with no
+         *     sign-in is revoked only by that write, so if it fails the cookies stay
+         *     and the response is 503.
          *
          *     Args:
          *         request: FastAPI request (used to read the auth cookies).
@@ -2391,35 +2394,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Models
-         * @description List available models for the Chat UI model picker.
-         *
-         *     Backward-compatible alias for `/api/ai/models` (GH #89). Returns every
-         *     model across all *active* providers (Anthropic, Ollama, OpenAI, …) so the
-         *     picker reflects what the instance can actually run: an Ollama-only
-         *     deployment shows its Ollama models instead of Claude models it will never
-         *     call. IDs stay as bare model ids so a persisted `chat_default.model_id`
-         *     selection still matches a menu entry; the chat send path resolves the
-         *     provider from the active default when no `provider_id::` prefix is present
-         *     (see `_resolve_provider_model_for_request`).
-         */
-        get: operations["get_api_claude_models"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/ai-operations": {
         parameters: {
             query?: never;
@@ -2998,29 +2972,6 @@ export interface paths {
         get: operations["get_api_conversations"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/conversations/import": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import Conversations
-         * @description One-time best-effort import of browser localStorage history.
-         *
-         *     Idempotent — conversations whose id already exists are skipped. Returns
-         *     ``{"imported": n, "skipped": m}``.
-         */
-        post: operations["post_api_conversations_import"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5598,6 +5549,9 @@ export interface paths {
         /**
          * Delete User
          * @description Delete a user (requires users.delete permission).
+         *
+         *     The username and email stay taken: the row is kept so its principal, and
+         *     the credentials it minted, still resolve on old records.
          *
          *     Args:
          *         user_id: User ID to delete
@@ -9256,19 +9210,6 @@ export interface components {
         IOCBulkAdd: {
             /** Iocs */
             iocs: {
-                [key: string]: unknown;
-            }[];
-        };
-        /**
-         * ImportConversationsRequest
-         * @description POST /import body — best-effort bulk import of localStorage history.
-         */
-        ImportConversationsRequest: {
-            /**
-             * Conversations
-             * @default []
-             */
-            conversations: {
                 [key: string]: unknown;
             }[];
         };
@@ -15577,37 +15518,6 @@ export interface operations {
             };
         };
     };
-    get_api_claude_models: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "get_api_config_ai-operations": {
         parameters: {
             query?: never;
@@ -16644,41 +16554,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_conversations_import: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ImportConversationsRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -10,14 +10,26 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.audit import trail
 from core.exceptions import default_on_error
 from core.storage.connection import get_db_manager
 from core.storage.models import ConfigAuditLog, IntegrationConfig, SystemConfig
 from core.storage.schemas import IntegrationConfigSchema
+from core.telemetry_sanitizer import SensitiveAttributeScrubber
 
 logger = logging.getLogger(__name__)
+
+# Payload ``action`` is the event kind (see audit.checkpoint). The
+# create/update/delete word stays in ``verb``.
+CONFIG_CHANGE = "config.change"
+_REDACTED = "[REDACTED]"
+_scrubber = SensitiveAttributeScrubber()
+# Set by core.integrations.integration_secrets. Storage cannot import that
+# module; an integration audit with no redactor fails the write.
+_integration_redactor = None
 
 
 @contextmanager
@@ -333,22 +345,21 @@ class ConfigService:
         new_value: Optional[Dict[str, Any]],
         change_reason: Optional[str] = None,
     ):
-        """Create an audit log entry.
+        """Record one config change on the caller's session.
 
         Deliberately unguarded: the entry joins the caller's transaction, so a
         failure here rolls the config change back with it. Swallowing it would
         let a config change commit with no audit record.
         """
-        session.add(
-            ConfigAuditLog(
-                config_type=config_type,
-                config_key=config_key,
-                action=action,
-                old_value=old_value,
-                new_value=new_value,
-                changed_by=self.user_id,
-                change_reason=change_reason,
-            )
+        write_config_audit(
+            session,
+            config_type=config_type,
+            config_key=config_key,
+            action=action,
+            old_value=old_value,
+            new_value=new_value,
+            changed_by=self.user_id,
+            change_reason=change_reason,
         )
 
     def record_audit(
@@ -371,6 +382,108 @@ class ConfigService:
                 new_value,
                 change_reason,
             )
+
+
+def _trail_ready(session: Session) -> bool:
+    """Whether ``session`` is Postgres and its revision includes the trail.
+
+    Anything else keeps today's ``config_audit_log`` insert. ``trail_ready``
+    itself is the Postgres check; callers do not add a setting.
+    """
+    get_bind = getattr(session, "get_bind", None)
+    if not callable(get_bind):
+        return False
+    bind = get_bind()
+    if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
+        return False
+    if not trail.trail_ready(session):
+        return False
+    # stamp_schema_head records the head revision on a create_all database,
+    # which has no audit_trail. The revision check would append into a
+    # missing table and roll the caller's change back.
+    return (
+        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
+        is not None
+    )
+
+
+def _redact_tree(value: Any, key: str = "") -> Any:
+    """Copy ``value``, replacing sensitive keys and secret-shaped strings."""
+    if isinstance(value, dict):
+        if key and _scrubber._should_redact(key, ""):
+            return _REDACTED
+        return {str(k): _redact_tree(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        if key and _scrubber._should_redact(key, ""):
+            return _REDACTED
+        return [_redact_tree(item, key) for item in value]
+    if key and _scrubber._should_redact(key, value):
+        return _REDACTED
+    return value
+
+
+def register_integration_secret_redactor(redactor) -> None:
+    """Install ``redact_secrets`` for integration values on the trail."""
+    global _integration_redactor
+    _integration_redactor = redactor
+
+
+def redacted_config_copy(
+    config_type: str, config_key: str, value: Optional[Dict[str, Any]]
+) -> Any:
+    """A copy safe to hash. The caller's object, and the saved row, stay intact."""
+    if value is None:
+        return None
+    if config_type == "integration" and isinstance(value, dict):
+        if _integration_redactor is None:
+            raise RuntimeError("integration secret redactor is not registered")
+        return _integration_redactor(config_key, value)
+    return _redact_tree(value)
+
+
+def write_config_audit(
+    session: Session,
+    *,
+    config_type: str,
+    config_key: str,
+    action: str,
+    old_value: Optional[Dict[str, Any]],
+    new_value: Optional[Dict[str, Any]],
+    changed_by: str,
+    change_reason: Optional[str] = None,
+) -> None:
+    """Append a trail entry, or insert ``config_audit_log`` when the trail is absent.
+
+    One or the other, never both. The trail path does not catch ``append``:
+    a failure rolls the caller's transaction back. Secret copies are redacted
+    before they reach a trail column.
+    """
+    if _trail_ready(session):
+        trail.append(
+            session,
+            {
+                "action": CONFIG_CHANGE,
+                "actor": changed_by,
+                "verb": action,
+                "config_type": config_type,
+                "config_key": config_key,
+                "change_reason": change_reason,
+                "old_value": redacted_config_copy(config_type, config_key, old_value),
+                "new_value": redacted_config_copy(config_type, config_key, new_value),
+            },
+        )
+        return
+    session.add(
+        ConfigAuditLog(
+            config_type=config_type,
+            config_key=config_key,
+            action=action,
+            old_value=old_value,
+            new_value=new_value,
+            changed_by=changed_by,
+            change_reason=change_reason,
+        )
+    )
 
 
 def get_config_service(user_id: str = "system") -> ConfigService:
