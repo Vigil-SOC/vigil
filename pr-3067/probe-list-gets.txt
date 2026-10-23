@@ -1,0 +1,5 @@
+list GETs on one mount: 1; catalog customs: [c0]
+after Validate: GETs 2; tab "Custom 2"; catalog customs: [c0,c1]; config GETs 1
+403 mount: GETs 1; tab label "Custom"; catalog customs: []
+      Tests  1 passed (1)
+   Duration  2.47s (transform 538ms, setup 269ms, import 586ms, tests 748ms, environment 620ms)

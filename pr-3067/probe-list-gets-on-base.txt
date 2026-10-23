@@ -1,0 +1,7 @@
+list GETs on one mount: 2; catalog customs: [c0]
+after Validate: GETs 3; tab "Custom 2"; catalog customs: [c0]
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected 'c0' to be 'c0,c1' // Object.is equality
+     38|   process.stderr.write(`after Validate: GETs ${lists}; tab "Custom 2";…
+      Tests  1 failed (1)
+   Duration  4.64s (transform 1.28s, setup 597ms, import 1.38s, tests 1.02s, environment 1.18s)
