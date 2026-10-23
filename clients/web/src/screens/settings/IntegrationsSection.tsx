@@ -24,6 +24,7 @@ import {
 import { relativeTime, type ServerRow } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
 import AddIntegrationTab from './AddIntegrationTab'
+import AuditFeedCard from './AuditFeedCard'
 import { buildCatalog } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
@@ -217,6 +218,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           </div>
         </>
       )}
+
+      <AuditFeedCard notify={notify} />
 
       <div className="wf-tabs" role="tablist" aria-label="Integrations views">
         {tabs.map(([k, label, n]) => (

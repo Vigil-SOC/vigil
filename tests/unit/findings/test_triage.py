@@ -161,10 +161,10 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
         investigation_id="tr-inv-started",
         created_at=NOW - timedelta(seconds=10),
         decided_at=NOW,
-        payload={"workflow_id": "incident-response"},
+        payload={"workflow_id": "incident-response", "document": "not an ask"},
     )
     # A second launch of the same case today still counts once.
-    _trigger(
+    bare_hunt = _trigger(
         state="launched",
         case_id="tr-case-1",
         investigation_id="tr-inv-started-2",
@@ -178,7 +178,10 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
         investigation_id="tr-inv-picked",
         created_at=NOW - timedelta(seconds=5),
         decided_at=NOW,
-        payload={"workflow_id": "threat-hunt"},
+        payload={
+            "workflow_id": "threat-hunt",
+            "hypothesis": "Hunt for T1059\non build hosts",
+        },
     )
     added = _trigger(
         state="merged",
@@ -214,19 +217,19 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[waiting]["source_link"] == "https://console.example/alert/1"
     assert rows[waiting]["title"] == "Odd login alert"
     assert rows[waiting]["description"] == "Odd login"
-    assert rows[waiting]["score"] is None
-    assert rows[waiting]["trust"] is None
-    assert rows[waiting]["weight"] is None
 
     assert rows[started]["state_label"] == "Started a case"
     assert rows[started]["case_door"] == "tr-case-1"
     assert rows[started]["pickup_seconds"] == 10
     assert rows[started]["workflow_id"] == "incident-response"
+    assert rows[started]["document"] is None
 
     assert rows[picked]["state_label"] == "Picked up"
     assert rows[picked]["case_door"] is None
     assert rows[picked]["source"] == "Schedule"
     assert rows[picked]["workflow_id"] == "threat-hunt"
+    assert rows[picked]["document"] == "Hunt for T1059 on build hosts"
+    assert rows[bare_hunt]["document"] is None
 
     assert rows[added]["state_label"] == "Added to a case"
     assert rows[added]["case_door"] == "tr-case-1"
@@ -242,8 +245,6 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[expired]["pickup_seconds"] is None
 
     assert payload["strip"]["cases_created_today"] == 1
-    assert payload["strip"]["trust_floor"] == "Not measured yet"
-    assert payload["unmeasured_text"] == "Not measured yet"
     info = payload["strip_info"]
     assert set(info) == {"picked_up", "waiting", "cases_created_today", "trust_floor"}
     assert all(item["source"] and item["calculation"] for item in info.values())
@@ -433,11 +434,10 @@ def test_finding_only_source_has_null_lag_and_is_not_quiet():
     assert sources["tr-hook"]["quiet"] is None
 
 
-def test_route_returns_the_strip(client):
+def test_route_returns_the_arrival_info(client):
     response = client.get("/api/triage")
     assert response.status_code == 200
     body = response.json()
-    assert body["strip"]["trust_floor"] == "Not measured yet"
     assert body["arrival_info"] == (
         "Arrivals count every finding stored today. The list is the intake rows."
     )

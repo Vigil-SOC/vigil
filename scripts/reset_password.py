@@ -15,7 +15,6 @@ run it through scripts/reset-password.sh; on compose, use
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -23,20 +22,14 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from core.auth.password_reset import generate_reset_token, reset_link  # noqa: E402
+from core.auth.password_reset import (  # noqa: E402
+    default_base_url,
+    generate_reset_token,
+    reset_link,
+)
 from core.config import get_settings  # noqa: E402
 from core.storage.connection import get_db_manager, init_database  # noqa: E402
 from core.storage.models.auth import User  # noqa: E402
-
-
-def default_base_url() -> str:
-    settings = get_settings()
-    if settings.vigil_frontend_url:
-        return settings.vigil_frontend_url
-    # start.sh serves the console on 6988; in the compose image the backend
-    # serves it itself on 6987.
-    port = 6987 if os.path.exists("/.dockerenv") else 6988
-    return f"http://localhost:{port}{settings.vigil_context_path.rstrip('/')}"
 
 
 def list_users(session) -> int:
@@ -85,7 +78,9 @@ def main(argv=None) -> int:
     with get_db_manager().session_scope() as session:
         if args.list:
             return list_users(session)
-        return issue_link(session, args.user, args.base_url or default_base_url())
+        return issue_link(
+            session, args.user, args.base_url or default_base_url(get_settings())
+        )
 
 
 if __name__ == "__main__":
