@@ -1,0 +1,29 @@
+rule: pipeline.lease-sweep-failing
+defaults:
+  sensors:
+    - {id: log.agent-worker, covers: [log_agent_worker], interval: 15s, service: agent-worker, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-while-every-sweep-fails
+    title: The sweep query fails every 30 s from +1m until +30m
+    end: +50m
+    logs:
+      - {at: +1m, signal: log_agent_worker, level: WARNING, logger: agent.worker, trusted: false,
+         template: sweep failed, message: sweep failed, repeat: {every: 30s, until: +30m}}
+    expect:
+      - {at: +5m30s, rule: pipeline.lease-sweep-failing, eval: true, state: pending}
+      - {at: +10m30s, rule: pipeline.lease-sweep-failing, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.lease-sweep-failing, active_since: +5m30s, opened_at: +10m30s, resolving_since: +35m30s,
+          resolved_at: +45m30s, reason: cleared, routed_at: +10m30s}
+  - kind: silent
+    id: v02-silent-on-a-few-failed-sweeps
+    title: A Postgres restart fails three sweeps
+    end: +30m
+    logs:
+      - {at: +1m, signal: log_agent_worker, level: WARNING, logger: agent.worker, trusted: false,
+         template: sweep failed, message: sweep failed, repeat: {every: 30s, until: +2m}}
+    expect:
+      - {at: +30s, rule: pipeline.lease-sweep-failing, eval: unknown, state: inactive, note: the window is not watched yet}
+      - {at: +30m, rule: pipeline.lease-sweep-failing, eval: false, state: inactive}
+    incidents: {}

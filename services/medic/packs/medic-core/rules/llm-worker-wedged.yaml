@@ -1,0 +1,40 @@
+# L-3.b: the llm-worker container runs but its health check (arq --check, #1691) fails,
+# so LLM jobs queue with no consumer. arq --check also fails when Redis is down, where a
+# worker restart wouldn't help, so the rule also needs the agent-worker ready: its
+# /readyz is true only while its own Redis client is ready (services/agent/worker.ts:645-650),
+# an independent read (another sensor, another service) that Redis is up. Trusted,
+# three samples from two sensors: passes the lane-1 gate with real corroboration.
+# Limits: "ready" means Redis is connected, not that it accepts writes, so a Redis
+# refusing writes (MISCONF, OOM under noeviction) can still read as a wedge; a Redis
+# write-health signal (redis_queues, D2-12) should be added before a runbook attaches.
+# If the agent-worker is down, redis_ok is never true and a wedge goes unreported.
+# Compose only: Helm's probes restart the pod themselves (#1499); host-native has no
+# health check. runbook: none until G4's vocabulary lands (wants restart_service llm-worker).
+# requires: D6-2 containers.state and containers.health with a service label.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.worker-wedged
+title: The llm-worker is running but failing its health check
+revision: 1
+fault: {class: llm, mode: L-3, causes: [L-3.b]}
+lane: 1
+detection: event
+shapes: [compose]
+signals:
+  state: {sample: {signal: containers, key: state, labels: {service: llm-worker}}}
+  health: {sample: {signal: containers, key: health, labels: {service: llm-worker}}}
+  redis_ok: {sample: {signal: agent_worker_readyz, key: ready}}
+when:
+  all:
+    - {fn: latest, signal: state, op: "==", value: running}
+    - {fn: latest, signal: health, op: "==", value: unhealthy}
+    - {fn: latest, signal: redis_ok, op: "==", value: true}
+for: 3m
+keep_firing_for: 5m
+advice:
+  summary: The llm-worker container is running but has failed its health check for 3 minutes, so LLM jobs wait with nothing to take them.
+  fix: >-
+    Restart the llm-worker container (docker compose restart llm-worker). If it
+    turns unhealthy again, check that Redis is up and accepting writes (its log
+    shows MISCONF or OOM errors if not) and send this incident to DeepTempo
+    Support with the evidence report.

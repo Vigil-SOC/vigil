@@ -1,0 +1,30 @@
+rule: ingest.federation-records-dropped
+defaults:
+  sensors:
+    - {id: http.federation, covers: [federation_sources], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    federation_sources: {sources.dropped_total: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-records-are-dropped
+    title: Three Elastic records without an id are dropped at +10m
+    end: +20m
+    series:
+      - {signal: federation_sources, key: sources.dropped_total, labels: {source: elastic}, steps: [[+0m, 0], [+10m, 3]]}
+    expect:
+      - {at: +9m, rule: ingest.federation-records-dropped, group: {source: elastic}, eval: unknown, state: inactive}
+      - {at: +10m, rule: ingest.federation-records-dropped, group: {source: elastic}, eval: true, state: pending, note: a rise of 3 seen decides > 0}
+      - {at: +12m, rule: ingest.federation-records-dropped, group: {source: elastic}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.federation-records-dropped, group: {source: elastic}, active_since: +10m, opened_at: +12m,
+          resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-old-drops
+    title: An old total that doesn't move is not a new drop
+    end: +65m
+    series:
+      - {signal: federation_sources, key: sources.dropped_total, labels: {source: splunk}, steps: [[+0s, 7]]}
+    expect:
+      - {at: +10m, rule: ingest.federation-records-dropped, group: {source: splunk}, eval: unknown, state: inactive}
+      - {at: +65m, rule: ingest.federation-records-dropped, group: {source: splunk}, eval: false, state: inactive}
+    incidents: {}

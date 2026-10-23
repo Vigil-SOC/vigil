@@ -1,15 +1,16 @@
-# Dev-mode rule (S4 walking skeleton): loaded through the S4b loader, not a pack (F6).
-# B5 has no row for exactly this symptom. The worker's /readyz is false when its
-# BullMQ worker isn't running or its Redis client isn't ready
-# (services/agent/worker.ts:645-650), so runs queue and nothing picks them up:
-# mode P-1. Which P-1 cause can't be told from /readyz alone, and the Redis lane
-# depends on who runs Redis (P-1.f "1/2 by ownership"), so: lane 3 (S4-1).
+# P-1.j (PROVISIONAL B5 row, F7c; was the skeleton's dev rule) · the agent worker is
+# up (/healthz is always "ok") but its /readyz says no: the BullMQ worker isn't
+# running or its Redis client isn't ready (services/agent/worker.ts:645-650), so
+# queued runs aren't picked up. A refused connection reads ready=false too (the
+# process is gone). Which of Redis or the worker is at fault can't be told from
+# /readyz alone, so lane 3 (Phase 1: restart, once Redis is shown healthy).
+# Outsider: no (an unauthenticated probe on a port only Medic and the agents reach).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.agent-worker-not-ready
 title: The agent worker is running but not ready
-revision: 1
-fault: {class: pipeline, mode: P-1, causes: [P-1.f]}
+revision: 2
+fault: {class: pipeline, mode: P-1, causes: [P-1.j]}
 lane: 3
 detection: event
 signals:
