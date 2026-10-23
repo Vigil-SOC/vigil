@@ -41,6 +41,24 @@ logger = logging.getLogger(__name__)
 
 APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
 
+
+def read_stored_force_manual_approval() -> bool:
+    """The stored flag; Act when no row exists. Raises when the read fails."""
+    value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
+    return bool(value.get("enabled", False)) if isinstance(value, dict) else False
+
+
+def stored_force_manual_approval() -> bool:
+    """The stored flag as the gate applies it: Assist when the read fails."""
+    try:
+        return read_stored_force_manual_approval()
+    except Exception as e:  # noqa: BLE001
+        logger.error(
+            "Cannot read the approval setting; requiring manual approval: %s", e
+        )
+        return True
+
+
 _pending_gauge: Any = None
 
 
@@ -197,17 +215,6 @@ class ApprovalService:
     # creates (Act); it is read at each decision so a long-lived service sees
     # a change without a restart. Nothing here writes it.
 
-    def _stored_force_manual_approval(self) -> bool:
-        """The stored flag; Act when no row exists, Assist when the read fails."""
-        try:
-            value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "Cannot read the approval setting; requiring manual approval: %s", e
-            )
-            return True
-        return bool(value.get("enabled", False)) if value else False
-
     def set_force_manual_approval(self, force: bool):
         """Force manual approval for this process; the stored row is left as is."""
         self.force_manual_approval = force
@@ -299,9 +306,7 @@ class ApprovalService:
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
         forced = (
-            human_only
-            or self.force_manual_approval
-            or self._stored_force_manual_approval()
+            human_only or self.force_manual_approval or stored_force_manual_approval()
         )
         requires_approval, rule = approval_requirement(
             forced, reversibility, confidence, self.config

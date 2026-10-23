@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from core.auth.permissions import permission_gate
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.routing import Auth, RouterMeta
 from core.storage.schemas import CaseSchema, CaseTemplateSchema
@@ -17,6 +18,7 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 workflow_service = CaseWorkflowService()
+_CASES_WRITE = [permission_gate("cases.write")]
 
 
 class TemplateCreate(BaseModel):
@@ -92,7 +94,7 @@ async def get_template(template_id: str):
     return CaseTemplateSchema.dump(template)
 
 
-@router.post("/")
+@router.post("/", dependencies=_CASES_WRITE)
 async def create_template(data: TemplateCreate):
     """
     Create a new case template.
@@ -122,7 +124,7 @@ async def create_template(data: TemplateCreate):
     return CaseTemplateSchema.dump(template)
 
 
-@router.put("/{template_id}")
+@router.put("/{template_id}", dependencies=_CASES_WRITE)
 async def update_template(template_id: str, data: TemplateUpdate):
     """
     Update a template.
@@ -145,7 +147,7 @@ async def update_template(template_id: str, data: TemplateUpdate):
     return {"success": True}
 
 
-@router.delete("/{template_id}")
+@router.delete("/{template_id}", dependencies=_CASES_WRITE)
 async def delete_template(template_id: str):
     """
     Delete (deactivate) a template.
@@ -164,7 +166,7 @@ async def delete_template(template_id: str):
     return {"success": True}
 
 
-@router.post("/{template_id}/create-case")
+@router.post("/{template_id}/create-case", dependencies=_CASES_WRITE)
 async def create_case_from_template(template_id: str, data: CaseFromTemplate):
     """
     Create a new case from a template.

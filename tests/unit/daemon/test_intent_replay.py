@@ -192,13 +192,15 @@ class _FakeConfigService:
     def __init__(self, rows):
         self.rows = rows
 
-    def get_system_config(self, key, default=None):
-        return self.rows.get(key, default)
+    def read_system_config(self, key):
+        return self.rows.get(key)
 
 
 def test_effective_force_uses_the_db_overlay_and_declared_can_override(monkeypatch):
     svc = _FakeConfigService({"approval.force_manual_approval": {"enabled": True}})
-    monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: svc)
+    monkeypatch.setattr(
+        "core.response.approval_service.get_config_service", lambda: svc
+    )
     base = DaemonConfig()
     effective = effective_daemon_config(base)
     assert base.response.force_manual_approval is False
@@ -207,6 +209,20 @@ def test_effective_force_uses_the_db_overlay_and_declared_can_override(monkeypat
         effective, {"respond.force_manual_approval": False}
     )
     assert declared.response.force_manual_approval is False
+    assert effective.response.force_manual_approval is True
+
+
+class _BrokenConfigService:
+    def read_system_config(self, key):
+        raise RuntimeError("db down")
+
+
+def test_failed_approval_read_reports_the_force_the_gate_applies(monkeypatch):
+    svc = _BrokenConfigService()
+    monkeypatch.setattr(
+        "core.response.approval_service.get_config_service", lambda: svc
+    )
+    effective = effective_daemon_config(DaemonConfig())
     assert effective.response.force_manual_approval is True
 
 

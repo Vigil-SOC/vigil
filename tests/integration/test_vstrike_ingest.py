@@ -57,9 +57,10 @@ class _FakeDataService:
         priority: str = "medium",
         description: str = "",
         status: str = "open",
+        case_id: Optional[str] = None,
     ):
         case = {
-            "case_id": f"case-test-{len(self.created_cases)+1:04d}",
+            "case_id": case_id or f"case-test-{len(self.created_cases)+1:04d}",
             "title": title,
             "finding_ids": list(finding_ids),
             "priority": priority,
@@ -270,6 +271,19 @@ def test_auth_rejects_wrong_token(monkeypatch):
     monkeypatch.setattr(vstrike_module, "_expected_inbound_key", lambda: "secret-key")
     with pytest.raises(HTTPException) as excinfo:
         vstrike_module.verify_inbound_key(authorization="Bearer wrong")
+    assert excinfo.value.status_code == 401
+
+
+def test_auth_rejects_non_ascii_bearer(monkeypatch):
+    """A non-ASCII bearer is a 401. compare_digest on str would raise TypeError."""
+    from fastapi import HTTPException
+
+    from services.api.routers import vstrike as vstrike_module
+
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setattr(vstrike_module, "_expected_inbound_key", lambda: "secret-key")
+    with pytest.raises(HTTPException) as excinfo:
+        vstrike_module.verify_inbound_key(authorization="Bearer s\u00e9cret")
     assert excinfo.value.status_code == 401
 
 
