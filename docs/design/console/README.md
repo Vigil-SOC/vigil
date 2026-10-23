@@ -5,10 +5,12 @@ This folder is what an implementer or groomer needs for console work in phase 1,
 ## What is canonical
 
 1. **`PRD-phase1.md`** decides scope and behaviour. When anything in this folder disagrees with it on what to build, the PRD wins. It has no open decisions; section 16 records every decision and its grounds.
-2. **Boards** decide appearance. `boards/png/` holds a render of every phase-1 board in dark and light at the board's own size (1440 × 900 for app boards, so content below the fold is only in the HTML), plus the three case-page moods. `boards/*.dc.html` are the interactive originals (open one in a browser with `support.js` beside it); grep them for exact inline styles, spacing and copy. The live canvas is at https://claude.ai/artifact/LfdCAGfXzJaWzDASis8pWP and wins over the PNGs if they ever differ.
-3. **`DESIGN.md`** (phase-1 edition) holds vocabulary, the visual system, layout and the component index. **`tokens/`** holds the colour, type, radius, control and motion values for both themes. **`components/`** holds one spec per component phase 1 ships.
+2. **Boards** decide appearance. `boards/png/` holds a render of every phase-1 board in dark and light at the board's own size (1440 × 900 for app boards, so content below the fold is only in the HTML), plus the three case-page moods and dark-only scene renders (`<Board>.<scene>.dark.png`). `boards/*.dc.html` are the interactive originals (open one in a browser with `support.js` beside it); grep them for exact inline styles, spacing and copy. The live canvas is at https://claude.ai/artifact/LfdCAGfXzJaWzDASis8pWP and wins over the PNGs if they ever differ.
+3. **`DESIGN.md`** (phase-1 edition) holds vocabulary, the visual system, layout and the component index. **`tokens/`** holds the colour, type, radius, control and motion values for both themes. **`components/`** holds one spec per component phase 1 ships, plus `confirm-you` for the sessions epic.
 
 **`MEDIC.md`** holds the Medic console's requirements (UX-1…UX-30: the Health card, the status-line fact and the `/medic` screen). It isn't phase-1 PRD scope, and no board covers it; it names the tokens and components each Medic surface uses.
+
+**Sessions and sign-in boards** (`SettingsSessions`, `AccountSignIns`, `SignIn`, and `components/confirm-you.md`) belong to the vigil-mu sessions epic, not phase 1. That epic decides their scope and behaviour; the phase-1 PRD doesn't govern them. The Team & access person drawer in the `team-*` scenes of `SettingsSessions` is in scope for the epic, even though the rest of `SettingsTeam` isn't in this folder. `AccountSignIns` is drawn over the phase-2 Home; only the drawer is the design.
 
 ## Read the boards with the PRD open
 

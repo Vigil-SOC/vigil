@@ -60,4 +60,4 @@ Check every screen you change against these at 1440px and at 1920px, in a real b
 
 ## 8. Component index
 
-See `components/`. Phase 1 ships: card, row-stack, tab-strip, state-pill, info-button, hold-to-confirm, undo-fuse, needs-you-strip, decision-block (reduced per PRD CP-P3), citation-chip, composer (Ask mode only). Not in phase 1 and not in this folder: tier-control, trust-strip, revert-window, parsed-action, evidence-row-actions.
+See `components/`. Phase 1 ships: card, row-stack, tab-strip, state-pill, info-button, hold-to-confirm, undo-fuse, needs-you-strip, decision-block (reduced per PRD CP-P3), citation-chip, composer (Ask mode only). Also here, for the vigil-mu sessions epic rather than phase 1: confirm-you. Not in phase 1 and not in this folder: tier-control, trust-strip, revert-window, parsed-action, evidence-row-actions.
