@@ -1,5 +1,3 @@
-// Mirrors LIVE_INVESTIGATION_STATUSES and FINISHED_INVESTIGATION_STATUSES in
-// core/storage/models/workflow.py, which the kill and wake routes enforce.
 const LIVE = ['assigned', 'executing', 'waiting_approval', 'paused']
 const FINISHED = ['completed', 'failed']
 

@@ -37,7 +37,6 @@ IN_FLIGHT_INVESTIGATION_STATUSES = (
     "executing",
     "waiting_approval",
 )
-# What a person may restart; kill takes LIVE.
 FINISHED_INVESTIGATION_STATUSES = ("completed", "failed")
 # A run with no ``Investigation`` row (``/hunt``) has three live-ish words of its
 # own. The case reads them as a running run ``executing`` and a held one ``paused``.
