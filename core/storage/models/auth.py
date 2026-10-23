@@ -145,6 +145,12 @@ class User(Base):
     password_changed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
     )
+    # Tokens with an earlier ``iat`` are rejected. Same transaction as the
+    # change that ends sessions; NULL on existing rows, so the migration
+    # does not sign anyone out.
+    tokens_valid_after: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
 
     # A machine login, not a person: today only Medic's gateway (D2-17). Exempt
     # from lockout and held to the Viewer role. Set only by

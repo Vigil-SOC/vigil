@@ -494,6 +494,7 @@ dbInit:
     - 43_users_service_account.sql
     - 44_medic_last_seen.sql
     - 45_medic_permissions.sql
+    - 46_users_tokens_valid_after.sql
   resources:
     requests:
       cpu: 50m

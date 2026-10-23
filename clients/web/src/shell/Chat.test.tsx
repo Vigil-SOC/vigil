@@ -50,7 +50,6 @@ vi.mock('../services/api', () => ({
     get: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
-    importHistory: vi.fn(),
   },
   reasoningApi: {
     listInteractions: vi.fn(),
@@ -292,28 +291,6 @@ describe('Ask Vigil dock', () => {
     const cached = JSON.parse(localStorage.getItem('soc.chat.history.user-1') || '[]')
     expect(cached[0]?.messages?.some((m: { text: string }) => m.text === 'All quiet.')).toBe(true)
     expect(localStorage.getItem('soc.chat.history')).toBeNull()
-  })
-
-  it('imports only this user\'s cache, and drops an unscoped history instead of uploading it', async () => {
-    localStorage.setItem(
-      'soc.chat.history',
-      JSON.stringify([{ id: 'legacy', title: 'Legacy', ts: 1, messages: [{ role: 'user', text: 'legacy secret' }] }]),
-    )
-    saveHistory('user-2', [
-      { id: 'bob', title: 'Bob', ts: 1, messages: [{ role: 'user', text: 'bob secret' }] },
-    ])
-    saveHistory('user-1', [
-      { id: 'mine', title: 'Mine', ts: 1, messages: [{ role: 'vigil', text: 'my note' }, { role: 'error', text: 'failed' }], key: 'seed-1' },
-    ])
-    vi.mocked(conversationsApi.importHistory).mockResolvedValue({ data: {} } as never)
-    renderChat()
-    await waitFor(() => expect(conversationsApi.importHistory).toHaveBeenCalledTimes(1))
-    expect(conversationsApi.importHistory).toHaveBeenCalledWith([
-      { id: 'mine', title: 'Mine', messages: [{ role: 'assistant', content: 'my note', thinking: null }] },
-    ])
-    expect(localStorage.getItem('soc.chat.history')).toBeNull()
-    expect(localStorage.getItem('soc.chat.history.user-2')).toBeNull()
-    expect(JSON.parse(localStorage.getItem('soc.chat.keymap.user-1') || '{}')).toEqual({ 'seed-1': 'mine' })
   })
 
   it.each([404, 403, 401])(

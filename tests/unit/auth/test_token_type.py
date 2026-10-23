@@ -6,6 +6,8 @@ substituting only the database session and the Redis revocation lookup.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import jwt
 import pytest
 from fastapi.testclient import TestClient
@@ -77,7 +79,7 @@ def redis(monkeypatch):
 
 
 @pytest.fixture
-def client(monkeypatch, user, redis):
+def database(user):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -98,9 +100,13 @@ def client(monkeypatch, user, redis):
             )
         )
         s.commit()
+    return maker
 
+
+@pytest.fixture
+def client(monkeypatch, user, redis, database):
     def _session():
-        with maker() as s:
+        with database() as s:
             yield s
 
     async def _not_revoked(payload):
@@ -304,6 +310,77 @@ def test_browser_logout_revokes_the_path_scoped_refresh_cookie(
         assert replay.json()["detail"] == "Refresh token has been revoked"
     finally:
         get_settings.cache_clear()
+
+
+def test_database_cutoff_rejects_tokens_redis_still_accepts(client, database, user):
+    """Redis reads succeed and have no cutoff key. The user row still ends the session."""
+    with database() as s:
+        row = s.query(User).filter(User.user_id == user.user_id).one()
+        row.tokens_valid_after = datetime(2099, 1, 1)
+        s.commit()
+
+    tokens = _tokens(user)
+    me = _present(client, tokens["access"], "bearer")
+    assert me.status_code == 401, me.text
+    assert me.json()["detail"] == "Token has been revoked"
+
+    refresh = client.post(REFRESH, json={"refresh_token": tokens["refresh"]})
+    assert refresh.status_code == 401, refresh.text
+    assert refresh.json()["detail"] == "Refresh token has been revoked"
+
+    with database() as s:
+        row = s.query(User).filter(User.user_id == user.user_id).one()
+        row.tokens_valid_after = datetime(2000, 1, 1)
+        s.commit()
+
+    assert _present(client, tokens["access"], "bearer").status_code == 200
+    renewed = client.post(REFRESH, json={"refresh_token": tokens["refresh"]})
+    assert renewed.status_code == 200, renewed.text
+
+
+def test_logout_succeeds_when_the_sign_in_ends_and_redis_does_not(
+    client, user, monkeypatch
+):
+    async def _fail(jti, expires_at):
+        raise RuntimeError("redis is down")
+
+    ended = []
+
+    def _end(sid, reason):
+        ended.append((sid, reason))
+        return True
+
+    monkeypatch.setattr("services.api.routers.auth.blacklist_jti", _fail)
+    monkeypatch.setattr("services.api.routers.auth.sign_ins.end", _end)
+    access = AuthService.generate_jwt_token(user, "access", sid="si-1")
+    refresh = AuthService.generate_jwt_token(user, "refresh", sid="si-1")
+
+    response = client.post(
+        LOGOUT,
+        json={"refresh_token": refresh},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert ended == [("si-1", "sign_out")]
+
+
+def test_logout_does_not_claim_success_when_revocation_fails(
+    client, user, monkeypatch
+):
+    async def _fail(jti, expires_at):
+        raise RuntimeError("OOM command not allowed")
+
+    monkeypatch.setattr("services.api.routers.auth.blacklist_jti", _fail)
+    tokens = _tokens(user)
+
+    response = client.post(
+        LOGOUT, headers={"Authorization": f"Bearer {tokens['access']}"}
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Could not revoke this session"
+    assert _present(client, tokens["access"], "bearer").status_code == 200
 
 
 def test_logout_leaves_another_users_refresh_token_alone(client, user, blacklisted):

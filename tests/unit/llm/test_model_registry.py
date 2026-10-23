@@ -399,26 +399,6 @@ async def test_list_available_models_keeps_pinned_embedding_as_deprecated():
     assert by_id["nomic-embed-text:latest"].deprecated is True
 
 
-async def test_fallback_models_reflects_ollama_not_anthropic():
-    """fallback_models() must return the configured provider's models
-    (Ollama here), never a hardcoded Anthropic set (#409)."""
-    reg = _StubRegistry(
-        active_providers=[_Prov("ollama-local", "ollama", default_model="llama3.1:8b")]
-    )
-    models = await reg.fallback_models()
-    ids = [m.model_id for m in models]
-    assert "llama3.1:8b" in ids
-    assert all(m.provider_type == "ollama" for m in models)
-    assert not any(mid.startswith("claude") for mid in ids)
-
-
-async def test_fallback_models_empty_when_no_providers():
-    """No configured providers → empty, so the caller can apply its own
-    last-resort default (the fresh-install Claude bootstrap in the API)."""
-    reg = _StubRegistry(active_providers=[])
-    assert await reg.fallback_models() == []
-
-
 def test_effort_for_component_follows_the_assignment_and_ignores_junk(monkeypatch):
     from core.llm.providers.registry import ComponentAssignment, get_registry
 

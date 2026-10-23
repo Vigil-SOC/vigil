@@ -19,17 +19,13 @@ import api, {
   reasoningApi,
   streamFetch,
   type ConversationDetail,
-  type ImportConversationInput,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
 import { useAuth } from '../contexts/AuthContext'
 import { useConversations } from './useConversations'
 import {
-  chatCacheEpoch,
-  chatWasImported,
   loadHistory,
   loadKeymap,
-  markChatImported,
   CHAT_HISTORY_MAX,
   retainChatCache,
   saveHistory,
@@ -836,49 +832,6 @@ export default function Chat({
       /* ignore — server unreachable */
     }
   }
-
-  // the marker is only set on success, so a failed import retries next mount.
-  // Only this user's scoped cache is imported; unscoped leftovers are not theirs to upload.
-  const migratedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!userId || lockedCaseId || migratedFor.current === userId) return
-    migratedFor.current = userId
-    try {
-      if (chatWasImported(userId)) return
-      const local = loadHistory<Conversation>(userId)
-      if (local.length === 0) {
-        markChatImported(userId)
-        return
-      }
-      const payload: ImportConversationInput[] = local.map((c) => ({
-        id: c.id,
-        title: c.title,
-        messages: (c.messages || [])
-          .filter((m) => m.role !== 'error')
-          .map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text, thinking: null })),
-      }))
-      for (const c of local) if (c.key) setKeymapEntry(userId, c.key, c.id)
-      const epoch = chatCacheEpoch()
-      let cancelled = false
-      conversationsApi
-        .importHistory(payload)
-        .then(() => {
-          // Sign-out and a user switch bump the epoch; don't recreate a key they removed.
-          if (cancelled || epoch !== chatCacheEpoch()) return
-          markChatImported(userId)
-          reloadHistory()
-        })
-        .catch(() => {
-          if (!cancelled) migratedFor.current = null
-          /* retry next mount */
-        })
-      return () => {
-        cancelled = true
-      }
-    } catch {
-      /* empty */
-    }
-  }, [reloadHistory, lockedCaseId, userId])
 
   // going back to a tab folds the thread to its last exchange; a case switch resets that below
   const seenKey = useRef(collapseKey)
