@@ -65,12 +65,26 @@ case "${WORKER##*:}" in ''|*[!0-9]*) usage ;; esac
 # Medic gets a fresh environment: only these, never the caller's. sudo resets the
 # environment as well; this holds even where a sudoers rule keeps it (check 9).
 # exec: run in the background, $! is then Medic's own PID, so TERM reaches it.
+# VIGIL_MEDIC_GATEWAY_ADDR and DEV_MODE are forwarded only when this process
+# was given them. Host-native has no gateway, so an unset address stays unset
+# and Medic does not register gateway_session. medic.sh still refuses to start
+# Medic when DEV_MODE is on; this only passes a value it was handed.
 medic() {
+    cmd="$1"
+    extra=()
+    if [ -n "${VIGIL_MEDIC_GATEWAY_ADDR:-}" ]; then
+        extra+=("VIGIL_MEDIC_GATEWAY_ADDR=$VIGIL_MEDIC_GATEWAY_ADDR")
+    fi
+    if [ -n "${DEV_MODE:-}" ]; then
+        extra+=("DEV_MODE=$DEV_MODE")
+    fi
+    # ${arr[@]+...}: bash 3.2 with set -u errors on an empty array.
     exec env -i PATH=/usr/bin:/bin HOME="$DATA" LANG=C.UTF-8 \
         PYTHONPATH="$APP" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
         VIGIL_MEDIC_ENABLED=true VIGIL_MEDIC_DATA_DIR="$DATA" \
         VIGIL_MEDIC_INSTALL_SHAPE=start_sh VIGIL_MEDIC_AGENT_WORKER_ADDR="$WORKER" \
-        "$PY" -m services.medic "$1"
+        ${extra[@]+"${extra[@]}"} \
+        "$PY" -m services.medic "$cmd"
 }
 
 cd "$APP" || exit 1

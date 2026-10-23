@@ -293,6 +293,17 @@ def test_medic_env_names_its_shape_and_targets(on) -> None:
     # so "control connects" proves the target has live endpoints (re-review).
     assert env["VIGIL_MEDIC_POLICY_PROBE_ADDR"] == f"{GATEWAY}:8470"
     assert env["VIGIL_MEDIC_POLICY_CONTROL_ADDR"] == f"{GATEWAY}:8471"
+    assert env["VIGIL_MEDIC_GATEWAY_ADDR"] == env["VIGIL_MEDIC_POLICY_CONTROL_ADDR"]
+    assert env["DEV_MODE"] == "false"
+
+
+def test_medic_dev_mode_follows_config_and_not_envfrom(chart) -> None:
+    docs = helm_template(chart, {**MEDIC_ON, "config.DEV_MODE": "true"})
+    (c,) = medic_pod(docs)["containers"]
+    assert "envFrom" not in c
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["DEV_MODE"] == "true"
+    assert env["VIGIL_MEDIC_GATEWAY_ADDR"].endswith(":8471")
 
 
 def test_probe_target_cant_be_overridden(chart) -> None:

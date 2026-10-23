@@ -1,7 +1,7 @@
 // One of the four Phase-0 contracts. Consumed by the resume path, deployment,
 // and the Python backend, which enqueues plain JSON and writes no ledger.
 
-import type { RunKind } from "./events.js";
+import type { RunKind, RunPayload } from "./events.js";
 
 export const JOB_SCHEMA_VERSION = 1;
 
@@ -16,9 +16,13 @@ interface JobBase {
   tenant_id: string | null;
   enqueued_at: string;
   enqueued_by: string;
-  // API-signed name of the person who started the run. Absent for a system run,
+  // API-signed token for the run. Absent for a system run that predates one,
   // and on a resume, which reads it back off the ledger instead.
   principal?: string;
+  // In the clear, so this process never decodes the token. The actor is the
+  // agent principal. origin is what started the run.
+  actor?: string;
+  origin?: RunPayload["origin"];
   // The W3C traceparent of whoever enqueued it, so the run's spans continue that
   // request's trace. Optional: absent when tracing is off, and on any older job.
   traceparent?: string;

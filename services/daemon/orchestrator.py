@@ -255,18 +255,17 @@ def intake_severity_band(
     return name if name in _BAND_RANK else "unknown"
 
 
-def rank_intake_row(
+def intake_rank_inputs(
     row: Dict,
     *,
     now: datetime,
     ttl_seconds: int,
     promote_fraction: float,
-) -> tuple:
-    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+) -> tuple[str, bool, float]:
+    """``(band, promoted, age_seconds)`` of a row: what ``rank_intake_row`` sorts on.
 
-    Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
-    ``low`` precedes ``medium``. Detection rows read current finding severity
-    from ``_finding``; ``schedule`` and ``human_ask`` read the row's ``priority``.
+    Detection rows read current finding severity from ``_finding``;
+    ``schedule`` and ``human_ask`` read the row's ``priority``.
     """
     age = intake_age_seconds(row, now)
     remaining = ttl_seconds - age
@@ -277,6 +276,24 @@ def rank_intake_row(
         row.get("kind"),
         finding_severity=finding_severity,
         priority=row.get("priority"),
+    )
+    return band, promoted, age
+
+
+def rank_intake_row(
+    row: Dict,
+    *,
+    now: datetime,
+    ttl_seconds: int,
+    promote_fraction: float,
+) -> tuple:
+    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+
+    Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
+    ``low`` precedes ``medium``.
+    """
+    band, promoted, _ = intake_rank_inputs(
+        row, now=now, ttl_seconds=ttl_seconds, promote_fraction=promote_fraction
     )
     created = _as_naive_utc(row.get("created_at"))
     return (
@@ -314,6 +331,112 @@ def _caller(investigation_id: str) -> tuple[Optional[str], Optional[str]]:
     username = name if isinstance(name, str) and name else None
     principal = token if isinstance(token, str) and token else None
     return username, principal
+
+
+def _stamp_phases(context: Dict[str, Any], workflow_id: str, workflows) -> None:
+    """The phase agents as the definition names them now, stored on the run."""
+    from core.agents.attribution import phase_actors
+
+    try:
+        workflow = workflows.get_workflow(workflow_id)
+    except Exception:  # noqa: BLE001 - a run with no snapshot uses its plugin
+        return
+    if workflow is None:
+        return
+    agents = phase_actors(workflow.phases)
+    if agents:
+        context["phase_agents"] = agents
+
+
+def _principal_of(started_by: Optional[str], principal: Optional[str]) -> Optional[str]:
+    """The principal beside triggered_by. A person when the token names one, else system.
+
+    ``started_by`` is the text column. orchestrator is not an agent principal.
+    """
+    del started_by
+    from core.auth import tool_principal
+    from core.auth.principals import SYSTEM_PRINCIPAL_ID
+
+    if principal:
+        try:
+            claims = tool_principal.read(principal)
+        except tool_principal.InvalidPrincipal:
+            return SYSTEM_PRINCIPAL_ID
+        if claims.person_id:
+            return claims.person_id
+        if claims.username:
+            from core.agents.attribution import principal_id_for_username
+
+            return principal_id_for_username(claims.username)
+    return SYSTEM_PRINCIPAL_ID
+
+
+def _start_principal(
+    run_id: str,
+    run_kind: str,
+    started_by: Optional[str],
+    principal: Optional[str],
+    trigger_type: Optional[str],
+) -> tuple[str, str, str, Optional[str]]:
+    """Token, actor principal, origin kind, person principal. The agent does not sign."""
+    from core.agents.attribution import plugin_actor
+    from core.auth import tool_principal
+
+    actor = plugin_actor(run_kind)
+    person_id: Optional[str] = None
+    username: Optional[str] = None
+    if principal:
+        try:
+            claims = tool_principal.read(principal)
+        except tool_principal.InvalidPrincipal:
+            logger.warning("stored principal for %s did not verify", run_id)
+            claims = None
+        if claims is not None:
+            person_id = claims.person_id
+            username = claims.username
+    if username and not person_id:
+        from core.agents.attribution import principal_id_for_username
+
+        person_id = principal_id_for_username(username)
+    if person_id or username:
+        origin = "person"
+    elif trigger_type in ("schedule", "scheduled"):
+        origin = "schedule"
+    else:
+        origin = "alert"
+    token = tool_principal.mint(
+        username,
+        person_id=person_id,
+        agent_id=actor,
+        run_id=run_id,
+        origin=origin,
+        ttl=tool_principal.RUN_TTL,
+    )
+    return token, actor, origin, person_id
+
+
+def _record_start(
+    run_id: str,
+    actor: str,
+    origin: str,
+    person_id: Optional[str],
+    spec: Dict[str, Any],
+) -> None:
+    from core.agents.attribution import TrailWriteError, note_run_start
+
+    origin_value = (person_id or "") if origin == "person" else origin
+    try:
+        note_run_start(
+            run_id=run_id,
+            actor=actor,
+            origin_kind=origin,
+            origin=origin_value,
+            spec=spec,
+        )
+    except TrailWriteError:
+        raise
+    except Exception:  # noqa: BLE001 - a database without the trail keeps today's path
+        logger.warning("run %s started without a trail entry", run_id)
 
 
 def insert_intake_trigger(
@@ -1441,6 +1564,7 @@ class Orchestrator:
                     case_id = inv_record.get("case_id")
                     if case_id:
                         context["case_id"] = case_id
+                    _stamp_phases(context, inv_record["workflow_id"], self._workflows)
                     row = runs.begin_run(
                         run_id=run_id,
                         workflow_id=inv_record["workflow_id"],
@@ -1451,6 +1575,7 @@ class Orchestrator:
                         ),
                         trigger_context=context,
                         triggered_by=started_by or "orchestrator",
+                        triggered_by_principal_id=_principal_of(started_by, principal),
                     )
                     if row is None:
                         logger.warning("no workflow_runs row for %s", run_id)
@@ -1460,12 +1585,19 @@ class Orchestrator:
                 logger.warning("no workflow_runs row for %s: %s", run_id, exc)
                 row = None
 
+            token, actor, origin, person = _start_principal(
+                run_id, run_kind, started_by, principal, inv_record.get("trigger_type")
+            )
+            if row is not None:
+                _record_start(run_id, actor, origin, person, request)
             job = build_start_job(
                 run_id,
                 run_kind,
                 request,
                 enqueued_by=started_by or "orchestrator",
-                principal=principal,
+                principal=token,
+                actor=actor,
+                origin=origin,
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
@@ -1475,6 +1607,9 @@ class Orchestrator:
                 runs.finalize_run(
                     run_id, status="failed", error=f"Could not enqueue: {exc}"
                 )
+                from core.agents.attribution import note_terminal
+
+                note_terminal(run_id, "failed", "")
             self._update_investigation_status(
                 inv_id, "failed", f"Could not enqueue: {exc}"
             )
@@ -1556,16 +1691,35 @@ class Orchestrator:
                 "intake_workflow_id": intake_workflow,
             },
             triggered_by="orchestrator",
+            triggered_by_principal_id=_principal_of(started_by, principal),
         )
         if row is None:
             logger.warning("no workflow_runs row for shadow run %s", shadow_id)
 
+        # The shadow is the system's second opinion, not the person's run.
+        token, actor, origin, person = _start_principal(
+            shadow_id, "adjudicate", None, None, "finding"
+        )
+        if row is not None:
+            try:
+                _record_start(shadow_id, actor, origin, person, shadow)
+            except (
+                Exception
+            ):  # noqa: BLE001 - a refused trail must not leave the row running
+                runs.finalize_run(
+                    shadow_id,
+                    status="failed",
+                    error="the action could not be recorded",
+                )
+                raise
         job = build_start_job(
             shadow_id,
             "adjudicate",
             shadow,
             enqueued_by=started_by or "orchestrator",
-            principal=principal,
+            principal=token,
+            actor=actor,
+            origin=origin,
         )
         try:
             await enqueue_run(job, job_id=shadow_id)
@@ -1575,6 +1729,9 @@ class Orchestrator:
                 runs.finalize_run(
                     shadow_id, status="failed", error=f"Could not enqueue: {exc}"
                 )
+                from core.agents.attribution import note_terminal
+
+                note_terminal(shadow_id, "failed", "")
             raise
         logger.info("enqueued shadow adjudication of %s as run %s", inv_id, shadow_id)
 
