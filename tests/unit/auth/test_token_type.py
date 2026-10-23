@@ -338,6 +338,33 @@ def test_database_cutoff_rejects_tokens_redis_still_accepts(client, database, us
     assert renewed.status_code == 200, renewed.text
 
 
+def test_logout_succeeds_when_the_sign_in_ends_and_redis_does_not(
+    client, user, monkeypatch
+):
+    async def _fail(jti, expires_at):
+        raise RuntimeError("redis is down")
+
+    ended = []
+
+    def _end(sid, reason):
+        ended.append((sid, reason))
+        return True
+
+    monkeypatch.setattr("services.api.routers.auth.blacklist_jti", _fail)
+    monkeypatch.setattr("services.api.routers.auth.sign_ins.end", _end)
+    access = AuthService.generate_jwt_token(user, "access", sid="si-1")
+    refresh = AuthService.generate_jwt_token(user, "refresh", sid="si-1")
+
+    response = client.post(
+        LOGOUT,
+        json={"refresh_token": refresh},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert ended == [("si-1", "sign_out")]
+
+
 def test_logout_does_not_claim_success_when_revocation_fails(
     client, user, monkeypatch
 ):

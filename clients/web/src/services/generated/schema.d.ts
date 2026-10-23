@@ -904,9 +904,11 @@ export interface paths {
         /**
          * Logout
          * @description Logout user: blacklist the current access token and the refresh token so
-         *     replaying either returns 401 for the rest of its lifetime, and clear the
-         *     HttpOnly auth cookies from the browser. If a blacklist write does not
-         *     happen, the cookies stay and the response is 503.
+         *     replaying either returns 401 for the rest of its lifetime, end their
+         *     sign-in, and clear the HttpOnly auth cookies. An ended sign-in cannot be
+         *     refreshed even when the blacklist write did not happen. A token with no
+         *     sign-in is revoked only by that write, so if it fails the cookies stay
+         *     and the response is 503.
          *
          *     Args:
          *         request: FastAPI request (used to read the auth cookies).

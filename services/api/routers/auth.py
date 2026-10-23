@@ -545,9 +545,11 @@ async def logout(
 ):
     """
     Logout user: blacklist the current access token and the refresh token so
-    replaying either returns 401 for the rest of its lifetime, and clear the
-    HttpOnly auth cookies from the browser. If a blacklist write does not
-    happen, the cookies stay and the response is 503.
+    replaying either returns 401 for the rest of its lifetime, end their
+    sign-in, and clear the HttpOnly auth cookies. An ended sign-in cannot be
+    refreshed even when the blacklist write did not happen. A token with no
+    sign-in is revoked only by that write, so if it fails the cookies stay
+    and the response is 503.
 
     Args:
         request: FastAPI request (used to read the auth cookies).
@@ -587,7 +589,7 @@ async def logout(
         sids.add(sid)
 
     # Refresh refuses an ended sign-in, so end it even when the blacklist
-    # write did not happen. The access token still needs that write.
+    # write did not happen.
     ended = True
     for sid in sids - {None}:
         try:
@@ -596,9 +598,9 @@ async def logout(
             logger.error("Failed to end sign-in for %s: %s", current_user.username, exc)
             ended = False
 
-    if not revoked or not ended:
-        # Cookies stay. The browser session is still the one the server has,
-        # and the client needs to see that sign-out did not happen.
+    # A token issued before sign-ins carries no sid. Nothing but the blacklist
+    # revokes it, so a missed write must not be reported as success.
+    if not ended or (not revoked and not (sids - {None})):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not revoke this session",
