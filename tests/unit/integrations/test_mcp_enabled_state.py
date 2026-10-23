@@ -1,5 +1,3 @@
-"""A state file that cannot be read or written fails the toggle (#3026)."""
-
 import json
 import os
 from types import SimpleNamespace
