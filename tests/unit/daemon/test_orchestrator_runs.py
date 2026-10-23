@@ -535,7 +535,7 @@ class TestShadowAdjudication:
                     "techniques": [{"technique_id": "T1021.001", "confidence": 0.7}],
                     "model": "v2",
                 },
-                " and is Lateral Movement activity (T1021.001 RDP)",
+                " and is Lateral Movement activity (T1021.001 Remote Desktop Protocol)",
             ),
             (
                 [{"id": "T1190", "confidence": "0.8"}],

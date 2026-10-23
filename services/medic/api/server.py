@@ -1,4 +1,5 @@
-"""Medic's API listener (X2): `GET /v1/status` only; the other 8 operations are G3's.
+"""Medic's API listener (X2): `GET /v1/status` and the decision log. The other
+operations are later G3 work; `/v1/export` is one of them and stays 404.
 
 stdlib only, like the gateway (SP1 ⚑5). Every request needs `X-Medic-Key`,
 compared in constant time with the key file, re-read on each request so a new
@@ -27,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from services.medic.api.decisions import Problem, get_decision, list_page
 from services.medic.api.status import API_VERSION, serve_view
 from services.medic.app.config import API_KEY_FILE_VAR
 
@@ -99,6 +101,7 @@ class Handler(BaseHTTPRequestHandler):
     key_file: Path
     board: StatusBoard
     wall: Callable[[], float]
+    data_dir: Path | None = None
 
     def log_message(self, *args: Any) -> None:  # the access log would print targets
         pass
@@ -170,16 +173,41 @@ class Handler(BaseHTTPRequestHandler):
         self.rid = self._request_id()
         if not self._authorised():
             return self._problem(401, "unauthorized")
-        if self.raw_target != STATUS_PATH:
+        handler = self._handler()
+        if handler is None:
             return self._problem(404, "not_found")
         if self.command != "GET":
             return self._problem(405, "method_not_allowed")
         if not self.server.in_flight.acquire(blocking=False):
             return self._problem(503, "busy", retry_after_s=1)
         try:
-            self._status()
+            handler()
         finally:
             self.server.in_flight.release()
+
+    def _handler(self) -> Callable[[], None] | None:
+        """Status is the exact target. Decisions take a query. Every other path,
+        including `/v1/export`, is not this listener's."""
+        path, _, query = self.raw_target.partition("?")
+        if self.raw_target == STATUS_PATH:
+            return self._status
+        if path == "/v1/decisions":
+            return lambda: self._finish(list_page(self.data_dir, query))
+        head, _, seq = path.rpartition("/")
+        if head == "/v1/decisions" and seq:
+            return lambda: self._finish(get_decision(self.data_dir, seq, query))
+        return None
+
+    def _finish(self, result: dict | Problem) -> None:
+        if isinstance(result, Problem):
+            extra: dict[str, Any] = {}
+            if result.field:
+                extra["field"] = result.field
+            if result.code == "busy":
+                extra["retry_after_s"] = 1
+            self._problem(result.status, result.code, **extra)
+            return
+        self._send(200, result, "application/json")
 
     def _status(self) -> None:
         current = self.board.read()
@@ -225,8 +253,14 @@ def make_server(
     key_file: Path,
     board: StatusBoard,
     wall: Callable[[], float],
+    data_dir: Path | None = None,
 ) -> ThreadingHTTPServer:
-    attrs = {"key_file": key_file, "board": board, "wall": staticmethod(wall)}
+    attrs = {
+        "key_file": key_file,
+        "board": board,
+        "wall": staticmethod(wall),
+        "data_dir": data_dir,
+    }
     return _Server(bind, type("MedicApiHandler", (Handler,), attrs))
 
 
@@ -247,10 +281,12 @@ class Api:
         board: StatusBoard,
         wall: Callable[[], float],
         monotonic: Callable[[], float],
+        data_dir: Path | None = None,
         bind_peer: str | None = None,
         retry_s: float = RETRY_MAX_S,
     ) -> None:
         self.bind, self.key_file, self.board = bind, key_file, board
+        self.data_dir = data_dir
         self.bind_peer = bind_peer
         self._wall, self._monotonic, self._retry_s = wall, monotonic, retry_s
         self._next_try: float | None = None
@@ -315,7 +351,11 @@ class Api:
                 return False
         try:
             server = make_server(
-                (host, port), key_file=self.key_file, board=self.board, wall=self._wall
+                (host, port),
+                key_file=self.key_file,
+                board=self.board,
+                wall=self._wall,
+                data_dir=self.data_dir,
             )
         except OSError as exc:
             self._say_once(
