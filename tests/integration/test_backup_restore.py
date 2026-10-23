@@ -635,14 +635,20 @@ def _install_app_rows(database: str, mfa: str) -> None:
         )
         conn.execute(
             text(
+                "INSERT INTO principals (principal_id, kind) "
+                "VALUES ('u-mfa', 'person'), ('u-none', 'person')"
+            )
+        )
+        conn.execute(
+            text(
                 "INSERT INTO users "
-                "(user_id, username, email, password_hash, full_name, role_id, "
-                "is_active, is_verified, mfa_enabled, mfa_secret, mfa_recovery_codes, "
-                "login_count) VALUES "
-                "('u-mfa', 'ada', 'ada@example.com', 'hash', 'Ada', 'role-analyst', "
-                "true, true, true, :mfa, '[]', 0), "
-                "('u-none', 'bea', 'bea@example.com', 'hash', 'Bea', 'role-analyst', "
-                "true, true, false, NULL, '[]', 0)"
+                "(user_id, principal_id, username, email, password_hash, full_name, "
+                "role_id, is_active, is_verified, mfa_enabled, mfa_secret, "
+                "mfa_recovery_codes, login_count) VALUES "
+                "('u-mfa', 'u-mfa', 'ada', 'ada@example.com', 'hash', 'Ada', "
+                "'role-analyst', true, true, true, :mfa, '[]', 0), "
+                "('u-none', 'u-none', 'bea', 'bea@example.com', 'hash', 'Bea', "
+                "'role-analyst', true, true, false, NULL, '[]', 0)"
             ),
             {"mfa": mfa},
         )

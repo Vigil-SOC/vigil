@@ -130,9 +130,6 @@ def _persist_chat_turn(
 logger = logging.getLogger(__name__)
 
 
-# Structured payload returned when no Anthropic provider is configured.
-# The chat drawer matches on ``code`` and renders a "Configure a provider"
-# CTA instead of a generic ``Error: ...`` bubble.
 NO_PROVIDER_DETAIL: Dict[str, str] = {
     "code": "no_llm_provider_configured",
     "message": (
@@ -141,11 +138,6 @@ NO_PROVIDER_DETAIL: Dict[str, str] = {
     ),
     "settings_path": "/settings#llm-providers",
 }
-
-
-def _raise_no_provider() -> None:
-    """Raise the canonical 503 for an unconfigured chat backend."""
-    raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
 
 
 def _resolve_provider_model_for_request(
@@ -376,7 +368,7 @@ async def chat_stream(
 
     active_provider = provider_for(provider_id)
     if active_provider is None:
-        _raise_no_provider()
+        raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
     model = request.model = model_for(active_provider, request.model)
     provider_type = active_provider.provider_type
 

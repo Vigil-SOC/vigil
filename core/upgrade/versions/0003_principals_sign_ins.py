@@ -1,8 +1,8 @@
-"""Per-user session cutoff, enforced when Redis did not store its copy."""
+"""Principals, sign-ins, and credentials that outlive the account (#2758)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0003_session_cutoff"
+revision = "0003_principals_sign_ins"
 down_revision = "0002_audit_trail"
 
 

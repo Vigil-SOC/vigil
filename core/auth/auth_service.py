@@ -19,6 +19,7 @@ import pyotp
 from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
+from core.auth import principals
 from core.config import get_settings
 from core.exceptions import default_on_error
 from core.secrets import get_secret
@@ -184,8 +185,12 @@ class AuthService:
         user: User,
         token_type: str = "access",
         user_agent: Optional[str] = None,
+        sid: Optional[str] = None,
     ) -> str:
-        """Generate a JWT token for a user with optional session binding."""
+        """Generate a JWT token for a user with optional session binding.
+
+        ``sid`` names the sign-in the token belongs to; every token gets a
+        fresh ``jti`` either way."""
         expiration = (
             timedelta(minutes=JWT_ACCESS_EXPIRATION_MINUTES)
             if token_type == "access"
@@ -203,6 +208,9 @@ class AuthService:
             "exp": now + expiration,
             "iat": now,
         }
+
+        if sid:
+            payload["sid"] = sid
 
         # Bind token to session context when available
         if user_agent:
@@ -246,6 +254,24 @@ class AuthService:
         except jwt.InvalidTokenError as e:
             logger.warning(f"Invalid JWT token: {e}")
             return None
+
+    @staticmethod
+    def expired_refresh_payload(token: str) -> Optional[Dict[str, Any]]:
+        """The claims of a validly signed refresh token whose expiry has passed,
+        so the sign-in it carries can be ended. None for anything else."""
+        try:
+            payload = jwt.decode(
+                token,
+                JWT_SECRET_KEY,
+                algorithms=[JWT_ALGORITHM],
+                options={"verify_exp": False},
+            )
+        except jwt.InvalidTokenError:
+            return None
+        exp = payload.get("exp")
+        if payload.get("token_type") != "refresh" or exp is None:
+            return None
+        return payload if exp <= time.time() else None
 
     @staticmethod
     def authenticate_user(
@@ -793,6 +819,7 @@ class AuthService:
                 login_count=0,
             )
 
+            principals.add_for_user(session, user)
             session.add(user)
             # Flush so the read-back sees server defaults; the unit of work
             # commits.

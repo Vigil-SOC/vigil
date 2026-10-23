@@ -14,7 +14,8 @@ def _session(user, role):
 
     def query(model):
         q = MagicMock()
-        q.filter.return_value.first.return_value = user if model is users.User else role
+        q.join.return_value = q.filter.return_value = q
+        q.first.return_value = user if model is users.User else role
         return q
 
     session.query.side_effect = query
