@@ -98,6 +98,7 @@ def test_a_new_password_rotates_and_clears_failures():
     assert AuthService.verify_password(new, user.password_hash)
     assert not AuthService.verify_password(PASSWORD, user.password_hash)
     assert user.failed_login_count == 0
+    assert user.tokens_valid_after is not None
 
 
 def test_a_new_name_retires_the_old_service_account():

@@ -3414,6 +3414,11 @@
   "nullable": false,
   "type": "boolean"
  },
+ "column users.tokens_valid_after": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column users.updated_at": {
   "default": "now()",
   "nullable": false,

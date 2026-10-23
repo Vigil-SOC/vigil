@@ -38,6 +38,7 @@ from core.auth.password_validator import (
     PasswordPolicyError,
     validate_password_strength,
 )
+from core.auth.session_cutoff import issued_before_cutoff, stamp_session_cutoff
 from core.auth.token_blacklist import (
     blacklist_jti,
     consume_refresh_jti,
@@ -491,24 +492,27 @@ def _set_cookies_for(response: Response, access_token: str, refresh_token: str):
     )
 
 
-async def _revoke_token(raw: str, owner: User, kind: str) -> None:
-    """Blacklist a token's JTI for its remaining life. Another user's token is
-    left alone, so a body field cannot be used to revoke someone else's session."""
+async def _revoke_token(raw: str, owner: User, kind: str) -> bool:
+    """Blacklist a token's JTI for its remaining life.
+
+    False when that write did not happen. Another user's token is left alone,
+    so a body field cannot be used to revoke someone else's session.
+    """
     payload = AuthService.verify_jwt_token(raw)
     jti = payload.get("jti") if payload else None
     if not jti or payload.get("user_id") != owner.user_id:
-        return
+        return True
     exp_ts = payload.get("exp")
     try:
         await blacklist_jti(
             jti, datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
         )
     except Exception as exc:
-        # Redis down: logout still "succeeds" client-side (cookies cleared,
-        # client discards its tokens), but the server-side failure is logged.
         logger.error(
             "Failed to blacklist %s token for %s: %s", kind, owner.username, exc
         )
+        return False
+    return True
 
 
 @router.post("/logout")
@@ -522,7 +526,8 @@ async def logout(
     """
     Logout user: blacklist the current access token and the refresh token so
     replaying either returns 401 for the rest of its lifetime, and clear the
-    HttpOnly auth cookies from the browser.
+    HttpOnly auth cookies from the browser. If a blacklist write does not
+    happen, the cookies stay and the response is 503.
 
     Args:
         request: FastAPI request (used to read the auth cookies).
@@ -542,8 +547,9 @@ async def logout(
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
+    revoked = True
     if raw_token:
-        await _revoke_token(raw_token, current_user, "access")
+        revoked = await _revoke_token(raw_token, current_user, "access") and revoked
 
     # A captured refresh token must not mint new access tokens after logout.
     # The cookie and the body field can differ (a Bearer client next to a
@@ -553,7 +559,15 @@ async def logout(
         body.refresh_token if body else None,
     }
     for raw in refresh_tokens - {None, ""}:
-        await _revoke_token(raw, current_user, "refresh")
+        revoked = await _revoke_token(raw, current_user, "refresh") and revoked
+
+    if not revoked:
+        # Cookies stay. The browser session is still the one the server has,
+        # and the client needs to see that sign-out did not happen.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not revoke this session",
+        )
 
     clear_auth_cookies(response)
 
@@ -615,6 +629,12 @@ async def refresh_token(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
+        )
+
+    if issued_before_cutoff(payload, user.tokens_valid_after):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
         )
 
     service_account = _is_service_account(user)
@@ -773,10 +793,14 @@ async def update_current_user(
                 await revoke_all_for_user(current_user.user_id)
             except Exception as exc:
                 logger.error(
-                    "Email changed for %s but revoke_all_for_user failed: %s",
+                    "Email changed for %s; session cutoff is stored but the "
+                    "Redis copy failed: %s",
                     current_user.username,
                     exc,
                 )
+            # After the Redis round-trip. A refresh during that wait must
+            # still be older than the cutoff this request commits.
+            stamp_session_cutoff(current_user)
 
         logger.info(f"User profile updated: {current_user.username}")
         return payload
@@ -847,11 +871,14 @@ async def change_password(
             await revoke_all_for_user(current_user.user_id)
         except Exception as exc:
             logger.error(
-                "Password changed for %s but revoke_all_for_user failed: %s. "
-                "Old tokens may remain valid until natural expiry.",
+                "Password changed for %s; session cutoff is stored but the "
+                "Redis copy failed: %s",
                 current_user.username,
                 exc,
             )
+        # After the Redis round-trip, so a refresh during that wait is still
+        # older than the cutoff this request commits.
+        stamp_session_cutoff(current_user)
 
         clear_auth_cookies(response)
         logger.info(f"Password changed for user: {current_user.username}")
@@ -1119,10 +1146,14 @@ async def password_reset_confirm(
             await revoke_all_for_user(user.user_id)
         except Exception as exc:
             logger.error(
-                "Password reset for %s but revoke_all_for_user failed: %s",
+                "Password reset for %s; session cutoff is stored but the "
+                "Redis copy failed: %s",
                 user.username,
                 exc,
             )
+        # After the Redis round-trip, so a refresh during that wait is still
+        # older than the cutoff this request commits.
+        stamp_session_cutoff(user)
 
         logger.info("Password reset completed for user: %s", user.username)
         return {"message": "Password reset successfully"}

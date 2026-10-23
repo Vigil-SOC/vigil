@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from core.auth.auth_service import AuthService
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
+from core.auth.session_cutoff import stamp_session_cutoff
 from core.auth.token_blacklist import revoke_all_for_user
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Role, User
@@ -401,11 +402,15 @@ async def update_user(
                 await revoke_all_for_user(user.user_id)
             except Exception as exc:
                 logger.error(
-                    "%s for %s but revoke_all_for_user failed: %s",
+                    "%s for %s; session cutoff is stored but the Redis copy "
+                    "failed: %s",
                     stale_reason,
                     user.username,
                     exc,
                 )
+            # After the Redis round-trip. A refresh during that wait must
+            # still be older than the cutoff this request commits.
+            stamp_session_cutoff(user)
 
         logger.info(f"User updated by {current_user.username}: {user.username}")
         return payload
