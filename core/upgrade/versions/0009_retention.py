@@ -6,7 +6,7 @@ Continues the single chain at ``0007_conversation_generation``.
 from core.upgrade.revision import run_sql
 
 revision = "0009_retention"
-down_revision = "0007_conversation_generation"
+down_revision = "0008_permission_catalog"
 
 
 def upgrade() -> None:
