@@ -1,0 +1,1 @@
+{"iterations": {"anyOf": [{"maximum": 40, "minimum": 1, "type": "integer"}, {"type": "null"}], "default": null, "title": "Iterations"}, "max_cost_usd": {"anyOf": [{"exclusiveMinimum": 0, "maximum": 100.0, "type": "number"}, {"type": "null"}], "default": null, "title": "Max Cost Usd"}}

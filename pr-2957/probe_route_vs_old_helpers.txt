@@ -1,0 +1,46 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/d10141bf-5392-490d-81e5-49de6ee7cc88/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 24 items
+
+tests/unit/zz_probe/test_probe_2880.py "iterations": 5                               -> 200 job iterations=5 overrides=None | old=5 None
+."iterations": "5"                             -> 200 job iterations=5 overrides=None | old=5 None
+."iterations": 5.0                             -> 200 job iterations=5 overrides=None | old=5 None
+."iterations": 40                              -> 200 job iterations=40 overrides=None | old=40 None
+."iterations": 41                              -> 422
+."iterations": 0                               -> 422
+."iterations": 5.5                             -> 422
+."iterations": "ten"                           -> 422
+."iterations": 1e9                             -> 422
+."iterations": true                            -> 200 job iterations=1 overrides=None | old=1 None
+."iterations": null                            -> 200 job iterations=None overrides=None | old=None None
+."max_cost_usd": 12                            -> 200 job iterations=None overrides={'budgets': {'max_cost_usd': 12.0}} | old=None {'budgets': {'max_cost_usd': 12.0}}
+."max_cost_usd": "7.5"                         -> 200 job iterations=None overrides={'budgets': {'max_cost_usd': 7.5}} | old=None {'budgets': {'max_cost_usd': 7.5}}
+."max_cost_usd": 100                           -> 200 job iterations=None overrides={'budgets': {'max_cost_usd': 100.0}} | old=None {'budgets': {'max_cost_usd': 100.0}}
+."max_cost_usd": 100.0001                      -> 422
+."max_cost_usd": 0                             -> 422
+."max_cost_usd": -1                            -> 422
+."max_cost_usd": "lots"                        -> 422
+."max_cost_usd": "NaN"                         -> 422
+."max_cost_usd": "inf"                         -> 422
+."max_cost_usd": 1e-300                        -> 200 job iterations=None overrides={'budgets': {'max_cost_usd': 1e-300}} | old=None {'budgets': {'max_cost_usd': 1e-300}}
+."max_cost_usd": true                          -> 200 job iterations=None overrides={'budgets': {'max_cost_usd': 1.0}} | old=None {'budgets': {'max_cost_usd': 1.0}}
+."max_cost_usd": null                          -> 200 job iterations=None overrides=None | old=None None
+."iterations": 40, "max_cost_usd": 100         -> 200 job iterations=40 overrides={'budgets': {'max_cost_usd': 100.0}} | old=40 {'budgets': {'max_cost_usd': 100.0}}
+.
+
+============================= slowest 10 durations =============================
+0.15s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["max_cost_usd": null]
+0.14s setup    unit/zz_probe/test_probe_2880.py::test_route_then_real_service["iterations": 5]
+0.08s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["iterations": 5]
+0.06s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["iterations": true]
+0.06s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["iterations": null]
+0.05s setup    unit/zz_probe/test_probe_2880.py::test_route_then_real_service["max_cost_usd": "inf"]
+0.05s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["max_cost_usd": "NaN"]
+0.05s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["max_cost_usd": "inf"]
+0.05s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["max_cost_usd": "7.5"]
+0.05s call     unit/zz_probe/test_probe_2880.py::test_route_then_real_service["iterations": "5"]
+============================== 24 passed in 4.03s ==============================

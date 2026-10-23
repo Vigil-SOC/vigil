@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/d10141bf-5392-490d-81e5-49de6ee7cc88/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 131 items
+
+tests/unit/api/test_api_v1_contract.py .....                             [  3%]
+tests/unit/agents/test_run_limits.py ............                        [ 12%]
+tests/unit/workflows/test_workflow_execution.py ........................ [ 31%]
+....                                                                     [ 34%]
+tests/unit/workflows/test_rca_handoff_gate.py .................          [ 47%]
+tests/unit/workflows/test_workflow_enablement.py ....................... [ 64%]
+...                                                                      [ 67%]
+tests/unit/agents/test_hunt_coverage.py .........                        [ 74%]
+tests/unit/integrations/test_feed_hunt_proposals.py .........            [ 80%]
+tests/unit/workflows/test_hunt_coverage_route.py .......                 [ 86%]
+tests/unit/workflows/test_workflow_version.py ..................         [100%]
+
+============================= slowest 10 durations =============================
+4.04s call     unit/api/test_api_v1_contract.py::test_v1_contract_matches_committed_snapshot
+1.04s call     unit/workflows/test_rca_handoff_gate.py::TestTheDeploymentGate::test_a_connected_siem_starts_the_run
+0.56s setup    unit/workflows/test_workflow_version.py::TestUpdateVersion::test_identical_save_keeps_version
+0.05s teardown unit/workflows/test_workflow_version.py::TestUpdateVersion::test_several_changed_fields_bump_by_one
+0.05s call     unit/workflows/test_workflow_enablement.py::test_execute_accepts_an_enabled_workflow
+0.04s call     unit/workflows/test_workflow_version.py::TestAgentRunPath::test_named_workflow_stores_its_version
+0.04s call     unit/workflows/test_workflow_version.py::TestAgentRunPath::test_failed_lookup_still_begins_the_run
+0.04s call     unit/workflows/test_workflow_execution.py::test_a_queue_outage_fails_the_run_rather_than_leaving_it_running
+0.04s call     unit/workflows/test_workflow_execution.py::test_a_hunt_needs_a_belief_from_someone[asked3-False]
+0.04s call     unit/workflows/test_workflow_execution.py::test_the_cost_ceiling_rides_the_job[asked1-None]
+======================= 131 passed, 2 warnings in 9.85s ========================
