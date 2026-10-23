@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit import trail
@@ -395,7 +396,15 @@ def _trail_ready(session: Session) -> bool:
     bind = get_bind()
     if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
         return False
-    return trail.trail_ready(session)
+    if not trail.trail_ready(session):
+        return False
+    # stamp_schema_head records the head revision on a create_all database,
+    # which has no audit_trail. The revision check would append into a
+    # missing table and roll the caller's change back.
+    return (
+        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
+        is not None
+    )
 
 
 def _redact_tree(value: Any, key: str = "") -> Any:

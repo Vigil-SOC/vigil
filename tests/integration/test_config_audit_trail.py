@@ -179,6 +179,35 @@ def test_secrets_are_redacted_in_the_trail_and_kept_on_the_row(db):
     assert "super-secret" not in str(by_key["audit.t.secret"])
 
 
+def test_stamped_head_without_the_trail_table_keeps_the_legacy_row(db):
+    """create_all plus stamp_schema_head names the head revision and has no table."""
+    with db.begin() as conn:
+        conn.execute(text("ALTER TABLE audit_trail RENAME TO audit_trail_hidden"))
+    try:
+        ConfigService(user_id="runner").record_audit(
+            "backup",
+            "restore",
+            "restore",
+            None,
+            {"snapshot_id": "abc", "expired_count": 0},
+        )
+        with db.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT changed_by, action FROM config_audit_log "
+                    "WHERE config_key = 'restore'"
+                )
+            ).one()
+            hidden = conn.execute(
+                text("SELECT to_regclass('public.audit_trail_hidden')")
+            ).scalar_one()
+        assert (row.changed_by, row.action) == ("runner", "restore")
+        assert hidden == "audit_trail_hidden"
+    finally:
+        with db.begin() as conn:
+            conn.execute(text("ALTER TABLE audit_trail_hidden RENAME TO audit_trail"))
+
+
 def test_legacy_audit_row_when_the_trail_revision_is_absent(db):
     with db.begin() as conn:
         conn.execute(text("UPDATE alembic_version SET version_num = '0001_baseline'"))
