@@ -18,7 +18,6 @@ class WorkdirManager:
     """
 
     REQUIRED_FILES = {
-        "plan.md": "",
         "state.json": "{}",
         "context.md": "",
         "log.jsonl": "",
