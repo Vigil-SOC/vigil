@@ -1,12 +1,14 @@
 """Stage a snapshot, check it, and swap it in. ``--test`` discards the stage.
 
 After a swap, rotate the JWT secret, re-encrypt MFA secrets, reject pending
-approvals, and write one audit row. ``--test`` returns before any of that.
+approvals, and write one trail entry. ``--test`` returns before any of that.
+A snapshot from before the trail still gets the config audit row.
 
-The dump is restored into a new database. ``agent_events_assign_hashes`` is a
-BEFORE INSERT trigger and would re-hash rows if the dump landed in a schema
-that already had it. Checks run before any rename. A failure before the swap
-drops the stage and leaves the live database and files where they were.
+The dump is restored into a new database. ``agent_events_assign_hashes`` and
+``audit_trail_assign`` are BEFORE INSERT triggers and would re-hash rows if
+the dump landed in a schema that already had them. Checks run before any
+rename. A failure before the swap drops the stage and leaves the live
+database and files where they were.
 
 Bifrost's request log (``logs.db`` and its ``-wal``/``-shm`` files) lives in the
 Bifrost data directory but is never in a snapshot. The swap moves the live one
@@ -31,7 +33,10 @@ from urllib.parse import quote
 import psycopg2
 from cryptography.fernet import Fernet
 from psycopg2 import sql
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
+from core.audit import trail
 from core.backup.connection import backup_database_config
 from core.backup.create import (
     PRE_RESTORE_PREFIX,
@@ -129,6 +134,10 @@ def restore_snapshot(
         restic, passphrase, snapshot, priority
     )
     _assert_compatible(manifest)
+    # Before anything is staged. A missing date is not a version mismatch.
+    created_at = manifest.get("created_at")
+    if not isinstance(created_at, str) or not created_at.strip():
+        raise BackupError("manifest has no created_at")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged_name = _suffixed(cfg.database, "_stage_", stamp)
     pre_name = _suffixed(cfg.database, "_pre_restore_", stamp)
@@ -170,7 +179,11 @@ def restore_snapshot(
                 lines.append("discarded staged copies")
                 return "\n".join(lines)
             lines.append(f"previous database: {pre_name}")
-            lines.extend(_swap(cfg, staged_name, pre_name, placed, stamp))
+            # Resolved before the swap: an unknown operator refuses the restore
+            # with nothing moved, rather than failing after the swap.
+            restoring_user = _actor(actor)
+            swap_lines, abandoned = _swap(cfg, staged_name, pre_name, placed, stamp)
+            lines.extend(swap_lines)
             swapped = True
             created = False
             # The swap stays even when this fails. --test returned above. The
@@ -179,7 +192,9 @@ def restore_snapshot(
             # JWT rotation, and a write error still carries those lines.
             try:
                 lines.extend(
-                    _settle_restored(cfg, manifest, snapshot_id, _actor(actor))
+                    _settle_restored(
+                        cfg, manifest, snapshot_id, restoring_user, abandoned
+                    )
                 )
                 _record_restored(manifest, snapshot_id, discarded)
             except BackupError as exc:
@@ -655,8 +670,11 @@ def _swap(
     pre_name: str,
     placed: list[_Placed],
     stamp: str,
-) -> list[str]:
+) -> tuple[list[str], dict | None]:
     _close_our_backends(cfg, [cfg.database, staged_name])
+    # Read and release before the rename. A connection left on the live
+    # database makes _other_clients refuse the swap.
+    abandoned = _abandoned_tip(cfg)
     admin = _connect_as(cfg, database="postgres", autocommit=True)
     renamed = False
     try:
@@ -678,7 +696,7 @@ def _swap(
     finally:
         admin.close()
     try:
-        return _swap_files(placed, stamp)
+        return _swap_files(placed, stamp), abandoned
     except Exception:
         try:
             _rollback_database(cfg, staged_name, pre_name)
@@ -891,46 +909,160 @@ def _actor(actor: str | None) -> str:
         raise BackupError(f"could not identify the restoring user: {exc}") from exc
 
 
-def _settle_restored(
-    cfg: DatabaseConfig, manifest: dict, snapshot_id: str, actor: str
-) -> list[str]:
-    created_at = manifest.get("created_at")
-    if not isinstance(created_at, str) or not created_at.strip():
-        raise BackupError("manifest has no created_at")
-    _point_at_live(cfg)
-    old_key = _stored_jwt_secret()
-    # Under Compose the backend takes the key from the environment, which the
-    # operator also passes to this process. No store holds it.
-    env_key = os.environ.get("JWT_SECRET_KEY")  # noqa: ENV001
-    from_env = old_key is None and bool(env_key)
-    if from_env:
-        old_key = env_key
-    new_key = secrets.token_urlsafe(48)
-    expired = _reencrypt_and_expire(old_key, new_key, snapshot_id, created_at, actor)
-    # With no key anywhere, a deployment outside this install sets it. A
-    # jwt_secret written here would never be read.
-    rotated = old_key is not None
-    if rotated:
-        _write_jwt_stores(new_key, secrets_only=from_env)
+def _trail_ready(conn) -> bool:
+    """Whether this database has the trail table, not only its revision.
+
+    ``stamp_schema_head`` records the head revision on a ``create_all``
+    database, and ``audit_trail`` is not an ORM model, so ``trail.trail_ready``
+    alone would query a missing table and refuse the swap.
+    """
+    if not trail.trail_ready(conn):
+        return False
+    return (
+        conn.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
+        is not None
+    )
+
+
+def _abandoned_tip(cfg: DatabaseConfig) -> dict | None:
+    """The live trail's tip, or None when the database has no trail.
+
+    An empty ``audit_trail`` falls back to the anchor, as ``trail.current_tip``
+    does, so a prefix delete that removed every row still names the tip it
+    abandoned. The engine is disposed before return so the rename is not
+    refused for this connection.
+    """
+    engine = create_engine(
+        _config_for(cfg, cfg.database).get_database_url(), poolclass=NullPool
+    )
+    try:
+        with engine.connect() as conn:
+            if not _trail_ready(conn):
+                return None
+            tip = trail.current_tip(conn)
+    finally:
+        engine.dispose()
+    return {"seq": int(tip.seq), "hash": str(tip.entry_hash)}
+
+
+def _restore_values(
+    snapshot_id: str, created_at: str, expired: int, rotated: bool
+) -> dict:
+    return {
+        "snapshot_id": snapshot_id,
+        "created_at": created_at,
+        "expired_count": expired,
+        "jwt_rotated": rotated,
+    }
+
+
+def _record_restore(
+    snapshot_id: str,
+    created_at: str,
+    expired: int,
+    rotated: bool,
+    actor: str,
+    abandoned: dict | None,
+    failure: BackupError | None,
+    legacy: bool,
+) -> None:
+    """One trail entry, or today's config audit row when the trail is absent.
+
+    The writer does not set ``prev_hash`` or ``seq``: the trigger chains onto
+    the restored tip. The OS user sits in ``operator_text``, not the actor.
+    A failure is part of this entry; it is not a later update.
+    """
+    values = _restore_values(snapshot_id, created_at, expired, rotated)
+    with get_db_manager().session_scope() as session:
+        if _trail_ready(session):
+            payload = {
+                trail.ACTION: trail.ACTION_RESTORE,
+                trail.ACTOR: trail.SYSTEM,
+                "abandoned": abandoned,
+                **values,
+            }
+            if failure is not None:
+                payload[trail.OUTCOME] = trail.OUTCOME_FAILED
+                payload["reason"] = str(failure)
+            # Poll's reset returns the newest entry with this action.
+            trail.append(session, payload, operator_text=actor)
+            return
+    if not legacy:
+        return
     get_config_service(user_id=actor).record_audit(
         config_type="backup",
         config_key="restore",
         action="restore",
         old_value=None,
-        new_value={
-            "snapshot_id": snapshot_id,
-            "created_at": created_at,
-            "expired_count": expired,
-            "jwt_rotated": rotated,
-        },
+        new_value=values,
     )
-    if not rotated:
-        raise BackupError(
-            f"approvals expired: {expired}\n"
-            "JWT_SECRET_KEY is not in secrets.enc, either .env, or jwt_secret, so "
-            "it is set outside this install; old sessions stay valid until it is "
-            "rotated where it is defined"
+
+
+def _settle_restored(
+    cfg: DatabaseConfig,
+    manifest: dict,
+    snapshot_id: str,
+    actor: str,
+    abandoned: dict | None,
+) -> list[str]:
+    created_at: str = manifest["created_at"]
+    failure: BackupError | None = None
+    expired = 0
+    rotated = False
+    from_env = False
+    # True once settle has reached the point where today's audit row is written.
+    # An earlier failure on a pre-trail snapshot still writes nothing.
+    legacy = False
+    try:
+        _point_at_live(cfg)
+        old_key = _stored_jwt_secret()
+        # Under Compose the backend takes the key from the environment, which the
+        # operator also passes to this process. No store holds it.
+        env_key = os.environ.get("JWT_SECRET_KEY")  # noqa: ENV001
+        from_env = old_key is None and bool(env_key)
+        if from_env:
+            old_key = env_key
+        new_key = secrets.token_urlsafe(48)
+        expired = _reencrypt_and_expire(
+            old_key, new_key, snapshot_id, created_at, actor
         )
+        # With no key anywhere, a deployment outside this install sets it. A
+        # jwt_secret written here would never be read.
+        if old_key is not None:
+            _write_jwt_stores(new_key, secrets_only=from_env)
+            rotated = True
+        legacy = True
+        if not rotated:
+            failure = BackupError(
+                f"approvals expired: {expired}\n"
+                "JWT_SECRET_KEY is not in secrets.enc, either .env, or jwt_secret, "
+                "so it is set outside this install; old sessions stay valid until "
+                "it is rotated where it is defined"
+            )
+    except Exception as exc:
+        # Any settle failure after the swap still records one entry. A
+        # pre-trail snapshot only keeps today's row when settle reached it.
+        failure = exc if isinstance(exc, BackupError) else BackupError(str(exc))
+    try:
+        _record_restore(
+            snapshot_id,
+            created_at,
+            expired,
+            rotated,
+            actor,
+            abandoned,
+            failure,
+            legacy,
+        )
+    except BackupError:
+        raise
+    except Exception as exc:
+        wrapped = BackupError(f"could not record the restore: {exc}")
+        if failure is None:
+            raise wrapped from exc
+        raise BackupError(f"{failure}\n{wrapped}") from exc
+    if failure is not None:
+        raise failure
     lines = [
         f"backup date: {created_at}",
         f"approvals expired: {expired}",

@@ -10,6 +10,7 @@ from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from core.cases.case_status import CLOSED
 from core.storage.models import Case, CaseMetrics, CaseSLA, CaseTask
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -69,8 +70,7 @@ class CaseMetricsService:
                         (first_activity_dt - case_created).total_seconds()
                     )
 
-                # Time to resolve (case closed/resolved)
-                if case.status in ["resolved", "closed"]:
+                if case.status == CLOSED:
                     if case.updated_at:
                         metrics.time_to_resolve = int(
                             (case.updated_at - case_created).total_seconds()
@@ -174,9 +174,7 @@ class CaseMetricsService:
                 priority_counts[priority] = priority_counts.get(priority, 0) + 1
 
             # Calculate average resolution time
-            resolved_cases = [
-                c for c in all_cases if c.status in ["resolved", "closed"]
-            ]
+            resolved_cases = [c for c in all_cases if c.status == CLOSED]
             avg_resolution_time = None
             if resolved_cases:
                 total_time = 0
@@ -225,11 +223,5 @@ class CaseMetricsService:
                 "sla_compliance_rate": sla_compliance_rate,
                 "cases_per_day": cases_per_day,
                 "resolved_cases_count": len(resolved_cases),
-                "open_cases_count": len(
-                    [
-                        c
-                        for c in all_cases
-                        if c.status in ["open", "in-progress", "investigating"]
-                    ]
-                ),
+                "open_cases_count": len(all_cases) - len(resolved_cases),
             }
