@@ -1,0 +1,7 @@
+== base service ==
+No Anthropic API key found - AI insights will use fallback mode
+gateway calls: 0 titles: ['SOC operations stable']
+exit 1
+== fixed service ==
+gateway calls: 1 titles: ['t']
+exit 0

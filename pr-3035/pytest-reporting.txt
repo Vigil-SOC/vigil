@@ -1,0 +1,5 @@
+0.06s call     unit/reporting/test_ai_decisions_db_down.py::test_reads_fail_loud[/api/ai/decisions]
+0.05s call     unit/reporting/test_ai_decisions_db_down.py::test_unknown_decision_is_still_a_404
+0.04s call     unit/reporting/test_ai_insights_service.py::test_error_dict_returns_fallback_and_logs_the_worker_error
+0.04s call     unit/reporting/test_ai_decision_feedback_reviewer.py::test_a_user_without_the_approvals_right_cannot_grade
+================== 21 passed, 2 warnings in 126.35s (0:02:06) ==================

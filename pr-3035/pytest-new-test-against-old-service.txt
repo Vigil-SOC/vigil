@@ -1,0 +1,15 @@
+2.22s setup    unit/reporting/test_ai_insights_service.py::test_error_dict_returns_fallback_and_logs_the_worker_error
+0.41s call     unit/reporting/test_ai_insights_service.py::test_error_dict_returns_fallback_and_logs_the_worker_error
+0.01s teardown unit/reporting/test_ai_insights_service.py::test_error_dict_returns_fallback_and_logs_the_worker_error
+0.01s setup    unit/reporting/test_ai_insights_service.py::test_unparseable_reply_returns_fallback[[{"type": "warning", "title": ]]
+0.01s setup    unit/reporting/test_ai_insights_service.py::test_unparseable_reply_returns_fallback[I could not produce insights.]
+
+(5 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/reporting/test_ai_insights_service.py::test_error_dict_returns_fallback_and_logs_the_worker_error
+FAILED tests/unit/reporting/test_ai_insights_service.py::test_unparseable_reply_returns_fallback[I could not produce insights.]
+FAILED tests/unit/reporting/test_ai_insights_service.py::test_unparseable_reply_returns_fallback[[{"type": "warning", "title": ]]
+FAILED tests/unit/reporting/test_ai_insights_service.py::test_well_formed_reply_is_parsed
+FAILED tests/unit/reporting/test_ai_insights_service.py::test_valid_empty_array_is_returned_as_empty
+FAILED tests/unit/reporting/test_ai_insights_service.py::test_gateway_is_called_without_an_anthropic_key
+========================= 6 failed in 80.70s (0:01:20) =========================
