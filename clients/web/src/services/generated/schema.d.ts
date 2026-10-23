@@ -835,6 +835,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Feed
+         * @description Destination (without TLS material) and how far the cursor is behind the tip.
+         */
+        get: operations["get_api_audit_feed"];
+        /**
+         * Update Feed
+         * @description Save host, port, enabled and TLS material. One trail entry, from the config write.
+         */
+        put: operations["put_api_audit_feed"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/feed/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Feed
+         * @description Send one CEF test frame. Does not move the cursor or append a trail entry.
+         */
+        post: operations["post_api_audit_feed_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/poll": {
         parameters: {
             query?: never;
@@ -3570,23 +3614,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/findings/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Export Findings */
-        post: operations["post_api_findings_export"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/findings/stats/summary": {
         parameters: {
             query?: never;
@@ -5368,94 +5395,6 @@ export interface paths {
          *         Dictionary with storage backend information
          */
         get: operations["get_api_storage_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/timeline/case/{case_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Case Timeline
-         * @description Get timeline events for a specific case.
-         *
-         *     Includes:
-         *     - Case timeline events
-         *     - Associated findings
-         *     - Activities
-         *     - Status changes
-         *     - Notes
-         *
-         *     Args:
-         *         case_id: Case identifier
-         *
-         *     Returns:
-         *         Timeline events for the case
-         */
-        get: operations["get_api_timeline_case_case_id"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/timeline/cluster/{cluster_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Cluster Timeline
-         * @description Get timeline events for findings in a specific cluster.
-         *
-         *     Args:
-         *         cluster_id: Cluster identifier
-         *
-         *     Returns:
-         *         Timeline events for the cluster
-         */
-        get: operations["get_api_timeline_cluster_cluster_id"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/timeline/finding/{finding_id}/context": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Finding Context Timeline
-         * @description Get timeline context around a specific finding.
-         *
-         *     Shows related findings within a time window before and after the finding.
-         *
-         *     Args:
-         *         finding_id: Finding identifier
-         *         time_window_minutes: Minutes before/after to include (default 60)
-         *
-         *     Returns:
-         *         Timeline events around the finding
-         */
-        get: operations["get_api_timeline_finding_finding_id_context"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9058,6 +8997,27 @@ export interface components {
             max_items?: number | null;
             /** Min Severity */
             min_severity?: string | null;
+        };
+        /** FeedIn */
+        FeedIn: {
+            /** Ca Pem */
+            ca_pem?: string | null;
+            /** Client Cert Pem */
+            client_cert_pem?: string | null;
+            /** Client Key Pem */
+            client_key_pem?: string | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Host
+             * @default
+             */
+            host: string;
+            /** Port */
+            port?: number | null;
         };
         /** FindingListResponse */
         FindingListResponse: {
@@ -12962,6 +12922,103 @@ export interface operations {
                 attribution?: string | null;
                 after?: number | null;
             };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_feed: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_feed: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_audit_feed_test: {
+        parameters: {
+            query?: never;
             header?: {
                 authorization?: string | null;
             };
@@ -17798,39 +17855,6 @@ export interface operations {
             };
         };
     };
-    post_api_findings_export: {
-        parameters: {
-            query?: {
-                output_format?: string;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_findings_stats_summary: {
         parameters: {
             query?: {
@@ -20847,107 +20871,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_timeline_case_case_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TimelineResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_timeline_cluster_cluster_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                cluster_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TimelineResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_timeline_finding_finding_id_context: {
-        parameters: {
-            query?: {
-                time_window_minutes?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TimelineResponse"];
                 };
             };
             /** @description Validation Error */

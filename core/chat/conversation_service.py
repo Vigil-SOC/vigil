@@ -58,6 +58,14 @@ def _owned(session, conversation_id: str, user_id: Optional[str]):
     )
 
 
+def held_by_another(conversation_id: str, user_id: Optional[str]) -> bool:
+    """True when a conversation with this id exists and ``user_id`` does not own it."""
+    db_manager = get_db_manager()
+    with db_manager.session_scope() as session:
+        conv = session.get(Conversation, conversation_id)
+        return conv is not None and conv.user_id != user_id
+
+
 # --------------------------------------------------------------------------- #
 # Write paths invoked from the chat stream — fail-open (never raise).
 # --------------------------------------------------------------------------- #
@@ -87,7 +95,8 @@ def ensure_conversation(
 ) -> Optional[str]:
     """Upsert the conversation row for ``session_id``; return its id or None.
 
-    On create, the title is derived from ``first_user_text`` and ``user_id`` /
+    Returns None, changing nothing, when another user owns the row. On create,
+    the title is derived from ``first_user_text`` and ``user_id`` /
     ``agent_id`` are stamped. On an existing row, only ``model`` / ``agent_id``
     are refreshed (never the title — the user may have renamed it). ``case_id``
     and ``page_context`` follow :func:`_apply_case_and_page`. Fail-open.
@@ -95,13 +104,9 @@ def ensure_conversation(
     try:
         db_manager = get_db_manager()
         with db_manager.session_scope() as session:
-            conv = (
-                session.execute(
-                    select(Conversation).where(Conversation.id == session_id)
-                )
-                .scalars()
-                .first()
-            )
+            conv = session.get(Conversation, session_id)
+            if conv is not None and conv.user_id != user_id:
+                return None
             if conv is None:
                 conv = Conversation(
                     id=session_id,

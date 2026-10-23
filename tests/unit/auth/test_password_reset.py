@@ -96,6 +96,7 @@ class TestConfirm:
             password_hash=AuthService.hash_password(OLD),
             password_history=[],
             password_changed_at=None,
+            service_account=False,
         )
 
     @pytest.fixture

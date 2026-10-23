@@ -151,10 +151,12 @@ class WorkdirManager:
         return dest
 
     def _safe_path(self, investigation_id: str, filename: str) -> Optional[Path]:
-        """Prevent path traversal attacks."""
-        workdir = self.base_dir / investigation_id
+        base = self.base_dir.resolve()
+        workdir = (base / investigation_id).resolve()
         filepath = (workdir / filename).resolve()
-        if not str(filepath).startswith(str(workdir.resolve())):
-            logger.error(f"Path traversal attempt blocked: {filename}")
+        if workdir.parent != base or not filepath.is_relative_to(workdir):
+            logger.error(
+                f"Path outside workdir blocked: {investigation_id!r}/{filename!r}"
+            )
             return None
         return filepath
