@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditFilter, type AuditTip, type AuditVerify } from '../../services/api'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { AUDIT_PAGE, auditApi, type AuditEntry, type AuditFilter, type AuditRetention, type AuditTip, type AuditVerify } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -174,6 +175,7 @@ export default function AuditSection({ notify }: SectionProps) {
 
       <div className="audit-top">
         <VerifyCard tip={tip} />
+        <RetentionCard notify={notify} />
         <FeedHealth />
       </div>
 
@@ -327,6 +329,131 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
         </details>
       </div>
     </div>
+  )
+}
+
+const EMPTY_POLICY: AuditRetention = {
+  effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasure_unconfirmed: false, erasures: [],
+}
+
+/** Period and erasure, in the same card as verify. Mutations need audit.manage; the unconfirmed line does not. */
+function RetentionCard({ notify }: SectionProps) {
+  const canManage = useAuth().hasPermission('audit.manage')
+  const [policy, setPolicy] = useState<AuditRetention>(EMPTY_POLICY)
+  const [days, setDays] = useState('365')
+  const [principal, setPrincipal] = useState('')
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
+
+  useEffect(() => {
+    let live = true
+    auditApi.retention()
+      .then((res) => {
+        if (!live) return
+        setPolicy(res.data)
+        const shown = res.data.pending_days ?? res.data.effective_days
+        if (shown != null) setDays(String(shown))
+      })
+      .catch(() => undefined)
+    return () => { live = false }
+  }, [])
+
+  const apply = (next: AuditRetention) => {
+    setPolicy(next)
+    setStatus('')
+  }
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    const parsed = Number(days)
+    if (!Number.isInteger(parsed)) {
+      setStatus('Retention is a whole number of days')
+      return
+    }
+    setBusy(true)
+    try {
+      apply((await auditApi.saveRetention(parsed)).data)
+    } catch (e) {
+      setStatus(detailOf(e, 'Could not save the period'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const erase = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      apply((await auditApi.erasePrincipal(principal.trim(), reason.trim())).data)
+      setPrincipal('')
+      setReason('')
+      notify('ok', 'Erasure recorded')
+    } catch (e) {
+      const text = detailOf(e, 'Could not erase those details')
+      setStatus(text)
+      notify('err', text)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const inForce = policy.effective_days != null
+    ? `The trail is kept for ${policy.effective_days} days.`
+    : 'No retention period is in force yet.'
+  const waiting = policy.pending_days == null ? '' : (
+    `${policy.pending_days} days takes effect ${utcDayClock(policy.pending_on) ?? policy.pending_on} UTC.`
+    + (policy.effective_days != null ? ' Until then the period already in force stays.' : '')
+  )
+
+  return (
+    <section className="audit-box" aria-label="Retention">
+      <div className="audit-box-head">
+        <h3>Retention</h3>
+        <InfoTip
+          label="About retention"
+          text="At least 365 days, in force 7 days after it is set. Erasing someone who can manage the trail waits the same 7 days and needs a reason. Personal details are cleared; the trail itself still verifies."
+        />
+      </div>
+      <div className="audit-retain">
+        {canManage ? (
+          <form className="audit-verify" onSubmit={save}>
+            <label>
+              Keep the trail for
+              <input type="number" step={1} aria-label="Retention days" className={inputCls} value={days} onChange={(e) => setDays(e.target.value)} />
+            </label>
+            <span>days</span>
+            <button type="submit" className="audit-btn" disabled={busy}>Save</button>
+          </form>
+        ) : (
+          <p className="audit-note">{inForce}</p>
+        )}
+        {waiting && <p className="audit-note">{waiting}</p>}
+        {policy.unconfirmed && <p className="audit-unconfirmed" role="status">This announcement has not left the box.</p>}
+        {canManage && (
+          <form className="audit-verify" onSubmit={erase}>
+            <label>
+              Principal
+              <input type="text" aria-label="Principal to erase" className={inputCls} value={principal} placeholder="id" onChange={(e) => setPrincipal(e.target.value)} />
+            </label>
+            <label>
+              Reason
+              <input type="text" aria-label="Erasure reason" className={inputCls} value={reason} placeholder="why" onChange={(e) => setReason(e.target.value)} />
+            </label>
+            <button type="submit" className="audit-btn" disabled={busy || !principal.trim()}>Erase details</button>
+          </form>
+        )}
+        {policy.erasures.map((item) => (
+          <p className="audit-note" key={item.principal_id}>
+            Erasure of {item.principal_id} takes effect {utcDayClock(item.on) ?? item.on} UTC.
+          </p>
+        ))}
+        {policy.erasure_unconfirmed && (
+          <p className="audit-unconfirmed" role="status">This erasure announcement has not left the box.</p>
+        )}
+        {status && <p className="audit-status" role="status">{status}</p>}
+      </div>
+    </section>
   )
 }
 
