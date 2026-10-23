@@ -1,0 +1,4 @@
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    services.api.routers.budgets:budgets.py:86 budget settings write failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+FAILED tests/unit/api/test_config_audit_actor.py::test_signed_in_user_is_who_changed_the_config
+========================= 1 failed, 1 warning in 1.49s =========================
