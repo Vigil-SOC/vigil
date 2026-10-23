@@ -425,14 +425,8 @@ export const caseMetricsApi = {
 }
 
 export const caseSearchApi = {
-  search: (data: {
-    query: string
-    filters?: Record<string, any>
-    sort_by?: string
-    sort_order?: string
-    limit?: number
-    offset?: number
-  }) => api.post('/case-search/', data),
+  search: (data: Schema<'SearchRequest'>) =>
+    api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
 export interface ReloadServersResponse {
