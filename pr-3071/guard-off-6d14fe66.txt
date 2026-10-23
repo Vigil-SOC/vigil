@@ -1,0 +1,3 @@
+=========================== short test summary info ============================
+FAILED tests/security/test_path_traversal.py::test_server_path_stays_in_base
+======================== 1 failed, 21 passed in 23.26s =========================
