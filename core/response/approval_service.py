@@ -23,6 +23,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from core.cases import case_trail
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -469,6 +470,13 @@ class ApprovalService:
                     else ("system" if approved_by == "system" else None)
                 )
                 session.flush()
+                case_trail.append_approval(
+                    session,
+                    action=case_trail.APPROVE,
+                    principal_id=row.approved_by_principal_id,
+                    action_id=action_id,
+                    username=approved_by,
+                )
                 pending = _row_to_pending(row)
             logger.info("Action %s approved by %s", action_id, approved_by)
             return pending
@@ -508,6 +516,14 @@ class ApprovalService:
                 )
                 row.approved_at = utcnow()
                 session.flush()
+                case_trail.append_approval(
+                    session,
+                    action=case_trail.REJECT,
+                    principal_id=row.approved_by_principal_id,
+                    action_id=action_id,
+                    username=rejected_by,
+                    operator_text=reason,
+                )
                 pending = _row_to_pending(row)
             logger.info(
                 "Action %s rejected by %s: %s",

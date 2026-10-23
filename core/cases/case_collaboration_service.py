@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from core.cases import case_trail
 from core.cases.case_notification_service import CaseNotificationService
 from core.exceptions import default_on_error
 from core.storage.models import CaseAuditLog, CaseComment, CaseWatcher
@@ -30,11 +31,21 @@ def _comment_audit(
     """Name who changed a comment, and keep the wording they replaced.
 
     The case record reads ``entity_type == case`` rows, and its text is the
-    summary, so the previous wording has to be in that sentence.
+    summary, so the previous wording has to be in that sentence. On the trail
+    the previous wording is ``operator_text``, beside the hash.
     """
     verb = "edited" if action == "update" else "deleted"
-    session.add(
-        CaseAuditLog(
+    case_trail.append_or_legacy(
+        session,
+        action=(
+            case_trail.COMMENT_UPDATE
+            if action == "update"
+            else case_trail.COMMENT_DELETE
+        ),
+        signed_in=actor,
+        case_id=case_id,
+        operator_text=previous,
+        legacy=CaseAuditLog(
             entity_type="case",
             entity_id=case_id,
             action=action,
@@ -45,7 +56,8 @@ def _comment_audit(
                 f"{actor} {verb} comment {comment_id}. Previous text: {previous}"
             ),
             changed_by=actor,
-        )
+        ),
+        ids=lambda: {"comment_id": comment_id},
     )
 
 
@@ -56,7 +68,6 @@ class CaseCollaborationService:
         """Initialize the collaboration service."""
         self.notification_service = CaseNotificationService()
 
-    @default_on_error(None)
     def add_comment(
         self,
         case_id: str,
@@ -77,45 +88,67 @@ class CaseCollaborationService:
 
         Returns:
             Created CaseComment or None
+
+        An owned session rolls back and this returns None, as
+        ``default_on_error`` did. A joined session does not roll back — the
+        caller commits — so a trail failure propagates and that commit does
+        not happen.
         """
-        with unit_of_work(session) as session:
-            # Extract mentions from content
-            mentions = self.notification_service.extract_mentions(content)
+        joined = session is not None
+        try:
+            with unit_of_work(session) as session:
+                # Extract mentions from content
+                mentions = self.notification_service.extract_mentions(content)
 
-            comment = CaseComment(
-                case_id=case_id,
-                parent_comment_id=parent_comment_id,
-                author=author,
-                content=content,
-                mentions=mentions,
-                is_edited=False,
-                is_deleted=False,
-            )
+                comment = CaseComment(
+                    case_id=case_id,
+                    parent_comment_id=parent_comment_id,
+                    author=author,
+                    content=content,
+                    mentions=mentions,
+                    is_edited=False,
+                    is_deleted=False,
+                )
 
-            session.add(comment)
+                session.add(comment)
 
-            # Send notifications for mentions
-            for mentioned_user in mentions:
-                if mentioned_user != author:  # Don't notify self
-                    self.notification_service.notify_comment_mention(
-                        case_id=case_id,
-                        mentioned_user=mentioned_user,
-                        comment_author=author,
-                        comment_content=content,
-                        session=session,
-                    )
+                # Send notifications for mentions
+                for mentioned_user in mentions:
+                    if mentioned_user != author:  # Don't notify self
+                        self.notification_service.notify_comment_mention(
+                            case_id=case_id,
+                            mentioned_user=mentioned_user,
+                            comment_author=author,
+                            comment_content=content,
+                            session=session,
+                        )
 
-            # Notify watchers
-            self.notification_service.notify_watchers(
-                case_id=case_id,
-                notification_type="new_comment",
-                title="New Comment",
-                message=f"{author} added a comment",
-                session=session,
-            )
+                # Notify watchers
+                self.notification_service.notify_watchers(
+                    case_id=case_id,
+                    notification_type="new_comment",
+                    title="New Comment",
+                    message=f"{author} added a comment",
+                    session=session,
+                )
 
-            logger.info(f"Added comment to case {case_id} by {author}")
-            return comment
+                # No CaseAuditLog today. The trail row, when there is one,
+                # commits with the comment or not at all.
+                case_trail.append_or_legacy(
+                    session,
+                    action=case_trail.COMMENT,
+                    signed_in=author,
+                    case_id=case_id,
+                    ids=lambda: {"comment_id": comment.comment_id},
+                )
+
+                logger.info(f"Added comment to case {case_id} by {author}")
+                return comment
+        except Exception:
+            if joined:
+                raise
+            logger.exception("CaseCollaborationService.add_comment failed")
+            return None
 
     def update_comment(
         self,

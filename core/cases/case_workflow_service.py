@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from core.cases import case_trail
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.exceptions import NotFoundError, default_on_error
 from core.storage.models import (
@@ -293,7 +294,6 @@ class CaseWorkflowService:
             logger.info(f"Created case {case_id} from template {template_id}")
             return case
 
-    @default_on_error(False)
     def escalate_case(
         self,
         case_id: str,
@@ -316,52 +316,71 @@ class CaseWorkflowService:
 
         Returns:
             True if successful
+
+        An owned session rolls back and this returns False, as
+        ``default_on_error`` did. A joined session does not roll back — the
+        caller commits — so a trail failure propagates and that commit does
+        not happen.
         """
-        with unit_of_work(session) as session:
-            case = session.query(Case).filter(Case.case_id == case_id).first()
-            if not case:
-                logger.info(f"Case {case_id} not found")
-                return False
+        joined = session is not None
+        try:
+            with unit_of_work(session) as session:
+                case = session.query(Case).filter(Case.case_id == case_id).first()
+                if not case:
+                    logger.info(f"Case {case_id} not found")
+                    return False
 
-            # Create escalation record
-            escalation = CaseEscalation(
-                case_id=case_id,
-                escalated_from=escalated_from,
-                escalated_to=escalated_to,
-                reason=reason,
-                urgency_level=urgency_level,
-                status="pending",
-            )
-            session.add(escalation)
-            # The case record only shows case-audit rows, so the name has to
-            # land here as well as on the escalation.
-            session.add(
-                CaseAuditLog(
-                    entity_type="case",
-                    entity_id=case_id,
-                    action="update",
-                    field_name="escalation",
-                    change_summary=(
-                        f"{escalated_from} escalated this case to {escalated_to}: "
-                        f"{reason}"
-                    ),
-                    changed_by=escalated_from,
+                # Create escalation record
+                escalation = CaseEscalation(
+                    case_id=case_id,
+                    escalated_from=escalated_from,
+                    escalated_to=escalated_to,
+                    reason=reason,
+                    urgency_level=urgency_level,
+                    status="pending",
                 )
-            )
-
-            # Update case
-            case.assignee = escalated_to
-            case.timeline.append(
-                {
-                    "timestamp": utcnow().isoformat(),
-                    "event": (
-                        f"{escalated_from} escalated to {escalated_to}: {reason}"
+                session.add(escalation)
+                # The case record only shows case-audit rows, so the name has to
+                # land here as well as on the escalation until the trail is in use.
+                # The reason is operator_text on the trail, not part of the hash.
+                case_trail.append_or_legacy(
+                    session,
+                    action=case_trail.ESCALATE,
+                    signed_in=escalated_from,
+                    case_id=case_id,
+                    operator_text=reason,
+                    legacy=CaseAuditLog(
+                        entity_type="case",
+                        entity_id=case_id,
+                        action="update",
+                        field_name="escalation",
+                        change_summary=(
+                            f"{escalated_from} escalated this case to "
+                            f"{escalated_to}: {reason}"
+                        ),
+                        changed_by=escalated_from,
                     ),
-                }
-            )
+                    ids=lambda: {"escalation_id": escalation.escalation_id},
+                )
 
-            logger.info(f"Escalated case {case_id} to {escalated_to}")
-            return True
+                # Update case
+                case.assignee = escalated_to
+                case.timeline.append(
+                    {
+                        "timestamp": utcnow().isoformat(),
+                        "event": (
+                            f"{escalated_from} escalated to {escalated_to}: {reason}"
+                        ),
+                    }
+                )
+
+                logger.info(f"Escalated case {case_id} to {escalated_to}")
+                return True
+        except Exception:
+            if joined:
+                raise
+            logger.exception("CaseWorkflowService.escalate_case failed")
+            return False
 
     @default_on_error(False)
     def update_template(
