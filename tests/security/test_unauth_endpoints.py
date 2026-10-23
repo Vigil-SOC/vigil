@@ -100,7 +100,6 @@ PROTECTED_ROUTES = [
     ("GET", "/api/orchestrator/status", None),
     ("POST", "/api/orchestrator/investigations/purge", None),
     ("GET", "/api/approvals/pending", None),
-    ("GET", "/api/claude/models", None),
     (
         "POST",
         "/api/claude/chat/stream",

@@ -67,7 +67,6 @@ vi.mock('../services/api', () => ({
     get: vi.fn(() => Promise.resolve({ data: { messages: [] } })),
     update: vi.fn(() => Promise.resolve({ data: {} })),
     delete: vi.fn(),
-    importHistory: vi.fn(() => Promise.resolve({ data: {} })),
   },
   reasoningApi: {
     getSessionSummary: vi.fn(() => Promise.resolve(null)),
