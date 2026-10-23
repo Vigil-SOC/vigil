@@ -180,7 +180,7 @@ def test_the_filter_the_label_and_the_counts_agree_on_every_spelling():
 
 
 def test_the_revision_rewrites_findings_stored_before_canonical_form():
-    path = PACKAGE_DIR / "versions" / "0006_canonical_finding_ips.py"
+    path = PACKAGE_DIR / "versions" / "0007_canonical_finding_ips.py"
     spec = importlib.util.spec_from_file_location("canonical_finding_ips", path)
     revision = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(revision)
