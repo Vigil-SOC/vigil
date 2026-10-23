@@ -4,8 +4,10 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
@@ -17,13 +19,14 @@ from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
 from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
-from core.cases.case_brief import case_brief
+from core.cases.case_brief import RULES, case_brief
 from core.chat import conversation_service
-from core.deps import provide_mcp_registry, provide_workflows
+from core.deps import provide_agent_http, provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import (
     chat_config,
     granted_ids,
+    integrations_how,
     integrations_line,
     run_id_for,
 )
@@ -140,22 +143,24 @@ NO_PROVIDER_DETAIL: Dict[str, str] = {
 }
 
 
-def _resolve_provider_model_for_request(
-    agent_id: Optional[str],
-) -> Tuple[Optional[str], str]:
+def _agent_for(agent_id: Optional[str]) -> Any:
+    """The named agent, or None; a failed lookup never fails the turn. Blocking."""
+    if not agent_id:
+        return None
+    try:
+        from core.agents.manager import AgentManager
+
+        return AgentManager().agents.get(agent_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("agent lookup failed: %s", exc)
+        return None
+
+
+def _resolve_provider_model_for_request(agent: Any) -> Tuple[Optional[str], str]:
     registry = get_registry()
-    agent = None
     category: str = "chat_default"
-
-    if agent_id:
-        try:
-            from core.agents.manager import AgentManager
-
-            agent = AgentManager().agents.get(agent_id)
-            if agent is not None:
-                category = getattr(agent, "component_category", None) or "investigation"
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("agent lookup in model resolution failed: %s", exc)
+    if agent is not None:
+        category = getattr(agent, "component_category", None) or "investigation"
 
     resolved = registry.resolve_model_for_component(category)
     if resolved is None:
@@ -256,6 +261,7 @@ class ChatRequest(BaseModel):
     page_context: Optional[str] = None
 
 
+# In the system prompt on every turn: Q3 was opening by restating Q2's answer.
 LATEST_ONLY = (
     "Answer only the latest question; do not restate or summarise earlier answers."
 )
@@ -266,28 +272,26 @@ def _page_case_sentence(page_context: Optional[str], case_id: Optional[str]) -> 
     page = (page_context or "").strip()
     case = (case_id or "").strip()
     if page and case:
-        sentence = f"The analyst opened this from page {page} about case {case}."
-    elif page:
+        return f"The analyst opened this from page {page} about case {case}."
+    if page:
         return f"The analyst opened this from page {page}."
-    elif case:
-        sentence = f"The analyst opened this about case {case}."
-    else:
-        return ""
-    # Q3 was opening by restating Q2's answer.
-    return f"{sentence} {LATEST_ONLY}"
+    if case:
+        return f"The analyst opened this about case {case}."
+    return ""
 
 
-def _with_page_case(
-    system_prompt: Optional[str], page_context: Optional[str], case_id: Optional[str]
+def _turn_context(
+    page_context: Optional[str], case_id: Optional[str], connected: str, case_data: str
 ) -> str:
-    """Append the page/case sentence after whatever prompt was chosen."""
-    sentence = _page_case_sentence(page_context, case_id)
-    base = (system_prompt or "").strip()
-    if not sentence:
-        return base
-    if not base:
-        return sentence
-    return f"{base}\n\n{sentence}"
+    """What changes between turns, put ahead of the latest question rather than in
+    the system prompt, so the prompt cache on tools plus system carries over."""
+    lines = [
+        _page_case_sentence(page_context, case_id),
+        f"Today is {datetime.now(timezone.utc):%Y-%m-%d} (UTC).",
+        connected,
+        case_data,
+    ]
+    return "\n".join(line for line in lines if line)
 
 
 def _context_window(provider_id: Optional[str], provider_type: str, model: str) -> int:
@@ -306,6 +310,7 @@ async def chat_stream(
     current_user: User = Depends(get_current_user),
     registry: MCPRegistry = Depends(provide_mcp_registry),
     workflows: WorkflowsService = Depends(provide_workflows),
+    agent_http: httpx.AsyncClient = Depends(provide_agent_http),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
     user_id = getattr(current_user, "user_id", None)
@@ -315,52 +320,76 @@ async def chat_stream(
         raise HTTPException(
             status_code=403, detail="This conversation belongs to another user."
         )
-    # Before model resolution, whose agent lookup swallows errors.
-    if request.agent_id and request.agent_id in disabled_agent_ids():
-        raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
-    # Resolved here because this is the side that knows what an agent is: the
-    # harness is handed a prompt, a model and a tool list, never an agent id.
-    provider_id, resolved_model = _resolve_provider_model_for_request(request.agent_id)
+    case_id = (request.case_id or "").strip()
 
-    system_prompt: Optional[str] = None
-    tools: Optional[List[str]] = None
-    if request.agent_id:
-        from core.agents.manager import AgentManager
+    # Every blocking read of the setup (database, skill files, MCP status,
+    # registries) in one hop off the event loop.
+    def setup():
+        # Before the agent lookup, which swallows errors.
+        if request.agent_id and request.agent_id in disabled_agent_ids():
+            raise HTTPException(
+                status_code=409, detail=disabled_message(request.agent_id)
+            )
+        agent = _agent_for(request.agent_id)
+        # Resolved here because this is the side that knows what an agent is: the
+        # harness is handed a prompt, a model and a tool list, never an agent id.
+        provider_id, resolved_model = _resolve_provider_model_for_request(agent)
+        tools = (
+            list(agent.recommended_tools)
+            if agent is not None and agent.recommended_tools
+            else None
+        )
 
-        agent = AgentManager().agents.get(request.agent_id)
-        if agent:
-            system_prompt = agent.system_prompt
-            tools = list(agent.recommended_tools) if agent.recommended_tools else None
+        # Only what holds for the whole conversation, so the cache carries over.
+        system = [agent.system_prompt if agent is not None else "", LATEST_ONLY]
+        if case_id:
+            system.append(RULES)
+        # Chat never goes through prompt_for_row, so a granted read_skill would
+        # have no index. Read per turn so a newly saved skill shows on the next
+        # message; skipped when an agent's own prompt already carries it.
+        if "<available_skills>" not in "\n\n".join(p or "" for p in system):
+            system.append(_skills_section(granted_ids(tools), None))
 
-    system_prompt = _with_page_case(
-        system_prompt, request.page_context, request.case_id
-    )
-    # Rebuilt every turn, so a live run's new evidence is in the next answer.
-    if (request.case_id or "").strip():
-        brief = await case_brief(request.case_id.strip(), workflows)
-        if brief:
-            system_prompt = f"{system_prompt}\n\n{brief}"
-    # Chat never goes through prompt_for_row, so a granted read_skill would have
-    # no index. Read per turn so a newly saved skill shows on the next message;
-    # skipped when an agent's own prompt already carries it.
-    if "<available_skills>" not in system_prompt:
-        skills = _skills_section(granted_ids(tools), None)
-        if skills:
-            system_prompt = f"{system_prompt}\n\n{skills}".strip()
+        active_provider = provider_for(provider_id)
+        if active_provider is None:
+            raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
+        model = model_for(active_provider, resolved_model)
+        provider_type = active_provider.provider_type
 
-    active_provider = provider_for(provider_id)
-    if active_provider is None:
-        raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-    model = model_for(active_provider, resolved_model)
-    provider_type = active_provider.provider_type
+        # Whatever MCP integrations are connected right now (VirusTotal, OTX,
+        # MISP, Shodan, …), refreshed per turn, no restart. Not declared one by
+        # one: the model finds and calls their tools on demand.
+        mcp_tools = live_mcp_tools(registry) or None
+        system.append(integrations_how(mcp_tools))
+        return (
+            "\n\n".join(p.strip() for p in system if p and p.strip()),
+            tools,
+            model,
+            provider_type,
+            mcp_tools,
+            integrations_line(mcp_tools, registry.tool_servers()),
+            _context_window(provider_id, provider_type, model),
+        )
 
-    # Whatever MCP integrations are connected right now (VirusTotal, OTX, MISP,
-    # Shodan, …), refreshed per turn, no restart. Named in the prompt rather than
-    # declared: the model finds and calls their tools on demand.
-    mcp_tools = live_mcp_tools(registry) or None
-    connected = integrations_line(mcp_tools, registry.tool_servers())
-    if connected:
-        system_prompt = f"{system_prompt}\n\n{connected}".strip()
+    (
+        system_prompt,
+        tools,
+        model,
+        provider_type,
+        mcp_tools,
+        connected,
+        context_window,
+    ) = await asyncio.to_thread(setup)
+
+    turns = _turns_of(request.messages)
+    if not turns:
+        raise HTTPException(status_code=400, detail="No messages provided")
+    question = turns[-1]["content"]
+    if turns[-1]["role"] == "user":
+        # Rebuilt every turn, so a live run's new evidence is in the next answer.
+        case_data = await case_brief(case_id, workflows) if case_id else ""
+        context = _turn_context(request.page_context, case_id, connected, case_data)
+        turns[-1]["content"] = f"{context}\n\n{question}"
 
     session_id = request.session_id or str(uuid.uuid4())
     # Read before the payload is built. Generation 0 (every row that exists
@@ -375,8 +404,8 @@ async def chat_stream(
     run_id = run_id_for(ledger_session)
     payload = {
         "run_id": run_id,
-        "turns": _turns_of(request.messages),
-        "system_prompt": system_prompt or "",
+        "turns": turns,
+        "system_prompt": system_prompt,
         # The provider rides alongside the model so the gateway routes to the
         # account this request resolved to, rather than to whichever provider
         # claims the bare model name first.
@@ -386,7 +415,7 @@ async def chat_stream(
             mcp_tools,
             provider=provider_type,
             effort=resolve_effort("chat_default"),
-            context_window=_context_window(provider_id, provider_type, model),
+            context_window=context_window,
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
@@ -409,9 +438,6 @@ async def chat_stream(
     if request.agent_id:
         payload["agent_id"] = request.agent_id
 
-    if not payload["turns"]:
-        raise HTTPException(status_code=400, detail="No messages provided")
-
     return StreamingResponse(
         _relay(
             payload,
@@ -419,6 +445,8 @@ async def chat_stream(
             model,
             session_id,
             user_id,
+            question,
+            agent_http,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -451,34 +479,33 @@ async def _relay(
     model: str,
     session_id: str,
     user_id: Optional[str],
+    question: Optional[str],
+    client: httpx.AsyncClient,
 ):
-    import httpx
-
     said: List[str] = []
     finished = False
     # The turn's own failure, stored as the failed reply so a reload shows it.
     failure: Optional[str] = None
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
-                "POST",
-                agent_route("/chat/stream"),
-                json=payload,
-                headers=_internal_headers(),
-            ) as upstream:
-                if upstream.status_code != 200:
-                    detail = (await upstream.aread()).decode("utf-8", "replace")
-                    failure = f"agent layer refused the turn: {detail}"
-                    yield _frame({"error": failure})
-                    return
-                async for line in upstream.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    said.append(_text_in(line[6:]))
-                    error = _event_in(line[6:]).get("error")
-                    if error:
-                        failure = str(error)
-                    yield f"{line}\n\n"
+        async with client.stream(
+            "POST",
+            agent_route("/chat/stream"),
+            json=payload,
+            headers=_internal_headers(),
+        ) as upstream:
+            if upstream.status_code != 200:
+                detail = (await upstream.aread()).decode("utf-8", "replace")
+                failure = f"agent layer refused the turn: {detail}"
+                yield _frame({"error": failure})
+                return
+            async for line in upstream.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                said.append(_text_in(line[6:]))
+                error = _event_in(line[6:]).get("error")
+                if error:
+                    failure = str(error)
+                yield f"{line}\n\n"
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)
@@ -493,8 +520,10 @@ async def _relay(
                 user_id=user_id,
                 agent_id=request.agent_id,
                 model=model,
-                # The question as asked: the agent turns merge consecutive user messages.
+                # The question as asked: the agent turns merge consecutive user
+                # messages, and the latest carries the turn's context block.
                 user_text=_user_text_from_content(request.messages[-1].content).strip()
+                or question
                 or payload["turns"][-1]["content"],
                 assistant_text=failure or "".join(said),
                 assistant_thinking=None,

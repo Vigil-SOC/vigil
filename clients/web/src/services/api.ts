@@ -136,10 +136,7 @@ export const aiDecisionsApi = {
     time_saved_minutes?: number
   }) => api.post(`/ai/decisions/${decisionId}/feedback`, data),
   
-  getStats: (params?: {
-    agent_id?: string
-    days?: number
-  }) => api.get('/ai/decisions/stats', { params }),
+  getStats: () => api.get('/ai/decisions/stats'),
   
   getPendingFeedback: (limit?: number) =>
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),

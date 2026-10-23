@@ -431,6 +431,8 @@ async def _connect_external_services(mcp_client, registry):
 # Constructs the process-scoped services. This is the only place they are built for
 # the API; handlers receive them through the Depends providers in core/deps.py.
 def _build_services(app: FastAPI):
+    import httpx
+
     from core.agents.agent_ai_generator import AgentAIGenerator
     from core.config import is_demo_mode
     from core.detections.detection_rules_service import DetectionRulesService
@@ -454,6 +456,13 @@ def _build_services(app: FastAPI):
     app.state.health_storage = DatabaseDataService()
     # One HTTP client and one cached answer for every caller of GET /api/processes.
     app.state.process_health = ProcessHealth()
+    # One client for every chat turn relayed to the agent layer. No pool cap: with
+    # no timeout, a turn past the cap would wait forever. Idle connections expire
+    # before the agent layer's own 5 s keep-alive closes them.
+    app.state.agent_http = httpx.AsyncClient(
+        timeout=None,
+        limits=httpx.Limits(max_connections=None, keepalive_expiry=2.0),
+    )
 
     app.state.approvals = ApprovalService()
     register_pending_gauge(app.state.approvals)
@@ -764,6 +773,13 @@ async def _shutdown(app: FastAPI):
             await process_health.aclose()
     except Exception as e:
         logger.warning("Error closing the process health client: %s", e)
+
+    try:
+        agent_http = getattr(app.state, "agent_http", None)
+        if agent_http is not None:
+            await agent_http.aclose()
+    except Exception as e:
+        logger.warning("Error closing the chat relay client: %s", e)
 
     # Flush and shut down OTEL providers
     try:
