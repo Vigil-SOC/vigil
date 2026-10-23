@@ -122,9 +122,9 @@ describe("whom the turn's tools act for", () => {
   async function principalsSeen(requests: readonly ChatRequest[]): Promise<(string | undefined)[]> {
     const seen: (string | undefined)[] = [];
     const scripted = scriptedHarness([{ content: "ok" }, { content: "ok" }]);
-    const build: HarnessFactory = (kind, spec, runState, memory, seed, principal) => {
+    const build: HarnessFactory = (spec, runState, memory, seed, principal) => {
       seen.push(principal);
-      return scripted(kind, spec, runState, memory, seed);
+      return scripted(spec, runState, memory, seed);
     };
     for (const request of requests) {
       const res = Object.assign(new EventEmitter(), { write: () => true, end: () => undefined, writableEnded: false, destroyed: false }) as unknown as ServerResponse;
@@ -146,8 +146,8 @@ describe("a reader who leaves mid-step", () => {
     let started!: () => void;
     const inFlight = new Promise<void>((resolve) => (started = resolve));
     const scripted = scriptedHarness([]);
-    const build: HarnessFactory = (kind, spec, runState, memory, seed) => ({
-      ...scripted(kind, spec, runState, memory, seed),
+    const build: HarnessFactory = (spec, runState, memory, seed) => ({
+      ...scripted(spec, runState, memory, seed),
       provider: {
         model: "scripted/model",
         provider_type: "scripted",

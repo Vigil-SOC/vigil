@@ -2649,13 +2649,16 @@
                 "type": "null"
               }
             ],
+            "description": "The run's own checkpoint this item answers, so a page reading the run can tell it was answered.",
             "title": "Checkpoint Id"
           },
           "created_at": {
+            "description": "'' when nothing recorded when it started waiting.",
             "title": "Created At",
             "type": "string"
           },
           "hypotheses": {
+            "description": "A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
             "items": {
               "$ref": "#/components/schemas/NeedsYouHypothesis"
             },
@@ -2663,6 +2666,12 @@
             "type": "array"
           },
           "kind": {
+            "description": "parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.",
+            "enum": [
+              "approval",
+              "checkpoint",
+              "parked"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -2671,6 +2680,10 @@
             "type": "string"
           },
           "reversibility": {
+            "enum": [
+              "reversible",
+              "irreversible"
+            ],
             "title": "Reversibility",
             "type": "string"
           },

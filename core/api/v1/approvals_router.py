@@ -8,7 +8,7 @@ the paused run; rejecting cancels it with the supplied reason.
 
 import logging
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -105,19 +105,27 @@ class NeedsYouHypothesis(BaseModel):
 
 
 class NeedsYouItem(BaseModel):
-    # approval, checkpoint, or parked: a hunt stopped at a limit, answered with
-    # Keep going on its case rather than here.
-    kind: str
+    kind: Literal["approval", "checkpoint", "parked"] = Field(
+        description="parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id."
+    )
     source_id: str
     title: str
     reason: str
-    created_at: str
-    reversibility: str
+    created_at: str = Field(
+        description="'' when nothing recorded when it started waiting."
+    )
+    reversibility: Literal["reversible", "irreversible"]
     case_id: Optional[str] = None
     run_id: Optional[str] = None
-    checkpoint_id: Optional[str] = None
+    checkpoint_id: Optional[str] = Field(
+        default=None,
+        description="The run's own checkpoint this item answers, so a page reading the run can tell it was answered.",
+    )
     checkpoint_class: Optional[str] = None
-    hypotheses: List[NeedsYouHypothesis] = Field(default_factory=list)
+    hypotheses: List[NeedsYouHypothesis] = Field(
+        default_factory=list,
+        description="A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
+    )
 
 
 class NeedsYouResponse(BaseModel):
