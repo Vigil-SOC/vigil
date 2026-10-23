@@ -103,10 +103,7 @@ PROTECTED_ROUTES = [
     (
         "POST",
         "/api/claude/chat/stream",
-        {
-            "messages": [{"role": "user", "content": "auth gate test"}],
-            "max_tokens": 1,
-        },
+        {"messages": [{"role": "user", "content": "auth gate test"}]},
     ),
     ("GET", "/api/integrations/vstrike/health", None),
     ("GET", "/api/integrations/vstrike/topology/asset/test-asset", None),

@@ -171,3 +171,30 @@ async def test_the_stream_refuses_a_session_another_user_owns(monkeypatch):
     async for _ in response.body_iterator:
         pass
     assert sent["run_id"] == claude.run_id_for(session_id)
+
+
+def test_case_id_finds_the_exact_case_past_newer_lookalikes():
+    owner = f"analyst-{uuid.uuid4().hex[:8]}"
+    target = f"conv-{uuid.uuid4().hex[:8]}"
+    with get_db_manager().session_scope() as session:
+        session.add(Conversation(id=target, user_id=owner, case_id="CASE-1"))
+        session.add(
+            Conversation(
+                id=f"conv-{uuid.uuid4().hex[:8]}",
+                user_id=f"{owner}-x",
+                case_id="CASE-1",
+            )
+        )
+    with get_db_manager().session_scope() as session:
+        session.add_all(
+            Conversation(
+                id=f"conv-{uuid.uuid4().hex[:8]}",
+                user_id=owner,
+                title=f"about CASE-1 and CASE-{n}",
+                case_id=f"CASE-{n}",
+            )
+            for n in range(100, 150)
+        )
+
+    rows = conversation_service.list_conversations(owner, case_id="CASE-1", limit=1)
+    assert [row["id"] for row in rows] == [target]

@@ -1198,7 +1198,7 @@ export interface ConversationDetail extends ConversationSummary {
 
 export const conversationsApi = {
   // trailing slash avoids a 307 to the backend root route
-  list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string }) =>
+  list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string; case_id?: string }) =>
     api.get('/conversations/', { params }),
 
   get: (id: string) => api.get(`/conversations/${encodeURIComponent(id)}`),

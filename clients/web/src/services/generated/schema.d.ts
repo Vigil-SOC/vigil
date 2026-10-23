@@ -8401,23 +8401,14 @@ export interface components {
             agent_id?: string | null;
             /** Case Id */
             case_id?: string | null;
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
-            /** Model */
-            model?: string | null;
             /** Page Context */
             page_context?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Session Id */
             session_id?: string | null;
-            /** System Prompt */
-            system_prompt?: string | null;
         };
         /** CheckpointRaised */
         CheckpointRaised: {
@@ -16823,6 +16814,8 @@ export interface operations {
                 offset?: number;
                 /** @description Match title, case id, or page key */
                 q?: string | null;
+                /** @description Exact case id */
+                case_id?: string | null;
             };
             header?: {
                 authorization?: string | null;
