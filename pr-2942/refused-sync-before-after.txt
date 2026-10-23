@@ -1,0 +1,6 @@
+== before (52d363d7)
+INFO Synced status 'closed' to elastic alert a1
+vendor calls: ['a1']
+== after
+WARNING Elastic did not accept status 'closed' for alert a1
+vendor calls: ['a1']
