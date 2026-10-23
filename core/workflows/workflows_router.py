@@ -40,7 +40,6 @@ from core.workflows.workflows_service import WorkflowsService
 router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
-# Enabling or saving a workflow changes what every run can do.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
 
 ROUTER_META = RouterMeta(
@@ -330,8 +329,7 @@ async def propose_feed_hunts(limit: int = 200):
 
 
 # -----------------------------------------------------------------------------
-# Parameterized discovery/execution routes (keep at bottom so specific paths
-# match first)
+# Parameterized discovery/execution routes
 # -----------------------------------------------------------------------------
 
 
