@@ -1,0 +1,4 @@
+$ env -u AGENT_INTERNAL_TOKEN VIGIL_TOOLS_TOKEN=s3cret tsx -> internalToken()
+""
+$ AGENT_INTERNAL_TOKEN=s3cret VIGIL_TOOLS_TOKEN=other tsx -> internalToken()
+"s3cret"
