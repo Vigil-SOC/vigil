@@ -12,6 +12,7 @@ is bypassed (matches the rest of the Vigil codebase).
 
 from __future__ import annotations
 
+import hmac
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -89,7 +90,12 @@ def verify_inbound_key(
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
     token = authorization.split(" ", 1)[1].strip()
-    if token != expected:
+    # compare_digest rather than !=, which returns on the first differing byte.
+    # Bytes, because on a str holding any non-ASCII character it raises TypeError.
+    if not hmac.compare_digest(
+        token.encode("utf-8", "surrogatepass"),
+        expected.encode("utf-8", "surrogatepass"),
+    ):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 

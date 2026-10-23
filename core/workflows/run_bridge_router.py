@@ -684,6 +684,7 @@ def _case_title(title: str, limit: int = 200) -> str:
 # handoff that tees up no backward run still arrives twice, and the second arrival
 # must find the case the first opened.
 def _open_case(run_id: str, handoff: TerminalHandoff) -> Optional[str]:
+    from core.cases.case_sla_service import open_case
     from core.storage.database_data_service import DatabaseDataService
 
     case_id = _handoff_case_id(run_id, handoff)
@@ -692,7 +693,8 @@ def _open_case(run_id: str, handoff: TerminalHandoff) -> Optional[str]:
         return case_id
 
     try:
-        opened = data.create_case(
+        opened = open_case(
+            data,
             title=_case_title(handoff.title),
             finding_ids=[],
             priority="high",
