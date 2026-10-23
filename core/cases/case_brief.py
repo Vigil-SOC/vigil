@@ -28,7 +28,7 @@ LINE_CHARS = 240
 FINDING_CHARS = 600
 # Two lines of the case page's Now card and Paused line.
 STATE_CHARS = 2 * LINE_CHARS
-# The brief rides in the system prompt on every turn and shares the agent layer's
+# The brief rides on the latest user turn every turn and shares the agent layer's
 # request ceiling (DEFAULT_FOLD.max_chars, 120,000, services/agent/core/context.ts)
 # with the tool catalogue (about 23,000: the built-ins plus the two integration
 # tools, fixed however many MCP servers are connected) and the history the
@@ -295,19 +295,31 @@ def _fit(
     return text
 
 
+def _case_reads(case_id: str) -> tuple:
+    """The case, its alerts and its run refs: blocking reads, run off the loop."""
+    data_service = DatabaseDataService()
+    case = data_service.get_case(case_id)
+    if not case:
+        return None, [], []
+    alerts = data_service.get_findings_by_case(case_id) or []
+    with unit_of_work() as session:
+        refs = case_run_refs(
+            case_records_service.list_case_investigations(session, case_id),
+            case_records_service.list_case_runs(session, case_id),
+        )
+    return case, alerts, refs
+
+
 async def case_brief(case_id: str, workflows: Any) -> str:
-    """The brief for ``case_id``, or "" when any read fails."""
+    """The ``<case_data>`` block for ``case_id``, or "" when any read fails.
+
+    ``RULES`` is not in it: it is the same every turn, so the caller puts it in
+    the system prompt and this block rides on the latest user turn.
+    """
     try:
-        data_service = DatabaseDataService()
-        case = data_service.get_case(case_id)
+        case, alerts, refs = await asyncio.to_thread(_case_reads, case_id)
         if not case:
             return ""
-        alerts = data_service.get_findings_by_case(case_id) or []
-        with unit_of_work() as session:
-            refs = case_run_refs(
-                case_records_service.list_case_investigations(session, case_id),
-                case_records_service.list_case_runs(session, case_id),
-            )
         state = combined_state(case.get("status"), [s for _, s in refs])
         head = f"Case {case_id}: {_line(case.get('title'))} (state: {state})"
         next_lines = _next(case)
@@ -342,4 +354,4 @@ async def case_brief(case_id: str, workflows: Any) -> str:
     except Exception as exc:  # noqa: BLE001 — a brief is never worth the turn
         logger.warning("no case brief for %s: %s", case_id, exc)
         return ""
-    return f"{RULES}\n{OPEN}\n{body}\n{CLOSE}"
+    return f"{OPEN}\n{body}\n{CLOSE}"

@@ -268,7 +268,6 @@ export interface ApiDecision {
   /** true_positive | false_positive | true_negative | false_negative | unknown */
   actual_outcome?: string
   time_saved_minutes?: number
-  has_feedback?: boolean
 }
 
 /** `agent_id` is an action id from core/agents/builtins.py, already words, so
@@ -284,13 +283,6 @@ function decisionOutcome(human?: string): Outcome {
   if (human === 'disagree') return 'disagree'
   if (human === 'partial') return 'modify'
   return 'pending'
-}
-
-function decisionHuman(human?: string): string {
-  if (human === 'agree') return 'Approved'
-  if (human === 'disagree') return 'Rejected'
-  if (human === 'partial') return 'Modified'
-  return 'Pending'
 }
 
 function timeSaved(minutes?: number): string {
@@ -323,13 +315,10 @@ export function mapApiDecision(d: ApiDecision): Decision {
         ? Math.round(d.confidence_score * 100)
         : 0,
     ai: d.recommended_action || DASH,
-    human: decisionHuman(d.human_decision),
     outcome: decisionOutcome(d.human_decision),
     saved: timeSaved(d.time_saved_minutes),
     time: fmt(d.timestamp, 'MMM d, HH:mm'),
     rationale: d.reasoning || '',
-    // no evidence list from the backend; the detail pane hides an empty card
-    evidence: [],
   }
 }
 
