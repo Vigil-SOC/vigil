@@ -95,9 +95,8 @@ def test_password_change_stands_when_redis_revocation_fails(client, user):
 def test_password_reset_stands_when_redis_revocation_fails(client, user):
     user.is_active = True
     with (
-        patch.object(
-            auth, "verify_reset_token", new=AsyncMock(return_value=user.user_id)
-        ),
+        patch.object(auth, "decode_reset_token", return_value=user.user_id),
+        patch.object(auth, "consume_reset_token", new=AsyncMock(return_value=True)),
         patch.object(auth, "_get_user", return_value=user),
         patch.object(
             auth,
