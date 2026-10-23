@@ -419,7 +419,8 @@ function RetentionCard({ notify }: SectionProps) {
         />
       </div>
       <div className="audit-retain">
-        {canManage ? (
+        <p className="audit-note">{inForce}</p>
+        {canManage && (
           <form className="audit-verify" onSubmit={save}>
             <label>
               Keep the trail for
@@ -428,8 +429,6 @@ function RetentionCard({ notify }: SectionProps) {
             <span>days</span>
             <button type="submit" className="audit-btn" disabled={busy}>Save</button>
           </form>
-        ) : (
-          <p className="audit-note">{inForce}</p>
         )}
         {waiting && <p className="audit-note">{waiting}</p>}
         {policy.unconfirmed && <p className="audit-unconfirmed" role="status">This announcement has not left the box.</p>}

@@ -75,11 +75,9 @@ def set_period(
 ) -> dict:
     """Store a period and announce it. It is not in force until ``WAIT`` has passed."""
     now = _aware(now)
-    if (
-        isinstance(days, bool)
-        or not isinstance(days, int)
-        or not MIN_DAYS <= days <= MAX_DAYS
-    ):
+    if isinstance(days, int) and not isinstance(days, bool) and days > MAX_DAYS:
+        raise RetentionError(f"retention is at most {MAX_DAYS} days")
+    if isinstance(days, bool) or not isinstance(days, int) or days < MIN_DAYS:
         raise RetentionError(f"retention is at least {MIN_DAYS} days")
     stored = _load(session)
     entry = trail.append(

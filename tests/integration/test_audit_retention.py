@@ -188,6 +188,9 @@ def test_a_30_day_period_is_refused(db, client):
     refused = client.put("/api/audit/retention", headers=admin, json={"days": 30})
     assert refused.status_code == 400
     assert refused.json()["detail"] == "retention is at least 365 days"
+    too_long = client.put("/api/audit/retention", headers=admin, json={"days": 36501})
+    assert too_long.status_code == 400
+    assert too_long.json()["detail"] == "retention is at most 36500 days"
     with db.connect() as conn:
         assert (
             conn.execute(
