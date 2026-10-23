@@ -1,0 +1,232 @@
+200dict    read_replay  ('R1', 'd1')       DIFF ('ok', {'events': [{'kind': 'call'}], 'ok': True}) [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+200dict    read_replay  ('R1',)            DIFF ('ok', {'events': [{'kind': 'call'}], 'ok': True}) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200dict    read_replay  ('R1', '')         DIFF ('ok', {'events': [{'kind': 'call'}], 'ok': True}) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200dict    read_call    ('R1', 'r7')       DIFF ('ok', {'events': [{'kind': 'call'}], 'ok': True}) [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+200dict    read_call    ('R1', 'a b/c')    DIFF ('ok', {'events': [{'kind': 'call'}], 'ok': True}) [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+200dict    read_events  ('R1',)            DIFF ('ok', [{'kind': 'call'}]) [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('ok', [{'kind': 'call'}]), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('ok', [{'kind': 'call'}]), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+200dict    read_verify  ('R1',)            DIFF ('ok', {'events': [{'kind': 'call'}], 'ok': True}) [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('ok', {'events': [{'kind': 'call'}], 'ok': True}), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+200noev    read_replay  ('R1', 'd1')       DIFF ('ok', {'ok': True}) [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+200noev    read_replay  ('R1',)            DIFF ('ok', {'ok': True}) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200noev    read_replay  ('R1', '')         DIFF ('ok', {'ok': True}) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200noev    read_call    ('R1', 'r7')       DIFF ('ok', {'ok': True}) [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+200noev    read_call    ('R1', 'a b/c')    DIFF ('ok', {'ok': True}) [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+200noev    read_events  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer returned no event list') [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer returned no event list'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer returned no event list'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+200noev    read_verify  ('R1',)            DIFF ('ok', {'ok': True}) [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('ok', {'ok': True}), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+200evnull  read_replay  ('R1', 'd1')       DIFF ('ok', {'events': None}) [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+200evnull  read_replay  ('R1',)            DIFF ('ok', {'events': None}) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200evnull  read_replay  ('R1', '')         DIFF ('ok', {'events': None}) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200evnull  read_call    ('R1', 'r7')       DIFF ('ok', {'events': None}) [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+200evnull  read_call    ('R1', 'a b/c')    DIFF ('ok', {'events': None}) [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+200evnull  read_events  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer returned no event list') [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer returned no event list'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer returned no event list'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+200evnull  read_verify  ('R1',)            DIFF ('ok', {'events': None}) [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('ok', {'events': None}), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+200list    read_replay  ('R1', 'd1')       DIFF ('ok', [1, 2]) [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+200list    read_replay  ('R1',)            DIFF ('ok', [1, 2]) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200list    read_replay  ('R1', '')         DIFF ('ok', [1, 2]) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200list    read_call    ('R1', 'r7')       DIFF ('ok', [1, 2]) [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+200list    read_call    ('R1', 'a b/c')    DIFF ('ok', [1, 2]) [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+200list    read_events  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer returned no event list') [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer returned no event list'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer returned no event list'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+200list    read_verify  ('R1',)            DIFF ('ok', [1, 2]) [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('ok', [1, 2]), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+200null    read_replay  ('R1', 'd1')       DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+200null    read_replay  ('R1',)            DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200null    read_replay  ('R1', '')         DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200null    read_call    ('R1', 'r7')       DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+200null    read_call    ('R1', 'a b/c')    DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+200null    read_events  ('R1',)            DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+200null    read_verify  ('R1',)            DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+200notjson read_replay  ('R1', 'd1')       DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+200notjson read_replay  ('R1',)            DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200notjson read_replay  ('R1', '')         DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+200notjson read_call    ('R1', 'r7')       DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+200notjson read_call    ('R1', 'a b/c')    DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+200notjson read_events  ('R1',)            DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+200notjson read_verify  ('R1',)            DIFF ('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)') [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('err', 'JSONDecodeError', 'Expecting value: line 1 column 1 (char 0)'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+404        read_replay  ('R1', 'd1')       DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+404        read_replay  ('R1',)            DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+404        read_replay  ('R1', '')         DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+404        read_call    ('R1', 'r7')       DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+404        read_call    ('R1', 'a b/c')    DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+404        read_events  ('R1',)            DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+404        read_verify  ('R1',)            DIFF ('ok', None) [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('ok', None), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+502long    read_replay  ('R1', 'd1')       DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+502long    read_replay  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+502long    read_replay  ('R1', '')         DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+502long    read_call    ('R1', 'r7')       DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+502long    read_call    ('R1', 'a b/c')    DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+502long    read_events  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+502long    read_verify  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+500        read_replay  ('R1', 'd1')       DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+500        read_replay  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+500        read_replay  ('R1', '')         DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+500        read_call    ('R1', 'r7')       DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+500        read_call    ('R1', 'a b/c')    DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+500        read_events  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+500        read_verify  ('R1',)            DIFF ('err', 'RuntimeError', 'the agent layer answered 500: boom') [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', 'the agent layer answered 500: boom'), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+connerr    read_replay  ('R1', 'd1')       DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+connerr    read_replay  ('R1',)            DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+connerr    read_replay  ('R1', '')         DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+connerr    read_call    ('R1', 'r7')       DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+connerr    read_call    ('R1', 'a b/c')    DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+connerr    read_events  ('R1',)            DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+connerr    read_verify  ('R1',)            DIFF ('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')") [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ConnectError('refused')"), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+timeout    read_replay  ('R1', 'd1')       DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/replay?decision_id=d1', 'Bearer t')], [11])
+timeout    read_replay  ('R1',)            DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+timeout    read_replay  ('R1', '')         DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/replay', 'Bearer t')], [11])
+timeout    read_call    ('R1', 'r7')       DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/calls/r7', 'Bearer t')], [11])
+timeout    read_call    ('R1', 'a b/c')    DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/calls/a%20b/c', 'Bearer t')], [11])
+timeout    read_events  ('R1',)            DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/events', 'Bearer t')], [11])
+timeout    read_verify  ('R1',)            DIFF ('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')") [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')]
+   old: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [10]) 
+   new: (('err', 'RuntimeError', "could not reach the agent layer: ReadTimeout('slow')"), [('GET', 'http://localhost:6989/runs/R1/verify', 'Bearer t')], [11])
+cases: 77 diffs: 77

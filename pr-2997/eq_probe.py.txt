@@ -1,0 +1,57 @@
+import asyncio, importlib.util, sys, httpx
+from core.agents import projections as new
+spec = importlib.util.spec_from_file_location("old_projections", "/tmp/eq2926/old_projections.py")
+old = importlib.util.module_from_spec(spec); spec.loader.exec_module(old)
+
+CASES = {
+    "200dict": lambda r: httpx.Response(200, json={"events": [{"kind": "call"}], "ok": True}),
+    "200noev": lambda r: httpx.Response(200, json={"ok": True}),
+    "200evnull": lambda r: httpx.Response(200, json={"events": None}),
+    "200list": lambda r: httpx.Response(200, json=[1, 2]),
+    "200null": lambda r: httpx.Response(200, json=None),
+    "200jsonnull": lambda r: httpx.Response(200, text="null"),
+    "200notjson": lambda r: httpx.Response(200, text="<html>"),
+    "404": lambda r: httpx.Response(404, text="nope"),
+    "502long": lambda r: httpx.Response(502, text="x" * 900),
+    "500": lambda r: httpx.Response(500, text="boom"),
+    "connerr": "conn", "timeout": "timeout",
+}
+CALLS = [
+    ("read_replay", ("R1", "d1")), ("read_replay", ("R1",)), ("read_replay", ("R1", "")),
+    ("read_call", ("R1", "r7")), ("read_call", ("R1", "a b/c")),
+    ("read_events", ("R1",)), ("read_verify", ("R1",)),
+]
+real = httpx.AsyncClient
+
+async def run(mod, name, args, case):
+    seen = []
+    def handle(req):
+        seen.append((req.method, str(req.url), req.headers.get("authorization")))
+        if case == "conn": raise httpx.ConnectError("refused", request=req)
+        if case == "timeout": raise httpx.ReadTimeout("slow", request=req)
+        return case(req)
+    timeouts = []
+    def mk(**kw):
+        timeouts.append(kw.get("timeout"))
+        return real(transport=httpx.MockTransport(handle), **kw)
+    httpx.AsyncClient = mk
+    mod._headers = lambda: {"Authorization": "Bearer t"}
+    try:
+        out = ("ok", await getattr(mod, name)(*args))
+    except Exception as e:
+        out = ("err", type(e).__name__, str(e))
+    finally:
+        httpx.AsyncClient = real
+    return out, seen, timeouts
+
+async def main():
+    diffs = n = 0
+    for cname, case in CASES.items():
+        for name, args in CALLS:
+            a = await run(old, name, args, case); b = await run(new, name, args, case)
+            n += 1; same = a == b; diffs += not same
+            print(f"{cname:10} {name:12} {str(args):18} {'SAME' if same else 'DIFF'} {b[0]!r:.90} {b[1]}")
+            if not same: print("   old:", a, "\n   new:", b)
+    print(f"cases: {n} diffs: {diffs}")
+    sys.exit(1 if diffs else 0)
+asyncio.run(main())
