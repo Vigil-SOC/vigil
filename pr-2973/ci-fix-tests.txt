@@ -1,0 +1,93 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/6e8b8f6e-a1a2-493f-bd5f-c3c792a1d109/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 463 items
+
+tests/unit/_ratchets/test_app_db_password_split.py .....s                [  1%]
+tests/unit/_ratchets/test_bifrost_management_auth.py ....                [  2%]
+tests/unit/_ratchets/test_bifrost_no_content_logging.py .                [  2%]
+tests/unit/_ratchets/test_builtin_definitions_name_capabilities.py ....  [  3%]
+tests/unit/_ratchets/test_checkpoints_agree.py .........                 [  5%]
+tests/unit/_ratchets/test_compose_backup_service.py ....                 [  6%]
+tests/unit/_ratchets/test_compose_bifrost_healthcheck.py ..              [  6%]
+tests/unit/_ratchets/test_compose_daemon_agent.py ....                   [  7%]
+tests/unit/_ratchets/test_compose_daemon_profile.py .........            [  9%]
+tests/unit/_ratchets/test_compose_db_seed.py ..                          [  9%]
+tests/unit/_ratchets/test_compose_llm_worker_healthcheck.py ...          [ 10%]
+tests/unit/_ratchets/test_compose_one_builder_per_image.py .......       [ 11%]
+tests/unit/_ratchets/test_compose_state_volumes.py ...                   [ 12%]
+tests/unit/_ratchets/test_config_audit_actor.py ....                     [ 13%]
+tests/unit/_ratchets/test_database_url_split.py .....                    [ 14%]
+tests/unit/_ratchets/test_dependabot_directories.py .............        [ 17%]
+tests/unit/_ratchets/test_desktop_compose_agent_layer.py .........       [ 19%]
+tests/unit/_ratchets/test_desktop_version_tracks_release.py ......       [ 20%]
+tests/unit/_ratchets/test_dockerfile_node_major.py .                     [ 20%]
+tests/unit/_ratchets/test_dockerfile_version_not_clobbered.py ......     [ 22%]
+tests/unit/_ratchets/test_helm_db_init_sql_files.py ....                 [ 22%]
+tests/unit/_ratchets/test_helm_env_names_are_read.py ........            [ 24%]
+tests/unit/_ratchets/test_helm_environment_label.py ..                   [ 25%]
+tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py sss [ 25%]
+.                                                                        [ 25%]
+tests/unit/_ratchets/test_helm_postgres_password_not_published.py .      [ 26%]
+tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py ss           [ 26%]
+tests/unit/_ratchets/test_hunt_capabilities_agree.py ................    [ 30%]
+tests/unit/_ratchets/test_init_sql_model_indexes.py ..                   [ 30%]
+tests/unit/_ratchets/test_integration_registries.py ..........           [ 32%]
+tests/unit/_ratchets/test_logs_rotate_before_truncate.py .               [ 32%]
+tests/unit/_ratchets/test_mcp_runtime_pins.py .......................... [ 38%]
+...                                                                      [ 39%]
+tests/unit/_ratchets/test_mcp_tool_schemas.py ..                         [ 39%]
+tests/unit/_ratchets/test_no_ambient_state.py ...                        [ 40%]
+tests/unit/_ratchets/test_no_blocking_in_async_routes.py ........        [ 41%]
+tests/unit/_ratchets/test_no_claude_agent_sdk.py ....                    [ 42%]
+tests/unit/_ratchets/test_no_datetime_utcnow.py ..                       [ 43%]
+tests/unit/_ratchets/test_no_exception_text_in_responses.py .            [ 43%]
+tests/unit/_ratchets/test_no_import_time_db_connection.py .              [ 43%]
+tests/unit/_ratchets/test_no_logger_fstrings.py .                        [ 43%]
+tests/unit/_ratchets/test_no_metadata_kwarg.py ...                       [ 44%]
+tests/unit/_ratchets/test_no_tls_verify_disabled.py ...                  [ 45%]
+tests/unit/_ratchets/test_one_egress.py ...                              [ 45%]
+tests/unit/_ratchets/test_one_loop_gate.py .....                         [ 46%]
+tests/unit/_ratchets/test_pr_d_mechanical.py ....                        [ 47%]
+tests/unit/_ratchets/test_recall_contract_agrees.py .................... [ 52%]
+............                                                             [ 54%]
+tests/unit/_ratchets/test_redis_noeviction.py ...                        [ 55%]
+tests/unit/_ratchets/test_run_kinds_agree.py ....                        [ 56%]
+tests/unit/_ratchets/test_seed_insert_columns.py ...                     [ 56%]
+tests/unit/_ratchets/test_settings_env_example.py ...                    [ 57%]
+tests/unit/_ratchets/test_shutdown_all_destructive_flag.py ..            [ 57%]
+tests/unit/_ratchets/test_support_secret_names.py ..                     [ 58%]
+tests/unit/memory/test_case_distil.py .................................. [ 65%]
+.......................                                                  [ 70%]
+tests/unit/memory/test_distil_failures.py ..................             [ 74%]
+tests/unit/memory/test_distil_techniques.py ...                          [ 75%]
+tests/unit/memory/test_learning_episodes.py .........                    [ 77%]
+tests/unit/memory/test_prior_hunts.py ......                             [ 78%]
+tests/unit/memory/test_recall_entity.py ...................              [ 82%]
+tests/unit/memory/test_snapshot.py ...............                       [ 85%]
+tests/unit/memory/test_source_tier.py ............                       [ 88%]
+tests/unit/agents/test_hunt_coverage.py .........                        [ 90%]
+tests/unit/findings/test_ip_exclusions_db.py .....................       [ 94%]
+tests/integration/test_distil_poll_failures.py ....                      [ 95%]
+tests/integration/test_upgrade_command.py .........                      [ 97%]
+tests/integration/test_upgrade_adoption.py ...........                   [100%]
+
+============================= slowest 10 durations =============================
+22.11s setup    integration/test_upgrade_command.py::test_empty_database_matches_fresh_install
+10.15s call     unit/_ratchets/test_config_audit_actor.py::test_no_placeholder_or_anonymous_config_actor
+7.28s call     unit/_ratchets/test_no_import_time_db_connection.py::test_importing_every_router_opens_no_database_connection
+4.99s call     unit/_ratchets/test_one_egress.py::test_no_provider_host_is_dialled_directly
+4.74s call     integration/test_upgrade_adoption.py::test_clean_release_adopts_to_the_baseline[v0.7.0]
+4.53s call     integration/test_upgrade_adoption.py::test_clean_release_adopts_to_the_baseline[v0.8.0]
+4.36s call     integration/test_upgrade_adoption.py::test_known_drift_is_repaired[helm]
+4.31s call     unit/_ratchets/test_no_ambient_state.py::test_no_lazy_singleton_accessors
+4.13s call     unit/_ratchets/test_no_datetime_utcnow.py::test_no_asyncio_get_event_loop
+4.11s call     unit/_ratchets/test_one_loop_gate.py::test_the_tree_is_clean
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 457 passed, 6 skipped, 3 warnings in 196.25s (0:03:16) ============
