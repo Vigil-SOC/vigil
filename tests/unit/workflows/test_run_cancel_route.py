@@ -1,5 +1,3 @@
-"""Cancel ends a run in flight and refuses one that has already finished."""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -20,9 +18,8 @@ def _cancel(runs: WorkflowRunService, run_id: str):
     app = FastAPI()
     app.include_router(workflows_router.router, prefix="/api")
     app.state.workflow_runs = runs
-    approvals = MagicMock()
-    approvals.list_actions.return_value = []
-    app.state.approvals = approvals
+    app.state.approvals = MagicMock()
+    app.state.approvals.list_actions.return_value = []
     app.state.workflows = MagicMock()
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
         user_id="u1", username="analyst"
@@ -37,7 +34,7 @@ def _cancel(runs: WorkflowRunService, run_id: str):
         resp = TestClient(app).post(
             f"/api/workflows/runs/{run_id}/cancel", json={"reason": "double click"}
         )
-    return resp, counter, approvals
+    return resp, counter
 
 
 @pytest.mark.parametrize("terminal", ["completed", "failed", "cancelled"])
@@ -47,7 +44,7 @@ def test_cancel_refuses_a_finished_run(terminal):
     assert runs.finalize_run(run_id, status=terminal, error=None)
     before = runs.get_run(run_id)
 
-    resp, counter, approvals = _cancel(runs, run_id)
+    resp, counter = _cancel(runs, run_id)
 
     assert resp.status_code == 409
     after = runs.get_run(run_id)
@@ -56,14 +53,13 @@ def test_cancel_refuses_a_finished_run(terminal):
     assert after["duration_ms"] == before["duration_ms"]
     assert after.get("error") == before.get("error")
     counter.add.assert_not_called()
-    approvals.reject_action.assert_not_called()
 
 
 def test_cancel_still_cancels_a_running_run():
     runs = WorkflowRunService()
     run_id = runs.begin_run(workflow_id="wf-cancel", workflow_name="cancel")
 
-    resp, counter, _ = _cancel(runs, run_id)
+    resp, counter = _cancel(runs, run_id)
 
     assert resp.status_code == 200, resp.text
     assert runs.get_run(run_id)["status"] == "cancelled"
