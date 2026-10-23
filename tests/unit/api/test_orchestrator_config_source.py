@@ -66,6 +66,15 @@ def test_a_settings_change_after_first_use_is_picked_up(tmp_path):
     assert Path(second.workdir.base_dir) == tmp_path / "after"
 
 
+def test_resolving_saved_settings_does_not_log_at_info(caplog, tmp_path):
+    # Auto Ops polls status and the investigation list every few seconds, and
+    # each call resolves this config. An INFO line here is a steady log stream.
+    with caplog.at_level("INFO", logger="services.daemon.config"):
+        with _saved({"workdir_base": str(tmp_path / "saved")}):
+            assert router._get_orchestrator() is not None
+    assert "overridden from database settings" not in caplog.text
+
+
 def test_case_reset_marks_the_sidecar_under_the_saved_workdir(tmp_path):
     workdir = WorkdirManager(str(tmp_path / "saved-in-settings"))
     workdir.create("inv-1")
