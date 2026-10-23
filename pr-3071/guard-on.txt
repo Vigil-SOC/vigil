@@ -1,0 +1,5 @@
+============================= slowest 10 durations =============================
+1.11s setup    security/test_path_traversal.py::test_validate_integration_id_rejects_traversal[../x]
+
+(9 durations < 0.005s hidden.  Use -vv to show these durations.)
+============================= 22 passed in 28.00s ==============================

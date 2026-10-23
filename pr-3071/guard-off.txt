@@ -1,0 +1,8 @@
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+1.33s setup    security/test_path_traversal.py::test_validate_integration_id_rejects_traversal[../x]
+
+(9 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/security/test_path_traversal.py::test_server_path_stays_in_base
+======================== 1 failed, 21 passed in 22.44s =========================
