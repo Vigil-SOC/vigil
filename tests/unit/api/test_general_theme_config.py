@@ -1,5 +1,3 @@
-"""GET /config/general and /config/theme: stored row, seeded default, or 503."""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
