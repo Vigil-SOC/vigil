@@ -3,10 +3,10 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
 import { heldCase } from '../../shell/heldCase'
-import api, { configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
+import { casesApi, configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
-  default: { post: vi.fn() },
+  casesApi: { exportJira: vi.fn() },
   overviewApi: { get: vi.fn(), alert: vi.fn() },
   findingsApi: {
     markNoise: vi.fn(),
@@ -260,6 +260,20 @@ describe('OverviewScreen', () => {
     expect(within(flow).queryByText('g')).not.toBeInTheDocument()
   })
 
+  it('disables Create ticket and names the gap when Jira is not ready', async () => {
+    vi.mocked(configApi.getIntegrations).mockResolvedValueOnce({
+      data: { enabled_integrations: [], integrations: {}, secrets_set: {} },
+    } as never)
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [{ ...payload().feed[0], case_id: 'case-1' }] }) } as never)
+    renderScreen()
+    fireEvent.click(await screen.findByText('f-1'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create ticket' }).parentElement).toHaveAttribute('title', 'Jira is not enabled'))
+    const ticket = screen.getByRole('button', { name: 'Create ticket' })
+    expect(ticket).toBeDisabled()
+    fireEvent.click(ticket)
+    expect(casesApi.exportJira).not.toHaveBeenCalled()
+  })
+
   it('marks then clears, says a second launch is already queued, and shows a Jira error', async () => {
     const item = {
       ...payload().feed[0],
@@ -273,7 +287,7 @@ describe('OverviewScreen', () => {
     vi.mocked(findingsApi.launchIntake)
       .mockResolvedValueOnce({ data: { queued: true, already_queued: false, trigger_id: 1 } } as never)
       .mockResolvedValueOnce({ data: { queued: false, already_queued: true, trigger_id: null } } as never)
-    vi.mocked(api.post).mockRejectedValue({ response: { data: { detail: 'JIRA not configured' } } })
+    vi.mocked(casesApi.exportJira).mockRejectedValue({ response: { data: { detail: 'JIRA not configured' } } })
     renderScreen()
     fireEvent.click(await screen.findByText('f-1'))
     expect(screen.queryByRole('link', { name: /^Open in/ })).not.toBeInTheDocument()
@@ -297,10 +311,10 @@ describe('OverviewScreen', () => {
     expect(await screen.findByRole('link', { name: 'Waiting in the Triage queue' })).toHaveAttribute('href', '/triage')
     fireEvent.click(screen.getByRole('button', { name: 'Send to triage' }))
     expect(await screen.findByRole('link', { name: 'Already waiting in the Triage queue.' })).toHaveAttribute('href', '/triage')
-    await waitFor(() => expect(configApi.getIntegrations).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create ticket' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Create ticket' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('JIRA not configured')
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/cases/case-1/export/jira', { project_key: 'SOC' }))
+    expect(casesApi.exportJira).toHaveBeenCalledWith('case-1', 'SOC')
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
   })
 

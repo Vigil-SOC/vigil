@@ -207,11 +207,6 @@ export const findingsApi = {
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
   
-  export: (format: 'json' | 'jsonl' = 'json') =>
-    api.post('/findings/export', null, { params: { output_format: format } }),
-  
-  update: (id: string, data: any) => api.patch(`/findings/${id}`, data),
-  
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
     // may restart the Bifrost gateway, then wait on the configured model
     api.post(`/findings/${id}/enrich`, null, {
@@ -367,6 +362,14 @@ export const casesApi = {
       merged_by: 'user',
     }),
 
+  /** Exports the case to a Jira issue and returns the note to show; a refused export throws its error. */
+  exportJira: async (id: string, projectKey: string): Promise<string> => {
+    const res = await api.post<Schema<'JiraExportResponse'>>(`/cases/${encodeURIComponent(id)}/export/jira`, {
+      project_key: projectKey,
+    })
+    if (res.data?.success === false) throw new Error(res.data.error || 'Jira export failed')
+    return res.data?.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created'
+  },
 }
 
 export const slaPoliciesApi = {
