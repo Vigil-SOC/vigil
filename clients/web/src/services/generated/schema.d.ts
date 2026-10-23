@@ -2860,9 +2860,7 @@ export interface paths {
         put?: never;
         /**
          * Set Orchestrator Config
-         * @description Set orchestrator configuration. Persists settings AND syncs the
-         *     runtime enabled flag used by GET /api/orchestrator/status (which
-         *     NavigationRail uses to show/hide the Auto Ops tab).
+         * @description Set orchestrator configuration.
          *
          *     A ``profiles`` field on the body is ignored. The stored object stays the
          *     flat keys; no profile name is written.
