@@ -36,25 +36,6 @@ ROUTER_META = RouterMeta(
 # ========== Request/Response Models ==========
 
 
-class CreateAIDecisionRequest(BaseModel):
-    """Request model for creating an AI decision log."""
-
-    decision_id: str = Field(..., description="Unique decision identifier")
-    agent_id: str = Field(..., description="ID of the agent making the decision")
-    decision_type: str = Field(
-        ..., description="Type of decision (e.g., 'triage', 'escalate', 'isolate')"
-    )
-    confidence_score: float = Field(
-        ..., ge=0, le=1, description="AI's confidence (0-1)"
-    )
-    reasoning: str = Field(..., description="AI's reasoning for the decision")
-    recommended_action: str = Field(..., description="Recommended action")
-    finding_id: Optional[str] = Field(None, description="Associated finding ID")
-    case_id: Optional[str] = Field(None, description="Associated case ID")
-    workflow_id: Optional[str] = Field(None, description="Workflow ID")
-    decision_metadata: Optional[dict] = Field(None, description="Additional metadata")
-
-
 class SubmitFeedbackRequest(BaseModel):
     """Request model for submitting feedback on an AI decision."""
 
@@ -126,35 +107,6 @@ class AIDecisionStatsResponse(BaseModel):
 
 
 # ========== API Endpoints ==========
-
-
-@router.post("/decisions", response_model=AIDecisionResponse, status_code=201)
-async def create_ai_decision(request: CreateAIDecisionRequest):
-    """
-    Log an AI decision for tracking and feedback.
-
-    This endpoint should be called by AI agents whenever they make a decision
-    that could benefit from human review and feedback.
-    """
-    db_service = DatabaseService()
-
-    decision = db_service.create_ai_decision(
-        decision_id=request.decision_id,
-        agent_id=request.agent_id,
-        decision_type=request.decision_type,
-        confidence_score=request.confidence_score,
-        reasoning=request.reasoning,
-        recommended_action=request.recommended_action,
-        finding_id=request.finding_id,
-        case_id=request.case_id,
-        workflow_id=request.workflow_id,
-        decision_metadata=request.decision_metadata,
-    )
-
-    if not decision:
-        raise HTTPException(status_code=500, detail="Failed to create AI decision log")
-
-    return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
 
 
 @router.post(
@@ -260,17 +212,3 @@ async def list_ai_decisions(
         decisions = [d for d in decisions if d.workflow_id == workflow_id]
 
     return [AIDecisionResponse(**AIDecisionLogSchema.dump(d)) for d in decisions]
-
-
-@router.get("/decisions/{decision_id}", response_model=AIDecisionResponse)
-async def get_ai_decision(decision_id: str):
-    """Get a specific AI decision by ID."""
-    db_service = DatabaseService()
-    decision = db_service.get_ai_decision(decision_id)
-
-    if not decision:
-        raise HTTPException(
-            status_code=404, detail=f"AI decision not found: {decision_id}"
-        )
-
-    return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))

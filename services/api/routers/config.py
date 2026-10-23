@@ -36,7 +36,10 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.approval_service import APPROVAL_CONFIG_KEY
+from core.response.approval_service import (
+    APPROVAL_CONFIG_KEY,
+    read_stored_force_manual_approval,
+)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -636,6 +639,20 @@ def assigned_model_ids(session) -> set[str]:
     return found
 
 
+class SetupStep(BaseModel):
+    id: str
+    title: str
+    state_line: str
+    done: bool
+    href: str
+
+
+class SetupStepsResponse(BaseModel):
+    steps: List[SetupStep]
+    alerts_exist: int
+    demo_enabled: bool
+
+
 def _step(step_id: str, title: str, state_line: str, done: bool, href: str) -> dict:
     return {
         "id": step_id,
@@ -738,7 +755,7 @@ def build_setup_steps(
     }
 
 
-@router.get("/setup-steps")
+@router.get("/setup-steps", response_model=SetupStepsResponse)
 def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
@@ -1690,13 +1707,6 @@ def _environment_wins() -> bool:
     return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
 
 
-def _stored_force_manual(config_service) -> bool:
-    value = config_service.read_system_config(APPROVAL_CONFIG_KEY)
-    if isinstance(value, dict):
-        return bool(value.get("enabled", False))
-    return False
-
-
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
 def get_force_manual_approval():
     """Read ``approval.force_manual_approval`` without inserting a default row.
@@ -1705,7 +1715,7 @@ def get_force_manual_approval():
     approvals as off while the stored flag may be forcing them on.
     """
     try:
-        enabled = _stored_force_manual(get_config_service())
+        enabled = read_stored_force_manual_approval()
     except Exception as e:
         logger.error(f"Error getting force-manual approval: {e}")
         raise HTTPException(

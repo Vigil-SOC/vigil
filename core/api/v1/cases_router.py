@@ -29,6 +29,7 @@ from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
+from core.cases.case_status import CaseStatus, record_status_change, status_change
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
@@ -94,38 +95,6 @@ def _get_ingestion_service(source: str):
     return None
 
 
-def _record_status_close(session, case_id: str, closed_by: str) -> None:
-    """Record who closed a Case that was closed by editing its status.
-
-    This is how the console closes a Case: it PATCHes the status and asks for no
-    category. Left unrecorded, the close that matters most -- a person looked and
-    said no -- reaches episodic memory as nothing at all, because there is no
-    closure row for the Case Distil to read a category or an actor from.
-
-    The category is ``unspecified``, which is not a determination and does not
-    pretend to be one: it says the Case was closed and no reason was stated, and
-    becomes an inconclusive Verdict rather than a claim nobody made. It goes
-    through ``close_case`` like every other close, so this path stops the SLA
-    resolution clock and indexes the Case's IOCs as the others do, and cannot
-    overwrite a determination an earlier close already stated.
-
-    This lands in the request's own transaction while the status change went
-    through ``data_service`` in its own, so a failure here 500s with the Case
-    already closed and no closure row. The Distil reads that as a close with no
-    stated reason -- the Verdict is still written, at Trust ``agent`` rather
-    than ``analyst``. Degraded, and never a Case that closed and vanished.
-    """
-    from core.cases.case_workflow_service import CaseWorkflowService
-
-    CaseWorkflowService().close_case(
-        session,
-        case_id,
-        closure_category=ClosureCategory.UNSPECIFIED,
-        closed_by=closed_by,
-        closed_by_kind=ClosedByKind.ANALYST,
-    )
-
-
 async def _sync_upstream_status(case_id: str, new_status: str) -> None:
     """Best-effort sync of case status to the upstream SIEM."""
     import logging
@@ -177,7 +146,7 @@ class CaseCreate(BaseModel):
     description: str = ""
     finding_ids: List[str]
     priority: str = "medium"
-    status: str = "open"
+    status: CaseStatus = "open"
 
 
 class CaseUpdate(BaseModel):
@@ -185,7 +154,7 @@ class CaseUpdate(BaseModel):
 
     title: Optional[str] = None
     description: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[CaseStatus] = None
     priority: Optional[str] = None
     notes: Optional[str] = None
     assignee: Optional[str] = None
@@ -498,22 +467,23 @@ def update_case(
         )
         updates["notes"] = notes
 
-    # Read before the write, because what makes this a close is the transition:
-    # re-PATCHing `closed` onto an already-closed Case is an edit, and stamping
-    # it would move the closure's date and re-derive its Verdict for nothing.
-    was_closed = (data_service.get_case(case_id) or {}).get("status") == "closed"
+    change = status_change(
+        (data_service.get_case(case_id) or {}).get("status"), case_data.status
+    )
 
     success = data_service.update_case(case_id, **updates)
 
     if not success:
         raise HTTPException(status_code=404, detail="Case not found or update failed")
 
-    if updates.get("status") == "closed" and not was_closed:
-        _record_status_close(session, case_id, current_user.username)
-    elif was_closed and updates.get("status") not in (None, "closed"):
-        from core.cases.case_workflow_service import CaseWorkflowService
-
-        CaseWorkflowService().reopen_case(session, case_id)
+    if change:
+        record_status_change(
+            session,
+            case_id,
+            change,
+            closed_by=current_user.username,
+            closed_by_kind=ClosedByKind.ANALYST,
+        )
 
     # Fire upstream SIEM status sync when status changes
     if case_data.status is not None:

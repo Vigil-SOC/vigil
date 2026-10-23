@@ -289,9 +289,6 @@ class AutonomousResponseService:
             results = []
 
             for action in approved_actions:
-                # Skip if already executed
-                if action.executed_at:
-                    continue
                 # Released by a confidence figure and no person: whoever
                 # supplied that figure also chose the outcome.
                 if not action.requires_approval and not action.approved_by:

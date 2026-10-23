@@ -24,6 +24,8 @@ export interface ChatOptions {
   // The agent this conversation belongs to, when it belongs to one (#1560):
   // its skill reads are credited to it. Absent for a plain chat.
   agent_id?: string;
+  // Aborted when the reader leaves, so the call in flight is cancelled rather than paid for whole.
+  signal?: AbortSignal;
 }
 
 export interface ChatReport {
@@ -66,12 +68,10 @@ export async function* runChat(harness: Harness, options: ChatOptions): AsyncGen
     ...(options.origin === undefined ? {} : { origin: options.origin }),
     conversation,
     ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-  for (;;) {
-    const next = await stream.next();
-    if (next.done) return reportOf(next.value);
-    yield next.value as StreamEvent<string>;
-  }
+  // Delegated rather than pumped, so a reader's return() reaches the kernel's finally.
+  return reportOf(yield* (stream as AsyncGenerator<StreamEvent<string>, AgentReport>));
 }
 
 // Prose only: what each answer read is on the ledger, and the kernel carries it (#2281).

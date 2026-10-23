@@ -77,7 +77,6 @@ def verdict(db, keys, techniques=(), *, investigation, concluded=EPOCH, marker=N
                 investigation_id=investigation,
                 origin_run_id=marker,
                 origin_seq=1,
-                origin_run_ids=[marker],
                 distil_version=1,
                 concluded_at=concluded,
             )
