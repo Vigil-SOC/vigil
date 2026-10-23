@@ -1,0 +1,45 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/6e8b8f6e-a1a2-493f-bd5f-c3c792a1d109/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 13 items
+
+tests/integration/test_upgrade_adoption.py ...........                   [ 84%]
+tests/integration/test_helm_db_init_apply.py .F                          [100%]
+
+=================================== FAILURES ===================================
+____________ test_failed_file_is_rolled_back_unrecorded_and_retried ____________
+
+owner_db = {'SHELL': '/bin/bash', 'npm_command': 'run', 'COREPACK_ENABLE_AUTO_PIN': '0', 'npm_config_userconfig': '/home/gray/.npmrc', ...}
+tmp_path = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/pytest-of-gray/pytest-25/test_failed_file_is_rolled_bac0')
+
+    def test_failed_file_is_rolled_back_unrecorded_and_retried(owner_db, tmp_path) -> None:
+        sql = tmp_path / "99_broken.sql"
+        sql.write_text(
+            "CREATE TABLE partial_apply (id int);\nSELECT * FROM no_such_table;\n"
+        )
+        failed = _run(owner_db, tmp_path, sql.name)
+>       assert failed.returncode != 0
+E       assert 0 != 0
+E        +  where 0 = CompletedProcess(args=['sh', '-c', 'set -eu\npsql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _vigil_schema_vers...; done\n', 'apply', '99_broken.sql'], returncode=0, stdout='CREATE TABLE\nAPPLY 99_broken.sql\n  applied\n', stderr='').returncode
+
+failed     = CompletedProcess(args=['sh', '-c', 'set -eu\npsql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _vigil_schema_vers...; done\n', 'apply', '99_broken.sql'], returncode=0, stdout='CREATE TABLE\nAPPLY 99_broken.sql\n  applied\n', stderr='')
+owner_db   = {'SHELL': '/bin/bash', 'npm_command': 'run', 'COREPACK_ENABLE_AUTO_PIN': '0', 'npm_config_userconfig': '/home/gray/.npmrc', ...}
+sql        = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/pytest-of-gray/pytest-25/test_failed_file_is_rolled_bac0/99_broken.sql')
+tmp_path   = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/pytest-of-gray/pytest-25/test_failed_file_is_rolled_bac0')
+
+tests/integration/test_helm_db_init_apply.py:138: AssertionError
+============================= slowest 10 durations =============================
+8.57s call     integration/test_helm_db_init_apply.py::test_every_listed_file_applies_as_a_non_superuser_owner
+2.03s call     integration/test_upgrade_adoption.py::test_clean_release_adopts_to_the_baseline[v0.7.0]
+1.74s call     integration/test_upgrade_adoption.py::test_clean_release_adopts_to_the_baseline[v0.8.0]
+1.68s call     integration/test_upgrade_adoption.py::test_a_held_legacy_role_is_kept_and_named
+1.67s call     integration/test_upgrade_adoption.py::test_unknown_drift_refuses_and_writes_nothing
+1.64s call     integration/test_upgrade_adoption.py::test_known_drift_is_repaired[no-app-role]
+1.54s call     integration/test_upgrade_adoption.py::test_known_drift_is_repaired[app-owned]
+1.54s call     integration/test_upgrade_adoption.py::test_known_drift_is_repaired[helm]
+1.37s call     integration/test_upgrade_adoption.py::test_a_restamp_by_an_older_release_says_restore_first
+1.21s setup    integration/test_upgrade_adoption.py::test_clean_release_adopts_to_the_baseline[v0.7.0]
+======================== 1 failed, 12 passed in 28.14s =========================

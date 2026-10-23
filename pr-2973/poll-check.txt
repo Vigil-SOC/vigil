@@ -1,0 +1,13 @@
+Source Tier: integration 'atomic-red-team' declares category 'Forensics & Analysis', which maps to no tier; its sources will take the default
+OK   both runs offered before any marker: {(UUID('31bfe6d1-a628-41ff-9d2f-71ef00d4ed38'), 5), (UUID('8e77a16b-b7fd-49b2-9f16-3493cd73f6b1'), 10)}
+OK   first write derives: 1
+OK   marker names run a, seq 10: (UUID('8e77a16b-b7fd-49b2-9f16-3493cd73f6b1'), 10, 2)
+OK   run a no longer offered, b still is: {(UUID('31bfe6d1-a628-41ff-9d2f-71ef00d4ed38'), 5)}
+OK   rewrite of the same terminal derives again: 1
+OK   still only b offered after rewrite: {(UUID('31bfe6d1-a628-41ff-9d2f-71ef00d4ed38'), 5)}
+OK   resumed run a offered at its later terminal seq 20: {(UUID('31bfe6d1-a628-41ff-9d2f-71ef00d4ed38'), 5), (UUID('8e77a16b-b7fd-49b2-9f16-3493cd73f6b1'), 20)}
+OK   marker moved to seq 20: (UUID('8e77a16b-b7fd-49b2-9f16-3493cd73f6b1'), 20, 2)
+OK   run a settled after resume: {(UUID('31bfe6d1-a628-41ff-9d2f-71ef00d4ed38'), 5)}
+OK   version bump re-offers run a: {(UUID('31bfe6d1-a628-41ff-9d2f-71ef00d4ed38'), 5), (UUID('8e77a16b-b7fd-49b2-9f16-3493cd73f6b1'), 20)}
+OK   init SQL has no origin_run_ids column: False
+ALL OK

@@ -1,0 +1,22 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/6e8b8f6e-a1a2-493f-bd5f-c3c792a1d109/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 9 items
+
+tests/integration/test_upgrade_command.py .........                      [100%]
+
+============================= slowest 10 durations =============================
+11.18s setup    integration/test_upgrade_command.py::test_empty_database_matches_fresh_install
+1.05s call     integration/test_upgrade_command.py::test_lock_held_elsewhere_refuses
+1.00s call     integration/test_upgrade_command.py::test_check_matches_the_apply_that_follows[at-head]
+0.92s call     integration/test_upgrade_command.py::test_empty_database_matches_fresh_install
+0.77s call     integration/test_upgrade_command.py::test_check_matches_the_apply_that_follows[newer]
+0.75s call     integration/test_upgrade_command.py::test_check_matches_the_apply_that_follows[empty]
+0.69s call     integration/test_upgrade_command.py::test_acknowledgement_for_this_version_applies
+0.42s teardown integration/test_upgrade_command.py::test_empty_database_matches_fresh_install
+0.13s call     integration/test_upgrade_command.py::test_check_matches_the_apply_that_follows[empty-no-point]
+0.12s call     integration/test_upgrade_command.py::test_check_matches_the_apply_that_follows[empty-stale-ack]
+============================== 9 passed in 19.28s ==============================

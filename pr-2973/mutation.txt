@@ -1,0 +1,3 @@
+# mutation: 0007 replaced with SELECT 1; expect failure
+E             Left contains 2 more items, first extra item: {'object': 'column episodic_distil_markers.origin_run_ids', 'expected': None, 'actual': {'type': 'uuid[]', 'nullable': False, 'default': 'ARRAY[]::uuid[]'}}
+======================= 1 failed, 8 deselected in 11.75s =======================
