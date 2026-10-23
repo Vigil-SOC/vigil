@@ -678,19 +678,17 @@ class WorkflowsService:
         if agents:
             context["phase_agents"] = agents
         actor_principal = plugin_actor(workflow.run_kind)
-        if origin_kind is None:
-            if person_id or principal or username:
-                origin_kind = "person"
-            elif (parameters or {}).get("finding_id"):
-                origin_kind = "alert"
-            else:
-                origin_kind = "schedule"
+        resolved_origin = origin_kind or (
+            "person"
+            if person_id or principal or username
+            else ("alert" if (parameters or {}).get("finding_id") else "schedule")
+        )
         who = (
             person_id
             if person_id
-            else (None if origin_kind == "person" else SYSTEM_PRINCIPAL_ID)
+            else (None if resolved_origin == "person" else SYSTEM_PRINCIPAL_ID)
         )
-        run_id = run_service.begin_run(
+        persisted = run_service.begin_run(
             workflow_id=workflow.id,
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
@@ -702,8 +700,9 @@ class WorkflowsService:
             triggered_by_principal_id=who,
             run_id=run_id,
         )
-        if not run_id:
+        if not persisted:
             return {"success": False, "error": "Could not persist run (DB unavailable)"}
+        run_id = persisted
 
         principal = _run_token(
             principal,
@@ -711,9 +710,9 @@ class WorkflowsService:
             person_id=person_id,
             agent_id=actor_principal,
             run_id=run_id,
-            origin=origin_kind,
+            origin=resolved_origin,
         )
-        origin_value = _origin_value(origin_kind, person_id, origin_id)
+        origin_value = _origin_value(resolved_origin, person_id, origin_id)
         asked = _asked_hypotheses(parameters)
         spec = _omit_unset(
             {
@@ -739,7 +738,7 @@ class WorkflowsService:
             note_run_start(
                 run_id=run_id,
                 actor=actor_principal,
-                origin_kind=origin_kind,
+                origin_kind=resolved_origin,
                 origin=origin_value,
                 spec=spec,
                 model=_model_of(parameters),
@@ -763,7 +762,7 @@ class WorkflowsService:
             enqueued_by=actor or triggered_by or "api",
             principal=principal,
             actor=actor_principal,
-            origin=origin_kind,
+            origin=resolved_origin,
         )
         try:
             job_id = await enqueue_run(job)

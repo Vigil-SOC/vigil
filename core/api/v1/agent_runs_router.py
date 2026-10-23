@@ -168,7 +168,8 @@ async def start_run(
     if request.overrides is not None:
         payload["overrides"] = request.overrides
 
-    person_id = getattr(user, "principal_id", None) or getattr(user, "user_id", None)
+    raw_person = getattr(user, "principal_id", None) or getattr(user, "user_id", None)
+    person_id = raw_person if isinstance(raw_person, str) and raw_person else None
     actor = plugin_actor(request.run_kind)
     # Best-effort: without a workflow_runs row a parked run cannot raise an
     # answerable checkpoint. Like every write to that table, the ledger is truth.
@@ -179,7 +180,7 @@ async def start_run(
             run_id=run_id,
             actor=actor,
             origin_kind="person",
-            origin=person_id,
+            origin=person_id or "",
             spec=payload,
         )
     except TrailWriteError as exc:
@@ -224,7 +225,10 @@ async def start_run(
 # The playbook reference names the workflow when there is one; a run started from
 # file paths is named for the loop it runs, which is all the console needs to list it.
 def _begin_run_row(
-    run_id: str, request: StartRunRequest, triggered_by: str, person_id: str
+    run_id: str,
+    request: StartRunRequest,
+    triggered_by: str,
+    person_id: Optional[str],
 ) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService

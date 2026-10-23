@@ -374,7 +374,7 @@ def _start_principal(
         except tool_principal.InvalidPrincipal:
             logger.warning("stored principal for %s did not verify", run_id)
             claims = None
-        else:
+        if claims is not None:
             person_id = claims.person_id
             username = claims.username
     if username and not person_id:
