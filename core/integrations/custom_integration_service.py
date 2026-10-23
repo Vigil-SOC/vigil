@@ -38,10 +38,6 @@ class ServerCodeTooLargeError(SOCError):
     status_code = 400
 
 
-class IntegrationNotFoundError(NotFoundError):
-    """Raised when no custom integration has the given id."""
-
-
 def _validate_integration_id(integration_id: str) -> str:
     """Validate and return a safe integration_id.
 
@@ -577,7 +573,7 @@ Only generate the JSON response when you have enough information to create a com
         all_metadata = self._load_metadata()
 
         if integration_id not in all_metadata:
-            raise IntegrationNotFoundError(f"Integration '{integration_id}' not found")
+            raise NotFoundError(f"Integration '{integration_id}' not found")
 
         del all_metadata[integration_id]
         self._save_metadata(all_metadata)
@@ -596,7 +592,7 @@ Only generate the JSON response when you have enough information to create a com
         """Validate a custom integration's server code."""
         server_file = self._server_path_for(integration_id)
         if not server_file.exists():
-            raise IntegrationNotFoundError(f"Integration '{integration_id}' not found")
+            raise NotFoundError(f"Integration '{integration_id}' not found")
 
         code = server_file.read_text()
         try:
