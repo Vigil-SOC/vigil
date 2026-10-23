@@ -43,7 +43,6 @@ def marker(db, kind, ident, *, concluded, run=None):
             investigation_id=ident,
             origin_run_id=run,
             origin_seq=1 if run else None,
-            origin_run_ids=[run] if run else [],
             distil_version=1,
             concluded_at=concluded,
         )

@@ -128,12 +128,8 @@ RETRY_NEVER = datetime(9999, 12, 31, tzinfo=timezone.utc)
 ABORTED = "aborted"
 BUDGET_TERMINATED = "budget_terminated"
 
-# Terminals no marker at this version covers. The join is on the covered-runs
-# array and not on origin_run_id: one investigation can span more than one run,
-# and agent_events carries no investigation id for the poll to key on, so a
-# marker has to say which runs it accounts for. Matching the version in the join
-# rather than the filter is what makes a bump re-offer every covered run instead
-# of only the origin one.
+# Terminals no marker at this version covers. Matching the version in the join
+# rather than the filter is what makes a bump re-offer every run.
 #
 # The failure join is the second half of the same idea (#734). A failure writes
 # no marker, so without it a run that cannot be written comes back on every tick
@@ -153,7 +149,7 @@ _CANDIDATES = text("""
     SELECT DISTINCT ON (e.run_id) e.run_id AS run_id, e.seq AS seq
     FROM agent_events e
     LEFT JOIN episodic_distil_markers m
-           ON m.origin_run_ids @> ARRAY[e.run_id]
+           ON m.origin_run_id = e.run_id
           AND m.distil_version = :version
     LEFT JOIN episodic_distil_failures f
            ON f.investigation_kind = 'hunt'
@@ -163,10 +159,7 @@ _CANDIDATES = text("""
     WHERE e.kind = 'terminal'
       AND e.run_kind = ANY(:kinds)
       AND (f.failure_key IS NULL OR f.next_attempt_at <= now())
-      AND (
-        m.investigation_id IS NULL
-        OR (m.origin_run_id = e.run_id AND m.origin_seq < e.seq)
-      )
+      AND (m.investigation_id IS NULL OR m.origin_seq < e.seq)
     ORDER BY e.run_id, e.seq DESC
     LIMIT :limit
     """)
@@ -182,7 +175,7 @@ class Terminal:
 
 @dataclass(frozen=True)
 class Origin:
-    """The terminal a marker's rows were derived from, and the runs it covers.
+    """The terminal a marker's rows were derived from.
 
     Absent on a Case, which is closed rather than run — the marker's origin
     columns are null there, and the schema's CHECK ties that to the kind.
@@ -190,7 +183,6 @@ class Origin:
 
     run_id: uuid.UUID
     seq: int
-    covered: Sequence[uuid.UUID]
 
 
 @dataclass(frozen=True)
@@ -551,25 +543,6 @@ def _accept(terminal: Terminal, payload: Mapping[str, Any]) -> Concluded:
     return Concluded(payload, investigation_id, concluded_at)
 
 
-def _superseded_by(
-    marker: Optional[EpisodicDistilMarker], concluded: Concluded, terminal: Terminal
-) -> bool:
-    """Whether this investigation already holds rows from a later terminal.
-
-    One investigation can reach a terminal in more than one run, and the poll
-    offers each run separately because it has nothing but run ids to go on. Two
-    runs both re-deriving the same investigation would leave whichever ran last
-    on the record, and they would take turns forever. The later terminal wins,
-    and the earlier one is recorded as covered without touching the rows.
-    """
-    return (
-        marker is not None
-        and marker.distil_version == DISTIL_MAPPING_VERSION
-        and marker.origin_run_id != terminal.run_id
-        and marker.concluded_at >= concluded.concluded_at
-    )
-
-
 def record_failure(
     session: Session,
     *,
@@ -668,16 +641,6 @@ def write_distil(
     concluded = _accept(terminal, payload)
     kind = InvestigationKind.HUNT
 
-    marker = session.get(EpisodicDistilMarker, (kind.value, concluded.investigation_id))
-    # origin_run_id included, so the covered set is what the poll needs on its own.
-    covered = sorted(
-        {*(marker.origin_run_ids if marker is not None else []), terminal.run_id}
-    )
-
-    if _superseded_by(marker, concluded, terminal):
-        marker.origin_run_ids = covered  # type: ignore[union-attr]
-        return {"sightings": 0, "verdicts": 0, "gaps": 0, "derived": 0}
-
     # A crash is not an outcome, so an aborted run contributes no memory — and
     # withdraws none either. What an earlier terminal of this investigation
     # concluded was concluded; a later run dying does not unsay it, so the clear
@@ -717,7 +680,7 @@ def write_distil(
         version=DISTIL_MAPPING_VERSION,
         counts=counts,
         concluded_at=concluded.concluded_at,
-        origin=Origin(terminal.run_id, terminal.seq, covered),
+        origin=Origin(terminal.run_id, terminal.seq),
     )
     return counts | {"derived": 1}
 
@@ -747,7 +710,6 @@ def write_marker(
         "investigation_id": investigation_id,
         "origin_run_id": origin.run_id if origin is not None else None,
         "origin_seq": origin.seq if origin is not None else None,
-        "origin_run_ids": list(origin.covered) if origin is not None else [],
         "distil_version": version,
         "sightings_written": counts.get("sightings", 0),
         "verdicts_written": counts.get("verdicts", 0),

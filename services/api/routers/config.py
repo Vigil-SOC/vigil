@@ -643,6 +643,20 @@ def assigned_model_ids(session) -> set[str]:
     return found
 
 
+class SetupStep(BaseModel):
+    id: str
+    title: str
+    state_line: str
+    done: bool
+    href: str
+
+
+class SetupStepsResponse(BaseModel):
+    steps: List[SetupStep]
+    alerts_exist: int
+    demo_enabled: bool
+
+
 def _step(step_id: str, title: str, state_line: str, done: bool, href: str) -> dict:
     return {
         "id": step_id,
@@ -745,7 +759,11 @@ def build_setup_steps(
     }
 
 
-@router.get("/setup-steps", dependencies=_SETTINGS_READ)
+@router.get(
+    "/setup-steps",
+    response_model=SetupStepsResponse,
+    dependencies=_SETTINGS_READ,
+)
 def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),

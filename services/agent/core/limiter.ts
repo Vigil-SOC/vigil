@@ -84,20 +84,22 @@ export class Limiter {
     this.gate = pLimit(concurrency);
   }
 
-  async run<T>(estimatedTokens: number, call: () => Promise<T>): Promise<T> {
+  async run<T>(estimatedTokens: number, call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     return this.gate(async () => {
       await Promise.all([this.requests.take(1), this.tokens.take(estimatedTokens)]);
-      return this.withRetry(call);
+      return this.withRetry(call, signal);
     });
   }
 
-  private async withRetry<T>(call: () => Promise<T>): Promise<T> {
+  private async withRetry<T>(call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     let lastError: unknown;
     let blind = 0;
     for (let attempt = 0; attempt < this.attempts; attempt += 1) {
       try {
         return await call();
       } catch (error) {
+        // A cancelled call is not a failure to retry: whoever cancelled it is gone.
+        if (signal?.aborted === true) throw error;
         const status = statusOf(error);
         if (status === 402) throw new GatewayExhausted((error as Error).message);
         // One more attempt, not three: retrying a ceiling costs a role its whole dispatch

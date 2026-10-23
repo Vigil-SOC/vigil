@@ -144,6 +144,10 @@ def add_task(
     return task
 
 
+def tasks_on_case(session: Session, case_id: str) -> List[CaseTask]:
+    return session.query(CaseTask).filter(CaseTask.case_id == case_id).all()
+
+
 def list_tasks(case_id: str) -> List[CaseTask]:
     """Tasks for a case, or [] when the database is unreachable.
 
@@ -154,7 +158,7 @@ def list_tasks(case_id: str) -> List[CaseTask]:
 
     try:
         with unit_of_work() as session:
-            return session.query(CaseTask).filter(CaseTask.case_id == case_id).all()
+            return tasks_on_case(session, case_id)
     except Exception:
         logger.exception("Listing tasks for case %s failed; reporting none", case_id)
         return []

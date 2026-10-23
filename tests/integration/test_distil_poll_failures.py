@@ -25,6 +25,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from core.memory.distil import DISTIL_MAPPING_VERSION, pending
+from core.storage.models.episodic import EpisodicDistilFailure, EpisodicDistilMarker
 
 pytestmark = [
     pytest.mark.integration,
@@ -34,14 +35,8 @@ pytestmark = [
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The ledger this polls, and the episodic tables it joins. Python models the
-# episodic half and not the ledger, so both are applied rather than assumed.
-DDL = (
-    "19_agent_ledger.sql",
-    "31_agent_ledger_hash_chain.sql",
-    "26_episodic_memory.sql",
-    "29_episodic_distil_failures.sql",
-)
+# The ledger this polls. Python does not model it; the tables it joins are modelled.
+DDL = ("19_agent_ledger.sql", "31_agent_ledger_hash_chain.sql")
 
 
 def _database_url() -> str:
@@ -61,6 +56,10 @@ def engine():
             conn.execute(
                 text((REPO_ROOT / "infra" / "database" / "init" / name).read_text())
             )
+        EpisodicDistilMarker.metadata.create_all(
+            conn,
+            tables=[EpisodicDistilMarker.__table__, EpisodicDistilFailure.__table__],
+        )
         conn.commit()
     yield engine
     engine.dispose()
