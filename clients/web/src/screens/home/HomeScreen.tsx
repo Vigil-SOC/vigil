@@ -79,7 +79,6 @@ function errorText(error: unknown, fallback: string): string {
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
 
-/** `text` on one line, cut on a whole word with an ellipsis past 60 characters; the full text belongs on hover. */
 function briefText(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   if (flat.length <= 60) return flat
