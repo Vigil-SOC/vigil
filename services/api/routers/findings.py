@@ -16,7 +16,6 @@ from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
 from core.cases.closure import ClosedByKind
-from core.config import vigil_path
 from core.findings.enrichment import (
     FindingNotFound,
     NoProviderConfigured,
@@ -41,8 +40,6 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
-
-EXPORT_FORMATS = DatabaseDataService.EXPORT_FORMATS
 
 
 class NoiseMarkRequest(BaseModel):
@@ -207,30 +204,3 @@ def launch_finding_into_intake(
         already_queued=trigger_id is None,
         trigger_id=trigger_id,
     )
-
-
-# Not in the frozen surface: this writes a file on the server and answers with
-# its path, which is nothing an external caller can open. It stays unversioned
-# until it answers with the export itself.
-@router.post("/export")
-def export_findings(output_format: str = "json"):
-    if output_format not in EXPORT_FORMATS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported export format; use one of {', '.join(EXPORT_FORMATS)}",
-        )
-
-    output_dir = vigil_path("exports", write=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Extension from the allowlist, not the request, so the caller picks no part of the path.
-    ext = next(f for f in EXPORT_FORMATS if f == output_format)
-    output_path = output_dir / f"findings_export_{timestamp}.{ext}"
-
-    success = data_service.export_findings(output_path, fmt=output_format)
-
-    if success:
-        return {"success": True, "file_path": str(output_path)}
-    else:
-        raise HTTPException(status_code=500, detail="Export failed")

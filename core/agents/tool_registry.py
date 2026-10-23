@@ -16,6 +16,7 @@ from core.auth.permissions import (
     permission_refusal,
     username_has_permission,
 )
+from core.cases.case_sla_service import open_case
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
@@ -254,7 +255,8 @@ def create_case(
         return refusal
     data = _data()
     ids = finding_ids or []
-    case = data.create_case(
+    case = open_case(
+        data,
         title=title,
         finding_ids=ids,
         priority=priority or severity or "medium",
