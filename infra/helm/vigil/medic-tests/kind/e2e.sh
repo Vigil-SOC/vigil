@@ -215,7 +215,9 @@ if [[ -n $early ]]; then
   first=$($K -n "$NS" logs "deploy/$FN-medic" --previous 2>/dev/null | grep -o "Medic refuses to run: [^(]*" | head -1 || true)
   printf '   note: an early start refused (exit 3): %s\n' "$first"
 fi
-$K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced" || fail "no enforced line"
+# Logs are read whole before grep -q: under pipefail, grep exiting on an early match
+# SIGPIPEs kubectl and fails the pipeline even though the line is there.
+grep -q "NetworkPolicy is enforced" <<<"$($K -n "$NS" logs "deploy/$FN-medic")" || fail "no enforced line"
 ok "check 14: Medic Running and Ready; log: NetworkPolicy is enforced"
 
 # --- backend: the real backend reads Medic's status (V2-8, V2-2) -----------------
@@ -234,7 +236,7 @@ print(current_status().value)'
   for _ in $(seq 60); do got=$(status || true); [[ $got == running ]] && break; sleep 5; done
   [[ $got == running ]] || fail "the backend reads Medic as '${got:-nothing}', not running"
   ok "backend reads Medic: running"
-  $K -n "$NS" logs "deploy/$FN-medic-gateway" | grep -q '/v1/status' \
+  grep -q '/v1/status' <<<"$($K -n "$NS" logs "deploy/$FN-medic-gateway")" \
     || fail "the gateway's inbound log has no /v1/status"
   ok "the poll went backend → gateway inbound → Medic"
   say "kill Medic: Down within 270 s (V2-2)"
@@ -343,7 +345,7 @@ $K -n "$NS" exec "deploy/$FN-medic" -- python -m services.medic.store verify \
 ok "store verify: chain intact"
 leak=$($K -n "$NS" exec "deploy/$FN-medic" -- sh -c "grep -rl '$CANARY' /var/lib/vigil-medic || true")
 [[ -z $leak ]] || fail "canary in $leak"
-$K -n "$NS" logs "deploy/$FN-medic" | grep -q "$CANARY" && fail "canary in Medic's log"
+grep -q "$CANARY" <<<"$($K -n "$NS" logs "deploy/$FN-medic")" && fail "canary in Medic's log"
 ok "canary (body + Set-Cookie) in neither the data dir nor the log"
 
 say "S2-6: fresh volumes, with and without fsGroup, root vs data/"
@@ -410,7 +412,7 @@ if [[ $MODE == calico ]]; then
   $K -n "$NS" rollout status "deploy/$FN-medic" --timeout=300s || fail "S7-2: Medic didn't come back under Reject"
   # Recreate: `rollout status` returns once the old pod is gone, so the log read
   # below is the new pod's.
-  $K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced: the probe to .* was refused every time" \
+  grep -q "NetworkPolicy is enforced: the probe to .* was refused every time" <<<"$($K -n "$NS" logs "deploy/$FN-medic")" \
     || fail "S7-2: no 'refused every time' line"
   ok "S7-2: under Reject Medic logs 'refused every time' and is Ready"
 fi
