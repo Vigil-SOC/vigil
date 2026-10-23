@@ -1,0 +1,4 @@
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e7be7331-60f2-4ec1-a71b-5681767c2ee5/tests/unit/response/test_decide_once.py:192: assert 2 == 1
+=========================== short test summary info ============================
+FAILED tests/unit/response/test_decide_once.py::test_concurrent_approve_and_reject_decide_once
+======================= 1 failed, 5 deselected in 9.29s ========================

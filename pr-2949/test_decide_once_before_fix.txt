@@ -1,0 +1,15 @@
+       'approved_at': None,
+       'approved_by': None,
+       'confidence': 0.4,...
+      
+      ...Full output truncated (20 lines hidden), use '-vv' to show
+------------------------------ Captured log call -------------------------------
+WARNING  core.response.approval_service:approval_service.py:495 Action decide-once-ac79cd92 is not pending (status: rejected)
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e7be7331-60f2-4ec1-a71b-5681767c2ee5/tests/unit/response/test_decide_once.py:131: AssertionError: assert {'action_id':...: 'hold', ...} == {'error': 'Ac...ady rejected'}
+
+=========================== short test summary info ============================
+FAILED tests/unit/response/test_decide_once.py::test_approve_after_reject_is_409_and_does_not_resume
+FAILED tests/unit/response/test_decide_once.py::test_reject_after_approve_is_409
+FAILED tests/unit/response/test_decide_once.py::test_tool_path_reports_already_decided[approve]
+FAILED tests/unit/response/test_decide_once.py::test_tool_path_reports_already_decided[reject]
+========================= 4 failed, 1 passed in 5.99s ==========================
