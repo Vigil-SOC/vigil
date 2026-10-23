@@ -44,7 +44,6 @@ _cached_orchestrator = None
 
 
 def _get_orchestrator():
-    """Orchestrator for DB-only queries, rebuilt when the daemon's config changes."""
     global _cached_orchestrator
     try:
         from services.daemon.config import DaemonConfig
