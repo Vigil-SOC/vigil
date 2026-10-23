@@ -1,7 +1,7 @@
 """`python -m services.medic run` end to end: a fault becomes an incident in the log.
 
 A local stub plays the agent worker's `/readyz`. Medic runs its real path: the
-`http_ready` sensor, the K2 choke, the engine on the 15 s tick, router R1 and the
+`http_ready` sensor, the K2 choke, the engine on the 15 s tick, the router and the
 store, on a fake clock. The stub's body and headers carry a canary secret that
 must never reach the store or Medic's logs.
 """
@@ -39,7 +39,26 @@ class Stub:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 stub.hits += 1
-                stub.paths.append(self.path)
+                path = self.path.split("?", 1)[0]
+                stub.paths.append(path)
+                # Compose also polls the Docker proxy. An empty list is a
+                # successful read, so that sensor doesn't go blind beside /readyz.
+                if path == "/_gw/status":
+                    body = b'{"state":"ok","since":0}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if path == "/containers/json":
+                    body = b"[]"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 body = b"ready" if stub.ready else f"not ready {CANARY}".encode()
                 self.send_response(200 if stub.ready else 503)
                 self.send_header("Content-Type", "text/plain")
@@ -110,8 +129,11 @@ def _env(data_dir: Path, stub: Stub, serve: Stub | None = None) -> dict[str, str
         "VIGIL_MEDIC_INSTALL_SHAPE": "compose",
         "VIGIL_MEDIC_AGENT_WORKER_ADDR": stub.addr,
         # On Compose agent-serve is read too (S10); one stub plays both unless
-        # the test gives serve its own.
+        # the test gives serve its own. The proxy shares the worker stub: the
+        # serve stub's paths stay /readyz.
         "VIGIL_MEDIC_AGENT_SERVE_ADDR": (serve or stub).addr,
+        "VIGIL_MEDIC_DOCKERPROXY_ADDR": stub.addr,
+        "VIGIL_MEDIC_GATEWAY_ADDR": stub.addr,
     }
 
 

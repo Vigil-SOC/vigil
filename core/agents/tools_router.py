@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import nullcontext
 from typing import Any, ContextManager, Dict, List, Optional, Tuple
@@ -11,15 +12,26 @@ from typing import Any, ContextManager, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from core.agents.attribution import (
+    TrailWriteError,
+    attributed,
+    bound_claims,
+    current_claims,
+    effectful,
+    note_tool,
+)
 from core.agents.integration_tools import resolve_integration_call
 from core.agents.internal_auth import authorise
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
 from core.auth import tool_principal
+from core.auth.tool_principal import Claims
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
+from core.llm.chat_layers import _is_destructive_mcp
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
+from core.response.approval_service import ActionStatus, ApprovalService
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
@@ -57,6 +69,11 @@ class InvokeRequest(BaseModel):
     # across phases run by different agents. Absent means unattributed: a
     # skill read is still counted, with no agent to credit.
     agent_id: Optional[str] = None
+    # Set when the agent layer is running a call a person already approved.
+    # A direct-action tool is refused without them: the token alone is not
+    # an approval, and the row is what names the call and its arguments.
+    run_id: Optional[str] = None
+    checkpoint_id: Optional[str] = None
 
 
 def _failure(kind: str, **detail: Any) -> Dict[str, Any]:
@@ -214,6 +231,89 @@ def _source_system(tool: str, registry: MCPRegistry) -> str:
     return SOURCE_SYSTEM if split is None else split[0]
 
 
+def _norm_args(value: Any) -> Any:
+    """A shape two JSON parsers can agree on.
+
+    ``1`` and ``1.0`` are the same argument. A bool is not a number, and key
+    order is not part of the call.
+    """
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, list):
+        return [_norm_args(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _norm_args(item) for key, item in sorted(value.items())}
+    return str(value)
+
+
+def _args_match(stored: Any, sent: Dict[str, Any]) -> bool:
+    if not isinstance(stored, str):
+        return False
+    try:
+        parsed = json.loads(stored or "{}")
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    return _norm_args(parsed) == _norm_args(sent)
+
+
+def _direct_action_refusal(
+    body: InvokeRequest, tool: str, args: Dict[str, Any]
+) -> Optional[str]:
+    """Why this direct-action call may not run, or None when an approval covers it.
+
+    The agent layer parks the call and a person approves that checkpoint. This
+    repeats the check: a caller that holds the internal token and names the
+    tool itself does not get to skip it. Anything that is not a direct-action
+    tool is not this function's concern.
+    """
+    if not _is_destructive_mcp(tool):
+        return None
+    if not body.run_id or not body.checkpoint_id:
+        return f"{tool} changes the estate and no approval covers this call"
+    try:
+        actions = ApprovalService().list_actions(
+            status=ActionStatus.APPROVED, workflow_run_id=body.run_id
+        )
+    except Exception:  # noqa: BLE001 — unreadable is not approved
+        logger.exception("could not read approvals for %s", body.run_id)
+        return f"{tool} changes the estate and its approval could not be read"
+    for action in actions:
+        params = action.parameters or {}
+        if str(params.get("checkpoint_id") or "") != body.checkpoint_id:
+            continue
+        if params.get("tool") != tool:
+            continue
+        if _args_match(params.get("args"), args):
+            return None
+    return f"{tool} changes the estate and no approval covers this call"
+
+
+def _recording(tool: str) -> Optional[Claims]:
+    """The claims an effectful, attributed call records. A read-only call has none."""
+    claims = current_claims()
+    if claims is None or not effectful(tool) or not attributed(claims):
+        return None
+    return claims
+
+
+def _intent(claims: Claims, tool: str, args: Dict[str, Any]) -> None:
+    note_tool(claims, tool, args, outcome=None)
+
+
+def _outcome(claims: Claims, tool: str, args: Dict[str, Any], outcome: str) -> None:
+    """The call has already happened. A missed outcome stays unknown."""
+    try:
+        note_tool(claims, tool, args, outcome=outcome)
+    except TrailWriteError:
+        logger.exception("tool %s outcome was not recorded", tool)
+
+
 # Backend tools first, then the MCP servers. One ceiling governs both, so a tool
 # does not get a second timeout by virtue of living on the other side.
 #
@@ -226,15 +326,37 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
         tool, raw = resolve_integration_call(registry, raw)
     args = _bounded(raw, body.bounds.max_rows, tool, registry)
 
-    result, handled = await asyncio.wait_for(
-        execute_backend_tool(tool, args, registry=registry), timeout=seconds
-    )
-    if handled:
-        return result, True, SOURCE_SYSTEM
-    result, handled = await asyncio.wait_for(
-        execute_mcp_tool(tool, args, seconds, registry), timeout=seconds
-    )
-    return result, handled, _source_system(tool, registry)
+    record = _recording(tool)
+    if record is not None:
+        _intent(record, tool, raw)
+    outcome = "failed"
+    try:
+        result, handled = await asyncio.wait_for(
+            execute_backend_tool(tool, args, registry=registry), timeout=seconds
+        )
+        if handled:
+            outcome = "failed" if _errored(result) is not None else "done"
+            return result, True, SOURCE_SYSTEM
+        # After the backend, so a Vigil tool is not caught by a verb in its name.
+        # The arguments compared are the ones the model sent, before the row cap
+        # lowered a limit the approval was not asked about.
+        refusal = _direct_action_refusal(body, tool, raw)
+        if refusal is not None:
+            outcome = "refused"
+            raise MCPFailure("refused", refusal)
+        result, handled = await asyncio.wait_for(
+            execute_mcp_tool(tool, args, seconds, registry), timeout=seconds
+        )
+        if not handled:
+            outcome = "refused"
+        elif _errored(result) is not None:
+            outcome = "failed"
+        else:
+            outcome = "done"
+        return result, handled, _source_system(tool, registry)
+    finally:
+        if record is not None:
+            _outcome(record, tool, raw, outcome)
 
 
 @router.post("/invoke")
@@ -245,18 +367,23 @@ async def invoke(
 ) -> Dict[str, Any]:
     authorise(authorization, "tool invocation")
     # A token that does not verify is refused, never read as "no person": that
-    # would record a person's work as an agent's.
+    # would record a person's work as an agent's. A bad token is not a denial.
+    claims: Optional[Claims] = None
     bound: ContextManager[None] = nullcontext()
     if body.principal is not None:
         try:
-            bound = acting_as(tool_principal.verify(body.principal))
+            claims = tool_principal.read(body.principal)
         except tool_principal.InvalidPrincipal:
             raise HTTPException(status_code=401, detail="bad or expired principal")
+        if claims.username:
+            bound = acting_as(claims.username)
 
     try:
         # The tool runs in this context (or a copy of it), so it sees the binding.
-        with bound:
+        with bound_claims(claims), bound:
             result, handled, source = await _run(body, registry)
+    except TrailWriteError:
+        return _failure("backend_error", detail="the action could not be recorded")
     except asyncio.TimeoutError:
         return _failure("timeout", timeoutMs=body.bounds.timeout_ms)
     # An MCP server that could not be reached is a gap in visibility, not a defect

@@ -1,6 +1,6 @@
 import { SpanStatusCode } from "@opentelemetry/api";
 import type { RegisteredTool, ToolPrincipal, ToolResult } from "../contracts/tool.js";
-import type { ToolDispatch } from "./seams.js";
+import type { CallApproval, ToolDispatch } from "./seams.js";
 import { capture, traceHeaders, traced } from "./tracing.js";
 
 export interface RemoteOptions {
@@ -68,7 +68,13 @@ export function deadline(timeoutMs: number, signal?: AbortSignal): Deadline {
 // knows whether a tool runs in this process. Bounds travel and are applied there.
 export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   const call = options.fetch ?? globalThis.fetch;
-  const send = async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal, agentId?: string): Promise<ToolResult> => {
+  const send = async (
+    tool: RegisteredTool,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    agentId?: string,
+    approval?: CallApproval,
+  ): Promise<ToolResult> => {
     // A tool the registry answers itself never leaves the process: every call routes
     // through this dispatch, so a local implementation was otherwise unreachable.
     if (tool.local) return tool.invoke(args);
@@ -94,6 +100,8 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
             // The agent rides the call, not the dispatch options: one
             // dispatch serves every phase of a compose run (#1560).
             ...(agentId === undefined ? {} : { agent_id: agentId }),
+            // Present only for a call the run parked and a person released.
+            ...(approval === undefined ? {} : { run_id: approval.runId, checkpoint_id: approval.checkpointId }),
           }),
           signal: held.signal,
         });
@@ -121,7 +129,7 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   };
 
   return {
-    invoke: (tool, args, signal, agentId) => {
+    invoke: (tool, args, signal, agentId, approval) => {
       const attributes = {
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": tool.id,
@@ -129,7 +137,7 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
       };
       return traced(`execute_tool ${tool.id}`, attributes, async (span) => {
         capture(span, "gen_ai.tool.call.arguments", args);
-        const result = await send(tool, args, signal, agentId);
+        const result = await send(tool, args, signal, agentId, approval);
         // A failed tool is a result the model reads, not a throw, so it is marked here.
         if (!result.ok) span.setStatus({ code: SpanStatusCode.ERROR, message: result.failure.kind });
         capture(span, "gen_ai.tool.call.result", result);

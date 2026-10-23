@@ -54,6 +54,7 @@
   "host_memory",
   "cert_expiry",
   "version",
+  "gateway_session",
   "log_backend",
   "log_soc_daemon",
   "log_llm_worker",

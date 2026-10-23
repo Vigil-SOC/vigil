@@ -226,6 +226,28 @@ def _budgets(definition: WorkflowDefinition) -> Dict[str, Any]:
     return resolver._budgets(definition.phases)
 
 
+def _compose_pause_note(definition: WorkflowDefinition) -> str:
+    """What a compose run stops for, said before it starts.
+
+    A phase marked approval_required stops the whole step. A direct-action
+    tool stops on the call, whether or not the phase is marked, because the
+    grant itself is what parks it.
+    """
+    names = [
+        str(tool)
+        for phase in definition.phases or []
+        for tool in ((phase or {}).get("tools") or [])
+    ]
+    gated = [
+        name
+        for name in names
+        if name != "create_approval_action" and changes_for_tool(name) == "asks_first"
+    ]
+    if gated:
+        return "Direct-action calls pause for approval before they run."
+    return "It pauses only at phases marked approval_required."
+
+
 def _checkpoints(
     definition: WorkflowDefinition,
 ) -> Tuple[Dict[str, str], Optional[str]]:
@@ -239,7 +261,7 @@ def _checkpoints(
     kind = definition.run_kind
     if not is_hunt_like(kind):
         if kind == COMPOSE_RUN_KIND:
-            return {}, "It pauses only at phases marked approval_required."
+            return {}, _compose_pause_note(definition)
         return {}, "This workflow never pauses to ask."
     note = None
     try:

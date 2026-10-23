@@ -8,6 +8,8 @@ This folder is what an implementer or groomer needs for console work in phase 1,
 2. **Boards** decide appearance. `boards/png/` holds a render of every phase-1 board in dark and light at the board's own size (1440 × 900 for app boards, so content below the fold is only in the HTML), plus the three case-page moods. `boards/*.dc.html` are the interactive originals (open one in a browser with `support.js` beside it); grep them for exact inline styles, spacing and copy. The live canvas is at https://claude.ai/artifact/LfdCAGfXzJaWzDASis8pWP and wins over the PNGs if they ever differ.
 3. **`DESIGN.md`** (phase-1 edition) holds vocabulary, the visual system, layout and the component index. **`tokens/`** holds the colour, type, radius, control and motion values for both themes. **`components/`** holds one spec per component phase 1 ships.
 
+**`MEDIC.md`** holds the Medic console's requirements (UX-1…UX-30: the Health card, the status-line fact and the `/medic` screen). It isn't phase-1 PRD scope, and no board covers it; it names the tokens and components each Medic surface uses.
+
 ## Read the boards with the PRD open
 
 Every app board shares one shell, and that shell was drawn for the full product. The following appear on every board and are **phase 2**; the PRD names the class for each (Omitted, Later, Not measured yet):

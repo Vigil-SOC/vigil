@@ -81,7 +81,7 @@ def main(argv=None) -> int:
     parser.add_argument("--base-url", help="console URL the link opens")
     args = parser.parse_args(argv)
 
-    init_database(echo=False, create_tables=False)
+    init_database(echo=False)
     with get_db_manager().session_scope() as session:
         if args.list:
             return list_users(session)
