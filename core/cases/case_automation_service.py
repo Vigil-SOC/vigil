@@ -11,7 +11,7 @@ from typing import Dict, List
 
 from core.cases.case_metrics_service import CaseMetricsService
 from core.cases.case_notification_service import CaseNotificationService
-from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_sla_service import CaseSLAService, open_case
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.storage.models import Case, CaseSLA
 from core.storage.unit_of_work import unit_of_work
@@ -314,7 +314,8 @@ def cluster_findings_by_attack_path(finding_ids: List[str]) -> List[str]:
         )
         title = f"VStrike: {segment} via {initial_asset}"
 
-        case = data_service.create_case(
+        case = open_case(
+            data_service,
             title=title,
             finding_ids=ids,
             priority=priority,

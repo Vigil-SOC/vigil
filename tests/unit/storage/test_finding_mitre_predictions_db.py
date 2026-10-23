@@ -127,6 +127,7 @@ def test_query_plan_uses_technique_confidence_index():
 
     manager = service.db_manager
     with manager.session_scope() as session:
+        session.execute(text("ANALYZE findings"))
         session.execute(text("ANALYZE finding_mitre_predictions"))
         session.execute(text("SET LOCAL enable_seqscan = off"))
         compiled = findings_by_technique_stmt("T1071.001").compile(

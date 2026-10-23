@@ -58,12 +58,10 @@ export interface Decision {
   inv: string
   conf: number
   ai: string
-  human: string
   outcome: Outcome
   saved: string
   time: string
   rationale: string
-  evidence: string[]
 }
 
 export type ToolChange = 'read_only' | 'asks_first' | 'on_its_own'
