@@ -303,7 +303,10 @@ def _names() -> list[str]:
     engine = create_engine(_url("postgres"), isolation_level="AUTOCOMMIT")
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT datname FROM pg_database WHERE datname LIKE 'vigil_r\\_%%'")
+            text(
+                "SELECT datname FROM pg_database WHERE datname LIKE 'vigil_r\\_%%' "
+                "ORDER BY datname"
+            )
         ).fetchall()
     engine.dispose()
     return [row[0] for row in rows]
