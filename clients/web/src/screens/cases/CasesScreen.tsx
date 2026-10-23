@@ -14,7 +14,9 @@ import {
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
   CLOSURE_CATEGORIES,
+  isCaseStatus,
   type CaseFilters,
+  type CaseStatus,
   type Phase,
 } from './useCases'
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select, activateOnKey } from '../../shared/ui'
@@ -29,15 +31,10 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
+import { errorDetail } from './caseFormat'
 import { LATER_RELEASE } from '../../shared/later'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
-
-function caseActionError(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  return (error as { message?: string })?.message || fallback
-}
 
 const CASE_PRIO_OPTIONS: { value: CaseRow['prio']; label: string }[] = [
   { value: 'critical', label: 'Critical' },
@@ -459,7 +456,7 @@ function DeleteCaseDialog({
       onClose()
       onDeleted(deleting)
     } catch (cause) {
-      const message = caseActionError(cause, `Failed to delete ${deleting.id}`)
+      const message = errorDetail(cause, `Failed to delete ${deleting.id}`)
       setBusy(false)
       setError(message)
       notify('err', message)
@@ -541,7 +538,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
       const res = await caseSearchApi.search({ ...filters, limit: 50, offset: 0 })
       onResults(res.data.results.map((c) => mapQueueCase(c)))
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Search failed')
+      setErr(errorDetail(e, 'Search failed'))
     } finally {
       setBusy(false)
     }
@@ -637,7 +634,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
 function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState('medium')
-  const [status, setStatus] = useState('open')
+  const [status, setStatus] = useState<CaseStatus>('open')
   const [description, setDescription] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -661,7 +658,7 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
       onCreated()
       onClose()
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Failed to create case')
+      setErr(errorDetail(e, 'Failed to create case'))
     } finally {
       setBusy(false)
     }
@@ -687,7 +684,7 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
             <span>Status</span>
             <Select
               value={status}
-              onSelect={setStatus}
+              onSelect={(v) => isCaseStatus(v) && setStatus(v)}
               options={[
                 { value: 'open', label: 'Open' },
                 { value: 'investigating', label: 'Investigating' },
@@ -761,7 +758,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
       await casesApi.update(c.id, {
         title: title.trim(),
         priority,
-        ...(closing ? {} : { status }),
+        ...(closing || !isCaseStatus(status) ? {} : { status }),
         // '' (not omitted) so clearing the field unassigns
         assignee: assignee.trim(),
         description: description.trim() || undefined,
@@ -780,7 +777,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
       onSaved()
       onClose()
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Failed to save changes')
+      setErr(errorDetail(e, 'Failed to save changes'))
     } finally {
       setBusy(false)
     }
@@ -875,7 +872,7 @@ function MergeCaseDialog({ open, c, onClose, onMerged }: { open: boolean; c: Cas
       })
       .catch((e) => {
         if (cancelled) return
-        setLoadError(caseActionError(e, 'Failed to load cases'))
+        setLoadError(errorDetail(e, 'Failed to load cases'))
         setPhase('error')
       })
     return () => { cancelled = true }
@@ -891,7 +888,7 @@ function MergeCaseDialog({ open, c, onClose, onMerged }: { open: boolean; c: Cas
       onMerged()
       onClose()
     } catch (e) {
-      setErr((e as { message?: string })?.message || 'Merge failed')
+      setErr(errorDetail(e, 'Merge failed'))
     } finally {
       setBusy(false)
     }

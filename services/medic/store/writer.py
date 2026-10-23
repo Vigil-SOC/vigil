@@ -50,6 +50,9 @@ GIB = 2**30
 RESERVE_BYTES = 64 * MIB  # C4 §6.4; held as a filler row from G3 on
 NEAR_CAP_PERCENT = 80  # C4 §6.4 step 1
 JOURNAL_SIZE_LIMIT = 16 * MIB
+# A reader waits this long for the file, then fails. Shorter than the writer's
+# 5 s: an open reader holds back WAL checkpoints (C4 §6.7).
+READER_BUSY_MS = 1000
 
 ENVELOPE = ("seq", "prev", "hash")
 
@@ -489,8 +492,9 @@ def open_writer(
 
 @contextmanager
 def open_reader(root: Path) -> Iterator[sqlite3.Connection]:
-    """A separate read-only connection (C4 §6.7). Keep it short: an open reader
-    holds back WAL checkpoints."""
+    """A separate read-only connection (C4 §6.7). One connection, closed by the
+    caller when the read returns. `query_only` plus a short `busy_timeout`: a
+    reader that can't get the file fails instead of sitting on the WAL."""
     db = Path(root) / DB_NAME
     if not db.exists():
         raise StoreRefused(f"{db}: no store here")
@@ -498,6 +502,7 @@ def open_reader(root: Path) -> Iterator[sqlite3.Connection]:
         db.resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None
     )
     try:
+        conn.execute(f"PRAGMA busy_timeout = {READER_BUSY_MS}")
         conn.execute("PRAGMA query_only = ON")
         yield conn
     finally:
