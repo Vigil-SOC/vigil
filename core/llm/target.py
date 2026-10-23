@@ -28,9 +28,8 @@ _SERVES_CLAUDE = frozenset({"anthropic", "vertex", "bedrock"})
 def provider_for(provider_id: Optional[str]):
     """Pick the provider a request should route through.
 
-    The model picker can send the model as ``provider_id::model_id`` (#348); a
-    bare id has no provider and falls back to the configured default rather
-    than the Anthropic SDK, which 503s on an Ollama-only deployment.
+    A missing or unknown id falls back to the configured default rather than
+    the Anthropic SDK, which 503s on an Ollama-only deployment.
     """
     from core.llm.router.router import get_default_provider_spec, get_provider_spec
 

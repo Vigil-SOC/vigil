@@ -153,6 +153,7 @@ def test_a_route_refuses_a_user_who_lacks_its_permission(
 ):
     viewer = User(
         user_id="viewer",
+        principal_id="viewer",
         username="vera_viewer",
         email="v@test.local",
         password_hash="",

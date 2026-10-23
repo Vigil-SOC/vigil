@@ -5,7 +5,7 @@ minutes):
 
     VIGIL_MEDIC_COMPOSE_LIVE=1 python -m pytest tests/medic_compose/test_last_seen_live.py
 
-The real backend, Postgres, db-seed, Redis, gateway and **Medic** (S9 serves
+The real backend, Postgres, the upgrade one-shot, Redis, gateway and **Medic** (S9 serves
 `GET /v1/status`; V2 ran this against a stub); V1's stubs for the rest
 (`compose.v1.yml`). Real timings: one poll a minute, Down at 270 s (V2-2).
 
@@ -57,7 +57,7 @@ pytestmark = [
 
 STATUS = (
     "from core.storage.connection import init_database; "
-    "init_database(create_tables=False); "
+    "init_database(); "
     "from core.platform.medic_last_seen import current_status; "
     "print(current_status().value)"
 )
