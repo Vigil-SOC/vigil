@@ -17,11 +17,11 @@ class TestConfiguredFloors:
     """The responder's severity floors and the processor's queue line read
     ResponseConfig rather than literals (#916)."""
 
-    def _responder(self, **overrides):
+    def _responder(self):
         from services.daemon.config import EscalationConfig, ResponseConfig
 
         return AutonomousResponder(
-            ResponseConfig(**overrides),
+            ResponseConfig(),
             EscalationConfig(),
             response_service=Mock(),
             approvals=Mock(),
