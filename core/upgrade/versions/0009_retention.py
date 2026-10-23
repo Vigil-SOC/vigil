@@ -1,12 +1,12 @@
 """Which retention and erasure announcements have not left the box (#2769).
 
-Continues the single chain at ``0006_audit_feed``.
+Continues the single chain at ``0007_conversation_generation``.
 """
 
 from core.upgrade.revision import run_sql
 
 revision = "0009_retention"
-down_revision = "0006_audit_feed"
+down_revision = "0007_conversation_generation"
 
 
 def upgrade() -> None:
