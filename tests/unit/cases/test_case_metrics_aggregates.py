@@ -111,11 +111,11 @@ def _seed(session) -> None:
         closed_at=T0 + timedelta(days=1) + 4 * HOUR,
         first_activity=T0 + timedelta(days=1) + 1.5 * HOUR,
     )
-    # Resolved by a status edit: no closure row, updated_at is the close.
+    # Closed before closure rows existed: updated_at is the close.
     _case(
         session,
         "c-low-1",
-        status="resolved",
+        status="closed",
         priority="low",
         assignee="bob",
         updated_at=T0 + 9 * HOUR,
@@ -294,8 +294,7 @@ def test_by_status_counts(session):
     result = _run(get_by_status, session)
 
     assert _by_status(result) == {
-        "closed": 2,
-        "resolved": 1,
+        "closed": 3,
         "open": 1,
         "investigating": 1,
         "unknown": 1,
@@ -312,8 +311,7 @@ def test_by_priority_and_status_respect_the_window(session):
     }
     assert _by_status(_run(get_by_status, session, **second_day)) == {"closed": 1}
     assert _by_status(_run(get_by_status, session, **first_day)) == {
-        "closed": 1,
-        "resolved": 1,
+        "closed": 2,
         "open": 1,
         "investigating": 1,
     }
