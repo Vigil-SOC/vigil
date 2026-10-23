@@ -8,8 +8,8 @@ from sqlalchemy import text
 
 from core.storage.ip_address import FINDING_IP_KEYS, canonical_entity_context
 
-revision = "0003_canonical_finding_ips"
-down_revision = "0002_audit_trail"
+revision = "0006_canonical_finding_ips"
+down_revision = "0005_agent_attribution"
 
 
 def canonicalize(conn) -> int:
