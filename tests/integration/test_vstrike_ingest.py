@@ -275,7 +275,7 @@ def test_auth_rejects_wrong_token(monkeypatch):
 
 
 def test_auth_rejects_non_ascii_bearer(monkeypatch):
-    """A bearer above U+00FF is a 401. compare_digest on str would raise."""
+    """A non-ASCII bearer is a 401. compare_digest on str would raise TypeError."""
     from fastapi import HTTPException
 
     from services.api.routers import vstrike as vstrike_module
@@ -283,7 +283,7 @@ def test_auth_rejects_non_ascii_bearer(monkeypatch):
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setattr(vstrike_module, "_expected_inbound_key", lambda: "secret-key")
     with pytest.raises(HTTPException) as excinfo:
-        vstrike_module.verify_inbound_key(authorization="Bearer s\u0101cret")
+        vstrike_module.verify_inbound_key(authorization="Bearer s\u00e9cret")
     assert excinfo.value.status_code == 401
 
 

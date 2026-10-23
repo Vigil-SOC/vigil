@@ -91,10 +91,10 @@ def verify_inbound_key(
 
     token = authorization.split(" ", 1)[1].strip()
     # compare_digest rather than !=, which returns on the first differing byte.
-    # Encoded because it refuses a str holding anything above U+00FF.
+    # Bytes, because on a str holding any non-ASCII character it raises TypeError.
     if not hmac.compare_digest(
         token.encode("utf-8", "surrogatepass"),
-        expected.encode(),
+        expected.encode("utf-8", "surrogatepass"),
     ):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
