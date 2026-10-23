@@ -1,0 +1,16 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web
+
+Error: Not implemented: navigation (except hash changes)
+    at module.exports (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at navigateFetch (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web/node_modules/jsdom/lib/jsdom/living/window/navigation.js:77:3)
+    at exports.navigate (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web/node_modules/jsdom/lib/jsdom/living/window/navigation.js:55:3)
+    at Timeout._onTimeout (/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web/node_modules/jsdom/lib/jsdom/living/nodes/HTMLHyperlinkElementUtils-impl.js:80:7)
+    at listOnTimeout (node:internal/timers:605:17)
+    at processTimers (node:internal/timers:541:7) undefined
+
+ Test Files  6 passed (6)
+      Tests  251 passed (251)
+   Start at  08:22:07
+   Duration  267.91s (transform 32.10s, setup 12.35s, import 80.14s, tests 290.44s, environment 33.08s)
+

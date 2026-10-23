@@ -1,0 +1,1289 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web
+
+ ❯ src/screens/cases/CaseSections.test.tsx (9 tests | 5 failed) 7380ms
+     × shows the server detail when evidence or IOCs fail to load 1096ms
+     × keeps the evidence form open and says why the write failed 1268ms
+     × says why adding an IOC failed 1137ms
+     × says why adding or toggling a task failed, and clears it on the next success 1098ms
+     × keeps a comment that failed to post and shows the detail 1121ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/cases/CaseSections.test.tsx > case section failures > shows the server detail when evidence or IOCs fail to load
+TestingLibraryElementError: Unable to find an element with the text: Couldn’t load evidence: Not allowed to read evidence. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mEvidence[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0 items[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Add"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 5v14M5 12h14"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mIndicators of Compromise[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Add"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 5v14M5 12h14"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mEvidence[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0 items[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Add"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 5v14M5 12h14"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mIndicators of Compromise[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Add"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 5v14M5 12h14"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CaseSections.test.tsx:130:25
+    128|     render(<><EvidenceCard caseId="case-1" /><IOCsCard caseId="case-1"…
+    129|
+    130|     expect(await screen.findByText('Couldn’t load evidence: Not allowe…
+       |                         ^
+    131|     expect(await screen.findByText('Couldn’t load IOCs: Network Error'…
+    132|     expect(screen.queryByText('0 items')).not.toBeInTheDocument()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  src/screens/cases/CaseSections.test.tsx > case section failures > keeps the evidence form open and says why the write failed
+TestingLibraryElementError: Unable to find role="alert"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mEvidence[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0 items[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Cancel"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"py-3 grid grid-cols-1 gap-2.5"[39m
+      [36m>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Name"[39m
+          [33mvalue[39m=[32m"pcap"[39m
+        [36m/>[39m
+        [36m<select[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+        [36m>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"file"[39m
+          [36m>[39m
+            [0mfile[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"screenshot"[39m
+          [36m>[39m
+            [0mscreenshot[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"log"[39m
+          [36m>[39m
+            [0mlog[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"url"[39m
+          [36m>[39m
+            [0murl[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"other"[39m
+          [36m>[39m
+            [0mother[0m
+          [36m</option>[39m
+        [36m</select>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Description"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"File path"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn primary justify-self-start"[39m
+        [36m>[39m
+          [0mAdd evidence[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"empty-state compact"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-icon"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"18"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"18"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M6 2h8l4 4v16H6V2z"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M14 2v4h4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-copy"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0mNo evidence attached[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0mAdd screenshots, URLs, logs, or files that support this case.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mEvidence[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0 items[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Cancel"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"py-3 grid grid-cols-1 gap-2.5"[39m
+      [36m>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Name"[39m
+          [33mvalue[39m=[32m"pcap"[39m
+        [36m/>[39m
+        [36m<select[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+        [36m>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"file"[39m
+          [36m>[39m
+            [0mfile[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"screenshot"[39m
+          [36m>[39m
+            [0mscreenshot[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"log"[39m
+          [36m>[39m
+            [0mlog[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"url"[39m
+          [36m>[39m
+            [0murl[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"other"[39m
+          [36m>[39m
+            [0mother[0m
+          [36m</option>[39m
+        [36m</select>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Description"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"File path"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn primary justify-self-start"[39m
+        [36m>[39m
+          [0mAdd evidence[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"empty-state compact"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-icon"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"18"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"18"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M6 2h8l4 4v16H6V2z"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M14 2v4h4"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-copy"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0mNo evidence attached[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0mAdd screenshots, URLs, logs, or files that support this case.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CaseSections.test.tsx:144:25
+    142|     fireEvent.click(screen.getByRole('button', { name: 'Add evidence' …
+    143|
+    144|     expect(await screen.findByRole('alert')).toHaveTextContent('Analys…
+       |                         ^
+    145|     expect(screen.getByPlaceholderText('Name')).toHaveValue('pcap')
+    146|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  src/screens/cases/CaseSections.test.tsx > case section failures > says why adding an IOC failed
+TestingLibraryElementError: Unable to find role="alert"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mIndicators of Compromise[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Cancel"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"py-3 grid grid-cols-1 gap-2.5"[39m
+      [36m>[39m
+        [36m<select[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+        [36m>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"ip"[39m
+          [36m>[39m
+            [0mip[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"domain"[39m
+          [36m>[39m
+            [0mdomain[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"hash"[39m
+          [36m>[39m
+            [0mhash[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"url"[39m
+          [36m>[39m
+            [0murl[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"email"[39m
+          [36m>[39m
+            [0memail[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"other"[39m
+          [36m>[39m
+            [0mother[0m
+          [36m</option>[39m
+        [36m</select>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Value"[39m
+          [33mvalue[39m=[32m"10.0.0.1"[39m
+        [36m/>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Context"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Source"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn primary justify-self-start"[39m
+        [36m>[39m
+          [0mAdd IOC[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"empty-state compact"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-icon"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"18"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"18"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 3l9 16H3L12 3zM12 9v5M12 17h.01"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-copy"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0mNo IOCs recorded[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0mAdd IPs, domains, hashes, URLs, or emails observed during investigation.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"side-sec"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"side-sec-head"[39m
+      [36m>[39m
+        [36m<h3>[39m
+          [0mIndicators of Compromise[0m
+        [36m</h3>[39m
+        [36m<span>[39m
+          [0m0[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"grow"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Cancel"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M6 6l12 12M18 6L6 18"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"py-3 grid grid-cols-1 gap-2.5"[39m
+      [36m>[39m
+        [36m<select[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+        [36m>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"ip"[39m
+          [36m>[39m
+            [0mip[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"domain"[39m
+          [36m>[39m
+            [0mdomain[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"hash"[39m
+          [36m>[39m
+            [0mhash[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"url"[39m
+          [36m>[39m
+            [0murl[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"email"[39m
+          [36m>[39m
+            [0memail[0m
+          [36m</option>[39m
+          [36m<option[39m
+            [33mvalue[39m=[32m"other"[39m
+          [36m>[39m
+            [0mother[0m
+          [36m</option>[39m
+        [36m</select>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Value"[39m
+          [33mvalue[39m=[32m"10.0.0.1"[39m
+        [36m/>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Context"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<input[39m
+          [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full"[39m
+          [33mplaceholder[39m=[32m"Source"[39m
+          [33mvalue[39m=[32m""[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn primary justify-self-start"[39m
+        [36m>[39m
+          [0mAdd IOC[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"empty-state compact"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-icon"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"18"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"18"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 3l9 16H3L12 3zM12 9v5M12 17h.01"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state-copy"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0mNo IOCs recorded[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0mAdd IPs, domains, hashes, URLs, or emails observed during investigation.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CaseSections.test.tsx:157:25
+    155|     fireEvent.click(screen.getByRole('button', { name: 'Add IOC' }))
+    156|
+    157|     expect(await screen.findByRole('alert')).toHaveTextContent('IOC al…
+       |                         ^
+    158|     expect(screen.getByPlaceholderText('Value')).toHaveValue('10.0.0.1…
+    159|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  src/screens/cases/CaseSections.test.tsx > case section failures > says why adding or toggling a task failed, and clears it on the next success
+TestingLibraryElementError: Unable to find role="alert"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"bg-panel border border-line rounded-lg shadow-panel overflow-hidden"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"[39m
+      [36m>[39m
+        [36m<h3[39m
+          [33mclass[39m=[32m"text-[14.5px]"[39m
+        [36m>[39m
+          [0mTasks[0m
+        [36m</h3>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"text-xs text-tx-3"[39m
+        [36m>[39m
+          [0m0/1 done[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"flex-1"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Add"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 5v14M5 12h14"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"px-[18px] pt-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"h-1.5 bg-bg-3 rounded-full overflow-hidden"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"h-full bg-accent transition-all"[39m
+            [33mstyle[39m=[32m"width: 0%;"[39m
+          [36m/>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"p-[18px] pt-3 flex flex-col gap-2.5"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex items-start gap-2.5"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"mt-[1px] text-tx-3 hover:text-accent"[39m
+            [33mtitle[39m=[32m"Toggle"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"15"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"15"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M16 20v-4h4"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+          [36m</button>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"min-w-0 flex-1"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex items-center gap-2"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-[13px] text-tx"[39m
+              [36m>[39m
+                [0mCollect packet capture[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"prio high"[39m
+              [36m>[39m
+                [0mH[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"text-xs text-tx-faint mt-[2px] flex gap-3"[39m
+            [36m/>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"bg-panel border border-line rounded-lg shadow-panel overflow-hidden"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"[39m
+      [36m>[39m
+        [36m<h3[39m
+          [33mclass[39m=[32m"text-[14.5px]"[39m
+        [36m>[39m
+          [0mTasks[0m
+        [36m</h3>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"text-xs text-tx-3"[39m
+        [36m>[39m
+          [0m0/1 done[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"flex-1"[39m
+        [36m/>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"btn ghost icon"[39m
+          [33mtitle[39m=[32m"Add"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"14"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"1.8"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"14"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 5v14M5 12h14"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"px-[18px] pt-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"h-1.5 bg-bg-3 rounded-full overflow-hidden"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"h-full bg-accent transition-all"[39m
+            [33mstyle[39m=[32m"width: 0%;"[39m
+          [36m/>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"p-[18px] pt-3 flex flex-col gap-2.5"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex items-start gap-2.5"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"mt-[1px] text-tx-3 hover:text-accent"[39m
+            [33mtitle[39m=[32m"Toggle"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"15"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"15"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M16 20v-4h4"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+          [36m</button>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"min-w-0 flex-1"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex items-center gap-2"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-[13px] text-tx"[39m
+              [36m>[39m
+                [0mCollect packet capture[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"prio high"[39m
+              [36m>[39m
+                [0mH[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"text-xs text-tx-faint mt-[2px] flex gap-3"[39m
+            [36m/>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CaseSections.test.tsx:167:25
+    165|
+    166|     fireEvent.click(await screen.findByTitle('Toggle'))
+    167|     expect(await screen.findByRole('alert')).toHaveTextContent('Reques…
+       |                         ^
+    168|
+    169|     fireEvent.click(screen.getByTitle('Add'))
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  src/screens/cases/CaseSections.test.tsx > case section failures > keeps a comment that failed to post and shows the detail
+TestingLibraryElementError: Unable to find role="alert"
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"bg-panel border border-line rounded-lg shadow-panel overflow-hidden span-2"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"[39m
+      [36m>[39m
+        [36m<h3[39m
+          [33mclass[39m=[32m"text-[14.5px]"[39m
+        [36m>[39m
+          [0mComments[0m
+        [36m</h3>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"text-xs text-tx-3"[39m
+        [36m>[39m
+          [0m0[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"flex-1"[39m
+        [36m/>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"p-[18px] flex flex-col gap-4"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state compact"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"empty-state-icon"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"18"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"18"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M16 20v-4h4"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"empty-state-copy"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0mNo comments yet[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0mUse comments to capture analyst notes, handoffs, and review decisions.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"border-t border-line-soft pt-3"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex gap-2.5 items-end"[39m
+          [36m>[39m
+            [36m<textarea[39m
+              [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full resize-none"[39m
+              [33mplaceholder[39m=[32m"Write a comment…"[39m
+              [33mrows[39m=[32m"2"[39m
+            [36m>[39m
+              [0mhello[0m
+            [36m</textarea>[39m
+            [36m<button[39m
+              [33mclass[39m=[32m"btn primary"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0m [0m
+              [0mPost[0m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"bg-panel border border-line rounded-lg shadow-panel overflow-hidden span-2"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"[39m
+      [36m>[39m
+        [36m<h3[39m
+          [33mclass[39m=[32m"text-[14.5px]"[39m
+        [36m>[39m
+          [0mComments[0m
+        [36m</h3>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"text-xs text-tx-3"[39m
+        [36m>[39m
+          [0m0[0m
+        [36m</span>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"flex-1"[39m
+        [36m/>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"p-[18px] flex flex-col gap-4"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"empty-state compact"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"empty-state-icon"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"18"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"1.8"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"18"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M4 4h16v12l-4 4H4V4z"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M16 20v-4h4"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"empty-state-copy"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0mNo comments yet[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0mUse comments to capture analyst notes, handoffs, and review decisions.[0m
+            [36m</p>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"border-t border-line-soft pt-3"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex gap-2.5 items-end"[39m
+          [36m>[39m
+            [36m<textarea[39m
+              [33mclass[39m=[32m"bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full resize-none"[39m
+              [33mplaceholder[39m=[32m"Write a comment…"[39m
+              [33mrows[39m=[32m"2"[39m
+            [36m>[39m
+              [0mhello[0m
+            [36m</textarea>[39m
+            [36m<button[39m
+              [33mclass[39m=[32m"btn primary"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"13"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"13"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+              [0m [0m
+              [0mPost[0m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/screens/cases/CaseSections.test.tsx:187:25
+    185|     fireEvent.click(screen.getByRole('button', { name: /Post/ }))
+    186|
+    187|     expect(await screen.findByRole('alert')).toHaveTextContent('Commen…
+       |                         ^
+    188|     expect(screen.getByPlaceholderText('Write a comment…')).toHaveValu…
+    189|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 4 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Request failed with status code 403
+ ❯ denied src/screens/cases/CaseSections.test.tsx:122:17
+    120|
+    121| const denied = (detail: string) =>
+    122|   Object.assign(new Error('Request failed with status code 403'), { re…
+       |                 ^
+    123|
+    124| describe('case section failures', () => {
+ ❯ src/screens/cases/CaseSections.test.tsx:137:55
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+ ❯ runWithCancel node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+ ❯ runWithTimeout node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { response: { status: 403, data: { detail: 'Analyst role required' } } }
+This error originated in "src/screens/cases/CaseSections.test.tsx" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "keeps the evidence form open and says why the write failed". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Request failed with status code 403
+ ❯ denied src/screens/cases/CaseSections.test.tsx:122:17
+    120|
+    121| const denied = (detail: string) =>
+    122|   Object.assign(new Error('Request failed with status code 403'), { re…
+       |                 ^
+    123|
+    124| describe('case section failures', () => {
+ ❯ src/screens/cases/CaseSections.test.tsx:150:50
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+ ❯ runWithCancel node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+ ❯ runWithTimeout node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { response: { status: 403, data: { detail: 'IOC already on this case' } } }
+This error originated in "src/screens/cases/CaseSections.test.tsx" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "says why adding an IOC failed". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Request failed with status code 500
+ ❯ src/screens/cases/CaseSections.test.tsx:163:58
+    161|   it('says why adding or toggling a task failed, and clears it on the …
+    162|     vi.mocked(casesApi.addTask).mockRejectedValue(denied('Case is clos…
+    163|     vi.mocked(casesApi.updateTask).mockRejectedValueOnce(new Error('Re…
+       |                                                          ^
+    164|     render(<Tasks caseId="case-1" />)
+    165|
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+ ❯ runWithCancel node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+ ❯ runWithTimeout node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64
+
+This error originated in "src/screens/cases/CaseSections.test.tsx" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "says why adding or toggling a task failed, and clears it on the next success". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: Request failed with status code 403
+ ❯ denied src/screens/cases/CaseSections.test.tsx:122:17
+    120|
+    121| const denied = (detail: string) =>
+    122|   Object.assign(new Error('Request failed with status code 403'), { re…
+       |                 ^
+    123|
+    124| describe('case section failures', () => {
+ ❯ src/screens/cases/CaseSections.test.tsx:181:54
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+ ❯ runWithCancel node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10
+ ❯ node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+ ❯ runWithTimeout node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { response: { status: 403, data: { detail: 'Comments are locked' } } }
+This error originated in "src/screens/cases/CaseSections.test.tsx" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "keeps a comment that failed to post and shows the detail". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 4 passed (9)
+     Errors  4 errors
+   Start at  08:26:46
+   Duration  16.29s (transform 1.37s, setup 1.80s, import 1.45s, tests 7.38s, environment 4.02s)
+

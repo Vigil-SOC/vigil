@@ -1,0 +1,78 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web
+
+stderr | src/screens/cases/CasesScreen.test.tsx > chip rows > Near SLA sends sla_at_risk, counts from the strip, and excludes Assigned to me
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ❯ src/screens/cases/CasesScreen.test.tsx (44 tests | 1 failed | 43 skipped) 5344ms
+     × Near SLA sends sla_at_risk, counts from the strip, and excludes Assigned to me 5257ms
+stderr | src/screens/cases/CasePage.test.tsx > case page > Record tab > types each row, counts All, and filters by chip
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ❯ src/screens/cases/CasePage.test.tsx (148 tests | 3 failed | 145 skipped) 16647ms
+       × types each row, counts All, and filters by chip 6119ms
+       × reports a chain break and a failed export as Poor in the Record header, and clears them on tab leave 5241ms
+     × offers "Show older" again across runs when the hunt's larger read fails, and reads again on the next press 5274ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/cases/CasePage.test.tsx > case page > Record tab > types each row, counts All, and filters by chip
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/cases/CasePage.test.tsx:1213:5
+    1211|     }
+    1212|
+    1213|     it('types each row, counts All, and filters by chip', async () => {
+       |     ^
+    1214|       testState.recordRows = rows
+    1215|       await openRecord()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/screens/cases/CasePage.test.tsx > case page > Record tab > reports a chain break and a failed export as Poor in the Record header, and clears them on tab leave
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/cases/CasePage.test.tsx:1335:5
+    1333|       expect(createUrl).toHaveBeenCalled()
+    1334|     })
+    1335|     it('reports a chain break and a failed export as Poor in the Recor…
+       |     ^
+    1336|       testState.recordRows = rows
+    1337|       vi.mocked(workflowApi.verifyRun).mockResolvedValue({ data: { ok:…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/screens/cases/CasePage.test.tsx > a case with several runs > offers "Show older" again across runs when the hunt's larger read fails, and reads again on the next press
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/cases/CasePage.test.tsx:2743:3
+    2741|   })
+    2742|
+    2743|   it('offers "Show older" again across runs when the hunt\'s larger re…
+       |   ^
+    2744|     twoRuns('case-older-fail-many')
+    2745|     const many = Array.from({ length: 50 }, (_, i) => evidence(`n${i}`…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/screens/cases/CasesScreen.test.tsx > chip rows > Near SLA sends sla_at_risk, counts from the strip, and excludes Assigned to me
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/screens/cases/CasesScreen.test.tsx:618:3
+    616|   })
+    617|
+    618|   it('Near SLA sends sla_at_risk, counts from the strip, and excludes …
+       |   ^
+    619|     renderCases()
+    620|     await screen.findByText(CASE.title)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  4 failed | 188 skipped (192)
+   Start at  08:20:46
+   Duration  65.60s (transform 19.40s, setup 8.37s, import 67.86s, tests 21.99s, environment 16.32s)
+

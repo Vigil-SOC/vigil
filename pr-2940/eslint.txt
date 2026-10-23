@@ -1,0 +1,12 @@
+
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web/src/screens/cases/CaseSections.tsx
+   29:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  203:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  373:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  381:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/24193619-aa5a-48b2-9b2c-f948c5917b40/clients/web/src/screens/cases/RunChecks.tsx
+  249:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+✖ 5 problems (0 errors, 5 warnings)
+
