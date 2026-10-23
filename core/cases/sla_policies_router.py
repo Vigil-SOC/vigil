@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
+from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseSLA, SLAPolicy
 from core.storage.schemas import CaseSchema, SLAPolicySchema
@@ -390,12 +391,8 @@ def get_policy_usage(
 
     total_cases = session.query(CaseSLA).filter(*window).count()
 
-    # Active cases (not resolved)
     active_cases = (
-        session.query(CaseSLA)
-        .join(Case)
-        .filter(*window, Case.status.notin_(["resolved", "closed"]))
-        .count()
+        session.query(CaseSLA).join(Case).filter(*window, Case.status != CLOSED).count()
     )
 
     # Breached cases

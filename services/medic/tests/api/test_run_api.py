@@ -12,7 +12,8 @@ from services.medic.app import config
 from services.medic.app.cli import main
 from services.medic.app.heartbeat import check_heartbeat
 from services.medic.app.wiring import TICK_S
-from services.medic.tests.api.schema import errors
+from services.medic.store import open_writer
+from services.medic.tests.api.schema import errors, record_errors
 from services.medic.tests.fakes import FakeClock
 
 KEY = "A" * 40 + "_-9"
@@ -25,9 +26,14 @@ def _free_port() -> int:
 
 
 def _get(port: int, key: str = KEY) -> tuple[int, dict]:
+    return _ask(port, "/v1/status", key)
+
+
+def _ask(port: int, target: str, key: str | None = KEY) -> tuple[int, dict]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        conn.request("GET", "/v1/status", headers={"X-Medic-Key": key})
+        headers = {} if key is None else {"X-Medic-Key": key}
+        conn.request("GET", target, headers=headers)
         resp = conn.getresponse()
         return resp.status, json.loads(resp.read())
     finally:
@@ -253,3 +259,42 @@ def test_heartbeat_at_is_the_last_beat_written(tmp_path, monkeypatch) -> None:
     # Cycle 1's beat was the last one written; cycles 2 and 3 failed to write.
     assert beats[1] == beats[0] and beats[2] == beats[0]
     assert seen[2]["now"] > beats[0]
+
+
+def test_the_decision_log_is_served_while_medic_runs(tmp_path) -> None:
+    clock, port = FakeClock(), _free_port()
+    seen: dict[str, tuple[int, dict]] = {}
+    with open_writer(tmp_path / "data") as writer:
+        writer.append(
+            {
+                "v": 1,
+                "at": "2026-01-01T00:00:00Z",
+                "type": "gap",
+                "body": {
+                    "from": "2026-01-01T00:00:00Z",
+                    "to": "2026-01-01T00:00:00Z",
+                    "reason": "off",
+                },
+            }
+        )
+
+    async def look(seconds: float) -> None:
+        seen["list"] = _ask(port, "/v1/decisions")
+        seen["missing"] = _ask(port, "/v1/decisions/999999")
+        seen["export"] = _ask(port, "/v1/export")
+        seen["open"] = _ask(port, "/v1/decisions", key=None)
+        await clock.sleep(seconds)
+
+    assert (
+        main(["run"], env=_env(tmp_path, port), clock=clock, sleep=look, max_cycles=1)
+        == 0
+    )
+    status, page = seen["list"]
+    assert status == 200 and errors("DecisionPage", page) == []
+    seqs = [item["seq"] for item in page["items"]]
+    assert seqs and seqs == sorted(set(seqs))
+    for item in page["items"]:
+        assert record_errors(item) == []
+    assert seen["missing"][0] == 404 and seen["missing"][1]["code"] == "not_found"
+    assert seen["export"][0] == 404 and seen["export"][1]["code"] == "not_found"
+    assert seen["open"][0] == 401 and seen["open"][1]["code"] == "unauthorized"
