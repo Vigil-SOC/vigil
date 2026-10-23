@@ -1,0 +1,16 @@
+✨ openapi-typescript 7.13.0
+🚀 /home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-2292214/tmp/tmp__fmwar0.json → /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/08397dcb-4a51-49c3-8a46-bba23588c2b4/clients/web/src/services/generated/schema.d.ts [1.6s]
+wrote clients/web/src/services/generated/schema.d.ts
+diff --git a/clients/web/src/services/generated/schema.d.ts b/clients/web/src/services/generated/schema.d.ts
+index 5214176e..258306b1 100644
+--- a/clients/web/src/services/generated/schema.d.ts
++++ b/clients/web/src/services/generated/schema.d.ts
+@@ -4564,7 +4564,7 @@ export interface paths {
+         put?: never;
+         /**
+          * Kill Investigation
+-         * @description Kill a specific running investigation.
++         * @description Fail one live investigation; a finished or unknown one is left as it is.
+          */
+         post: operations["post_api_orchestrator_investigations_investigation_id_kill"];
+         delete?: never;
