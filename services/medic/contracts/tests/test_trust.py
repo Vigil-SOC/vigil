@@ -102,6 +102,20 @@ def test_payload_type_is_bound_by_the_signature(stable_pack: bytes) -> None:
     assert "S-SCOPE" in _verify(doc, dev_mode=True)
 
 
+def test_statement_size_must_be_an_integer(stable_pack: bytes) -> None:
+    # Signed, and canonical for Python, but a float spelling a KMS would not sign.
+    stmt = json.loads(statement(stable_pack, PACK))
+    stmt["size"] = float(stmt["size"])
+    payload = json.dumps(stmt, sort_keys=True, separators=(",", ":")).encode()
+    doc = json.loads(sign(payload, PACK, ["pack-a"]))
+    doc = {
+        "format": "medic.signed-pack/v1",
+        "envelope": doc,
+        "pack": stable_pack.decode(),
+    }
+    assert _verify(doc) == {"S-STATEMENT"}
+
+
 def test_statement_over_different_bytes_is_refused(stable_pack: bytes) -> None:
     doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
     doc["pack"] = doc["pack"].replace("lane: 2", "lane: 1", 1)

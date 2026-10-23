@@ -267,6 +267,7 @@ def _check_statement(signed: bytes, ptype: str, pack_text: str, err) -> bytes | 
     if (
         stmt is None
         or list(STATEMENT.iter_errors(stmt))
+        or type(stmt["size"]) is not int  # 38.0 is valid JSON Schema "integer"
         or canonical(stmt) != signed
         or stmt["payloadType"] != ptype
     ):
