@@ -1,0 +1,10 @@
+$ flake8 core/agents/tool_errors.py core/agents/tools_router.py core/agents/tool_registry.py core/memory/recall.py core/memory/learning_episodes.py
+ok
+$ black --check
+All done! ✨ 🍰 ✨
+11 files would be left unchanged.
+$ isort --check-only (changed files)
+ok
+$ lint-imports
+
+Contracts: 8 kept, 0 broken.

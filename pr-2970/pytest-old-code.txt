@@ -1,0 +1,13 @@
+=================================== FAILURES ===================================
+ERROR    core.agents.tools_router:tools_router.py:398 tool list_findings failed
+ERROR    core.agents.tools_router:tools_router.py:398 tool lookup_indicators failed
+ERROR    core.agents.tools_router:tools_router.py:398 tool replay_hunt failed
+ERROR    core.agents.tools_router:tools_router.py:398 tool replay_hunt failed
+FAILED tests/unit/agents/test_tools_router.py::TestFailureKinds::test_a_refusal_in_any_words_is_invalid_args
+FAILED tests/unit/agents/test_tools_router.py::TestFailureKinds::test_a_real_tool_refusing_its_arguments_is_invalid_args[lookup_indicators-args0]
+FAILED tests/unit/agents/test_tools_router.py::TestFailureKinds::test_a_real_tool_refusing_its_arguments_is_invalid_args[replay_hunt-args1]
+FAILED tests/unit/agents/test_tools_router.py::TestFailureKinds::test_a_real_tool_refusing_its_arguments_is_invalid_args[replay_hunt-args2]
+FAILED tests/unit/agents/test_hunt_coverage.py::test_backend_tool_refuses_an_empty_ask
+FAILED tests/unit/memory/test_recall_entity.py::test_a_caller_mistake_is_invalid_args_however_it_is_spelled[no key named]
+FAILED tests/unit/memory/test_recall_entity.py::test_a_caller_mistake_is_invalid_args_however_it_is_spelled[unreadable as_of]
+================= 7 failed, 11 passed, 62 deselected in 9.39s ==================
