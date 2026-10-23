@@ -1334,27 +1334,21 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             since = utcnow() - timedelta(days=days)
 
-            # One filter set shared by every query below, so the totals,
-            # averages and outcome breakdown all describe the same rows.
             base_filters = [AIDecisionLog.timestamp >= since]
             if agent_id:
                 base_filters.append(AIDecisionLog.agent_id == agent_id)
 
             query = session.query(AIDecisionLog).filter(*base_filters)
 
-            # Total decisions
             total_decisions = query.count()
 
-            # Decisions with feedback
             feedback_query = query.filter(AIDecisionLog.human_decision.isnot(None))
             total_with_feedback = feedback_query.count()
 
-            # Agreement rate
             agree_count = feedback_query.filter(
                 AIDecisionLog.human_decision == "agree"
             ).count()
 
-            # Average grades
             avg_accuracy = (
                 session.query(func.avg(AIDecisionLog.accuracy_grade))
                 .filter(*base_filters, AIDecisionLog.accuracy_grade.isnot(None))
@@ -1362,7 +1356,6 @@ class DatabaseService:
                 or 0
             )
 
-            # Outcome counts
             outcomes = {}
             for outcome, count in (
                 session.query(
@@ -1374,7 +1367,6 @@ class DatabaseService:
             ):
                 outcomes[outcome] = count
 
-            # Time saved
             total_time_saved = (
                 session.query(func.sum(AIDecisionLog.time_saved_minutes))
                 .filter(*base_filters, AIDecisionLog.time_saved_minutes.isnot(None))

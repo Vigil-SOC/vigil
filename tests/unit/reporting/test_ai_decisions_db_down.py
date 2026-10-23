@@ -1,9 +1,4 @@
-"""A database failure on the AI-decision routes surfaces as a 5xx.
-
-These used to answer an empty list, zero stats or a 404, so the Decisions screen
-read an outage as "no decisions yet". The app and ``DatabaseService`` are real;
-only the session is replaced.
-"""
+"""A database failure on the AI-decision routes answers 500, not empty data."""
 
 from contextlib import contextmanager
 
