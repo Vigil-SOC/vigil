@@ -175,34 +175,42 @@ def plan(
     upgrade_dir: Optional[Path],
 ) -> Plan:
     """What apply would do, from the database and the run history alone."""
-    current = MigrationContext.configure(
-        conn, opts={"version_table_schema": "public"}
-    ).get_current_heads()
-    if len(current) > 1:
-        return Plan(REFUSE, f"database has more than one revision: {list(current)}")
-    revision = current[0] if current else None
-    if revision is not None:
+    current = tuple(
+        MigrationContext.configure(
+            conn, opts={"version_table_schema": "public"}
+        ).get_current_heads()
+    )
+    # A database upgraded while this image had two heads has one row per head.
+    # The merge revision joins them; refuse only a head this image does not know.
+    unknown = []
+    for rev in current:
         try:
-            script.get_revision(revision)
+            script.get_revision(rev)
         except CommandError:
-            return Plan(
-                REFUSE,
-                f"database is at revision {revision}, which this image "
-                f"({__version__}) does not know: the database is newer. Restore, "
-                "or install a release at least as new as the database.",
-                revision=revision,
-            )
+            unknown.append(rev)
+    if unknown:
+        listed = ", ".join(unknown)
+        return Plan(
+            REFUSE,
+            f"database is at revision {listed}, which this image "
+            f"({__version__}) does not know: the database is newer. Restore, "
+            "or install a release at least as new as the database.",
+            revision=unknown[0],
+        )
+    revision = current[0] if len(current) == 1 else None
+    if current:
         older = adopt.restamped(conn)
         if older:
             return Plan(
                 REFUSE,
                 f"release {older} ran its old init path against this database "
-                f"after it reached {revision}: restore first, from the restore "
-                "point taken before the upgrade",
+                f"after it reached {revision or ', '.join(current)}: restore "
+                "first, from the restore point taken before the upgrade",
                 revision=revision,
             )
+    lower: str | tuple[str, ...] = current if len(current) > 1 else (revision or "base")
     adoption = None
-    if revision is None:
+    if not current:
         tables = conn.execute(
             text(
                 "SELECT count(*) FROM pg_tables "
@@ -226,8 +234,7 @@ def plan(
             adoption = found
 
     pending = [
-        s.revision
-        for s in reversed(list(script.iterate_revisions("heads", revision or "base")))
+        s.revision for s in reversed(list(script.iterate_revisions("heads", lower)))
     ]
     previous = _previous_version(upgrade_dir)
     restart = Plan(

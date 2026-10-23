@@ -3,6 +3,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { auditApi, auditParams } from '../../services/api'
 import AuditSection, { EMPTY_DRAFT, auditFilter, verifyLine } from './AuditSection'
 
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasPermission: (p: string) => p === 'audit.manage' || p === 'audit.read' }),
+}))
+
 vi.mock('../../services/api', async (orig) => {
   const real = await orig<typeof import('../../services/api')>()
   return {
@@ -11,6 +15,11 @@ vi.mock('../../services/api', async (orig) => {
       entries: vi.fn(() => Promise.resolve({ data: { entries: [], tip: { seq: 0, hash: 'h' } } })),
       download: vi.fn(() => Promise.resolve()),
       verify: vi.fn(),
+      retention: vi.fn(() => Promise.resolve({
+        data: { effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasures: [] },
+      })),
+      saveRetention: vi.fn(),
+      erasePrincipal: vi.fn(),
     },
   }
 })

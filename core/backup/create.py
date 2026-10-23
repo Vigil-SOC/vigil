@@ -117,7 +117,9 @@ def create_snapshot(
             locations = _locations(staging, bifrost_data)
             manifest_path = staging / "manifest.json"
             _write_manifest(manifest_path, locations, counts, kind, version, taken_by)
-            paths = [str(manifest_path)]
+            erasure_path = staging / "erased-principals.txt"
+            erasure_path.write_text(_erasure_list(), encoding="utf-8")
+            paths = [str(manifest_path), str(erasure_path)]
             paths.extend(loc.path for loc in locations if loc.path)
             snap = _restic_backup(repo, passphrase, paths, priority, tags, extra_env)
             try:
@@ -436,6 +438,13 @@ def _sqlite_backup(src: Path, dest: Path) -> None:
         raise BackupError(f"sqlite backup of {src} failed: {exc}") from exc
     finally:
         source.close()
+
+
+def _erasure_list() -> str:
+    """The same ids as ``$VIGIL_UPGRADE_DIR/erased-principals.txt``, or none."""
+    from core.audit.retention import list_text
+
+    return list_text()
 
 
 def _write_manifest(

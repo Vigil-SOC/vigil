@@ -187,6 +187,30 @@ def test_empty_database_matches_fresh_install(provisioned, empty, tmp_path):
     assert len(_history(tmp_path)) == 1
 
 
+def test_two_known_heads_join_at_the_merge(empty, tmp_path):
+    """A database stamped at both 0006 heads can still take the merge."""
+    _at_head(empty, tmp_path)
+    with empty.begin() as conn:
+        # 0007 only adds this column. Dropping it is the schema of the two heads.
+        conn.execute(
+            text("ALTER TABLE audit_feed_state DROP COLUMN pending_announcements")
+        )
+        conn.execute(text("DELETE FROM alembic_version"))
+        conn.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
+            [{"v": "0006_audit_feed"}, {"v": "0006_canonical_finding_ips"}],
+        )
+    code, report = _run(empty, tmp_path / "check", check=True, restore_point="rp-join")
+    assert (code, report["verdict"], report["pending"]) == (
+        command.EXIT_OK,
+        command.APPLY,
+        ["0007_retention"],
+    ), report
+    code, report = _run(empty, tmp_path / "apply", restore_point="rp-join")
+    assert code == command.EXIT_OK, report.get("reason", report)
+    assert _version(empty) == "0007_retention"
+
+
 def test_lock_held_elsewhere_refuses(empty, tmp_path, monkeypatch):
     monkeypatch.setattr(command, "LOCK_WAIT_SECONDS", 1.0)
     with empty.connect() as holder:

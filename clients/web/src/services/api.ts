@@ -1128,6 +1128,20 @@ export interface AuditVerify {
   ok: boolean
 }
 
+export interface AuditErasure {
+  principal_id: string
+  on: string
+  unconfirmed: boolean
+}
+
+export interface AuditRetention {
+  effective_days: number | null
+  pending_days: number | null
+  pending_on: string | null
+  unconfirmed: boolean
+  erasures: AuditErasure[]
+}
+
 export const AUDIT_PAGE = 100
 
 /** The filter as query params, empty ones left out. */
@@ -1166,6 +1180,10 @@ export const auditApi = {
   },
   verify: (first?: number, last?: number) =>
     api.get<AuditVerify>('/audit/verify', { params: { first, last } }),
+  retention: () => api.get<AuditRetention>('/audit/retention'),
+  saveRetention: (days: number) => api.put<AuditRetention>('/audit/retention', { days }),
+  erasePrincipal: (principal_id: string, reason: string) =>
+    api.post<AuditRetention>('/audit/erasure', { principal_id, reason }),
 }
 
 export interface FederationSourceView {
