@@ -13,7 +13,6 @@ const draft = {
   server_code: 'print(1)',
 }
 
-// stands in for the CSRF middleware: refuses a POST whose header does not match the cookie
 function serve(seen: { url?: string; csrf: unknown }[]) {
   return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
     const csrf = config.headers['X-CSRF-Token']

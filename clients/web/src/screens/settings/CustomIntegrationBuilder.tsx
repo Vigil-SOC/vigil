@@ -5,6 +5,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { Field, Select, TextInput } from '../../shared/ui'
 import { INTEGRATION_CATEGORIES } from '../../config/integrations'
 import { customIntegrationsApi } from '../../services/api'
+import { errorText } from '../setup/errorText'
 import type { SectionProps } from './types'
 
 interface Props {
@@ -41,8 +42,6 @@ const CATEGORY_OPTIONS = INTEGRATION_CATEGORIES.map((c) => ({ value: c, label: c
 
 const chipLabel = (f: SettingField) => (f.type === 'password' ? `${f.label} (secret)` : f.label)
 const checkLabel = (k: string) => k.replace(/_/g, ' ').replace(/^\w/, (l) => l.toUpperCase())
-const errorText = (e: unknown, fallback: string) =>
-  (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || fallback
 
 export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: Props) {
   const [busy, setBusy] = useState<'generate' | 'validate' | 'save' | null>(null)
