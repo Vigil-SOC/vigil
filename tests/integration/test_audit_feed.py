@@ -392,7 +392,7 @@ def test_a_credential_cannot_turn_the_feed_on(db, client):
     _user("mia", "role-manager")
     minted = mcp_credential_service.mint(admin_id, "ada's script")
     body = {"enabled": True, "host": "siem.example", "port": 6514}
-    manager = _login(client, "mia")
+    manager_headers = _login(client, "mia")
     before = _count(db)
 
     credential = client.put(
@@ -403,7 +403,7 @@ def test_a_credential_cannot_turn_the_feed_on(db, client):
     assert credential.status_code == 403, credential.text
     assert credential.json()["detail"] == MCP_CREDENTIAL_DENIED
 
-    manager = client.put("/api/audit/feed", headers=manager, json=body)
+    manager = client.put("/api/audit/feed", headers=manager_headers, json=body)
     assert manager.status_code == 403, manager.text
     assert manager.json()["detail"] == "Permission denied: audit.forward required"
     assert _count(db) == before
@@ -420,6 +420,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
         feed, "get_secret", lambda key, default=None: store.get(key, default)
     )
     admin = _login(client, "ada")
+    manager_headers = _login(client, "mia")
     saved = client.put(
         "/api/audit/feed",
         headers=admin,
@@ -431,7 +432,6 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
         },
     )
     assert saved.status_code == 200, saved.text
-    manager = _login(client, "mia")
     before = _count(db)
 
     class _Bridge:
@@ -441,7 +441,7 @@ def test_the_integrations_save_cannot_change_the_feed(db, client, monkeypatch):
     client.app.state.integration_bridge = _Bridge()
     posted = client.post(
         "/api/config/integrations",
-        headers=manager,
+        headers=manager_headers,
         json={
             "enabled_integrations": [],
             "integrations": {
