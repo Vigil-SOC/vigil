@@ -1,5 +1,4 @@
-"""case_records answers empty sections for a case with no records, and a store
-failure as backend_error, which the kernel records as a visibility gap."""
+"""case_records: empty sections for an unknown case, backend_error on a store failure."""
 
 from __future__ import annotations
 
