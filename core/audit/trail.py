@@ -25,6 +25,8 @@ from typing import Any, Optional
 from alembic.util import CommandError
 from sqlalchemy import text
 
+from core.auth import principals
+
 logger = logging.getLogger(__name__)
 
 REVISION = "0002_audit_trail"
@@ -59,8 +61,13 @@ OUTCOME_UNKNOWN = "outcome unknown"
 ATTRIBUTION_VERIFIED = "verified"
 ATTRIBUTION_MATCHED_BY_NAME = "matched_by_name"
 ATTRIBUTION_UNVERIFIED_LEGACY = "unverified_legacy"
-# principals.kind. A live entry with no attribution field counts as verified.
-KINDS = ("person", "service_account", "agent", "system")
+# The principal kinds. A live entry with no attribution field counts as verified.
+KINDS = (
+    principals.PERSON,
+    principals.SERVICE_ACCOUNT,
+    principals.AGENT,
+    principals.SYSTEM,
+)
 POLL_LIMIT = 500
 _READ_PAGE = 500
 _VERIFY_BATCH = 5000
