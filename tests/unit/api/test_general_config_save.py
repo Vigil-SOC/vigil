@@ -1,7 +1,5 @@
 """Saving General settings keeps the demo_mode flag that shares its file."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest
