@@ -458,28 +458,24 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
 @pytest.mark.parametrize(
     "args",
     [
-        {"caller_kind": "worker"},
-        {"entity_key": "ip:10.9.0.1", "as_of": "last tuesday"},
-        {"entity_key": f"sha256:{HASH}"},
-        {"entity_key": f"md5:{HASH}"},
-        {"entity_key": HASH},
-        {"entity_key": "10.0.0.7"},
-        {"entity_key": "ip:"},
-        {"entity_keys": [f"hash:{HASH}", "bogus:x"]},
-    ],
-    ids=[
-        "no key named",
-        "unreadable as_of",
-        "sha256 type",
-        "md5 type",
-        "bare hash",
-        "bare ip",
-        "empty value",
-        "one unknown type among good keys",
+        pytest.param({"caller_kind": "worker"}, id="no key named"),
+        pytest.param(
+            {"entity_key": "ip:10.9.0.1", "as_of": "last tuesday"},
+            id="unreadable as_of",
+        ),
+        pytest.param({"entity_key": f"sha256:{HASH}"}, id="sha256 type"),
+        pytest.param({"entity_key": f"md5:{HASH}"}, id="md5 type"),
+        pytest.param({"entity_key": HASH}, id="bare hash"),
+        pytest.param({"entity_key": "10.0.0.7"}, id="bare ip"),
+        pytest.param({"entity_key": "ip:"}, id="empty value"),
+        pytest.param(
+            {"entity_keys": [f"hash:{HASH}", "bogus:x"]},
+            id="one unknown type among good keys",
+        ),
     ],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
-    # Both are the caller's to fix, so both must come back the same way. The
+    # Each is the caller's to fix, so all must come back the same way. The
     # router answers invalid_args only for Python's own wording for a call that
     # did not fit its signature; anything else is a backend_error, which tells
     # the model the tool broke rather than that it should call again.
