@@ -41,10 +41,10 @@ def _err_response(status: int, text: str = "boom"):
     return r
 
 
-def _client_returning(method: str, response):
-    """Build a context-manager mock client whose ``method`` returns ``response``."""
+def _client_returning(response):
+    """Build a context-manager mock client whose ``get`` returns ``response``."""
     client = MagicMock()
-    setattr(client, method, MagicMock(return_value=response))
+    client.get = MagicMock(return_value=response)
     cm = MagicMock()
     cm.__enter__ = MagicMock(return_value=client)
     cm.__exit__ = MagicMock(return_value=False)
@@ -65,7 +65,7 @@ def test_histogram_cost_hits_correct_url_and_returns_payload(monkeypatch):
         "bucket_size_seconds": 3600,
         "models": [],
     }
-    cm, client = _client_returning("get", _ok_response(payload))
+    cm, client = _client_returning(_ok_response(payload))
 
     with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
         from core.llm.bifrost.costs import histogram_cost
@@ -90,7 +90,7 @@ def test_histogram_cost_hits_correct_url_and_returns_payload(monkeypatch):
 def test_histogram_cost_returns_none_on_5xx(monkeypatch):
     """The dashboard must degrade gracefully — Bifrost down means we
     fall back to local LLMInteractionLog aggregations, not 500 the user."""
-    cm, _ = _client_returning("get", _err_response(503, "service down"))
+    cm, _ = _client_returning(_err_response(503, "service down"))
 
     with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
         from core.llm.bifrost.costs import histogram_cost
@@ -118,7 +118,7 @@ def test_histogram_cost_returns_none_on_network_error():
 
 
 def test_stats_hits_correct_path():
-    cm, client = _client_returning("get", _ok_response({"total_requests": 0}))
+    cm, client = _client_returning(_ok_response({"total_requests": 0}))
     with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
         from core.llm.bifrost.costs import stats
 
