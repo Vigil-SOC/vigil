@@ -181,6 +181,15 @@ def test_unsigned_pack_only_in_dev_mode() -> None:
     )
 
 
+def test_pack_format_with_envelope_keys_is_not_unsigned() -> None:
+    doc = json.loads(SAMPLE)
+    doc["payloadType"], doc["signatures"] = PACK_DEV, []
+    res = verify_envelope(
+        json.dumps(doc).encode(), V1, expected=PACKS, now=NOW, dev_mode=True
+    )
+    assert not res.ok and not res.unsigned_dev
+
+
 def test_dev_signed_pack_only_in_dev_mode() -> None:
     data = (TRUST / "sample-0.1.0.dev.signed-pack.json").read_bytes()
     assert verify_envelope(data, V1, expected=PACKS, now=NOW).codes == {"S-DEV"}

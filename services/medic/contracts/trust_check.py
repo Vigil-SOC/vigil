@@ -196,7 +196,7 @@ def verify_envelope(
         err(("S-JSON", str(exc)[:120]))
         return res
     fmt = doc.get("format") if isinstance(doc, dict) else None
-    if fmt == PACK_FORMAT:
+    if fmt == PACK_FORMAT and "payloadType" not in doc and "signatures" not in doc:
         # A bare, unsigned pack: pack_check applies its own 4 MB cap.
         if dev_mode and PACK_DEV in expected:
             res.payload, res.payload_type, res.role, res.unsigned_dev = (
