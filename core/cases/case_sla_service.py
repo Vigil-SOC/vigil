@@ -612,8 +612,7 @@ def open_case(
 ) -> Optional[Dict[str, Any]]:
     """Create a case and give it the default SLA for its priority.
 
-    The case is the effect a caller asked for, so it is returned even when
-    no SLA could be assigned.
+    Returns the case even when no SLA could be assigned.
     """
     case = data.create_case(
         title=title,

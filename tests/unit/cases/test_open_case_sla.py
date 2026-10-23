@@ -1,9 +1,3 @@
-"""Every way a case is opened gives it the default SLA for its priority (#2830).
-
-Only the HTTP create route used to assign one, so a case an agent, VStrike or a
-workflow handoff opened had no deadlines and no breach tracking.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -96,5 +90,4 @@ def test_a_new_case_gets_the_default_sla_for_its_priority(
 ):
     case_id = open_one(monkeypatch)
 
-    assert case_id
     assert _sla_policy_of(case_id) == POLICY
