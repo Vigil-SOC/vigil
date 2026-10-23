@@ -299,7 +299,7 @@ function useTickets(caseId: string) {
 function TicketsView({ resource: { data, phase } }: { resource: Resource<Ticket[]> }) {
   const rows = data || []
   return (
-    <SectionCard bare title="Linked tickets">
+    <SectionCard title="Linked tickets">
       <div className="side-list">
         {phase === 'loading' && <p className="muted">Loading tickets…</p>}
         {phase === 'error' && <p className="muted">Couldn’t load tickets.</p>}
@@ -345,8 +345,8 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
           <div className="side-meta">
             Comments {comments.phase === 'ready' ? n : '—'} · Tasks {count(tasks as Resource<unknown[]>)} · Tickets {count(tickets as Resource<unknown[]>)}
           </div>
-          <CommentsView caseId={caseId} resource={comments} bare />
-          <TasksView caseId={caseId} resource={tasks} bare />
+          <CommentsView caseId={caseId} resource={comments} />
+          <TasksView caseId={caseId} resource={tasks} />
           <TicketsView resource={tickets} />
         </div>
       )}
