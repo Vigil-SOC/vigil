@@ -7492,8 +7492,9 @@ export interface components {
             /**
              * Status
              * @default open
+             * @enum {string}
              */
-            status: string;
+            status: "new" | "open" | "investigating" | "closed";
             /** Title */
             title: string;
         };
@@ -8209,7 +8210,7 @@ export interface components {
             /** Priority */
             priority?: string | null;
             /** Status */
-            status?: string | null;
+            status?: ("new" | "open" | "investigating" | "closed") | null;
             /** Title */
             title?: string | null;
         };

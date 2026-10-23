@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import httpx
 import pytest
 
 from services.api.routers import claude
@@ -15,9 +14,6 @@ pytestmark = pytest.mark.unit
 class _Client:
     def __init__(self, lines):
         self.lines = lines
-
-    def __call__(self, **_):
-        return self
 
     def stream(self, *_args, **_kw):
         return self
@@ -37,19 +33,23 @@ class _Client:
 
 async def _relay(monkeypatch, lines, messages):
     saved: dict = {}
-    monkeypatch.setattr(httpx, "AsyncClient", _Client(lines))
     monkeypatch.setattr(claude, "_internal_headers", lambda: {})
     monkeypatch.setattr(claude, "_persist_chat_turn", lambda **kw: saved.update(kw))
     request = claude.ChatRequest(messages=messages)
     turns = claude._turns_of(request.messages)
-    async for _ in claude._relay({"turns": turns}, request, "m", "s-1", "u-1"):
+    relay = claude._relay(
+        {"turns": turns}, request, "m", "s-1", "u-1", None, _Client(lines)
+    )
+    async for _ in relay:
         pass
     return saved
 
 
 @pytest.mark.asyncio
 async def test_an_error_frame_is_stored_as_the_incomplete_reply(monkeypatch):
-    error = "the system prompt and tool catalogue leave no room for the current question"
+    error = (
+        "the system prompt and tool catalogue leave no room for the current question"
+    )
     saved = await _relay(
         monkeypatch,
         [f"data: {json.dumps({'error': error})}"],

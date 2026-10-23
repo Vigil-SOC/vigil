@@ -17,6 +17,12 @@ from core.auth.permissions import (
     username_has_permission,
 )
 from core.cases.case_sla_service import open_case
+from core.cases.case_status import (
+    CASE_STATUSES,
+    CaseStatus,
+    record_status_change,
+    status_change,
+)
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
@@ -184,7 +190,7 @@ def get_finding(*, finding_id: str) -> Any:
 
 
 # A dismissal is the finding's terminal state. The actor is the caller and the
-# kind is agent, as with record_agent_close; the reason is what makes it a record.
+# kind is agent, as with a status edit that closes a case; the reason is what makes it a record.
 def dismiss_finding(*, finding_id: str, reason: str) -> Args:
     if refusal := permission_refusal("findings.write"):
         return refusal
@@ -240,6 +246,14 @@ def get_case(*, case_id: str) -> Any:
     return _data().get_case(case_id)
 
 
+def _status_refusal(status: str) -> Optional[Args]:
+    if status in CASE_STATUSES:
+        return None
+    return {
+        "error": f"Unknown case status {status!r}; use one of {list(CASE_STATUSES)}"
+    }
+
+
 def create_case(
     *,
     title: str,
@@ -247,11 +261,13 @@ def create_case(
     severity: Optional[str] = None,
     priority: Optional[str] = None,
     finding_ids: Optional[list] = None,
-    status: str = "new",
+    status: CaseStatus = "new",
     assignee: Optional[str] = None,
     tags: Optional[list] = None,
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
+        return refusal
+    if refusal := _status_refusal(status):
         return refusal
     data = _data()
     ids = finding_ids or []
@@ -288,14 +304,17 @@ def update_case(
     case_id: str,
     title: Optional[str] = None,
     description: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[CaseStatus] = None,
     priority: Optional[str] = None,
     assignee: Optional[str] = None,
     add_note: Optional[str] = None,
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
         return refusal
-    from core.cases.agent_closure import record_agent_close, record_reopen
+    if status is not None and (refusal := _status_refusal(status)):
+        return refusal
+    from core.cases.agent_closure import actor, service_session
+    from core.cases.closure import ClosedByKind
     from core.time import utcnow
 
     data = _data()
@@ -308,7 +327,7 @@ def update_case(
         updates["title"] = title
     if description:
         updates["description"] = description
-    if status:
+    if status is not None:
         updates["status"] = status
     if priority:
         updates["priority"] = priority
@@ -319,13 +338,18 @@ def update_case(
         notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})
         updates["notes"] = notes
 
-    was_closed = (case.get("status") or "").strip() == "closed"
+    change = status_change(case.get("status"), status)
     if not data.update_case(case_id, **updates):
         return {"error": "Failed to update case"}
-    if updates.get("status") == "closed" and not was_closed:
-        record_agent_close(case_id)
-    elif was_closed and updates.get("status") not in (None, "closed"):
-        record_reopen(case_id)
+    if change:
+        with service_session() as session:
+            record_status_change(
+                session,
+                case_id,
+                change,
+                closed_by=actor(),
+                closed_by_kind=ClosedByKind.AGENT,
+            )
     return {"success": True, "case_id": case_id}
 
 
@@ -651,6 +675,7 @@ def _without_approval_right() -> Optional[Args]:
 # would stamp "agent" and release a row the requirement already held.
 def approve_action(*, action_id: str) -> Args:
     from core.cases.agent_closure import actor
+    from core.response.approval_service import AlreadyDecided
 
     if current_caller() is None:
         return {"error": "Action cannot be approved: no principal is bound"}
@@ -658,27 +683,30 @@ def approve_action(*, action_id: str) -> Args:
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
-    return _decided(
-        _approvals().approve_action(
+    try:
+        action = _approvals().approve_action(
             action_id, actor(), approved_by_principal_id=principal
-        ),
-        "approved",
-    )
+        )
+    except AlreadyDecided as e:
+        return {"error": str(e)}
+    return _decided(action, "approved")
 
 
 def reject_action(*, action_id: str, reason: str) -> Args:
     from core.cases.agent_closure import actor
+    from core.response.approval_service import AlreadyDecided
 
     if refusal := _without_approval_right():
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
-    return _decided(
-        _approvals().reject_action(
+    try:
+        action = _approvals().reject_action(
             action_id, reason, actor(), approved_by_principal_id=principal
-        ),
-        "rejected",
-    )
+        )
+    except AlreadyDecided as e:
+        return {"error": str(e)}
+    return _decided(action, "rejected")
 
 
 def get_approval_stats(**_args: Any) -> Any:
