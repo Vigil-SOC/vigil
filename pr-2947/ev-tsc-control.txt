@@ -1,0 +1,3 @@
+src/screens/decisions/DecisionsScreen.tsx(186,48): error TS2339: Property 'human' does not exist on type 'Decision'.
+src/screens/decisions/DecisionsScreen.tsx(186,57): error TS2339: Property 'evidence' does not exist on type 'Decision'.
+control tsc exit 2

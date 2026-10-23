@@ -1,0 +1,2 @@
+before (params {}): /api/ai/decisions/stats
+after  (no params): /api/ai/decisions/stats
