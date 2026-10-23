@@ -44,6 +44,9 @@ vi.mock('./GeneralSection', () => ({ default: () => <div>General panel</div> }))
 vi.mock('./DeveloperSection', () => ({ default: () => <div>Developer panel</div> }))
 vi.mock('./UsersSection', () => ({ default: () => <div>Users panel</div> }))
 vi.mock('./DataUploadsSection', () => ({ default: () => <div>Data panel</div> }))
+vi.mock('./AuditSection', () => ({ AUDIT_DESC: 'Stub audit description.', default: () => <div>Audit panel</div> }))
+const auth = vi.hoisted(() => ({ perms: new Set<string>(['audit.read']) }))
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ hasPermission: (p: string) => auth.perms.has(p) }) }))
 
 const screenProps: ConsoleScreenProps = {
   openChat: vi.fn(),
@@ -161,6 +164,19 @@ describe('settings nav', () => {
     expect(nav().getByRole('button', { name: 'Data & uploads' })).toHaveClass('active')
     expect(screen.getByText('Data panel')).toBeInTheDocument()
     expect(document.querySelector('.tabs')).toBeNull()
+  })
+
+  it('shows Audit only to holders of audit.read', () => {
+    renderAt('/settings?section=audit')
+    expect(nav().getByRole('button', { name: 'Audit' })).toHaveClass('active')
+    expect(screen.getByText('Audit panel')).toBeInTheDocument()
+    cleanup()
+    auth.perms = new Set()
+    renderAt('/settings?section=audit')
+    expect(nav().queryByRole('button', { name: 'Audit' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Audit panel')).not.toBeInTheDocument()
+    expect(screen.getByText('AI panel')).toBeInTheDocument()
+    auth.perms = new Set(['audit.read'])
   })
 
   it('keeps the sections goSettings already opens', () => {

@@ -244,6 +244,36 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && yq --version
 
 ########################################################
+# KIND + KUBECTL (Medic kind e2e)
+########################################################
+
+# medic-helm.yml's "Medic on kind" job installs these with
+# helm/kind-action@v1 (install_only: true) and then runs
+# infra/helm/vigil/medic-tests/kind/e2e.sh, which calls kind and kubectl.
+# The workflow passes no version inputs. The @v1 tag resolves to commit
+# ef37e7f390d99f746eb8b610417061a60e82a6cc, whose defaults are kind v0.31.0
+# and kubectl v1.35.0. Helm v3.15.2 is already installed above. The script
+# creates and deletes its own cluster; nothing here starts one.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+         amd64) KSUM=eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa; CSUM=a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989 ;; \
+         arm64) KSUM=8e1014e87c34901cc422a1445866835d1e666f2a61301c27e722bdeab5a1f7e4; CSUM=58f82f9fe796c375c5c4b8439850b0f3f4d401a52434052f2df46035a8789e25 ;; \
+         *) echo "unsupported arch $ARCH" && exit 1 ;; \
+       esac \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /tmp/kind \
+       "https://github.com/kubernetes-sigs/kind/releases/download/v0.31.0/kind-linux-${ARCH}" \
+    && echo "${KSUM}  /tmp/kind" | sha256sum -c - \
+    && install -m 0755 /tmp/kind /usr/local/bin/kind \
+    && rm -f /tmp/kind \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /tmp/kubectl \
+       "https://dl.k8s.io/release/v1.35.0/bin/linux/${ARCH}/kubectl" \
+    && echo "${CSUM}  /tmp/kubectl" | sha256sum -c - \
+    && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
+    && rm -f /tmp/kubectl \
+    && kind version \
+    && kubectl version --client
+
+########################################################
 # ACTIONLINT + HADOLINT (CI lint gates)
 ########################################################
 

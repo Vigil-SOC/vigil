@@ -14,6 +14,7 @@ export type SettingsSectionKey =
   | 'general'
   | 'dev'
   | 'data'
+  | 'audit'
 
 export interface ConsoleScreenGoOptions {
   search?: string
