@@ -4538,7 +4538,7 @@ export interface paths {
         put?: never;
         /**
          * Kill Investigation
-         * @description Kill a specific running investigation.
+         * @description Fail one live investigation; a finished or unknown one is left as it is.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_kill"];
         delete?: never;
