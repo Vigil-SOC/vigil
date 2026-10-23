@@ -8,7 +8,7 @@ Opt-in (it builds Medic's three images and runs a stack for a few minutes):
    the secrets and compose.env), then the stack up with the overlay: the real
    Medic images, every Vigil service a stub on its real network and port
    (`compose.test.yml`), under its own project (`medic-s11`, or
-   VIGIL_MEDIC_COMPOSE_PROJECT) and its own image tags (`compose.s11.yml`).
+   VIGIL_MEDIC_COMPOSE_PROJECT_S11) and its own image tags (`compose.s11.yml`).
 2. The agent worker and the daemon stop, and come back the way `./start.sh`
    brings a container back: `ensure_container` from `scripts/lib.sh`, i.e.
    `dc up -d <service>`, with `.env`'s VIGIL_MEDIC_ENABLED="false" exported as
@@ -37,10 +37,17 @@ from pathlib import Path
 
 import pytest
 
-from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE, REPO, clean_env
+from tests.medic_compose.compose import (
+    ENABLE,
+    HAVE_COMPOSE,
+    REPO,
+    clean_env,
+    compose_project,
+    require_compose_project,
+)
 
 HERE = Path(__file__).resolve().parent
-PROJECT = os.environ.get("VIGIL_MEDIC_COMPOSE_PROJECT", "medic-s11")
+PROJECT_ENV = "VIGIL_MEDIC_COMPOSE_PROJECT_S11"
 LIB = os.environ.get("VIGIL_MEDIC_START_PATH_LIB", str(REPO / "scripts" / "lib.sh"))
 OVERRIDES = (HERE / "compose.test.yml", HERE / "compose.s11.yml")
 IMAGES = (
@@ -92,6 +99,8 @@ print(json.dumps(out))
 
 class Stack:
     def __init__(self, home: Path) -> None:
+        # Before any docker or enable-compose.sh call this suite makes.
+        self.project = compose_project(PROJECT_ENV, "medic-s11")
         self.secrets_dir = home / "medic-secrets"
         self.env = clean_env(
             home,
@@ -99,7 +108,7 @@ class Stack:
             MEDIC_S6_STUB_DIR=str(HERE),
             MEDIC_S6_CANARY="S11CANARY" + secrets.token_hex(8),
             AGENT_INTERNAL_TOKEN="S11TOKEN" + secrets.token_hex(8),
-            COMPOSE_PROJECT_NAME=PROJECT,
+            COMPOSE_PROJECT_NAME=self.project,
             VIGIL_MEDIC_COMPOSE_OVERRIDE=":".join(str(f) for f in OVERRIDES),
         )
 
@@ -107,8 +116,8 @@ class Stack:
         """Through this branch's `dc`, which adds Medic's overlay and settings
         (and the test overrides, VIGIL_MEDIC_COMPOSE_OVERRIDE) once compose.env
         exists: the rendering step 2 must keep."""
-        # Never the default project: that is the developer's own deeptempo stack.
-        assert self.env["COMPOSE_PROJECT_NAME"].startswith("medic-")
+        # dc() takes no -p; COMPOSE_PROJECT_NAME is what keeps it off `docker`.
+        require_compose_project(self.env["COMPOSE_PROJECT_NAME"])
         done = subprocess.run(
             [
                 "bash",
@@ -197,8 +206,8 @@ def stack(tmp_path_factory):
         s.docker("image", "rm", *IMAGES, check=False)
 
 
-def _medic_net(info: dict) -> bool:
-    return f"{PROJECT}_medic-net" in info["NetworkSettings"]["Networks"]
+def _medic_net(project: str, info: dict) -> bool:
+    return f"{project}_medic-net" in info["NetworkSettings"]["Networks"]
 
 
 def _reach(s: Stack) -> dict:
@@ -211,7 +220,8 @@ def restarted(stack):
     s = stack
     before = {svc: s.cid(svc) for svc in ("agent-worker", "soc-daemon", "medic")}
     assert all(
-        _medic_net(s.inspect(before[svc])) for svc in ("agent-worker", "soc-daemon")
+        _medic_net(s.project, s.inspect(before[svc]))
+        for svc in ("agent-worker", "soc-daemon")
     )
     assert isinstance(_reach(s)["worker"], int)
     names = {svc: s.inspect(cid)["Name"].lstrip("/") for svc, cid in before.items()}
@@ -241,7 +251,7 @@ def test_start_path_keeps_the_agents_on_medic_net(restarted) -> None:
         assert after == before[svc], f"{svc} was recreated without Medic's overlay"
         info = s.inspect(after)
         assert info["State"]["Running"], svc
-        assert _medic_net(info), f"{svc} is off medic-net"
+        assert _medic_net(s.project, info), f"{svc} is off medic-net"
 
 
 def test_medic_still_reaches_the_worker_and_daemon(restarted) -> None:
