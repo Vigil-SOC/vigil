@@ -58,6 +58,13 @@ def test_response_action_matches_the_live_branches():
     assert response_action_decision("medium", 0.92, "block", config)[0] == "block"
 
 
+def test_raised_floors_move_the_decision():
+    config = ResponseConfig(critical_action_floor=0.90, high_action_floor=0.95)
+    assert response_action_decision("critical", 0.85, "", config) is None
+    assert response_action_decision("high", 0.90, "", config) is None
+    assert response_action_decision("high", 0.79, "", config) is None
+
+
 def test_auto_response_off_is_no_action():
     config = ResponseConfig(auto_response_enabled=False)
     assert response_action_decision("critical", 0.99, "isolate", config) is None
