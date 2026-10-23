@@ -45,7 +45,7 @@ export interface ArchEntry {
 }
 
 // The hunt lead-loop, minus its arch prompt. `hunt` and `adjudicate` run this exact
-// loop — same actions, ownership, projection and notes — and differ only in
+// loop, with the same actions, ownership, projection and notes, and differ only in
 // the arch that frames the lead's job, so the shared mechanics live here and drift
 // between the kinds is impossible rather than a two-place edit. `root_cause` does
 // not: a backward trace is its own workflow.
