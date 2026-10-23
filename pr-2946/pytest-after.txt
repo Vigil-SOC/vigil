@@ -1,0 +1,15 @@
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+2.67s setup    unit/storage/test_ai_decision_stats_db.py::test_outcome_breakdown_is_scoped_to_the_requested_agent
+1.86s teardown unit/storage/test_ai_decision_stats_db.py::test_outcome_breakdown_is_scoped_to_the_requested_agent
+0.41s call     unit/reporting/test_ai_decisions_db_down.py::test_reads_fail_loud[/api/ai/decisions]
+0.27s call     unit/storage/test_ai_decision_stats_db.py::test_outcome_breakdown_is_scoped_to_the_requested_agent
+0.20s setup    unit/reporting/test_ai_decisions_db_down.py::test_reads_fail_loud[/api/ai/decisions]
+0.16s call     unit/reporting/test_ai_decisions_db_down.py::test_unknown_decision_is_still_a_404
+0.15s call     unit/reporting/test_ai_decision_feedback_reviewer.py::test_a_user_without_the_approvals_right_cannot_grade
+0.14s call     unit/reporting/test_ai_decisions_db_down.py::test_feedback_fails_loud
+0.13s call     unit/reporting/test_ai_decision_feedback_reviewer.py::test_feedback_without_a_reviewer_field_is_accepted
+0.13s call     unit/reporting/test_ai_decisions_db_down.py::test_reads_fail_loud[/api/ai/decisions/dec-1]
+================== 12 passed, 1 warning in 102.93s (0:01:42) ===================
