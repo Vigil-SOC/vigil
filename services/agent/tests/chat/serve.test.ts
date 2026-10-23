@@ -146,8 +146,8 @@ describe("a reader who leaves mid-step", () => {
     let started!: () => void;
     const inFlight = new Promise<void>((resolve) => (started = resolve));
     const scripted = scriptedHarness([]);
-    const build: HarnessFactory = (kind, spec, runState, memory, seed) => ({
-      ...scripted(kind, spec, runState, memory, seed),
+    const build: HarnessFactory = (spec, runState, memory, seed) => ({
+      ...scripted(spec, runState, memory, seed),
       provider: {
         model: "scripted/model",
         provider_type: "scripted",
