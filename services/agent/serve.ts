@@ -77,7 +77,6 @@ export interface ChatRequest {
   agent_id?: string;
 }
 
-// Before the 200: past it, a refusal can only be an error frame.
 function parseChatRequest(text: string): ChatRequest {
   const body: unknown = JSON.parse(text);
   if (typeof body !== "object" || body === null || Array.isArray(body)) throw new SpecError("a chat request is a JSON object");
