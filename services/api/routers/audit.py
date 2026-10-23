@@ -20,12 +20,11 @@ from fastapi.responses import StreamingResponse
 from core.audit import trail
 from core.auth import current_user as current_user_module
 from core.auth import principals
-from core.auth.auth_service import AuthService
+from core.auth.auth_service import AuthService, _is_service_account
 from core.auth.current_user import get_current_user
 from core.auth.permissions import require_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import Principal, User
-from core.storage.unit_of_work import unit_of_work
+from core.storage.models import User
 
 router = APIRouter()
 
@@ -88,22 +87,6 @@ def _require_sign_in(request: Request) -> None:
         raise HTTPException(status_code=401, detail=_SIGN_IN_REQUIRED)
 
 
-def _principal_is_service_account(user_id: str) -> bool:
-    """The principal row ``_is_person`` reads, when its kind is a service account."""
-    with unit_of_work() as session:
-        principal_id = (
-            session.query(User.principal_id).filter(User.user_id == user_id).scalar()
-        )
-        if not principal_id:
-            return False
-        kind = (
-            session.query(Principal.kind)
-            .filter(Principal.principal_id == principal_id)
-            .scalar()
-        )
-        return kind == principals.SERVICE_ACCOUNT
-
-
 def require_forward():
     """A sign-in, then ``audit.read`` for a service account and ``audit.forward`` otherwise.
 
@@ -115,7 +98,7 @@ def require_forward():
         _require_sign_in(request)
         permission = (
             "audit.read"
-            if _principal_is_service_account(user.user_id)
+            if _is_service_account(user)
             else "audit.forward"
         )
         if not AuthService.check_permission(user.user_id, permission):
