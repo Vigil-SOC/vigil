@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0004_agent_attribution"
-down_revision = "0003_principals_sign_ins"
+revision = "0005_agent_attribution"
+down_revision = "0004_session_cutoff"
 
 
 def upgrade() -> None:
