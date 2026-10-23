@@ -32,12 +32,13 @@ from sqlalchemy.orm import Session
 from core.agents.projections import THREAT_HUNT_WORKFLOW_ID
 from core.memory.entity_keys import normalise_keys
 from core.storage.unit_of_work import unit_of_work
-from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
+from core.workflows.workflow_run_service import (
+    IN_FLIGHT_STATUSES,
+    LIST_RUNS_MAX,
+    WorkflowRunService,
+)
 
 Row = Dict[str, Any]
-
-# Exactly the statuses set_status accepts as non-terminal.
-IN_FLIGHT_STATUSES = ("running", "paused")
 
 _T_ID = re.compile(r"^T\d{4}(?:\.\d{3})?$")
 

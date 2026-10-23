@@ -1,0 +1,60 @@
+{
+  "fault": {
+    "mode": "P-4",
+    "cause": "P-4.a",
+    "class": "pipeline",
+    "lane_expected": null
+  },
+  "windows": {
+    "baseline": {
+      "start": "2026-10-07T10:00:00Z",
+      "end": "2026-10-07T10:10:00Z"
+    },
+    "fault": {
+      "start": "2026-10-07T10:10:00Z",
+      "end": "2026-10-07T10:20:00Z"
+    },
+    "recovery": {
+      "start": "2026-10-07T10:20:00Z",
+      "end": "2026-10-07T10:30:00Z"
+    }
+  },
+  "injection": {
+    "at": "2026-10-07T10:10:00Z",
+    "actions": [
+      "docker compose stop backend-db"
+    ]
+  },
+  "recovery_action": {
+    "at": "2026-10-07T10:20:00Z",
+    "actions": [
+      "docker compose start backend-db"
+    ]
+  },
+  "expected": {
+    "baseline": {
+      "fires": [],
+      "may_fire": [],
+      "detect_within_s": null,
+      "clear_within_s": null
+    },
+    "fault": {
+      "fires": [
+        "P-4"
+      ],
+      "may_fire": [
+        "L-4"
+      ],
+      "detect_within_s": 300,
+      "clear_within_s": null
+    },
+    "recovery": {
+      "fires": [],
+      "may_fire": [
+        "P-4"
+      ],
+      "detect_within_s": null,
+      "clear_within_s": 300
+    }
+  }
+}

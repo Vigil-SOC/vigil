@@ -8,6 +8,7 @@ import json
 import pytest
 
 from core.agents.builtins import BUILTIN_AGENTS
+from core.agents.mcp_tools import MCPFailure
 from core.agents.tool_registry import execute_backend_tool
 from core.llm.tool_schemas import ALL_TOOLS
 
@@ -139,7 +140,7 @@ async def test_a_mismatch_is_reported_and_the_ceiling_sheds_whole_steps(monkeypa
 @pytest.mark.asyncio
 async def test_a_step_that_is_not_a_number_is_the_models_mistake_to_hear(monkeypatch):
     _stub(monkeypatch, _big())
-    with pytest.raises(TypeError, match="step"):
+    with pytest.raises(MCPFailure, match="step"):
         await execute_backend_tool("replay_hunt", {"run_id": "r", "step": "last"})
 
 

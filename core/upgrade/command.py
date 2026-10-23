@@ -8,7 +8,8 @@ version and a non-empty ``VIGIL_UPGRADE_ACK_REASON``. Each revision is its own
 transaction. A database with tables and no ``alembic_version`` is adopted
 first (``core/upgrade/adopt.py``): ``--check`` runs the adoption in a
 transaction it rolls back. Apply outcomes other than a restart are appended to
-``$VIGIL_UPGRADE_DIR/history.jsonl``.
+``$VIGIL_UPGRADE_DIR/history.jsonl``. A revision may stash a report; that
+report is a field of the same record, not a second line.
 """
 
 from __future__ import annotations
@@ -311,11 +312,20 @@ def check_report(
     return report
 
 
-def _migrate(engine: Engine, script: ScriptDirectory) -> None:
-    """Every pending revision, each in its own transaction."""
+def _migrate(engine: Engine, script: ScriptDirectory) -> list[dict]:
+    """Every pending revision, each in its own transaction.
+
+    Returns reports stashed by those revisions, oldest first.
+    """
+    from core.upgrade.revision import note_stamped, take_reports
 
     def upgrade(rev, _context):
         return script._upgrade_revs("heads", rev)
+
+    def _on_version(ctx, step, heads, run_args):  # noqa: ARG001
+        # After the version-row update, still inside the revision's transaction.
+        if step.up_revision_id:
+            note_stamped(step.up_revision_id)
 
     with engine.connect() as conn, EnvironmentContext(
         alembic_config(), script, fn=upgrade, destination_rev="heads"
@@ -324,9 +334,11 @@ def _migrate(engine: Engine, script: ScriptDirectory) -> None:
             connection=conn,
             transaction_per_migration=True,
             version_table_schema="public",
+            on_version_apply=_on_version,
         )
         with env.begin_transaction():
             env.run_migrations()
+    return take_reports()
 
 
 def _record(
@@ -335,6 +347,7 @@ def _record(
     outcome: str,
     reason: str,
     adoption: Optional[adopt.Adoption] = None,
+    reports: Optional[list[dict]] = None,
 ):
     entry: dict[str, Any] = {
         "time": datetime.now(timezone.utc).isoformat(),
@@ -349,6 +362,8 @@ def _record(
         entry["adoption"] = adoption.summary()
         if adoption.drift:  # schema only: object names and definitions
             entry["drift"] = adoption.drift
+    if reports:
+        entry["reports"] = reports
     if upgrade_dir is not None:
         upgrade_dir.mkdir(parents=True, exist_ok=True)
         with (upgrade_dir / "history.jsonl").open("a", encoding="utf-8") as f:
@@ -367,6 +382,10 @@ def run(
     state_dir: Optional[Path] = None,
     out: TextIO = sys.stdout,
 ) -> int:
+    from core.upgrade.revision import take_reports
+
+    # A report stashed by a revision that did not finish must not leak in.
+    take_reports()
     engine = create_engine(url, poolclass=NullPool)
     script = script_directory()
 
@@ -410,12 +429,13 @@ def run(
                     # Repairs and the stamp commit together or not at all.
                     with engine.connect() as conn, conn.begin():
                         adoption = _adopt(conn, current.adoption.stamp, script)
-                _migrate(engine, script)
+                reports = _migrate(engine, script)
             except UnknownDrift as e:
                 emit(_record(upgrade_dir, current, "refused", str(e), e.adoption))
                 return EXIT_REFUSED
             except Exception as e:  # noqa: BLE001 - recorded, then non-zero exit
                 # A set adoption committed before a later revision failed.
+                # A report is kept only when its version row was updated.
                 emit(
                     _record(
                         upgrade_dir,
@@ -423,11 +443,12 @@ def run(
                         "failed",
                         f"{type(e).__name__}: {e}",
                         adoption,
+                        take_reports(),
                     )
                 )
                 return EXIT_FAILED
             reason = ack_reason.strip() if current.restore_point == OVERRIDDEN else ""
-            emit(_record(upgrade_dir, current, "applied", reason, adoption))
+            emit(_record(upgrade_dir, current, "applied", reason, adoption, reports))
             return EXIT_OK
     except UpgradeBusy as e:
         emit({"outcome": "refused", "reason": str(e)})
