@@ -1,0 +1,8 @@
+-------------------------------------------------------------------------------------------
+TOTAL                                                        49427  46785   5.35%
+
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+======================== 43 passed in 94.71s (0:01:34) =========================

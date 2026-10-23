@@ -1,0 +1,7 @@
+save custom-a 200
+save custom-b 200
+list ['custom-a', 'custom-b']
+dir ['__init__.py', 'custom-a_server.py', 'custom-b_server.py', 'metadata.json']
+save on corrupt 500 {'detail': 'Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'}
+list on corrupt 500
+file after {trunc
