@@ -46,7 +46,6 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
-    Sequence,
     Tuple,
 )
 
@@ -211,7 +210,7 @@ def _caller_principal_column(session: Session) -> bool:
     return _has_caller_principal
 
 
-def _iso(value: Any) -> Any:
+def iso(value: Any) -> Any:
     """Timestamps travel as ISO-8601 with an offset, matching the contract."""
     if isinstance(value, datetime):
         return value.isoformat().replace("+00:00", "Z")
@@ -250,14 +249,14 @@ def _as_of(raw: Any) -> datetime:
 
 
 def _window(row: Mapping[str, Any]) -> Dict[str, Any]:
-    return {"first_seen": _iso(row["first_seen"]), "last_seen": _iso(row["last_seen"])}
+    return {"first_seen": iso(row["first_seen"]), "last_seen": iso(row["last_seen"])}
 
 
 def _provenance(row: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "investigation_kind": row["investigation_kind"],
         "investigation_id": row["investigation_id"],
-        "concluded_at": _iso(row["concluded_at"]),
+        "concluded_at": iso(row["concluded_at"]),
     }
 
 
@@ -272,7 +271,7 @@ def _sighting(row: Mapping[str, Any]) -> Row:
     }
 
 
-def _verdict(row: Mapping[str, Any]) -> Row:
+def verdict_row(row: Mapping[str, Any]) -> Row:
     return {
         **_provenance(row),
         "hypothesis_id": row["hypothesis_id"],
@@ -289,7 +288,7 @@ def _verdict(row: Mapping[str, Any]) -> Row:
     }
 
 
-def _gap(row: Mapping[str, Any]) -> Row:
+def gap_row(row: Mapping[str, Any]) -> Row:
     return {
         **_provenance(row),
         "hypothesis_id": row["hypothesis_id"],
@@ -300,7 +299,7 @@ def _gap(row: Mapping[str, Any]) -> Row:
     }
 
 
-_SHAPES = {"sightings": _sighting, "verdicts": _verdict, "gaps": _gap}
+_SHAPES = {"sightings": _sighting, "verdicts": verdict_row, "gaps": gap_row}
 
 
 class _Selected(NamedTuple):
@@ -397,9 +396,8 @@ def _apply_overall_cap(
     return kept, dropped
 
 
-def _attach_sources(session: Session, verdicts: Sequence[_Selected]) -> None:
-    """Give each surviving Verdict its per-source Stance and stamped Source Tier."""
-    by_id = {selected.id: selected.row for selected in verdicts}
+def attach_sources(session: Session, by_id: Mapping[int, Row]) -> None:
+    """Give each Verdict, keyed by id, its per-source Stance and stamped Source Tier."""
     if not by_id:
         return
     for row in session.execute(
@@ -470,7 +468,7 @@ def recall(
     moment = _as_of(as_of)
     result: Dict[str, Any] = {
         "keys": normalised,
-        "as_of": _iso(moment),
+        "as_of": iso(moment),
         "sightings": [],
         "verdicts": [],
         "gaps": [],
@@ -495,7 +493,7 @@ def recall(
                 result[kind] = [selected.row for selected in kept[kind]]
                 result["dropped"][kind]["overall_cap"] = spent[kind]
 
-            _attach_sources(db, kept["verdicts"])
+            attach_sources(db, {s.id: s.row for s in kept["verdicts"]})
 
         _log(db, result, moment, caller_kind, caller_id, caller_principal_id)
 
