@@ -149,7 +149,7 @@ def before_send_filter(event, hint):
     """Filter events before sending to Sentry."""
 
     # Don't send health check errors
-    if event.get("request", {}).get("url", "").endswith("/health"):
+    if event.get("request", {}).get("url", "").endswith(("/health", "/health/ready")):
         return None
 
     # Don't send test errors
