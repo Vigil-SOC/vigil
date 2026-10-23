@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { caseMetricsApi } from '../../services/api'
 import type { Phase } from '../cases/useCases'
 
-export type { Phase } from '../cases/useCases'
-
 interface PriorityRow {
   priority: string
   count: number
