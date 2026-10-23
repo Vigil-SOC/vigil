@@ -283,7 +283,6 @@ def verdict_row(row: Mapping[str, Any]) -> Row:
         "trust": row["trust"],
         "window": _window(row),
         "window_source": row["window_source"],
-        # Filled once the overall cap has said which Verdicts survive.
         "sources": [],
     }
 
