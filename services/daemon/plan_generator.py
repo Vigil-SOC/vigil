@@ -1,13 +1,10 @@
 """Workflow selection and initial workdir files for autonomous investigations."""
 
-import logging
 from typing import Any, Dict, List, Optional
 
 from core.documents.fence import fenced_document
 from core.time import utcnow
 from core.workflows.routing import FALLBACK_WORKFLOW
-
-logger = logging.getLogger(__name__)
 
 
 def select_workflow(finding: Dict[str, Any]) -> str:
