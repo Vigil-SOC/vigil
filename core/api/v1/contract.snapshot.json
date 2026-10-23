@@ -2726,7 +2726,7 @@
         "type": "object"
       },
       "PendingActionResponse": {
-        "description": "Frozen shape of an approval action (mirrors ``_pending_to_dict``).\n\nValue types are permissive where the underlying dataclass carries open JSON\n(evidence, parameters, execution_result); the key set is the promise.",
+        "description": "Frozen shape of an approval action.\n\nValue types are permissive where the underlying dataclass carries open JSON\n(evidence, parameters, execution_result); the key set is the promise.",
         "properties": {
           "action_id": {
             "anyOf": [
