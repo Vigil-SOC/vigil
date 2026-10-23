@@ -81,7 +81,7 @@ function outcomeChip(o: Outcome) {
     modify: ['modify', 'Modified'],
     pending: ['pending', 'Pending'],
   }
-  const [c, t] = map[o] || ['pending', o]
+  const [c, t] = map[o]
   return <span className={`outcome ${c}`}>{t}</span>
 }
 
@@ -135,14 +135,14 @@ function DecisionRows({
   error,
   reload,
   onSelect,
-  empty,
+  filtered,
 }: {
   rows: Decision[]
   phase: Phase
   error: string | null
   reload: () => void
   onSelect: (id: string) => void
-  empty: string
+  filtered: boolean
 }) {
   // keyed on a stable signature, not the array identity, so the page doesn't
   // reset on every render
@@ -170,8 +170,8 @@ function DecisionRows({
               <EmptyState
                 table
                 icon="brain"
-                title={empty.includes('filters') ? 'No decisions match these filters' : 'No AI decisions yet'}
-                body={empty.includes('filters') ? 'Clear the selected filters to return to the full decision history.' : 'Agent decisions will appear here after workflows or autonomous investigations run.'}
+                title={filtered ? 'No decisions match these filters' : 'No AI decisions yet'}
+                body={filtered ? 'Clear the selected filters to return to the full decision history.' : 'Agent decisions will appear here after workflows or autonomous investigations run.'}
               />
             </StateRow>
           )}
@@ -538,18 +538,6 @@ function DecisionsDetail({
             <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">AI recommendation</h3><span className="flex-1" />{confMeter(d.conf)}</div>
             <div className="p-[18px]"><p style={{ margin: '0 0 4px', color: 'var(--tx-2)', fontSize: '13.5px', lineHeight: 1.6 }}>{d.rationale || 'No rationale provided.'}</p></div>
           </div>
-          {d.evidence.length > 0 && (
-            <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden">
-              <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Supporting evidence</h3></div>
-              <div className="p-[18px]">
-                <div className="ev-list">
-                  {d.evidence.map((e, i) => (
-                    <div className="ev-item" key={i}><span className="ed" />{e}</div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
           <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden">
             <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Decision details</h3></div>
             <div className="p-[18px]">
@@ -613,7 +601,7 @@ export default function DecisionsScreen({ setViewFull }: ConsoleScreenProps) {
   const [rejectFor, setRejectFor] = useState<ApprovalAction | null>(null)
   const [approvalBanner, setApprovalBanner] = useState<string | null>(null)
 
-  const stats = useDecisionStats('all')
+  const stats = useDecisionStats()
   const pending = usePendingDecisions()
   const all = useDecisions(agentF, statusF)
   const approvals = usePendingApprovals()
@@ -730,10 +718,10 @@ export default function DecisionsScreen({ setViewFull }: ConsoleScreenProps) {
       )}
 
       {tab === 'pending' && (
-        <DecisionRows rows={filterRows(pending.rows)} phase={pending.phase} error={pending.error} reload={pending.reload} onSelect={setSelected} empty="No decisions awaiting feedback." />
+        <DecisionRows rows={filterRows(pending.rows)} phase={pending.phase} error={pending.error} reload={pending.reload} onSelect={setSelected} filtered={false} />
       )}
       {tab === 'all' && (
-        <DecisionRows rows={filterRows(all.rows)} phase={all.phase} error={all.error} reload={all.reload} onSelect={setSelected} empty="No decisions match your filters." />
+        <DecisionRows rows={filterRows(all.rows)} phase={all.phase} error={all.error} reload={all.reload} onSelect={setSelected} filtered />
       )}
       {tab === 'analytics' && <AnalyticsTab s={stats.stats} phase={stats.phase} error={stats.error} reload={stats.reload} />}
       {tab === 'approvals' && (

@@ -4,7 +4,7 @@ import { Limiter } from "../../core/limiter.js";
 import { costOf } from "../../core/prices.js";
 import { EMIT_TOOL, ModelSilent, OutputCapReached, openAiSurface, resetEmitMode, resetOutputCap, setSilentPauses } from "../../core/wire.js";
 import { ZERO_TOKENS, type TokenCounts } from "../../contracts/budget.js";
-import type { Message, Provider, ToolCall, Turn, TurnRequest } from "../../core/provider.js";
+import { ProviderError, type Message, type Provider, type ToolCall, type Turn, type TurnRequest } from "../../core/provider.js";
 
 type Body = OpenAI.Chat.ChatCompletionCreateParams;
 
@@ -605,6 +605,33 @@ describe("the wire streams", () => {
     expect(bodies[0]?.stream_options).toEqual({ include_usage: true });
   });
 
+  // The SDK ends a stream aborted mid-body quietly; a reader who left is not an answer (#3036).
+  it("fails a call cancelled mid-stream with what it burned, and does not retry it", async () => {
+    const reader = new AbortController();
+    let calls = 0;
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            calls += 1;
+            return {
+              async *[Symbol.asyncIterator]() {
+                yield { id: "c", created: 1, model: "m", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "half an ans" }, finish_reason: null }] } as unknown as Chunk;
+                reader.abort(new Error("the reader stopped the turn"));
+              },
+            };
+          },
+        },
+      },
+    } as unknown as OpenAI;
+    const surface = openAiSurface(client, "openai/gpt-4o", new Limiter({ rpm: 10_000, tpm: 10_000_000 }, 4, 3), "openai");
+
+    const failure = await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [], signal: reader.signal }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ProviderError);
+    expect((failure as ProviderError).tokens.output).toBeGreaterThan(0);
+    expect(calls).toBe(1);
+  });
+
   it("keeps every fragment of a reply rather than the last one", async () => {
     const surface = surfaceOf(async () =>
       completion({ role: "assistant", content: "the whole answer, in pieces" }),
@@ -750,6 +777,18 @@ describe("an empty reply", () => {
     await expect(failed).rejects.toBeInstanceOf(ModelSilent);
     await expect(failed).rejects.toMatchObject({ message: expect.stringContaining("3 empty replies in a row"), tokens: { input: 300, output: 0 } });
     expect(calls).toBe(3);
+  });
+
+  it("carries what the empty replies were billed when the reader stops it between attempts", async () => {
+    setSilentPauses([60_000]);
+    const reader = new AbortController();
+    const surface = surfaceOf(async () => {
+      setTimeout(() => reader.abort(new Error("the reader stopped the turn")), 0);
+      return completion({ role: "assistant", content: "" }, EMPTY);
+    });
+
+    const failed = turn(surface, { messages: [{ role: "user", content: "go" }], tools: [], signal: reader.signal });
+    await expect(failed).rejects.toMatchObject({ tokens: { input: 100, output: 0 } });
   });
 
   it("counts a forced emit with no arguments at zero tokens as empty", async () => {

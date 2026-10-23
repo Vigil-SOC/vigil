@@ -56,6 +56,8 @@ OUTCOME_DONE = "done"
 OUTCOME_DENIED = "denied"
 OUTCOME_RECORDED_LATE = "recorded late"
 OUTCOME_UNKNOWN = "outcome unknown"
+# A restore whose settle step failed after the swap (#2768).
+OUTCOME_FAILED = "failed"
 ATTRIBUTION_VERIFIED = "verified"
 ATTRIBUTION_MATCHED_BY_NAME = "matched_by_name"
 ATTRIBUTION_UNVERIFIED_LEGACY = "unverified_legacy"
@@ -505,6 +507,7 @@ _OUTCOMES = {
     "recorded_late": OUTCOME_RECORDED_LATE,
     "outcome unknown": OUTCOME_UNKNOWN,
     "outcome_unknown": OUTCOME_UNKNOWN,
+    "failed": OUTCOME_FAILED,
 }
 _ATTRIBUTIONS = {
     "verified": ATTRIBUTION_VERIFIED,
@@ -616,7 +619,7 @@ def where_clause(query: TrailQuery) -> tuple[str, dict[str, Any]]:
         params["object_ref"] = query.object_ref
     if query.outcome == OUTCOME_RECORDED_LATE:
         parts.append("t.late")
-    elif query.outcome in (OUTCOME_DONE, OUTCOME_DENIED):
+    elif query.outcome in (OUTCOME_DONE, OUTCOME_DENIED, OUTCOME_FAILED):
         parts.append(f"t.payload->>'{OUTCOME}' = :outcome")
         params["outcome"] = query.outcome
     elif query.outcome == OUTCOME_UNKNOWN:

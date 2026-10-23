@@ -9,7 +9,6 @@ import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
 import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
-import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
@@ -17,7 +16,7 @@ import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
 import { chatEvents, sse } from "./plugins/chat/sse.js";
 import { runChat, type Turn } from "./plugins/chat/workflow.js";
-import { harnessFor, type HarnessFactory } from "./harness.js";
+import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import type { ProjectionOptions } from "./plugins/hunt/projection.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
@@ -107,15 +106,22 @@ export async function memoryFor(state: State, parentRunId: string | undefined): 
 }
 
 export async function streamChat(state: State, request: ChatRequest, res: ServerResponse, build: HarnessFactory = harnessFor): Promise<void> {
+  // The reader leaving cancels the call in flight rather than waiting out the step:
+  // the wire buffers a step whole, so the check between events comes after the bill.
+  const reader = new AbortController();
+  const leave = () => reader.abort(new Error("the reader stopped the turn"));
+  res.on("close", leave);
+  const write = (frame: string) => void (res.writableEnded || res.destroyed || res.write(frame));
   // Assembling the spec is inside the try because it is the likeliest thing to
   // refuse: the headers are already sent, so a refusal is a frame or it is nothing.
   try {
     const spec = chatSpec(request);
-    const harness = build("chat" as RunKind, spec, state, await memoryFor(state, request.parent_run_id), FRESH, request.principal);
+    const harness = build(spec, state, await memoryFor(state, request.parent_run_id), FRESH, request.principal);
     const stream = runChat(harness, {
       run_id: request.run_id,
       spec,
       turns: request.turns,
+      signal: reader.signal,
       ...(request.principal === undefined ? {} : { principal: request.principal }),
       ...(request.actor === undefined ? {} : { started_by: request.actor }),
       ...(request.origin === undefined ? {} : { origin: request.origin }),
@@ -124,16 +130,21 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
 
     for (;;) {
       const next = await stream.next();
-      if (next.done) break;
-      for (const event of chatEvents(next.value)) res.write(sse(event));
-      // The reader is gone, so the generator is finalised here rather than after
-      // a whole answer nobody will read: its finally still journals the spend.
-      if (res.writableEnded || res.destroyed) return void (await stream.return(undefined as never));
+      if (next.done) {
+        if (reader.signal.aborted) log.info("chat turn stopped by its reader", { run_id: request.run_id, reason: next.value.reason });
+        break;
+      }
+      // Drained even once the reader is gone: the abort ends the turn within the
+      // call in flight, and return() here would abandon a step before its spend.
+      for (const event of chatEvents(next.value)) write(sse(event));
     }
   } catch (error) {
     log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
     failed(error);
-    res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
+    write(sse({ error: error instanceof Error ? error.message : String(error) }));
+  } finally {
+    // close also fires after a clean end(), which is not the reader stopping anything.
+    res.off("close", leave);
   }
   res.end();
 }
@@ -150,7 +161,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
 // Hashed because timingSafeEqual throws on a length mismatch, and the throw would
 // leak the length.
 function authorised(req: IncomingMessage): boolean {
-  const expected = process.env["AGENT_INTERNAL_TOKEN"] ?? process.env["VIGIL_TOOLS_TOKEN"] ?? "";
+  const expected = internalToken();
   if (expected === "") return false;
   const digest = (value: string): Buffer => createHash("sha256").update(value).digest();
   return timingSafeEqual(digest(req.headers.authorization ?? ""), digest(`Bearer ${expected}`));

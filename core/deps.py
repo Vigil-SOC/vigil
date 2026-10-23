@@ -12,6 +12,7 @@ not import ``services`` — see ``.importlinter``.
 
 from typing import Optional
 
+import httpx
 from fastapi import Request
 
 from core.agents.agent_ai_generator import AgentAIGenerator
@@ -65,6 +66,10 @@ def provide_detection_rules(request: Request) -> DetectionRulesService:
 
 def provide_process_health(request: Request) -> ProcessHealth:
     return request.app.state.process_health
+
+
+def provide_agent_http(request: Request) -> httpx.AsyncClient:
+    return request.app.state.agent_http
 
 
 # None when the MCP SDK is not installed.

@@ -10,6 +10,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.attribution import current_claims
+from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import (
     APPROVE_PERMISSION,
@@ -17,6 +18,12 @@ from core.auth.permissions import (
     username_has_permission,
 )
 from core.cases.case_sla_service import open_case
+from core.cases.case_status import (
+    CASE_STATUSES,
+    CaseStatus,
+    record_status_change,
+    status_change,
+)
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
@@ -184,7 +191,7 @@ def get_finding(*, finding_id: str) -> Any:
 
 
 # A dismissal is the finding's terminal state. The actor is the caller and the
-# kind is agent, as with record_agent_close; the reason is what makes it a record.
+# kind is agent, as with a status edit that closes a case; the reason is what makes it a record.
 def dismiss_finding(*, finding_id: str, reason: str) -> Args:
     if refusal := permission_refusal("findings.write"):
         return refusal
@@ -240,6 +247,14 @@ def get_case(*, case_id: str) -> Any:
     return _data().get_case(case_id)
 
 
+def _status_refusal(status: str) -> Optional[Args]:
+    if status in CASE_STATUSES:
+        return None
+    return {
+        "error": f"Unknown case status {status!r}; use one of {list(CASE_STATUSES)}"
+    }
+
+
 def create_case(
     *,
     title: str,
@@ -247,11 +262,13 @@ def create_case(
     severity: Optional[str] = None,
     priority: Optional[str] = None,
     finding_ids: Optional[list] = None,
-    status: str = "new",
+    status: CaseStatus = "new",
     assignee: Optional[str] = None,
     tags: Optional[list] = None,
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
+        return refusal
+    if refusal := _status_refusal(status):
         return refusal
     data = _data()
     ids = finding_ids or []
@@ -288,14 +305,17 @@ def update_case(
     case_id: str,
     title: Optional[str] = None,
     description: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[CaseStatus] = None,
     priority: Optional[str] = None,
     assignee: Optional[str] = None,
     add_note: Optional[str] = None,
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
         return refusal
-    from core.cases.agent_closure import record_agent_close, record_reopen
+    if status is not None and (refusal := _status_refusal(status)):
+        return refusal
+    from core.cases.agent_closure import actor, service_session
+    from core.cases.closure import ClosedByKind
     from core.time import utcnow
 
     data = _data()
@@ -308,7 +328,7 @@ def update_case(
         updates["title"] = title
     if description:
         updates["description"] = description
-    if status:
+    if status is not None:
         updates["status"] = status
     if priority:
         updates["priority"] = priority
@@ -319,40 +339,34 @@ def update_case(
         notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})
         updates["notes"] = notes
 
-    was_closed = (case.get("status") or "").strip() == "closed"
+    change = status_change(case.get("status"), status)
     if not data.update_case(case_id, **updates):
         return {"error": "Failed to update case"}
-    if updates.get("status") == "closed" and not was_closed:
-        record_agent_close(case_id)
-    elif was_closed and updates.get("status") not in (None, "closed"):
-        record_reopen(case_id)
+    if change:
+        with service_session() as session:
+            record_status_change(
+                session,
+                case_id,
+                change,
+                closed_by=actor(),
+                closed_by_kind=ClosedByKind.AGENT,
+            )
     return {"success": True, "case_id": case_id}
 
 
-# Missing case or empty records must still be a result: an error here parks the
-# lead before it can start. Empty sections are the answer, not refused.
 def _case_records(args: Args) -> Args:
-    from core.cases.case_records_service import list_escalations, list_tasks
+    from core.cases.case_records_service import list_escalations, tasks_on_case
     from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
-    try:
-        tasks = CaseTaskSchema.dump_many(list_tasks(case_id))
-    except Exception:
-        logger.exception("Listing tasks for case %s failed; reporting none", case_id)
-        tasks = []
-    try:
-        with unit_of_work() as session:
-            escalations = CaseEscalationSchema.dump_many(
+    with unit_of_work() as session:
+        return {
+            "tasks": CaseTaskSchema.dump_many(tasks_on_case(session, case_id)),
+            "escalations": CaseEscalationSchema.dump_many(
                 list_escalations(session, case_id)
-            )
-    except Exception:
-        logger.exception(
-            "Listing escalations for case %s failed; reporting none", case_id
-        )
-        escalations = []
-    return {"tasks": tasks, "escalations": escalations}
+            ),
+        }
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
@@ -432,7 +446,9 @@ def _step(value: Any, name: str) -> Optional[int]:
     try:
         return int(value)
     except (TypeError, ValueError):
-        raise TypeError(f"replay_hunt {name} must be a whole step number") from None
+        raise MCPFailure(
+            "invalid_args", f"replay_hunt {name} must be a whole step number"
+        ) from None
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -505,7 +521,9 @@ async def replay_hunt(
     to_step: Any = None,
 ) -> Any:
     if not run_id:
-        raise TypeError("replay_hunt is missing a required argument: run_id")
+        raise MCPFailure(
+            "invalid_args", "replay_hunt is missing a required argument: run_id"
+        )
     first, last = _step(from_step, "from_step"), _step(to_step, "to_step")
     only = _step(step, "step")
     if only is not None:
@@ -543,7 +561,9 @@ def _indicator_lookup(args: Args) -> Any:
 
     values = args.get("values") or ([args["value"]] if args.get("value") else [])
     if not values:
-        raise TypeError("lookup_indicators is missing a required argument: values")
+        raise MCPFailure(
+            "invalid_args", "lookup_indicators is missing a required argument: values"
+        )
 
     indicator_type = args.get("indicator_type", "ip")
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
@@ -600,7 +620,7 @@ def _check_hunt_coverage(args: Args) -> Any:
             techniques=args.get("techniques") or (),
         )
     except ValueError as exc:
-        return {"error": str(exc)}
+        raise MCPFailure("invalid_args", str(exc)) from None
 
 
 # Learning episodes (#906): a window over Distil markers, and a JSONL export of a
@@ -651,6 +671,7 @@ def _without_approval_right() -> Optional[Args]:
 # would stamp "agent" and release a row the requirement already held.
 def approve_action(*, action_id: str) -> Args:
     from core.cases.agent_closure import actor
+    from core.response.approval_service import AlreadyDecided
 
     if current_caller() is None:
         return {"error": "Action cannot be approved: no principal is bound"}
@@ -658,27 +679,30 @@ def approve_action(*, action_id: str) -> Args:
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
-    return _decided(
-        _approvals().approve_action(
+    try:
+        action = _approvals().approve_action(
             action_id, actor(), approved_by_principal_id=principal
-        ),
-        "approved",
-    )
+        )
+    except AlreadyDecided as e:
+        return {"error": str(e)}
+    return _decided(action, "approved")
 
 
 def reject_action(*, action_id: str, reason: str) -> Args:
     from core.cases.agent_closure import actor
+    from core.response.approval_service import AlreadyDecided
 
     if refusal := _without_approval_right():
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
-    return _decided(
-        _approvals().reject_action(
+    try:
+        action = _approvals().reject_action(
             action_id, reason, actor(), approved_by_principal_id=principal
-        ),
-        "rejected",
-    )
+        )
+    except AlreadyDecided as e:
+        return {"error": str(e)}
+    return _decided(action, "rejected")
 
 
 def get_approval_stats(**_args: Any) -> Any:
