@@ -251,7 +251,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
 # Dockerfiles with `hadolint/hadolint-action@v3.5.0` (hadolint v2.15.1). Both
 # are static binaries pinned to the same versions so a local run reports what
 # CI will. actionlint reads .github/actionlint.yaml from the repo root, which
-# keeps shellcheck findings out of the gate, so shellcheck is not needed here.
+# keeps shellcheck findings out of that gate. medic.yml's host-native job still
+# runs `shellcheck` itself; that binary is installed below.
 RUN ARCH="$(dpkg --print-architecture)" \
     && ACTIONLINT_VERSION=1.7.12 \
     && curl --retry 3 --retry-delay 5 -fsSL \
@@ -384,3 +385,14 @@ ENV TESTING=true
 # Chrome for Testing, into /home/ubuntu/.agent-browser (system libraries are
 # already in place). arm64 uses the Playwright Chromium installed above.
 RUN if [ "$(dpkg --print-architecture)" != arm64 ]; then agent-browser install; fi
+
+# medic.yml (Medic host-native, Linux) runs `shellcheck` on
+# scripts/medic/host-native. ubuntu-latest image 20261012.334.1 ships the
+# noble package shellcheck 0.9.0-1 and the workflow does not install another
+# version. actionlint does not cover this; its shellcheck findings are
+# disabled in .github/actionlint.yaml.
+RUN sudo apt-get update \
+    && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       shellcheck=0.9.0-1 \
+    && sudo rm -rf /var/lib/apt/lists/* \
+    && shellcheck --version

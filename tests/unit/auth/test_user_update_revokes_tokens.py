@@ -84,6 +84,31 @@ def test_update_user_revokes_on_role_change():
             )
         )
     revoke.assert_awaited_once_with("u-1")
+    assert target.tokens_valid_after is not None
+
+
+def test_role_change_stands_when_redis_revocation_fails():
+    target = _user()
+    with (
+        patch.object(
+            users, "_apply_user_update", return_value=(target, "Role changed", {})
+        ),
+        patch.object(
+            users,
+            "revoke_all_for_user",
+            new=AsyncMock(side_effect=ConnectionError("OOM")),
+        ),
+    ):
+        payload = asyncio.run(
+            users.update_user(
+                "u-1",
+                users.UpdateUserRequest(role_id="role-viewer"),
+                _user(),
+                MagicMock(),
+            )
+        )
+    assert payload == {}
+    assert target.tokens_valid_after is not None
 
 
 def test_update_user_leaves_tokens_alone_otherwise():
@@ -98,3 +123,4 @@ def test_update_user_leaves_tokens_alone_otherwise():
             )
         )
     revoke.assert_not_awaited()
+    assert getattr(target, "tokens_valid_after", None) is None
