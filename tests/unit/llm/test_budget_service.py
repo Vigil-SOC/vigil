@@ -96,9 +96,8 @@ def test_get_active_vk_strips_whitespace():
 
 def test_get_active_vk_returns_none_when_db_unavailable():
     """A misconfigured persistence layer must not block LLM traffic.
-    The internal _get_settings catches DB errors and returns None;
-    get_active_vk passes that through to the dispatch path which then
-    falls back to bootstrap (no-VK) mode."""
+    A row-less settings read (None) passes through as not-configured;
+    DB errors are covered by test_settings_readers_raise_and_dispatch_fails_open."""
     with patch(
         "core.llm.cost.budget._get_settings",
         return_value=None,
@@ -108,7 +107,9 @@ def test_get_active_vk_returns_none_when_db_unavailable():
         assert get_active_vk() is None
 
 
-def test_settings_readers_raise_and_dispatch_fails_open():
+def test_settings_readers_raise_and_dispatch_fails_open(monkeypatch):
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setenv("LLM_BUDGET_UNLIMITED", "false")
     with patch(
         "core.llm.cost.budget.get_session", side_effect=RuntimeError("DB exploded")
     ):
