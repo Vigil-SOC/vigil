@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
+import type { operations } from './generated/schema'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -1096,6 +1097,75 @@ export const orchestratorApi = {
     api.get(`/orchestrator/investigations/${id}/export`, {
       responseType: 'blob',
     }),
+}
+
+/** The trail filter (core.audit.trail.make_query): the list and the export send the same one. */
+export type AuditFilter = Omit<
+  NonNullable<operations['get_api_audit_export']['parameters']['query']>,
+  'after'
+>
+
+export interface AuditEntry {
+  seq: number
+  occurred_at: string
+  late: boolean
+  entry_hash: string
+  payload: Record<string, unknown>
+  source_ip: string | null
+  actor_text: string | null
+  operator_text: string | null
+  attempted_name: string | null
+  personal: unknown
+}
+
+export interface AuditTip { seq: number; hash: string }
+
+export interface AuditVerify {
+  first: number | null
+  last: number | null
+  first_bad: number | null
+  reason: string
+  ok: boolean
+}
+
+export const AUDIT_PAGE = 100
+
+/** The filter as query params, empty ones left out. */
+export function auditParams(filter: AuditFilter): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(filter)) {
+    const text = value == null ? '' : String(value).trim()
+    if (text) out[key] = text
+  }
+  return out
+}
+
+export const auditApi = {
+  entries: (filter: AuditFilter, after?: number, limit = AUDIT_PAGE) =>
+    api.get<{ entries: AuditEntry[]; tip: AuditTip }>('/audit/entries', {
+      params: { ...auditParams(filter), ...(after != null ? { after } : {}), limit },
+    }),
+  exportTrail: (filter: AuditFilter) =>
+    api.get<Blob>('/audit/export', { params: auditParams(filter), responseType: 'blob' }),
+  /** Export the filter and save it as an NDJSON file. */
+  download: async (filter: AuditFilter, filename = 'audit.ndjson') => {
+    const res = await auditApi.exportTrail(filter).catch(async (e) => {
+      // a blob response carries its error body as a Blob; read it so the caller sees the detail
+      const data = e?.response?.data
+      if (data instanceof Blob) {
+        try { e.response.data = JSON.parse(await data.text()) } catch { /* not JSON */ }
+      }
+      throw e
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  verify: (first?: number, last?: number) =>
+    api.get<AuditVerify>('/audit/verify', { params: { first, last } }),
 }
 
 export interface FederationSourceView {
