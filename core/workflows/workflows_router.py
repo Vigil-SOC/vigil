@@ -124,7 +124,6 @@ class CustomWorkflowCreate(BaseModel):
     use_case: Optional[str] = ""
     trigger_examples: List[str] = Field(default_factory=list)
     phases: List[WorkflowPhaseSchema] = Field(default_factory=list)
-    created_by: Optional[str] = None
 
 
 class CustomWorkflowUpdate(BaseModel):
@@ -150,7 +149,6 @@ class WorkflowRunCancelRequest(BaseModel):
     """Payload when cancelling a paused / running run from the UI."""
 
     reason: str
-    rejected_by: Optional[str] = None
 
 
 # -----------------------------------------------------------------------------
@@ -234,10 +232,11 @@ async def list_custom_workflows(
 async def create_custom_workflow(
     payload: CustomWorkflowCreate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Create a new custom workflow."""
     try:
-        created = service.create(payload.model_dump())
+        created = service.create(payload.model_dump(), created_by=current_user.username)
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -254,16 +254,6 @@ class EpisodicDistilMarker(Base):
     # a second one to the same run, and comparing seq is what makes the later
     # conclusions re-derive instead of being skipped as a run already seen.
     origin_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    # Every run this investigation has been distilled from, origin_run_id
-    # included. One investigation can span more than one run, and the poll has
-    # only run ids to work with because agent_events carries no investigation id;
-    # without this, each run of one investigation misses the other's marker and
-    # both re-distil on every tick forever.
-    origin_run_ids: Mapped[List[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)),
-        nullable=False,
-        server_default=text("ARRAY[]::uuid[]"),
-    )
     # Bumped when the mapping changes. Re-deriving is delete-then-insert, so a
     # bump that now yields fewer rows leaves none of the old ones behind.
     distil_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -277,10 +267,6 @@ class EpisodicDistilMarker(Base):
     )
     distilled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-
-    __table_args__ = (
-        Index("idx_episodic_markers_origin", "origin_run_ids", postgresql_using="gin"),
     )
 
 
