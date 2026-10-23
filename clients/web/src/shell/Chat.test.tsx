@@ -533,6 +533,7 @@ describe('failed case-composer turns', () => {
     } as never)
     render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" />)
     await screen.findByRole('button', { name: /4 messages/ })
+    expect(conversationsApi.list).toHaveBeenCalledWith({ case_id: 'CASE-1', limit: 1 })
     expect(screen.getByText('first')).toBeInTheDocument()
     expect(screen.getByText('second')).toBeInTheDocument()
     expect(screen.getByText('No room.')).toBeInTheDocument()

@@ -6,12 +6,14 @@ additionally require ``integrations.write`` permission since enabling
 an MCP server can spawn subprocesses and surface tools to agents.
 """
 
+import asyncio
 import logging
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth import trail_events
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
 from core.integrations.mcp.service import MCPService
@@ -30,6 +32,22 @@ ROUTER_META = RouterMeta(
     tags=["mcp"],
     auth=Auth.REQUIRED,
 )
+
+
+async def _require_integrations_admin(current_user: User, attempted: str) -> None:
+    """require_integrations_admin, with a refusal on the audit trail."""
+    try:
+        require_integrations_admin(current_user)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            # Off the loop: the write may wait on the trail's lock.
+            await asyncio.to_thread(
+                trail_events.refused,
+                "auth.denied",
+                actor=current_user.principal_id,
+                attempted=attempted,
+            )
+        raise
 
 
 def _validate_known_server(server_name: str) -> None:
@@ -503,7 +521,7 @@ async def mint_credential(
     The token is in this response and nowhere else. It is not stored and cannot
     be shown again; an operator who loses one mints another and revokes this.
     """
-    require_integrations_admin(current_user)
+    await _require_integrations_admin(current_user, "credential.mint")
 
     from datetime import timedelta
 
@@ -515,7 +533,13 @@ async def mint_credential(
         if body.expires_in_days
         else None
     )
-    minted = mint(current_user.user_id, body.label, expires_at=expires_at)
+    minted = await asyncio.to_thread(
+        mint,
+        current_user.user_id,
+        body.label,
+        expires_at=expires_at,
+        actor=current_user.principal_id,
+    )
     if minted is None:
         raise HTTPException(status_code=500, detail="Could not mint a credential")
 
@@ -532,7 +556,7 @@ async def revoke_credential(
     current_user: User = Depends(get_current_active_user),
 ):
     """Withdraw a credential. What it could reach, it can no longer reach."""
-    require_integrations_admin(current_user)
+    await _require_integrations_admin(current_user, "credential.revoke")
 
     from core.auth.mcp_credential_service import list_for_user, revoke
 
@@ -546,6 +570,13 @@ async def revoke_credential(
 
     if not revoke(credential_id):
         raise HTTPException(status_code=409, detail="Already revoked")
+    await asyncio.to_thread(
+        trail_events.safety,
+        "credential.revoked",
+        actor=current_user.principal_id,
+        principal=current_user.principal_id,
+        credential_id=credential_id,
+    )
 
     logger.warning(
         "MCP credential %s revoked by %s", credential_id, current_user.username
