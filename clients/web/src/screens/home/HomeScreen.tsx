@@ -5,7 +5,6 @@ import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../ser
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
-import { briefText } from '../../shared/brief'
 import { LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
@@ -60,14 +59,8 @@ function headline(count: number): string {
   return `${count} decisions wait on you. Everything else is running.`
 }
 
-/** Naive timestamps from the API are UTC. `Date.parse` would read them as local. */
-export function parseCreatedAt(createdAt: string): number {
-  const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(createdAt)
-  return Date.parse(hasZone ? createdAt : `${createdAt}Z`)
-}
-
 function waited(createdAt: string): string {
-  const then = parseCreatedAt(createdAt)
+  const then = Date.parse(createdAt)
   if (Number.isNaN(then)) return ''
   const minutes = Math.max(0, Math.floor((Date.now() - then) / 60_000))
   if (minutes < 1) return 'Waited under a minute'
@@ -85,6 +78,14 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
+
+function briefText(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length <= 60) return flat
+  const head = flat.slice(0, 61)
+  const cut = head.includes(' ') ? head.slice(0, head.lastIndexOf(' ')) : flat.slice(0, 60)
+  return `${cut.replace(/[\s.,;:—-]+$/, '')}…`
+}
 
 /**
  * The ask as verb and object. A hypothesis approval names the explanation it starts
@@ -188,7 +189,7 @@ function DecisionCard({
 
 export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost }: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
-  const [count, setCount] = useState<number | null>(null)
+  const [loaded, setLoaded] = useState(false)
   const [share, setShare] = useState<Pickup | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -223,7 +224,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       return
     }
     setItems(needsResult.data.items)
-    setCount(needsResult.data.count)
+    setLoaded(true)
     setError(null)
   }, [])
 
@@ -293,8 +294,6 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
     void run(item.source_id, () => approvalsApi.approve(item.source_id), `Approved: ${item.title}`)
   }
 
-  const reject = fused.reject
-
   const run = async (id: string, act: () => Promise<unknown>, doneText: string) => {
     if (busyRef.current) return
     busyRef.current = id
@@ -313,7 +312,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
 
   // cards whose fuse is running stay out of the list and the count, so a poll can't bring them back
   const shown = items.filter((it) => !pending.includes(it.source_id))
-  const shownCount = count === null ? null : Math.max(0, count - (items.length - shown.length))
+  const shownCount = loaded ? shown.length : null
   const visible = showAll ? shown : shown.slice(0, VISIBLE)
   const rest = shown.slice(visible.length)
   const moreWaiting = rest.length
@@ -525,7 +524,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
                   item={item}
                   busy={busy !== null}
                   onApprove={approve}
-                  onReject={reject}
+                  onReject={fused.reject}
                   onOpenCase={openCase}
                 />
               ))}
