@@ -32,14 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class SentrySpanProcessor(SpanProcessor):
-    """
-    Forwards OTEL ERROR spans to Sentry as breadcrumbs and attaches the
-    OTEL trace_id to the Sentry scope for cross-system correlation.
-
-    Registered in core/telemetry.py when SENTRY_DSN is present.
-    Does NOT create Sentry transactions — Sentry tracing is disabled
-    when OTEL is active to prevent double-tracing.
-    """
+    """Forwards OTEL ERROR spans to Sentry as breadcrumbs and tags the Sentry scope with the OTEL trace_id."""
 
     def on_start(self, span: Any, parent_context: Any = None) -> None:
         try:
