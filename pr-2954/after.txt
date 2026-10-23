@@ -1,0 +1,5 @@
+0.04s call     unit/workflows/test_run_cancel_route.py::test_cancel_refuses_a_finished_run[failed]
+0.04s call     unit/workflows/test_run_cancel_route.py::test_cancel_refuses_a_finished_run[cancelled]
+
+(4 durations < 0.005s hidden.  Use -vv to show these durations.)
+============================== 4 passed in 1.95s ===============================
