@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import api, { casesApi, configApi, findingsApi, workflowApi } from '../services/api'
+import api, { casesApi, findingsApi, workflowApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useToast } from './toast'
 import type { ConsoleScreenGoOptions } from '../shared/types'
@@ -15,7 +15,6 @@ import {
   huntHypothesis,
   huntTitle,
   isLiveCommand,
-  jiraReadiness,
   LIVE_COMMANDS,
   moveEnabled,
   PASTED_NAME,
@@ -30,10 +29,10 @@ import {
   type Hit,
   type HuntAttachment,
   type MatchType,
-  type JiraReadiness,
   type LiveCommandId,
   type PaletteRow,
   type SearchHits,
+  useJiraReadiness,
 } from './commandBarModel'
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() ? value : undefined)
@@ -134,7 +133,7 @@ export default function CommandBar({
   const [active, setActive] = useState(0)
   const [recents, setRecents] = useState<string[]>([])
   const [hits, setHits] = useState<SearchHits | null>(null)
-  const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
+  const jira = useJiraReadiness()
   const [preview, setPreview] = useState<{ id: LiveCommandId; arg: string } | null>(null)
   const [running, setRunning] = useState(false)
   const [attachment, setAttachment] = useState<HuntAttachment | null>(null)
@@ -146,21 +145,6 @@ export default function CommandBar({
   useEffect(() => {
     if (userId) setRecents(readRecents(userId))
   }, [userId])
-
-  useEffect(() => {
-    let live = true
-    configApi
-      .getIntegrations()
-      .then((res) => {
-        if (live) setJira(jiraReadiness(res.data))
-      })
-      .catch(() => {
-        if (live) setJira({ gap: 'Jira configuration could not be read', projectKey: '' })
-      })
-    return () => {
-      live = false
-    }
-  }, [])
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -426,18 +410,9 @@ export default function CommandBar({
         case 'ask':
           onOpenChat(arg)
           break
-        case 'ticket': {
-          const res = await api.post<{ success?: boolean; error?: string; issue_key?: string }>(
-            `/cases/${encodeURIComponent(arg)}/export/jira`,
-            { project_key: jira.projectKey },
-          )
-          if (res.data?.success === false) {
-            notify('err', res.data.error || 'Jira export failed')
-            return
-          }
-          notify('ok', res.data?.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created')
+        case 'ticket':
+          notify('ok', await casesApi.exportJira(arg, jira.projectKey))
           break
-        }
         default: {
           const exhaustive: never = preview.id
           return exhaustive
