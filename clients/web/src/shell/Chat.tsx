@@ -611,8 +611,6 @@ export default function Chat({
               // separate tool output from the prose preceding it
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
-            } else if (ev.type === 'context_windowed') {
-              // an engine detail: not part of the answer, so it is not written into it
             } else if (ev.type === 'text') {
               setIsProcessingTools(false)
               curText += ev.content || ''
@@ -834,7 +832,6 @@ export default function Chat({
     setEarlierHidden(true)
   }, [collapseKey])
 
-  // Newest conversation whose case_id is exactly the locked id. `q` is a substring match.
   useEffect(() => {
     if (!lockedCaseId) return
     const gen = ++loadGen.current
@@ -862,11 +859,10 @@ export default function Chat({
       if (queued) void send(queued)
     }
     conversationsApi
-      .list({ q: lockedCaseId })
+      .list({ case_id: lockedCaseId, limit: 1 })
       .then(async (res) => {
         if (!live || gen !== loadGen.current) return
-        const rows = (res.data?.conversations || []) as Array<{ id: string; case_id?: string | null }>
-        const match = rows.find((row) => row.case_id === lockedCaseId)
+        const match = (res.data?.conversations as Array<{ id: string }> | undefined)?.[0]
         if (match) {
           await openConversation(match.id, null, true)
           if (!live || gen !== loadGen.current) return
