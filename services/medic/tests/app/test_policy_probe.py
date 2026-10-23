@@ -164,6 +164,7 @@ def _env(tmp_path: Path) -> dict[str, str]:
         "VIGIL_MEDIC_AGENT_WORKER_ADDR": "127.0.0.1:9",
         config.POLICY_PROBE_VAR: "{}:{}".format(*TARGET),
         config.POLICY_CONTROL_VAR: "{}:{}".format(*CONTROL),
+        config.GATEWAY_VAR: "{}:{}".format(*CONTROL),
     }
 
 
@@ -246,7 +247,12 @@ def test_a_timeout_proves_nothing_unless_the_control_connects(
 
 
 def test_run_refuses_on_helm_without_a_target(tmp_path: Path, caplog) -> None:
-    env = {**HELM, "VIGIL_MEDIC_DATA_DIR": str(tmp_path)}
+    # The gateway address is set, so the missing name in the log is the probe.
+    env = {
+        **HELM,
+        "VIGIL_MEDIC_DATA_DIR": str(tmp_path),
+        config.GATEWAY_VAR: "vigil-medic-gateway:8471",
+    }
     clock = FakeClock()
     with caplog.at_level(logging.INFO, logger="services.medic"):
         code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)

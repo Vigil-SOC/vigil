@@ -50,7 +50,7 @@ class StubApprovals:
     def get_action(self, action_id):
         return next((a for a in self.actions if a.action_id == action_id), None)
 
-    def approve_action(self, action_id, approved_by=None):
+    def approve_action(self, action_id, approved_by=None, approved_by_principal_id=None):
         self.approved.append((action_id, approved_by))
         action = self.get_action(action_id)
         action.status = "approved"

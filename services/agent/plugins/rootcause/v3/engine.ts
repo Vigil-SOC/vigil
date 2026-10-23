@@ -1,4 +1,4 @@
-import type { AgentEvent, CallPayload, DirectivePayload, NewEvent, RunOutcome, TerminalPayload } from "../../../contracts/events.js";
+import type { AgentEvent, CallPayload, DirectivePayload, NewEvent, RunOutcome, RunPayload, TerminalPayload } from "../../../contracts/events.js";
 import type { RegisteredTool } from "../../../contracts/tool.js";
 import type { AgentKinds, StopSource } from "../../../core/agent.js";
 import { GatewayExhausted } from "../../../core/limiter.js";
@@ -35,6 +35,8 @@ export interface V3Options {
   run_id: string;
   spec: RunSpec;
   started_by?: string;
+  principal?: string;
+  origin?: RunPayload["origin"];
   // The lease: aborted when this worker may no longer write the run.
   signal?: AbortSignal;
   stop?: StopSource;
@@ -76,6 +78,8 @@ export async function runRootCauseV3(harness: Harness<V3Kinds>, options: V3Optio
         seed: run_id,
         tenant_id: null,
         started_by: options.started_by ?? "worker",
+        ...(options.principal === undefined ? {} : { principal: options.principal }),
+        ...(options.origin === undefined ? {} : { origin: options.origin }),
       }),
     ]);
   }
@@ -162,6 +166,9 @@ async function drive(
       class: call.result.ok ? "served" : /^timed out/.test(shown) ? "visibility_gap" : "defect",
       role: "code",
       duration_ms: call.ms,
+      ...(options.started_by === "system" || options.started_by?.startsWith("agent:") === true
+        ? { actor: options.started_by }
+        : {}),
     };
     await state.append(run_id, [event("call", payload)]);
   };

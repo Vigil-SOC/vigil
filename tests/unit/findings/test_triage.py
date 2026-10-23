@@ -195,7 +195,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
         investigation_id="tr-inv-ask",
         created_at=NOW - timedelta(seconds=6),
         decided_at=NOW,
-        payload={"document": "please\nlook"},
+        payload={"document": "please\nlook", "principal": "signed-secret"},
     )
     expired = _trigger(
         state="expired",
@@ -235,6 +235,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[ghost]["case_door"] is None
     assert rows[ghost]["source"] == "Ask"
     assert rows[ghost]["document"] == "please look"
+    assert "signed-secret" not in str(rows[ghost])
     assert rows[ghost]["workflow_id"] == "incident-response"
 
     assert rows[expired]["state_label"] == "Expired"

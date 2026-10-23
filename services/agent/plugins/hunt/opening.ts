@@ -1,4 +1,4 @@
-import type { RunKind } from "../../contracts/events.js";
+import type { RunKind, RunPayload } from "../../contracts/events.js";
 import type { State } from "../../core/seams.js";
 import { unboundCapabilities } from "../../core/spec.js";
 import { AUTO_ACTOR, DEFAULT_CHECKPOINTS, raiseCheckpoint, resolveCheckpoint } from "./checkpoints.js";
@@ -100,6 +100,8 @@ export async function startHunt(
   // What the agent needs, as its plugin declares it: one nothing here answers is
   // journalled as a blind spot.
   needs: readonly string[] = [],
+  principal?: string,
+  origin?: RunPayload["origin"],
 ): Promise<Journal> {
   const now = new Date().toISOString();
   const huntId = newId("hunt");
@@ -132,6 +134,8 @@ export async function startHunt(
     seed: runId,
     tenant_id: null,
     started_by: startedBy,
+    ...(principal === undefined ? {} : { principal }),
+    ...(origin === undefined ? {} : { origin }),
   });
 
   for (const statement of spec.hypotheses) {

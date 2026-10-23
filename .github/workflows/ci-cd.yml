@@ -687,11 +687,24 @@ jobs:
         env:
           DB_STRICT_SCHEMA: "true"
         run: |
-          python -c "from core.storage.connection import init_database; init_database()"
+          python - <<'PY'
+          from core.storage.connection import (
+              get_db_manager,
+              init_database,
+              seed_reference_tables,
+              stamp_schema_head,
+          )
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          seed_reference_tables(manager)
+          stamp_schema_head(manager.engine)
+          init_database()
+          PY
 
       # The agent layer's tables are raw SQL with no ORM model, deliberately:
       # Python makes two reads against the ledger and a model invites writes.
-      # init_database() builds from the models, so it creates none of them.
+      # create_tables() builds from the models, so it creates none of them.
       - name: Apply agent-layer schema
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
@@ -852,7 +865,20 @@ jobs:
         env:
           DB_STRICT_SCHEMA: "true"
         run: |
-          python -c "from core.storage.connection import init_database; init_database()"
+          python - <<'PY'
+          from core.storage.connection import (
+              get_db_manager,
+              init_database,
+              seed_reference_tables,
+              stamp_schema_head,
+          )
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          seed_reference_tables(manager)
+          stamp_schema_head(manager.engine)
+          init_database()
+          PY
 
       - name: Run DB-backed unit tests
         run: |
@@ -945,19 +971,62 @@ jobs:
             -e POSTGRES_APP_PASSWORD=vigil-app-test \
             "$(yq "$container | .image" "$job")" "${command[@]}"
 
+      - name: Create the tables the chart SQL does not, as vigil_app
+        # create_all builds the tables the init files never had. It does not
+        # add a column to a table the chart already built, so
+        # users.principal_id waits for the upgrade. The stamp is what a 0.8
+        # start wrote. init_database() no longer writes it, and it refuses a
+        # database with tables and no alembic_version. Adoption accepts only
+        # that stamp.
+        env:
+          POSTGRES_USER: vigil_app
+          POSTGRES_PASSWORD: vigil-app-test
+        run: |
+          python - <<'PY'
+          from core.storage.connection import _stamp_schema_version, get_db_manager
+
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          _stamp_schema_version(manager.engine)
+          PY
+
+      - name: Apply schema revisions as the chart user
+        # Adopts the install and applies every revision after the baseline,
+        # including users.principal_id (#2739). CI has no restore point.
+        env:
+          POSTGRES_USER: deeptempo
+          VIGIL_UPGRADE_ACK_REASON: "CI: fresh install, nothing to restore"
+        run: |
+          VIGIL_UPGRADE_ACK_VERSION="$(cat VERSION)" python -m core.upgrade
+
       - name: Initialize schema as vigil_app
         id: init-schema
-        # As the backend starts under the chart: _env.tpl logs it in as
-        # vigil_app, and services/api/main.py calls init_database() at startup.
-        # Strict for the reason the jobs above are (#562), and it covers what
-        # theirs cannot: here about half the ORM tables come from init SQL, as on
-        # a real install, so a table whose SQL disagrees with its model is drift.
+        # Strict for the reason the jobs above are (#562). The chart still
+        # applies its SQL as the owner; tables that SQL does not create have
+        # to be buildable as vigil_app. Startup no longer does that
+        # (python -m core.upgrade does, and #2739 puts the chart on it). This
+        # step keeps the grant check: create_tables as vigil_app, then the
+        # drift check under DB_STRICT_SCHEMA. About half the ORM tables come
+        # from init SQL, as on a real install, so a table whose SQL disagrees
+        # with its model is drift.
         env:
           POSTGRES_USER: vigil_app
           POSTGRES_PASSWORD: vigil-app-test
           DB_STRICT_SCHEMA: "true"
         run: |
-          python -c "from core.storage.connection import init_database; init_database()"
+          python - <<'PY'
+          from core.storage.connection import (
+              check_schema_drift,
+              get_db_manager,
+              seed_reference_tables,
+          )
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          seed_reference_tables(manager)
+          check_schema_drift(manager, provisioned=True)
+          PY
 
       - name: Every ORM table exists
         # Also after a failed create_all, to name the tables it left out.
@@ -983,9 +1052,9 @@ jobs:
           PY
 
       - name: Default rows are seeded
-        # init_database() seeds the default SLA policies and case templates into
-        # empty tables after create_all (#1246), and logs rather than fails when
-        # it cannot, so only a count shows an install left without them. The
+        # seed_reference_tables fills the default SLA policies and case templates
+        # into empty tables (#1246), and logs rather than fails when it cannot,
+        # so only a count shows an install left without them. The
         # expected count is one row per INSERT the backend's seeder finds, so a
         # multi-row VALUES default would need this to count rows instead.
         env:
