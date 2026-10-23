@@ -1,0 +1,4 @@
+        assert forged.status_code == omitted.status_code == 201
+>       assert stored["created_by"] == user.username
+E       AssertionError: assert 'mallory' == 'test-admin'
+========================= 1 failed, 1 passed in 2.01s ==========================
