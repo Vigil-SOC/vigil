@@ -1,0 +1,15 @@
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+8.08s call     unit/api/test_api_v1_contract.py::test_v1_contract_matches_committed_snapshot
+0.68s setup    unit/response/test_needs_you.py::test_needs_you_is_oldest_pending_approvals_only
+0.13s setup    unit/api/test_service_dependency_overrides.py::test_pending_approvals_reads_from_the_injected_service
+0.12s call     unit/api/test_api_v1_contract.py::test_snapshot_is_serialized_canonically
+0.06s teardown unit/api/test_openapi_spec_stability.py::test_schema_holds_only_api_routes
+0.06s call     unit/api/test_api_v1_contract.py::test_contract_covers_only_v1_paths
+0.06s call     unit/api/test_api_v1_contract.py::test_building_the_contract_leaves_the_app_spec_alone
+0.06s call     unit/api/test_api_v1_contract.py::test_no_beta_operation_is_in_the_contract
+0.05s call     unit/response/test_needs_you.py::test_case_id_filter_uses_the_resolved_id
+0.04s call     unit/response/test_needs_you.py::test_needs_you_is_oldest_pending_approvals_only
+======================= 16 passed, 2 warnings in 38.20s ========================
