@@ -1,0 +1,2 @@
+0.16s call     unit/llm/test_bifrost_admin.py::test_sync_all_populates_dropdown_cache_and_bifrost_allowlist
+================== 542 passed, 2 warnings in 62.83s (0:01:02) ==================

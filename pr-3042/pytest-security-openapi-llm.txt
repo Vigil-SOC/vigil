@@ -1,0 +1,8 @@
+ERROR tests/security/test_unauth_endpoints.py::test_internal_route_says_so_when_no_secret_is_configured[POST-/internal/runs/run-auth-gate/checkpoints-body2]
+ERROR tests/security/test_unauth_endpoints.py::test_internal_route_says_so_when_no_secret_is_configured[POST-/internal/tools/invoke-body3]
+ERROR tests/security/test_unauth_endpoints.py::test_internal_route_says_so_when_no_secret_is_configured[GET-/internal/pricing/rates?model_id=m&provider_type=p-None]
+ERROR tests/security/test_unauth_endpoints.py::test_internal_route_says_so_when_no_secret_is_configured[GET-/internal/pricing/vk-None]
+ERROR tests/security/test_unauth_endpoints.py::test_vstrike_inbound_without_bearer_uses_api_key_gate
+ERROR tests/security/test_unauth_endpoints.py::test_an_mcp_credential_does_not_authenticate_the_api
+ERROR tests/security/test_unauth_endpoints.py::test_the_api_says_why_rather_than_calling_it_invalid
+===== 853 passed, 45 skipped, 468 warnings, 48 errors in 322.09s (0:05:22) =====
