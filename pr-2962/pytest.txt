@@ -1,0 +1,5 @@
+0.38s call     unit/agents/test_agent_enablement.py::test_unknown_ids_in_the_list_are_ignored
+0.31s call     unit/agents/test_agent_enablement.py::test_chat_refuses_a_disabled_agent_and_serves_an_enabled_one
+0.28s call     unit/agents/test_agent_enablement.py::test_run_start_returns_the_refusal_to_the_operator
+0.26s call     unit/agents/test_agent_enablement.py::test_missing_agent_is_still_reported_as_missing
+======================== 35 passed, 1 warning in 57.00s ========================
