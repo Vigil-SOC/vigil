@@ -427,14 +427,8 @@ export const caseMetricsApi = {
 }
 
 export const caseSearchApi = {
-  search: (data: {
-    query: string
-    filters?: Record<string, any>
-    sort_by?: string
-    sort_order?: string
-    limit?: number
-    offset?: number
-  }) => api.post('/case-search/', data),
+  search: (data: Schema<'SearchRequest'>) =>
+    api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
 export interface ReloadServersResponse {
@@ -1347,7 +1341,6 @@ export interface OverviewOutcome {
   state: string
   label: string
   count: number | null
-  source_text: string
   info: string | null
   unmeasured_text: string | null
 }
@@ -1367,11 +1360,9 @@ export interface OverviewFeedItem {
   severity: string | null
   data_source: string
   terminal_state: string
-  terminal_label: string
   title: string | null
   description: string | null
   created_at: string | null
-  evidence_links: Array<{ ref?: string }>
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
@@ -1382,7 +1373,6 @@ export interface OverviewPayload {
   day: string
   empty: boolean
   arrivals: OverviewArrival[]
-  engine: { source_text: string }
   outcomes: OverviewOutcome[]
   running_source: string
   step_source: string

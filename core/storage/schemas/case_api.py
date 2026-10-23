@@ -150,13 +150,6 @@ class CasePurgeResponse(BaseModel):
     message: str
 
 
-class CaseReportResponse(BaseModel):
-    success: bool
-    filename: str
-    path: str
-    case_id: str
-
-
 class CaseSummaryResponse(BaseModel):
     total: int
     by_status: dict[str, int]

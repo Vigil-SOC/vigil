@@ -23,7 +23,6 @@ POST /api/auth/password-reset/confirm
 POST /api/auth/password-reset/request
 POST /api/auth/refresh
 POST /api/cases/search
-POST /api/cases/{case_id}/generate-report
 POST /api/findings/{finding_id}/enrich
 POST /api/findings/{finding_id}/intake
 POST /api/findings/{finding_id}/noise
