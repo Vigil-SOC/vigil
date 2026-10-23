@@ -249,6 +249,10 @@ class WorkflowRun(Base):
 
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     triggered_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Beside triggered_by. Null when the writer does not know the principal.
+    triggered_by_principal_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
     trigger_context: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
@@ -353,12 +357,14 @@ class ApprovalAction(Base):
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_by_principal_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     requires_approval: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    approved_by_principal_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     execution_result: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

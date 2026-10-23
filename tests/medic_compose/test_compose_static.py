@@ -274,6 +274,13 @@ def test_medic_is_told_the_docker_proxy_address(on) -> None:
     assert env["VIGIL_MEDIC_DOCKERPROXY_ADDR"] == "medic-dockerproxy:8472"
 
 
+def test_medic_is_told_the_gateway_and_the_backends_dev_mode(on) -> None:
+    medic = env_of(on["services"]["medic"])
+    backend = env_of(on["services"]["backend"])
+    assert medic["VIGIL_MEDIC_GATEWAY_ADDR"] == "medic-gateway-out:8471"
+    assert medic["DEV_MODE"] == backend["DEV_MODE"]
+
+
 def test_gateway_binds_each_listener_to_one_network(on) -> None:
     spec = on["services"]["medic-gateway"]
     env = env_of(spec)

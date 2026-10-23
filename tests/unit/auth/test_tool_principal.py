@@ -24,6 +24,41 @@ def test_a_minted_principal_verifies_to_the_username():
     assert tool_principal.verify(tool_principal.mint("nestor")) == "nestor"
 
 
+def test_a_run_token_still_verifies_for_the_life_of_a_park():
+    """A parked run keeps RUN_TTL, and the token is still not a session."""
+    person = "11111111-1111-1111-1111-111111111111"
+    token = tool_principal.mint(
+        "nestor",
+        ttl=tool_principal.RUN_TTL,
+        person_id=person,
+        agent_id="agent:hunt",
+        run_id="22222222-2222-2222-2222-222222222222",
+        origin="person",
+    )
+    claims = tool_principal.read(token)
+    assert claims.username == "nestor"
+    assert claims.person_id == person
+    assert claims.agent_id == "agent:hunt"
+    assert claims.origin == "person"
+    assert tool_principal.verify(token) == "nestor"
+
+
+def test_a_run_with_no_person_names_the_agent():
+    token = tool_principal.mint(
+        None,
+        ttl=tool_principal.RUN_TTL,
+        agent_id="agent:hunt",
+        run_id="33333333-3333-3333-3333-333333333333",
+        origin="schedule",
+    )
+    claims = tool_principal.read(token)
+    assert claims.username is None
+    assert claims.agent_id == "agent:hunt"
+    assert claims.origin == "schedule"
+    with pytest.raises(tool_principal.InvalidPrincipal):
+        tool_principal.verify(token)
+
+
 def test_an_expired_principal_is_refused():
     stale = tool_principal.mint("nestor", ttl=timedelta(minutes=-2))
     with pytest.raises(tool_principal.InvalidPrincipal):
@@ -74,7 +109,7 @@ async def test_a_principal_does_not_open_the_api(monkeypatch):
     with pytest.raises(HTTPException) as refused:
         await get_current_user(
             request,
-            f"Bearer {tool_principal.mint('nestor')}",
+            f"Bearer {tool_principal.mint('nestor', person_id='u-1', agent_id='agent:chat', run_id='r-1', origin='person')}",
             session=MagicMock(),
         )
     assert refused.value.status_code == 401

@@ -79,14 +79,9 @@ fi
 step frontend ok
 
 step schema start
-export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
-"$VENV_PY" "$REPO_ROOT/scripts/init_schema.py" >&2 || { step schema fail; exit 1; }
-# Seed reference data (roles, SLA policies, …) now that create_all built the
-# tables: the initdb-mounted SQL aborts before those files, so roles would be
-# missing and bootstrap could not assign role-admin. No default admin is seeded —
-# the user table stays empty so the first-run bootstrap screen fires, same as the
-# packaged app, and no default credentials ship.
-"$VENV_PY" "$REPO_ROOT/scripts/seed_reference_data.py" >&2 || true
+# Same one-shot as start.sh: pre-upgrade snapshot, then python -m core.upgrade.
+# A non-zero exit leaves the API unstarted.
+run_schema_upgrade >&2 || { step schema fail; exit 1; }
 step schema ok
 
 step backend start

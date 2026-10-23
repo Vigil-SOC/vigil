@@ -158,7 +158,7 @@ def _approval_spy(monkeypatch):
     called = []
 
     class _Approvals:
-        def approve_action(self, action_id, approved_by):
+        def approve_action(self, action_id, approved_by, approved_by_principal_id=None):
             called.append((action_id, approved_by))
 
     monkeypatch.setattr(tool_registry, "_approvals", lambda: _Approvals())

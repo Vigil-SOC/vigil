@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.agents.attribution import TrailWriteError, note_directive, trail_writable
+
 logger = logging.getLogger(__name__)
 
 # The vocabulary TypeScript's DIRECTIVE_KINDS declares, duplicated across the
@@ -61,6 +63,42 @@ class UnknownRun(InvalidDirective):
 # The run journaled its terminal, so no drain will run again.
 class RunAlreadyEnded(InvalidDirective):
     pass
+
+
+def _insert_directive(
+    session: Session,
+    run_id: str,
+    directive: Dict[str, Any],
+    actor_principal_id: Optional[str],
+) -> None:
+    """The text actor stays. The principal column is set when this database has it."""
+    from core.agents.attribution import column_present
+
+    has_principal = column_present(session, "agent_directives", "actor_principal_id")
+    columns = "run_id, directive_id, kind, actor, created_at, payload"
+    values = (
+        "CAST(:run_id AS uuid), :directive_id, :kind, :actor, "
+        "CAST(:created_at AS timestamptz), CAST(:payload AS jsonb)"
+    )
+    params: Dict[str, Any] = {
+        "run_id": run_id,
+        "directive_id": directive["directive_id"],
+        "kind": directive["kind"],
+        "actor": directive["actor"],
+        "created_at": directive["created_at"],
+        "payload": json.dumps(directive),
+    }
+    if has_principal:
+        columns += ", actor_principal_id"
+        values += ", :actor_principal_id"
+        params["actor_principal_id"] = actor_principal_id
+    session.execute(
+        text(
+            f"INSERT INTO agent_directives ({columns}) VALUES ({values}) "
+            "ON CONFLICT (directive_id) DO NOTHING"
+        ),
+        params,
+    )
 
 
 def new_directive_id() -> str:
@@ -161,6 +199,7 @@ def enqueue_directive(
     body: str,
     actor: str,
     fields: Optional[Dict[str, Any]] = None,
+    actor_principal_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     try:
         uuid.UUID(run_id)
@@ -172,24 +211,27 @@ def enqueue_directive(
     _refuse_unless_running(session, run_id)
 
     directive = build_directive(kind, body, actor, fields)
+    if actor_principal_id:
+        directive["actor_principal_id"] = actor_principal_id
     _wake(session, run_id)
-    session.execute(
-        text(
-            "INSERT INTO agent_directives "
-            "(run_id, directive_id, kind, actor, created_at, payload) "
-            "VALUES (CAST(:run_id AS uuid), :directive_id, :kind, :actor, "
-            "CAST(:created_at AS timestamptz), CAST(:payload AS jsonb)) "
-            "ON CONFLICT (directive_id) DO NOTHING"
-        ),
-        {
-            "run_id": run_id,
-            "directive_id": directive["directive_id"],
-            "kind": directive["kind"],
-            "actor": directive["actor"],
-            "created_at": directive["created_at"],
-            "payload": json.dumps(directive),
-        },
-    )
+    _insert_directive(session, run_id, directive, actor_principal_id)
+    try:
+        note_directive(
+            session,
+            run_id=run_id,
+            directive_id=directive["directive_id"],
+            kind=directive["kind"],
+            actor=actor,
+            actor_principal_id=actor_principal_id,
+        )
+    except TrailWriteError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a trail that is up must take the row
+        if trail_writable(session):
+            raise TrailWriteError(str(exc)) from exc
+        logger.warning(
+            "directive %s was queued without a trail entry", directive["directive_id"]
+        )
     logger.info(
         "queued %s directive %s for run %s", kind, directive["directive_id"], run_id
     )

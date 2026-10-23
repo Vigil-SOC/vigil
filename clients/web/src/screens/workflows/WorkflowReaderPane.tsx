@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Icon } from '../../shared/icons'
@@ -482,7 +482,13 @@ function Header({ name, wf, actions, definition, onSave }: { name: string; wf: W
   const [now, setNow] = useState<boolean | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  useEffect(() => setNow(null), [wf?.enabled])
+  const rowEnabled = wf?.enabled
+  const seenEnabled = useRef(rowEnabled)
+  useEffect(() => {
+    if (seenEnabled.current === rowEnabled) return
+    seenEnabled.current = rowEnabled
+    setNow(null)
+  }, [rowEnabled])
   const enabled = now ?? wf?.enabled ?? true
   const toggle = () => {
     if (!wf || !actions) return
