@@ -3,7 +3,7 @@
 from core.upgrade.revision import run_sql
 
 revision = "0007_drop_origin_run_ids"
-down_revision = "0006_canonical_finding_ips"
+down_revision = "0006_audit_feed"
 
 
 def upgrade() -> None:
