@@ -32,54 +32,6 @@ postgres redis bifrost ollama). --with/--all are additive to that list.
 EOF
 }
 
-# Host State Directory, the path `backups.json` is read from.
-host_state_dir() {
-    local state="${VIGIL_DIR:-$HOME/.vigil}"
-    mkdir -p "$state"
-    (cd "$state" && pwd)
-}
-
-# Host paths and `docker compose run` flags every backup container shares: the
-# create/restore one-shot, the pre-upgrade one-shot, and the schedule loop.
-# Exports the State Directory and investigation workdir the compose `backup`
-# service mounts and sets BACKUP_RUN_ARGS (host user, plus the repo-root .env
-# when present, mounted $1: ro by default).
-prepare_backup_mounts() {
-    local env_mode="${1:-ro}"
-    local investigations="${ORCHESTRATOR_WORKDIR:-$REPO_ROOT/data/investigations}"
-    local upgrade="${VIGIL_UPGRADE_HOST_DIR:-$HOME/.vigil-upgrade}"
-    case "$investigations" in
-        /*) ;;
-        *) investigations="$REPO_ROOT/$investigations" ;;
-    esac
-    mkdir -p "$investigations"
-    export VIGIL_BACKUP_STATE_DIR="$(host_state_dir)"
-    export VIGIL_BACKUP_INVESTIGATIONS_DIR="$(cd "$investigations" && pwd)"
-    mkdir -p "$upgrade"
-    export VIGIL_UPGRADE_HOST_DIR="$(cd "$upgrade" && pwd)"
-    BACKUP_RUN_ARGS=(--user "$(id -u):$(id -g)")
-    if [ -f "$REPO_ROOT/.env" ]; then
-        BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
-    fi
-}
-
-# Before the schema is touched: take a restore point when this image would
-# migrate or the recorded version changed. Runs even with no backups.json;
-# that case uses ~/.vigil-upgrade (compose's upgrade_state volume otherwise).
-backup_pre_upgrade() {
-    prepare_backup_mounts
-    # An old loop would hold the backup lock, and could snapshot mid-upgrade.
-    save_container_logs "$BACKUP_LOOP_CONTAINER"
-    docker rm -f "$BACKUP_LOOP_CONTAINER" >/dev/null 2>&1 || true
-    # --build: an image from before this command existed would exit 2.
-    dc run --rm --build "${BACKUP_RUN_ARGS[@]}" backup-pre-upgrade || {
-        echo "Pre-upgrade backup failed. Set VIGIL_UPGRADE_ACK_VERSION to this" \
-            "release and a non-empty VIGIL_UPGRADE_ACK_REASON to start without" \
-            "a restore point." >&2
-        return 1
-    }
-}
-
 # The schedule loop, detached, once the schema is ready. Replaces a loop left by
 # an earlier start; shutdown_all.sh stops it by the same name.
 start_backup_loop() {
@@ -266,12 +218,8 @@ for svc in $EXTRA_SERVICES; do
     ensure_container "$(service_container "$svc")" "$svc" "$(service_profile "$svc")"
 done
 
-# --- Database init ---
-backup_pre_upgrade || exit 1
-python3 scripts/init_schema.py || { echo "Schema init failed."; exit 1; }
-# Seed roles/reference data so first-run bootstrap can assign role-admin. No
-# default admin is seeded — the empty user table triggers the bootstrap screen.
-python3 scripts/seed_reference_data.py || true
+# --- Schema (upgrade one-shot; the API does not create tables) ---
+run_schema_upgrade || exit 1
 start_backup_loop
 
 # --- Frontend deps ---

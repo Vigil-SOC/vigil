@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine, make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -68,6 +69,7 @@ from core.storage.models import (  # noqa: F401
     UserPreference,
 )
 from core.storage.reference_seed import seed_empty_tables
+from core.upgrade.command import script_directory
 from core.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -669,8 +671,8 @@ class DatabaseManager:
             return
         try:
             # validate=False: create_engine is lazy today, so cold boot has
-            # always succeeded with postgres down (scripts/init_schema.py and
-            # database_data_service rely on it). Only retarget() validates.
+            # always succeeded with postgres down (database_data_service relies
+            # on it). Only retarget() validates.
             self.retarget(None if force else self.config, echo=echo, validate=False)
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -1169,36 +1171,110 @@ def _stamp_schema_version(engine: Engine) -> None:
     _schema_stamped.add(key)
 
 
-def init_database(echo: bool = False, create_tables: bool = True):
-    """
-    Initialize the database.
+class SchemaRevisionError(RuntimeError):
+    """``alembic_version`` is not this image's head.
 
-    Args:
-        echo: If True, log all SQL statements
-        create_tables: If True, create all tables, and seed the default rows
-            of those create_all alone builds (see ``seed_reference_tables``)
+    Raised whether or not ``DB_STRICT_SCHEMA`` is set. The way to a schema is
+    ``python -m core.upgrade``, run as the database owner.
+    """
+
+
+def schema_head() -> str:
+    """The single Alembic head this image knows how to serve."""
+    heads = script_directory().get_heads()
+    if len(heads) != 1:
+        raise SchemaRevisionError(
+            f"this image has {len(heads)} Alembic heads: {list(heads)}"
+        )
+    return heads[0]
+
+
+def stamp_schema_head(engine: Engine) -> None:
+    """Record this image's head on a database ``create_tables()`` just built.
+
+    Scratch databases and unit-test throwaways have no revision of their own.
+    Production databases are stamped by ``python -m core.upgrade``.
+    """
+    head = schema_head()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS public.alembic_version "
+                "(version_num VARCHAR(32) NOT NULL)"
+            )
+        )
+        conn.execute(text("DELETE FROM public.alembic_version"))
+        conn.execute(
+            text("INSERT INTO public.alembic_version (version_num) VALUES (:v)"),
+            {"v": head},
+        )
+
+
+def _require_schema_revision(engine: Engine) -> None:
+    """vigil_app can SELECT the revision and cannot write it.
+
+    A permission error is a mismatch: the process must not serve a database
+    whose revision it cannot read. A refused connection stays OperationalError
+    so a database that is down is still reported as down.
+    """
+    try:
+        head = schema_head()
+        with engine.connect() as conn:
+            present = conn.execute(
+                text("SELECT to_regclass('public.alembic_version')")
+            ).scalar()
+            if present is None:
+                tables = conn.execute(
+                    text(
+                        "SELECT count(*) FROM pg_tables " "WHERE schemaname = 'public'"
+                    )
+                ).scalar_one()
+                if tables:
+                    raise SchemaRevisionError(
+                        "the database has tables but no alembic_version; "
+                        "run python -m core.upgrade as the database owner"
+                    )
+                raise SchemaRevisionError(
+                    "the database has no alembic_version; "
+                    "run python -m core.upgrade as the database owner"
+                )
+            revision = conn.execute(
+                text("SELECT version_num FROM public.alembic_version")
+            ).scalar()
+        if revision != head:
+            raise SchemaRevisionError(
+                f"database revision is {revision}, this image's head is {head}; "
+                "run python -m core.upgrade as the database owner"
+            )
+    except (SchemaRevisionError, OperationalError):
+        raise
+    except Exception as exc:
+        raise SchemaRevisionError(
+            f"could not read alembic_version ({exc}); "
+            "run python -m core.upgrade as the database owner"
+        ) from exc
+
+
+def init_database(echo: bool = False, create_tables: bool = False):
+    """Open the engine and require ``alembic_version`` to be this image's head.
 
     Raises:
-        SchemaDriftError: if the schema cannot serve the models and
+        SchemaRevisionError: the revision is missing or is not this image's
+            head, including when tables are present and ``alembic_version``
+            is not.
+        SchemaDriftError: the schema cannot serve the models and
             ``DB_STRICT_SCHEMA`` is set.
+
+    ``create_tables`` is accepted and ignored. Callers that still pass it
+    (a Helm install, until that chart runs the upgrade command) do not create
+    or seed on this path.
     """
+    if create_tables:
+        logger.warning(
+            "init_database(create_tables=True) does not create tables; "
+            "run python -m core.upgrade as the database owner"
+        )
     db_manager = get_db_manager()
     db_manager.initialize(echo=echo)
-
-    if create_tables:
-        db_manager.create_tables()
-
-    # After create_all, so we report what the schema actually ended up as.
-    check_schema_drift(db_manager, provisioned=create_tables)
-
-    # Here rather than in a SQL file: the Helm db-init Job applies SQL before
-    # the backend can create these tables, and marks it applied for good.
-    if create_tables:
-        seed_reference_tables(db_manager)
-        # Only once create_all and the drift check have returned: a stamp
-        # the schema never reached would hide the version it is really at.
-        try:
-            _stamp_schema_version(db_manager.engine)
-        except Exception as e:  # noqa: BLE001
-            # The old stamp stays and the next start tries again.
-            logger.error("Could not record the schema version: %s", e)
+    _require_schema_revision(db_manager.engine)
+    check_schema_drift(db_manager, provisioned=False)

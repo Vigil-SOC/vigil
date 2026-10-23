@@ -94,11 +94,12 @@ def route(
                 parents, key=lambda p: (p.m["opened_at"], p.rule_id, gkey(p.group))
             )
             m["freed_at"] = None
-            if not m.get("suppressed_by"):
-                m["suppressed_by"] = by.m["incident_id"]
-                out.append(
-                    (m, {"change": "suppressed", "suppressed_by": by.m["incident_id"]})
-                )
+            chosen = by.m["incident_id"]
+            # A later record re-points the child when the parent it names has
+            # resolved and another is still open. The same parent writes nothing.
+            if m.get("suppressed_by") != chosen:
+                m["suppressed_by"] = chosen
+                out.append((m, {"change": "suppressed", "suppressed_by": chosen}))
             continue
         if m.get("suppressed_by"):  # §6.3: the last parent has resolved
             m["freed_at"] = m.get("freed_at") or now

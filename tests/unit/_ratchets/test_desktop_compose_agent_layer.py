@@ -47,13 +47,26 @@ def test_backend_points_at_agent_serve() -> None:
     assert "AGENT_URL=http://agent-serve:6989" in env
 
 
-def test_backend_mounts_upgrade_state_and_has_no_pre_upgrade_service() -> None:
-    spec = _services()["backend"]
+def test_desktop_snapshot_then_upgrade_before_the_api() -> None:
+    services = _services()
+    spec = services["backend"]
     assert "VIGIL_UPGRADE_DIR=/var/lib/vigil-upgrade" in spec["environment"]
     assert "upgrade_state:/var/lib/vigil-upgrade" in spec["volumes"]
     compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8")) or {}
     assert "upgrade_state" in compose["volumes"]
-    assert "backup-pre-upgrade" not in compose["services"]
+    assert "db-seed" not in services
+    pre = services["backup-pre-upgrade"]
+    upgrade = services["upgrade"]
+    assert pre.get("restart") == "no"
+    assert upgrade.get("restart") == "no"
+    assert "profiles" not in pre and "profiles" not in upgrade
+    assert upgrade["depends_on"]["backup-pre-upgrade"]["condition"] == (
+        "service_completed_successfully"
+    )
+    for name in ("backend", "agent-worker", "agent-serve"):
+        assert services[name]["depends_on"]["upgrade"]["condition"] == (
+            "service_completed_successfully"
+        )
 
 
 @pytest.mark.parametrize(
@@ -155,4 +168,4 @@ def test_postgres_password_is_minted_by_the_app() -> None:
             assert pairs.get("POSTGRES_APP_PASSWORD") == _APP, name
             owner_slots += 1
     assert app_slots >= 3, "expected the agent env, backend and anchor"
-    assert owner_slots >= 2, "expected postgres and db-seed"
+    assert owner_slots >= 2, "expected postgres and the upgrade one-shot"

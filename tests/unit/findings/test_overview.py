@@ -16,7 +16,7 @@ from core.findings.overview import (
     overview_alert,
     overview_payload,
 )
-from core.response.approval_service import pending_approval_case_ids
+from core.response.approval_service import needs_you_case_ids
 from core.storage.models import (
     ApprovalAction,
     Case,
@@ -300,11 +300,11 @@ def test_terminal_states_partition_the_day():
     assert "ov-off" not in arrivals
     assert sum(arrivals.values()) == len(terminal_states_today(DAY.date()))
 
-    pending = pending_approval_case_ids()
-    assert "ov-c-you" in pending
-    assert "ov-c-run" in pending
-    assert "ov-c-inv" in pending
-    assert "ov-c-other" not in pending
+    needs_you_ids = needs_you_case_ids()
+    assert "ov-c-you" in needs_you_ids
+    assert "ov-c-run" in needs_you_ids
+    assert "ov-c-inv" in needs_you_ids
+    assert "ov-c-other" not in needs_you_ids
 
     payload = overview_payload(day=DAY.date(), now=NOW)
     live = [node["count"] for node in payload["outcomes"] if node["count"] is not None]

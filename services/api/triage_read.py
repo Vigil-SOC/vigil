@@ -21,11 +21,7 @@ from core.storage.connection import get_db_manager
 from core.storage.models import Case, Finding, IntakeTrigger, Investigation
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
-from services.daemon.orchestrator import (
-    intake_age_seconds,
-    intake_severity_band,
-    rank_intake_row,
-)
+from services.daemon.orchestrator import intake_rank_inputs, rank_intake_row
 
 ROW_CAP = 200
 ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
@@ -80,16 +76,6 @@ def _naive(value: Optional[datetime]) -> Optional[datetime]:
     return value
 
 
-def _source_text(kind: str, finding: Optional[dict]) -> str:
-    if kind == "schedule":
-        return "Schedule"
-    if kind == "human_ask":
-        return "Ask"
-    if finding and finding.get("data_source"):
-        return str(finding["data_source"])
-    return ""
-
-
 def _state_label(
     state: str,
     case_id: Optional[str],
@@ -131,22 +117,18 @@ def _document_line(kind: str, payload: dict) -> Optional[str]:
 
 
 def _ranking(row: dict, now: datetime, config: OrchestratorConfig) -> dict:
-    """The inputs ``rank_intake_row`` sorts on, computed the same way."""
-    age = intake_age_seconds(row, now)
     ttl = config.intake_ttl_seconds
-    remaining = ttl - age
-    finding = row.get("_finding")
-    finding_severity = finding.get("severity") if isinstance(finding, dict) else None
-    band = intake_severity_band(
-        row.get("kind"),
-        finding_severity=finding_severity,
-        priority=row.get("priority"),
+    band, promoted, age = intake_rank_inputs(
+        row,
+        now=now,
+        ttl_seconds=ttl,
+        promote_fraction=config.intake_ttl_promote_fraction,
     )
     return {
         "severity_band": band,
         "age_seconds": age,
         "ttl_seconds": ttl,
-        "last_quarter": 0 < remaining <= ttl * config.intake_ttl_promote_fraction,
+        "last_quarter": promoted,
     }
 
 
@@ -171,7 +153,7 @@ def _sources(day: date, now: datetime) -> list[dict]:
 
 
 def _source_column():
-    """``_source_text`` in SQL, over IntakeTrigger outer-joined to Finding."""
+    """A row's source name, over IntakeTrigger outer-joined to Finding."""
     return case(
         (IntakeTrigger.kind == "schedule", literal("Schedule")),
         (IntakeTrigger.kind == "human_ask", literal("Ask")),
@@ -268,10 +250,13 @@ def _load(
     """The shown rows in ``ids`` order, and only their findings, workflows, cases."""
     if not ids:
         return [], {}, {}, set()
-    by_id = {
-        row.id: row
-        for row in session.query(IntakeTrigger).filter(IntakeTrigger.id.in_(ids))
-    }
+    sources = {}
+    by_id = {}
+    for row, source in _joined(session, IntakeTrigger, _source_column()).filter(
+        IntakeTrigger.id.in_(ids)
+    ):
+        by_id[row.id] = row
+        sources[row.id] = source
     triggers = [by_id[row_id] for row_id in ids if row_id in by_id]
     finding_ids = {row.finding_id for row in triggers if row.finding_id}
     findings: dict[str, dict] = {}
@@ -309,12 +294,16 @@ def _load(
         }
     rows = []
     for row in triggers:
-        payload = row.payload if isinstance(row.payload, dict) else {}
+        raw = row.payload if isinstance(row.payload, dict) else {}
+        # The signed tool principal is for the worker, not the queue. A reader of
+        # this row is not a holder of the internal token, and does not need it.
+        payload = {key: value for key, value in raw.items() if key != "principal"}
         rows.append(
             {
                 "id": row.id,
                 "kind": row.kind,
                 "state": row.state,
+                "source": sources[row.id],
                 "priority": row.priority,
                 "finding_id": row.finding_id,
                 "payload": payload,
@@ -370,7 +359,7 @@ def _present(
         "kind_label": _KIND_LABELS.get(kind, kind),
         "state": row["state"],
         "state_label": label,
-        "source": _source_text(kind, finding),
+        "source": row["source"],
         **ranking,
         "pickup_seconds": pickup,
         "workflow_id": workflow,
