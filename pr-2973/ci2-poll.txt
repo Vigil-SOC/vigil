@@ -1,0 +1,9 @@
+## CI integration setup (create_tables, seed, stamp head, init_database, ledger SQL), this branch
+Database already initialized
+============================== 4 passed in 0.79s ===============================
+## same setup, previous PR head (fixture applies 26_episodic_memory.sql)
+Database already initialized
+============================== 4 errors in 1.55s ===============================
+E       (Background on this error at: https://sqlalche.me/e/21/f405)
+E       -- identical data, which surfaces as a replay diff rather than as an error.
+E       psycopg2.errors.UndefinedColumn: column "origin_run_ids" does not exist

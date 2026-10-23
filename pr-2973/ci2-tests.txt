@@ -1,0 +1,24 @@
+## 1. fresh empty database
+============================== 4 passed in 0.86s ===============================
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to table agent_events
+drop cascades to function agent_event_hash(text,jsonb)
+drop cascades to function agent_events_assign_hashes()
+drop cascades to table episodic_distil_markers
+drop cascades to table episodic_distil_failures
+## 2. CI integration setup: init_database() then ledger SQL
+core.storage.connection.SchemaRevisionError: the database has no alembic_version; run python -m core.upgrade as the database owner
+psql:<stdin>:41: NOTICE:  trigger "agent_events_assign_hashes" for relation "agent_events" does not exist, skipping
+markers table exists: false
+E       assert 2 == (0 + 1)
+E        +  where 2 = _count(Engine(postgresql+psycopg2://test:***@localhost:55892/vigil_schema_snap_2723525_d04e54))
+E       assert 2 == 1
+E        +  where 2 = _count(Engine(postgresql+psycopg2://test:***@localhost:55892/vigil_schema_snap_2723525_d04e54))
+E       assert 3 == 2
+E        +  where 3 = _count(Engine(postgresql+psycopg2://test:***@localhost:55892/vigil_schema_snap_2723525_d04e54))
+0.83s setup    integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+0.38s call     integration/test_audit_feed.py::test_a_failed_send_retries_from_the_same_sequence
+FAILED tests/integration/test_audit_feed.py::test_turning_the_feed_on_writes_one_entry
+FAILED tests/integration/test_audit_feed.py::test_a_credential_cannot_turn_the_feed_on
+FAILED tests/integration/test_audit_feed.py::test_the_integrations_save_cannot_change_the_feed
+=================== 3 failed, 8 passed, 15 warnings in 4.94s ===================
