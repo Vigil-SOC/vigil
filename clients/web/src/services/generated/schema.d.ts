@@ -10056,7 +10056,7 @@ export interface components {
         };
         /**
          * PendingActionResponse
-         * @description Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+         * @description Frozen shape of an approval action.
          *
          *     Value types are permissive where the underlying dataclass carries open JSON
          *     (evidence, parameters, execution_result); the key set is the promise.
