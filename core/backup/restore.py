@@ -175,6 +175,9 @@ def restore_snapshot(
                 lines.append("discarded staged copies")
                 return "\n".join(lines)
             lines.append(f"previous database: {pre_name}")
+            # Resolved before the swap: an unknown operator refuses the restore
+            # with nothing moved, rather than failing after the swap.
+            restoring_user = _actor(actor)
             swap_lines, abandoned = _swap(cfg, staged_name, pre_name, placed, stamp)
             lines.extend(swap_lines)
             swapped = True
@@ -186,7 +189,7 @@ def restore_snapshot(
             try:
                 lines.extend(
                     _settle_restored(
-                        cfg, manifest, snapshot_id, _actor(actor), abandoned
+                        cfg, manifest, snapshot_id, restoring_user, abandoned
                     )
                 )
                 _record_restored(manifest, snapshot_id, discarded)
@@ -321,6 +324,9 @@ def _load_manifest(
 
 
 def _assert_compatible(manifest: dict) -> None:
+    created_at = manifest.get("created_at")
+    if not isinstance(created_at, str) or not created_at.strip():
+        raise BackupError("manifest has no created_at")
     version = manifest.get("version")
     if not isinstance(version, str) or not version.strip():
         raise BackupError("manifest has no version")
@@ -918,11 +924,12 @@ def _trail_ready(conn) -> bool:
 
 
 def _abandoned_tip(cfg: DatabaseConfig) -> dict | None:
-    """The live trail's newest seq and hash, or None when it has none.
+    """The live trail's tip, or None when the database has no trail.
 
-    Absent when the database is not trail-ready or ``audit_trail`` is empty.
-    The anchor is not a tip. The engine is disposed before return so the
-    rename is not refused for this connection.
+    An empty ``audit_trail`` falls back to the anchor, as ``trail.current_tip``
+    does, so a prefix delete that removed every row still names the tip it
+    abandoned. The engine is disposed before return so the rename is not
+    refused for this connection.
     """
     engine = create_engine(
         _config_for(cfg, cfg.database).get_database_url(), poolclass=NullPool
@@ -931,17 +938,10 @@ def _abandoned_tip(cfg: DatabaseConfig) -> dict | None:
         with engine.connect() as conn:
             if not _trail_ready(conn):
                 return None
-            row = conn.execute(
-                text(
-                    "SELECT seq, entry_hash FROM public.audit_trail "
-                    "ORDER BY seq DESC LIMIT 1"
-                )
-            ).first()
+            tip = trail.current_tip(conn)
     finally:
         engine.dispose()
-    if row is None:
-        return None
-    return {"seq": int(row[0]), "hash": str(row[1])}
+    return {"seq": int(tip.seq), "hash": str(tip.entry_hash)}
 
 
 def _restore_values(
@@ -1004,10 +1004,7 @@ def _settle_restored(
     actor: str,
     abandoned: dict | None,
 ) -> list[str]:
-    created_at = manifest.get("created_at")
-    if not isinstance(created_at, str) or not created_at.strip():
-        raise BackupError("manifest has no created_at")
-    _point_at_live(cfg)
+    created_at: str = manifest["created_at"]
     failure: BackupError | None = None
     expired = 0
     rotated = False
@@ -1016,6 +1013,7 @@ def _settle_restored(
     # An earlier failure on a pre-trail snapshot still writes nothing.
     legacy = False
     try:
+        _point_at_live(cfg)
         old_key = _stored_jwt_secret()
         # Under Compose the backend takes the key from the environment, which the
         # operator also passes to this process. No store holds it.
