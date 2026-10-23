@@ -18,15 +18,16 @@ class _Rows:
     def __init__(self, row):
         self.row = row
 
-    def get_system_config(self, key, default=None):
-        if key == "approval.force_manual_approval":
-            return self.row
-        return default
+    def read_system_config(self, key):
+        assert key == "approval.force_manual_approval"
+        return self.row
 
 
 def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
     rows = _Rows({"enabled": True})
-    monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: rows)
+    monkeypatch.setattr(
+        "core.response.approval_service.get_config_service", lambda: rows
+    )
     base = DaemonConfig()
     base.response = ResponseConfig(
         auto_response_enabled=True, force_manual_approval=False
@@ -55,7 +56,9 @@ def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
 
 def test_disabled_db_row_does_not_force_manual(monkeypatch):
     rows = _Rows({"enabled": False})
-    monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: rows)
+    monkeypatch.setattr(
+        "core.response.approval_service.get_config_service", lambda: rows
+    )
     base = DaemonConfig()
     monkeypatch.setattr(
         "services.api.routers.config.DaemonConfig.from_env", lambda: base

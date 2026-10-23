@@ -3093,7 +3093,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Conversation
-         * @description Hard-delete a conversation (messages cascade).
+         * @description Hide the conversation and drop its messages. Ledger rows stay.
          */
         delete: operations["delete_api_conversations_conversation_id"];
         options?: never;
@@ -7518,8 +7518,9 @@ export interface components {
             /**
              * Status
              * @default open
+             * @enum {string}
              */
-            status: string;
+            status: "new" | "open" | "investigating" | "closed";
             /** Title */
             title: string;
         };
@@ -8235,7 +8236,7 @@ export interface components {
             /** Priority */
             priority?: string | null;
             /** Status */
-            status?: string | null;
+            status?: ("new" | "open" | "investigating" | "closed") | null;
             /** Title */
             title?: string | null;
         };

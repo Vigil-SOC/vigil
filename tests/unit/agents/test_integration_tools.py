@@ -16,7 +16,12 @@ from core.integrations.mcp import client as mcp_client
 from core.integrations.mcp import in_process
 from core.integrations.mcp import registry as mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
-from core.llm.chat_layers import _is_destructive_mcp, chat_config, integrations_line
+from core.llm.chat_layers import (
+    _is_destructive_mcp,
+    chat_config,
+    integrations_how,
+    integrations_line,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -58,12 +63,13 @@ def test_nothing_connected_declares_neither_tool_nor_line():
     ids = {t["id"] for t in yaml.safe_load(chat_config("m", None, None))["tools"]}
     assert not ids & {"find_integration_tools", "call_integration_tool"}
     assert integrations_line(None, {}) == ""
+    assert integrations_how(None) == ""
 
 
 def test_the_prompt_line_names_the_connected_servers(registry):
     line = integrations_line(registry.get_all_tools(), registry.tool_servers())
     assert f"{SD}, {SPLUNK}, vigil" in line
-    assert "find_integration_tools" in line
+    assert "find_integration_tools" in integrations_how(registry.get_all_tools())
 
 
 def test_find_returns_matching_tools_with_schemas_and_nothing_destructive(registry):

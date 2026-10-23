@@ -130,6 +130,7 @@ def _install_agent(monkeypatch, agent_id: str, agent: _ChatAgent, resolved):
 
     monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
     monkeypatch.setattr("core.agents.manager.AgentManager", _Mgr)
+    seen["agent"] = claude._agent_for(agent_id)
     monkeypatch.setattr(
         claude,
         "get_provider_spec",
@@ -145,7 +146,7 @@ def test_chat_uses_agent_model_on_the_assignment_provider(monkeypatch):
         _ChatAgent(model="qwen2.5", fallback_model="mistral"),
         ("unit-ollama", AN_OLLAMA_MODEL),
     )
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         "qwen2.5",
     )
@@ -153,13 +154,13 @@ def test_chat_uses_agent_model_on_the_assignment_provider(monkeypatch):
 
 
 def test_chat_uses_fallback_when_agent_model_is_not_servable(monkeypatch):
-    _install_agent(
+    seen = _install_agent(
         monkeypatch,
         "custom-hunter",
         _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="qwen2.5"),
         ("unit-ollama", AN_OLLAMA_MODEL),
     )
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         "qwen2.5",
     )
@@ -170,13 +171,13 @@ def test_chat_returns_assignment_model_when_neither_agent_string_is_servable(
 ):
     # model_for, called later by chat_stream, is what substitutes. This step
     # returns the assignment model unchanged.
-    _install_agent(
+    seen = _install_agent(
         monkeypatch,
         "custom-hunter",
         _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="claude-also"),
         ("unit-ollama", AN_OLLAMA_MODEL),
     )
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         AN_OLLAMA_MODEL,
     )
@@ -189,7 +190,7 @@ def test_chat_without_agent_model_uses_the_assignment(monkeypatch):
         _ChatAgent(component_category="triage"),
         ("unit-ollama", AN_OLLAMA_MODEL),
     )
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         AN_OLLAMA_MODEL,
     )
@@ -199,13 +200,13 @@ def test_chat_without_agent_model_uses_the_assignment(monkeypatch):
 def test_chat_returns_unservable_assignment_model_for_model_for_to_substitute(
     monkeypatch,
 ):
-    _install_agent(
+    seen = _install_agent(
         monkeypatch,
         "custom-hunter",
         _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="claude-also"),
         ("unit-ollama", "claude-assignment"),
     )
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         "claude-assignment",
     )
@@ -214,14 +215,14 @@ def test_chat_returns_unservable_assignment_model_for_model_for_to_substitute(
 def test_missing_assignment_provider_keeps_the_assignment_model(monkeypatch):
     # A missing assignment provider must not be replaced by the default before
     # can_serve, or an agent model would be accepted on the wrong provider.
-    _install_agent(
+    seen = _install_agent(
         monkeypatch,
         "custom-hunter",
         _ChatAgent(model="qwen2.5", fallback_model="mistral"),
         ("unit-ollama", AN_OLLAMA_MODEL),
     )
     monkeypatch.setattr(claude, "get_provider_spec", lambda pid: None)
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         AN_OLLAMA_MODEL,
     )
@@ -395,14 +396,14 @@ def test_chat_tries_the_component_fallback_after_the_assignment_model(monkeypatc
 
 
 def test_agent_model_still_beats_the_component_fallback(monkeypatch):
-    _install_agent(
+    seen = _install_agent(
         monkeypatch,
         "custom-hunter",
         _ChatAgent(model="mistral"),
         ("unit-ollama", A_CLAUDE_MODEL),
     )
     monkeypatch.setattr(claude, "component_fallback", lambda c: "qwen2.5")
-    assert claude._resolve_provider_model_for_request("custom-hunter") == (
+    assert claude._resolve_provider_model_for_request(seen["agent"]) == (
         "unit-ollama",
         "mistral",
     )
