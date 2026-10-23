@@ -105,8 +105,10 @@ def test_disk_error_is_500_without_os_text(client, action):
     with patch.object(
         CustomIntegrationService, "_save_metadata", side_effect=DISK_ERROR
     ):
-        r = _save(client) if action == "save" else client.delete(
-            "/api/custom-integrations/acme"
+        r = (
+            _save(client)
+            if action == "save"
+            else client.delete("/api/custom-integrations/acme")
         )
     assert r.status_code == 500
     assert "Permission denied" not in r.text
