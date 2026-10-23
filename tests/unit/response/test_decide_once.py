@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from core.api.v1.approvals_router import router as approvals_router
 from core.auth.current_user import get_current_user
 from core.deps import provide_approvals
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import AlreadyDecided, ApprovalService
 from core.response.checkpoints import expire_stale, withdraw_for_run
 from core.storage.models import ApprovalAction, WorkflowRun
 from core.storage.unit_of_work import unit_of_work
@@ -137,8 +137,6 @@ def test_tool_path_reports_already_decided(monkeypatch, verb):
 
 
 class _ListedPendingThenDecided(ApprovalService):
-    """The row was pending when listed and decided before the sweep reached it."""
-
     def __init__(self, action_id):
         super().__init__()
         self.listed = ApprovalService().get_action(action_id)
@@ -161,8 +159,6 @@ def test_sweeps_skip_a_row_decided_after_it_was_listed():
 
 
 def test_concurrent_approve_and_reject_decide_once():
-    from core.response.approval_service import AlreadyDecided
-
     for _ in range(20):
         action_id = _seed()
         service = ApprovalService()
