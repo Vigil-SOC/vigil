@@ -670,6 +670,10 @@ services:
       VIGIL_MEDIC_AGENT_WORKER_ADDR: agent-worker:6990
       # Docker Engine API, on medic-private only (D6-2). host:port.
       VIGIL_MEDIC_DOCKERPROXY_ADDR: medic-dockerproxy:8472
+      # Read-only gateway, the medic-private alias (D6-7). Same DEV_MODE the
+      # backend gets: on, the API sensors stay off.
+      VIGIL_MEDIC_GATEWAY_ADDR: medic-gateway-out:8471
+      DEV_MODE: ${DEV_MODE:-false}
     secrets:
       # X-Medic-Key (X2): what the backend presents, via the gateway, to Medic's API.
       - medic_api_key

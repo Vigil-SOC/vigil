@@ -95,7 +95,6 @@ const newSessionId = (): string => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-/** An `{error}` frame the server sent: the backend was reached, so it is not a transport failure. */
 class ServerRefusal extends Error {}
 
 interface Conversation {
@@ -145,8 +144,7 @@ function askedOf(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter((m, i) => m.role !== 'error' && msgs[i + 1]?.role !== 'error')
 }
 
-/** The failure's own words, from a refused response's `detail`. */
-async function refusalOf(res: Response): Promise<string> {
+async function refusalOf(res: Response): Promise<string | null> {
   try {
     const detail = (await res.json())?.detail
     if (typeof detail === 'string' && detail) return detail
@@ -154,7 +152,7 @@ async function refusalOf(res: Response): Promise<string> {
   } catch {
     /* no body */
   }
-  return `Vigil refused the request (HTTP ${res.status})`
+  return null
 }
 
 interface CaseHit {
@@ -586,9 +584,12 @@ export default function Chat({
         body: JSON.stringify(payload),
         signal: ac.signal,
       })
-      if (res.status === 502 || res.status === 503) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const refusal = await refusalOf(res)
+        if (refusal === null && (res.status === 502 || res.status === 503)) throw new Error(`HTTP ${res.status}`)
+        throw new ServerRefusal(refusal ?? `Vigil refused the request (HTTP ${res.status})`)
+      }
       reached = true
-      if (!res.ok) throw new Error(await refusalOf(res))
       accepted = true
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()

@@ -88,6 +88,7 @@ class Medic:
         engine_state: dict[str, Any] | None = None,
         suppression: Sequence[Mapping[str, Any]] = (),
         group_cap: int = GROUP_CAP,
+        vigil_dev_mode: bool = False,
     ) -> None:
         self.writer, self.clock = writer, clock
         self.engine = Engine(
@@ -102,7 +103,12 @@ class Medic:
         self.bus = Bus(Stats())
         self.sink = EngineSink(self.engine)
         self.pipeline = Pipeline(self.bus, self.sink)
-        self.scheduler = Scheduler(sensors, SensorContext(shape=shape), self.bus, clock)
+        self.scheduler = Scheduler(
+            sensors,
+            SensorContext(shape=shape, vigil_dev_mode=vigil_dev_mode),
+            self.bus,
+            clock,
+        )
         self.unstored = 0  # records the store refused or couldn't take
         self._stepped_back = False
 

@@ -971,13 +971,45 @@ jobs:
             -e POSTGRES_APP_PASSWORD=vigil-app-test \
             "$(yq "$container | .image" "$job")" "${command[@]}"
 
+      - name: Create the tables the chart SQL does not, as vigil_app
+        # create_all builds the tables the init files never had. It does not
+        # add a column to a table the chart already built, so
+        # users.principal_id waits for the upgrade. The stamp is what a 0.8
+        # start wrote. init_database() no longer writes it, and it refuses a
+        # database with tables and no alembic_version. Adoption accepts only
+        # that stamp.
+        env:
+          POSTGRES_USER: vigil_app
+          POSTGRES_PASSWORD: vigil-app-test
+        run: |
+          python - <<'PY'
+          from core.storage.connection import _stamp_schema_version, get_db_manager
+
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          _stamp_schema_version(manager.engine)
+          PY
+
+      - name: Apply schema revisions as the chart user
+        # Adopts the install and applies every revision after the baseline,
+        # including users.principal_id (#2739). CI has no restore point.
+        env:
+          POSTGRES_USER: deeptempo
+          VIGIL_UPGRADE_ACK_REASON: "CI: fresh install, nothing to restore"
+        run: |
+          VIGIL_UPGRADE_ACK_VERSION="$(cat VERSION)" python -m core.upgrade
+
       - name: Initialize schema as vigil_app
         id: init-schema
-        # The chart still applies its SQL as the owner, then the tables that
-        # SQL does not create have to be buildable as vigil_app. Startup no
-        # longer does that (python -m core.upgrade does, and #2739 puts the
-        # chart on it). This step keeps the grant check: create_tables as
-        # vigil_app, then the drift check under DB_STRICT_SCHEMA.
+        # Strict for the reason the jobs above are (#562). The chart still
+        # applies its SQL as the owner; tables that SQL does not create have
+        # to be buildable as vigil_app. Startup no longer does that
+        # (python -m core.upgrade does, and #2739 puts the chart on it). This
+        # step keeps the grant check: create_tables as vigil_app, then the
+        # drift check under DB_STRICT_SCHEMA. About half the ORM tables come
+        # from init SQL, as on a real install, so a table whose SQL disagrees
+        # with its model is drift.
         env:
           POSTGRES_USER: vigil_app
           POSTGRES_PASSWORD: vigil-app-test
