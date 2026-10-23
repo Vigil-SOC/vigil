@@ -1,0 +1,4 @@
+1.81s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/findings/]
+1.77s call     unit/api/test_context_path.py::test_mount_routers_prefixes_api_routes
+1.72s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/cases/]
+================= 1532 passed, 8 warnings in 156.56s (0:02:36) =================
