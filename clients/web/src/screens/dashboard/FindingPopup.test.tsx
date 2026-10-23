@@ -8,7 +8,6 @@ vi.mock('../../services/api', () => ({
   findingsApi: {
     getById: vi.fn(),
     getEnrichment: vi.fn(),
-    update: vi.fn(),
     launchIntake: vi.fn(),
     markNoise: vi.fn(),
     clearNoise: vi.fn(),
@@ -356,7 +355,6 @@ describe('FindingPopup Status row', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
     expect(await screen.findByText('Case 0042')).toBeInTheDocument()
     expect(findingsApi.clearNoise).toHaveBeenCalledWith('f-source-1')
-    expect(findingsApi.update).not.toHaveBeenCalled()
     expect(onChanged).toHaveBeenCalledTimes(2)
   })
 })
