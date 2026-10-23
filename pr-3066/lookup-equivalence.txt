@@ -1,0 +1,13 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/3afb7481-ce8b-49bb-b45c-e22cd0b93e36/clients/web
+
+stdout | src/screens/setup/zz_cmp.test.ts > cmp > new lookup equals removed CATALOG_TO_SERVER for every id
+ids=53 diff=0 splunk->splunk-selfhosted elastic-siem->elastic aws-security-hub->aws-security
+
+ ✓ src/screens/setup/zz_cmp.test.ts > cmp > new lookup equals removed CATALOG_TO_SERVER for every id 13ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  23:04:20
+   Duration  3.37s (transform 426ms, setup 921ms, import 311ms, tests 24ms, environment 1.62s)
+
