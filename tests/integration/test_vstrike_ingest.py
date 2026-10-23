@@ -57,9 +57,10 @@ class _FakeDataService:
         priority: str = "medium",
         description: str = "",
         status: str = "open",
+        case_id: Optional[str] = None,
     ):
         case = {
-            "case_id": f"case-test-{len(self.created_cases)+1:04d}",
+            "case_id": case_id or f"case-test-{len(self.created_cases)+1:04d}",
             "title": title,
             "finding_ids": list(finding_ids),
             "priority": priority,
