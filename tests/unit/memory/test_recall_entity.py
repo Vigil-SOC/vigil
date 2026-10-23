@@ -472,6 +472,10 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
             {"entity_keys": [f"hash:{HASH}", "bogus:x"]},
             id="one unknown type among good keys",
         ),
+        pytest.param(
+            {"entity_keys": ["bogus:x", f"hash:{HASH}"]},
+            id="unknown type before good keys",
+        ),
     ],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
@@ -543,3 +547,16 @@ def test_a_key_memory_cannot_know_is_refused_rather_than_read_as_no_history(
     assert bad["ok"] is False
     assert bad["failure"]["kind"] == "invalid_args"
     assert f"sha256:{HASH}" in bad["failure"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["IP:10.0.0.7", "ip:2001:db8::1", "url:https://evil.example/a:8080/x"],
+)
+def test_a_well_formed_key_in_any_case_or_shape_is_accepted(invoke, session, key):
+    # The refusal guards the type, not the value's shape: a key whose type is in
+    # the vocabulary must still reach the read, however it is written.
+    args = {"entity_keys": [key], "caller_kind": "t", "caller_id": "t"}
+    body = invoke(RECALL_TOOL, args).json()
+
+    assert body["ok"] is True, body
