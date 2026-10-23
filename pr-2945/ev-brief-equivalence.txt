@@ -1,0 +1,7 @@
+SAME "short"
+SAME "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+SAME "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+SAME "a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b…"
+SAME "Lateral movement from the jump host to the domain controller…"
+SAME "word word word word word word word word word word word word…"
+SAME "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
