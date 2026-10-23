@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { errorFields, logger } from "./log.js";
+import { PartialAnswer } from "./provider.js";
 
 export interface RateLimit {
   rpm: number;
@@ -99,7 +100,7 @@ export class Limiter {
         return await call();
       } catch (error) {
         // A cancelled call is not a failure to retry: whoever cancelled it is gone.
-        if (signal?.aborted === true) throw error;
+        if (signal?.aborted === true || error instanceof PartialAnswer) throw error;
         const status = statusOf(error);
         if (status === 402) throw new GatewayExhausted((error as Error).message);
         // One more attempt, not three: retrying a ceiling costs a role its whole dispatch

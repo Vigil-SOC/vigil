@@ -29,6 +29,9 @@ export interface TurnRequest {
   // forced choice offers only that tool instead; one that refuses tools at all asks for the
   // tool's arguments as an emission. The run's emission turn covers a miss.
   force?: string;
+  // Yield the model's text as it arrives rather than once the call ends. Only the plain
+  // ask path honours it, and a failure after text has gone out is not retried.
+  live?: boolean;
   signal?: AbortSignal;
 }
 
@@ -68,3 +71,7 @@ export class ProviderError extends Error {
     super(message);
   }
 }
+
+// A live call that failed after some of its text was already handed out. Asking again
+// would repeat that text to whoever is reading, so nothing retries it.
+export class PartialAnswer extends ProviderError {}

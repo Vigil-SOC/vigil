@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { ZERO_TOKENS, type TokenCounts } from "../contracts/budget.js";
 import { estimateTokens, Limiter, statusOf } from "./limiter.js";
 import {
+  PartialAnswer,
   ProviderError,
   type Message,
   type Provider,
@@ -229,19 +230,46 @@ class OpenAiSurface implements Provider {
     };
   }
 
-  // Assembled before the events are emitted, so usage precedes the tool calls. The
-  // deltas are not re-emitted: nothing downstream renders a partial turn.
+  // Assembled before the events are emitted, so usage precedes the tool calls. Only a
+  // live plain ask hands its text out as it arrives: emit and forced calls can be asked
+  // again in another shape, which would show text that is later thrown away.
   async *stream(request: TurnRequest): AsyncGenerator<ProviderEvent> {
+    if (request.live === true && request.emit === undefined && request.force === undefined) return yield* this.live(request);
     const turn = request.emit === undefined ? await this.ask(request) : await this.emit(request, request.emit);
     if (turn.content !== "") yield { type: "text_delta", text: turn.content };
     yield { type: "usage", tokens: turn.tokens };
     for (const call of turn.tool_calls) yield { type: "tool_call", call };
   }
 
-  private async ask(request: TurnRequest): Promise<Turn> {
+  // The call runs inside the limiter, which cannot yield, so its text is queued here
+  // and handed out between chunks. Usage and tool calls still come at the end.
+  private async *live(request: TurnRequest): AsyncGenerator<ProviderEvent> {
+    const heard: string[] = [];
+    let wake = (): void => {};
+    let ended = false;
+    const call = this.ask(request, (text) => {
+      heard.push(text);
+      wake();
+    });
+    // A reader that stops early never awaits the call; its failure is not unhandled.
+    call.catch(() => {}).finally(() => {
+      ended = true;
+      wake();
+    });
+    for (;;) {
+      while (heard.length > 0) yield { type: "text_delta", text: heard.shift()! };
+      if (ended) break;
+      await new Promise<void>((resolve) => (wake = resolve));
+    }
+    const turn = await call;
+    yield { type: "usage", tokens: turn.tokens };
+    for (const one of turn.tool_calls) yield { type: "tool_call", call: one };
+  }
+
+  private async ask(request: TurnRequest, heard?: (text: string) => void): Promise<Turn> {
     const body = (tools: readonly ToolSchema[]) => ({ model: this.wire_model, messages: wire(request.messages), ...(tools.length === 0 ? {} : { tools: wireTools(tools) }) });
     const forced = request.tools.find((tool) => tool.id === request.force);
-    if (forced === undefined) return turnOf(await this.call(body(request.tools), request.signal));
+    if (forced === undefined) return turnOf(await this.call(body(request.tools), request.signal, heard));
     // Remembered per model like emitModes: "tool" means the gateway refuses a forced choice,
     // "prompt" that it refuses tools at all. Each is remembered once the next rung has gone
     // through: a 400 about something else is not a refusal.
@@ -363,33 +391,35 @@ class OpenAiSurface implements Provider {
 
   // Streamed, and not for the deltas: a buffered completion is subject to the gateway's
   // non-streaming ceiling -- 30 seconds in Bifrost, returned as a 504.
-  private async call(body: Body, signal?: AbortSignal): Promise<OpenAI.Chat.ChatCompletion> {
+  private async call(body: Body, signal?: AbortSignal, heard?: (text: string) => void): Promise<OpenAI.Chat.ChatCompletion> {
     // Before the limiter, not only inside the request: a call still queued behind
     // a rate limit is the cheapest one to give up on.
     signal?.throwIfAborted();
     if (takesCacheMarker(this.provider_type, this.model)) body = { ...body, messages: cacheable(body.messages) };
     const cap = outputCaps.get(this.model) ?? "max_tokens";
     try {
-      return await this.send(body, cap, signal);
+      return await this.send(body, cap, signal, heard);
     } catch (error) {
       const other = renamed(error, cap);
       if (other === null) throw error;
       outputCaps.set(this.model, other);
-      return await this.send(body, other, signal);
+      return await this.send(body, other, signal, heard);
     }
   }
 
-  private async send(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<OpenAI.Chat.ChatCompletion> {
+  private async send(body: Body, cap: OutputCap, signal?: AbortSignal, heard?: (text: string) => void): Promise<OpenAI.Chat.ChatCompletion> {
     let wasted: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
-    // A cancel mid-retry still owes what the empty replies before it burned.
+    // A cancel mid-retry, or a live answer cut off, still owes what the empty replies before it burned.
     const cancelled = (error: unknown): unknown => {
-      if (signal?.aborted !== true || wasted.input + wasted.output === 0) return error;
+      const partial = error instanceof PartialAnswer;
+      if ((signal?.aborted !== true && !partial) || wasted.input + wasted.output === 0) return error;
       const burned = error instanceof ProviderError ? error.tokens : ZERO_TOKENS;
       const tokens = { ...burned, input: burned.input + wasted.input, output: burned.output + wasted.output };
-      return new ProviderError(error instanceof Error ? error.message : String(error), tokens);
+      const message = error instanceof Error ? error.message : String(error);
+      return partial ? new PartialAnswer(message, tokens) : new ProviderError(message, tokens);
     };
     for (let attempt = 0; ; attempt += 1) {
-      const { response, reported } = await this.sendOnce(body, cap, signal).catch((error: unknown) => {
+      const { response, reported } = await this.sendOnce(body, cap, signal, heard).catch((error: unknown) => {
         throw cancelled(error);
       });
       if (response.choices[0]?.finish_reason === "length" && !said(response)) {
@@ -416,7 +446,7 @@ class OpenAiSurface implements Provider {
 
   // One request. `reported` says the gateway sent usage: a guessed usage cannot tell
   // an empty reply from one the stream lost.
-  private async sendOnce(body: Body, cap: OutputCap, signal?: AbortSignal): Promise<{ response: OpenAI.Chat.ChatCompletion; reported: boolean }> {
+  private async sendOnce(body: Body, cap: OutputCap, signal?: AbortSignal, heard?: (text: string) => void): Promise<{ response: OpenAI.Chat.ChatCompletion; reported: boolean }> {
     let reported = false;
     const ceiling = maxOutputTokens();
     const limit = cap === "max_tokens" ? { max_tokens: ceiling } : { max_completion_tokens: ceiling };
@@ -446,7 +476,18 @@ class OpenAiSurface implements Provider {
         if (!(Symbol.asyncIterator in stream)) {
           throw new ProviderError("the gateway answered a stream request with a whole completion");
         }
-        const response = await assemble(stream);
+        // What a live call has already handed out: past the first of it, a failure is
+        // final, carrying an estimate of what it burned, since usage only comes at the end.
+        let written = "";
+        const relay = heard === undefined ? undefined : (text: string) => {
+          written += text;
+          heard(text);
+        };
+        const response = await assemble(stream, relay).catch((error: unknown) => {
+          if (written === "") throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          throw new PartialAnswer(`the model's answer was cut off: ${message}`, { ...ZERO_TOKENS, input: estimate, output: estimateTokens(written) });
+        });
         reported = response.usage !== undefined;
         const usage = response.usage ?? guessed(estimate, response);
         // The SDK ends a stream aborted mid-body as if it had finished. A cut-off answer
@@ -508,7 +549,7 @@ function honours(content: string, schema: Record<string, unknown>): boolean {
 
 // One completion out of its chunks. A tool call arrives split across them, so held ids
 // and names are kept rather than overwritten by the nulls that follow.
-async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>): Promise<OpenAI.Chat.ChatCompletion> {
+async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>, heard?: (text: string) => void): Promise<OpenAI.Chat.ChatCompletion> {
   const calls = new Map<number, OpenAI.Chat.ChatCompletionMessageFunctionToolCall>();
   let content = "";
   let usage: OpenAI.CompletionUsage | undefined;
@@ -522,7 +563,9 @@ async function assemble(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>):
     const choice = chunk.choices[0];
     if (choice === undefined) continue;
     if (choice.finish_reason) finish = choice.finish_reason;
-    content += textOf(choice.delta.content);
+    const text = textOf(choice.delta.content);
+    content += text;
+    if (text !== "") heard?.(text);
     for (const delta of choice.delta.tool_calls ?? []) {
       const held = calls.get(delta.index);
       calls.set(delta.index, {
