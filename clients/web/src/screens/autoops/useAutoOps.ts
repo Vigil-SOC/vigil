@@ -32,8 +32,6 @@ export interface Investigation {
   skill_id: string
   trigger_type: string
   status: string
-  current_step: number
-  total_steps: number
   iteration_count: number
   cost_usd: number
   priority: string
