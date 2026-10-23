@@ -19,6 +19,7 @@ USER_SECRETS = (
     "password_hash",
     "password_history",
     "password_changed_at",
+    "tokens_valid_after",
     "mfa_secret",
     "mfa_recovery_codes",
     "mfa_last_totp_step",

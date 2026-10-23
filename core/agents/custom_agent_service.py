@@ -8,8 +8,9 @@ from core.agents.builtins import blank_model
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.agents.prompts import prompt_for_row
 from core.auth import principals
+from core.storage.config_service import write_config_audit
 from core.storage.connection import get_db_manager
-from core.storage.models import ConfigAuditLog, CustomAgent
+from core.storage.models import CustomAgent
 from core.storage.schemas import CustomAgentSchema
 
 logger = logging.getLogger(__name__)
@@ -84,18 +85,17 @@ def _audit_model_strings(
     after: Optional[Dict[str, Optional[str]]],
     changed_by: Optional[str],
 ) -> None:
-    """One config_audit_log row on this session when either string changes."""
+    """One audit entry on this session when either string changes."""
     if not changed_by or not model_strings_changed(before, after):
         return
-    session.add(
-        ConfigAuditLog(
-            config_type="custom_agent",
-            config_key=agent_id,
-            action=action,
-            old_value=before,
-            new_value=after,
-            changed_by=changed_by,
-        )
+    write_config_audit(
+        session,
+        config_type="custom_agent",
+        config_key=agent_id,
+        action=action,
+        old_value=before,
+        new_value=after,
+        changed_by=changed_by,
     )
 
 

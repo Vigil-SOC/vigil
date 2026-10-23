@@ -1,16 +1,32 @@
-"""``python -m core.backup`` create, restore, and the schedule loop."""
+"""``python -m core.backup`` create, restore, the schedule loop, and the current point."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
-from core.backup.create import BackupError, BackupSkipped, create_snapshot
-from core.backup.preupgrade import RESTORE_POINT_NAME, pre_upgrade_snapshot
-from core.backup.restore import restore_snapshot
-from core.backup.schedule import _configure_logging, run_forever
+from core.backup.create import (
+    BackupError,
+    BackupSkipped,
+    _priority_prefix,
+    create_snapshot,
+)
+from core.backup.preupgrade import (
+    DEFAULT_UPGRADE_DIR,
+    KIND,
+    RESTORE_POINT_NAME,
+    pre_upgrade_snapshot,
+)
+from core.backup.restore import _load_manifest, _restic, restore_snapshot
+from core.backup.schedule import (
+    _applied_times,
+    _configure_logging,
+    _tagged,
+    run_forever,
+)
 from core.config import get_settings
 
 
@@ -54,7 +70,45 @@ def _parser() -> argparse.ArgumentParser:
         help="snapshot when this image would migrate or the recorded version changed",
     )
     pre.add_argument("--bifrost-data", help="Bifrost data directory to include")
+    sub.add_parser(
+        "current-point",
+        help="print the newest pre-upgrade snapshot in the upgrade directory as JSON",
+    )
     return parser
+
+
+def current_point() -> dict:
+    """The pre-upgrade snapshot to restore, or {} when the no-setup repo has none.
+
+    After the last applied upgrade that is the first point taken since: a
+    retry after a failed upgrade snapshots the half-migrated database again,
+    and that later point is not the way back. With none since, it is the
+    newest, the point the last applied upgrade took. ``taken_by`` is the
+    release that took it; ``version`` is the release it returns to.
+    """
+    raw = (get_settings().vigil_upgrade_dir or "").strip()
+    upgrade_dir = Path(raw) if raw else DEFAULT_UPGRADE_DIR
+    repo, passphrase = upgrade_dir / "repo", upgrade_dir / "passphrase"
+    if not passphrase.is_file() or not (repo / "config").is_file():
+        return {}
+    snaps = _tagged(str(repo), passphrase, None, KIND)
+    if not snaps:
+        return {}
+    applied = max(_applied_times(upgrade_dir), default=None)
+    since = [s for s in snaps if applied is None or s.taken_at > applied]
+    if since:
+        point = min(since, key=lambda snap: snap.taken_at)
+    else:
+        point = max(snaps, key=lambda snap: snap.taken_at)
+    manifest, _dump, snapshot_id = _load_manifest(
+        _restic(str(repo), True), passphrase, point.snapshot_id, _priority_prefix()
+    )
+    return {
+        "snapshot": snapshot_id,
+        "taken_by": manifest.get("taken_by"),
+        "version": manifest.get("version"),
+        "created_at": manifest.get("created_at"),
+    }
 
 
 def _publish_restore_point(snapshot_id: str | None) -> None:
@@ -109,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "pre-upgrade":
             _configure_logging()
             _publish_restore_point(pre_upgrade_snapshot(bifrost_data=args.bifrost_data))
+            return 0
+        if args.command == "current-point":
+            print(json.dumps(current_point()))
             return 0
     except BackupSkipped as exc:
         print(str(exc), file=sys.stderr)

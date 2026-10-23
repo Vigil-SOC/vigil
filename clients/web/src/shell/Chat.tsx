@@ -19,17 +19,13 @@ import api, {
   reasoningApi,
   streamFetch,
   type ConversationDetail,
-  type ImportConversationInput,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
 import { useAuth } from '../contexts/AuthContext'
 import { useConversations } from './useConversations'
 import {
-  chatCacheEpoch,
-  chatWasImported,
   loadHistory,
   loadKeymap,
-  markChatImported,
   CHAT_HISTORY_MAX,
   retainChatCache,
   saveHistory,
@@ -43,7 +39,6 @@ type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
   role: Role
   text: string
-  ms?: number
 }
 
 interface SessionSummary {
@@ -255,10 +250,8 @@ function VigilMessage({
   onTrace,
 }: {
   text: string
-  ms?: number
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
-  /** dock only: opens the reasoning trace; the case composer keeps its "More" */
   onTrace?: () => void
 }) {
   const copy = (
@@ -269,10 +262,8 @@ function VigilMessage({
       <AnswerText text={text} citations={citations} onCite={onCite} />
       <div className="msg-actions">
         {copy}
-        {onTrace ? (
+        {onTrace && (
           <button title="Reasoning trace" aria-label="Reasoning trace" onClick={onTrace}><Icon name="reason" size={15} /></button>
-        ) : (
-          <button title="More"><Icon name="more" size={15} /></button>
         )}
       </div>
     </>
@@ -556,7 +547,6 @@ export default function Chat({
     setLoading(true)
     setStreamText('')
     setIsProcessingTools(false)
-    const start = Date.now()
 
     const ac = new AbortController()
     abortRef.current = ac
@@ -631,10 +621,9 @@ export default function Chat({
           }
         }
       }
-      const ms = Date.now() - start
       if (gen === turnGen.current) {
         setMessages((m) => {
-          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ms }
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_' }
           const next = [...m, vigil]
           messagesRef.current = next
           return next
@@ -837,49 +826,6 @@ export default function Chat({
     }
   }
 
-  // the marker is only set on success, so a failed import retries next mount.
-  // Only this user's scoped cache is imported; unscoped leftovers are not theirs to upload.
-  const migratedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!userId || lockedCaseId || migratedFor.current === userId) return
-    migratedFor.current = userId
-    try {
-      if (chatWasImported(userId)) return
-      const local = loadHistory<Conversation>(userId)
-      if (local.length === 0) {
-        markChatImported(userId)
-        return
-      }
-      const payload: ImportConversationInput[] = local.map((c) => ({
-        id: c.id,
-        title: c.title,
-        messages: (c.messages || [])
-          .filter((m) => m.role !== 'error')
-          .map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text, thinking: null })),
-      }))
-      for (const c of local) if (c.key) setKeymapEntry(userId, c.key, c.id)
-      const epoch = chatCacheEpoch()
-      let cancelled = false
-      conversationsApi
-        .importHistory(payload)
-        .then(() => {
-          // Sign-out and a user switch bump the epoch; don't recreate a key they removed.
-          if (cancelled || epoch !== chatCacheEpoch()) return
-          markChatImported(userId)
-          reloadHistory()
-        })
-        .catch(() => {
-          if (!cancelled) migratedFor.current = null
-          /* retry next mount */
-        })
-      return () => {
-        cancelled = true
-      }
-    } catch {
-      /* empty */
-    }
-  }, [reloadHistory, lockedCaseId, userId])
-
   // going back to a tab folds the thread to its last exchange; a case switch resets that below
   const seenKey = useRef(collapseKey)
   useEffect(() => {
@@ -1016,7 +962,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} ms={m.ms} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (

@@ -230,9 +230,6 @@ vi.mock('../services/api', () => ({
       data: { steps: [], alerts_exist: 1, demo_enabled: false },
     })),
   },
-  orchestratorApi: {
-    getStatus: () => Promise.resolve({ data: { enabled: false } }),
-  },
   reasoningApi: {
     getSessionSummary: () => Promise.resolve(null),
     listInteractions: () => Promise.resolve({ interactions: [] }),
@@ -285,7 +282,6 @@ vi.mock('../services/api', () => ({
     get: () => Promise.resolve({ data: { messages: [] } }),
     update: () => Promise.resolve({ data: {} }),
     delete: () => Promise.resolve({ data: {} }),
-    importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
   },
   // the spending card shows its own error state; budgets aren't under test here
   budgetsApi: {

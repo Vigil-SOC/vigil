@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
+import { approvalsApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { PageHead } from '../shared/PageHead'
@@ -100,7 +100,7 @@ export default function SocConsole() {
 }
 
 /** key is a plain string, so extension screens can join the nav row */
-type NavItem = [IconName, string, string | null, NavGate?]
+type NavItem = [IconName, string, string, NavGate?]
 
 function SocConsoleInner() {
   const navigate = useNavigate()
@@ -194,9 +194,6 @@ function SocConsoleInner() {
   )
   const [tourOn, setTourOn] = useState(() => !readConsoleTourSeen())
   const [tourIndex, setTourIndex] = useState(0)
-  // from ExtensionProvider, so a connector configured in Settings reaches the
-  // nav row without a refresh
-  const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
   const [demoOn, setDemoOn] = useState(false)
 
   useDesktopNotifications()
@@ -307,19 +304,6 @@ function SocConsoleInner() {
       live = false
       clearInterval(id)
     }
-  }, [])
-
-  useEffect(() => {
-    const pollStatus = () =>
-      orchestratorApi
-        .getStatus()
-        .then((res) => setOrchestratorEnabled(Boolean((res.data as { enabled?: boolean })?.enabled)))
-        .catch(() => {
-          /* keep the previous value */
-        })
-    pollStatus()
-    const id = setInterval(pollStatus, 10_000)
-    return () => clearInterval(id)
   }, [])
 
   useEffect(() => {
@@ -434,20 +418,18 @@ function SocConsoleInner() {
   const Screen = screens[current]
 
   const visibleNav = navItems.filter(([, , key, gate]) => {
-    const perm = key ? screenPerms[key] : undefined
+    const perm = screenPerms[key]
     if (perm && !hasPermission(perm)) return false
-    if (gate?.integration && !enabledIntegrations.includes(gate.integration)) return false
-    if (gate?.orchestrator && !orchestratorEnabled) return false
-    return Boolean(key)
+    return !gate?.integration || enabledIntegrations.includes(gate.integration)
   })
-  const byKey = new Map(visibleNav.map((item) => [item[2] as string, item]))
+  const byKey = new Map(visibleNav.map((item) => [item[2], item]))
   const primary = PRIMARY_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item))
   const moreKeySet = new Set<string>(MORE_KEYS)
   const primaryKeySet = new Set<string>(PRIMARY_KEYS)
   const more = [
     ...MORE_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
     ...visibleNav.filter((item) => {
-      const key = item[2] as string
+      const key = item[2]
       return !primaryKeySet.has(key) && !moreKeySet.has(key)
     }),
   ]
@@ -458,7 +440,6 @@ function SocConsoleInner() {
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
-    if (!key) return null
     const count = key === 'decisions' ? parked : key === 'home' || key === 'cases' ? needsYou : 0
     const active = valid && key === current
     return (
@@ -495,7 +476,7 @@ function SocConsoleInner() {
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
   const commandBoards = [...primary, ...more].map((item) => {
-    const key = item[2] as string
+    const key = item[2]
     return { key, label: item[1], icon: item[0], desc: titles[key]?.[1] ?? '' }
   })
   const commandOnHome = valid && allowed && current === 'home' && !wallMode && commandHost !== null

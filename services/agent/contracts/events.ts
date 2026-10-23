@@ -66,9 +66,13 @@ export interface RunPayload {
   budgets: BudgetLimits;
   seed: string;
   tenant_id: string | null;
+  // The actor principal id when the start job named one. Older rows hold the
+  // free-text enqueued_by this replaced.
   started_by: string;
-  // The API-signed name of the person who started the run, when a person did.
-  // A resume reads it back: the resume job does not carry the start request.
+  // person, schedule, alert, or parent. Absent on rows written before it existed.
+  origin?: "person" | "schedule" | "alert" | "parent";
+  // The API-signed token for this run, when one was minted. A resume reads it
+  // back: the resume job does not carry the start request, and does not mint one.
   principal?: string;
   // Set on a child run: the run it was started by, and what for.
   parent?: ParentLink;
@@ -237,6 +241,8 @@ export interface CallPayload {
   // The role that made the call, when it was not the run's one agent: a step a
   // plugin ran under its own prompt and grants.
   role?: string;
+  // The agent principal, when the run was started as one.
+  actor?: string;
   // Experimental guards: what the model was shown in place of result, which
   // stays the raw text, and the reader's findings it was rendered from.
   shown?: string;

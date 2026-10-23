@@ -1,4 +1,4 @@
-"""Wiring: observations → engine (15 s tick) → router R1 → store, end to end.
+"""Wiring: observations → engine (15 s tick) → the router → store, end to end.
 
 Every E3 vector runs through the app path, not only the engine (S10): what lands
 in the store must be the incidents the vector expects, field for field, with
