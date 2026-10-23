@@ -62,9 +62,11 @@ def _vector_rule(inc: lane_ref.Incident):
     counts. Patched after loading, as a defective or tampered pack would be."""
     base = load_rule_file(LANE1)
     signals = {
-        f"s{i}": {"sample": {"signal": "daemon_health", "key": f"k{i}"}}
-        if i < inc.samples
-        else {"log": {"signal": "log_soc_daemon"}}
+        f"s{i}": (
+            {"sample": {"signal": "daemon_health", "key": f"k{i}"}}
+            if i < inc.samples
+            else {"log": {"signal": "log_soc_daemon"}}
+        )
         for i in range(inc.signals)
     }
     when = {
