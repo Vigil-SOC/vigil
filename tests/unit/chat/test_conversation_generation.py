@@ -225,3 +225,26 @@ async def test_a_conversation_that_was_never_deleted_keeps_its_reads(monkeypatch
         monkeypatch, fresh, owner, [{"role": "user", "content": "hi"}]
     )
     assert missing["run_id"] == run_id_for(fresh)
+
+
+def test_a_deleted_conversation_cannot_be_edited_or_deleted_again():
+    owner = f"analyst-{uuid.uuid4().hex[:8]}"
+    session_id = f"conv-{uuid.uuid4().hex[:8]}"
+
+    conversation_service.ensure_conversation(
+        session_id, owner, first_user_text="look up the case"
+    )
+    assert conversation_service.delete(session_id, owner) is True
+    before = _row(session_id)
+
+    assert conversation_service.rename(session_id, owner, "renamed") is None
+    assert conversation_service.set_case_id(session_id, owner, "C-9") is None
+    assert conversation_service.set_archived(session_id, owner, True) is None
+    assert conversation_service.delete(session_id, owner) is False
+    assert conversation_service.get_conversation(session_id, owner) is None
+
+    after = _row(session_id)
+    assert after.generation == before.generation == 1
+    assert after.case_id is None
+    assert after.title is None
+    assert after.deleted_at is not None

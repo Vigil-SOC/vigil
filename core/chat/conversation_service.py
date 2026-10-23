@@ -46,12 +46,13 @@ def _derive_title(text: Optional[str]) -> Optional[str]:
 
 
 def _owned(session, conversation_id: str, user_id: Optional[str]):
-    """Fetch a conversation only if it belongs to ``user_id`` (else ``None``)."""
+    """Fetch a live conversation only if it belongs to ``user_id`` (else ``None``)."""
     return (
         session.execute(
             select(Conversation).where(
                 Conversation.id == conversation_id,
                 Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
             )
         )
         .scalars()
@@ -266,7 +267,7 @@ def get_conversation(conversation_id: str, user_id: Optional[str]) -> Optional[d
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
         conv = _owned(session, conversation_id, user_id)
-        if conv is None or conv.deleted_at is not None:
+        if conv is None:
             return None
         return ConversationSchema.dump(conv)
 
@@ -351,6 +352,7 @@ def delete(conversation_id: str, user_id: Optional[str]) -> bool:
         conv.title = None
         conv.case_id = None
         conv.page_context = None
+        conv.archived = False
         conv.deleted_at = utcnow()
         conv.generation = int(conv.generation or 0) + 1
         conv.message_count = 0
