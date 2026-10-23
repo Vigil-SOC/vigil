@@ -6,7 +6,7 @@ import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
-import { ConfirmDialog, EmptyState, Popup } from '../../shared/ui'
+import { EmptyState, Popup } from '../../shared/ui'
 import { stateWord } from '../../shared/findingState'
 import { Icon } from '../../shared/icons'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
@@ -179,7 +179,6 @@ export default function FindingPopup({
 
   const [acting, setActing] = useState(false)
   const [dismissError, setDismissError] = useState<string | null>(null)
-  const [confirmDel, setConfirmDel] = useState(false)
   const [triageNote, setTriageNote] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
   const [triaging, setTriaging] = useState(false)
@@ -327,19 +326,6 @@ export default function FindingPopup({
       .then(note => { if (triageFor.current === target) setTriageNote(note) })
       .catch(() => { if (triageFor.current === target) setTriageError(SEND_TO_TRIAGE_FAILED) })
       .finally(() => setTriaging(false))
-  }
-
-  const doDelete = () => {
-    if (!id) return
-    setActing(true)
-    findingsApi
-      .delete(id)
-      .then(() => {
-        setConfirmDel(false)
-        onChanged?.()
-        onClose()
-      })
-      .finally(() => setActing(false))
   }
 
   const f = raw ? mapApiFinding(raw) : null
@@ -556,24 +542,11 @@ export default function FindingPopup({
           {/* actions */}
           <div className="fp-actions">
             <button className="btn ghost" onClick={sendToTriage} disabled={triaging}>Send to triage</button>
-            <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={acting}>
-              <Icon name="trash" size={14} /> Delete finding
-            </button>
           </div>
           {triageNote && <div className="field-hint" style={{ marginTop: 10 }}>{triageNote}</div>}
           {triageError && <div className="field-hint err" role="alert" style={{ marginTop: 10 }}>{triageError}</div>}
         </>
       )}
-
-      <ConfirmDialog
-        open={confirmDel}
-        title="Delete finding"
-        body={`Permanently delete finding ${id}? This cannot be undone.`}
-        confirmLabel="Delete"
-        busy={acting}
-        onConfirm={doDelete}
-        onClose={() => setConfirmDel(false)}
-      />
     </Popup>
   )
 }
