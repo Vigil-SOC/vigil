@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 import core.storage.unit_of_work as uow_module
 from core.auth import auth_service
 from core.auth.auth_service import AuthService
-from core.storage.models import Base, Role, User
+from core.storage.models import Base, Principal, Role, User
 from core.time import utcnow
 from services.api.errors import register_exception_handlers
 from services.api.middleware.auth import get_current_active_user
@@ -89,12 +89,13 @@ def db(engine, monkeypatch):
         s.commit()
     yield engine
     with engine.begin() as c:
-        c.execute(text("TRUNCATE users, roles CASCADE"))
+        c.execute(text("TRUNCATE users, roles, principals CASCADE"))
 
 
 def _add_user(engine, **fields) -> None:
     row = dict(
         user_id="u-1",
+        principal_id="u-1",
         username="analyst",
         email="analyst@example.com",
         password_hash=bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(4)).decode(),
@@ -105,6 +106,8 @@ def _add_user(engine, **fields) -> None:
     )
     row.update(fields)
     with Session(engine) as s:
+        s.add(Principal(principal_id="u-1", kind="person"))
+        s.flush()
         s.add(User(**row))
         s.commit()
 

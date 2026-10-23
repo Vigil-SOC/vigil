@@ -335,6 +335,8 @@ class EpisodicReadLog(Base):
     caller_id: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'unknown'")
     )
+    # Beside caller_id. Null when the read did not name a principal.
+    caller_principal_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     keys: Mapped[List[str]] = mapped_column(ARRAY(Text), nullable=False)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     row_counts: Mapped[dict] = mapped_column(JSONB, nullable=False)

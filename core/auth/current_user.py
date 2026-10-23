@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.mcp_credential_service import looks_like_mcp_token
+from core.auth.session_cutoff import issued_before_cutoff
 from core.auth.token_blacklist import is_token_revoked
 from core.config import get_settings
 from core.routing import UnitOfWorkSession
@@ -200,4 +201,15 @@ async def get_current_user(
             detail="User account is inactive",
         )
 
+    # Redis may have refused the cutoff write, or be serving reads without it.
+    # The user row is the record of that sign-out.
+    if issued_before_cutoff(payload, user.tokens_valid_after):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # The audit poll reads this to require a person sign-in before the role check.
+    request.state.access_claims = payload
     return user

@@ -19,14 +19,35 @@ import pyotp
 from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
+from core.auth import principals
 from core.config import get_settings
 from core.exceptions import default_on_error
 from core.secrets import get_secret
-from core.storage.models import Role, User
+from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# A person's own act (decision 9). Never held by a service account, token, or agent.
+_PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
+
+
+def _is_person(user_id: str, session: Optional[Session]) -> bool:
+    """Whether that user's principal is a person. No row is not one."""
+    with unit_of_work(session) as session:
+        principal_id = (
+            session.query(User.principal_id).filter(User.user_id == user_id).scalar()
+        )
+        if not principal_id:
+            return False
+        kind = (
+            session.query(Principal.kind)
+            .filter(Principal.principal_id == principal_id)
+            .scalar()
+        )
+        return kind == principals.PERSON
+
 
 # Fernet tokens are urlsafe base64 of a version byte + timestamp, so they start
 # with "gAAAAA". Lowercase "g" is not base32, so legacy plaintext never matches.
@@ -186,8 +207,12 @@ class AuthService:
         user: User,
         token_type: str = "access",
         user_agent: Optional[str] = None,
+        sid: Optional[str] = None,
     ) -> str:
-        """Generate a JWT token for a user with optional session binding."""
+        """Generate a JWT token for a user with optional session binding.
+
+        ``sid`` names the sign-in the token belongs to; every token gets a
+        fresh ``jti`` either way."""
         expiration = (
             timedelta(minutes=JWT_ACCESS_EXPIRATION_MINUTES)
             if token_type == "access"
@@ -205,6 +230,9 @@ class AuthService:
             "exp": now + expiration,
             "iat": now,
         }
+
+        if sid:
+            payload["sid"] = sid
 
         # Bind token to session context when available
         if user_agent:
@@ -248,6 +276,24 @@ class AuthService:
         except jwt.InvalidTokenError as e:
             logger.warning(f"Invalid JWT token: {e}")
             return None
+
+    @staticmethod
+    def expired_refresh_payload(token: str) -> Optional[Dict[str, Any]]:
+        """The claims of a validly signed refresh token whose expiry has passed,
+        so the sign-in it carries can be ended. None for anything else."""
+        try:
+            payload = jwt.decode(
+                token,
+                JWT_SECRET_KEY,
+                algorithms=[JWT_ALGORITHM],
+                options={"verify_exp": False},
+            )
+        except jwt.InvalidTokenError:
+            return None
+        exp = payload.get("exp")
+        if payload.get("token_type") != "refresh" or exp is None:
+            return None
+        return payload if exp <= time.time() else None
 
     @staticmethod
     def authenticate_user(
@@ -650,6 +696,12 @@ class AuthService:
         Returns:
             True if user has permission
         """
+        # audit.forward and audit.manage are a person's own act. Dev mode grants
+        # every role permission, and this still refuses a non-person, including
+        # a dev user with no principal row.
+        if permission in _PERSON_ONLY and not _is_person(user_id, session):
+            return False
+
         # DEV MODE: Grant all permissions
         if _is_dev_mode():
             return True
@@ -701,6 +753,9 @@ class AuthService:
                 "ai_decisions.approve": True,
                 "medic.read": True,
                 "medic.admin": True,
+                "audit.read": True,
+                "audit.forward": True,
+                "audit.manage": True,
             }
 
         with unit_of_work(session) as session:
@@ -766,6 +821,7 @@ class AuthService:
                 login_count=0,
             )
 
+            principals.add_for_user(session, user)
             session.add(user)
             # Flush so the read-back sees server defaults; the unit of work
             # commits.

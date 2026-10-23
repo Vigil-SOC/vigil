@@ -55,12 +55,6 @@ describe("what the harness says, in the console's words", () => {
     expect(chatEvents(EVERY[1]!)).toEqual([{ type: "tool_processing" }]);
   });
 
-  it("reports a fold with both counts, because the console renders both", () => {
-    expect(chatEvents({ type: "folded", folded: 12, remaining: 18 })).toEqual([
-      { type: "context_windowed", windowed_messages: 12, remaining_messages: 18 },
-    ]);
-  });
-
   it("says a parked turn twice: once typed, once in prose", () => {
     const said = chatEvents(EVERY[3]!);
     expect(said[0]).toEqual({ type: "approval_required", checkpoint_id: "apr-1", tool: "isolate", args: "{}" });

@@ -403,6 +403,10 @@ class Engine:
         recent = [t for t in m.get("opens", []) if now - t <= FLAP_WINDOW_S]
         m["opens"] = recent[-(FLAP_OPENS - 1) :] + [now]
         held, last = m.pop("held_until", None), m.pop("last", None)
+        # Unknown ticks leave the pending snapshot alone, and the window's end
+        # can move during them. Name the end on the opening tick.
+        if held is not None:
+            held = self.upgrade.end
         m["hold_end"] = now + suppress.HOLD_S
         if len(recent) < FLAP_OPENS - 1 or not last:
             return self._opened(rule, group, m, evidence, now, held)
