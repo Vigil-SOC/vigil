@@ -53,11 +53,12 @@ def _clean(throwaway_database):
 
 
 @pytest.fixture
-def client():
+def client(authenticate_app):
     from services.api.routers import triage
 
     app = FastAPI()
     app.include_router(triage.router, prefix=triage.ROUTER_META.prefix)
+    authenticate_app(app)
     return TestClient(app)
 
 

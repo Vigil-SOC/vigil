@@ -30,7 +30,9 @@ class _User:
 def client(monkeypatch):
     from core.auth.auth_service import AuthService
 
-    monkeypatch.setattr(AuthService, "check_permission", staticmethod(lambda *a: True))
+    monkeypatch.setattr(
+        AuthService, "check_permission", staticmethod(lambda *a, **k: True)
+    )
     app = FastAPI()
     app.include_router(approvals_router, prefix="/api")
     app.dependency_overrides[get_current_user] = lambda: _User()

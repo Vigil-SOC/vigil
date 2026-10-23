@@ -99,7 +99,7 @@ def test_export_authenticates_with_resolved_username(monkeypatch):
     )
     monkeypatch.setattr("services.api.routers.jira_export.httpx.post", fake_post)
     monkeypatch.setattr(
-        "services.api.routers.jira_export.AuthService.check_permission",
+        "core.auth.auth_service.AuthService.check_permission",
         lambda *_args, **_kwargs: True,
     )
 
