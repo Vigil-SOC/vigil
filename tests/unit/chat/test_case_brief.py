@@ -90,7 +90,7 @@ async def test_hunt_brief_lists_explanations_evidence_ids_and_how_to_cite(reads)
     assert "The case's run: r-1 (hunt)" in brief
     assert "h-1 [refuted] m.chen is compromised" in brief
     assert "- ev-0 | weakens h-1 | saw thing 0" in brief
-    assert "exact evidence_id" in brief
+    assert "exact evidence_id" in mod.RULES
 
 
 async def test_evidence_over_the_cap_says_how_many_were_left_out(reads):
@@ -178,7 +178,7 @@ async def test_every_run_has_a_section_primary_first_then_newest(reads):
     other = brief.index("Other run: inv-1 (lead investigation), Investigate")
     assert primary < other < brief.index("triage: transfer seen")
     assert "- ev-0 | weakens h-1" in brief
-    assert "say what each run found and cite it" in brief
+    assert "say what each run found and cite it" in mod.RULES
 
 
 async def test_a_short_primary_does_not_starve_another_runs_rows(reads):
@@ -311,7 +311,7 @@ async def test_running_hunt_states_step_phase_directive_and_cost(reads):
     assert "Directive: check m.chen's other sign-ins this week" in body
     assert "Cost: $1.50 of $5.00" in body
     assert "Why " not in body
-    assert "replay_hunt only for a specific past step" in body
+    assert "replay_hunt only for a specific past step" in mod.RULES
 
 
 async def test_parked_hunt_is_paused_with_its_reason(reads):
@@ -393,8 +393,15 @@ async def test_the_handoff_and_a_root_cause_not_started_are_in_the_brief(reads):
     assert body.count("Handed off to") == 1
     assert f"- {ROOT_CAUSE_NOT_STARTED}" in body and "analyst note" not in body
     assert brief.count("</case_data>") == 1
-    assert "never by its run id" in brief and "never name a tool" in brief
+    assert "never by its run id" in mod.RULES and "never name a tool" in mod.RULES
 
 
 async def test_a_case_with_no_handoff_has_no_next_section(reads):
     assert "Next:" not in (await mod.case_brief("C", WF)).split(mod.OPEN)[1]
+
+
+async def test_the_brief_is_the_data_block_alone(reads):
+    # RULES rides in the system prompt, the same every turn (#2863).
+    brief = await mod.case_brief("C", WF)
+    assert brief.startswith(mod.OPEN) and brief.endswith(mod.CLOSE)
+    assert mod.RULES not in brief

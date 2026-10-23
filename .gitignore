@@ -237,10 +237,6 @@ clients/web/yarn-error.log*
 *.exe
 *.dll
 
-# Test outputs
-TestOutputs/*.pdf
-!TestOutputs/.gitkeep
-
 # Temporary files
 tmp/
 temp/

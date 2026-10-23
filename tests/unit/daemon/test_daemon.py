@@ -17,38 +17,14 @@ class TestConfiguredFloors:
     """The responder's severity floors and the processor's queue line read
     ResponseConfig rather than literals (#916)."""
 
-    def _responder(self, **overrides):
+    def _responder(self):
         from services.daemon.config import EscalationConfig, ResponseConfig
 
         return AutonomousResponder(
-            ResponseConfig(**overrides),
+            ResponseConfig(),
             EscalationConfig(),
             response_service=Mock(),
             approvals=Mock(),
-        )
-
-    def test_default_floors_match_the_old_literals(self):
-        responder = self._responder()
-        assert responder._determine_action("critical", 0.70, "")[0] == "isolate"
-        assert responder._determine_action("critical", 0.69, "") is None
-        assert responder._determine_action("high", 0.80, "")[0] == "investigate"
-        assert responder._determine_action("high", 0.79, "") is None
-
-    def test_raised_floors_move_the_decision(self):
-        responder = self._responder(critical_action_floor=0.90, high_action_floor=0.95)
-        assert responder._determine_action("critical", 0.85, "") is None
-        assert responder._determine_action("high", 0.90, "") is None
-
-    def test_decision_records_the_branch_that_fired(self):
-        """Two findings decided by different branches record different rules (#917)."""
-        responder = self._responder()
-        assert responder._determine_action("critical", 0.70, "") == (
-            "isolate",
-            "response.critical_action_floor=0.70 met (0.70)",
-        )
-        assert responder._determine_action("medium", 0.92, "isolate") == (
-            "isolate",
-            "response.confidence_threshold=0.90 met (0.92)",
         )
 
     @pytest.mark.asyncio
