@@ -1,5 +1,6 @@
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, NodeTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node";
+import { EventEmitter } from "node:events";
 import type { ServerResponse } from "node:http";
 import type OpenAI from "openai";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -177,7 +178,7 @@ describe("a run's root span", () => {
 
   // streamChat answers a failure with an error frame rather than a throw.
   it("is marked failed by a chat turn that failed without throwing", async () => {
-    const res = { write: () => true, end: () => undefined, writableEnded: false, destroyed: false } as unknown as ServerResponse;
+    const res = Object.assign(new EventEmitter(), { write: () => true, end: () => undefined, writableEnded: false, destroyed: false }) as unknown as ServerResponse;
     const request = { run_id: "5a2c2d3e-0000-4000-8000-000000000778", turns: [], system_prompt: "", config: "model: x\ntools: [oops]" };
     await traced("invoke_agent chat", {}, () => streamChat(new InProcessState(), request, res));
 

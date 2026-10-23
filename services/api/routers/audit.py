@@ -1,9 +1,11 @@
 """Read, export, and poll the audit trail (#2765).
 
 One filter, from ``core.audit.trail``. List, export, and range verify need
-``audit.read``. Poll needs ``audit.forward`` on a person sign-in: a missing
-sign-in is refused before the role check, and a non-person is refused inside
-``check_permission`` even in dev mode. A poll writes nothing.
+``audit.read``. Poll needs a sign-in: a service account passes on
+``audit.read``, and anyone else needs ``audit.forward``. A missing sign-in is
+refused before that check. ``audit.forward`` and ``audit.manage`` stay a
+person's own act inside ``check_permission``, including in dev mode. A poll
+writes nothing.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from core.audit import trail
 from core.auth import current_user as current_user_module
 from core.auth import principals
-from core.auth.auth_service import AuthService
+from core.auth.auth_service import AuthService, _is_service_account
 from core.auth.current_user import get_current_user
 from core.auth.permissions import require_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -86,17 +88,22 @@ def _require_sign_in(request: Request) -> None:
 
 
 def require_forward():
-    """Person sign-in, then the kind check, then ``audit.forward``."""
+    """A sign-in, then ``audit.read`` for a service account and ``audit.forward`` otherwise.
+
+    ``permission`` stays ``audit.forward``: the person half of the role matrix
+    still denies a Manager, who holds ``audit.read`` and not ``audit.forward``.
+    """
 
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         _require_sign_in(request)
-        if not AuthService.check_permission(user.user_id, "audit.forward"):
+        permission = "audit.read" if _is_service_account(user) else "audit.forward"
+        if not AuthService.check_permission(user.user_id, permission):
             raise HTTPException(
-                status_code=403, detail="Permission denied: audit.forward required"
+                status_code=403, detail=f"Permission denied: {permission} required"
             )
         return user
 
-    # The role x route matrix reads these off the dependency.
+    # The role x route matrix reads these off the dependency (the person audience).
     _check.permission, _check.unsafe_only = "audit.forward", False
     return _check
 

@@ -4,9 +4,14 @@ Fully offline: Ed25519 verification against a trust root baked into the Medic im
 and updated only by a newer trust root signed by the current root role. No network,
 no transparency log, no OCSP, so it works the same on air-gapped installs.
 
-The pack loader (F6) calls verify_envelope() on the raw import bytes FIRST. Only the
-small, fixed-shape envelope is parsed before verification; the payload (the pack)
-is not parsed until a signature has verified. Then it runs pack_check on the payload.
+A pack import is one medic.signed-pack/v1 file: {format, envelope, pack}. The DSSE
+envelope signs a small statement {payloadType, sha256, size} about the pack, not the
+pack itself, so the release key can live in a cloud KMS that signs bounded messages.
+The pack loader (F6) calls verify_envelope() on the raw import bytes FIRST: it checks
+the signatures over the statement, then the pack's size and sha256 against it, and
+only then returns the pack bytes. The pack is not parsed until all of that has passed;
+the loader then runs pack_check on Verified.payload. Trust roots stay a bare DSSE
+envelope over the root JSON itself.
 """
 
 from __future__ import annotations
@@ -22,23 +27,35 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from jsonschema import Draft202012Validator
 
+if __package__:  # inside the services.medic package (A3 F-16)
+    from .pack_check import MAX_PACK_BYTES
+else:  # run from the contracts folder (tests, CLI)
+    from pack_check import MAX_PACK_BYTES
+
 HERE = Path(__file__).parent
 _SCHEMA = json.loads((HERE / "trust.schema.json").read_text())
 ENVELOPE = Draft202012Validator(_SCHEMA)
-ROOT = Draft202012Validator(
-    {
-        "$schema": _SCHEMA["$schema"],
-        "$defs": _SCHEMA["$defs"],
-        "$ref": "#/$defs/trust_root",
-    }
-)
-MAX_ENVELOPE_BYTES = 6 * 1024 * 1024  # a 4 MB pack, base64-encoded, plus signatures
+
+
+def _sub(ref: str) -> Draft202012Validator:
+    return Draft202012Validator(
+        {"$schema": _SCHEMA["$schema"], "$defs": _SCHEMA["$defs"], "$ref": ref}
+    )
+
+
+ROOT = _sub("#/$defs/trust_root")
+SIGNED = _sub("#/$defs/signed_pack")
+STATEMENT = _sub("#/$defs/statement")
+MAX_ENVELOPE_BYTES = 64 * 1024  # a statement or trust root, plus signatures
+MAX_IMPORT_BYTES = MAX_PACK_BYTES + MAX_ENVELOPE_BYTES
 MAX_ROOT_LIFETIME_DAYS = 400
 
 PACK = "application/vnd.deeptempo.medic.pack.v1+json"
 PACK_DEV = "application/vnd.deeptempo.medic.pack-dev.v1+json"
 TRUST_ROOT = "application/vnd.deeptempo.medic.trust-root.v1+json"
 FIXPLAN = "application/vnd.deeptempo.medic.fixplan.v1+json"
+PACK_FORMAT = "medic.pack/v1"
+SIGNED_PACK = "medic.signed-pack/v1"
 
 
 @dataclass
@@ -86,6 +103,22 @@ def _strict_json(data: bytes):
 
     return json.loads(
         data.decode("utf-8"), object_pairs_hook=_no_dupes, parse_constant=bad_constant
+    )
+
+
+def canonical(doc: dict) -> bytes:
+    """Canonical JSON: sorted keys, no whitespace, no trailing newline."""
+    return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
+
+
+def statement(pack: bytes, payload_type: str) -> bytes:
+    """The bytes a pack signature covers."""
+    return canonical(
+        {
+            "payloadType": payload_type,
+            "sha256": hashlib.sha256(pack).hexdigest(),
+            "size": len(pack),
+        }
     )
 
 
@@ -141,6 +174,8 @@ def verify_envelope(
     """Verify an import before anything parses its payload.
 
     expected: payload types the caller accepts here (a pack import passes {PACK, PACK_DEV}).
+    A pack arrives as medic.signed-pack/v1 and Verified.payload is the pack bytes;
+    anything else (trust root, fix plan) is a bare DSSE envelope over its own payload.
     """
     res = Verified()
     err = res.errors.append
@@ -152,16 +187,17 @@ def verify_envelope(
             )
         )
         return res
-    if len(data) > MAX_ENVELOPE_BYTES:
-        err(("S-SIZE", f"{len(data)} bytes"))
+    if len(data) > MAX_IMPORT_BYTES:
+        err(("S-SIZE", f"{len(data)} bytes > {MAX_IMPORT_BYTES}"))
         return res
     try:
-        env = _strict_json(data)
+        doc = _strict_json(data)
     except (ValueError, UnicodeDecodeError, RecursionError) as exc:
         err(("S-JSON", str(exc)[:120]))
         return res
-    if isinstance(env, dict) and "format" in env and "payloadType" not in env:
-        # A bare, unsigned pack.
+    fmt = doc.get("format") if isinstance(doc, dict) else None
+    if fmt == PACK_FORMAT and "payloadType" not in doc and "signatures" not in doc:
+        # A bare, unsigned pack: pack_check applies its own 4 MB cap.
         if dev_mode and PACK_DEV in expected:
             res.payload, res.payload_type, res.role, res.unsigned_dev = (
                 data,
@@ -172,13 +208,23 @@ def verify_envelope(
             return res
         err(("S-UNSIGNED", "unsigned content is refused outside dev mode"))
         return res
-    errors = list(ENVELOPE.iter_errors(env))
+    wrapped = fmt == SIGNED_PACK
+    env = doc.get("envelope") if wrapped else doc
+    size = len(canonical(env)) if wrapped else len(data)
+    if size > MAX_ENVELOPE_BYTES:
+        err(("S-SIZE", f"envelope is {size} bytes > {MAX_ENVELOPE_BYTES}"))
+        return res
+    errors = list((SIGNED if wrapped else ENVELOPE).iter_errors(doc))
     if errors:
         err(("S-ENVELOPE", errors[0].message[:150]))
         return res
     ptype = env["payloadType"]
     if ptype not in expected:
         err(("S-TYPE", f"{ptype} is not accepted here"))
+        return res
+    if wrapped != (ptype in (PACK, PACK_DEV)):
+        # Includes the old form: a bare envelope whose payload is the whole pack.
+        err(("S-FORMAT", f"{ptype} must not arrive as {fmt or 'a bare envelope'}"))
         return res
     found = _role_for(root, ptype)
     if found is None or not found[1]["keyids"]:
@@ -188,7 +234,11 @@ def verify_envelope(
     if role.get("dev_mode_only") and not dev_mode:
         err(("S-DEV", f"{ptype} is accepted only in dev mode"))
         return res
-    payload = base64.b64decode(env["payload"])
+    try:
+        payload = base64.b64decode(env["payload"], validate=True)
+    except ValueError as exc:
+        err(("S-ENVELOPE", f"payload: {exc}"[:150]))
+        return res
     good, reasons = _check_sigs(env, payload, root, role, now)
     if len(good) < role["threshold"]:
         res.errors.extend(reasons)
@@ -200,8 +250,41 @@ def verify_envelope(
                 )
             )
         return res
+    if wrapped:
+        payload = _check_statement(payload, ptype, doc["pack"], err)
+        if payload is None:
+            return res
     res.payload, res.payload_type, res.role, res.signed_by = payload, ptype, name, good
     return res
+
+
+def _check_statement(signed: bytes, ptype: str, pack_text: str, err) -> bytes | None:
+    """Return the pack bytes iff the signed statement describes exactly them."""
+    try:
+        stmt = _strict_json(signed)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        stmt = None
+    if (
+        stmt is None
+        or list(STATEMENT.iter_errors(stmt))
+        or type(stmt["size"]) is not int  # 38.0 is valid JSON Schema "integer"
+        or canonical(stmt) != signed
+        or stmt["payloadType"] != ptype
+    ):
+        err(("S-STATEMENT", f"payload is not a canonical {ptype} statement"))
+        return None
+    try:
+        pack = pack_text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        err(("S-JSON", str(exc)[:120]))
+        return None
+    if len(pack) != stmt["size"]:
+        err(("S-DIGEST", f"pack is {len(pack)} bytes, statement says {stmt['size']}"))
+        return None
+    if hashlib.sha256(pack).hexdigest() != stmt["sha256"]:
+        err(("S-DIGEST", "pack sha256 does not match the signed statement"))
+        return None
+    return pack
 
 
 def update_trust_root(current: dict, data: bytes, *, now: datetime) -> Verified:
@@ -268,6 +351,8 @@ def update_trust_root(current: dict, data: bytes, *, now: datetime) -> Verified:
 def load_root(data: bytes, *, now: datetime) -> dict:
     """Load the trust root baked into the image. Like a TUF root, it must carry its
     own root role's threshold of signatures (checked here, not just at build time)."""
+    if len(data) > MAX_ENVELOPE_BYTES:
+        raise ValueError("trust-root envelope too large")
     env = _strict_json(data)
     if list(ENVELOPE.iter_errors(env)) or env["payloadType"] != TRUST_ROOT:
         raise ValueError("not a trust-root envelope")
