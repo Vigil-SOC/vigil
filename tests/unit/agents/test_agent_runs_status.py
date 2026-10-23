@@ -44,16 +44,19 @@ def _one(value):
     return SimpleNamespace(one_or_none=lambda: value)
 
 
-def _client(session):
+def _client(session, authenticate_app):
     app = FastAPI()
     app.include_router(agent_runs_router.router, prefix="/api/agent-runs")
     app.dependency_overrides[request_unit_of_work] = lambda: session
+    authenticate_app(app)
     return TestClient(app, raise_server_exceptions=False)
 
 
 class TestStatus:
-    def test_an_accepted_run_with_no_events_is_queued_not_missing(self):
-        response = _client(FakeSession(run_row=True)).get(f"/api/agent-runs/{RUN}")
+    def test_an_accepted_run_with_no_events_is_queued_not_missing(self, authenticate_app):
+        response = _client(FakeSession(run_row=True), authenticate_app).get(
+            f"/api/agent-runs/{RUN}"
+        )
 
         assert response.status_code == 200
         assert response.json() == {
@@ -64,31 +67,31 @@ class TestStatus:
             "reason": None,
         }
 
-    def test_a_run_nobody_accepted_is_still_not_found(self):
-        response = _client(FakeSession()).get(f"/api/agent-runs/{RUN}")
+    def test_a_run_nobody_accepted_is_still_not_found(self, authenticate_app):
+        response = _client(FakeSession(), authenticate_app).get(f"/api/agent-runs/{RUN}")
         assert response.status_code == 404
 
     # Once the worker has written to the ledger, workflow_runs no longer decides.
-    def test_events_on_the_ledger_mean_running(self):
-        response = _client(FakeSession(events=3, run_row=False)).get(
+    def test_events_on_the_ledger_mean_running(self, authenticate_app):
+        response = _client(FakeSession(events=3, run_row=False), authenticate_app).get(
             f"/api/agent-runs/{RUN}"
         )
         assert response.json()["status"] == "running"
         assert response.json()["events"] == 3
 
     # workflow_runs.run_id is text, so a run must be found under any UUID spelling.
-    def test_a_queued_run_is_found_under_an_uppercase_id(self):
-        response = _client(FakeSession(run_row=True)).get(
+    def test_a_queued_run_is_found_under_an_uppercase_id(self, authenticate_app):
+        response = _client(FakeSession(run_row=True), authenticate_app).get(
             f"/api/agent-runs/{RUN.upper()}"
         )
         assert response.status_code == 200
         assert response.json()["run_id"] == RUN
 
-    def test_a_terminal_event_carries_its_outcome(self):
+    def test_a_terminal_event_carries_its_outcome(self, authenticate_app):
         session = FakeSession(
             events=5, terminal={"outcome": "completed", "reason": "done"}
         )
-        body = _client(session).get(f"/api/agent-runs/{RUN}").json()
+        body = _client(session, authenticate_app).get(f"/api/agent-runs/{RUN}").json()
         assert body["status"] == "terminal"
         assert body["outcome"] == "completed"
         assert body["reason"] == "done"

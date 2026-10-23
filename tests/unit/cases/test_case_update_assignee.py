@@ -11,7 +11,7 @@ from fastapi import BackgroundTasks
 pytestmark = pytest.mark.unit
 
 SESSION = MagicMock()
-ANALYST = SimpleNamespace(username="nestor")
+ANALYST = SimpleNamespace(username="nestor", user_id="nestor")
 
 
 def _patch(monkeypatch):
