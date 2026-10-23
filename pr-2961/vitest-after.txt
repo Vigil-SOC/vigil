@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/cc3f9ff8-7097-4f70-b04d-002eb17f8313/services/agent
+
+
+ Test Files  5 passed (5)
+      Tests  93 passed (93)
+   Start at  10:48:38
+   Duration  3.00s (import 73%, tests 19%, transform 7%, worker 1%)
+
+    Isolate  5 workers spawned · ~112ms startup each (spawn + environment, per file)
+             at least ~449ms faster with isolate: false — reuses workers across files instead of one per file
+

@@ -1,0 +1,3 @@
+PROBE actor,config,origin,principal,run_id,system_prompt,turns -> 200 "data: {\"type\":\"text\",\"content\":\"ok\"}\n\n"
+PROBE actor,agent_id,config,origin,parent_run_id,principal,run_id,system_prompt,turns -> 200 "data: {\"type\":\"text\",\"content\":\"ok\"}\n\n"
+      Tests  1 passed (1)

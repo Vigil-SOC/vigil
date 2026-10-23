@@ -1,0 +1,3 @@
+0.11s call     unit/chat/test_chat_principal.py::test_the_turn_carries_a_principal_for_the_signed_in_user
+0.11s call     unit/chat/test_chat_page_context.py::test_turn_without_a_model_names_the_page_and_uses_chat_default
+======================== 36 passed, 1 warning in 32.58s ========================

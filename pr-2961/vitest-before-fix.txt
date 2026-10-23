@@ -1,0 +1,15 @@
+     × is refused with 400 before any stream opens: null 12ms
+     × is refused with 400 before any stream opens: an empty object 14ms
+     × is refused with 400 before any stream opens: a list 6ms
+     × is refused with 400 before any stream opens: no run_id 5ms
+     × is refused with 400 before any stream opens: an empty run_id 6ms
+     × is refused with 400 before any stream opens: no turns 4ms
+     × is refused with 400 before any stream opens: turns that are a string 5ms
+     × is refused with 400 before any stream opens: a turn with an unknown role 5ms
+     × is refused with 400 before any stream opens: a turn with no content 5ms
+     × is refused with 400 before any stream opens: no system_prompt 3ms
+     × is refused with 400 before any stream opens: a config that is not text 3ms
+     × is refused with 400 before any stream opens: a principal that is not text 4ms
+     × is refused with 400 before any stream opens: an unknown origin 4ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 13 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  13 failed | 32 passed (45)
