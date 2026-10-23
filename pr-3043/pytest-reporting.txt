@@ -1,0 +1,15 @@
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+0.63s setup    unit/reporting/test_analytics_probe_exclusion_db.py::test_breakdowns_exclude_probes_and_add_up_to_the_total
+0.57s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+0.53s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+0.51s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.21s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/workflows/runs/r-1/resume-body26-ai_decisions.approve]
+0.16s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/detection-rules/update-all-None-settings.write]
+0.14s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases-body16-cases.write]
+0.13s call     unit/reporting/test_attack_heatmap_db.py::test_analytics_is_200_with_an_undated_finding
+0.11s call     unit/reporting/test_ai_decision_feedback_reviewer.py::test_the_session_user_is_recorded_and_a_body_reviewer_is_ignored
+0.07s setup    unit/reporting/test_ai_decision_feedback_reviewer.py::test_the_session_user_is_recorded_and_a_body_reviewer_is_ignored
+======================= 88 passed, 2 warnings in 40.77s ========================

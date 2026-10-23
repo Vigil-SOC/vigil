@@ -1,0 +1,5 @@
+PROBE 24h 200 ['affectedEntities', 'attackHeatmap', 'metrics', 'mitreTechniques', 'severityDistribution', 'timeSeriesData', 'topSources']
+PROBE 7d 200 ['affectedEntities', 'attackHeatmap', 'metrics', 'mitreTechniques', 'severityDistribution', 'timeSeriesData', 'topSources']
+PROBE 30d 200 ['affectedEntities', 'attackHeatmap', 'metrics', 'mitreTechniques', 'severityDistribution', 'timeSeriesData', 'topSources']
+PROBE all 200 ['affectedEntities', 'attackHeatmap', 'metrics', 'mitreTechniques', 'severityDistribution', 'timeSeriesData', 'topSources']
+============================== 4 passed in 2.05s ===============================

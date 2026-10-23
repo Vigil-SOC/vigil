@@ -1,0 +1,4 @@
+EXIT=0
+--- probe reading responseTimeData:
+src/probe3007.ts(1,117): error TS2339: Property 'responseTimeData' does not exist on type 'AnalyticsData'.
+EXIT=2
