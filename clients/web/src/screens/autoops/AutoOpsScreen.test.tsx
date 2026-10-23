@@ -21,6 +21,8 @@ vi.mock('./useAutoOps', () => ({
       inv({ investigation_id: 'inv-priced', cost_usd: 1.2346 }),
       inv({ investigation_id: 'inv-zero', cost_usd: 0 }),
       inv({ investigation_id: 'inv-absent', cost_usd: undefined }),
+      ...['assigned', 'executing', 'waiting_approval', 'paused', 'failed'].map((status) =>
+        inv({ investigation_id: `inv-${status}`, status, cost_usd: 0 })),
     ],
     phase: 'ready', error: null, notice: null, busy: null,
     reload: vi.fn(), clearError: vi.fn(), clearNotice: vi.fn(), toggleEnabled: vi.fn(), killAll: vi.fn(),
@@ -38,5 +40,19 @@ describe('autoops investigation rows', () => {
     expect(within(rowFor('inv-zero')).getByText('$0.000')).toBeInTheDocument()
     expect(within(rowFor('inv-absent')).getByText('not priced')).toBeInTheDocument()
     expect(document.body.textContent).not.toContain('$undefined')
+  })
+
+  it.each([
+    ['inv-assigned', true, false],
+    ['inv-executing', true, false],
+    ['inv-waiting_approval', true, false],
+    ['inv-paused', true, false],
+    ['inv-priced', false, true],
+    ['inv-failed', false, true],
+  ])('%s offers Kill %s and Restart %s', (id, kill, restart) => {
+    render(<AutoOpsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
+
+    expect(within(rowFor(id)).queryByTitle('Kill') !== null).toBe(kill)
+    expect(within(rowFor(id)).queryByTitle('Restart') !== null).toBe(restart)
   })
 })

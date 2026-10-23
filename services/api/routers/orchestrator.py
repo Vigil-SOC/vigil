@@ -21,7 +21,11 @@ from core.auth.permissions import permission_gate
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
-from core.storage.models import User
+from core.storage.models import (
+    FINISHED_INVESTIGATION_STATUSES,
+    LIVE_INVESTIGATION_STATUSES,
+    User,
+)
 from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
@@ -377,7 +381,7 @@ def wake_investigation(investigation_id: str, user: User = Depends(get_current_u
                 status_code=404, detail=f"Investigation not found: {investigation_id}"
             )
 
-        if inv.get("status") not in ("completed", "failed"):
+        if inv.get("status") not in FINISHED_INVESTIGATION_STATUSES:
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot restart investigation in status '{inv.get('status')}'",
@@ -415,26 +419,55 @@ def wake_investigation(investigation_id: str, user: User = Depends(get_current_u
 
 @router.post("/investigations/{investigation_id}/kill", dependencies=_KILL)
 def kill_investigation(investigation_id: str):
-    """Kill a specific running investigation."""
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=404, detail="Orchestrator not available")
+    """Fail one live investigation; a finished or unknown one is left as it is."""
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Investigation
 
-        # The run belongs to the agent worker, so this marks the record and the
-        # run stops at its own ceiling. Reaping one mid-flight is #633.
-        orch._update_investigation_status(
-            investigation_id, "failed", "Manually killed by user"
+    orch = _get_orchestrator()
+    if not orch:
+        raise HTTPException(status_code=404, detail="Orchestrator not available")
+
+    with get_db_manager().session_scope() as session:
+        killed = (
+            session.query(Investigation)
+            .filter(
+                Investigation.investigation_id == investigation_id,
+                Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
+            )
+            .update(
+                {
+                    "status": "failed",
+                    "current_activity": None,
+                    "master_review_notes": "Manually killed by user",
+                },
+                synchronize_session=False,
+            )
+        )
+        status = (
+            None
+            if killed
+            else session.query(Investigation.status)
+            .filter_by(investigation_id=investigation_id)
+            .scalar()
         )
 
-        state = orch.workdir.read_state(investigation_id)
-        state["status"] = "failed"
-        state["failure_reason"] = "Manually killed by user"
-        orch.workdir.write_state(investigation_id, state)
+    if not killed:
+        if status is None:
+            raise HTTPException(
+                status_code=404, detail=f"Investigation not found: {investigation_id}"
+            )
+        raise HTTPException(
+            status_code=409, detail=f"Cannot kill investigation in status '{status}'"
+        )
 
-        return {"success": True, "message": f"Investigation {investigation_id} killed"}
-    except HTTPException:
-        raise
+    # The run belongs to the agent worker, so this marks the record and the
+    # run stops at its own ceiling. Reaping one mid-flight is #633.
+    state = orch.workdir.read_state(investigation_id)
+    state["status"] = "failed"
+    state["failure_reason"] = "Manually killed by user"
+    orch.workdir.write_state(investigation_id, state)
+
+    return {"success": True, "message": f"Investigation {investigation_id} killed"}
 
 
 @router.post("/investigations", dependencies=_RUN_AGENTS)
