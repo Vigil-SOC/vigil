@@ -2255,7 +2255,7 @@ describe('case page', () => {
       const toggle = await panel.findByRole('button', { name: /^People/ })
       await waitFor(() => expect(toggle).toHaveTextContent('People · unassigned, comments unavailable'))
       fireEvent.click(toggle)
-      expect(await panel.findByText('Couldn’t load comments.')).toBeInTheDocument()
+      expect(await panel.findByText('Couldn’t load comments: down')).toBeInTheDocument()
       expect(panel.getByText('Comments — · Tasks 0 · Tickets 0')).toBeInTheDocument()
 
       vi.mocked(casesApi.addComment).mockResolvedValueOnce({ data: {} } as never)

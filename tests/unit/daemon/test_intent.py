@@ -31,12 +31,22 @@ def _no_db(*_a, **_k):
     raise RuntimeError("no database in unit tests")
 
 
+class _FakeConfigService:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def get_system_config(self, key, default=None):
+        return self.rows.get(key, default)
+
+    def read_system_config(self, key):
+        return self.rows.get(key)
+
+
 @pytest.fixture
 def offline_config():
-    # Both the lazy import inside from_env() and the module-level one in
-    # services.daemon.intent, so no test here reaches for Postgres.
     with patch("core.storage.config_service.get_config_service", _no_db), patch(
-        "services.daemon.intent.get_config_service", _no_db
+        "core.response.approval_service.get_config_service",
+        return_value=_FakeConfigService({}),
     ):
         yield
 
@@ -214,14 +224,6 @@ def test_from_env_threads_triage_timeout(offline_config, monkeypatch):
     assert DaemonConfig.from_env().processing.triage_timeout == 150
 
 
-class _FakeConfigService:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def get_system_config(self, key, default=None):
-        return self.rows.get(key, default)
-
-
 def test_db_overlays_report_source_db(tmp_path, monkeypatch):
     svc = _FakeConfigService(
         {
@@ -230,7 +232,9 @@ def test_db_overlays_report_source_db(tmp_path, monkeypatch):
         }
     )
     monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: svc)
-    monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: svc)
+    monkeypatch.setattr(
+        "core.response.approval_service.get_config_service", lambda: svc
+    )
     path = _write(
         tmp_path,
         "respond:\n  force_manual_approval: false\n"
