@@ -4,13 +4,13 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
-    ARRAY,
     DateTime,
     Index,
     String,
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,

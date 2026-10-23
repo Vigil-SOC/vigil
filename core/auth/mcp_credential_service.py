@@ -20,10 +20,12 @@ import logging
 import secrets
 import uuid
 from datetime import datetime
+from functools import partial
 from typing import List, NamedTuple, Optional
 
 from sqlalchemy.orm import Session
 
+from core.auth import trail_events
 from core.storage.models import McpCredential, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -66,10 +68,12 @@ def mint(
     label: str,
     expires_at: Optional[datetime] = None,
     session: Optional[Session] = None,
+    actor: Optional[str] = None,
 ) -> Optional[MintedCredential]:
     """Issue a credential for ``user_id``. Returns None if there is no such user.
 
     The caller must show the token to the operator now; it is not recoverable.
+    ``actor`` is the principal minting it; its trail entry commits with it.
     """
     with unit_of_work(session) as session:
         user = session.query(User).filter(User.user_id == user_id).first()
@@ -87,6 +91,14 @@ def mint(
         )
         session.add(record)
         session.flush()
+        trail_events.record(
+            session,
+            "credential.minted",
+            actor=actor,
+            principal=user.principal_id,
+            credential_id=record.credential_id,
+            expires_at=expires_at.isoformat() if expires_at else None,
+        )
 
         logger.info(
             "Minted MCP credential %s for user %s (%s)",
@@ -109,6 +121,7 @@ def authenticate(token: str, session: Optional[Session] = None) -> Optional[User
     if not looks_like_mcp_token(token):
         return None
 
+    refusal = None
     try:
         with unit_of_work(session) as session:
             record = (
@@ -116,11 +129,20 @@ def authenticate(token: str, session: Optional[Session] = None) -> Optional[User
                 .filter(McpCredential.token_hash == _hash(token))
                 .first()
             )
-            if record is None or not record.is_usable():
+            if record is None or record.revoked_at is not None:
+                return None
+            if not record.is_usable():
+                refusal = partial(trail_events.credential_expired, record.credential_id)
                 return None
 
             user = session.query(User).filter(User.user_id == record.user_id).first()
             if user is None or not user.is_active:
+                if user is not None:
+                    refusal = partial(
+                        trail_events.credential_inactive,
+                        record.credential_id,
+                        user.principal_id,
+                    )
                 return None
 
             # Written on the way through so an unused credential can be found
@@ -135,6 +157,10 @@ def authenticate(token: str, session: Optional[Session] = None) -> Optional[User
         # is broken and invites a retry.
         logger.exception("Could not check an MCP credential; refusing the caller")
         return None
+    finally:
+        # After the lookup's transaction, on a session of its own.
+        if refusal is not None:
+            refusal()
 
 
 def revoke(credential_id: str, session: Optional[Session] = None) -> bool:
