@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from core.agents.mcp_tools import MCPFailure
 from core.memory.recall import expire_read_log, recall, recall_entity
 from core.memory.recall_contract import (
     RECALL_OVERALL_CAP,
@@ -479,16 +480,9 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
     ],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
-    # Each is the caller's to fix, so all must come back the same way. The
-    # router answers invalid_args only for Python's own wording for a call that
-    # did not fit its signature; anything else is a backend_error, which tells
-    # the model the tool broke rather than that it should call again.
-    from core.agents.tools_router import _is_bad_arguments
-
-    with pytest.raises(TypeError) as raised:
+    with pytest.raises(MCPFailure) as raised:
         recall_entity(args)
-
-    assert _is_bad_arguments(raised.value)
+    assert raised.value.kind == "invalid_args"
 
 
 def test_the_bridge_resolves_recall_entity_without_reaching_mcp(
