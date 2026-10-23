@@ -22,12 +22,6 @@ METRICS = {
 TIME_SERIES = [{"timestamp": "2026-09-29T00:00:00Z", "findings": 4}]
 
 
-def _service() -> AIInsightsService:
-    service = AIInsightsService()
-    service.model = "test-model"
-    return service
-
-
 class _Gateway:
     def __init__(self, result):
         self.result = result
@@ -67,7 +61,7 @@ async def test_error_dict_returns_fallback_and_logs_the_worker_error(
             "error": "RuntimeError: 401 invalid x-api-key",
         },
     )
-    service = _service()
+    service = AIInsightsService()
 
     with caplog.at_level(logging.ERROR, logger="core.reporting.ai_insights_service"):
         result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
@@ -87,7 +81,7 @@ async def test_error_dict_returns_fallback_and_logs_the_worker_error(
 )
 async def test_unparseable_reply_returns_fallback(monkeypatch, content):
     gateway = _patch_gateway(monkeypatch, {"content": content, "type": "text"})
-    service = _service()
+    service = AIInsightsService()
 
     result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
@@ -112,7 +106,7 @@ async def test_well_formed_reply_is_parsed(monkeypatch):
             "type": "text",
         },
     )
-    service = _service()
+    service = AIInsightsService()
 
     result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
@@ -131,7 +125,7 @@ async def test_well_formed_reply_is_parsed(monkeypatch):
 @pytest.mark.asyncio
 async def test_valid_empty_array_is_returned_as_empty(monkeypatch):
     gateway = _patch_gateway(monkeypatch, {"content": "[]", "type": "text"})
-    service = _service()
+    service = AIInsightsService()
 
     result = await service.generate_insights(METRICS, TIME_SERIES, "7d")
 
