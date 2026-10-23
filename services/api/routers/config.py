@@ -1637,22 +1637,6 @@ def set_orchestrator_config(
             status_code=500, detail="Failed to save orchestrator config to database"
         )
 
-    # Poke the in-process orchestrator (if the API happens to share one)
-    # so a running daemon reacts immediately. No-op in backend-only
-    # deployments — the daemon polls orchestrator.settings every few
-    # seconds.
-    try:
-        from services.api.routers.orchestrator import _get_orchestrator
-
-        orch = _get_orchestrator()
-        if orch is not None:
-            if config_data.get("enabled"):
-                orch.enable()
-            else:
-                orch.disable()
-    except Exception as e:
-        logger.debug("In-process orchestrator runtime apply skipped: %s", e)
-
     return {"success": True, "message": "Orchestrator settings saved"}
 
 

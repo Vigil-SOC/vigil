@@ -4362,26 +4362,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/orchestrator/cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Cost Summary
-         * @description Get cost breakdown across all investigations.
-         */
-        get: operations["get_api_orchestrator_cost"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/orchestrator/disable": {
         parameters: {
             query?: never;
@@ -19091,37 +19071,6 @@ export interface operations {
             path: {
                 credential_id: string;
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_orchestrator_cost: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
