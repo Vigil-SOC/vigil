@@ -8,7 +8,8 @@ version and a non-empty ``VIGIL_UPGRADE_ACK_REASON``. Each revision is its own
 transaction. A database with tables and no ``alembic_version`` is adopted
 first (``core/upgrade/adopt.py``): ``--check`` runs the adoption in a
 transaction it rolls back. Apply outcomes other than a restart are appended to
-``$VIGIL_UPGRADE_DIR/history.jsonl``.
+``$VIGIL_UPGRADE_DIR/history.jsonl``. A revision may stash a report; that
+report is a field of the same record, not a second line.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from alembic.config import Config
 from alembic.runtime.environment import EnvironmentContext
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from alembic.script.revision import RevisionError
 from alembic.util import CommandError
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -165,6 +167,41 @@ def _previous_version(upgrade_dir: Optional[Path]) -> Optional[str]:
     return None
 
 
+def revisions_pending(script: ScriptDirectory, lower) -> list[str]:
+    """What ``_upgrade_revs`` would run from ``lower`` up to this image's heads."""
+    return [
+        s.revision
+        for s in reversed(
+            list(script.iterate_revisions("heads", lower, implicit_base=True))
+        )
+    ]
+
+
+def _pending_across_heads(script: ScriptDirectory, current: tuple[str, ...]):
+    """Revisions that move every head in ``current`` onto this image's one head.
+
+    None when this image cannot: it has more than one head itself, or a
+    database head is not an ancestor of that head. An empty result is also
+    None — two version rows and nothing to apply is still a fork.
+    """
+    heads = script.get_heads()
+    if len(heads) != 1:
+        return None
+    try:
+        known = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    except (CommandError, RevisionError):
+        return None
+    if not set(current) <= known:
+        return None
+    try:
+        # Same traversal as _upgrade_revs, so --check lists the other 0006
+        # branch when only one of the two rows is stamped.
+        pending = revisions_pending(script, tuple(current))
+    except (CommandError, RevisionError):
+        return None
+    return pending or None
+
+
 def plan(
     conn,
     script: ScriptDirectory,
@@ -175,12 +212,27 @@ def plan(
     upgrade_dir: Optional[Path],
 ) -> Plan:
     """What apply would do, from the database and the run history alone."""
-    current = MigrationContext.configure(
+    current_heads = MigrationContext.configure(
         conn, opts={"version_table_schema": "public"}
     ).get_current_heads()
-    if len(current) > 1:
-        return Plan(REFUSE, f"database has more than one revision: {list(current)}")
-    revision = current[0] if current else None
+    # Two rows is a fork this image cannot move, unless every row is an
+    # ancestor of the one head (the 0006 branches, joined by a later revision).
+    joined = None
+    if len(current_heads) > 1:
+        joined = _pending_across_heads(script, current_heads)
+        if joined is None:
+            return Plan(
+                REFUSE, f"database has more than one revision: {list(current_heads)}"
+            )
+        older = adopt.restamped(conn)
+        if older:
+            return Plan(
+                REFUSE,
+                f"release {older} ran its old init path against this database "
+                f"after it reached {list(current_heads)}: restore first, from the "
+                "restore point taken before the upgrade",
+            )
+    revision = current_heads[0] if len(current_heads) == 1 else None
     if revision is not None:
         try:
             script.get_revision(revision)
@@ -202,7 +254,7 @@ def plan(
                 revision=revision,
             )
     adoption = None
-    if revision is None:
+    if not current_heads:
         tables = conn.execute(
             text(
                 "SELECT count(*) FROM pg_tables "
@@ -225,10 +277,7 @@ def plan(
                 return found
             adoption = found
 
-    pending = [
-        s.revision
-        for s in reversed(list(script.iterate_revisions("heads", revision or "base")))
-    ]
+    pending = joined or revisions_pending(script, revision or "base")
     previous = _previous_version(upgrade_dir)
     restart = Plan(
         RESTART,
@@ -311,11 +360,20 @@ def check_report(
     return report
 
 
-def _migrate(engine: Engine, script: ScriptDirectory) -> None:
-    """Every pending revision, each in its own transaction."""
+def _migrate(engine: Engine, script: ScriptDirectory) -> list[dict]:
+    """Every pending revision, each in its own transaction.
+
+    Returns reports stashed by those revisions, oldest first.
+    """
+    from core.upgrade.revision import note_stamped, take_reports
 
     def upgrade(rev, _context):
         return script._upgrade_revs("heads", rev)
+
+    def _on_version(ctx, step, heads, run_args):  # noqa: ARG001
+        # After the version-row update, still inside the revision's transaction.
+        if step.up_revision_id:
+            note_stamped(step.up_revision_id)
 
     with engine.connect() as conn, EnvironmentContext(
         alembic_config(), script, fn=upgrade, destination_rev="heads"
@@ -324,9 +382,11 @@ def _migrate(engine: Engine, script: ScriptDirectory) -> None:
             connection=conn,
             transaction_per_migration=True,
             version_table_schema="public",
+            on_version_apply=_on_version,
         )
         with env.begin_transaction():
             env.run_migrations()
+    return take_reports()
 
 
 def _record(
@@ -335,6 +395,7 @@ def _record(
     outcome: str,
     reason: str,
     adoption: Optional[adopt.Adoption] = None,
+    reports: Optional[list[dict]] = None,
 ):
     entry: dict[str, Any] = {
         "time": datetime.now(timezone.utc).isoformat(),
@@ -349,6 +410,8 @@ def _record(
         entry["adoption"] = adoption.summary()
         if adoption.drift:  # schema only: object names and definitions
             entry["drift"] = adoption.drift
+    if reports:
+        entry["reports"] = reports
     if upgrade_dir is not None:
         upgrade_dir.mkdir(parents=True, exist_ok=True)
         with (upgrade_dir / "history.jsonl").open("a", encoding="utf-8") as f:
@@ -367,6 +430,10 @@ def run(
     state_dir: Optional[Path] = None,
     out: TextIO = sys.stdout,
 ) -> int:
+    from core.upgrade.revision import take_reports
+
+    # A report stashed by a revision that did not finish must not leak in.
+    take_reports()
     engine = create_engine(url, poolclass=NullPool)
     script = script_directory()
 
@@ -410,12 +477,13 @@ def run(
                     # Repairs and the stamp commit together or not at all.
                     with engine.connect() as conn, conn.begin():
                         adoption = _adopt(conn, current.adoption.stamp, script)
-                _migrate(engine, script)
+                reports = _migrate(engine, script)
             except UnknownDrift as e:
                 emit(_record(upgrade_dir, current, "refused", str(e), e.adoption))
                 return EXIT_REFUSED
             except Exception as e:  # noqa: BLE001 - recorded, then non-zero exit
                 # A set adoption committed before a later revision failed.
+                # A report is kept only when its version row was updated.
                 emit(
                     _record(
                         upgrade_dir,
@@ -423,11 +491,12 @@ def run(
                         "failed",
                         f"{type(e).__name__}: {e}",
                         adoption,
+                        take_reports(),
                     )
                 )
                 return EXIT_FAILED
             reason = ack_reason.strip() if current.restore_point == OVERRIDDEN else ""
-            emit(_record(upgrade_dir, current, "applied", reason, adoption))
+            emit(_record(upgrade_dir, current, "applied", reason, adoption, reports))
             return EXIT_OK
     except UpgradeBusy as e:
         emit({"outcome": "refused", "reason": str(e)})
