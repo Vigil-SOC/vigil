@@ -501,5 +501,15 @@ def test_a_checkpoint_is_written_once_per_quiet_interval(db):
 
 
 def _count(engine) -> int:
+    """Trail entries other than the sign-ins the test's own logins record (#2924).
+
+    A login's sign-in commits as its request ends, which can be after the
+    next request, so it cannot be counted before the change under test.
+    """
     with engine.connect() as conn:
-        return conn.execute(text("SELECT count(*) FROM audit_trail")).scalar_one()
+        return conn.execute(
+            text(
+                "SELECT count(*) FROM audit_trail "
+                "WHERE payload->>'action' IS DISTINCT FROM 'auth.sign_in'"
+            )
+        ).scalar_one()
