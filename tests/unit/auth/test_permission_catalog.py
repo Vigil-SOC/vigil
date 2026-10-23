@@ -42,7 +42,7 @@ def test_revision_builtins_match_the_catalog():
 def test_revision_follows_the_audit_feed():
     # One parent, the head on main. This file does not merge heads.
     assert revision.revision == "0008_permission_catalog"
-    assert revision.down_revision == "0006_audit_feed"
+    assert revision.down_revision == "0007_conversation_generation"
     assert isinstance(revision.down_revision, str)
 
 

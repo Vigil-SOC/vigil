@@ -20,9 +20,7 @@ from core.upgrade.adopt import LEGACY_ROLE_IDS
 from core.upgrade.revision import run_sql, stash_report
 
 revision = "0008_permission_catalog"
-# Current head on main. #2856's 0007_conversation_generation is not in this
-# tree; a missing parent makes Alembic refuse to load the revision map.
-down_revision = "0006_audit_feed"
+down_revision = "0007_conversation_generation"
 
 # Parent key -> successors copied only when the parent is true.
 SUCCESSORS = {
