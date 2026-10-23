@@ -1,0 +1,4 @@
+E                   AssertionError: assert {} is None
+E                    +  where {} = <function _fetch_db_config at 0x7fac56f5f7e0>()
+E                    +    where <function _fetch_db_config at 0x7fac56f5f7e0> = <module 'core.platform.runtime_config' from '/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/cfb93e3f-9e36-4cb8-849e-d37e844919d3/core/platform/runtime_config.py'>._fetch_db_config
+======================= 1 failed, 18 deselected in 1.41s =======================
