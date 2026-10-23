@@ -13,7 +13,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from trust_check import PACK, PACK_DEV, TRUST_ROOT, keyid, pae
+from trust_check import (
+    PACK,
+    PACK_DEV,
+    SIGNED_PACK,
+    TRUST_ROOT,
+    canonical,
+    keyid,
+    pae,
+    statement,
+)
 
 OUT = Path("fixtures/trust")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -59,6 +68,16 @@ def sign(payload: bytes, ptype: str, signers: list[str]) -> bytes:
     return (json.dumps(env, indent=2) + "\n").encode()
 
 
+def sign_pack(pack: bytes, ptype: str, signers: list[str]) -> bytes:
+    """A medic.signed-pack/v1 import: the envelope signs a statement about the pack."""
+    doc = {
+        "format": SIGNED_PACK,
+        "envelope": json.loads(sign(statement(pack, ptype), ptype, signers)),
+        "pack": pack.decode("utf-8"),
+    }
+    return (json.dumps(doc, indent=2) + "\n").encode()
+
+
 def root_doc(
     version: int,
     roots: list[str],
@@ -101,8 +120,7 @@ def root_doc(
     }
 
 
-def dump(doc: dict) -> bytes:
-    return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
+dump = canonical
 
 
 if __name__ == "__main__":
@@ -127,7 +145,9 @@ if __name__ == "__main__":
         sign(dump(v2), TRUST_ROOT, ["root-1", "root-3"])
     )
     pack = Path("fixtures/packs/sample-0.1.0.medicpack.json").read_bytes()
-    (OUT / "sample-0.1.0.dev.dsse.json").write_bytes(sign(pack, PACK_DEV, ["dev-1"]))
+    (OUT / "sample-0.1.0.dev.signed-pack.json").write_bytes(
+        sign_pack(pack, PACK_DEV, ["dev-1"])
+    )
     (OUT / "TEST-ONLY-keyids.json").write_text(
         json.dumps(
             {

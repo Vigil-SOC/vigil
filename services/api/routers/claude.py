@@ -18,6 +18,7 @@ from core.auth import tool_principal
 from core.auth.permissions import permission_gate
 from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
 from core.cases.case_brief import case_brief
+from core.chat import conversation_service
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import (
@@ -92,14 +93,12 @@ def _persist_chat_turn(
     the user turn (always complete) and the assistant turn (``complete=False``
     on abort/error). Each ``conversation_service`` call is itself fail-open;
     this wrapper adds a final guard so nothing here can surface into the
-    request path. The authoritative per-iteration record (including full tool
-    calls / results) remains in ``llm_interaction_logs`` keyed by the same
-    ``session_id``.
+    request path. The text is stored in ``conversations`` / ``chat_messages``.
+    Tool calls, results, and cost are recorded in the agent ledger under this
+    conversation's run id.
     """
     try:
-        from core.chat import conversation_service
-
-        conversation_service.ensure_conversation(
+        if not conversation_service.ensure_conversation(
             session_id=session_id,
             user_id=user_id,
             agent_id=agent_id,
@@ -107,7 +106,8 @@ def _persist_chat_turn(
             first_user_text=user_text,
             case_id=case_id,
             page_context=page_context,
-        )
+        ):
+            return
         conversation_service.append_message(
             session_id=session_id,
             role="user",
@@ -245,7 +245,7 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     agent_id: Optional[str] = None
     session_id: Optional[str] = (
-        None  # Chat session identifier for reasoning-trace persistence (GH #79)
+        None  # Conversation id. Its text is stored on that row; the ledger run is derived from it.
     )
     # A run this conversation follows up on. The console does not send one yet
     # (#634); when it does, the turn opens with what that run concluded.
@@ -308,6 +308,13 @@ async def chat_stream(
     workflows: WorkflowsService = Depends(provide_workflows),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
+    user_id = getattr(current_user, "user_id", None)
+    if request.session_id and await asyncio.to_thread(
+        conversation_service.held_by_another, request.session_id, user_id
+    ):
+        raise HTTPException(
+            status_code=403, detail="This conversation belongs to another user."
+        )
     # Before model resolution, whose agent lookup swallows errors.
     if request.agent_id and request.agent_id in disabled_agent_ids():
         raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
@@ -356,8 +363,18 @@ async def chat_stream(
         system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
+    # Read before the payload is built. Generation 0 (every row that exists
+    # today, and a session with no row) keeps run_id_for(session_id). A
+    # deleted conversation's later life uses a new run, so its old tool
+    # reads are not loaded. A missing row is a new session.
+    ledger_session = session_id
+    if request.session_id:
+        ledger_session = await asyncio.to_thread(
+            conversation_service.ledger_key, request.session_id
+        )
+    run_id = run_id_for(ledger_session)
     payload = {
-        "run_id": run_id_for(session_id),
+        "run_id": run_id,
         "turns": _turns_of(request.messages),
         "system_prompt": system_prompt or "",
         # The provider rides alongside the model so the gateway routes to the
@@ -378,7 +395,7 @@ async def chat_stream(
             person_id=getattr(current_user, "principal_id", None)
             or getattr(current_user, "user_id", None),
             agent_id=agent_principal_id(CHAT_PLUGIN_ID),
-            run_id=run_id_for(session_id),
+            run_id=run_id,
             origin="person",
         ),
         "actor": agent_principal_id(CHAT_PLUGIN_ID),
@@ -401,7 +418,7 @@ async def chat_stream(
             request,
             model,
             session_id,
-            getattr(current_user, "user_id", None),
+            user_id,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},

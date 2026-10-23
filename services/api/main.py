@@ -677,6 +677,7 @@ async def _startup(app: FastAPI):
     else:
         await _connect_external_services(app.state.mcp_client, app.state.mcp_registry)
         _start_medic_poller(app)
+        _start_audit_feed(app)
 
     # Load custom agents from DB into the AgentManager so built-in + custom
     # agents are visible in one merged list. Lookup misses for "custom-*" IDs
@@ -688,6 +689,25 @@ async def _startup(app: FastAPI):
         logger.info(f"Loaded {loaded} custom agent(s) from database")
     except Exception as e:
         logger.warning(f"Could not preload custom agents: {e}")
+
+
+def _start_audit_feed(app) -> None:
+    """The syslog leader (decision 7). One replica holds the lock; the task
+    exits on shutdown. It does nothing until the trail revision is present."""
+    from core.audit.feed import start_leader
+
+    app.state.audit_feed = start_leader()
+
+
+async def _stop_audit_feed(app) -> None:
+    task = getattr(app.state, "audit_feed", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 def _start_medic_poller(app) -> None:
@@ -711,6 +731,7 @@ async def _stop_medic_poller(app) -> None:
 
 async def _shutdown(app: FastAPI):
     """Clean up LLM gateway and MCP connections on shutdown."""
+    await _stop_audit_feed(app)
     await _stop_medic_poller(app)
     logger.info("Shutting down LLM Gateway...")
     try:
