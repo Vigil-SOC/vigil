@@ -56,11 +56,7 @@ export function Cost({ className, title, ...input }: CostProps) {
   const v = describeCost(input)
   switch (v.kind) {
     case 'amount':
-      return (
-        <span className={className} title={title}>
-          {v.text}
-        </span>
-      )
+      return <span className={className} title={title}>{v.text}</span>
     case 'not-priced':
     case 'not-billed':
       return <span className={className} title={title ? `${v.hint} ${title}` : v.hint} data-cost={v.kind}>{v.text}</span>
