@@ -1,0 +1,3 @@
+0.01s call     unit/api/test_orchestrator_db_down.py::test_a_failed_legacy_read_does_not_stop_the_loops
+FAILED tests/unit/api/test_orchestrator_db_down.py::test_a_failed_legacy_read_does_not_stop_the_loops
+======================= 1 failed, 4 deselected in 48.96s =======================

@@ -1,0 +1,9 @@
+0.21s setup    unit/api/test_orchestrator_db_down.py::test_a_failed_legacy_read_does_not_stop_the_loops
+0.04s call     unit/daemon/test_orchestrator_overlap_attach.py::test_a_database_error_reads_as_a_failed_attach
+0.02s call     unit/api/test_orchestrator_db_down.py::test_a_failed_legacy_read_does_not_stop_the_loops
+FAILED tests/unit/api/test_orchestrator_db_down.py::test_readers_raise - Fail...
+FAILED tests/unit/api/test_orchestrator_db_down.py::test_list_is_a_server_error_not_an_empty_queue
+FAILED tests/unit/api/test_orchestrator_db_down.py::test_detail_is_a_server_error_not_a_404
+FAILED tests/unit/api/test_orchestrator_db_down.py::test_kill_raises_instead_of_marking_nothing
+FAILED tests/unit/daemon/test_orchestrator_overlap_attach.py::test_a_gone_overlapping_investigation_holds_the_row
+============== 5 failed, 10 passed, 1 warning in 63.31s (0:01:03) ==============

@@ -1,0 +1,5 @@
+0.12s setup    unit/api/test_orchestrator_db_down.py::test_detail_is_a_server_error_not_a_404
+0.07s call     unit/api/test_orchestrator_db_down.py::test_detail_is_a_server_error_not_a_404
+0.06s call     unit/daemon/test_orchestrator_overlap_attach.py::test_a_database_error_reads_as_a_failed_attach
+0.01s call     unit/api/test_orchestrator_db_down.py::test_a_failed_legacy_read_does_not_stop_the_loops
+=================== 15 passed, 1 warning in 66.75s (0:01:06) ===================
