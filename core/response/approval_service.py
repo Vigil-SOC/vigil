@@ -44,6 +44,11 @@ APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
 _pending_gauge: Any = None
 
 
+class AlreadyDecided(Exception):
+    def __init__(self, action_id: str, status: str):
+        super().__init__(f"Action {action_id} is already {status}")
+
+
 def register_pending_gauge(service: "ApprovalService") -> None:
     """Export the approval queue depth as an observable gauge, once per process.
 
@@ -445,21 +450,16 @@ class ApprovalService:
         approved_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Approve a pending action."""
+        """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
-                row = session.get(ApprovalActionRow, action_id)
+                row = session.get(ApprovalActionRow, action_id, with_for_update=True)
                 if row is None:
                     logger.warning("Action %s not found", action_id)
                     return None
                 if row.status != ActionStatus.PENDING.value:
-                    logger.warning(
-                        "Action %s is not pending (status: %s)",
-                        action_id,
-                        row.status,
-                    )
-                    return _row_to_pending(row)
+                    raise AlreadyDecided(action_id, row.status)
                 row.status = ActionStatus.APPROVED.value
                 row.approved_at = utcnow()
                 row.approved_by = approved_by
@@ -483,21 +483,16 @@ class ApprovalService:
         rejected_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Reject a pending action."""
+        """Reject a pending action. Raises ``AlreadyDecided`` if it is not pending."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
-                row = session.get(ApprovalActionRow, action_id)
+                row = session.get(ApprovalActionRow, action_id, with_for_update=True)
                 if row is None:
                     logger.warning("Action %s not found", action_id)
                     return None
                 if row.status != ActionStatus.PENDING.value:
-                    logger.warning(
-                        "Action %s is not pending (status: %s)",
-                        action_id,
-                        row.status,
-                    )
-                    return _row_to_pending(row)
+                    raise AlreadyDecided(action_id, row.status)
                 row.status = ActionStatus.REJECTED.value
                 row.rejection_reason = reason
                 row.approved_by = rejected_by

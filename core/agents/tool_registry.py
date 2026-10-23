@@ -649,6 +649,7 @@ def _without_approval_right() -> Optional[Args]:
 # would stamp "agent" and release a row the requirement already held.
 def approve_action(*, action_id: str) -> Args:
     from core.cases.agent_closure import actor
+    from core.response.approval_service import AlreadyDecided
 
     if current_caller() is None:
         return {"error": "Action cannot be approved: no principal is bound"}
@@ -656,27 +657,30 @@ def approve_action(*, action_id: str) -> Args:
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
-    return _decided(
-        _approvals().approve_action(
+    try:
+        action = _approvals().approve_action(
             action_id, actor(), approved_by_principal_id=principal
-        ),
-        "approved",
-    )
+        )
+    except AlreadyDecided as e:
+        return {"error": str(e)}
+    return _decided(action, "approved")
 
 
 def reject_action(*, action_id: str, reason: str) -> Args:
     from core.cases.agent_closure import actor
+    from core.response.approval_service import AlreadyDecided
 
     if refusal := _without_approval_right():
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
-    return _decided(
-        _approvals().reject_action(
+    try:
+        action = _approvals().reject_action(
             action_id, reason, actor(), approved_by_principal_id=principal
-        ),
-        "rejected",
-    )
+        )
+    except AlreadyDecided as e:
+        return {"error": str(e)}
+    return _decided(action, "rejected")
 
 
 def get_approval_stats(**_args: Any) -> Any:
