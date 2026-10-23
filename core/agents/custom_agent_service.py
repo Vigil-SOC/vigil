@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from core.agents.builtins import blank_model
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.agents.prompts import prompt_for_row
+from core.auth import principals
 from core.storage.connection import get_db_manager
 from core.storage.models import ConfigAuditLog, CustomAgent
 from core.storage.schemas import CustomAgentSchema
@@ -172,6 +173,9 @@ class CustomAgentService:
             if data.get("component_category"):
                 kwargs["component_category"] = data["component_category"]
             agent = CustomAgent(**kwargs)
+            # The agent's principal, in the same transaction. A re-created id
+            # gets its old principal back rather than a second one.
+            principals.ensure_agent(session, agent_id, name)
             session.add(agent)
             _audit_model_strings(
                 session,
@@ -317,5 +321,7 @@ class CustomAgentService:
                 None,
                 changed_by,
             )
+            # The principal outlives the agent, so old records still name it.
+            principals.mark_deleted(session, principals.agent_principal_id(agent_id))
             session.delete(agent)
             return True

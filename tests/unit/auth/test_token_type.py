@@ -18,8 +18,8 @@ from sqlalchemy.pool import StaticPool
 from core.auth import current_user as current_user_module
 from core.auth import token_blacklist
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
-from core.config import get_settings
 from core.auth.auth_service import JWT_ALGORITHM, JWT_SECRET_KEY, AuthService
+from core.config import get_settings
 from core.routing import request_unit_of_work
 from core.storage.models import Role, User
 from core.storage.models.base import Base
@@ -41,6 +41,7 @@ def _jsonb_is_json_on_sqlite(type_, compiler, **kw):
 def user():
     return User(
         user_id="u-1",
+        principal_id="u-1",
         username="nestor",
         email="nestor@example.com",
         password_hash="x",
@@ -87,6 +88,7 @@ def client(monkeypatch, user, redis):
         s.add(
             User(
                 user_id=user.user_id,
+                principal_id=user.user_id,
                 username=user.username,
                 email=user.email,
                 password_hash="x",
@@ -307,7 +309,11 @@ def test_browser_logout_revokes_the_path_scoped_refresh_cookie(
 def test_logout_leaves_another_users_refresh_token_alone(client, user, blacklisted):
     tokens = _tokens(user)
     other = User(
-        user_id="u-2", username="other", email="o@example.com", role_id="r-analyst"
+        user_id="u-2",
+        principal_id="u-2",
+        username="other",
+        email="o@example.com",
+        role_id="r-analyst",
     )
 
     client.post(

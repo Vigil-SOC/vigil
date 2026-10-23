@@ -28,7 +28,6 @@ if str(ROOT) not in sys.path:
 
 from core.storage.connection import (  # noqa: E402
     get_db_manager,
-    init_database,
     reset_schema_drift_check,
 )
 
@@ -105,7 +104,7 @@ def _quote_ident(name: str) -> str:
 
 
 def _apply_init_sql(database: str) -> None:
-    """Tolerant apply, matching infra/docker/initdb/00_apply.sh.
+    """Tolerant apply of infra/database/init.
 
     ON_ERROR_STOP=0 and a per-file ``|| true``: files that target tables
     ``create_all`` has not built yet fail on the first pass and succeed on
@@ -145,7 +144,7 @@ def _apply_init_sql(database: str) -> None:
 
 
 def _init_on(engine) -> None:
-    """Point the process singleton at ``engine`` for ``init_database()`` only.
+    """Point the process singleton at ``engine`` for ``create_tables()`` only.
 
     DatabaseManager reads POSTGRES_* through its config and ignores
     DATABASE_URL, and ``initialize()`` keeps the engine it already has. The
@@ -160,7 +159,7 @@ def _init_on(engine) -> None:
     manager._engine = engine
     manager._session_factory = sessionmaker(bind=engine)
     try:
-        init_database()
+        get_db_manager().create_tables()
     finally:
         replaced = manager._engine
         manager._engine = saved_engine
@@ -178,8 +177,8 @@ def _init_on(engine) -> None:
 def scratch_database(provision: bool = True) -> Iterator[tuple[str, Engine]]:
     """A throwaway local database, dropped on exit: its name and an engine.
 
-    With ``provision`` it is built in compose order (SQL, ``init_database()``,
-    SQL again); without, it is empty.
+    With ``provision`` it is built as init SQL, ``create_tables()``, then the
+    SQL again; without, it is empty.
     """
     reason = postgres_skip_reason()
     if reason:

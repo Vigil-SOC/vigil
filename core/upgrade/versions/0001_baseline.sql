@@ -4071,8 +4071,9 @@ GRANT SELECT, INSERT ON TABLE agent_events TO vigil_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON TABLE agent_events FROM vigil_app;
 
 -- Alembic created alembic_version just before this file ran, so the grants
--- above reached it. Only the owner moves the revision.
+-- above reached it. vigil_app may read the revision and must not move it.
 REVOKE ALL ON TABLE public.alembic_version FROM vigil_app;
+GRANT SELECT ON TABLE public.alembic_version TO vigil_app;
 
 -- Reference rows from the init SQL and core/storage/reference_seed.py.
 -- role-admin and role-manager include the grants from 45_medic_permissions.sql.

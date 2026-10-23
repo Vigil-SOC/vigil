@@ -5599,6 +5599,9 @@ export interface paths {
          * Delete User
          * @description Delete a user (requires users.delete permission).
          *
+         *     The username and email stay taken: the row is kept so its principal, and
+         *     the credentials it minted, still resolve on old records.
+         *
          *     Args:
          *         user_id: User ID to delete
          *         current_user: Current authenticated user
