@@ -1,7 +1,7 @@
 """`python -m services.medic run` end to end: a fault becomes an incident in the log.
 
 A local stub plays the agent worker's `/readyz`. Medic runs its real path: the
-`http_ready` sensor, the K2 choke, the engine on the 15 s tick, router R1 and the
+`http_ready` sensor, the K2 choke, the engine on the 15 s tick, the router and the
 store, on a fake clock. The stub's body and headers carry a canary secret that
 must never reach the store or Medic's logs.
 """
