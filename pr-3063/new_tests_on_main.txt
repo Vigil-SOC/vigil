@@ -1,0 +1,6 @@
+FAILED tests/unit/api/test_custom_integrations_api.py::test_bad_id_is_400[post-/api/custom-integrations/BAD..ID/validate]
+FAILED tests/unit/api/test_custom_integrations_api.py::test_missing_integration_is_404[post-/api/custom-integrations/acme/validate]
+FAILED tests/unit/api/test_custom_integrations_api.py::test_missing_integration_is_404[delete-/api/custom-integrations/integration_id]
+FAILED tests/unit/api/test_custom_integrations_api.py::test_disk_error_is_500_without_os_text[save]
+FAILED tests/unit/api/test_custom_integrations_api.py::test_disk_error_is_500_without_os_text[delete]
+========================= 5 failed, 7 passed in 2.33s ==========================
