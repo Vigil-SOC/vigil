@@ -340,6 +340,7 @@ const EMPTY_POLICY: AuditRetention = {
 function RetentionCard({ notify }: SectionProps) {
   const canManage = useAuth().hasPermission('audit.manage')
   const [policy, setPolicy] = useState<AuditRetention>(EMPTY_POLICY)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [days, setDays] = useState('365')
   const [principal, setPrincipal] = useState('')
   const [reason, setReason] = useState('')
@@ -355,7 +356,7 @@ function RetentionCard({ notify }: SectionProps) {
         const shown = res.data.pending_days ?? res.data.effective_days
         if (shown != null) setDays(String(shown))
       })
-      .catch(() => undefined)
+      .catch(() => { if (live) setLoadFailed(true) })
     return () => { live = false }
   }, [])
 
@@ -398,9 +399,11 @@ function RetentionCard({ notify }: SectionProps) {
     }
   }
 
-  const inForce = policy.effective_days != null
-    ? `The trail is kept for ${policy.effective_days} days.`
-    : 'No retention period is in force yet.'
+  const inForce = loadFailed
+    ? 'Could not load the retention period.'
+    : policy.effective_days != null
+      ? `The trail is kept for ${policy.effective_days} days.`
+      : 'No retention period is in force yet.'
   const waiting = policy.pending_days == null ? '' : (
     `${policy.pending_days} days takes effect ${utcDayClock(policy.pending_on) ?? policy.pending_on} UTC.`
     + (policy.effective_days != null ? ' Until then the period already in force stays.' : '')

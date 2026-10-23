@@ -246,6 +246,7 @@ def _apply_erasures(session, now: datetime) -> None:
         if principal_id in active and len(active) == 1:
             continue
         _perform(session, principal_id)
+        active.discard(principal_id)
         gone.add((principal_id, item["set_at"]))
     stored["erasures"] = [
         item

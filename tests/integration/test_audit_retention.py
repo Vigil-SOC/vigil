@@ -377,6 +377,22 @@ def test_erasure_leaves_verify_green_and_clears_the_beside_columns(
     assert payload["actor"] == mia  # the hashed document is untouched
 
 
+def test_two_managers_erasing_each_other_leave_one_holder(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("VIGIL_UPGRADE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    # Own names: principal labels persist across tests, and ada and ben are blanked below.
+    pat = _user("pat", "role-admin")
+    quinn = _user("quinn", "role-admin")
+    _activate(pat, quinn)
+    with unit_of_work() as session:
+        retention.erase(session, pat, quinn, "left", NOW)
+    with unit_of_work() as session:
+        retention.erase(session, quinn, pat, "left", NOW)
+    feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
+    # Each was the last active holder once the other was gone; only one may be blanked.
+    assert [_label(db, p)[0] for p in (pat, quinn)].count(None) == 1
+
+
 def test_the_last_audit_manager_cannot_be_erased(db, client, tmp_path, monkeypatch):
     monkeypatch.setenv("VIGIL_UPGRADE_DIR", str(tmp_path))
     get_settings.cache_clear()
