@@ -1029,8 +1029,8 @@ export const workflowApi = {
 
   // Stop, as opposed to steer. Queues the abort so the run can settle itself and write
   // a report, and escalates behind that: steer('abort') alone leaves a wedged worker running.
-  cancelRun: (runId: string, reason: string, rejectedBy?: string) =>
-    api.post(`/workflows/runs/${runId}/cancel`, { reason, ...(rejectedBy && { rejected_by: rejectedBy }) }),
+  cancelRun: (runId: string, reason: string) =>
+    api.post(`/workflows/runs/${runId}/cancel`, { reason }),
 
   // Another pass over the same ledger, for a finished run whose write-up reads badly.
   // The timeout sits above the backend's own 180s so its answer — the account is still
@@ -1054,7 +1054,6 @@ export const workflowApi = {
     use_case?: string
     trigger_examples?: string[]
     phases: WorkflowPhase[]
-    created_by?: string
   }) => api.post('/workflows/custom', data),
   updateCustom: (id: string, data: Partial<{
     name: string

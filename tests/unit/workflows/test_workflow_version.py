@@ -123,7 +123,8 @@ class TestUpdateVersion:
     @pytest.fixture
     def wf_id(self, service):
         return service.create(
-            {"name": "Ransom", "description": "Contain it", "phases": [self.PHASE]}
+            {"name": "Ransom", "description": "Contain it", "phases": [self.PHASE]},
+            created_by="analyst",
         )["workflow_id"]
 
     def test_identical_save_keeps_version(self, service, wf_id):
