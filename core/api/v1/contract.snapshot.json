@@ -317,6 +317,12 @@
           },
           "status": {
             "default": "open",
+            "enum": [
+              "new",
+              "open",
+              "investigating",
+              "closed"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -1675,6 +1681,12 @@
           "status": {
             "anyOf": [
               {
+                "enum": [
+                  "new",
+                  "open",
+                  "investigating",
+                  "closed"
+                ],
                 "type": "string"
               },
               {

@@ -431,6 +431,8 @@ async def _connect_external_services(mcp_client, registry):
 # Constructs the process-scoped services. This is the only place they are built for
 # the API; handlers receive them through the Depends providers in core/deps.py.
 def _build_services(app: FastAPI):
+    import httpx
+
     from core.agents.agent_ai_generator import AgentAIGenerator
     from core.config import is_demo_mode
     from core.detections.detection_rules_service import DetectionRulesService
@@ -454,6 +456,13 @@ def _build_services(app: FastAPI):
     app.state.health_storage = DatabaseDataService()
     # One HTTP client and one cached answer for every caller of GET /api/processes.
     app.state.process_health = ProcessHealth()
+    # One client for every chat turn relayed to the agent layer. No pool cap: with
+    # no timeout, a turn past the cap would wait forever. Idle connections expire
+    # before the agent layer's own 5 s keep-alive closes them.
+    app.state.agent_http = httpx.AsyncClient(
+        timeout=None,
+        limits=httpx.Limits(max_connections=None, keepalive_expiry=2.0),
+    )
 
     app.state.approvals = ApprovalService()
     register_pending_gauge(app.state.approvals)
@@ -677,6 +686,7 @@ async def _startup(app: FastAPI):
     else:
         await _connect_external_services(app.state.mcp_client, app.state.mcp_registry)
         _start_medic_poller(app)
+        _start_audit_feed(app)
 
     # Load custom agents from DB into the AgentManager so built-in + custom
     # agents are visible in one merged list. Lookup misses for "custom-*" IDs
@@ -688,6 +698,25 @@ async def _startup(app: FastAPI):
         logger.info(f"Loaded {loaded} custom agent(s) from database")
     except Exception as e:
         logger.warning(f"Could not preload custom agents: {e}")
+
+
+def _start_audit_feed(app) -> None:
+    """The syslog leader (decision 7). One replica holds the lock; the task
+    exits on shutdown. It does nothing until the trail revision is present."""
+    from core.audit.feed import start_leader
+
+    app.state.audit_feed = start_leader()
+
+
+async def _stop_audit_feed(app) -> None:
+    task = getattr(app.state, "audit_feed", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 def _start_medic_poller(app) -> None:
@@ -711,6 +740,7 @@ async def _stop_medic_poller(app) -> None:
 
 async def _shutdown(app: FastAPI):
     """Clean up LLM gateway and MCP connections on shutdown."""
+    await _stop_audit_feed(app)
     await _stop_medic_poller(app)
     logger.info("Shutting down LLM Gateway...")
     try:
@@ -743,6 +773,13 @@ async def _shutdown(app: FastAPI):
             await process_health.aclose()
     except Exception as e:
         logger.warning("Error closing the process health client: %s", e)
+
+    try:
+        agent_http = getattr(app.state, "agent_http", None)
+        if agent_http is not None:
+            await agent_http.aclose()
+    except Exception as e:
+        logger.warning("Error closing the chat relay client: %s", e)
 
     # Flush and shut down OTEL providers
     try:

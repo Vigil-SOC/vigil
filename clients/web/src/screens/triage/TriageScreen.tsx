@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
@@ -256,9 +256,10 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const source = searchParams.get('source') ?? ''
   const state = searchParams.get('state') ?? ''
   const [phase, setPhase] = useState<Phase>('loading')
-  const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<TriagePayload | null>(null)
   const [openId, setOpenId] = useState<number | null>(null)
+  const loadTicket = useRef(0)
+  const loadedFilter = useRef('')
 
   const setFilter = (key: FilterKey, value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -268,6 +269,13 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   }
 
   const load = useCallback(() => {
+    // only a filter change supersedes an in-flight request; a poll must not starve a slow one
+    const filter = [kind, source, state].join('|')
+    if (filter !== loadedFilter.current) {
+      loadedFilter.current = filter
+      loadTicket.current++
+    }
+    const ticket = loadTicket.current
     const params: { kind?: string; source?: string; state?: string } = {}
     if (kind) params.kind = kind
     if (source) params.source = source
@@ -275,13 +283,13 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
     triageApi
       .get(params)
       .then((res) => {
+        if (ticket !== loadTicket.current) return
         setData(res.data)
         setPhase('ready')
-        setError(null)
       })
       .catch(() => {
+        if (ticket !== loadTicket.current) return
         setPhase('error')
-        setError('Couldn’t load triage')
       })
   }, [kind, source, state])
 
@@ -388,7 +396,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
 
       {phase === 'loading' && <EmptyState loading icon="clock" title="Loading triage…" />}
       {phase === 'error' && (
-        <EmptyState error icon="alert" title="Couldn’t load triage" body={error} primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />
+        <EmptyState error icon="alert" title="Couldn’t load triage" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />
       )}
       {phase === 'ready' && data && (
         <>

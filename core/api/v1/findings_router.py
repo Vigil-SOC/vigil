@@ -2,16 +2,9 @@
 
 The read and record-update routes an external consumer relies on: list, get,
 summary, and the enrich-metadata PATCH. Enrichment *generation*
-(``/{id}/enrich``), the destructive ``/all`` wipe and
-``/export`` stay on the unversioned router in
-``services/api/routers/findings.py`` — they are operator/console actions, not
-part of the frozen surface. ``/export`` in particular writes a file on the
-server and answers with its path, which is nothing an external caller can open;
-freezing that shape would promise it for the life of 1.x.
-
-``FindingUpdate`` is defined here because it is the update contract; the
-unversioned router imports it back for its bulk endpoint (services -> core,
-the allowed direction).
+(``/{id}/enrich``) and the destructive ``/all`` wipe stay on the unversioned
+router in ``services/api/routers/findings.py``. They are operator/console
+actions, not part of the frozen surface.
 """
 
 import logging

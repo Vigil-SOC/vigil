@@ -11,11 +11,15 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
+from core.auth import current_user as current_user_module
+from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
+from core.auth.mcp_credential_service import looks_like_mcp_token
 from core.integrations.mcp.surface import current_caller
+from core.routing import UnitOfWorkSession
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 
@@ -27,7 +31,177 @@ APPROVE_PERMISSION = "ai_decisions.approve"
 MEDIC_READ_PERMISSION = "medic.read"
 MEDIC_ADMIN_PERMISSION = "medic.admin"
 
+# The permission vocabulary (#2915). ``permissions`` is each name's origin.
+# ``builtins`` is what an unmodified built-in holds once 0008 has run.
+# A revision must not import this: its grants are frozen literals.
+# users.*, findings.*, cases.read/write/delete, audit.*, medic.*, loglm.view,
+# ai_chat.use, ai_decisions.approve and integrations.write stay as they are
+# and are not re-originated. settings.read and settings.write stay on the
+# role JSON until #2916 moves the last gate off them.
+_SIGNED_IN_READ = "signed-in read"
+_NEW_CAPABILITY = "new capability"
+
+
+def _split_from(parent: str) -> str:
+    return f"split from {parent}"
+
+
+CATALOG = {
+    "permissions": {
+        "detections.read": _split_from("settings.read"),
+        "detections.write": _split_from("settings.write"),
+        "automation.read": _split_from("settings.read"),
+        "automation.write": _split_from("settings.write"),
+        "ai_autonomy.read": _split_from("settings.read"),
+        "ai_autonomy.write": _split_from("settings.write"),
+        "ai_autonomy.stop": _split_from("settings.write"),
+        "platform.read": _split_from("settings.read"),
+        "platform.write": _split_from("settings.write"),
+        "integrations.read": _SIGNED_IN_READ,
+        "integrations.install": _split_from("integrations.write"),
+        "cases.assign": _split_from("cases.write"),
+        "roles.manage": _NEW_CAPABILITY,
+        "ai_decisions.read": _SIGNED_IN_READ,
+        "settings.read": _SIGNED_IN_READ,
+    },
+    "builtins": {
+        "role-admin": {
+            "ai_autonomy.read": True,
+            "ai_autonomy.stop": True,
+            "ai_autonomy.write": True,
+            "ai_chat.use": True,
+            "ai_decisions.approve": True,
+            "ai_decisions.read": True,
+            "audit.forward": True,
+            "audit.manage": True,
+            "audit.read": True,
+            "automation.read": True,
+            "automation.write": True,
+            "cases.assign": True,
+            "cases.delete": True,
+            "cases.read": True,
+            "cases.write": True,
+            "detections.read": True,
+            "detections.write": True,
+            "findings.delete": True,
+            "findings.read": True,
+            "findings.write": True,
+            "integrations.install": True,
+            "integrations.read": True,
+            "integrations.write": True,
+            "loglm.view": True,
+            "medic.admin": True,
+            "medic.read": True,
+            "platform.read": True,
+            "platform.write": True,
+            "roles.manage": True,
+            "settings.read": True,
+            "settings.write": True,
+            "users.delete": True,
+            "users.read": True,
+            "users.write": True,
+        },
+        "role-analyst": {
+            "ai_autonomy.read": True,
+            "ai_chat.use": True,
+            "ai_decisions.approve": False,
+            "ai_decisions.read": True,
+            "automation.read": True,
+            "cases.assign": True,
+            "cases.delete": False,
+            "cases.read": True,
+            "cases.write": True,
+            "detections.read": True,
+            "findings.delete": False,
+            "findings.read": True,
+            "findings.write": True,
+            "integrations.read": True,
+            "integrations.write": False,
+            "loglm.view": True,
+            "platform.read": True,
+            "settings.read": True,
+            "settings.write": False,
+            "users.read": False,
+        },
+        "role-manager": {
+            "ai_autonomy.read": True,
+            "ai_autonomy.stop": True,
+            "ai_autonomy.write": True,
+            "ai_chat.use": True,
+            "ai_decisions.approve": True,
+            "ai_decisions.read": True,
+            "audit.read": True,
+            "automation.read": True,
+            "automation.write": True,
+            "cases.assign": True,
+            "cases.delete": True,
+            "cases.read": True,
+            "cases.write": True,
+            "detections.read": True,
+            "detections.write": True,
+            "findings.delete": True,
+            "findings.read": True,
+            "findings.write": True,
+            "integrations.install": True,
+            "integrations.read": True,
+            "integrations.write": True,
+            "loglm.view": True,
+            "medic.read": True,
+            "platform.read": True,
+            "platform.write": True,
+            "settings.read": True,
+            "settings.write": True,
+            "users.delete": False,
+            "users.read": True,
+            "users.write": True,
+        },
+        "role-senior-analyst": {
+            "ai_autonomy.read": True,
+            "ai_autonomy.stop": True,
+            "ai_chat.use": True,
+            "ai_decisions.approve": True,
+            "ai_decisions.read": True,
+            "automation.read": True,
+            "cases.assign": True,
+            "cases.delete": False,
+            "cases.read": True,
+            "cases.write": True,
+            "detections.read": True,
+            "findings.delete": True,
+            "findings.read": True,
+            "findings.write": True,
+            "integrations.install": True,
+            "integrations.read": True,
+            "integrations.write": True,
+            "loglm.view": True,
+            "platform.read": True,
+            "settings.read": True,
+            "settings.write": False,
+            "users.read": True,
+        },
+        "role-viewer": {
+            "ai_autonomy.read": True,
+            "ai_chat.use": False,
+            "ai_decisions.approve": False,
+            "ai_decisions.read": True,
+            "automation.read": True,
+            "cases.read": True,
+            "detections.read": True,
+            "findings.read": True,
+            "integrations.read": True,
+            "platform.read": True,
+            "settings.read": True,
+            "users.read": False,
+        },
+    },
+}
+
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# A credential is refused before the role check (decision 9). 403, including
+# in dev mode, where the session dependency would otherwise accept it.
+MCP_CREDENTIAL_DENIED = "An MCP credential cannot do this"
+SIGN_IN_REQUIRED = "A person sign-in is required"
 
 
 def require_permission(
@@ -51,6 +225,75 @@ def require_permission(
 
     # Introspectable by the role x route matrix test.
     _check.permission, _check.unsafe_only = permission, unsafe_only
+    return _check
+
+
+def _presented_token(request: Request, authorization: Optional[str]) -> Optional[str]:
+    token = request.cookies.get(ACCESS_COOKIE_NAME)
+    if token:
+        return token
+    if not authorization:
+        return None
+    parts = authorization.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
+def reject_mcp_credential(request: Request, authorization: Optional[str]) -> None:
+    """403 before a permission check when the caller is a credential.
+
+    ``current_caller`` is set for the duration of an MCP tool call. A bearer
+    that looks like a credential is the same refusal on the HTTP routes.
+    """
+    token = _presented_token(request, authorization)
+    if current_caller() is not None or (token and looks_like_mcp_token(token)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=MCP_CREDENTIAL_DENIED
+        )
+
+
+async def resolve_signed_in_user(
+    request: Request,
+    session: UnitOfWorkSession,
+    authorization: Optional[str] = Header(None),
+) -> User:
+    """The session user, after a credential has already been refused."""
+    reject_mcp_credential(request, authorization)
+    user = await current_user_module.get_current_user(
+        request, authorization, session=session
+    )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
+        )
+    return user
+
+
+def require_person_permission(permission: str) -> Callable[..., User]:
+    """``permission`` held by a person principal, never by a credential.
+
+    The kind check is ``AuthService.check_permission``, which refuses a
+    non-person for ``audit.forward`` and ``audit.manage`` even when dev mode
+    grants every role permission. A missing sign-in is refused first, except
+    in dev mode, which has no token. The role matrix reads ``permission``.
+    """
+
+    def _check(request: Request, user: User = Depends(resolve_signed_in_user)) -> User:
+        if not current_user_module.DEV_MODE:
+            claims = getattr(request.state, "access_claims", None)
+            if not isinstance(claims, dict) or not claims.get("sid"):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail=SIGN_IN_REQUIRED
+                )
+        if not AuthService.check_permission(user.user_id, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: {permission} required",
+            )
+        return user
+
+    _check.permission, _check.unsafe_only = permission, False
     return _check
 
 
