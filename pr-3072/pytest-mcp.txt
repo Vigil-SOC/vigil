@@ -1,0 +1,95 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/d612bd03-720c-41a0-beae-4693d948eca0/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 915 items
+
+tests/unit/integrations/test_atomic_red_team_tool.py .....               [  0%]
+tests/unit/integrations/test_blocking_offload.py .......                 [  1%]
+tests/unit/integrations/test_cape_sandbox_tool.py .......                [  2%]
+tests/unit/integrations/test_cloudflare_integration.py ..........        [  3%]
+tests/unit/integrations/test_config_resolver.py ........................ [  5%]
+............................................................             [ 12%]
+tests/unit/integrations/test_connector_id_bounds.py ....                 [ 12%]
+tests/unit/integrations/test_credential_check.py ....................... [ 15%]
+...............                                                          [ 16%]
+tests/unit/integrations/test_crowdstrike_service.py .........            [ 17%]
+tests/unit/integrations/test_custom_integration_tools.py ..              [ 18%]
+tests/unit/integrations/test_darktrace_webhook.py ...................... [ 20%]
+.                                                                        [ 20%]
+tests/unit/integrations/test_defender_ingestion.py .........             [ 21%]
+tests/unit/integrations/test_elastic_bidirectional_sync.py .....         [ 22%]
+tests/unit/integrations/test_elastic_indexer_ingestion.py .............. [ 23%]
+......                                                                   [ 24%]
+tests/unit/integrations/test_elastic_ingestion.py ....................   [ 26%]
+tests/unit/integrations/test_elastic_service.py .......................  [ 29%]
+tests/unit/integrations/test_elastic_tool.py ...                         [ 29%]
+tests/unit/integrations/test_export_postgres_to_splunk.py ....           [ 29%]
+tests/unit/integrations/test_feed_hunt_proposals.py .........            [ 30%]
+tests/unit/integrations/test_generate_splunk_test_data.py ..........     [ 31%]
+tests/unit/integrations/test_in_process_equivalence.py .........         [ 32%]
+tests/unit/integrations/test_indicator_expiry.py ....                    [ 33%]
+tests/unit/integrations/test_ingestion_secret_resolution.py .......      [ 34%]
+tests/unit/integrations/test_integration_config_source.py ....           [ 34%]
+tests/unit/integrations/test_integration_id_hyphens.py ................. [ 36%]
+                                                                         [ 36%]
+tests/unit/integrations/test_integration_proxy.py ................       [ 38%]
+tests/unit/integrations/test_integration_secrets.py ................     [ 39%]
+tests/unit/integrations/test_mcp_child_ca_bundle.py .............        [ 41%]
+tests/unit/integrations/test_mcp_child_proxy.py ....                     [ 41%]
+tests/unit/integrations/test_mcp_enabled_state.py .....                  [ 42%]
+tests/unit/integrations/test_mcp_registry_population.py ..........       [ 43%]
+tests/unit/integrations/test_mcp_registry_refresh.py .....               [ 43%]
+tests/unit/integrations/test_mcp_required_env.py ....................... [ 46%]
+.........                                                                [ 47%]
+tests/unit/integrations/test_mcp_setup_gate.py ...............           [ 49%]
+tests/unit/integrations/test_opensearch_ingestion.py ................... [ 51%]
+                                                                         [ 51%]
+tests/unit/integrations/test_opensearch_service.py ..............        [ 52%]
+tests/unit/integrations/test_opensearch_tool.py .....                    [ 53%]
+tests/unit/integrations/test_packaged_catalog.py .....                   [ 53%]
+tests/unit/integrations/test_sandbox_submitter.py .............          [ 55%]
+tests/unit/integrations/test_search_params.py .......................... [ 58%]
+...........                                                              [ 59%]
+tests/unit/integrations/test_siem_fetch_failures.py ...............      [ 60%]
+tests/unit/integrations/test_siem_fetch_order.py .........               [ 61%]
+tests/unit/integrations/test_splunk_secrets_migration.py ............... [ 63%]
+.......                                                                  [ 64%]
+tests/unit/integrations/test_splunk_service.py ......................... [ 66%]
+.....                                                                    [ 67%]
+tests/unit/integrations/test_splunk_tool_description.py .............    [ 68%]
+tests/unit/integrations/test_splunk_tool_failures.py .......             [ 69%]
+tests/unit/integrations/test_threat_report_parse.py ................     [ 71%]
+tests/unit/integrations/test_tls_verify.py ........                      [ 72%]
+tests/unit/integrations/test_tool_dotenv_disabled.py ....                [ 72%]
+tests/unit/integrations/test_tool_failure_reporting.py ..........        [ 73%]
+tests/unit/integrations/test_tool_servers_httpx.py ..................... [ 76%]
+..............................................................           [ 82%]
+tests/unit/integrations/test_vstrike_mcp_server.py ..................... [ 85%]
+                                                                         [ 85%]
+tests/unit/integrations/test_vstrike_service.py ........................ [ 87%]
+.............................................                            [ 92%]
+tests/unit/api/test_mcp_servers_reload.py ......                         [ 93%]
+tests/integration/test_mcp_enable_transactional.py ........              [ 94%]
+tests/unit/api/test_integration_test_endpoint.py ....................... [ 96%]
+..                                                                       [ 97%]
+tests/unit/mcp_runner/test_backend_client.py .....                       [ 97%]
+tests/unit/mcp_runner/test_live_transport.py ....                        [ 98%]
+tests/unit/mcp_runner/test_runner.py ...........                         [ 99%]
+tests/unit/api/test_mcp_servers_status.py ..                             [ 99%]
+tests/unit/api/test_local_startup.py .....                               [100%]
+
+============================= slowest 10 durations =============================
+5.25s setup    integration/test_mcp_enable_transactional.py::TestEnableTransactional::test_enable_triggers_connect_and_reports_connected
+3.75s call     unit/mcp_runner/test_runner.py::test_stop_under_concurrent_calls[restart]
+2.65s call     unit/mcp_runner/test_runner.py::test_stop_under_concurrent_calls[delete]
+2.58s call     unit/mcp_runner/test_backend_client.py::test_connect_and_reconnect_go_through_the_runner
+2.27s call     unit/mcp_runner/test_runner.py::test_put_noop_restart_and_delete
+2.14s call     unit/mcp_runner/test_runner.py::test_calls_multiplex
+1.31s call     unit/mcp_runner/test_runner.py::test_put_bridges_and_ignores_command
+1.30s call     unit/mcp_runner/test_backend_client.py::test_close_all_leaves_the_server_and_disconnect_stops_it
+1.28s call     unit/mcp_runner/test_backend_client.py::test_probe_of_a_disabled_server_leaves_nothing_running
+0.75s call     unit/integrations/test_blocking_offload.py::test_splunk_federation_adapter_does_not_block_the_loop
+======================= 915 passed, 3 warnings in 39.07s =======================

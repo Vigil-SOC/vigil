@@ -1,0 +1,5 @@
+state before: {  "enabled": {    "geo": true  }}
+startup loop raised PermissionError [Errno 13] Permission denied: '/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-3996197/tmp/tmpz7lsl07_/state/mcp_server_enabled.json'
+connect_to_server raised PermissionError [Errno 13] Permission denied: '/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-3996197/tmp/tmpz7lsl07_/state/mcp_server_enabled.json'
+call_tool raised PermissionError [Errno 13] Permission denied: '/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-3996197/tmp/tmpz7lsl07_/state/mcp_server_enabled.json'
+state after: {  "enabled": {    "geo": true  }}
