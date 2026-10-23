@@ -1,0 +1,3 @@
+0.07s call     unit/workflows/test_workflow_version.py::TestAgentRunPath::test_failed_lookup_still_begins_the_run
+FAILED tests/unit/workflows/test_workflow_version.py::TestAgentRunPath::test_named_workflow_stores_its_version
+================= 1 failed, 2 passed, 15 deselected in 32.74s ==================

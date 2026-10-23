@@ -1,0 +1,6 @@
+normal             stored=4      version_of=4      expected=4      OK
+phase_is_str       stored=None   version_of=None   expected=None   OK
+no_workflow_id     stored=None   version_of=None   expected=None   OK
+raw_is_list        stored=None   version_of=None   expected=None   OK
+incident-response  stored=1      version_of=1      expected=1      OK
+missing            stored=None   version_of=None   expected=None   OK

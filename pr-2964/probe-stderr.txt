@@ -1,0 +1,5 @@
+JWT_SECRET_KEY not set; using deterministic DEV_MODE fallback. Tokens issued in dev are not portable to production.
+⚠️  DEV_MODE is ENABLED - authentication is BYPASSED. Gates opened: session auth (every request runs as a mock admin with full permissions); vstrike inbound (POST /api/integrations/vstrike/findings accepts pushes without its bearer key). This is for a developer's own machine only; set DEV_MODE=false in .env to require a login.
+no playbook phases for phase_is_str: 'str' object has no attribute 'get'
+no playbook phases for no_workflow_id: 'workflow_id'
+no playbook phases for raw_is_list: 'list' object has no attribute 'get'

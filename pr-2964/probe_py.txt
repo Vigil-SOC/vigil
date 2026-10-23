@@ -1,0 +1,28 @@
+import sys
+from unittest.mock import MagicMock, patch
+from core.api.v1 import agent_runs_router as r
+from core.workflows import workflows_service as ws
+
+ROWS = {
+    "normal": {"workflow_id": "normal", "name": "N", "phases": [{"order": 1, "name": "L", "agent_id": "triage"}], "version": 4},
+    "phase_is_str": {"workflow_id": "phase_is_str", "phases": ["step one"], "version": 7},
+    "no_workflow_id": {"phases": [], "version": 9},
+    "raw_is_list": ["x"],
+}
+fail = False
+for wid, expect in [("normal", 4), ("phase_is_str", None), ("no_workflow_id", None),
+                    ("raw_is_list", None), ("incident-response", "file"), ("missing", None)]:
+    custom = MagicMock(); custom.get.side_effect = lambda w: ROWS.get(w)
+    real = ws.WorkflowsService(custom_workflows=custom, workflow_runs=MagicMock())
+    runs = MagicMock()
+    with patch("core.workflows.workflows_service.WorkflowsService", return_value=real), \
+         patch("core.workflows.workflow_run_service.WorkflowRunService", return_value=runs):
+        req = r.StartRunRequest(run_kind="compose", playbook=f"workflow:{wid}", config="", prompt="p")
+        r._begin_run_row("r-1", req, "api")
+    got = runs.begin_run.call_args.kwargs["workflow_version"]
+    if expect == "file":
+        expect = real.version_of(wid)
+    same = got == real.version_of(wid) == expect
+    fail |= not same
+    print(f"{wid:18} stored={got!r:6} version_of={real.version_of(wid)!r:6} expected={expect!r:6} {'OK' if same else 'MISMATCH'}")
+sys.exit(1 if fail else 0)
