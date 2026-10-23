@@ -4717,9 +4717,8 @@ export interface paths {
          * Get Processes
          * @description State of the agent layer and the SOC daemon.
          *
-         *     ``agent_layer`` and ``daemon`` are each ``running``, ``unhealthy``,
-         *     ``not_running`` or ``unknown``; ``agent_layer`` is ``no_token`` when this
-         *     server has no AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         *     ``agent_layer`` is ``no_token`` when this server has no
+         *     AGENT_INTERNAL_TOKEN. Up to five seconds old.
          */
         get: operations["get_api_processes"];
         put?: never;
@@ -10127,6 +10126,19 @@ export interface components {
             count: number;
             /** Priority */
             priority: string;
+        };
+        /** ProcessStates */
+        ProcessStates: {
+            /**
+             * Agent Layer
+             * @enum {string}
+             */
+            agent_layer: "running" | "unhealthy" | "not_running" | "unknown" | "no_token";
+            /**
+             * Daemon
+             * @enum {string}
+             */
+            daemon: "running" | "unhealthy" | "not_running" | "unknown";
         };
         /**
          * ProfileUpdateRequest
@@ -19638,9 +19650,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ProcessStates"];
                 };
             };
             /** @description Validation Error */

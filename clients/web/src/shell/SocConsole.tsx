@@ -49,7 +49,6 @@ import {
   type FederationRead,
   type HealthRead,
   type McpRead,
-  type ProcessesRead,
   type RoutabilityRead,
   type StatusFold,
 } from './statusLine'
@@ -382,7 +381,7 @@ function SocConsoleInner() {
         canReadRoutability
           ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
           : Promise.resolve(null),
-        settled(consoleApi.getProcesses().then((res) => res.data as ProcessesRead)),
+        settled(consoleApi.getProcesses().then((res) => res.data)),
       ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
         if (!live) return
