@@ -39,6 +39,8 @@ from services.medic.app.wiring import (
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.containers import docker_containers
+from services.medic.sensors.gateway import address as gateway_address
+from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.store import StoreError, open_writer
 
@@ -185,6 +187,7 @@ def run(
             watchdog_exit=watchdog_exit,
             watchdog_poll_s=watchdog_poll_s,
             api=api,
+            vigil_dev_mode=config.dev_mode(env),
         )
     finally:
         os.umask(old_umask)
@@ -202,6 +205,9 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
         proxy = config.dockerproxy_addr(env, shape)
         if proxy is not None:
             sensors.append(docker_containers(host=proxy[0], port=proxy[1]))
+    gateway = gateway_address(env, shape)
+    if gateway is not None:
+        sensors.append(gateway_session(host=gateway[0], port=gateway[1]))
     return sensors
 
 
@@ -275,6 +281,7 @@ def _run(
     watchdog_exit: Callable[[int], None],
     watchdog_poll_s: float,
     api: ApiSettings | None = None,
+    vigil_dev_mode: bool = False,
 ) -> int:
     started_at = clock.wall()
     try:
@@ -294,7 +301,9 @@ def _run(
         # Built first: a start that can't build writes no gap and no beat, so a
         # crash loop neither grows the store nor reads healthy (S4 review #1).
         try:
-            medic = _build(writer, data_dir, shape, sensors, clock)
+            medic = _build(
+                writer, data_dir, shape, sensors, clock, vigil_dev_mode=vigil_dev_mode
+            )
         except Exception as exc:  # logged (redacted), exit 1
             log.exception("Medic can't start: %s", type(exc).__name__)
             return 1
@@ -367,7 +376,9 @@ def _run(
     return code
 
 
-def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
+def _build(
+    writer, data_dir: Path, shape: str, sensors, clock, *, vigil_dev_mode: bool = False
+) -> Medic:
     rules, suppression = load_dev_rules(), load_dev_suppression()
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
@@ -384,6 +395,7 @@ def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
             shape=shape,
             engine_state=state,
             suppression=suppression,
+            vigil_dev_mode=vigil_dev_mode,
         )
     except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
@@ -396,6 +408,7 @@ def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
             clock=clock,
             shape=shape,
             suppression=suppression,
+            vigil_dev_mode=vigil_dev_mode,
         )
 
 

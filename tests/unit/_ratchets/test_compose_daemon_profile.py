@@ -22,7 +22,7 @@ COMPOSE_PATH = REPO / "infra" / "docker" / "docker-compose.yml"
 
 INVESTIGATION_SET = (
     "postgres",
-    "db-seed",
+    "upgrade",
     "redis",
     "bifrost",
     "backend",

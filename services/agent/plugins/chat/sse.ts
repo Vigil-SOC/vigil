@@ -5,7 +5,6 @@ import type { StreamEvent } from "../../core/stream.js";
 export type ChatEvent =
   | { type: "text"; content: string }
   | { type: "tool_processing" }
-  | { type: "context_windowed"; windowed_messages: number; remaining_messages: number }
   | { type: "approval_required"; checkpoint_id: string; tool: string | null; args: string | null }
   | { error: string };
 
@@ -17,8 +16,6 @@ export function chatEvents(event: StreamEvent<string>): ChatEvent[] {
       return [{ type: "text", content: event.text }];
     case "tool_call":
       return [{ type: "tool_processing" }];
-    case "folded":
-      return [{ type: "context_windowed", windowed_messages: event.folded, remaining_messages: event.remaining }];
     case "approval_required":
       return parked(event.pending);
     case "failed":
