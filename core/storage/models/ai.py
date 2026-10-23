@@ -240,14 +240,13 @@ class AIModelConfig(Base):
 class Conversation(Base):
     """Cross-device, per-analyst persistent chat conversation.
 
-    The Claude.ai-style history store for the console chat dock: a
-    listable, reopenable conversation owned by an analyst. The primary key
-    IS the frontend ``session_id`` so reopening a conversation continues
-    the same session.
+    The history store for the console chat dock: a listable, reopenable
+    conversation owned by an analyst. The primary key IS the frontend
+    ``session_id`` so reopening a conversation continues the same session.
 
-    This is distinct from ``llm_interaction_logs``, which remains the
-    per-API-call compliance audit log (system-of-record). Deleting a
-    conversation here never touches that audit trail.
+    The text lives here and in ``chat_messages``. Tool calls, results, and
+    cost live in the agent ledger (``agent_events``). Deleting a conversation
+    sets ``deleted_at`` and drops its messages; it does not change ledger rows.
     """
 
     __tablename__ = "conversations"
@@ -283,6 +282,13 @@ class Conversation(Base):
     )
     # Sort key for the history list; null until the first message lands.
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # 0 is the ledger run already written for this id. A delete increments it
+    # so the next life of the same id starts a new run.
+    generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Set on delete. History hides the row until a later turn clears it.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     messages: Mapped[List["ChatMessage"]] = relationship(
         "ChatMessage",

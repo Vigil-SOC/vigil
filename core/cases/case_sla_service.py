@@ -9,12 +9,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from core.exceptions import default_on_error
+from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, CaseSLA, SLAPolicy
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -597,3 +598,39 @@ class CaseSLAService:
                         )
 
             return breached_cases
+
+
+def open_case(
+    data: DatabaseDataService,
+    *,
+    title: str,
+    finding_ids: List[str],
+    priority: str,
+    description: str,
+    status: str = "open",
+    case_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Create a case and give it the default SLA for its priority.
+
+    Returns the case even when no SLA could be assigned.
+    """
+    case = data.create_case(
+        title=title,
+        finding_ids=finding_ids,
+        priority=priority,
+        description=description,
+        status=status,
+        case_id=case_id,
+    )
+    if not case:
+        return None
+    try:
+        assignment = CaseSLAService().assign_sla_to_case(case["case_id"])
+    except Exception:
+        logger.exception("Could not assign an SLA to case %s", case["case_id"])
+        return case
+    if not assignment:
+        logger.warning(
+            "Case %s opened with no SLA: %s", case["case_id"], assignment.outcome.value
+        )
+    return case
