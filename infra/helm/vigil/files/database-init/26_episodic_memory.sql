@@ -174,13 +174,6 @@ CREATE TABLE IF NOT EXISTS episodic_distil_markers (
     -- appends a second one to the same run, and comparing seq is what makes the
     -- later conclusions re-derive instead of being skipped as a run already seen.
     origin_seq         integer,
-    -- Every run this investigation has been distilled from, origin_run_id
-    -- included. One investigation can span more than one run -- a resumed hunt
-    -- is the case the rest of this schema is keyed for -- and the poll has only
-    -- run ids to work with, because agent_events carries no investigation id.
-    -- Without this, each run of one investigation misses the other's marker and
-    -- both re-distil on every tick forever.
-    origin_run_ids     uuid[]      NOT NULL DEFAULT ARRAY[]::uuid[],
     -- Bumped when the mapping changes. Re-deriving is delete-then-insert, so a
     -- bump that now yields fewer rows leaves none of the old ones behind.
     distil_version     integer     NOT NULL,
@@ -218,10 +211,6 @@ ALTER TABLE episodic_distil_markers
         (investigation_kind = 'hunt') = (origin_run_id IS NOT NULL)
         AND (origin_run_id IS NULL) = (origin_seq IS NULL)
     );
-
--- The Distil's poll: which terminals no marker at the current version covers.
-CREATE INDEX IF NOT EXISTS idx_episodic_markers_origin
-    ON episodic_distil_markers USING GIN (origin_run_ids);
 
 COMMENT ON TABLE episodic_distil_markers IS
     'One row per distilled investigation, written in the same transaction as its rows.';
