@@ -1314,9 +1314,6 @@ export interface TriageRow {
   age_seconds: number
   ttl_seconds: number
   last_quarter: boolean
-  score: null
-  trust: null
-  weight: null
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
@@ -1352,7 +1349,6 @@ export interface TriagePayload {
     }
     waiting: number
     cases_created_today: number
-    trust_floor: string
   }
   /** rows that pass the filters, before the row cap */
   matched: number
@@ -1372,7 +1368,6 @@ export interface TriagePayload {
     trust_floor: TriageInfo & { limit: string }
   }
   breakdown_info: { trust: string; weight: string; score: string }
-  unmeasured_text: string
 }
 
 export interface TriageQuery {

@@ -214,9 +214,6 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[waiting]["source_link"] == "https://console.example/alert/1"
     assert rows[waiting]["title"] == "Odd login alert"
     assert rows[waiting]["description"] == "Odd login"
-    assert rows[waiting]["score"] is None
-    assert rows[waiting]["trust"] is None
-    assert rows[waiting]["weight"] is None
 
     assert rows[started]["state_label"] == "Started a case"
     assert rows[started]["case_door"] == "tr-case-1"
@@ -242,8 +239,6 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[expired]["pickup_seconds"] is None
 
     assert payload["strip"]["cases_created_today"] == 1
-    assert payload["strip"]["trust_floor"] == "Not measured yet"
-    assert payload["unmeasured_text"] == "Not measured yet"
     info = payload["strip_info"]
     assert set(info) == {"picked_up", "waiting", "cases_created_today", "trust_floor"}
     assert all(item["source"] and item["calculation"] for item in info.values())
@@ -433,11 +428,10 @@ def test_finding_only_source_has_null_lag_and_is_not_quiet():
     assert sources["tr-hook"]["quiet"] is None
 
 
-def test_route_returns_the_strip(client):
+def test_route_returns_the_arrival_info(client):
     response = client.get("/api/triage")
     assert response.status_code == 200
     body = response.json()
-    assert body["strip"]["trust_floor"] == "Not measured yet"
     assert body["arrival_info"] == (
         "Arrivals count every finding stored today. The list is the intake rows."
     )

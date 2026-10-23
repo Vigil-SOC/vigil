@@ -176,6 +176,10 @@ def test_manager_can_export_and_cannot_poll(db, client):
 def test_a_cursor_past_the_tip_is_a_reset(db, client):
     _user("ada", "role-admin")
     admin = _bearer(_login(client, "ada"))
+    # Login records auth.sign_in. This test is about an empty trail.
+    with db.begin() as conn:
+        conn.execute(text("TRUNCATE audit_trail, audit_trail_held"))
+        conn.execute(text("UPDATE audit_trail_anchor SET seq = 0, entry_hash = ''"))
 
     caught_up = client.get("/api/audit/poll?after=0", headers=admin)
     assert caught_up.status_code == 200, caught_up.text
@@ -220,8 +224,9 @@ def test_an_mcp_credential_and_a_token_without_a_sign_in_cannot_poll(db, client)
 def test_export_writes_one_entry_and_poll_writes_none(db, client):
     admin_id = _user("ada", "role-admin")
     _append({trail.ACTION: "case.comment", trail.ACTOR: "not-the-caller"})
-    before = _count(db)
     admin = _bearer(_login(client, "ada"))
+    # Login records auth.sign_in. Poll and export are what this count watches.
+    before = _count(db)
 
     polled = client.get("/api/audit/poll?after=0", headers=admin)
     assert polled.status_code == 200, polled.text

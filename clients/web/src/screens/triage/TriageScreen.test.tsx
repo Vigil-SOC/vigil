@@ -22,9 +22,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         age_seconds: 12,
         ttl_seconds: 14400,
         last_quarter: false,
-        score: null,
-        trust: null,
-        weight: null,
         pickup_seconds: 4,
         workflow_id: 'incident-response',
         case_door: 'case-9',
@@ -55,9 +52,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         age_seconds: 30,
         ttl_seconds: 14400,
         last_quarter: false,
-        score: null,
-        trust: null,
-        weight: null,
         pickup_seconds: 2,
         workflow_id: '',
         case_door: null,
@@ -75,7 +69,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       picked_up: { launched_or_merged: 0, created_today: 0, share: null },
       waiting: 3,
       cases_created_today: 1,
-      trust_floor: 'Not measured yet',
     },
     matched: 12,
     counts: {
@@ -96,7 +89,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       trust_floor: { source: 'Floor source', calculation: 'Floor calc', limit: 'Floor limit' },
     },
     breakdown_info: { trust: 'Trust tip', weight: 'Weight tip', score: 'Score tip' },
-    unmeasured_text: 'Not measured yet',
     ...overrides,
   }
 }
