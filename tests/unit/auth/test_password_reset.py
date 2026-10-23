@@ -89,12 +89,14 @@ class TestConfirm:
     def user(self):
         return SimpleNamespace(
             user_id="u-1",
+            principal_id="u-1",
             username="analyst",
             email="a@example.com",
             is_active=True,
             password_hash=AuthService.hash_password(OLD),
             password_history=[],
             password_changed_at=None,
+            service_account=False,
         )
 
     @pytest.fixture
