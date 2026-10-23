@@ -10,7 +10,6 @@ import pytest
 
 from core.storage.models import AIDecisionLog
 from core.storage.service import DatabaseService
-from core.time import utcnow
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
@@ -26,7 +25,6 @@ def _decide(service: DatabaseService, agent_id: str, outcome: str) -> None:
                 confidence_score=0.8,
                 reasoning="test",
                 recommended_action="escalate",
-                timestamp=utcnow(),
             )
         )
     service.submit_ai_decision_feedback(
