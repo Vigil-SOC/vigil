@@ -100,8 +100,6 @@ def test_negative_is_treated_as_disabled(monkeypatch):
 
 
 def test_pgoptions_is_carried_after_the_timeouts(monkeypatch):
-    """An explicit ``options`` replaces libpq's PGOPTIONS fallback, so the engine
-    has to carry it through, last, so that an operator's own -c still wins."""
     kwargs = _engine_kwargs(
         monkeypatch,
         DB_STATEMENT_TIMEOUT_MS="0",
