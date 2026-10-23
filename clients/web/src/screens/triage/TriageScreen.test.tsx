@@ -222,6 +222,24 @@ describe('TriageScreen', () => {
     expect(screen.getByText('Nothing in the queue matches these filters.')).toBeInTheDocument()
   })
 
+  it('still applies a slow response that the 10 s poll overtakes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let resolveFirst: (value: unknown) => void = () => {}
+      vi.mocked(triageApi.get).mockReset()
+      vi.mocked(triageApi.get)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }) as never)
+        .mockReturnValueOnce(new Promise(() => {}) as never)
+      renderScreen()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(triageApi.get).toHaveBeenCalledTimes(2)
+      resolveFirst({ data: payload() })
+      expect(await screen.findByLabelText('Intake strip')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a linked source as a selected chip with 0, and says when the cap hides rows', async () => {
     const base = payload()
     vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, matched: 340, counts: { ...base.counts, total: 340 } } } as never)

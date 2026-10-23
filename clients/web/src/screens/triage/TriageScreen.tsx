@@ -259,6 +259,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   const [data, setData] = useState<TriagePayload | null>(null)
   const [openId, setOpenId] = useState<number | null>(null)
   const loadTicket = useRef(0)
+  const loadedFilter = useRef('')
 
   const setFilter = (key: FilterKey, value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -268,7 +269,13 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase, se
   }
 
   const load = useCallback(() => {
-    const ticket = ++loadTicket.current
+    // only a filter change supersedes an in-flight request; a poll must not starve a slow one
+    const filter = [kind, source, state].join('|')
+    if (filter !== loadedFilter.current) {
+      loadedFilter.current = filter
+      loadTicket.current++
+    }
+    const ticket = loadTicket.current
     const params: { kind?: string; source?: string; state?: string } = {}
     if (kind) params.kind = kind
     if (source) params.source = source
