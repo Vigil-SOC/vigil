@@ -120,8 +120,6 @@ class TestIndicatorLookup:
             == "evil.test"
         )
 
-    # invalid_args at the bridge rather than an empty answer: a call with nothing
-    # to look up is a defect.
     def test_refuses_a_call_with_nothing_to_look_up(self, monkeypatch):
         run = self._lookup(monkeypatch, {})
         with pytest.raises(InvalidToolArgs):

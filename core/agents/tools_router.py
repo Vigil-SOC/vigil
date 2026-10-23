@@ -134,9 +134,8 @@ def _errored(result: Any) -> Optional[str]:
     return None
 
 
-# Python's wording for a call that did not fit its signature. Any other TypeError
-# from inside a tool is not one, and invalid_args tells the model to retry until
-# the cap. A tool refusing its arguments raises InvalidToolArgs instead.
+# Python's wording for a call that did not fit its signature. A TypeError from
+# inside a tool is not one, and invalid_args tells the model to retry until the cap.
 _SIGNATURE_MISMATCH = (
     "unexpected keyword argument",
     "required positional argument",

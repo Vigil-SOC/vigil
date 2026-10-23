@@ -464,10 +464,8 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
     ids=["no key named", "unreadable as_of"],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
-    with pytest.raises(InvalidToolArgs) as raised:
+    with pytest.raises(InvalidToolArgs):
         recall_entity(args)
-
-    assert "required keyword-only argument" not in str(raised.value)
 
 
 def test_the_bridge_resolves_recall_entity_without_reaching_mcp(

@@ -196,7 +196,6 @@ class TestFailureKinds:
         _raises(monkeypatch, TypeError("unexpected keyword argument 'nope'"))
         assert _invoke(client).json()["failure"]["kind"] == "invalid_args"
 
-    # A tool's own refusal is classified by type, so its wording is the model's to read.
     def test_a_refusal_in_any_words_is_invalid_args(self, client, monkeypatch):
         _raises(monkeypatch, InvalidToolArgs("step must be a whole step number"))
         failure = _invoke(client).json()["failure"]
