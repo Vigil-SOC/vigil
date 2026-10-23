@@ -136,6 +136,8 @@ def frame(entry: dict[str, Any]) -> bytes:
 def tls_context(dest: Destination) -> ssl.SSLContext:
     """Verifies the server against the stored CA, or the system's when none is."""
     context = ssl.create_default_context(cadata=dest.ca_pem or None)
+    # RFC 9662 (syslog over TLS) requires TLS 1.2 or later.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     if dest.client_cert_pem:
         # load_cert_chain reads files only: a private directory, removed at once.
         with tempfile.TemporaryDirectory() as tmp:
@@ -148,6 +150,24 @@ def tls_context(dest: Destination) -> ssl.SSLContext:
                 os.chmod(key, 0o600)
             context.load_cert_chain(str(cert), str(key) if key else None)
     return context
+
+
+def describe(error: BaseException) -> str:
+    """A fixed phrase for a send failure: it reaches the API, the trail and the
+    SIEM, so it never carries exception text. The detail goes to the log."""
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return "the receiver's certificate is not trusted or does not match the host"
+    if isinstance(error, ssl.SSLError):
+        return "the TLS handshake failed"
+    if isinstance(error, socket.gaierror):
+        return "the host name does not resolve"
+    if isinstance(error, ConnectionRefusedError):
+        return "the connection was refused"
+    if isinstance(error, (socket.timeout, TimeoutError)):
+        return "the connection timed out"
+    if isinstance(error, (ConnectionResetError, BrokenPipeError)):
+        return "the receiver closed the connection"
+    return "the receiver could not be reached"
 
 
 def open_tls(dest: Destination) -> ssl.SSLSocket:
@@ -507,8 +527,13 @@ class Leader:
         self._failures += 1
         delay = min(BACKOFF_CAP_SECONDS, 2.0 ** (self._failures - 1))
         self._retry_at = self.clock() + delay
-        message = f"{type(error).__name__}: {error}"[:500]
-        logger.warning("audit feed send failed (retry in %ss): %s", delay, message)
+        message = describe(error)
+        logger.warning(
+            "audit feed send failed (retry in %ss): %s: %s",
+            delay,
+            type(error).__name__,
+            error,
+        )
         with Session(self.engine) as session, session.begin():
             state = _state(session, lock=True)
             if not state["failing"]:

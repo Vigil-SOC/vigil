@@ -9,6 +9,7 @@ sign-in is refused before the role check, and a non-person is refused inside
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 import ssl
 from datetime import datetime
@@ -36,6 +37,7 @@ from core.secrets import (
 from core.storage.config_service import get_config_service
 from core.storage.models import User
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -333,5 +335,6 @@ def test_feed(session: UnitOfWorkSession, _: User = Depends(require_forward())):
     try:
         feed.send_test(dest)
     except (OSError, ValueError) as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
+        logger.warning("audit feed test failed: %s: %s", type(exc).__name__, exc)
+        return {"ok": False, "error": feed.describe(exc)}
     return {"ok": True, "error": None}

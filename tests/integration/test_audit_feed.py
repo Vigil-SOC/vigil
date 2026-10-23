@@ -203,6 +203,8 @@ def test_a_failed_send_retries_from_the_same_seq(db):
         assert _cursor(db) == tip
         with Session(db) as session:
             assert feed.health(session)["behind"] == 0
+            # A fixed phrase, never the exception's text.
+            assert feed.health(session)["last_error"] == "the connection was refused"
     finally:
         leader.stop()
 
