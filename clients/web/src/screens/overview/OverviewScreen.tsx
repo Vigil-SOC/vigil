@@ -22,6 +22,7 @@ import api, {
   type OverviewFeedItem,
   type OverviewPayload,
 } from '../../services/api'
+import { errorText } from '../../shared/errorText'
 
 const NOISE_INFO =
   'The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it.'
@@ -31,14 +32,6 @@ const POLL_MS = 10_000
 type Phase = 'loading' | 'error' | 'ready'
 // The single read of an alert that is not in the feed.
 type AlertRead = { id: string; status: 'loading' | 'ready' | 'error' | 'missing'; item?: OverviewFeedItem }
-
-function errorText(error: unknown, fallback: string): string {
-  const data = (error as { response?: { data?: { detail?: unknown; error?: unknown } } })?.response?.data
-  if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
-  if (typeof data?.error === 'string' && data.error.trim()) return data.error
-  const message = (error as { message?: string })?.message
-  return message && message.trim() ? message : fallback
-}
 
 function legendTitle(data: OverviewPayload): string {
   const pct = (n: number) => Math.round(n * 100)

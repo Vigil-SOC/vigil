@@ -2,13 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { agentsApi, aiDecisionsApi, approvalsApi, type AgentSummary } from '../../services/api'
 import { mapApiDecision, type ApiDecision } from '../../data/mappers'
 import type { Decision } from '../../data/appData'
+import { errorText } from '../../shared/errorText'
 
 export type Phase = 'loading' | 'ready' | 'error'
-
-function errMsg(e: unknown, fallback: string): string {
-  const r = e as { response?: { data?: { detail?: string } }; message?: string }
-  return r?.response?.data?.detail || r?.message || fallback
-}
 
 /** the daemon is not an agent, so this never comes back from GET /agents */
 const ORCHESTRATION_DECISION_ID = 'orchestration'
@@ -66,7 +62,7 @@ export function useDecisions(agentId: string, status: DecisionStatus) {
       })
       .catch((e) => {
         if (cancelled) return
-        setError(errMsg(e, 'Failed to load decisions'))
+        setError(errorText(e, 'Failed to load decisions'))
         setPhase('error')
       })
     return () => {
@@ -98,7 +94,7 @@ export function usePendingDecisions() {
       })
       .catch((e) => {
         if (cancelled) return
-        setError(errMsg(e, 'Failed to load pending decisions'))
+        setError(errorText(e, 'Failed to load pending decisions'))
         setPhase('error')
       })
     return () => {
@@ -145,7 +141,7 @@ export function useDecisionStats(agentId: string, days?: number) {
       })
       .catch((e) => {
         if (cancelled) return
-        setError(errMsg(e, 'Failed to load decision stats'))
+        setError(errorText(e, 'Failed to load decision stats'))
         setPhase('error')
       })
     return () => {
@@ -199,7 +195,7 @@ export function usePendingApprovals() {
           if (cancelled) return
           // A poll that failed is not an empty queue: keep what was last shown
           // rather than reporting that nothing is waiting.
-          setError(errMsg(e, 'Failed to load approvals'))
+          setError(errorText(e, 'Failed to load approvals'))
           setPhase((p) => (p === 'ready' ? p : 'error'))
         })
 
