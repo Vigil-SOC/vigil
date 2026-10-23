@@ -40,6 +40,7 @@ def user(hashes):
         password_hash=hashes[0],
         password_history=[hashes[1]],
         password_changed_at=None,
+        service_account=False,
     )
 
 

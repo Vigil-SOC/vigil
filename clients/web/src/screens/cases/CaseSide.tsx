@@ -296,13 +296,13 @@ function useTickets(caseId: string) {
   )
 }
 
-function TicketsView({ resource: { data, phase } }: { resource: Resource<Ticket[]> }) {
+function TicketsView({ resource: { data, phase, error } }: { resource: Resource<Ticket[]> }) {
   const rows = data || []
   return (
     <SectionCard bare title="Linked tickets">
       <div className="side-list">
         {phase === 'loading' && <p className="muted">Loading tickets…</p>}
-        {phase === 'error' && <p className="muted">Couldn’t load tickets.</p>}
+        {phase === 'error' && <p className="muted">Couldn’t load tickets: {error}</p>}
         {phase === 'ready' && rows.length === 0 && <p className="muted">No linked tickets.</p>}
         {rows.map((row) => <p key={row.id}>{row.label}</p>)}
       </div>

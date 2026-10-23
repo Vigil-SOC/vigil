@@ -157,10 +157,25 @@ def integration_tools(
     ]
 
 
+def integrations_how(mcp_tools: Optional[List[Dict[str, Any]]]) -> str:
+    """The system-prompt sentence on reaching integrations, or "" when none is.
+
+    Under the same condition ``chat_config`` declares the two integration
+    tools, so the system prompt and the tool list change together.
+    """
+    if not integration_tools(mcp_tools):
+        return ""
+    return (
+        "Connected integrations' tools are not listed here: call "
+        f"{FIND_INTEGRATION_TOOLS} to find one, then {CALL_INTEGRATION_TOOL} "
+        "to run it."
+    )
+
+
 def integrations_line(
     mcp_tools: Optional[List[Dict[str, Any]]], servers: Dict[str, str]
 ) -> str:
-    """The system-prompt sentence naming what is connected, or "" for nothing."""
+    """The per-turn line naming what is connected, or "" for nothing."""
     names = sorted(
         {
             servers[t["name"]]
@@ -168,13 +183,7 @@ def integrations_line(
             if t["name"] in servers
         }
     )
-    if not names:
-        return ""
-    return (
-        f"Connected integrations: {', '.join(names)}. Their tools are not listed "
-        f"here: call {FIND_INTEGRATION_TOOLS} to find one, then "
-        f"{CALL_INTEGRATION_TOOL} to run it."
-    )
+    return f"Connected integrations: {', '.join(names)}." if names else ""
 
 
 # A tool with no description is dropped rather than declared: the agent layer

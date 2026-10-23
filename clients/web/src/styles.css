@@ -2793,28 +2793,6 @@
       border-color: var(--accent-line);
    }
 
-   .ev-list {
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
-   }
-
-   .ev-item {
-      display: flex;
-      gap: 9px;
-      font-size: 13px;
-      color: var(--tx-2);
-   }
-
-   .ev-item .ed {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--accent);
-      margin-top: 7px;
-      flex: 0 0 auto;
-   }
-
    /* ---------- Analytics report + insights rail ---------- */
    .report {
       display: flex;
@@ -4165,6 +4143,85 @@
    .int-neutral { font-size: 12px; font-weight: 650; color: var(--tx2); }
    .int-time { white-space: nowrap; }
    .int-note.poor { color: var(--poor); }
+
+   /* Audit feed connector. Radius 14 and --ln0 match the integrations table
+      on this screen (the board). Labels use token tx2; the shared .field-label
+      is --tx-2, which aliases tx1. */
+   .audit-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 16px 18px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+      min-width: 0;
+   }
+
+   .audit-feed h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.3;
+      color: var(--tx0);
+   }
+
+   .audit-feed .field-label {
+      color: var(--tx2);
+      font-size: 12px;
+      font-weight: 600;
+   }
+
+   .audit-feed-dest {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 8rem;
+      gap: 12px;
+   }
+
+   .audit-feed textarea.field-input {
+      min-height: 64px;
+      max-height: 160px;
+      resize: vertical;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+   }
+
+   .audit-feed-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .audit-feed-health {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--tx2);
+   }
+
+   .audit-feed-health b {
+      font-family: var(--font-mono);
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .audit-feed-error {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--tx1);
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+   }
 
    .int-clamp {
       display: -webkit-box;
