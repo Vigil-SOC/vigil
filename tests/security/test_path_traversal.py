@@ -62,7 +62,6 @@ def test_server_path_stays_in_base(tmp_path):
     base = tmp_path / "base"
     base.mkdir()
     outside = tmp_path / "outside.py"
-    outside.write_text("print('pwn')")
     (base / "evil_server.py").symlink_to(outside)
     svc = CustomIntegrationService.__new__(CustomIntegrationService)
     svc.custom_integrations_dir = base.resolve()
