@@ -167,19 +167,20 @@ def set_settings(*, default_vk: str, updated_by: str) -> dict:
 
     ``updated_by`` is the signed-in user, stored on the audit row.
     """
+    value = {"default_vk": default_vk or ""}
     try:
         from core.storage.config_service import get_config_service
 
         get_config_service(user_id=updated_by).set_system_config(
             key=GLOBAL_KEY,
-            value={"default_vk": default_vk or ""},
+            value=value,
             description="Bifrost virtual-key configuration and budget settings",
             config_type="ai",
         )
     except Exception as e:
         logger.error("budget_service: failed to write settings: %s", e)
         raise
-    return get_settings()
+    return value
 
 
 def _get_settings():
