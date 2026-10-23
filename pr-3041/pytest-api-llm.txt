@@ -1,0 +1,4 @@
+0.60s call     unit/llm/test_chat_layers.py::test_chat_config_carries_effort_only_when_set
+0.52s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.30s call     unit/llm/test_chat_layers.py::test_chat_config_keeps_approvals_empty_when_art_is_connected
+================== 531 passed, 2 warnings in 70.77s (0:01:10) ==================
