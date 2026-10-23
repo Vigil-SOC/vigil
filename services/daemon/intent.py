@@ -35,13 +35,15 @@ from core.intent import (
     intent_file,
     read_intent,
 )
-from core.response.approval_service import APPROVAL_CONFIG_KEY, Reversibility
+from core.response.approval_service import (
+    Reversibility,
+    stored_force_manual_approval,
+)
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
     response_action_decision,
 )
-from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction, Finding
 from core.time import utcnow
@@ -58,15 +60,9 @@ def _overlay_force_manual_approval(
     """The one DB overlay ``from_env()`` does not apply.
 
     ``ApprovalService`` reads ``approval.force_manual_approval`` itself and the
-    env flag forces it on, so the effective value is env OR db. Same
-    try/except-and-continue as the orchestrator overlay: no DB, no overlay.
+    env flag forces it on, so the effective value is env OR db.
     """
-    try:
-        row = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not read approval config from DB: %s", exc)
-        return
-    if not row or not isinstance(row, dict) or not row.get("enabled"):
+    if not stored_force_manual_approval():
         return
     if not effective["respond.force_manual_approval"]:
         effective["respond.force_manual_approval"] = True

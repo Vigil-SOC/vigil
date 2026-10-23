@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.agents.mcp_tools import rows_from, split_tool_name
+from core.agents.mcp_tools import MCPFailure, rows_from, split_tool_name
 
 pytestmark = pytest.mark.unit
 
@@ -119,11 +119,9 @@ class TestIndicatorLookup:
             == "evil.test"
         )
 
-    # invalid_args at the bridge rather than an empty answer: a call with nothing
-    # to look up is a defect, and the router reads a TypeError as exactly that.
     def test_refuses_a_call_with_nothing_to_look_up(self, monkeypatch):
         run = self._lookup(monkeypatch, {})
-        with pytest.raises(TypeError):
+        with pytest.raises(MCPFailure):
             run({"indicator_type": "ip"})
 
 
@@ -143,7 +141,7 @@ class TestReachingTheClient:
         self, monkeypatch
     ):
         import core.integrations.mcp.client as client
-        from core.agents.mcp_tools import UNAVAILABLE, MCPFailure, execute_mcp_tool
+        from core.agents.mcp_tools import UNAVAILABLE, execute_mcp_tool
 
         monkeypatch.setattr(client, "_process_client", None)
         with pytest.raises(MCPFailure) as raised:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -13,20 +14,6 @@ import './home.css'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
-
-type SetupStep = {
-  id: string
-  title: string
-  state_line: string
-  done: boolean
-  href: string
-}
-
-type SetupSteps = {
-  steps: SetupStep[]
-  alerts_exist: number
-  demo_enabled: boolean
-}
 
 const STEP_ACTION: Record<string, string> = {
   connect_tools: 'Set up',
@@ -125,7 +112,7 @@ function DecisionCard({
     <article className="home-card">
       <div className="home-card-top">
         <span className="home-waited">{waited(item.created_at)}</span>
-        <span className="home-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
+        <span className="home-kind">{KIND_LABEL[item.kind]}</span>
       </div>
       <h3 title={ask.full}>{ask.text}</h3>
       {meta && (
@@ -194,7 +181,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
-  const [setup, setSetup] = useState<SetupSteps | null>(null)
+  const [setup, setSetup] = useState<Schema<'SetupStepsResponse'> | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
   const [hidden, setHidden] = useState<string[]>(() => readSetupHidden())
   const [demoMessage, setDemoMessage] = useState<string | null>(null)
