@@ -81,7 +81,12 @@ class TestPasswordResetLogging:
     def test_console_backend_logs_neither_token_nor_address(self, monkeypatch, caplog):
         _settings(monkeypatch, dev_mode=False)
         user = SimpleNamespace(
-            user_id="u1", username="victim", full_name="V", email=EMAIL, is_active=True
+            user_id="u1",
+            username="victim",
+            full_name="V",
+            email=EMAIL,
+            is_active=True,
+            service_account=False,
         )
         sent = []
         real_send = email_service.ConsoleBackend.send
@@ -100,7 +105,12 @@ class TestPasswordResetLogging:
     def test_dev_mode_still_shows_the_message(self, monkeypatch, caplog):
         _settings(monkeypatch, dev_mode=True)
         user = SimpleNamespace(
-            user_id="u1", username="victim", full_name="V", email=EMAIL, is_active=True
+            user_id="u1",
+            username="victim",
+            full_name="V",
+            email=EMAIL,
+            is_active=True,
+            service_account=False,
         )
         assert "/reset-password?token=" in _request_reset(monkeypatch, user, caplog)
 
