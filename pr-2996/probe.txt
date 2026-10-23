@@ -1,0 +1,12 @@
+== main (ffa2a8c0) ==
+tests/unit/llm/test_zz_probe_2927.py n=0 coc_rows=0 old_rows=0 identical_prefix=True identical=True
+.n=3 coc_rows=3 old_rows=3 identical_prefix=True identical=True
+.n=501 coc_rows=501 old_rows=500 identical_prefix=True identical=False
+old route mounted: True | coc route mounted: True
+======================== 4 passed, 2 warnings in 15.76s ========================
+== branch ==
+tests/unit/llm/test_zz_probe_2927.py n=0 coc_rows=0 old endpoint gone
+.n=3 coc_rows=3 old endpoint gone
+.n=501 coc_rows=501 old endpoint gone
+old route mounted: False | coc route mounted: True
+======================== 4 passed, 2 warnings in 14.53s ========================

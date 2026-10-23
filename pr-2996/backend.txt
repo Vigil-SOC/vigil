@@ -1,0 +1,8 @@
+1.43s setup    unit/llm/test_reasoning_session_summary.py::test_mixed_session_sums_priced_rows_only
+0.17s call     unit/llm/test_reasoning_session_summary.py::test_mixed_session_sums_priced_rows_only
+0.10s teardown security/test_route_auth_coverage.py::test_route_inventory_reaches_every_documented_path
+0.06s call     unit/llm/test_llm_interaction_log.py::TestChatRecordsGenAIMetrics::test_chat_records_once_and_prices_once
+0.02s call     unit/llm/test_llm_interaction_log.py::TestSpendFigureFreezesItsRates::test_priced_call_keeps_its_rates_and_unpriced_stores_nulls
+0.02s call     unit/llm/test_llm_interaction_log.py::TestChatRecordsGenAIMetrics::test_persisted_row_does_not_store_the_virtual_key
+0.01s call     unit/llm/test_llm_interaction_log.py::TestChatRecordsGenAIMetrics::test_unpriced_chat_stores_null_and_prices_once
+======================= 20 passed, 2 warnings in 11.23s ========================

@@ -1,0 +1,52 @@
+import json, uuid
+from datetime import datetime, timedelta, timezone
+import pytest
+from core.storage.connection import get_db_manager
+from core.storage.models import Investigation, LLMInteractionLog
+from services.api.routers.orchestrator import _assemble_chain_of_custody
+pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
+
+FIELDS_READ_BY_REASONING_TAB = ["interaction_id", "created_at", "stop_reason", "thinking_content",
+    "response_content", "tool_calls", "tool_results", "input_tokens", "output_tokens", "cost_usd"]
+
+def _seed(inv_id, n):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with get_db_manager().session_scope() as s:
+        s.add(Investigation(investigation_id=inv_id, workflow_id="wf", trigger_type="manual",
+                            trigger_ids=[], status="assigned", workdir="/tmp/x"))
+        for i in range(n):
+            s.add(LLMInteractionLog(interaction_id=f"{inv_id}-{i}", session_id=f"s-{inv_id}", agent_id="a",
+                investigation_id=inv_id, model="m", created_at=base + timedelta(seconds=n - i),
+                system_prompt="S" * 50000, response_content="R" * 50000,
+                thinking_content="T" if i % 2 else None,
+                tool_calls=[{"name": "t", "input": {"q": i}}] if i % 3 else None,
+                tool_results=[{"tool_use_id": "u", "is_error": False, "content": "ok"}],
+                request_messages=[{"role": "user", "content": "q"}], cost_usd=0.01))
+
+@pytest.mark.parametrize("n", [0, 3, 501])
+def test_coc_matches_old_reasoning_endpoint(n):
+    inv = f"inv-{uuid.uuid4().hex[:8]}"; _seed(inv, n)
+    c = _assemble_chain_of_custody(inv)["llm_interactions"]
+    print(f"n={n} coc_rows={len(c)}", end=" ")
+    try:
+        from services.api.routers.reasoning import list_investigation_interactions
+    except ImportError:
+        print("old endpoint gone")
+    else:
+        r = list_investigation_interactions(inv, limit=500, offset=0)["interactions"]
+        a = json.dumps(r, sort_keys=True, default=str); b = json.dumps(c, sort_keys=True, default=str)
+        print(f"old_rows={len(r)} identical_prefix={b.startswith(a[:-1])} identical={a == b}")
+        assert (a == b) if n <= 500 else b.startswith(a[:-1])
+    assert len(c) == n
+    assert [x["created_at"] for x in c] == sorted(x["created_at"] for x in c)
+    for row in c:
+        for f in FIELDS_READ_BY_REASONING_TAB:
+            assert f in row, f
+    if n:
+        assert c[-1]["response_content"] == "R" * 50000 and c[-1]["tool_results"][0]["content"] == "ok"
+
+def test_old_route_is_unrouted_and_coc_route_serves():
+    from services.api.main import app
+    paths = set(app.openapi()["paths"])
+    print("old route mounted:", "/api/reasoning/investigation/{investigation_id}/interactions" in paths,
+          "| coc route mounted:", "/api/orchestrator/investigations/{investigation_id}/chain-of-custody" in paths)
