@@ -67,8 +67,3 @@ async def test_unpriced_rows_are_counted_not_summed(seeded):
     assert by_model["llama3"]["unpriced_calls"] == 0
     assert by_model["llama3"]["cost_usd"] == 0.0
     assert by_model["claude-sonnet-4-5-20250929"]["unpriced_calls"] == 0
-
-    (agent,) = out["by_agent"]
-    assert (agent["cost_usd"], agent["unpriced_calls"]) == (pytest.approx(1.25), 1)
-    (inv,) = out["top_investigations"]
-    assert (inv["investigation_id"], inv["unpriced_calls"]) == (INV, 1)

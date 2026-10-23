@@ -6,7 +6,7 @@ request-scoped ``Session``; nothing here commits — the unit of work owns that.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
@@ -584,25 +584,6 @@ async def get_mitre_technique_distribution(
     return techniques_list
 
 
-def _cost_time_series_from_bifrost(start_time, end_time) -> Optional[Dict[str, Any]]:
-    """Pull time-bucketed cost from Bifrost's logging API (#185).
-
-    Returns the ``buckets``/``bucket_size_seconds``/``models`` payload
-    as-is so the frontend can chart it directly. Returns ``None`` on any
-    failure (Bifrost down, log plugin off, network) so the dashboard
-    keeps working with the local aggregations.
-    """
-    try:
-        from core.llm.bifrost.costs import histogram_cost
-
-        return histogram_cost(
-            start_time=start_time.isoformat() if start_time else None,
-            end_time=end_time.isoformat() if end_time else None,
-        )
-    except Exception:
-        return None
-
-
 def _cache_hit_rate(input_tokens: int, cache_read_tokens: int) -> float:
     """Fraction of prompt-side tokens served from Anthropic's cache.
 
@@ -656,50 +637,6 @@ def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
         "cost_usd": float(cost_usd or 0),
         "cache_hit_rate": _cache_hit_rate(int(input_tokens or 0), int(cache_read or 0)),
     }
-
-
-def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
-    rows = (
-        db.query(
-            LLMInteractionLog.agent_id,
-            func.count(LLMInteractionLog.id).label("calls"),
-            func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label(
-                "input_tokens"
-            ),
-            func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label(
-                "output_tokens"
-            ),
-            func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0).label(
-                "cache_read"
-            ),
-            func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0).label(
-                "cache_creation"
-            ),
-            func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
-            _UNPRICED_CALLS.label("unpriced_calls"),
-        )
-        .filter(base_filter)
-        .group_by(LLMInteractionLog.agent_id)
-        .order_by(func.sum(LLMInteractionLog.cost_usd).desc().nullslast())
-        .all()
-    )
-
-    return [
-        {
-            "agent_id": agent_id or "unknown",
-            "calls": int(calls or 0),
-            "unpriced_calls": int(unpriced or 0),
-            "input_tokens": int(input_tokens or 0),
-            "output_tokens": int(output_tokens or 0),
-            "cache_read_tokens": int(cache_read or 0),
-            "cache_creation_tokens": int(cache_creation or 0),
-            "cost_usd": float(cost_usd or 0),
-            "cache_hit_rate": _cache_hit_rate(
-                int(input_tokens or 0), int(cache_read or 0)
-            ),
-        }
-        for agent_id, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd, unpriced in rows
-    ]
 
 
 def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
@@ -756,62 +693,14 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
     ]
 
 
-def _cost_top_investigations(
-    db: Session, base_filter, limit: int = 10
-) -> List[Dict[str, Any]]:
-    rows = (
-        db.query(
-            LLMInteractionLog.investigation_id,
-            func.count(LLMInteractionLog.id).label("calls"),
-            func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label(
-                "input_tokens"
-            ),
-            func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label(
-                "output_tokens"
-            ),
-            func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
-            _UNPRICED_CALLS.label("unpriced_calls"),
-        )
-        .filter(and_(base_filter, LLMInteractionLog.investigation_id.isnot(None)))
-        .group_by(LLMInteractionLog.investigation_id)
-        .order_by(func.sum(LLMInteractionLog.cost_usd).desc().nullslast())
-        .limit(limit)
-        .all()
-    )
-
-    return [
-        {
-            "investigation_id": inv_id,
-            "calls": int(calls or 0),
-            "unpriced_calls": int(unpriced or 0),
-            "input_tokens": int(input_tokens or 0),
-            "output_tokens": int(output_tokens or 0),
-            "cost_usd": float(cost_usd or 0),
-        }
-        for inv_id, calls, input_tokens, output_tokens, cost_usd, unpriced in rows
-    ]
-
-
 async def get_cost_breakdown(db: Session, time_range: str) -> Dict[str, Any]:
-    """LLM cost + token breakdown for the window named by ``time_range``.
-
-    ``time_series`` comes from Bifrost and is ``None`` when it is unreachable,
-    so the dashboard degrades to local aggregations rather than failing.
-    """
+    """LLM cost + token breakdown for the window named by ``time_range``."""
     start_time, end_time = get_time_range(time_range)
     base_filter = and_(
         LLMInteractionLog.created_at >= start_time,
         LLMInteractionLog.created_at <= end_time,
     )
     return {
-        "window": {
-            "start": start_time.isoformat(),
-            "end": end_time.isoformat(),
-            "seconds": int((end_time - start_time).total_seconds()),
-        },
         "totals": _cost_totals(db, base_filter),
-        "by_agent": _cost_group_by_agent(db, base_filter),
         "by_model": _cost_group_by_model(db, base_filter),
-        "top_investigations": _cost_top_investigations(db, base_filter),
-        "time_series": _cost_time_series_from_bifrost(start_time, end_time),
     }
