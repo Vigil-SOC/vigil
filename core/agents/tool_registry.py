@@ -16,13 +16,13 @@ from core.auth.permissions import (
     permission_refusal,
     username_has_permission,
 )
+from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
     CASE_STATUSES,
     CaseStatus,
     record_status_change,
     status_change,
 )
-from core.cases.case_sla_service import open_case
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
