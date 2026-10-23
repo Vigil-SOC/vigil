@@ -1,0 +1,3 @@
+0.16s call     unit/agents/test_agent_list_fields.py::test_model_label_is_display_name_when_registry_lists_it
+0.16s call     unit/agents/test_agent_list_fields.py::test_tool_changes_marks_each_tool_an_agent_holds
+======================= 429 passed, 2 warnings in 13.17s =======================

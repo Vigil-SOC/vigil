@@ -1,0 +1,6 @@
+tests/unit/memory/test_zz_parity_tmp.py ('hunt', 'a') [['crowdstrike', 'splunk', 'zeek', 'Zeta_Upper', 4]]
+('case', 'b') [['s000', 's001', 's002', 's003', 's004', 300]]
+('hunt', 'c') [[0]]
+('hunt', 'none') []
+PARITY OK
+========================= 1 passed, 1 warning in 1.58s =========================
