@@ -1,4 +1,3 @@
-import type { RunKind } from "../../contracts/events.js";
 import { budgetOf, FRESH, unmeteredQuota, type Seed } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
 import type { Harness } from "../../core/loop.js";
@@ -13,7 +12,6 @@ import { scriptedProvider, type ScriptedTurn } from "./scripted-provider.js";
 // only part stood in for: the budget, dispatch and ledger a test drives are all real.
 export function scriptedHarness(script: readonly ScriptedTurn[]): HarnessFactory {
   return <K extends Record<string, unknown>>(
-    _kind: RunKind,
     spec: RunSpec,
     state: State<K>,
     memory: Memory = nullMemory,
