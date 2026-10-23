@@ -1,9 +1,10 @@
-import { useState, type ComponentProps } from 'react'
+import type { ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import CommandBar from './CommandBar'
 import CaseDrawer from './CaseDrawer'
+import { heldCase, holdCase } from './heldCase'
 import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 import shellCss from './shell.css?inline'
@@ -67,7 +68,6 @@ vi.mock('../services/api', () => ({
     get: vi.fn(() => Promise.resolve({ data: { messages: [] } })),
     update: vi.fn(() => Promise.resolve({ data: {} })),
     delete: vi.fn(),
-    importHistory: vi.fn(() => Promise.resolve({ data: {} })),
   },
   reasoningApi: {
     getSessionSummary: vi.fn(() => Promise.resolve(null)),
@@ -119,8 +119,10 @@ const tags = () => screen.getAllByRole('option').map((o) => o.querySelector('.vg
 const sections = () => screen.getAllByRole('group').map((g) => g.getAttribute('aria-label'))
 
 function Shell() {
-  const [caseId, setCaseId] = useState<string | null>(null)
   const location = useLocation()
+  const navigate = useNavigate()
+  const caseId = heldCase(location.state)
+  const setCaseId = (id: string | null) => navigate(location, { replace: true, state: holdCase(location.state, id) })
   return (
     <>
       <div data-testid="where">{location.pathname}{location.search}</div>
@@ -690,6 +692,8 @@ describe('CommandBar', () => {
         fireEvent.change(screen.getByLabelText('Intelligence text'), { target: { value: REPORT } })
         fireEvent.click(screen.getByRole('button', { name: 'Attach text' }))
         expect(await screen.findByText('Pasted text')).toBeInTheDocument()
+        // The name shows while the text is still being read; Run only carries it once read.
+        expect(await screen.findByText('3 pages')).toBeInTheDocument()
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         await waitFor(() => expect(attachDocument).toHaveBeenCalled())
         expect(attachDocument.mock.calls[0][2]).toEqual({ name: 'Pasted text', pages: 3 })

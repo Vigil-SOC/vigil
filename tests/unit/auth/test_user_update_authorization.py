@@ -5,9 +5,11 @@ permissions have to cover the target account's current role, the same way
 assigning a role already requires covering that role.
 """
 
+import asyncio
 import json
 import re
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -17,7 +19,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from core.storage.models import Role, User
+from core.storage.models import McpCredential, Principal, Role, SignIn, User
 from core.storage.models.base import Base
 from services.api.routers import users
 
@@ -60,6 +62,7 @@ def _role(session, role_id: str, permissions: dict) -> None:
 def _user(session, user_id: str, role_id: str, **kw) -> User:
     user = User(
         user_id=user_id,
+        principal_id=user_id,
         username=kw.get("username", user_id),
         email=kw.get("email", f"{user_id}@example.com"),
         password_hash="x",
@@ -68,8 +71,14 @@ def _user(session, user_id: str, role_id: str, **kw) -> User:
         is_active=True,
         is_verified=True,
     )
+    session.add(Principal(principal_id=user_id, kind="person", label=user_id))
     session.add(user)
     return user
+
+
+def _delete(user_id: str, current: User, session) -> dict:
+    with patch.object(users, "revoke_all_for_user", new=AsyncMock()):
+        return asyncio.run(users.delete_user(user_id, current, session))
 
 
 @pytest.fixture
@@ -79,7 +88,16 @@ def db(monkeypatch):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    Base.metadata.create_all(engine, tables=[Role.__table__, User.__table__])
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            Role.__table__,
+            Principal.__table__,
+            User.__table__,
+            McpCredential.__table__,
+            SignIn.__table__,
+        ],
+    )
     maker = sessionmaker(bind=engine)
     monkeypatch.setattr("core.storage.unit_of_work.get_db_session", maker)
     session = maker()
@@ -208,22 +226,23 @@ def test_same_privileges_can_edit_each_other(db):
 def test_delete_of_a_stronger_role_is_refused(db):
     session, people = db
     with pytest.raises(HTTPException) as exc:
-        users.delete_user(people["admin"].user_id, people["ops"], session)
+        _delete(people["admin"].user_id, people["ops"], session)
     assert exc.value.status_code == 403
     assert "privileges you do not have" in exc.value.detail
     assert _reload(session, "admin") is not None
 
     # A lesser account whose grants ops already holds can be deleted.
     # A viewer cannot: that role can read findings, which ops cannot.
-    users.delete_user(people["clerk"].user_id, people["ops"], session)
+    _delete(people["clerk"].user_id, people["ops"], session)
     session.flush()
-    assert session.get(User, "clerk") is None
+    assert session.get(Principal, "clerk").deleted_at is not None
+    assert session.get(User, "clerk").is_active is False
 
 
 def test_delete_still_requires_users_delete(db):
     session, people = db
     with pytest.raises(HTTPException) as exc:
-        users.delete_user(people["viewer"].user_id, people["manager"], session)
+        _delete(people["viewer"].user_id, people["manager"], session)
     assert exc.value.status_code == 403
     assert "users.delete" in exc.value.detail
     assert _reload(session, "view") is not None

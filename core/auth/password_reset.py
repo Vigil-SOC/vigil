@@ -22,6 +22,7 @@ confirm handler rejects.
 
 import hashlib
 import logging
+import os
 from typing import Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -63,16 +64,24 @@ def generate_reset_token(user_id: str) -> str:
     return _get_serializer().dumps({"user_id": user_id})
 
 
+def default_base_url(settings) -> str:
+    """Console URL for reset links: VIGIL_FRONTEND_URL, else this host's console.
+    Never derived from the request, whose Host header the client controls."""
+    if settings.vigil_frontend_url:
+        return settings.vigil_frontend_url
+    port = 6987 if os.path.exists("/.dockerenv") else 6988
+    return f"http://localhost:{port}{settings.vigil_context_path.rstrip('/')}"
+
+
 def reset_link(base_url: str, token: str) -> str:
     """Console URL that opens the reset screen for ``token``."""
     return f"{base_url.rstrip('/')}/reset-password?token={token}"
 
 
-async def verify_reset_token(token: str) -> Optional[str]:
+def decode_reset_token(token: str) -> Optional[str]:
     """
-    Return the user_id the token was issued for, or None if the token is
-    invalid, expired, or already used. Marks the token used on success so
-    replay within the TTL window is rejected.
+    Return the user_id the token was issued for, or None if its signature
+    is bad or its TTL has passed. Does not check or record single use.
     """
     try:
         payload = _get_serializer().loads(token, max_age=_ttl_seconds())
@@ -84,27 +93,25 @@ async def verify_reset_token(token: str) -> Optional[str]:
         return None
 
     user_id = payload.get("user_id") if isinstance(payload, dict) else None
-    if not user_id:
-        return None
+    return user_id or None
 
+
+async def consume_reset_token(token: str) -> bool:
+    """
+    Mark the token used. Return False if it was already used, so a replay
+    within the TTL window is rejected.
+    """
     client = _redis_client()
-    if client is not None:
-        try:
-            key = f"{_USED_TOKEN_PREFIX}{_token_hash(token)}"
-            # SET NX: succeeds only if the key didn't exist. If it did,
-            # the token was already consumed.
-            set_ok = await client.set(key, "1", ex=_ttl_seconds(), nx=True)
-            if not set_ok:
-                logger.info("Password reset token replay rejected")
-                return None
-        except Exception as exc:
-            # Fail-open: if Redis is down we lose single-use enforcement
-            # but still honour the signed TTL. A compromised reset email
-            # during an outage could be replayed within the TTL — a
-            # user-facing retry is the mitigation.
-            logger.warning(
-                "Password reset single-use check failed (%s); allowing by signature only",
-                exc,
-            )
-
-    return user_id
+    if client is None:
+        return True
+    try:
+        key = f"{_USED_TOKEN_PREFIX}{_token_hash(token)}"
+        if not await client.set(key, "1", ex=_ttl_seconds(), nx=True):
+            logger.info("Password reset token replay rejected")
+            return False
+    except Exception as exc:
+        logger.warning(
+            "Password reset single-use check failed (%s); allowing by signature only",
+            exc,
+        )
+    return True
