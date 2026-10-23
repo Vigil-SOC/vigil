@@ -790,8 +790,10 @@ export default function Chat({
   }
 
   const deleteConversation = async (id: string) => {
+    let removed = false
     try {
       await conversationsApi.delete(id)
+      removed = true
       reloadHistory()
     } catch {
       /* still drop it from the offline cache below */
@@ -801,6 +803,22 @@ export default function Chat({
       saveHistory(userId, next)
       return next
     })
+    // A failed delete, or any row that is not the open one, leaves this session.
+    // archiveCurrent would write the deleted thread back into the local list.
+    if (!removed || id !== sessionRef.current) return
+    // Drop an in-flight turn so its reply cannot land on the new session.
+    turnGen.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    localTurn.current = false
+    setLoading(false)
+    setStreamText('')
+    setIsProcessingTools(false)
+    putMessages([])
+    sessionRef.current = newSessionId()
+    currentKeyRef.current = null
+    persistedRef.current = false
+    setSessionSummary(null)
   }
 
   const archiveConversation = async (id: string, archived: boolean) => {

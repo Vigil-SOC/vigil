@@ -2,12 +2,13 @@
 
 Surfaces the durable conversation store behind the console chat dock:
 list past conversations, reopen one with its full message history, rename,
-soft-archive, and hard-delete. Every handler is auth-gated and scoped to the
+soft-archive, and delete. Every handler is auth-gated and scoped to the
 authenticated user via ``get_current_user``.
 
-This store is separate from ``llm_interaction_logs`` (the compliance audit
-log), which is never touched here — deleting a conversation does not remove
-its audit trail.
+Transcript text lives in ``conversations`` and ``chat_messages``. Tool
+calls, results, and cost live in the agent ledger. Delete drops the
+messages and hides the row; it does not insert, update, or delete
+``agent_events``.
 """
 
 import logging
@@ -111,7 +112,7 @@ async def delete_conversation(
     conversation_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Hard-delete a conversation (messages cascade)."""
+    """Hide a conversation and drop its messages. The ledger is left as it is."""
     ok = conversation_service.delete(conversation_id, current_user.user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Conversation not found")

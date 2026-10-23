@@ -29,6 +29,7 @@ from alembic.config import Config
 from alembic.runtime.environment import EnvironmentContext
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from alembic.script.revision import RevisionError
 from alembic.util import CommandError
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -175,34 +176,40 @@ def plan(
     upgrade_dir: Optional[Path],
 ) -> Plan:
     """What apply would do, from the database and the run history alone."""
-    current = MigrationContext.configure(
-        conn, opts={"version_table_schema": "public"}
-    ).get_current_heads()
-    if len(current) > 1:
-        return Plan(REFUSE, f"database has more than one revision: {list(current)}")
-    revision = current[0] if current else None
-    if revision is not None:
+    current = list(
+        MigrationContext.configure(
+            conn, opts={"version_table_schema": "public"}
+        ).get_current_heads()
+    )
+    # Several stamped heads are a branch this image can leave only when it has
+    # one head that descends from all of them. Anything else stays refused.
+    if len(current) > 1 and len(script.get_heads()) != 1:
+        return Plan(REFUSE, f"database has more than one revision: {current}")
+    for stamped in current:
         try:
-            script.get_revision(revision)
+            script.get_revision(stamped)
         except CommandError:
             return Plan(
                 REFUSE,
-                f"database is at revision {revision}, which this image "
+                f"database is at revision {stamped}, which this image "
                 f"({__version__}) does not know: the database is newer. Restore, "
                 "or install a release at least as new as the database.",
-                revision=revision,
+                revision=stamped,
             )
+    revision = current[0] if len(current) == 1 else None
+    if current:
         older = adopt.restamped(conn)
         if older:
+            reached = revision or ", ".join(current)
             return Plan(
                 REFUSE,
                 f"release {older} ran its old init path against this database "
-                f"after it reached {revision}: restore first, from the restore "
+                f"after it reached {reached}: restore first, from the restore "
                 "point taken before the upgrade",
-                revision=revision,
+                revision=revision or current[0],
             )
     adoption = None
-    if revision is None:
+    if not current:
         tables = conn.execute(
             text(
                 "SELECT count(*) FROM pg_tables "
@@ -225,10 +232,22 @@ def plan(
                 return found
             adoption = found
 
-    pending = [
-        s.revision
-        for s in reversed(list(script.iterate_revisions("heads", revision or "base")))
-    ]
+    lower = tuple(current) if len(current) > 1 else (revision or "base")
+    try:
+        pending = [
+            s.revision
+            for s in reversed(
+                list(script.iterate_revisions("heads", lower, implicit_base=True))
+            )
+        ]
+    except RevisionError:
+        return Plan(
+            REFUSE,
+            f"database has more than one revision: {current}",
+            revision=revision,
+        )
+    if len(current) > 1 and not pending:
+        return Plan(REFUSE, f"database has more than one revision: {current}")
     previous = _previous_version(upgrade_dir)
     restart = Plan(
         RESTART,

@@ -70,6 +70,7 @@ beforeEach(() => {
   vi.mocked(streamFetch).mockReset()
   vi.mocked(conversationsApi.update).mockReset()
   vi.mocked(conversationsApi.update).mockResolvedValue({ data: {} } as never)
+  vi.mocked(conversationsApi.delete).mockReset()
   vi.mocked(conversationsApi.get).mockReset()
   vi.mocked(reasoningApi.getSessionSummary).mockReset()
   vi.mocked(reasoningApi.getSessionSummary).mockResolvedValue(null)
@@ -273,6 +274,105 @@ describe('Ask Vigil dock', () => {
     expect(onClose).not.toHaveBeenCalled()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts a new empty session when the open conversation is deleted', async () => {
+    vi.mocked(streamFetch).mockImplementation(() => Promise.resolve(replyStream('Looked up the case.')))
+    vi.mocked(conversationsApi.delete).mockImplementation(async (id: string) => {
+      historyState.items = historyState.items.filter((row) => row.id !== id)
+      return { data: { deleted: true } } as never
+    })
+    renderChat()
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'status?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Looked up the case.')
+    const first = JSON.parse(String(vi.mocked(streamFetch).mock.calls[0][1]?.body)).session_id as string
+
+    historyState.items = [
+      {
+        id: first,
+        title: 'Open thread',
+        message_count: 2,
+        last_message_at: '2026-03-02T15:00:00Z',
+        updated_at: null,
+        archived: false,
+        case_id: null,
+        page_context: 'overview',
+      },
+    ]
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(conversationsApi.delete).toHaveBeenCalledWith(first))
+    expect(screen.queryByText('Open thread')).toBeNull()
+    const cached = JSON.parse(localStorage.getItem('soc.chat.history.user-1') || '[]')
+    expect(cached.some((row: { id: string }) => row.id === first)).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.queryByText('Looked up the case.')).toBeNull()
+    expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'fresh question' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(vi.mocked(streamFetch).mock.calls.length).toBe(2))
+    const next = JSON.parse(String(vi.mocked(streamFetch).mock.calls[1][1]?.body))
+    expect(next.session_id).not.toBe(first)
+    expect(next.messages).toEqual([{ role: 'user', content: 'fresh question' }])
+  })
+
+  it('leaves the open session when deleting it fails or another row is deleted', async () => {
+    vi.mocked(streamFetch).mockImplementation(() => Promise.resolve(replyStream('Still here.')))
+    vi.mocked(conversationsApi.delete).mockRejectedValue(new Error('no'))
+    renderChat()
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'status?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Still here.')
+    const first = JSON.parse(String(vi.mocked(streamFetch).mock.calls[0][1]?.body)).session_id as string
+    historyState.items = [
+      {
+        id: first,
+        title: 'Open thread',
+        message_count: 2,
+        last_message_at: '2026-03-02T15:00:00Z',
+        updated_at: null,
+        archived: false,
+        case_id: null,
+        page_context: 'overview',
+      },
+      {
+        id: 'other-row',
+        title: 'Other thread',
+        message_count: 1,
+        last_message_at: '2026-03-01T15:00:00Z',
+        updated_at: null,
+        archived: false,
+        case_id: null,
+        page_context: null,
+      },
+    ]
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    const openRow = screen.getByText('Open thread', { selector: '.chist-title' }).closest('.chist-row') as HTMLElement
+    fireEvent.click(within(openRow).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(conversationsApi.delete).toHaveBeenCalledWith(first))
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.getByText('Still here.')).toBeInTheDocument()
+
+    vi.mocked(conversationsApi.delete).mockResolvedValue({ data: { deleted: true } } as never)
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    fireEvent.click(within(screen.getByText('Other thread').closest('.chist-row') as HTMLElement).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(conversationsApi.delete).toHaveBeenCalledWith('other-row'))
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.getByText('Still here.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'still this chat' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(vi.mocked(streamFetch).mock.calls.length).toBe(2))
+    const next = JSON.parse(String(vi.mocked(streamFetch).mock.calls[1][1]?.body))
+    expect(next.session_id).toBe(first)
+    expect(next.messages.map((m: { content: string }) => m.content)).toEqual([
+      'status?',
+      'Still here.',
+      'still this chat',
+    ])
   })
 
   it('clears the transcript on New conversation', async () => {

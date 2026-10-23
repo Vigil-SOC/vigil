@@ -187,6 +187,36 @@ def test_empty_database_matches_fresh_install(provisioned, empty, tmp_path):
     assert len(_history(tmp_path)) == 1
 
 
+def test_a_database_stamped_at_both_branches_applies_the_merge(empty, tmp_path):
+    """0006 had two heads. A database stamped with both must still reach 0007."""
+    assert _run(empty, tmp_path / "first", restore_point="rp-1")[0] == command.EXIT_OK
+    with empty.begin() as conn:
+        conn.execute(text("DELETE FROM alembic_version"))
+        conn.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES "
+                "('0006_audit_feed'), ('0006_canonical_finding_ips')"
+            )
+        )
+    code, report = _run(empty, tmp_path / "check", check=True, restore_point="rp-2")
+    assert report["verdict"] == command.APPLY, report
+    assert report["pending"] == ["0007_conversation_generation"]
+    code, report = _run(empty, tmp_path / "second", restore_point="rp-2")
+    assert (code, report.get("outcome")) == (command.EXIT_OK, "applied"), report
+    assert _version(empty) == "0007_conversation_generation"
+    with empty.connect() as conn:
+        columns = {
+            name
+            for (name,) in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'conversations'"
+                )
+            )
+        }
+    assert {"generation", "deleted_at"} <= columns
+
+
 def test_lock_held_elsewhere_refuses(empty, tmp_path, monkeypatch):
     monkeypatch.setattr(command, "LOCK_WAIT_SECONDS", 1.0)
     with empty.connect() as holder:

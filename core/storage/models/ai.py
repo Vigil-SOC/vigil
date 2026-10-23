@@ -245,9 +245,10 @@ class Conversation(Base):
     IS the frontend ``session_id`` so reopening a conversation continues
     the same session.
 
-    This is distinct from ``llm_interaction_logs``, which remains the
-    per-API-call compliance audit log (system-of-record). Deleting a
-    conversation here never touches that audit trail.
+    This row and its ``chat_messages`` hold the transcript text. Tool calls,
+    results, and cost are in the agent ledger (``agent_events``) for this
+    conversation's run. Deleting hides the row and drops the messages; it
+    does not change the ledger.
     """
 
     __tablename__ = "conversations"
@@ -271,6 +272,14 @@ class Conversation(Base):
     message_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # 0 keeps the ledger run derived from the id. Each delete increments it
+    # so the next life of this id does not reload that run's tool results.
+    generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Null while the row is listed. Set on delete; cleared when a later turn
+    # continues this id.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )

@@ -140,11 +140,14 @@ def restamped(conn: Connection) -> Optional[str]:
         is None
     ):
         return None
+    # LIMIT 1: a branch leaves one alembic_version row per head, and the
+    # join would otherwise return the same stamp twice.
     version = conn.execute(text("""
         SELECT s.value ->> 'version'
         FROM system_config s, alembic_version a
         WHERE s.key = 'schema_version'
           AND s.xmin <> a.xmin AND age(s.xmin) < age(a.xmin)
+        LIMIT 1
     """)).scalar()
     return version if _pre_baseline(version) else None
 

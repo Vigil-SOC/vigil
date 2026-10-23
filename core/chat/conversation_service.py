@@ -2,13 +2,13 @@
 
 Backs the cross-device chat history for the console chat dock. A
 ``Conversation``'s id IS the frontend ``session_id``, so reopening a
-conversation continues the same session. This store is separate from
-``llm_interaction_logs`` (the compliance audit log), which stays the
-system-of-record and is never touched here.
+conversation continues the same session. Transcript text is stored in
+``conversations`` and ``chat_messages``. Tool calls, results, and cost
+are stored in the agent ledger (``agent_events``) for that session's run.
+This module does not write the ledger.
 
-DB access is synchronous via ``get_db_manager().session_scope()``, matching
-the ``LLMInteractionLog`` writer in ``claude_service``. The two write paths
-invoked from the chat stream — :func:`ensure_conversation` and
+DB access is synchronous via ``get_db_manager().session_scope()``. The two
+write paths invoked from the chat stream — :func:`ensure_conversation` and
 :func:`append_message` — are **fail-open**: persistence failures are logged,
 never raised, so they can never break the chat. Async callers wrap these in
 ``asyncio.to_thread(...)``. The user-initiated CRUD helpers (list/get/rename/
@@ -19,6 +19,7 @@ but return ``None``/``False`` for not-found-or-not-owned.
 import logging
 from typing import List, Optional
 
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, or_, select
 
 from core.storage.connection import get_db_manager
@@ -66,6 +67,23 @@ def held_by_another(conversation_id: str, user_id: Optional[str]) -> bool:
         return conv is not None and conv.user_id != user_id
 
 
+def ledger_session_key(session_id: str) -> str:
+    """Key for ``run_id_for``. A missing row and generation 0 use the id.
+
+    A deleted row is still read: the next turn on that id is not refused,
+    and its run is ``session_id:generation`` so the previous life stays put.
+    """
+    db_manager = get_db_manager()
+    with db_manager.session_scope() as session:
+        conv = session.get(Conversation, session_id)
+        if conv is None:
+            return session_id
+        generation = int(conv.generation or 0)
+        if generation <= 0:
+            return session_id
+        return f"{session_id}:{generation}"
+
+
 # --------------------------------------------------------------------------- #
 # Write paths invoked from the chat stream — fail-open (never raise).
 # --------------------------------------------------------------------------- #
@@ -98,8 +116,11 @@ def ensure_conversation(
     Returns None, changing nothing, when another user owns the row. On create,
     the title is derived from ``first_user_text`` and ``user_id`` /
     ``agent_id`` are stamped. On an existing row, only ``model`` / ``agent_id``
-    are refreshed (never the title — the user may have renamed it). ``case_id``
-    and ``page_context`` follow :func:`_apply_case_and_page`. Fail-open.
+    are refreshed (never the title — the user may have renamed it). A row
+    hidden by delete is listed again: ``deleted_at`` is cleared, the
+    generation stays, and a missing title comes from ``first_user_text``.
+    ``case_id`` and ``page_context`` follow :func:`_apply_case_and_page`.
+    Fail-open.
     """
     try:
         db_manager = get_db_manager()
@@ -118,6 +139,8 @@ def ensure_conversation(
                 _apply_case_and_page(conv, case_id, page_context)
                 session.add(conv)
             else:
+                if conv.deleted_at is not None:
+                    conv.deleted_at = None
                 if model:
                     conv.model = model
                 if agent_id:
@@ -224,7 +247,10 @@ def list_conversations(
     """
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
-        stmt = select(Conversation).where(Conversation.user_id == user_id)
+        stmt = select(Conversation).where(
+            Conversation.user_id == user_id,
+            Conversation.deleted_at.is_(None),
+        )
         if case_id is not None:
             stmt = stmt.where(Conversation.case_id == case_id)
         needle = (q or "").strip()
@@ -258,7 +284,7 @@ def get_conversation(conversation_id: str, user_id: Optional[str]) -> Optional[d
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
         conv = _owned(session, conversation_id, user_id)
-        if conv is None:
+        if conv is None or conv.deleted_at is not None:
             return None
         return ConversationSchema.dump(conv)
 
@@ -308,11 +334,25 @@ def set_archived(
 
 
 def delete(conversation_id: str, user_id: Optional[str]) -> bool:
-    """Hard-delete a conversation (messages cascade); True if removed."""
+    """Hide a conversation and drop its messages. True if this user owns it.
+
+    The row stays so a later turn on this id uses the next generation.
+    Does not insert, update, or delete ``agent_events``.
+    """
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
         conv = _owned(session, conversation_id, user_id)
         if conv is None:
             return False
-        session.delete(conv)  # ORM cascade removes messages
+        session.execute(
+            sql_delete(ChatMessage).where(
+                ChatMessage.conversation_id == conversation_id
+            )
+        )
+        conv.title = None
+        conv.case_id = None
+        conv.page_context = None
+        conv.deleted_at = utcnow()
+        conv.generation = int(conv.generation or 0) + 1
+        conv.message_count = 0
         return True

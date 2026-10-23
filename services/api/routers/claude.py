@@ -93,9 +93,9 @@ def _persist_chat_turn(
     the user turn (always complete) and the assistant turn (``complete=False``
     on abort/error). Each ``conversation_service`` call is itself fail-open;
     this wrapper adds a final guard so nothing here can surface into the
-    request path. The authoritative per-iteration record (including full tool
-    calls / results) remains in ``llm_interaction_logs`` keyed by the same
-    ``session_id``.
+    request path. The text lands in ``conversations`` / ``chat_messages``.
+    Tool calls, results, and cost are recorded in the agent ledger under
+    this turn's run, not in this store.
     """
     try:
         if not conversation_service.ensure_conversation(
@@ -244,9 +244,9 @@ class ChatRequest(BaseModel):
 
     messages: List[ChatMessage]
     agent_id: Optional[str] = None
-    session_id: Optional[str] = (
-        None  # Chat session identifier for reasoning-trace persistence (GH #79)
-    )
+    # Conversation id. Text is stored on this id. The ledger run is
+    # ``run_id_for`` of it, or of ``id:generation`` after a delete.
+    session_id: Optional[str] = None
     # A run this conversation follows up on. The console does not send one yet
     # (#634); when it does, the turn opens with what that run concluded.
     parent_run_id: Optional[str] = None
@@ -363,8 +363,13 @@ async def chat_stream(
         system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
+    # Read before the payload: a deleted row's generation must not reuse its run.
+    run_key = await asyncio.to_thread(
+        conversation_service.ledger_session_key, session_id
+    )
+    run_id = run_id_for(run_key)
     payload = {
-        "run_id": run_id_for(session_id),
+        "run_id": run_id,
         "turns": _turns_of(request.messages),
         "system_prompt": system_prompt or "",
         # The provider rides alongside the model so the gateway routes to the
@@ -385,7 +390,7 @@ async def chat_stream(
             person_id=getattr(current_user, "principal_id", None)
             or getattr(current_user, "user_id", None),
             agent_id=agent_principal_id(CHAT_PLUGIN_ID),
-            run_id=run_id_for(session_id),
+            run_id=run_id,
             origin="person",
         ),
         "actor": agent_principal_id(CHAT_PLUGIN_ID),
