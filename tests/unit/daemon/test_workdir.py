@@ -1,5 +1,3 @@
-"""A workdir read or write stays inside one investigation's own directory."""
-
 import pytest
 
 from services.daemon.workdir import WorkdirManager

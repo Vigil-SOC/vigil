@@ -1,5 +1,3 @@
-"""The files route serves one investigation's own files and nothing else."""
-
 from types import SimpleNamespace
 from unittest.mock import patch
 

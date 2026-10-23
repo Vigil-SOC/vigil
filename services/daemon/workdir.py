@@ -151,7 +151,6 @@ class WorkdirManager:
         return dest
 
     def _safe_path(self, investigation_id: str, filename: str) -> Optional[Path]:
-        """Resolve a file inside one investigation's own directory, else None."""
         base = self.base_dir.resolve()
         workdir = (base / investigation_id).resolve()
         filepath = (workdir / filename).resolve()
