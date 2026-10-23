@@ -10,6 +10,7 @@ import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
+import { errorDetail } from './caseFormat'
 import type { Phase } from './useCases'
 
 function fmtDT(s?: string): string {
@@ -47,7 +48,7 @@ export function useResource<T>(caseId: string, run: () => Promise<T>) {
       })
       .catch((e) => {
         if (!cancelled) {
-          setError((e as { message?: string })?.message || 'Failed to load')
+          setError(errorDetail(e, 'Failed to load'))
           setPhase('error')
         }
       })
@@ -104,21 +105,28 @@ export const inputCls =
   'bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-hidden focus:border-accent-line w-full'
 
 export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; title?: string }) {
-  const { data, phase, reload } = useResource<Schema<'CaseEvidenceSchema'>[]>(caseId, () =>
+  const { data, phase, error, reload } = useResource<Schema<'CaseEvidenceSchema'>[]>(caseId, () =>
     casesApi.getEvidence(caseId).then((r) => r.data.evidence),
   )
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ name: '', evidence_type: 'file', description: '', file_path: '' })
+  const [writeError, setWriteError] = useState<string | null>(null)
   const items = data || []
 
   const submit = async () => {
     if (!form.name.trim()) return
-    await casesApi.addEvidence(caseId, {
-      name: form.name,
-      description: form.description || null,
-      evidence_type: form.evidence_type,
-      file_path: form.file_path || null,
-    })
+    setWriteError(null)
+    try {
+      await casesApi.addEvidence(caseId, {
+        name: form.name,
+        description: form.description || null,
+        evidence_type: form.evidence_type,
+        file_path: form.file_path || null,
+      })
+    } catch (e) {
+      setWriteError(errorDetail(e, 'Couldn’t add the evidence'))
+      return
+    }
     setForm({ name: '', evidence_type: 'file', description: '', file_path: '' })
     setAdding(false)
     reload()
@@ -127,7 +135,7 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
   return (
     <SectionCard
       title={title}
-      count={`${items.length} item${items.length === 1 ? '' : 's'}`}
+      count={phase === 'ready' ? `${items.length} item${items.length === 1 ? '' : 's'}` : undefined}
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
       {adding && (
@@ -141,7 +149,9 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
           <button className="btn primary justify-self-start" onClick={submit}>Add evidence</button>
         </div>
       )}
+      {writeError && <p role="alert" className="text-crit">{writeError}</p>}
       {phase === 'loading' && <MiniLoading icon="doc" title="Loading evidence…" />}
+      {phase === 'error' && <p className="muted">Couldn’t load evidence: {error}</p>}
       {phase === 'ready' && items.length === 0 && <MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." />}
       {items.length > 0 && (
         <ul className="side-rows">
@@ -171,9 +181,10 @@ type CaseTask = Schema<'CaseTaskSchema'>
 export function useTasks(caseId: string) {
   return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
 }
-export function TasksView({ caseId, resource: { data, phase, reload } }: { caseId: string; resource: Resource<CaseTask[]> }) {
+export function TasksView({ caseId, resource: { data, phase, error, reload } }: { caseId: string; resource: Resource<CaseTask[]> }) {
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ title: '', priority: 'medium', assignee: '', due_date: '' })
+  const [writeError, setWriteError] = useState<string | null>(null)
   const tasks = (data || []).slice().sort((a, b) => {
     const ad = a.status === 'completed' ? 1 : 0
     const bd = b.status === 'completed' ? 1 : 0
@@ -186,20 +197,32 @@ export function TasksView({ caseId, resource: { data, phase, reload } }: { caseI
   const toggle = async (t: CaseTask) => {
     if (t.task_id == null) return
     const next = t.status === 'completed' ? 'pending' : 'completed'
-    await casesApi.updateTask(caseId, t.task_id, {
-      status: next,
-      ...(next === 'completed' ? { completed_at: new Date().toISOString() } : {}),
-    })
+    setWriteError(null)
+    try {
+      await casesApi.updateTask(caseId, t.task_id, {
+        status: next,
+        ...(next === 'completed' ? { completed_at: new Date().toISOString() } : {}),
+      })
+    } catch (e) {
+      setWriteError(errorDetail(e, 'Couldn’t update the task'))
+      return
+    }
     reload()
   }
   const submit = async () => {
     if (!form.title.trim()) return
-    await casesApi.addTask(caseId, {
-      title: form.title,
-      assignee: form.assignee || null,
-      due_date: form.due_date || null,
-      priority: form.priority,
-    })
+    setWriteError(null)
+    try {
+      await casesApi.addTask(caseId, {
+        title: form.title,
+        assignee: form.assignee || null,
+        due_date: form.due_date || null,
+        priority: form.priority,
+      })
+    } catch (e) {
+      setWriteError(errorDetail(e, 'Couldn’t add the task'))
+      return
+    }
     setForm({ title: '', priority: 'medium', assignee: '', due_date: '' })
     setAdding(false)
     reload()
@@ -228,8 +251,9 @@ export function TasksView({ caseId, resource: { data, phase, reload } }: { caseI
         </div>
       )}
       <div className="pt-2 flex flex-col gap-2.5">
+        {writeError && <p role="alert" className="text-crit">{writeError}</p>}
         {phase === 'loading' && <MiniLoading icon="note" title="Loading tasks…" />}
-        {phase === 'error' && <p className="muted">Couldn’t load tasks.</p>}
+        {phase === 'error' && <p className="muted">Couldn’t load tasks: {error}</p>}
         {phase === 'ready' && tasks.length === 0 && <MiniEmpty icon="note" title="No tasks yet" body="Add tasks to assign containment, validation, or follow-up work." />}
         {tasks.map((t) => {
           const overdue = t.due_date && t.status !== 'completed' && new Date(t.due_date).getTime() < Date.now()
@@ -332,10 +356,11 @@ export function useComments(caseId: string) {
 }
 /** Comments shown for a case, replies included. */
 export const commentCount = (data: Comment[] | null) => flatten(data || []).length
-export function CommentsView({ caseId, resource: { data, phase, reload } }: { caseId: string; resource: Resource<Comment[]> }) {
+export function CommentsView({ caseId, resource: { data, phase, error, reload } }: { caseId: string; resource: Resource<Comment[]> }) {
   const [text, setText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const [writeError, setWriteError] = useState<string | null>(null)
   // newest thread first; collapsed view shows only the most recent one
   const tree = buildTree(data || []).sort(
     (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime(),
@@ -345,7 +370,13 @@ export function CommentsView({ caseId, resource: { data, phase, reload } }: { ca
 
   const submit = async () => {
     if (!text.trim()) return
-    await casesApi.addComment(caseId, { content: text, ...(replyTo ? { parent_comment_id: Number(replyTo) } : {}) })
+    setWriteError(null)
+    try {
+      await casesApi.addComment(caseId, { content: text, ...(replyTo ? { parent_comment_id: Number(replyTo) } : {}) })
+    } catch (e) {
+      setWriteError(errorDetail(e, 'Couldn’t post the comment'))
+      return
+    }
     setText('')
     setReplyTo(null)
     reload()
@@ -355,7 +386,7 @@ export function CommentsView({ caseId, resource: { data, phase, reload } }: { ca
     <SectionCard title="Comments" count={phase === 'ready' ? `${total}` : undefined}>
       <div className="pt-2 flex flex-col gap-4">
         {phase === 'loading' && <MiniLoading icon="note" title="Loading comments…" />}
-        {phase === 'error' && <p className="muted">Couldn’t load comments.</p>}
+        {phase === 'error' && <p className="muted">Couldn’t load comments: {error}</p>}
         {phase === 'ready' && total === 0 && <MiniEmpty icon="note" title="No comments yet" body="Use comments to capture analyst notes, handoffs, and review decisions." />}
         {visible.map((c) => <CommentNode key={c.id} c={c} onReply={setReplyTo} />)}
         {tree.length > 1 && (
@@ -383,6 +414,7 @@ export function CommentsView({ caseId, resource: { data, phase, reload } }: { ca
             />
             <button className="btn primary" onClick={submit}><Icon name="send" size={13} /> {replyTo ? 'Reply' : 'Post'}</button>
           </div>
+          {writeError && <p role="alert" className="text-crit mt-1.5">{writeError}</p>}
         </div>
       </div>
     </SectionCard>
@@ -399,21 +431,28 @@ function threatLevel(i: CaseIOC) {
   return { label: 'Unknown', cls: 'status open' }
 }
 export function IOCsCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<CaseIOC[]>(caseId, () =>
+  const { data, phase, error, reload } = useResource<CaseIOC[]>(caseId, () =>
     casesApi.getIOCs(caseId).then((r) => r.data.iocs),
   )
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ ioc_type: 'ip', value: '', context: '', source: '' })
+  const [writeError, setWriteError] = useState<string | null>(null)
   const iocs = data || []
 
   const submit = async () => {
     if (!form.value.trim()) return
-    await casesApi.addIOC(caseId, {
-      ioc_type: form.ioc_type,
-      value: form.value,
-      context: form.context || null,
-      source: form.source || null,
-    })
+    setWriteError(null)
+    try {
+      await casesApi.addIOC(caseId, {
+        ioc_type: form.ioc_type,
+        value: form.value,
+        context: form.context || null,
+        source: form.source || null,
+      })
+    } catch (e) {
+      setWriteError(errorDetail(e, 'Couldn’t add the IOC'))
+      return
+    }
     setForm({ ioc_type: 'ip', value: '', context: '', source: '' })
     setAdding(false)
     reload()
@@ -422,7 +461,7 @@ export function IOCsCard({ caseId }: { caseId: string }) {
   return (
     <SectionCard
       title="Indicators of Compromise"
-      count={`${iocs.length}`}
+      count={phase === 'ready' ? `${iocs.length}` : undefined}
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
       {adding && (
@@ -436,7 +475,9 @@ export function IOCsCard({ caseId }: { caseId: string }) {
           <button className="btn primary justify-self-start" onClick={submit}>Add IOC</button>
         </div>
       )}
+      {writeError && <p role="alert" className="text-crit">{writeError}</p>}
       {phase === 'loading' && <MiniLoading icon="alert" title="Loading IOCs…" />}
+      {phase === 'error' && <p className="muted">Couldn’t load IOCs: {error}</p>}
       {phase === 'ready' && iocs.length === 0 && <MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." />}
       {iocs.length > 0 && (
         <ul className="side-rows">

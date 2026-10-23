@@ -114,21 +114,8 @@ PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
 
 
 def _is_service_account(user: User) -> bool:
-    """Only an explicit True exempts from lockout; anything else fails closed.
-
-    A user object without the field is not one. MFA lockout tests, and any
-    caller that has not loaded the column, must still lock. An attribute
-    read, not a string: the writer scan allows exactly one assignment.
-    """
-    try:
-        return user.service_account is True
-    except AttributeError:
-        return False
-
-
-def _account_is_locked(user) -> bool:
-    until = getattr(user, "locked_until", None)
-    return until is not None and until > utcnow()
+    """Only an explicit True exempts from lockout; anything else fails closed."""
+    return user.service_account is True
 
 
 class AccountLockedError(Exception):
@@ -137,6 +124,21 @@ class AccountLockedError(Exception):
     def __init__(self, locked_until: datetime):
         self.locked_until = locked_until
         super().__init__(f"Account locked until {locked_until.isoformat()}")
+
+
+def _account_is_locked(user: User) -> bool:
+    until = user.locked_until
+    return until is not None and until > utcnow() and not _is_service_account(user)
+
+
+def raise_if_locked(user: User) -> None:
+    if _account_is_locked(user):
+        logger.warning(
+            "Refused, account locked: %s until %s",
+            user.username,
+            user.locked_until.isoformat(),
+        )
+        raise AccountLockedError(user.locked_until)
 
 
 def password_matches_any(plaintext: str, hashes) -> bool:
@@ -295,8 +297,14 @@ class AuthService:
 
     @staticmethod
     def authenticate_user(
-        username_or_email: str, password: str, session: Optional[Session] = None
+        username_or_email: str,
+        password: str,
+        session: Optional[Session] = None,
+        refusal: Optional[dict] = None,
     ) -> Optional[User]:
+        """The user, or None (or AccountLockedError). On a refusal, ``refusal``
+        gets its ``reason`` and, for a known account, its ``principal``."""
+        refusal = {} if refusal is None else refusal
         # The unit of work must see any failure, so it sits inside the try —
         # the handlers below swallow the exception and would otherwise let a
         # failed attempt commit.
@@ -314,30 +322,30 @@ class AuthService:
 
                 if not user:
                     logger.warning("Login attempt for unknown identifier")
+                    refusal["reason"] = "unknown"
                     return None
+                refusal["principal"] = user.principal_id
 
                 if not user.is_active:
                     logger.warning(
                         "Login attempt for inactive account: %s", user.username
                     )
+                    refusal["reason"] = "inactive"
                     return None
 
                 # Reject while locked. Lockout is authoritative even over a
                 # correct password — otherwise an attacker who eventually
                 # guesses right would bypass the wait.
                 now = utcnow()
-                if _account_is_locked(user) and not _is_service_account(user):
-                    logger.warning(
-                        "Login rejected, account locked: %s until %s",
-                        user.username,
-                        user.locked_until.isoformat(),
-                    )
-                    raise AccountLockedError(user.locked_until)
+                if _account_is_locked(user):
+                    refusal["reason"] = "locked"
+                raise_if_locked(user)
 
                 # Verify password
                 if not AuthService.verify_password(password, user.password_hash):
                     AuthService._record_failed_attempt(user.user_id, now)
                     logger.warning("Invalid password for user: %s", user.username)
+                    refusal["reason"] = "bad_password"
                     return None
 
                 # Success — reset lockout state and update session tracking
@@ -353,6 +361,7 @@ class AuthService:
             raise
         except Exception as e:
             logger.error(f"Authentication error: {e}")
+            refusal["reason"] = "error"
             return None
 
     @staticmethod
@@ -389,25 +398,6 @@ class AuthService:
                     user.failed_login_count,
                     user.username,
                 )
-
-    @staticmethod
-    def _lock_savepoint(session: Session):
-        """Savepoint around a row lock, or None for a session that is not real.
-
-        A wrong MFA code is counted in its own transaction, the same way a
-        wrong password is. That transaction cannot take the row while this
-        one holds FOR UPDATE, and a savepoint rollback is what releases the
-        lock. Unit tests pass a fake session; there is no second connection
-        to commit on, and the caller is not about to roll a real 401 back.
-        """
-        if not isinstance(session, Session):
-            return None
-        return session.begin_nested()
-
-    @staticmethod
-    def _close_savepoint(nested) -> None:
-        if nested is not None and getattr(nested, "is_active", False):
-            nested.commit()
 
     @staticmethod
     def _count_mfa_failure(user_id: str, username: str) -> None:
@@ -452,7 +442,7 @@ class AuthService:
         failed: Optional[tuple[str, str]] = None
         result: Optional[List[str]] = None
         with unit_of_work(session) as session:
-            nested = AuthService._lock_savepoint(session)
+            nested = session.begin_nested()
             try:
                 user = AuthService._lock_user(session, user_id)
                 if not user or not user.mfa_secret or _account_is_locked(user):
@@ -465,8 +455,7 @@ class AuthService:
                     if valid is None:
                         pass
                     elif not valid:
-                        if nested is not None:
-                            failed = (user.user_id, user.username)
+                        failed = (user.user_id, user.username)
                     elif user.mfa_enabled:
                         # Already enabled — codes were issued at enable time,
                         # don't silently reissue. Use regenerate to rotate.
@@ -481,10 +470,10 @@ class AuthService:
                         logger.info(f"MFA enabled for user: {user.username}")
                         result = codes
             finally:
-                if failed is not None and nested is not None:
+                if failed is not None:
                     nested.rollback()
-                else:
-                    AuthService._close_savepoint(nested)
+                elif nested.is_active:
+                    nested.commit()
         if failed:
             AuthService._count_mfa_failure(failed[0], failed[1])
         return result
@@ -520,7 +509,7 @@ class AuthService:
         failed: Optional[tuple[str, str]] = None
         accepted = False
         with unit_of_work(session) as session:
-            nested = AuthService._lock_savepoint(session)
+            nested = session.begin_nested()
             try:
                 # Locked so two requests carrying the same code are serialised:
                 # the second sees the consumed recovery code / stored TOTP step.
@@ -553,13 +542,13 @@ class AuthService:
                                 break
                         except Exception:
                             continue
-                    if not accepted and nested is not None:
+                    if not accepted:
                         failed = (user.user_id, user.username)
             finally:
-                if failed is not None and nested is not None:
+                if failed is not None:
                     nested.rollback()
-                else:
-                    AuthService._close_savepoint(nested)
+                elif nested.is_active:
+                    nested.commit()
         if failed:
             # The savepoint is already closed; count on a fresh transaction.
             AuthService._count_mfa_failure(failed[0], failed[1])
