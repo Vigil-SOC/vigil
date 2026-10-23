@@ -93,9 +93,9 @@ def _persist_chat_turn(
     the user turn (always complete) and the assistant turn (``complete=False``
     on abort/error). Each ``conversation_service`` call is itself fail-open;
     this wrapper adds a final guard so nothing here can surface into the
-    request path. The authoritative per-iteration record (including full tool
-    calls / results) remains in ``llm_interaction_logs`` keyed by the same
-    ``session_id``.
+    request path. The text is stored in ``conversations`` / ``chat_messages``.
+    Tool calls, results, and cost are recorded in the agent ledger under this
+    conversation's run id.
     """
     try:
         if not conversation_service.ensure_conversation(
@@ -245,7 +245,7 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     agent_id: Optional[str] = None
     session_id: Optional[str] = (
-        None  # Chat session identifier for reasoning-trace persistence (GH #79)
+        None  # Conversation id. Its text is stored on that row; the ledger run is derived from it.
     )
     # A run this conversation follows up on. The console does not send one yet
     # (#634); when it does, the turn opens with what that run concluded.
@@ -363,8 +363,18 @@ async def chat_stream(
         system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
+    # Read before the payload is built. Generation 0 (every row that exists
+    # today, and a session with no row) keeps run_id_for(session_id). A
+    # deleted conversation's later life uses a new run, so its old tool
+    # reads are not loaded. A missing row is a new session.
+    ledger_session = session_id
+    if request.session_id:
+        ledger_session = await asyncio.to_thread(
+            conversation_service.ledger_key, request.session_id
+        )
+    run_id = run_id_for(ledger_session)
     payload = {
-        "run_id": run_id_for(session_id),
+        "run_id": run_id,
         "turns": _turns_of(request.messages),
         "system_prompt": system_prompt or "",
         # The provider rides alongside the model so the gateway routes to the
@@ -385,7 +395,7 @@ async def chat_stream(
             person_id=getattr(current_user, "principal_id", None)
             or getattr(current_user, "user_id", None),
             agent_id=agent_principal_id(CHAT_PLUGIN_ID),
-            run_id=run_id_for(session_id),
+            run_id=run_id,
             origin="person",
         ),
         "actor": agent_principal_id(CHAT_PLUGIN_ID),

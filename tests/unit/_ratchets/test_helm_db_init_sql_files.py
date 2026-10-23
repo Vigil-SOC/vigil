@@ -32,6 +32,7 @@ EXEMPT = {
     "05_case_management_extended.sql": "rows seeded by core/storage/reference_seed.py",
     "28_case_closure_actor.sql": "column is on the ORM model; python -m core.upgrade runs it when adopting",
     "39_case_findings_finding_index.sql": "index is on the ORM model; python -m core.upgrade runs it when adopting",
+    "47_conversation_generation.sql": "conversations is created by create_all; python -m core.upgrade adds the columns when adopting",
 }
 
 
@@ -62,8 +63,12 @@ def test_every_sql_files_entry_exists() -> None:
 
 def test_exempt_files_are_not_listed_and_exist() -> None:
     present = set(_init_sql())
-    assert not EXEMPT.keys() & set(_sql_files()), "an EXEMPT file is back in dbInit.sqlFiles"
-    assert EXEMPT.keys() <= present, f"EXEMPT names missing files: {EXEMPT.keys() - present}"
+    assert not EXEMPT.keys() & set(
+        _sql_files()
+    ), "an EXEMPT file is back in dbInit.sqlFiles"
+    assert (
+        EXEMPT.keys() <= present
+    ), f"EXEMPT names missing files: {EXEMPT.keys() - present}"
 
 
 def test_sql_files_are_in_the_order_compose_applies_them() -> None:

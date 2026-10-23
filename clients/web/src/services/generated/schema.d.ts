@@ -3093,7 +3093,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Conversation
-         * @description Hard-delete a conversation (messages cascade).
+         * @description Hide the conversation and drop its messages. Ledger rows stay.
          */
         delete: operations["delete_api_conversations_conversation_id"];
         options?: never;
