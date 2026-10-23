@@ -1,0 +1,2 @@
+src/screens/setup/useSystemChecks.ts(66,10): error TS2678: Type '"not_runing"' is not comparable to type '"running" | "unknown" | "unhealthy" | "not_running" | "no_token"'.
+src/shell/statusLine.ts(73,3): error TS2561: Object literal may only specify known properties, but 'not_runing' does not exist in type 'Partial<Record<"running" | "unknown" | "unhealthy" | "not_running" | "no_token", string>>'. Did you mean to write 'not_running'?

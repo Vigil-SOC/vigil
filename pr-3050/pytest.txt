@@ -1,0 +1,4 @@
+0.01s call     unit/platform/test_process_health.py::test_both_running
+0.01s setup    unit/platform/test_process_health.py::test_both_running
+0.01s call     unit/platform/test_process_health.py::test_an_error_reads_as_unknown_and_never_raises
+=================== 14 passed, 1 warning in 72.57s (0:01:12) ===================

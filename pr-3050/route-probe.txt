@@ -1,0 +1,3 @@
+real: 200 {'agent_layer': 'no_token', 'daemon': 'running'}
+bad state: 500 {"detail":"Internal server error","code":"INTERNAL_ERROR"}
+schema: {'properties': {'agent_layer': {'type': 'string', 'enum': ['running', 'unhealthy', 'not_running', 'unknown', 'no_token'], 'title': 'Agent Layer'}, 'daemon': {'type': 'string', 'enum': ['running', 'unhealthy', 'not_running', 'unknown'], 'title': 'Daemon'}}, 'type': 'object', 'required': ['agent_layer', 'daemon'], 'title': 'ProcessStates'}
