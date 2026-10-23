@@ -1,0 +1,8 @@
+$ npx tsc --noEmit
+tsc exit=0
+$ npx vitest run tests/core tests/hunt tests/chat tests/integration
+ Test Files  87 passed (87)
+      Tests  1240 passed (1240)
+$ npx vitest run tests/rootcause
+ Test Files  31 passed (31)
+      Tests  350 passed (350)

@@ -1,0 +1,21 @@
+== inlined (this PR)
+PROBE lease rows after terminal 0
+ ✓ tests/integration/zz-probe.test.ts > a hunt started through the queue > PROBE: a finished hunt drops its lease row 285ms
+PROBE progress posts ["/progress {\"iteration\":1,\"max_cost_usd\":5}","/progress {\"iteration\":2,\"max_cost_usd\":5}","/progress {\"iteration\":3,\"max_cost_usd\":5}","/progress {\"iteration\":4,\"max_cost_usd\":5}","/progress {\"iteration\":5,\"max_cost_usd\":5}","/progress {\"iteration\":6,\"max_cost_usd\":5}"]
+ ✓ tests/integration/zz-probe.test.ts > a hunt that parks, as the console's run row sees it > PROBE: hunt branch posts progress through the mirror 248ms
+      Tests  2 passed | 11 skipped (13)
+== original (main)
+PROBE lease rows after terminal 0
+ ✓ tests/integration/zz-probe.test.ts > a hunt started through the queue > PROBE: a finished hunt drops its lease row 289ms
+PROBE progress posts ["/progress {\"iteration\":1,\"max_cost_usd\":5}","/progress {\"iteration\":2,\"max_cost_usd\":5}","/progress {\"iteration\":3,\"max_cost_usd\":5}","/progress {\"iteration\":4,\"max_cost_usd\":5}","/progress {\"iteration\":5,\"max_cost_usd\":5}","/progress {\"iteration\":6,\"max_cost_usd\":5}"]
+ ✓ tests/integration/zz-probe.test.ts > a hunt that parks, as the console's run row sees it > PROBE: hunt branch posts progress through the mirror 244ms
+      Tests  2 passed | 11 skipped (13)
+== mutant: progress no-op, settle skips leases.finish
+PROBE lease rows after terminal 1
+PROBE progress posts []
+ × tests/integration/zz-probe.test.ts > a hunt started through the queue > PROBE: a finished hunt drops its lease row 304ms
+ × tests/integration/zz-probe.test.ts > a hunt that parks, as the console's run row sees it > PROBE: hunt branch posts progress through the mirror 237ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected 1 to be +0 // Object.is equality
+AssertionError: expected 0 to be greater than 0
+      Tests  2 failed | 11 skipped (13)
