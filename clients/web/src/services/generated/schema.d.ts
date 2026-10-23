@@ -6987,6 +6987,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/runs/{run_id}/children": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Child
+         * @description A child run's start. The actor is the parent's agent; the origin is this run.
+         */
+        post: operations["post_internal_runs_run_id_children"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/runs/{run_id}/decisions": {
         parameters: {
             query?: never;
@@ -8389,6 +8409,20 @@ export interface components {
              * @default
              */
             run_kind: string;
+        };
+        /** ChildStart */
+        ChildStart: {
+            /** Child Run Id */
+            child_run_id: string;
+            /**
+             * Role
+             * @default
+             */
+            role: string;
+            /** Spec */
+            spec?: {
+                [key: string]: unknown;
+            };
         };
         /** CitedFindings */
         CitedFindings: {
@@ -23455,6 +23489,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CheckpointRaised"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_children: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChildStart"];
             };
         };
         responses: {

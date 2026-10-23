@@ -7,15 +7,17 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint, withdraw_for_run
 from core.routing import Auth, RouterMeta
+from core.storage.connection import get_db_session
 from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
 from core.workflows.handoff_cases import handoff_case_id
@@ -94,6 +96,13 @@ class TerminalUpdate(BaseModel):
 
 class CitedFindings(BaseModel):
     finding_ids: List[str] = Field(default_factory=list)
+
+
+class ChildStart(BaseModel):
+    child_run_id: str
+    role: str = ""
+    # Hashed into the fingerprint. Not stored.
+    spec: Dict[str, Any] = Field(default_factory=dict)
 
 
 class StatusUpdate(BaseModel):
@@ -243,6 +252,8 @@ def record_terminal(
     # route), so by the time its terminal arrives the case and RCA are usually
     # already teed up; the case is keyed on the handoff and the RCA on the trigger,
     # so re-sending them here is a safety net rather than a second of either.
+    note_terminal(run_id, update.outcome, update.summary or "")
+
     start_rca = _source_is_hunt(run_id)
     for handoff in update.handoffs:
         # Read again per handoff: the one before may have filed the hunt under its case.
@@ -254,6 +265,38 @@ def record_terminal(
             run_service,
             registry,
         )
+
+
+@router.post("/{run_id}/children", status_code=204)
+def record_child(
+    run_id: str,
+    body: ChildStart,
+    authorization: Optional[str] = Header(default=None),
+) -> None:
+    """A child run's start. The actor is the parent's agent; the origin is this run."""
+    authorise(authorization, "child run")
+    session = get_db_session()
+    try:
+        # unlinked is not success: the agent retries, and a second post is a no-op
+        # once the parent start is there. A trail that is not in use is today's path.
+        linked = note_child(
+            session,
+            parent_run_id=run_id,
+            child_run_id=body.child_run_id,
+            spec=body.spec,
+            role=body.role,
+        )
+        session.commit()
+    except Exception as exc:  # noqa: BLE001 - the child is already opening
+        session.rollback()
+        logger.exception("child run %s was not recorded", body.child_run_id)
+        raise HTTPException(
+            status_code=503, detail="the action could not be recorded"
+        ) from exc
+    finally:
+        session.close()
+    if linked == "unlinked":
+        raise HTTPException(status_code=503, detail="the action could not be recorded")
 
 
 # A handoff pushed the moment the hunt journals it, ahead of the terminal that will
@@ -741,7 +784,11 @@ def _start_root_cause(
     }
     try:
         result = asyncio.run(
-            _enqueue_root_cause(params, _triggered_by(source_run_id, handoff))
+            _enqueue_root_cause(
+                params,
+                _triggered_by(source_run_id, handoff),
+                source_run_id=source_run_id,
+            )
         )
     except Exception:  # noqa: BLE001 — the case it opened is the deliverable
         logger.exception(
@@ -764,7 +811,7 @@ def _start_root_cause(
 
 
 async def _enqueue_root_cause(
-    params: Dict[str, Any], triggered_by: str
+    params: Dict[str, Any], triggered_by: str, source_run_id: str
 ) -> Dict[str, Any]:
     from core.agents.queue import close_run_queue
     from core.workflows.workflows_service import WorkflowsService
@@ -778,6 +825,8 @@ async def _enqueue_root_cause(
             # approval an operator is asked to answer both name the escalation's
             # hash where every other run names api, watchdog or a username.
             actor="handoff",
+            origin_kind="parent",
+            origin_id=source_run_id,
         )
     finally:
         # asyncio.run closes the loop this ran on, and _run_queue caches one Queue

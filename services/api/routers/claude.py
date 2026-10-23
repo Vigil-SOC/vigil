@@ -16,6 +16,7 @@ from core.agents.projections import agent_route
 from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
+from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
 from core.cases.case_brief import case_brief
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
@@ -398,7 +399,16 @@ async def chat_stream(
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
-        "principal": tool_principal.mint(current_user.username),
+        "principal": tool_principal.mint(
+            current_user.username,
+            person_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+            agent_id=agent_principal_id(CHAT_PLUGIN_ID),
+            run_id=run_id_for(session_id),
+            origin="person",
+        ),
+        "actor": agent_principal_id(CHAT_PLUGIN_ID),
+        "origin": "person",
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id
