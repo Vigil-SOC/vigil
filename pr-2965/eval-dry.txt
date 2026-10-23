@@ -1,0 +1,8 @@
+== engine /tmp/vbase
+t: 1 cases on ec410da with dry/schema-filler, graded by keywords
+  ben-01-sanctioned-red-team         truth=benign got=undetermined $0.0000 3 model / 1 tool calls
+wrote /tmp/o-vbase.jsonl
+== engine /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1cd858e0-28d9-4262-8203-3539954b5619
+t: 1 cases on 2ee9f6f2 with dry/schema-filler, graded by keywords
+  ben-01-sanctioned-red-team         truth=benign got=undetermined $0.0000 4 model / 1 tool calls
+wrote /tmp/o-1cd858e0-28d9-4262-8203-3539954b5619.jsonl
