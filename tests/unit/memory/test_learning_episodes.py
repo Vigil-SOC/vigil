@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from core.agents.builtins import BUILTIN_AGENTS
+from core.agents.mcp_tools import MCPFailure
 from core.agents.tool_registry import _MEMORY_TOOLS, execute_backend_tool
 from core.llm.tool_schemas import ALL_TOOLS
 from core.workflows.workflow_run_service import LIST_RUNS_MAX
@@ -43,7 +44,6 @@ def marker(db, kind, ident, *, concluded, run=None):
             investigation_id=ident,
             origin_run_id=run,
             origin_seq=1 if run else None,
-            origin_run_ids=[run] if run else [],
             distil_version=1,
             concluded_at=concluded,
         )
@@ -168,8 +168,9 @@ async def test_window_bounds_are_inclusive_and_the_limit_reports_what_it_dropped
     assert page["total"] == 3 and page["dropped"] == 2
     assert [e["investigation_id"] for e in page["episodes"]] == ["hunt-empty"]
 
-    with pytest.raises(TypeError):
+    with pytest.raises(MCPFailure) as raised:
         await list_learning_episodes({"start": "2026-09-01", "end": "2026-08-01"})
+    assert raised.value.kind == "invalid_args"
 
 
 async def test_empty_selection_writes_no_file(seeded):
