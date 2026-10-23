@@ -1,0 +1,65 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/08205c3e-c87b-4f39-973e-dfe801a2b807/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 451 items
+
+tests/unit/daemon/test_ack_before_advance.py .....                       [  1%]
+tests/unit/daemon/test_bind_host.py ..                                   [  1%]
+tests/unit/daemon/test_cleanup_expires_approvals.py .....                [  2%]
+tests/unit/daemon/test_crowdstrike_finding_id.py ..                      [  3%]
+tests/unit/daemon/test_daemon.py .................                       [  6%]
+tests/unit/daemon/test_health_task_liveness.py .......                   [  8%]
+tests/unit/daemon/test_ingestion_service_reuse.py ....                   [  9%]
+tests/unit/daemon/test_intent.py ..................................      [ 16%]
+tests/unit/daemon/test_intent_replay.py ...............                  [ 20%]
+tests/unit/daemon/test_legacy_crowdstrike_poll.py ...                    [ 20%]
+tests/unit/daemon/test_legacy_ingestion_poll.py ....                     [ 21%]
+tests/unit/daemon/test_legacy_splunk_poll.py ..........                  [ 23%]
+tests/unit/daemon/test_orchestrator_admission_case.py .................  [ 27%]
+tests/unit/daemon/test_orchestrator_fail_closed.py .......               [ 29%]
+tests/unit/daemon/test_orchestrator_heartbeat.py .......                 [ 30%]
+tests/unit/daemon/test_orchestrator_hourly_cost_db.py ........           [ 32%]
+tests/unit/daemon/test_orchestrator_intake.py .......................... [ 38%]
+..                                                                       [ 38%]
+tests/unit/daemon/test_orchestrator_intake_db.py ...........             [ 41%]
+tests/unit/daemon/test_orchestrator_overlap_attach.py .........          [ 43%]
+tests/unit/daemon/test_orchestrator_rank.py ...................          [ 47%]
+tests/unit/daemon/test_orchestrator_review_rule.py ....                  [ 48%]
+tests/unit/daemon/test_orchestrator_runs.py ............................ [ 54%]
+.....................                                                    [ 59%]
+tests/unit/daemon/test_orchestrator_supervision.py ...                   [ 59%]
+tests/unit/daemon/test_plan_generator.py ...                             [ 60%]
+tests/unit/daemon/test_probes.py .........................               [ 66%]
+tests/unit/daemon/test_responder_slack_ts.py .                           [ 66%]
+tests/unit/daemon/test_responder_target.py .......                       [ 67%]
+tests/unit/daemon/test_run_principal.py ...                              [ 68%]
+tests/unit/daemon/test_scheduled_hunt.py ...........                     [ 70%]
+tests/unit/daemon/test_scheduled_hunt_db.py ...                          [ 71%]
+tests/unit/daemon/test_store_failure_retry.py ......                     [ 72%]
+tests/unit/daemon/test_threat_feed_intel_dedup_db.py ...........         [ 75%]
+tests/unit/daemon/test_threat_feed_poller.py ..............              [ 78%]
+tests/unit/daemon/test_triage_reply.py .......................           [ 83%]
+tests/unit/daemon/test_vendor_errors.py .......                          [ 85%]
+tests/unit/daemon/test_webhook_mitre_predictions.py ...............      [ 88%]
+tests/unit/daemon/test_webhook_rejections.py .                           [ 88%]
+tests/unit/workflows/test_workflow_enablement.py ....................... [ 93%]
+...                                                                      [ 94%]
+tests/unit/api/test_orchestrator_kill.py ..                              [ 94%]
+tests/unit/api/test_orchestrator_settings.py .................           [ 98%]
+tests/unit/api/test_orchestrator_wake.py ......                          [100%]
+
+============================= slowest 10 durations =============================
+0.57s setup    unit/daemon/test_orchestrator_hourly_cost_db.py::test_intake_pauses_when_the_hour_reaches_the_cap
+0.31s call     unit/daemon/test_daemon.py::TestTriageTimeout::test_raised_timeout_triages_on_first_attempt
+0.15s call     unit/daemon/test_orchestrator_runs.py::TestShadowAdjudication::test_on_enqueues_exactly_one_more_adjudicate_run
+0.11s call     unit/daemon/test_daemon.py::TestTriageTimeout::test_short_timeout_times_out_naming_the_knob
+0.09s call     unit/daemon/test_webhook_rejections.py::test_rejections_logged_once_per_window_and_counted
+0.07s call     unit/daemon/test_ack_before_advance.py::test_a_full_queue_blocks_the_federation_producer
+0.06s call     unit/daemon/test_store_failure_retry.py::test_webhook_does_not_redeliver
+0.06s teardown unit/api/test_orchestrator_wake.py::test_wake_rejects_unfinished_investigations[sleeping]
+0.04s call     unit/workflows/test_workflow_enablement.py::test_toggle_round_trip_for_a_built_in_and_a_custom_id[custom-hunt]
+0.04s call     unit/workflows/test_workflow_enablement.py::test_toggle_round_trip_for_a_built_in_and_a_custom_id[threat-hunt]
+======================== 451 passed, 1 warning in 6.08s ========================
