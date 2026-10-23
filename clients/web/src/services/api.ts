@@ -647,6 +647,15 @@ export const extensionsApi = {
     ),
 }
 
+export const customIntegrationsApi = {
+  generate: (data: Schema<'CustomIntegrationRequest'>) =>
+    api.post('/custom-integrations/generate', data, { timeout: LLM_TIMEOUT }),
+  save: (data: Schema<'SaveIntegrationRequest'>) =>
+    api.post('/custom-integrations/save', data),
+  validate: (integrationId: string) =>
+    api.post(`/custom-integrations/${integrationId}/validate`),
+}
+
 export interface LLMProvider {
   provider_id: string
   provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex' | 'openrouter'
