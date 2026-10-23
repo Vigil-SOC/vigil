@@ -59,6 +59,7 @@ from core.storage.models.finding import Finding, FindingMitrePrediction
 from core.storage.models.medic import MedicLastSeen
 from core.storage.models.skill import SkillRead
 from core.storage.models.workflow import (
+    FINISHED_INVESTIGATION_STATUSES,
     IN_FLIGHT_INVESTIGATION_STATUSES,
     LIVE_CASE_STATES,
     LIVE_INVESTIGATION_STATUSES,
@@ -108,6 +109,7 @@ __all__ = [
     "FederationSource",
     "Finding",
     "FindingMitrePrediction",
+    "FINISHED_INVESTIGATION_STATUSES",
     "IntakeTrigger",
     "IN_FLIGHT_INVESTIGATION_STATUSES",
     "IntegrationConfig",

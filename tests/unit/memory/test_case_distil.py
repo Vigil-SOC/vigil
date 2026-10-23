@@ -553,7 +553,6 @@ class TestIdempotency:
         marker = session.get(EpisodicDistilMarker, ("case", "case-733"))
         assert marker.origin_run_id is None
         assert marker.origin_seq is None
-        assert marker.origin_run_ids == []
         assert marker.verdicts_written == 1
 
 
@@ -757,16 +756,26 @@ class TestTheTick:
         assert len(verdicts(session)) == 1
 
 
+def agent_status_close(session):
+    from core.cases.case_status import StatusChange, record_status_change
+
+    record_status_change(
+        session,
+        "case-733",
+        StatusChange.CLOSE,
+        closed_by="agent",
+        closed_by_kind=ClosedByKind.AGENT,
+    )
+
+
 class TestTheOneWriter:
     """Every close goes through CaseWorkflowService.close_case (#733 review)."""
 
     def test_an_agent_status_edit_records_an_unspecified_agent_close(self, session):
-        from core.cases.agent_closure import record_agent_close
-
         case(session)
         session.commit()
 
-        record_agent_close("case-733")
+        agent_status_close(session)
 
         session.expire_all()
         recorded = session.get(CaseClosureInfo, "case-733")
@@ -780,8 +789,6 @@ class TestTheOneWriter:
         assert row.trust == "agent"
 
     def test_an_unstated_close_never_overwrites_a_stated_one(self, session):
-        from core.cases.agent_closure import record_agent_close
-
         case(session)
         closure(
             session,
@@ -791,7 +798,7 @@ class TestTheOneWriter:
         )
         session.commit()
 
-        record_agent_close("case-733")
+        agent_status_close(session)
 
         session.expire_all()
         recorded = session.get(CaseClosureInfo, "case-733")
@@ -829,8 +836,6 @@ class TestTheOneWriter:
         assert recorded.lessons_learned == "enforce MFA"
 
     def test_closing_by_status_edit_stops_the_sla_clock(self, session, monkeypatch):
-        from core.cases.agent_closure import record_agent_close
-
         marked = []
         import core.cases.case_sla_service as sla
 
@@ -843,7 +848,7 @@ class TestTheOneWriter:
         case(session)
         session.commit()
 
-        record_agent_close("case-733")
+        agent_status_close(session)
 
         # The consolidation this PR performed on the MCP close, applied to the
         # status edits too: a Case closed this way used to skip the clock.

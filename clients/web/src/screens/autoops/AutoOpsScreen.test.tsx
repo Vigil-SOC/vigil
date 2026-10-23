@@ -5,7 +5,7 @@ import { render, screen, within } from '@testing-library/react'
 import AutoOpsScreen from './AutoOpsScreen'
 
 const inv = (over: Record<string, unknown>) => ({
-  case_id: null, skill_id: 'triage', trigger_type: 'manual', status: 'completed', current_step: 1, total_steps: 1,
+  case_id: null, skill_id: 'triage', trigger_type: 'manual', status: 'completed',
   iteration_count: 3, priority: 'medium', created_at: '2026-09-01T00:00:00Z', last_activity_at: null, summary: null, current_activity: null,
   ...over,
 })
@@ -21,6 +21,8 @@ vi.mock('./useAutoOps', () => ({
       inv({ investigation_id: 'inv-priced', cost_usd: 1.2346 }),
       inv({ investigation_id: 'inv-zero', cost_usd: 0 }),
       inv({ investigation_id: 'inv-absent', cost_usd: undefined }),
+      ...['assigned', 'executing', 'waiting_approval', 'paused', 'failed'].map((status) =>
+        inv({ investigation_id: `inv-${status}`, status, cost_usd: 0 })),
     ],
     phase: 'ready', error: null, notice: null, busy: null,
     reload: vi.fn(), clearError: vi.fn(), clearNotice: vi.fn(), toggleEnabled: vi.fn(), killAll: vi.fn(),
@@ -38,5 +40,19 @@ describe('autoops investigation rows', () => {
     expect(within(rowFor('inv-zero')).getByText('$0.000')).toBeInTheDocument()
     expect(within(rowFor('inv-absent')).getByText('not priced')).toBeInTheDocument()
     expect(document.body.textContent).not.toContain('$undefined')
+  })
+
+  it.each([
+    ['inv-assigned', true, false],
+    ['inv-executing', true, false],
+    ['inv-waiting_approval', true, false],
+    ['inv-paused', true, false],
+    ['inv-priced', false, true],
+    ['inv-failed', false, true],
+  ])('%s offers Kill %s and Restart %s', (id, kill, restart) => {
+    render(<AutoOpsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
+
+    expect(within(rowFor(id)).queryByTitle('Kill') !== null).toBe(kill)
+    expect(within(rowFor(id)).queryByTitle('Restart') !== null).toBe(restart)
   })
 })
