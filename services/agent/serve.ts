@@ -67,6 +67,9 @@ export interface ChatRequest {
   // Signed by the API for the person in this conversation and handed back on
   // every tool call. Absent means no person, and the tools record "agent".
   principal?: ToolPrincipal;
+  // In the clear. This process does not decode principal.
+  actor?: string;
+  origin?: "person" | "schedule" | "alert" | "parent";
   // The agent this conversation belongs to, when it belongs to one (#1560).
   // The API has it on the chat request; a conversation with no agent sends
   // nothing and its skill reads are recorded unattributed.
@@ -113,6 +116,9 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
       run_id: request.run_id,
       spec,
       turns: request.turns,
+      ...(request.principal === undefined ? {} : { principal: request.principal }),
+      ...(request.actor === undefined ? {} : { started_by: request.actor }),
+      ...(request.origin === undefined ? {} : { origin: request.origin }),
       ...(request.agent_id === undefined ? {} : { agent_id: request.agent_id }),
     });
 

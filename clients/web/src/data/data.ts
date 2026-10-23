@@ -19,12 +19,11 @@ export type ConsoleScreenKey =
 export interface NavGate {
   /** an integration id, matched against the enabled-integrations list */
   integration?: string
-  orchestrator?: boolean
 }
 
 /** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
  *  made it vanish confusingly. */
-export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
+export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['home', 'Home', 'home'],
   ['graph', 'Overview', 'overview'],
   ['clock', 'Triage queue', 'triage'],

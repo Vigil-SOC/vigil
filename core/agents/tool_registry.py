@@ -9,6 +9,7 @@ import logging
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
+from core.agents.attribution import current_claims
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import (
     APPROVE_PERMISSION,
@@ -653,7 +654,14 @@ def approve_action(*, action_id: str) -> Args:
         return {"error": "Action cannot be approved: no principal is bound"}
     if refusal := _without_approval_right():
         return refusal
-    return _decided(_approvals().approve_action(action_id, actor()), "approved")
+    claims = current_claims()
+    principal = None if claims is None else (claims.person_id or claims.agent_id)
+    return _decided(
+        _approvals().approve_action(
+            action_id, actor(), approved_by_principal_id=principal
+        ),
+        "approved",
+    )
 
 
 def reject_action(*, action_id: str, reason: str) -> Args:
@@ -661,7 +669,14 @@ def reject_action(*, action_id: str, reason: str) -> Args:
 
     if refusal := _without_approval_right():
         return refusal
-    return _decided(_approvals().reject_action(action_id, reason, actor()), "rejected")
+    claims = current_claims()
+    principal = None if claims is None else (claims.person_id or claims.agent_id)
+    return _decided(
+        _approvals().reject_action(
+            action_id, reason, actor(), approved_by_principal_id=principal
+        ),
+        "rejected",
+    )
 
 
 def get_approval_stats(**_args: Any) -> Any:

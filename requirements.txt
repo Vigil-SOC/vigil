@@ -102,6 +102,9 @@ stix2>=3.0.2
 # services/api/routers/claude.py → /generate-chat-report; without this dep the endpoint
 # returns 503 even though the feature is wired into the UI.
 reportlab>=5.0.1
+# Transitive via reportlab. 12.3.0 has fixable criticals CVE-2026-112393 and
+# CVE-2026-112900; the image scan fails closed on those.
+pillow>=13.0.0
 
 # Monitoring & Observability
 sentry-sdk>=2.72.0

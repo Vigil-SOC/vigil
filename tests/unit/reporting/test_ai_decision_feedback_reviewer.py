@@ -68,6 +68,7 @@ def viewer(monkeypatch):
     """Signed in, holding every permission except ai_decisions.approve."""
     user = User(
         user_id="viewer",
+        principal_id="viewer",
         username="vera_viewer",
         email="v@test.local",
         password_hash="",

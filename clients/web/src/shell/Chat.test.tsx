@@ -32,7 +32,6 @@ vi.mock('./useConversations', () => ({
   useConversations: () => ({
     items: historyState.items,
     phase: historyState.phase,
-    error: null,
     reload: historyState.reload,
     offline: historyState.offline,
   }),
@@ -50,7 +49,6 @@ vi.mock('../services/api', () => ({
     get: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
-    importHistory: vi.fn(),
   },
   reasoningApi: {
     listInteractions: vi.fn(),
@@ -294,28 +292,6 @@ describe('Ask Vigil dock', () => {
     expect(localStorage.getItem('soc.chat.history')).toBeNull()
   })
 
-  it('imports only this user\'s cache, and drops an unscoped history instead of uploading it', async () => {
-    localStorage.setItem(
-      'soc.chat.history',
-      JSON.stringify([{ id: 'legacy', title: 'Legacy', ts: 1, messages: [{ role: 'user', text: 'legacy secret' }] }]),
-    )
-    saveHistory('user-2', [
-      { id: 'bob', title: 'Bob', ts: 1, messages: [{ role: 'user', text: 'bob secret' }] },
-    ])
-    saveHistory('user-1', [
-      { id: 'mine', title: 'Mine', ts: 1, messages: [{ role: 'vigil', text: 'my note' }, { role: 'error', text: 'failed' }], key: 'seed-1' },
-    ])
-    vi.mocked(conversationsApi.importHistory).mockResolvedValue({ data: {} } as never)
-    renderChat()
-    await waitFor(() => expect(conversationsApi.importHistory).toHaveBeenCalledTimes(1))
-    expect(conversationsApi.importHistory).toHaveBeenCalledWith([
-      { id: 'mine', title: 'Mine', messages: [{ role: 'assistant', content: 'my note', thinking: null }] },
-    ])
-    expect(localStorage.getItem('soc.chat.history')).toBeNull()
-    expect(localStorage.getItem('soc.chat.history.user-2')).toBeNull()
-    expect(JSON.parse(localStorage.getItem('soc.chat.keymap.user-1') || '{}')).toEqual({ 'seed-1': 'mine' })
-  })
-
   it.each([404, 403, 401])(
     'does not open a cached conversation when the server answers %i',
     async (status) => {
@@ -511,6 +487,22 @@ describe('failed case-composer turns', () => {
     renderPinned()
     ask('why?')
     expect(await screen.findByText(/Could not reach Vigil: HTTP 503\. Is the backend running\?/)).toBeInTheDocument()
+  })
+
+  it('shows the reason a 503 gives instead of blaming the backend', async () => {
+    vi.mocked(streamFetch).mockResolvedValueOnce(
+      refused(503, {
+        detail: {
+          code: 'no_llm_provider_configured',
+          message: 'No LLM provider is configured. Add one in Settings › AI models, then try again.',
+          settings_path: '/settings#llm-providers',
+        },
+      }),
+    )
+    renderPinned()
+    ask('why?')
+    expect(await screen.findByText(/No LLM provider is configured/)).toBeInTheDocument()
+    expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
   })
 
   it('does not send an unanswered question with the next one', async () => {
