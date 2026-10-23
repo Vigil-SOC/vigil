@@ -1,0 +1,2 @@
+0.01s teardown unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+============================== 1 passed in 35.92s ==============================

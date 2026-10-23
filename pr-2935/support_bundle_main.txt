@@ -1,0 +1,2 @@
+main: FAILED tests/unit/test_support_bundle.py::test_sudo_run_uses_the_invoking_users_home_and_hands_over_the_bundle
+main: 1 failed, 29 passed, 10 skipped, 29 warnings in 101.55s (0:01:41)
