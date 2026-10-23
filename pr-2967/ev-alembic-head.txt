@@ -1,0 +1,3 @@
+$ python -c "schema_head(); walk revisions"
+head: 0006_audit_feed
+chain: ['0006_audit_feed', '0006_canonical_finding_ips', '0005_agent_attribution', '0004_session_cutoff', '0003_principals_sign_ins', '0002_audit_trail', '0001_baseline']

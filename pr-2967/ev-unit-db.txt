@@ -1,0 +1,91 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/5107924e-1f1d-4c9a-8aee-f28a286bb8a2/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 5165 items / 4658 deselected / 507 selected
+
+tests/unit/agents/test_agent_list_fields.py .                            [  0%]
+tests/unit/agents/test_memory_grant.py .                                 [  0%]
+tests/unit/agents/test_search_findings_counts_db.py ...                  [  0%]
+tests/unit/api/test_dashboard_missing_fields.py ..                       [  1%]
+tests/unit/api/test_medic_last_seen.py ................................. [  7%]
+.................                                                        [ 11%]
+tests/unit/api/test_stats_summary_sql.py .......                         [ 12%]
+tests/unit/api/test_timeline_range_filters.py ....                       [ 13%]
+tests/unit/api/test_timeline_undated_findings.py ..............          [ 16%]
+tests/unit/auth/test_bootstrap_code.py .                                 [ 16%]
+tests/unit/auth/test_service_account_cli.py ............................ [ 21%]
+.                                                                        [ 22%]
+tests/unit/cases/test_case_delete_guards.py ............                 [ 24%]
+tests/unit/cases/test_case_metrics_aggregates.py ..................      [ 28%]
+tests/unit/cases/test_case_report_findings_query.py .                    [ 28%]
+tests/unit/cases/test_case_search_by_entity_db.py ....                   [ 28%]
+tests/unit/cases/test_case_template_finding_lookup.py ...                [ 29%]
+tests/unit/cases/test_sla_policy_inactive.py ....                        [ 30%]
+tests/unit/cases/test_sla_policy_usage_since.py ....                     [ 31%]
+tests/unit/chat/test_conversation_scope.py .....                         [ 32%]
+tests/unit/daemon/test_orchestrator_hourly_cost_db.py ........           [ 33%]
+tests/unit/daemon/test_orchestrator_intake_db.py ...........             [ 35%]
+tests/unit/daemon/test_scheduled_hunt_db.py ...                          [ 36%]
+tests/unit/daemon/test_threat_feed_intel_dedup_db.py ...........         [ 38%]
+tests/unit/findings/test_created_at_sort.py .                            [ 38%]
+tests/unit/findings/test_ip_exclusions_db.py .....................       [ 42%]
+tests/unit/findings/test_overview.py .........                           [ 44%]
+tests/unit/findings/test_overview_actions.py .....                       [ 45%]
+tests/unit/findings/test_search_terms.py .....                           [ 46%]
+tests/unit/findings/test_triage.py ........                              [ 48%]
+tests/unit/integrations/test_indicator_expiry.py ...                     [ 48%]
+tests/unit/llm/test_cost_analytics_db.py .                               [ 49%]
+tests/unit/llm/test_model_registry_default_rung_db.py ...                [ 49%]
+tests/unit/llm/test_reasoning_select_shape.py ......                     [ 50%]
+tests/unit/llm/test_reasoning_session_summary.py ...                     [ 51%]
+tests/unit/memory/test_case_distil.py .................................. [ 58%]
+.......................                                                  [ 62%]
+tests/unit/memory/test_distil_failures.py ..................             [ 66%]
+tests/unit/memory/test_learning_episodes.py .........                    [ 68%]
+tests/unit/memory/test_prior_hunts.py ......                             [ 69%]
+tests/unit/memory/test_recall_entity.py ...................              [ 72%]
+tests/unit/memory/test_snapshot.py ...............                       [ 75%]
+tests/unit/reporting/test_analytics_probe_exclusion_db.py ..             [ 76%]
+tests/unit/reporting/test_attack_heatmap_db.py ..                        [ 76%]
+tests/unit/response/test_approval_reversibility.py ...........           [ 78%]
+tests/unit/response/test_needs_you.py ......                             [ 80%]
+tests/unit/storage/test_ai_decision_stats_db.py .                        [ 80%]
+tests/unit/storage/test_ai_enrichment_ownership_db.py ....               [ 81%]
+tests/unit/storage/test_bulk_create_findings_db.py ...                   [ 81%]
+tests/unit/storage/test_case_findings_finding_index_db.py ..             [ 82%]
+tests/unit/storage/test_case_management_seed_db.py ...                   [ 82%]
+tests/unit/storage/test_case_queue.py ............                       [ 85%]
+tests/unit/storage/test_db_isolation.py ..s.                             [ 85%]
+tests/unit/storage/test_enrichment_backfill_age_db.py .                  [ 85%]
+tests/unit/storage/test_finding_cases_noload_db.py ...                   [ 86%]
+tests/unit/storage/test_finding_mitre_predictions_db.py .....            [ 87%]
+tests/unit/storage/test_medic_last_seen_db.py ..........                 [ 89%]
+tests/unit/storage/test_medic_permissions_db.py .....                    [ 90%]
+tests/unit/storage/test_now_server_default_db.py .                       [ 90%]
+tests/unit/storage/test_reference_seed_db.py ........                    [ 92%]
+tests/unit/storage/test_session_timeouts.py ..                           [ 92%]
+tests/unit/storage/test_threat_indicator_unique_db.py ..                 [ 93%]
+tests/unit/storage/test_users_service_account_db.py ..                   [ 93%]
+tests/unit/threat_intel/test_upsert_indicators_db.py .                   [ 93%]
+tests/unit/workflows/test_catalog_listing.py .                           [ 93%]
+tests/unit/workflows/test_workflow_phase_approval.py ..........          [ 95%]
+tests/unit/workflows/test_workflow_run_service.py ................       [ 99%]
+tests/unit/workflows/test_workflow_version.py .....                      [100%]
+
+============================= slowest 10 durations =============================
+6.49s call     unit/storage/test_finding_mitre_predictions_db.py::test_query_plan_uses_technique_confidence_index
+5.90s call     unit/storage/test_db_isolation.py::test_throwaway_database_survives_an_engine_left_on_a_blocked_host
+3.24s call     unit/auth/test_service_account_cli.py::test_a_new_password_rotates_and_clears_failures
+2.69s call     unit/api/test_stats_summary_sql.py::test_cases_summary_is_not_capped_at_ten_thousand
+2.22s call     unit/api/test_stats_summary_sql.py::test_findings_summary_is_not_capped_at_ten_thousand
+2.21s teardown unit/api/test_stats_summary_sql.py::test_cases_summary_is_not_capped_at_ten_thousand
+2.06s call     unit/auth/test_service_account_cli.py::test_ensure_undoes_what_a_stolen_session_could_change
+1.94s call     unit/auth/test_service_account_cli.py::test_output_never_holds_the_password
+1.43s call     unit/auth/test_bootstrap_code.py::test_announce_logs_the_code_only_while_no_human_user_exists
+1.42s call     unit/auth/test_service_account_cli.py::test_creates_a_viewer_service_account
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/storage/test_db_isolation.py:69: child run only
+=== 506 passed, 1 skipped, 4658 deselected, 3 warnings in 115.56s (0:01:55) ====
