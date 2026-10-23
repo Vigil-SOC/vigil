@@ -22,9 +22,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         age_seconds: 12,
         ttl_seconds: 14400,
         last_quarter: false,
-        score: null,
-        trust: null,
-        weight: null,
         pickup_seconds: 4,
         workflow_id: 'incident-response',
         case_door: 'case-9',
@@ -55,9 +52,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         age_seconds: 30,
         ttl_seconds: 14400,
         last_quarter: false,
-        score: null,
-        trust: null,
-        weight: null,
         pickup_seconds: 2,
         workflow_id: '',
         case_door: null,
@@ -75,7 +69,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       picked_up: { launched_or_merged: 0, created_today: 0, share: null },
       waiting: 3,
       cases_created_today: 1,
-      trust_floor: 'Not measured yet',
     },
     matched: 12,
     counts: {
@@ -96,7 +89,6 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       trust_floor: { source: 'Floor source', calculation: 'Floor calc', limit: 'Floor limit' },
     },
     breakdown_info: { trust: 'Trust tip', weight: 'Weight tip', score: 'Score tip' },
-    unmeasured_text: 'Not measured yet',
     ...overrides,
   }
 }
@@ -204,6 +196,40 @@ describe('TriageScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({}))
     expect(screen.queryByText(/Showing/)).not.toBeInTheDocument()
+  })
+
+  it('drops a response that a newer filter has overtaken', async () => {
+    vi.mocked(triageApi.get).mockResolvedValueOnce({ data: payload() } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    let resolveStale: (value: unknown) => void = () => {}
+    vi.mocked(triageApi.get)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveStale = resolve }) as never)
+      .mockResolvedValueOnce({ data: payload({ rows: [] }) } as never)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Filters' })).getByRole('button', { name: 'Splunk 7' }))
+    await screen.findByText('Nothing in the queue matches these filters.')
+    resolveStale({ data: payload() })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.getByText('Nothing in the queue matches these filters.')).toBeInTheDocument()
+  })
+
+  it('still applies a slow response that the 10 s poll overtakes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let resolveFirst: (value: unknown) => void = () => {}
+      vi.mocked(triageApi.get).mockReset()
+      vi.mocked(triageApi.get)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }) as never)
+        .mockReturnValueOnce(new Promise(() => {}) as never)
+      renderScreen()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(triageApi.get).toHaveBeenCalledTimes(2)
+      resolveFirst({ data: payload() })
+      expect(await screen.findByLabelText('Intake strip')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps a linked source as a selected chip with 0, and says when the cap hides rows', async () => {
@@ -367,6 +393,22 @@ describe('TriageScreen', () => {
     expect(screen.queryByText(/records omitted/)).not.toBeInTheDocument()
   })
 
+  it('shows the hypothesis of a scheduled hunt', async () => {
+    const base = payload()
+    const hunt = {
+      ...base.rows[1],
+      id: 3,
+      kind: 'schedule',
+      kind_label: 'Schedule',
+      source: 'Schedule',
+      document: 'Hunt for T1059 on build hosts',
+    }
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, rows: [hunt] } } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    expect(screen.getByText('Hunt for T1059 on build hosts')).toBeInTheDocument()
+  })
+
   it('shows the loading state', async () => {
     vi.mocked(triageApi.get).mockReturnValue(new Promise(() => {}) as never)
     renderScreen()
@@ -376,7 +418,7 @@ describe('TriageScreen', () => {
   it('shows the error state with a retry', async () => {
     vi.mocked(triageApi.get).mockRejectedValue(new Error('down'))
     renderScreen()
-    expect((await screen.findAllByText('Couldn’t load triage')).length).toBeGreaterThan(0)
+    expect(await screen.findByText('Couldn’t load triage')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
+import type { operations } from './generated/schema'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -135,10 +136,7 @@ export const aiDecisionsApi = {
     time_saved_minutes?: number
   }) => api.post(`/ai/decisions/${decisionId}/feedback`, data),
   
-  getStats: (params?: {
-    agent_id?: string
-    days?: number
-  }) => api.get('/ai/decisions/stats', { params }),
+  getStats: () => api.get('/ai/decisions/stats'),
   
   getPendingFeedback: (limit?: number) =>
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
@@ -189,13 +187,6 @@ export const findingsApi = {
   
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
-  
-  export: (format: 'json' | 'jsonl' = 'json') =>
-    api.post('/findings/export', null, { params: { output_format: format } }),
-  
-  update: (id: string, data: any) => api.patch(`/findings/${id}`, data),
-  
-  delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
     // may restart the Bifrost gateway, then wait on the configured model
@@ -352,6 +343,14 @@ export const casesApi = {
       merged_by: 'user',
     }),
 
+  /** Exports the case to a Jira issue and returns the note to show; a refused export throws its error. */
+  exportJira: async (id: string, projectKey: string): Promise<string> => {
+    const res = await api.post<Schema<'JiraExportResponse'>>(`/cases/${encodeURIComponent(id)}/export/jira`, {
+      project_key: projectKey,
+    })
+    if (res.data?.success === false) throw new Error(res.data.error || 'Jira export failed')
+    return res.data?.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created'
+  },
 }
 
 export const slaPoliciesApi = {
@@ -409,14 +408,8 @@ export const caseMetricsApi = {
 }
 
 export const caseSearchApi = {
-  search: (data: {
-    query: string
-    filters?: Record<string, any>
-    sort_by?: string
-    sort_order?: string
-    limit?: number
-    offset?: number
-  }) => api.post('/case-search/', data),
+  search: (data: Schema<'SearchRequest'>) =>
+    api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
 export interface ReloadServersResponse {
@@ -1078,6 +1071,75 @@ export const orchestratorApi = {
     }),
 }
 
+/** The trail filter (core.audit.trail.make_query): the list and the export send the same one. */
+export type AuditFilter = Omit<
+  NonNullable<operations['get_api_audit_export']['parameters']['query']>,
+  'after'
+>
+
+export interface AuditEntry {
+  seq: number
+  occurred_at: string
+  late: boolean
+  entry_hash: string
+  payload: Record<string, unknown>
+  source_ip: string | null
+  actor_text: string | null
+  operator_text: string | null
+  attempted_name: string | null
+  personal: unknown
+}
+
+export interface AuditTip { seq: number; hash: string }
+
+export interface AuditVerify {
+  first: number | null
+  last: number | null
+  first_bad: number | null
+  reason: string
+  ok: boolean
+}
+
+export const AUDIT_PAGE = 100
+
+/** The filter as query params, empty ones left out. */
+export function auditParams(filter: AuditFilter): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(filter)) {
+    const text = value == null ? '' : String(value).trim()
+    if (text) out[key] = text
+  }
+  return out
+}
+
+export const auditApi = {
+  entries: (filter: AuditFilter, after?: number, limit = AUDIT_PAGE) =>
+    api.get<{ entries: AuditEntry[]; tip: AuditTip }>('/audit/entries', {
+      params: { ...auditParams(filter), ...(after != null ? { after } : {}), limit },
+    }),
+  exportTrail: (filter: AuditFilter) =>
+    api.get<Blob>('/audit/export', { params: auditParams(filter), responseType: 'blob' }),
+  /** Export the filter and save it as an NDJSON file. */
+  download: async (filter: AuditFilter, filename = 'audit.ndjson') => {
+    const res = await auditApi.exportTrail(filter).catch(async (e) => {
+      // a blob response carries its error body as a Blob; read it so the caller sees the detail
+      const data = e?.response?.data
+      if (data instanceof Blob) {
+        try { e.response.data = JSON.parse(await data.text()) } catch { /* not JSON */ }
+      }
+      throw e
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  verify: (first?: number, last?: number) =>
+    api.get<AuditVerify>('/audit/verify', { params: { first, last } }),
+}
+
 export interface FederationSourceView {
   source_id: string
   enabled: boolean
@@ -1100,6 +1162,32 @@ export interface FederationSourceView {
 interface FederationListResponse {
   sources: FederationSourceView[]
   global: { enabled: boolean }
+}
+
+export interface AuditFeed {
+  enabled: boolean
+  host: string
+  port: number | null
+  ca_set: boolean
+  client_cert_set: boolean
+  last_delivered_at: string | null
+  last_delivered_seq: number | null
+  last_error: string | null
+  behind: number
+  tip_seq: number
+}
+
+export const auditFeedApi = {
+  get: () => api.get<AuditFeed>('/audit/feed'),
+  save: (body: {
+    enabled: boolean
+    host: string
+    port: number | null
+    ca_pem: string | null
+    client_cert_pem: string | null
+    client_key_pem: string | null
+  }) => api.put<AuditFeed>('/audit/feed', body),
+  test: () => api.post<{ ok: boolean }>('/audit/feed/test'),
 }
 
 export const federationApi = {
@@ -1230,7 +1318,6 @@ export interface OverviewOutcome {
   state: string
   label: string
   count: number | null
-  source_text: string
   info: string | null
   unmeasured_text: string | null
 }
@@ -1250,11 +1337,9 @@ export interface OverviewFeedItem {
   severity: string | null
   data_source: string
   terminal_state: string
-  terminal_label: string
   title: string | null
   description: string | null
   created_at: string | null
-  evidence_links: Array<{ ref?: string }>
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
@@ -1265,7 +1350,6 @@ export interface OverviewPayload {
   day: string
   empty: boolean
   arrivals: OverviewArrival[]
-  engine: { source_text: string }
   outcomes: OverviewOutcome[]
   running_source: string
   step_source: string
@@ -1294,9 +1378,6 @@ export interface TriageRow {
   age_seconds: number
   ttl_seconds: number
   last_quarter: boolean
-  score: null
-  trust: null
-  weight: null
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null
@@ -1332,7 +1413,6 @@ export interface TriagePayload {
     }
     waiting: number
     cases_created_today: number
-    trust_floor: string
   }
   /** rows that pass the filters, before the row cap */
   matched: number
@@ -1352,7 +1432,6 @@ export interface TriagePayload {
     trust_floor: TriageInfo & { limit: string }
   }
   breakdown_info: { trust: string; weight: string; score: string }
-  unmeasured_text: string
 }
 
 export interface TriageQuery {

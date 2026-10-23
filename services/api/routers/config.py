@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
+from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth.permissions import permission_gate
 from core.config import (
     get_settings,
@@ -35,7 +36,10 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.approval_service import APPROVAL_CONFIG_KEY
+from core.response.approval_service import (
+    APPROVAL_CONFIG_KEY,
+    read_stored_force_manual_approval,
+)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -816,14 +820,23 @@ def get_integrations_config():
         redacted = {
             iid: redact_secrets(iid, cfg or {})
             for iid, cfg in loaded["integrations"].items()
+            if iid != AUDIT_FEED_INTEGRATION_ID
         }
         return {
             "configured": True,
-            "enabled_integrations": loaded["enabled_integrations"],
+            "enabled_integrations": [
+                iid
+                for iid in loaded["enabled_integrations"]
+                if iid != AUDIT_FEED_INTEGRATION_ID
+            ],
             "integrations": redacted,
             "secrets_set": _secrets_set_map(redacted),
             # {id: {at, success, error}} from POST .../test; untested ids absent
-            "last_test": loaded.get("last_test", {}),
+            "last_test": {
+                iid: info
+                for iid, info in (loaded.get("last_test") or {}).items()
+                if iid != AUDIT_FEED_INTEGRATION_ID
+            },
         }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
@@ -868,6 +881,10 @@ def set_integrations_config(
     # one requires the caller to supply the credential again. Checked for every
     # integration before anything is written.
     for integration_id, raw_config in config.integrations.items():
+        # The syslog feed has its own route and audit.forward. A settings save
+        # must not retarget it, and must not write a second trail entry for it.
+        if integration_id == AUDIT_FEED_INTEGRATION_ID:
+            continue
         stored = config_service.get_integration_config(integration_id) or {}
         missing = credentials_to_resupply(
             integration_id, stored.get("config") or {}, raw_config or {}
@@ -895,6 +912,8 @@ def set_integrations_config(
     sanitized_integrations: dict = {}
     not_stored: list[str] = []
     for integration_id, raw_config in config.integrations.items():
+        if integration_id == AUDIT_FEED_INTEGRATION_ID:
+            continue
         secrets, non_secrets = split_secrets(integration_id, raw_config)
         field_by_env = {
             env: field for field, env in secret_fields_for(integration_id).items()
@@ -1688,13 +1707,6 @@ def _environment_wins() -> bool:
     return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
 
 
-def _stored_force_manual(config_service) -> bool:
-    value = config_service.read_system_config(APPROVAL_CONFIG_KEY)
-    if isinstance(value, dict):
-        return bool(value.get("enabled", False))
-    return False
-
-
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
 def get_force_manual_approval():
     """Read ``approval.force_manual_approval`` without inserting a default row.
@@ -1703,7 +1715,7 @@ def get_force_manual_approval():
     approvals as off while the stored flag may be forcing them on.
     """
     try:
-        enabled = _stored_force_manual(get_config_service())
+        enabled = read_stored_force_manual_approval()
     except Exception as e:
         logger.error(f"Error getting force-manual approval: {e}")
         raise HTTPException(

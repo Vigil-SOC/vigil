@@ -3,6 +3,7 @@ import { utcDayClock } from '../../shared/utc'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
+import type { Schema } from '../../services/apiTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -29,6 +30,13 @@ export interface CaseClosureView {
   closed_at: string | null
   verdict: string
 }
+
+export type CaseStatus = NonNullable<Schema<'CaseUpdate'>['status']>
+
+const CASE_STATUSES: Record<CaseStatus, true> = { new: true, open: true, investigating: true, closed: true }
+
+export const isCaseStatus = (value: string): value is CaseStatus =>
+  Object.prototype.hasOwnProperty.call(CASE_STATUSES, value)
 
 export const CLOSURE_CATEGORIES = [
   { value: 'resolved', label: 'Resolved' },

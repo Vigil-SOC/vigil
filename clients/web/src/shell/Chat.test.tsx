@@ -372,6 +372,147 @@ describe('Ask Vigil dock', () => {
   })
 })
 
+describe('deleting the open conversation', () => {
+  function historyRow(id: string, title: string, at: string) {
+    return {
+      id,
+      title,
+      message_count: 2,
+      last_message_at: at,
+      updated_at: null,
+      archived: false,
+      case_id: null,
+      page_context: null,
+    }
+  }
+
+  async function ask(text: string) {
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: text } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  }
+
+  async function openThread(): Promise<string> {
+    vi.mocked(streamFetch).mockResolvedValue(replyStream('All quiet.'))
+    const view = renderChat()
+    await ask('status?')
+    await screen.findByText('All quiet.')
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    const openId = body.session_id as string
+    historyState.items = [
+      historyRow(openId, 'Open thread', '2026-03-02T15:00:00Z'),
+      historyRow('other-thread', 'Other thread', '2026-03-01T15:00:00Z'),
+    ]
+    view.rerender(<Chat open onClose={vi.fn()} pageKey="overview" pageTitle="Overview" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    return openId
+  }
+
+  function historyList() {
+    return document.querySelector('.chist-list') as HTMLElement
+  }
+
+  function deleteRow(title: string) {
+    const row = within(historyList()).getByText(title).closest('.chist-row') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: 'Delete' }))
+  }
+
+  it('starts a new empty session and does not bring the deleted conversation back', async () => {
+    vi.mocked(conversationsApi.delete).mockImplementation(async (id: string) => {
+      historyState.items = historyState.items.filter((row) => row.id !== id)
+      return { data: { deleted: true } } as never
+    })
+    const openId = await openThread()
+    deleteRow('Open thread')
+
+    await waitFor(() => expect(within(historyList()).queryByText('Open thread')).toBeNull())
+    expect(conversationsApi.delete).toHaveBeenCalledWith(openId)
+    expect(within(historyList()).getByText('Other thread')).toBeInTheDocument()
+    expect(document.querySelector('.ch-convo')).toHaveTextContent('New conversation')
+    const cached = JSON.parse(localStorage.getItem('soc.chat.history.user-1') || '[]') as Array<{
+      id: string
+      messages?: Array<{ text: string }>
+    }>
+    expect(cached.some((c) => c.id === openId || c.messages?.some((m) => m.text === 'All quiet.'))).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.queryByText('All quiet.')).toBeNull()
+    expect(screen.queryByText('status?')).toBeNull()
+    expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
+
+    vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+    await ask('again?')
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const next = JSON.parse((vi.mocked(streamFetch).mock.calls[1][1] as { body: string }).body)
+    expect(next.session_id).not.toBe(openId)
+    expect(next.messages).toEqual([{ role: 'user', content: 'again?' }])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(within(historyList()).queryByText('Open thread')).toBeNull()
+    expect(within(historyList()).getByText('Other thread')).toBeInTheDocument()
+  })
+
+  it('starts a new session when the open conversation was already deleted elsewhere', async () => {
+    const openId = await openThread()
+    vi.mocked(conversationsApi.delete).mockRejectedValue({ response: { status: 404 } })
+    deleteRow('Open thread')
+    await waitFor(() => expect(conversationsApi.delete).toHaveBeenCalledWith(openId))
+    await waitFor(() => expect(document.querySelector('.ch-convo')).toHaveTextContent('New conversation'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+    await ask('again?')
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const next = JSON.parse((vi.mocked(streamFetch).mock.calls[1][1] as { body: string }).body)
+    expect(next.session_id).not.toBe(openId)
+    expect(next.messages).toEqual([{ role: 'user', content: 'again?' }])
+  })
+
+  it('keeps the open session when the delete fails', async () => {
+    vi.mocked(conversationsApi.delete).mockRejectedValue(new Error('nope'))
+    const openId = await openThread()
+    deleteRow('Open thread')
+    await waitFor(() => expect(conversationsApi.delete).toHaveBeenCalledWith(openId))
+    expect(within(historyList()).getByText('Open thread')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.getByText('All quiet.')).toBeInTheDocument()
+    vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+    await ask('again?')
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const same = JSON.parse((vi.mocked(streamFetch).mock.calls[1][1] as { body: string }).body)
+    expect(same.session_id).toBe(openId)
+    expect(same.messages.map((m: { content: string }) => m.content)).toEqual([
+      'status?',
+      'All quiet.',
+      'again?',
+    ])
+  })
+
+  it('leaves the open transcript when a different conversation is deleted', async () => {
+    vi.mocked(conversationsApi.delete).mockImplementation(async (id: string) => {
+      historyState.items = historyState.items.filter((row) => row.id !== id)
+      return { data: { deleted: true } } as never
+    })
+    const openId = await openThread()
+    deleteRow('Other thread')
+    await waitFor(() => expect(within(historyList()).queryByText('Other thread')).toBeNull())
+    expect(within(historyList()).getByText('Open thread')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    expect(screen.getByText('All quiet.')).toBeInTheDocument()
+    vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+    await ask('again?')
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const same = JSON.parse((vi.mocked(streamFetch).mock.calls[1][1] as { body: string }).body)
+    expect(same.session_id).toBe(openId)
+    expect(same.messages.map((m: { content: string }) => m.content)).toEqual([
+      'status?',
+      'All quiet.',
+      'again?',
+    ])
+  })
+})
+
 describe('outside a secure context', () => {
   it('renders and sends a v4 session id when crypto.randomUUID is missing', async () => {
     // plain HTTP at a LAN address: browsers leave randomUUID undefined

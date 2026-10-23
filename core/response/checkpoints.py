@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -66,14 +67,19 @@ def raise_for_checkpoint(
 # one was buried in them. Rejected rather than deleted, because who asked and why
 # it went unanswered is the record.
 def withdraw_for_run(run_id: str, reason: str, approvals=None) -> int:
-    from core.response.approval_service import ActionStatus, ApprovalService
+    from core.response.approval_service import (
+        ActionStatus,
+        AlreadyDecided,
+        ApprovalService,
+    )
 
     service = approvals or ApprovalService()
     open_ones = service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
     for action in open_ones:
-        service.reject_action(action.action_id, reason, rejected_by="agent")
+        with suppress(AlreadyDecided):
+            service.reject_action(action.action_id, reason, rejected_by="agent")
     if open_ones:
         logger.info("withdrew %d unanswered approvals for %s", len(open_ones), run_id)
     return len(open_ones)
@@ -90,7 +96,7 @@ def withdraw_for_run(run_id: str, reason: str, approvals=None) -> int:
 def expire_stale(older_than_days: int, approvals=None) -> int:
     from datetime import timedelta
 
-    from core.response.approval_service import ApprovalService
+    from core.response.approval_service import AlreadyDecided, ApprovalService
     from core.time import utcnow
 
     if older_than_days < 1:
@@ -105,7 +111,8 @@ def expire_stale(older_than_days: int, approvals=None) -> int:
     reason = f"expired: unanswered for more than {older_than_days} days"
     stale = service.list_stale_pending(cutoff)
     for action_id in stale:
-        service.reject_action(action_id, reason, rejected_by="system")
+        with suppress(AlreadyDecided):
+            service.reject_action(action_id, reason, rejected_by="system")
     if stale:
         logger.info(
             "expired %d approvals unanswered since before %s",
