@@ -7,9 +7,9 @@ metadata:
   labels:
     {{- include "vigil.componentLabels" (dict "context" . "component" "llm-worker") | nindent 4 }}
 spec:
-  {{- if not .Values.llmWorker.autoscaling.enabled }}
-  replicas: {{ .Values.llmWorker.replicaCount }}
-  {{- end }}
+  # Always set, the autoscaler's minimum under one: the upgrade hook scales
+  # every workload to 0, and Helm only scales back what the manifest names.
+  replicas: {{ ternary .Values.llmWorker.autoscaling.minReplicas .Values.llmWorker.replicaCount .Values.llmWorker.autoscaling.enabled }}
   selector:
     matchLabels:
       {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "llm-worker") | nindent 6 }}

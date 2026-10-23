@@ -222,9 +222,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -f kubeconform.tar.gz \
     && kubeconform -v
 
-# ci-cd.yml's Helm Install Schema job and medic-helm.yml both run
-# `yq -i 'del(.dependencies)'` before `helm template`, and the schema job
-# then reads the rendered Job with `yq -0`. Neither workflow installs yq:
+# medic-helm.yml runs `yq -i 'del(.dependencies)'` before `helm template`.
+# The workflow does not install yq:
 # ubuntu-latest ships mikefarah yq 4.54.1 (image 20261012.334.1). This base
 # does not, so that command cannot be run here. Same version. The SHA256 is
 # field 19 of the release `checksums` file, which is the field the runner
