@@ -102,21 +102,6 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
 }
 
 export const aiDecisionsApi = {
-  create: (data: {
-    decision_id: string
-    agent_id: string
-    decision_type: string
-    confidence_score: number
-    reasoning: string
-    recommended_action: string
-    finding_id?: string
-    case_id?: string
-    workflow_id?: string
-    decision_metadata?: any
-  }) => api.post('/ai/decisions', data),
-  
-  getById: (decisionId: string) => api.get(`/ai/decisions/${decisionId}`),
-  
   list: (params?: {
     agent_id?: string
     finding_id?: string
@@ -136,32 +121,13 @@ export const aiDecisionsApi = {
     time_saved_minutes?: number
   }) => api.post(`/ai/decisions/${decisionId}/feedback`, data),
   
-  getStats: (params?: {
-    agent_id?: string
-    days?: number
-  }) => api.get('/ai/decisions/stats', { params }),
+  getStats: () => api.get('/ai/decisions/stats'),
   
   getPendingFeedback: (limit?: number) =>
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
 }
 
-export interface NeedsYouItem {
-  /** `parked`: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. */
-  kind: 'checkpoint' | 'approval' | 'parked'
-  source_id: string
-  title: string
-  reason: string
-  /** '' when nothing recorded when it started waiting. */
-  created_at: string
-  reversibility: string
-  case_id: string | null
-  run_id?: string | null
-  /** The run's own checkpoint this item answers, so a page reading the run can tell it was answered. */
-  checkpoint_id?: string | null
-  checkpoint_class?: string | null
-  /** A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat. */
-  hypotheses?: { hypothesis_id: string; statement: string; provenance: string }[]
-}
+export type NeedsYouItem = Schema<'NeedsYouItem'>
 
 export const approvalsApi = {
   list: (params?: {
@@ -176,8 +142,6 @@ export const approvalsApi = {
     api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', {
       params: caseId ? { case_id: caseId } : undefined,
     }),
-
-  getById: (actionId: string) => api.get(`/approvals/${actionId}`),
 
   approve: (actionId: string, approved_by?: string) =>
     api.post(`/approvals/${actionId}/approve`, { approved_by }),
@@ -427,14 +391,8 @@ export const caseMetricsApi = {
 }
 
 export const caseSearchApi = {
-  search: (data: {
-    query: string
-    filters?: Record<string, any>
-    sort_by?: string
-    sort_order?: string
-    limit?: number
-    offset?: number
-  }) => api.post('/case-search/', data),
+  search: (data: Schema<'SearchRequest'>) =>
+    api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
 export interface ReloadServersResponse {
@@ -583,11 +541,7 @@ export const configApi = {
   getDemoMode: () => api.get('/config/demo-mode'),
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
   getSetupSteps: () =>
-    api.get<{
-      steps: { id: string; title: string; state_line: string; done: boolean; href: string }[]
-      alerts_exist: number
-      demo_enabled: boolean
-    }>('/config/setup-steps'),
+    api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps'),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
@@ -1031,8 +985,8 @@ export const workflowApi = {
 
   // Stop, as opposed to steer. Queues the abort so the run can settle itself and write
   // a report, and escalates behind that: steer('abort') alone leaves a wedged worker running.
-  cancelRun: (runId: string, reason: string, rejectedBy?: string) =>
-    api.post(`/workflows/runs/${runId}/cancel`, { reason, ...(rejectedBy && { rejected_by: rejectedBy }) }),
+  cancelRun: (runId: string, reason: string) =>
+    api.post(`/workflows/runs/${runId}/cancel`, { reason }),
 
   // Another pass over the same ledger, for a finished run whose write-up reads badly.
   // The timeout sits above the backend's own 180s so its answer — the account is still
@@ -1056,7 +1010,6 @@ export const workflowApi = {
     use_case?: string
     trigger_examples?: string[]
     phases: WorkflowPhase[]
-    created_by?: string
   }) => api.post('/workflows/custom', data),
   updateCustom: (id: string, data: Partial<{
     name: string
@@ -1347,7 +1300,6 @@ export interface OverviewOutcome {
   state: string
   label: string
   count: number | null
-  source_text: string
   info: string | null
   unmeasured_text: string | null
 }
@@ -1367,11 +1319,9 @@ export interface OverviewFeedItem {
   severity: string | null
   data_source: string
   terminal_state: string
-  terminal_label: string
   title: string | null
   description: string | null
   created_at: string | null
-  evidence_links: Array<{ ref?: string }>
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
@@ -1382,7 +1332,6 @@ export interface OverviewPayload {
   day: string
   empty: boolean
   arrivals: OverviewArrival[]
-  engine: { source_text: string }
   outcomes: OverviewOutcome[]
   running_source: string
   step_source: string

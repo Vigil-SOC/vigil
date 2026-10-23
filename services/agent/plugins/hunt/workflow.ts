@@ -108,7 +108,7 @@ export async function narrateRun(
   // The kind is on the run's own events, so a rewrite stamps the narrative with the
   // same kind the run carried rather than assuming "hunt".
   const runKind: RunKind = events[0]?.run_kind ?? "hunt";
-  const harness = build<HuntKinds>(runKind, spec, state);
+  const harness = build<HuntKinds>(spec, state);
   // Empty recall_keys: the write-up recalls nothing. It runs after the terminal,
   // over a projection, and a keyed read there would be a read no decision was
   // made on.
