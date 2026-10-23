@@ -348,7 +348,13 @@ def _person(user: User) -> Dict[str, str]:
     """Who a Human Ask runs as: a name for the row, a signed token for the tools."""
     return {
         "started_by": user.username,
-        "principal": tool_principal.mint(user.username, ttl=tool_principal.RUN_TTL),
+        "principal": tool_principal.mint(
+            user.username,
+            person_id=getattr(user, "principal_id", None)
+            or getattr(user, "user_id", None),
+            origin="person",
+            ttl=tool_principal.RUN_TTL,
+        ),
     }
 
 

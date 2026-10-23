@@ -1,6 +1,6 @@
 # Test-only override for tests/medic_compose/test_enable_live.py. Never for installs.
 #
-# Unlike compose.test.yml (S6), the backend, Postgres, db-seed and Redis are the
+# Unlike compose.test.yml (S6), the backend, Postgres, upgrade and Redis are the
 # real ones: the subject is the enable flow creating a real service account that
 # the real gateway logs in with. Bifrost, the pre-upgrade backup, the MCP runner
 # and the agents are stand-ins, so only the backend image has to be built. Names and host
@@ -21,7 +21,7 @@ services:
   postgres:
     container_name: !reset null
     ports: !reset []
-  db-seed:
+  upgrade:
     container_name: !reset null
   redis:
     container_name: !reset null

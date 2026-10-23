@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from core.auth import tool_principal
 from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 
 
@@ -65,7 +66,13 @@ async def test_execute_workflow_enqueues_a_compose_run(monkeypatch):
     assert job["run_kind"] == "compose"
     assert job["reason"] == "start"
     assert job["run_id"] == "run-1"
-    assert "principal" not in job
+    assert job["actor"] == "agent:compose"
+    assert job["origin"] == "alert"
+    claims = tool_principal.read(job["principal"])
+    assert claims.username is None
+    assert claims.agent_id == "agent:compose"
+    assert claims.run_id == "run-1"
+    assert claims.origin == "alert"
 
 
 @pytest.mark.asyncio

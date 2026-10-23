@@ -93,3 +93,30 @@ def test_page_sticks_and_a_blank_case_clears_without_inserting():
     assert replaced is not None
     assert replaced["case_id"] == "CASE-2"
     assert replaced["page_context"] == "overview"
+
+
+def test_case_id_finds_the_exact_case_past_newer_lookalikes():
+    owner = f"analyst-{uuid.uuid4().hex[:8]}"
+    target = f"conv-{uuid.uuid4().hex[:8]}"
+    with get_db_manager().session_scope() as session:
+        session.add(Conversation(id=target, user_id=owner, case_id="CASE-1"))
+        session.add(
+            Conversation(
+                id=f"conv-{uuid.uuid4().hex[:8]}",
+                user_id=f"{owner}-x",
+                case_id="CASE-1",
+            )
+        )
+    with get_db_manager().session_scope() as session:
+        session.add_all(
+            Conversation(
+                id=f"conv-{uuid.uuid4().hex[:8]}",
+                user_id=owner,
+                title=f"about CASE-1 and CASE-{n}",
+                case_id=f"CASE-{n}",
+            )
+            for n in range(100, 150)
+        )
+
+    rows = conversation_service.list_conversations(owner, case_id="CASE-1", limit=1)
+    assert [row["id"] for row in rows] == [target]

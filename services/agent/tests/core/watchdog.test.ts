@@ -208,7 +208,7 @@ describe("a run nobody is working on is put back on the queue", () => {
     expect(await sweepOnce(leases, queue)).toBe(1);
     expect(queue.jobs[0]?.reason).toBe("resume");
     expect(queue.jobs[0]?.run_id).toBe(RUN);
-    expect(queue.jobs[0]?.enqueued_by).toBe("watchdog");
+    expect(queue.jobs[0]?.enqueued_by).toBe("system");
   });
 
   // Claiming is part of discovering, so the run is not handed out twice in the

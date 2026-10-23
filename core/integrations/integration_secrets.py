@@ -41,6 +41,7 @@ from typing import Dict, Iterable, List, Mapping
 from core.config import vigil_path
 from core.integrations._base.descriptor import iter_descriptors
 from core.secrets import get_secret
+from core.storage.config_service import register_integration_secret_redactor
 
 
 def default_env_var(integration_id: str, field_name: str) -> str:
@@ -299,6 +300,10 @@ def redact_secrets(integration_id: str, config: Dict[str, object]) -> Dict[str, 
     if not mapping:
         return dict(config)
     return {k: v for k, v in config.items() if k not in mapping}
+
+
+# Storage records integration changes but cannot import this module.
+register_integration_secret_redactor(redact_secrets)
 
 
 # Config keys that say where the integration connects (server_url, connectorUrl,

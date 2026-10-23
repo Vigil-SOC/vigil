@@ -13,6 +13,7 @@ import re
 import pytest
 from sqlalchemy import text
 
+from core.auth import principals
 from core.auth import service_account as sa
 from core.auth.auth_service import AuthService
 from core.storage.connection import get_db_manager
@@ -98,6 +99,7 @@ def test_a_new_password_rotates_and_clears_failures():
     assert AuthService.verify_password(new, user.password_hash)
     assert not AuthService.verify_password(PASSWORD, user.password_hash)
     assert user.failed_login_count == 0
+    assert user.tokens_valid_after is not None
 
 
 def test_a_new_name_retires_the_old_service_account():
@@ -270,7 +272,6 @@ def test_a_service_account_does_not_close_first_admin_bootstrap():
     _run("ensure", NAME)
 
     with unit_of_work() as session:
-        assert auth_router._has_any_user(session) is False
         assert auth_router.bootstrap_status(session).required is True
 
     AuthService.create_user(
@@ -281,7 +282,7 @@ def test_a_service_account_does_not_close_first_admin_bootstrap():
         role_id="role-viewer",
     )
     with unit_of_work() as session:
-        assert auth_router._has_any_user(session) is True
+        assert auth_router.bootstrap_status(session).required is False
 
 
 def test_ensure_undoes_what_a_stolen_session_could_change():
@@ -302,6 +303,19 @@ def test_ensure_undoes_what_a_stolen_session_could_change():
     assert user.mfa_enabled is False
     assert user.mfa_secret is None
     assert user.mfa_recovery_codes == []
+
+
+def test_a_deleted_service_account_is_not_brought_back():
+    _run("ensure", NAME)
+    with unit_of_work() as session:
+        user = session.query(User).filter(User.username == NAME).one()
+        principals.mark_deleted(session, user.principal_id)
+        user.is_active = False
+
+    code, _, err = _run("ensure", NAME)
+
+    assert code == sa.EX_REFUSED, err
+    assert _user().is_active is False
 
 
 def test_a_database_error_prints_no_parameters(monkeypatch):
