@@ -1,0 +1,1 @@
+MCP update_case status=resolved -> ToolError Error executing tool update_case: 1 validation error for update_caseArguments | status |   Input should be 'new', 'open', 'investigating' or 'closed' [type=literal_error, input_value='resolved', input_type=str] |     For further information visit https://errors.pydantic.dev/2.13/v/literal_error

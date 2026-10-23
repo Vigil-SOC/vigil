@@ -1,0 +1,15 @@
+POST default 200 {"case_id":"case-2026-10-23-9ec86a45","title":"live 2831","description":"","status":"open","priority":"medium","assignee":null,"tags":[],"notes":[],"timeline":[{"event":"Case created","timestamp":"2026-10-23T07:14:54.090231Z"}],"activities":[],"resolution_steps":[],"mitre_techniques
+POST status=resolved 422
+PATCH status='resolved' 422 row: ('open', None)
+PATCH status='Closed' 422 row: ('open', None)
+PATCH status='done' 422 row: ('open', None)
+PATCH status='' 422 row: ('open', None)
+PATCH closed 200 row: ('closed', ('unspecified', 'analyst'))
+PATCH open (reopen) 200 row: ('open', ('unspecified', 'analyst'))
+agent resolved {'error': "Unknown case status 'resolved'; use one of ['new', 'open', 'investigating', 'closed']"} ('open', ('unspecified', 'analyst'))
+agent closed {'success': True, 'case_id': 'case-2026-10-23-9ec86a45'} ('closed', ('unspecified', 'agent'))
+agent closed again {'success': True, 'case_id': 'case-2026-10-23-9ec86a45'} ('closed', ('unspecified', 'agent'))
+agent investigating {'success': True, 'case_id': 'case-2026-10-23-9ec86a45'} ('investigating', ('unspecified', 'agent'))
+by-priority {'priority_breakdown': [{'priority': 'medium', 'count': 2, 'closed_count': 0}]}
+closed queue ids []
+======================== 1 passed, 1 warning in 34.26s =========================

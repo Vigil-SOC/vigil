@@ -1,0 +1,72 @@
+"""Throwaway: drive the real app and the real agent tool against Postgres."""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from core.storage.connection import get_db_session
+from core.storage.models import Case, CaseClosureInfo
+
+pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
+
+
+def _row(case_id):
+    s = get_db_session()
+    try:
+        case = s.get(Case, case_id)
+        closure = s.get(CaseClosureInfo, case_id)
+        return case.status, (
+            closure and (closure.closure_category, closure.closed_by_kind)
+        )
+    finally:
+        s.close()
+
+
+def test_live(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.auth.auth_service import AuthService
+    from core.auth.current_user import get_current_user
+    from services.api.main import app
+
+    monkeypatch.setattr(AuthService, "check_permission", staticmethod(lambda *a: True))
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        username="nestor", user_id="u1", is_active=True
+    )
+    client = TestClient(app)
+    created = client.post(
+        "/api/v1/cases", json={"title": "live 2831", "finding_ids": []}
+    )
+    print("POST default", created.status_code, created.text[:300])
+    case_id = created.json()["case_id"]
+
+    bad = client.post(
+        "/api/v1/cases",
+        json={"title": "x", "finding_ids": [], "status": "resolved"},
+    )
+    print("POST status=resolved", bad.status_code)
+
+    for status in ["resolved", "Closed", "done", ""]:
+        r = client.patch(f"/api/v1/cases/{case_id}", json={"status": status})
+        print(f"PATCH status={status!r}", r.status_code, "row:", _row(case_id))
+
+    r = client.patch(f"/api/v1/cases/{case_id}", json={"status": "closed"})
+    print("PATCH closed", r.status_code, "row:", _row(case_id))
+    r = client.patch(f"/api/v1/cases/{case_id}", json={"status": "open"})
+    print("PATCH open (reopen)", r.status_code, "row:", _row(case_id))
+
+    from core.agents import tool_registry
+
+    print("agent resolved", tool_registry.update_case(case_id=case_id, status="resolved"), _row(case_id))
+    print("agent closed", tool_registry.update_case(case_id=case_id, status="closed"), _row(case_id))
+    print("agent closed again", tool_registry.update_case(case_id=case_id, status="closed"), _row(case_id))
+    print("agent investigating", tool_registry.update_case(case_id=case_id, status="investigating"), _row(case_id))
+
+    # A legacy row written before this change: readers count it open.
+    s = get_db_session()
+    s.add(Case(case_id="legacy-resolved", title="legacy", status="resolved"))
+    s.commit()
+    s.close()
+    by_status = client.get("/api/v1/cases/metrics/by-priority").json()
+    print("by-priority", by_status)
+    queue = client.get("/api/v1/cases", params={"closed": True}).json()
+    print("closed queue ids", [c["case_id"] for c in queue.get("cases", queue.get("items", []))])
