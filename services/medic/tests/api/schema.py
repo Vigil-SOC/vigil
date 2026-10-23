@@ -40,3 +40,10 @@ def validator(name: str) -> Draft202012Validator:
 
 def errors(name: str, doc) -> list[str]:
     return [e.message for e in validator(name).iter_errors(doc)]
+
+
+def record_errors(doc) -> list[str]:
+    """A decision record, the schema `getDecision` and `DecisionPage.items` use."""
+    uri = (CONTRACTS / "decision-record.schema.json").resolve().as_uri()
+    check = Draft202012Validator({"$ref": uri}, registry=REGISTRY)
+    return [e.message for e in check.iter_errors(doc)]
