@@ -56,9 +56,11 @@ from sqlalchemy.dialects.postgresql import ARRAY as PGArray
 from sqlalchemy.orm import Session
 
 from core.agents.attribution import column_present, current_claims
-from core.memory.entity_keys import normalise_keys
+from core.agents.mcp_tools import MCPFailure
+from core.memory.entity_keys import normalise_key, normalise_keys
 from core.memory.recall_contract import (
     DROPPED_KINDS,
+    ENTITY_KEY_TYPES,
     RECALL_IGNORED_ARGS,
     RECALL_KEY_ARGS,
     RECALL_ORDER,
@@ -218,14 +220,8 @@ def _iso(value: Any) -> Any:
     return value
 
 
-# What tools_router._is_bad_arguments matches on, so a mistake the caller can fix
-# comes back as invalid_args and not backend_error -- the contract keeps "the call
-# was wrong" apart from "the tool could not answer", and only the first tells the
-# model to try again. Coupling to the router's wording is fragile in both
-# directions; it is the router's contract, and stating it once here is better than
-# two error classes for two spellings of the same caller mistake.
-def _refuse(detail: str) -> TypeError:
-    return TypeError(f"{RECALL_TOOL}: {detail} (required keyword-only argument)")
+def _refuse(detail: str) -> MCPFailure:
+    return MCPFailure("invalid_args", f"{RECALL_TOOL}: {detail}")
 
 
 def _as_of(raw: Any) -> datetime:
@@ -522,6 +518,15 @@ def recall_entity(args: Args) -> Dict[str, Any]:
         keys = [single] if single else []
     if not keys:
         raise _refuse("a call needs " + " or ".join(RECALL_KEY_ARGS))
+    unknown = [
+        key
+        for key in keys
+        if normalise_key(str(key)).partition(":")[0] not in ENTITY_KEY_TYPES
+    ]
+    if unknown:
+        raise _refuse(
+            f"{unknown} are not type:value with a type in {list(ENTITY_KEY_TYPES)}"
+        )
 
     claims = current_claims()
     principal = None if claims is None else (claims.agent_id or claims.person_id)

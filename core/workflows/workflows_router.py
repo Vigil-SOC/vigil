@@ -2,12 +2,14 @@
 
 import logging
 import re
+from contextlib import suppress
 from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
+from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -26,7 +28,7 @@ from core.memory.source_tier import (
     SourceTier,
     resolve_source_tier,
 )
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import AlreadyDecided, ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.workflows import catalog, hunt_preflight
@@ -34,7 +36,10 @@ from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
 from core.workflows.handoff_cases import stamp_handoff_cases
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import (
+    IN_FLIGHT_STATUSES,
+    WorkflowRunService,
+)
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
@@ -78,10 +83,10 @@ class WorkflowExecuteRequest(BaseModel):
     # sentence, so a subject is declared or a Verdict is recalled by nobody.
     hypothesis_subjects: Optional[Dict[str, List[str]]] = None
     # Turns, not model calls. Bounded so a typo cannot enqueue an hour of spend.
-    iterations: Optional[int] = Field(default=None, ge=1, le=40)
+    iterations: Optional[int] = Field(default=None, ge=1, le=MAX_ITERATIONS)
     # What the caller will spend on this question, which is not a property of the
     # definition. Bounded because a mistyped ceiling is money.
-    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=100)
+    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=MAX_COST_USD)
     # Whether the hunt stops and asks before it spends. The policy defaults to auto,
     # so a headless run advances with nobody at a terminal.
     approve_hypotheses: Optional[bool] = None
@@ -120,7 +125,6 @@ class CustomWorkflowCreate(BaseModel):
     use_case: Optional[str] = ""
     trigger_examples: List[str] = Field(default_factory=list)
     phases: List[WorkflowPhaseSchema] = Field(default_factory=list)
-    created_by: Optional[str] = None
 
 
 class CustomWorkflowUpdate(BaseModel):
@@ -146,7 +150,6 @@ class WorkflowRunCancelRequest(BaseModel):
     """Payload when cancelling a paused / running run from the UI."""
 
     reason: str
-    rejected_by: Optional[str] = None
 
 
 # -----------------------------------------------------------------------------
@@ -230,10 +233,11 @@ async def list_custom_workflows(
 async def create_custom_workflow(
     payload: CustomWorkflowCreate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Create a new custom workflow."""
     try:
-        created = service.create(payload.model_dump())
+        created = service.create(payload.model_dump(), created_by=current_user.username)
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -700,12 +704,15 @@ async def resume_workflow_run(
             "decide each through /approvals/{action_id}",
         )
 
-    approval_service.approve_action(
-        pending[0].action_id,
-        approved_by=approved_by,
-        approved_by_principal_id=getattr(current_user, "principal_id", None)
-        or getattr(current_user, "user_id", None),
-    )
+    try:
+        approval_service.approve_action(
+            pending[0].action_id,
+            approved_by=approved_by,
+            approved_by_principal_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+        )
+    except AlreadyDecided as e:
+        raise HTTPException(status_code=409, detail=str(e))
     return await resume_run(run_id, pending[0].action_id, approved_by)
 
 
@@ -730,19 +737,25 @@ async def cancel_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run.get("status") not in IN_FLIGHT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} has already finished (status={run.get('status')})",
+        )
 
     rejected_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
     for action in pending:
-        approval_service.reject_action(
-            action.action_id,
-            reason=request.reason,
-            rejected_by=rejected_by,
-            approved_by_principal_id=getattr(current_user, "principal_id", None)
-            or getattr(current_user, "user_id", None),
-        )
+        with suppress(AlreadyDecided):
+            approval_service.reject_action(
+                action.action_id,
+                reason=request.reason,
+                rejected_by=rejected_by,
+                approved_by_principal_id=getattr(current_user, "principal_id", None)
+                or getattr(current_user, "user_id", None),
+            )
 
     # A rejection ends the run, but the agent layer is what ends it: this hands
     # the decision over and that side journals it and stops.
@@ -903,7 +916,7 @@ async def delete_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    if run.get("status") in ("running", "paused"):
+    if run.get("status") in IN_FLIGHT_STATUSES:
         raise HTTPException(
             status_code=409,
             detail="This run has not finished. Cancel it before removing it.",

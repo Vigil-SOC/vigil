@@ -26,7 +26,6 @@ export interface ArchEntry {
   arch: string;
   workflow: WorkflowId;
   actions: readonly string[];
-  halts: readonly string[];
   // Sections of the playbook and config this workflow reads. The loader accepts
   // them and looks no further: their meaning is the workflow's to give.
   owned?: Owned;
@@ -46,7 +45,7 @@ export interface ArchEntry {
 }
 
 // The hunt lead-loop, minus its arch prompt. `hunt` and `adjudicate` run this exact
-// loop — same actions, halts, ownership, projection and notes — and differ only in
+// loop, with the same actions, ownership, projection and notes, and differ only in
 // the arch that frames the lead's job, so the shared mechanics live here and drift
 // between the kinds is impossible rather than a two-place edit. `root_cause` does
 // not: a backward trace is its own workflow.
@@ -55,7 +54,6 @@ export interface ArchEntry {
 const HUNT_LOOP: Omit<ArchEntry, "arch"> = {
   workflow: "hunt",
   actions: ["INVESTIGATE", "EXPAND", "PIVOT", "DEEPEN", "ABANDON", "VALIDATE", "CHECKPOINT", "CONCLUDE", "HANDOFF_IR"],
-  halts: ["CONCLUDE"],
   owned: { playbook: ["hypotheses", "attack_techniques", "data_domains"], config: ["enrichment", "checkpoints", "hypothesis_loop"] },
   notes: (state, runId) => huntNotes(state as unknown as State<HuntKinds>, runId),
   // Either engine answers in the hunt's shape; a kernel hunt's moves are its calls.
@@ -78,7 +76,6 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     arch: packaged("rootcause"),
     workflow: "rootcause",
     actions: [],
-    halts: [],
     owned: { config: ["checkpoints", "root_cause_index"] },
     // A run answers in the shape of the engine that wrote it: v3's moves and report, else the kernel plugin's trace.
     projection: (runId, events) =>
@@ -93,7 +90,6 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     arch: packaged("investigate"),
     workflow: "lead",
     actions: ["EXAMINE", "CONCLUDE"],
-    halts: ["CONCLUDE"],
     plugin: "investigate",
     // Either engine answers in the lead's shape, so the console needs no second view.
     projection: (runId, events) =>
@@ -105,12 +101,11 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     arch: packaged("compose"),
     workflow: "compose",
     actions: [],
-    halts: [],
     projection: composeProjection,
   },
   // No actions: the lead answers in prose, so there is no emission to constrain.
   // Served over SSE by serve.ts rather than the queue, so drive() never sees it.
-  chat: { arch: packaged("chat"), workflow: "lead", actions: [], halts: [] },
+  chat: { arch: packaged("chat"), workflow: "lead", actions: [] },
 };
 
 // A plugin's plugin.yaml, which carries the arch layer too. Resolved against the

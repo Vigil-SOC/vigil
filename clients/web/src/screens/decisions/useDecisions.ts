@@ -122,7 +122,7 @@ export interface DecisionStats {
   outcomes: Record<string, number>
 }
 
-export function useDecisionStats(agentId: string, days?: number) {
+export function useDecisionStats() {
   const [stats, setStats] = useState<DecisionStats | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -133,11 +133,8 @@ export function useDecisionStats(agentId: string, days?: number) {
     let cancelled = false
     setPhase('loading')
     setError(null)
-    const params: { agent_id?: string; days?: number } = {}
-    if (agentId !== 'all') params.agent_id = agentId
-    if (days) params.days = days
     aiDecisionsApi
-      .getStats(params)
+      .getStats()
       .then((res) => {
         if (cancelled) return
         setStats(res.data as DecisionStats)
@@ -151,7 +148,7 @@ export function useDecisionStats(agentId: string, days?: number) {
     return () => {
       cancelled = true
     }
-  }, [agentId, days, reloadKey])
+  }, [reloadKey])
 
   return { stats, phase, error, reload }
 }
