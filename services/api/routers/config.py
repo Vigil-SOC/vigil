@@ -12,6 +12,7 @@ from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth.permissions import permission_gate
 from core.config import (
+    _load_json_config,
     get_settings,
     is_demo_mode,
     load_integrations_config,
@@ -1242,7 +1243,8 @@ def set_general_config(
             status_code=500, detail="Failed to save configuration to database"
         )
 
-    _mirror_to_file("general_config.json", config_data)
+    existing = _load_json_config(vigil_path("general_config.json"))
+    _mirror_to_file("general_config.json", {**existing, **config_data})
 
     # Update the global secrets manager if keyring setting changed
     try:
