@@ -263,7 +263,6 @@ vi.mock('../services/api', () => ({
         day: '2026-10-01',
         empty: true,
         arrivals: [],
-        engine: { source_text: '' },
         outcomes: [],
         running_source: '',
         step_source: '',
@@ -859,8 +858,8 @@ describe('SocConsole', () => {
     it('opens the case from an Overview alert in place of the alert, and Back leaves both closed', async () => {
       const base = (await overviewApi.get()).data
       const alert = {
-        finding_id: 'f-1', severity: 'high', data_source: 'splunk', terminal_state: 'working', terminal_label: 'Still working',
-        title: null, description: 'Odd login', created_at: '2026-10-01T00:01:00', evidence_links: [], source_link: null,
+        finding_id: 'f-1', severity: 'high', data_source: 'splunk', terminal_state: 'working',
+        title: null, description: 'Odd login', created_at: '2026-10-01T00:01:00', source_link: null,
         case_id: 'case-2026-0142', noise_marked: false,
       }
       const get = vi.spyOn(overviewApi, 'get').mockResolvedValue({ data: { ...base, empty: false, feed: [alert] } } as never)

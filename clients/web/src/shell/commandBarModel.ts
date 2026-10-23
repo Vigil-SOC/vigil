@@ -1,5 +1,7 @@
 /** Command palette rows. The last four are display-only. */
 
+import { useEffect, useState } from 'react'
+import { configApi } from '../services/api'
 import type { IconName } from '../shared/icons'
 
 export type LiveCommandId = 'investigate' | 'hunt' | 'replay' | 'ask' | 'ticket'
@@ -291,6 +293,23 @@ export function jiraReadiness(data: JiraConfigRead | null): JiraReadiness {
   if (!projectKey) missing.push('project_key')
   if (missing.length > 0) return { gap: `Jira is missing ${missing.join(', ')}`, projectKey }
   return { gap: null, projectKey }
+}
+
+export function useJiraReadiness(): JiraReadiness {
+  const [jira, setJira] = useState(() => jiraReadiness(null))
+  useEffect(() => {
+    let live = true
+    configApi
+      .getIntegrations()
+      .then((res) => {
+        if (live) setJira(jiraReadiness(res.data))
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
+  return jira
 }
 
 export function commandPreview(
