@@ -1,4 +1,4 @@
-"""One Medic, wired: sensors → bus → K2 choke → engine (15 s tick) → router R1 → store.
+"""One Medic, wired: sensors → bus → K2 choke → engine (15 s tick) → router → store.
 
 Each cycle the scheduler starts the sensors that are due, the pipeline hands every
 finished, redacted observation to the engine, and the engine evaluates the tick on
@@ -88,6 +88,7 @@ class Medic:
         engine_state: dict[str, Any] | None = None,
         suppression: Sequence[Mapping[str, Any]] = (),
         group_cap: int = GROUP_CAP,
+        vigil_dev_mode: bool = False,
     ) -> None:
         self.writer, self.clock = writer, clock
         self.engine = Engine(
@@ -102,7 +103,12 @@ class Medic:
         self.bus = Bus(Stats())
         self.sink = EngineSink(self.engine)
         self.pipeline = Pipeline(self.bus, self.sink)
-        self.scheduler = Scheduler(sensors, SensorContext(shape=shape), self.bus, clock)
+        self.scheduler = Scheduler(
+            sensors,
+            SensorContext(shape=shape, vigil_dev_mode=vigil_dev_mode),
+            self.bus,
+            clock,
+        )
         self.unstored = 0  # records the store refused or couldn't take
         self._stepped_back = False
 
@@ -123,8 +129,10 @@ class Medic:
             return []  # same tick again, or the wall clock stepped back
         self._stepped_back = False
         stored = []
-        for record in self.engine.tick(datetime.fromtimestamp(tick, UTC)):
-            routed = {"v": 1, **self.router.route(record)}
+        records = self.engine.tick(datetime.fromtimestamp(tick, UTC))
+        status = self.engine.status()  # this tick's runtime_untrusted flags (R3)
+        for record in records:
+            routed = {"v": 1, **self.router.route(record, status)}
             try:
                 stored.append(self.writer.append(routed))
             # C5: the loop keeps beating whatever state the store is in (G3 adds
