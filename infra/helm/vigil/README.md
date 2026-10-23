@@ -58,7 +58,8 @@ their image's revision. See [docs/upgrading.md](../../../docs/upgrading.md#helm)
   nothing is stopped and the previous release keeps serving. Then a second Job
   (weight 0) scales every Deployment and StatefulSet of the release except
   Postgres and Redis to 0, pauses KEDA, waits for the pods to go, ends leftover
-  `vigil_app` sessions, and upgrades. Only that Job mounts a token, for a
+  `vigil_app` sessions (a non-superuser owner needs `pg_signal_backend` for
+  that), and upgrades. Only that Job mounts a token, for a
   namespace Role that can scale and patch ScaledObjects. Nothing is
   cluster-scoped. Give `--timeout` enough time for the whole window.
 - **Hook leftovers.** The upgrade ServiceAccount, Role, RoleBinding, ConfigMap,

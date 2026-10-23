@@ -457,8 +457,9 @@ upgrade:
   # false renders none of this: run `python -m core.upgrade` as the owner
   # yourself before app pods can start.
   enabled: true
-  # This release's version (the chart appVersion). A value left over from an
-  # earlier upgrade refuses, as does an empty one.
+  # This release's version (the chart appVersion; the backend image must be the
+  # same version). A value left over from an earlier upgrade refuses, as does an
+  # empty one.
   acknowledgeVersion: ""
   # Why you are upgrading without a Vigil restore point, e.g. "nightly RDS
   # snapshot 2026-10-22". Recorded in history.jsonl. Required.
@@ -1027,7 +1028,7 @@ medic:
   # agentWorker.enabled: the egress policy allows only the chart's agent worker.
   agentWorkerAddr: ""
   # The Kubernetes API server's address(es), as CIDRs, for Medic's egress policy
-  # (TCP `ports` only). Filled at install by looking up the `kubernetes`
+  # and, with networkPolicies.enabled, the upgrade Jobs' (TCP `ports` only). Filled at install by looking up the `kubernetes`
   # endpoints; set by hand where lookup can't run (`helm template`, Argo CD,
   # Flux), e.g. from `kubectl get endpointslice kubernetes -n default`.
   kubeApi:

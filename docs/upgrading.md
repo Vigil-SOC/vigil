@@ -29,25 +29,25 @@ helm upgrade vigil infra/helm/vigil -n vigil --reuse-values --timeout 30m \
   --set upgrade.acknowledgeReason="RDS snapshot vigil-2026-10-22 taken at 09:00"
 ```
 
-`upgrade.acknowledgeVersion` must equal the chart's `appVersion`. A value left over from an earlier upgrade (with `--reuse-values`, the previous one) refuses, as does an empty reason. That way each upgrade is acknowledged separately.
+`upgrade.acknowledgeVersion` must equal the chart's `appVersion`, and the backend image must be that version. A value left over from an earlier upgrade (with `--reuse-values`, the previous one) refuses, as does an empty reason. That way each upgrade is acknowledged separately.
 
 **Install.** A post-install Job takes the empty database to head and sets `vigil_app`'s password. App pods fail their startup check until it finishes, then become Ready. Do not pass `--wait` on the first install. Helm waits for Ready before it runs post-install hooks, so the install would time out.
 
 **Upgrade.** Two pre-upgrade Jobs run before Helm changes any manifest:
 
 1. Weight -10 checks the acknowledgement, then runs `python -m core.upgrade --check`. When it refuses, Helm stops. Nothing has been stopped, and the previous release keeps serving.
-2. Weight 0 records the replica count of every Deployment and StatefulSet in the release, and the KEDA pause annotation on their ScaledObjects. Postgres and Redis are left out. It pauses KEDA (`autoscaling.keda.sh/paused-replicas: "0"`) and scales the workloads to 0. That covers the API, daemon, workers, agent processes, MCP runner, Medic and its gateway, pgAdmin and Splunk. An HPA stops acting on a target at 0 replicas, so HPAs are not changed. The Job waits until those pods are gone (`upgrade.stopTimeoutSeconds`), terminates the remaining `vigil_app` sessions, and runs the upgrade. Then Helm applies the new manifests, and the new pods start at head.
+2. Weight 0 records the replica count of every Deployment and StatefulSet in the release, and the KEDA pause annotation on their ScaledObjects. Postgres and Redis are left out. It pauses KEDA (`autoscaling.keda.sh/paused-replicas: "0"`) and scales the workloads to 0. That covers the API, daemon, workers, agent processes, MCP runner, Medic and its gateway, pgAdmin and Splunk. An HPA stops acting on a target at 0 replicas, so HPAs are not changed. The Job waits until those pods are gone (`upgrade.stopTimeoutSeconds`), terminates the remaining `vigil_app` sessions in the database, and runs the upgrade. Where the owner is not a superuser (Bitnami, most managed databases), ending another role's session needs `pg_signal_backend`. Without that grant, an upgrade that finds a leftover session refuses and restores. Then Helm applies the new manifests, and the new pods start at head.
 
 From the scale-down until the new pods are Ready, nothing is served. Plan this as a maintenance window and give `--timeout` enough time for it. Source events are not queued. When the release is back, pollers re-read their lookback.
 
 When the upgrade fails:
 
 - **`alembic_version` unchanged.** The Job puts back the replica counts and KEDA annotations it recorded, and exits non-zero. The previous release serves again. A refusal does this, and so does an adoption that rolled back.
-- **`alembic_version` changed.** A revision has run, so the workloads stay at 0. Restore your own backup of the database, then run `helm rollback`.
+- **`alembic_version` changed.** A revision has run, so the workloads stay at 0 and KEDA stays paused. Restore your own backup of the database, then run `helm rollback`. Then remove the pause annotation from each ScaledObject; the Job's log prints the `kubectl annotate` command for each one. `helm rollback` does not remove an annotation it never set.
 
 A 0.7.0 or 0.8.0 Helm database is adopted by the command, as described below. A database with any other stamp refuses at the weight -10 check, and the previous release keeps serving.
 
-**Check only.** To see what an upgrade would do, run `--check` once as a Job of the new backend image, logged in as the owner. Do not use `helm upgrade` for this. For the in-chart Postgres, with release `vigil` in namespace `vigil`:
+**Check only.** To see what an upgrade would do, run `--check` once as a Job of the new backend image, logged in as the owner. Do not use `helm upgrade` for this. Without the acknowledgement, a pending upgrade answers `needs_restore_point` and exits 1. With it, the answer is `apply`. For the in-chart Postgres, with release `vigil` in namespace `vigil`:
 
 ```bash
 kubectl -n vigil apply -f - <<'EOF'
@@ -78,8 +78,12 @@ spec:
             - {name: POSTGRES_USER, value: deeptempo}   # the owner, not vigil_app
             - name: POSTGRES_PASSWORD
               valueFrom: {secretKeyRef: {name: vigil-postgres, key: POSTGRES_PASSWORD}}
+            - {name: VIGIL_UPGRADE_ACK_VERSION, value: "0.8.0"}
+            - {name: VIGIL_UPGRADE_ACK_REASON, value: "check only"}
 EOF
-kubectl -n vigil wait --for=condition=complete --timeout=5m job/vigil-upgrade-check-only
+# Exit 0 or 1 both carry the report: wait for either.
+until kubectl -n vigil get job/vigil-upgrade-check-only \
+    -o jsonpath='{.status.succeeded}{.status.failed}' | grep -q 1; do sleep 2; done
 kubectl -n vigil logs job/vigil-upgrade-check-only
 ```
 

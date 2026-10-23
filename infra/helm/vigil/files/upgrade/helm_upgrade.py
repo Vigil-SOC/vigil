@@ -184,6 +184,7 @@ def stop(kube: Kube, record: dict, timeout: float) -> None:
     say(f"scaled to 0: {describe(record)}")
     deadline = time.monotonic() + timeout
     while True:
+        # Failed and Succeeded pods (evicted, node shutdown) run nothing.
         left = [
             p["metadata"]["name"]
             for w in record["workloads"]
@@ -191,6 +192,7 @@ def stop(kube: Kube, record: dict, timeout: float) -> None:
                 f"/api/v1/namespaces/{kube.ns}/pods",
                 ",".join(f"{k}={v}" for k, v in sorted(w["selector"].items())),
             )
+            if (p.get("status") or {}).get("phase") not in ("Failed", "Succeeded")
         ]
         if not left:
             return
@@ -268,7 +270,13 @@ def terminate_app_sessions() -> None:
             )
             pids = [r[0] for r in cur.fetchall()]
             for pid in pids:
-                cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                try:
+                    cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                except psycopg2.Error as e:
+                    raise RuntimeError(
+                        f"the owner cannot end vigil_app session {pid} ({e}). "
+                        "Grant it pg_signal_backend, or end the session yourself"
+                    ) from e
         if pids:
             say(f"terminated {len(pids)} vigil_app session(s)")
     finally:
@@ -340,6 +348,7 @@ def apply() -> int:
         terminate_app_sessions()
     except Exception as e:  # noqa: BLE001 - restored, then non-zero exit
         say(f"ERROR before the upgrade ran: {e}")
+        # Kept until the restore succeeds, so a rerun restores from it.
         restore(kube, record)
         forget_record(upgrade_dir)
         return 1
@@ -355,16 +364,24 @@ def apply() -> int:
     except Exception as e:  # noqa: BLE001 - unknown counts as changed
         say(f"could not read alembic_version after the failure: {e}")
         after = object()
-    forget_record(upgrade_dir)
     if after == before:
         say(f"upgrade exited {code}; alembic_version is still {before}: restoring")
         restore(kube, record)
+        forget_record(upgrade_dir)
         return code
+    forget_record(upgrade_dir)
+    # KEDA stays paused too: un-paused, it would start the old pods now.
     say(
         f"upgrade exited {code} after alembic_version moved from {before}: "
         "workloads stay at 0. Restore your own backup of the database, then run "
         "`helm rollback`. Scales before the upgrade: " + describe(record)
     )
+    for so in record["keda"]:
+        say(
+            f"then un-pause KEDA: kubectl -n {kube.ns} annotate scaledobject "
+            f"{so['name']} {KEDA_PAUSE}"
+            + (f"={so['paused']} --overwrite" if so["paused"] is not None else "-")
+        )
     return code
 
 
