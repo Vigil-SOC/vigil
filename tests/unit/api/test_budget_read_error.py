@@ -1,5 +1,3 @@
-"""A failed system_config read must not look like "no key configured"."""
-
 from unittest.mock import patch
 
 import pytest
