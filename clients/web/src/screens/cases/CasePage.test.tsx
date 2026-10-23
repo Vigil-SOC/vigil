@@ -4,12 +4,13 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
 import { ToastProvider } from '../../shell/toast'
-import { approvalsApi, casesApi, orchestratorApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, auditApi, casesApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
 import investigateProjection from '../workflows/__fixtures__/kernel-investigate-projection.json'
 import heldProjection from '../workflows/__fixtures__/kernel-investigate-held-projection.json'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
+  canReadAudit: true,
   cases: [] as Array<Record<string, unknown>>,
   getByIdError: false,
   runs: {} as Record<string, unknown>,
@@ -19,7 +20,9 @@ const testState = vi.hoisted(() => ({
 }))
 
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ hasPermission: (p: string) => p !== 'cases.delete' || testState.canDelete }),
+  useAuth: () => ({
+    hasPermission: (p: string) => (p === 'cases.delete' ? testState.canDelete : p === 'audit.read' ? testState.canReadAudit : true),
+  }),
 }))
 
 vi.mock('../../services/api', () => ({
@@ -49,7 +52,7 @@ vi.mock('../../services/api', () => ({
     getCall: vi.fn(),
     steer: vi.fn(() => Promise.resolve({ data: {} })),
   },
-  orchestratorApi: { exportInvestigation: vi.fn() },
+  auditApi: { download: vi.fn() },
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
@@ -194,6 +197,7 @@ function openCase(id: string) {
 
 beforeEach(() => {
   testState.canDelete = true
+  testState.canReadAudit = true
   testState.getByIdError = false
   testState.cases = []
   testState.runs = {}
@@ -1315,9 +1319,7 @@ describe('case page', () => {
       testState.recordRows = rows
       let resolveVerify: (v: unknown) => void = () => {}
       vi.mocked(workflowApi.verifyRun).mockReturnValue(new Promise((r) => { resolveVerify = r }) as never)
-      vi.mocked(orchestratorApi.exportInvestigation).mockResolvedValue({ data: { a: 1 } } as never)
-      const createUrl = vi.fn(() => 'blob:x')
-      Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: vi.fn() })
+      vi.mocked(auditApi.download).mockResolvedValue(undefined)
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'Verify chain' }))
       const bar = document.querySelector('.rec-bar') as HTMLElement
@@ -1329,13 +1331,13 @@ describe('case page', () => {
       expect(document.querySelector('.detail-body > p.muted')).toBeNull()
       expect(workflowApi.verifyRun).toHaveBeenCalledWith('run/1')
       fireEvent.click(screen.getByRole('button', { name: 'Export audit' }))
-      await waitFor(() => expect(orchestratorApi.exportInvestigation).toHaveBeenCalledWith('inv-1'))
-      expect(createUrl).toHaveBeenCalled()
+      // the trail export, filtered to entries naming this case
+      await waitFor(() => expect(auditApi.download).toHaveBeenCalledWith({ object: 'case-rec' }, 'audit-case-rec.ndjson'))
     })
     it('reports a chain break and a failed export as Poor in the Record header, and clears them on tab leave', async () => {
       testState.recordRows = rows
       vi.mocked(workflowApi.verifyRun).mockResolvedValue({ data: { ok: false, reason: 'hash mismatch at 4' } } as never)
-      vi.mocked(orchestratorApi.exportInvestigation).mockRejectedValue({ response: { data: { detail: 'Export failed: no access' } } })
+      vi.mocked(auditApi.download).mockRejectedValue({ response: { data: { detail: 'Export failed: no access' } } })
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'Verify chain' }))
       const bar = document.querySelector('.rec-bar') as HTMLElement
@@ -1349,20 +1351,27 @@ describe('case page', () => {
       await screen.findByRole('button', { name: 'Verify chain' })
       expect(screen.queryByText(/Export failed/)).not.toBeInTheDocument()
     })
-    it('disables Export audit, with an ⓘ saying why, when the run has no investigation id', async () => {
+    it('exports from the case id even when the run has no investigation id', async () => {
       testState.recordRows = rows
       await openRecord(async () => {
         const [row] = testState.cases as unknown as { investigations: unknown[] }[]
         row.investigations = row.investigations.map((item) => ({ ...(item as object), investigation_id: null }))
         return renderCase('case-rec')
       })
+      fireEvent.click(await screen.findByRole('button', { name: 'Export audit' }))
+      await waitFor(() => expect(auditApi.download).toHaveBeenCalledWith({ object: 'case-rec' }, 'audit-case-rec.ndjson'))
+    })
+    it('disables Export audit, with an ⓘ saying why, without audit.read', async () => {
+      testState.recordRows = rows
+      testState.canReadAudit = false
+      await openRecord()
       const button = await screen.findByRole('button', { name: 'Export audit' })
       expect(button).toBeDisabled()
-      vi.mocked(orchestratorApi.exportInvestigation).mockClear()
+      vi.mocked(auditApi.download).mockClear()
       fireEvent.click(button)
-      expect(orchestratorApi.exportInvestigation).not.toHaveBeenCalled()
+      expect(auditApi.download).not.toHaveBeenCalled()
       fireEvent.click(screen.getByRole('button', { name: 'Why Export audit is unavailable' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('This run has no investigation record to export.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('needs the audit.read permission')
     })
 
   })

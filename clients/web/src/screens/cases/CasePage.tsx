@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
-import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, auditApi, casesApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, extendRun, useRunDetail, type Grant } from '../workflows/runRead'
@@ -17,6 +17,7 @@ import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
+import { useAuth } from '../../contexts/AuthContext'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
@@ -1019,6 +1020,7 @@ export function CasePage({
   const [recStatus, setRecStatus] = useState<{ level: Level; text: string } | null>(null)
   const recStatusTicket = useRef(0)
   const [busy, setBusy] = useState(false)
+  const canReadAudit = useAuth().hasPermission('audit.read')
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
@@ -1292,20 +1294,13 @@ export function CasePage({
     }
   }
 
+  // The audit trail's entries naming this case (decision 16): the trail export with the case as object.
   const download = async () => {
-    if (!latest?.investigation_id) return
     const ticket = ++recStatusTicket.current
     setBusy(true)
     setRecStatus(null)
     try {
-      const res = await orchestratorApi.exportInvestigation(latest.investigation_id)
-      const blob = res.data instanceof Blob ? res.data : new Blob([JSON.stringify(res.data)])
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${latest.investigation_id}-export`
-      a.click()
-      URL.revokeObjectURL(url)
+      await auditApi.download({ object: id }, `audit-${id}.ndjson`)
     } catch (e) {
       if (ticket === recStatusTicket.current) setRecStatus({ level: 'poor', text: detailOf(e, 'Export failed') })
     } finally {
@@ -1697,14 +1692,14 @@ export function CasePage({
                     </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
-                  {latest && (latest.investigation_id ? (
+                  {canReadAudit ? (
                     <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>
                   ) : (
                     <>
                       <button type="button" className="rec-btn" disabled>Export audit</button>
-                      <InfoTip label="Why Export audit is unavailable" text="This run has no investigation record to export." />
+                      <InfoTip label="Why Export audit is unavailable" text="Exporting this case’s audit trail needs the audit.read permission." />
                     </>
-                  ))}
+                  )}
                 </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}

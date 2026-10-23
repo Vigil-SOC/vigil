@@ -8,8 +8,7 @@ from typing import Optional
 
 from core.findings.alert_outcomes import (
     TERMINAL_LABELS,
-    _cases_for,
-    terminal_states_for,
+    finding_states,
     terminal_states_today,
 )
 from core.findings.arrival_counts import arrivals_today_by_source
@@ -218,12 +217,12 @@ def _feed_items(load) -> list[dict]:
                     "noise_marked": finding.noise_marked_at is not None,
                 }
             )
-        linked = _cases_for(session, [row["finding_id"] for row in staged])
+    states = finding_states([row["finding_id"] for row in staged])
     link_configs: dict[str, dict[str, str]] = {}
     items = []
     for row in staged:
         external_id = row.pop("external_id")
-        case = linked.get(row["finding_id"])
+        state, case_id = states[row["finding_id"]]
         items.append(
             {
                 **row,
@@ -235,14 +234,11 @@ def _feed_items(load) -> list[dict]:
                     },
                     configs=link_configs,
                 ),
-                "case_id": case.case_id if case else None,
+                "case_id": case_id,
+                "terminal_state": state,
+                "terminal_label": TERMINAL_LABELS[state],
             }
         )
-    states = terminal_states_for([item["finding_id"] for item in items])
-    for item in items:
-        state = states[item["finding_id"]]
-        item["terminal_state"] = state
-        item["terminal_label"] = TERMINAL_LABELS[state]
     return items
 
 
