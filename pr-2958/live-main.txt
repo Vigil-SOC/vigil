@@ -1,0 +1,7 @@
+[main] before rename, How it runs stage 1:
+button "1 Triage the alert Triage agent"
+null
+[main] agents table after reload shows:
+      1 "Triage RENAMED"
+[main] after rename, How it runs stage 1:
+button "1 Triage the alert Triage agent"

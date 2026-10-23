@@ -1,0 +1,7 @@
+[fix] before rename, How it runs stage 1:
+button "1 Triage the alert Triage agent"
+null
+[fix] agents table after reload shows:
+      1 "Triage RENAMED"
+[fix] after rename, How it runs stage 1:
+button "1 Triage the alert Triage RENAMED"
