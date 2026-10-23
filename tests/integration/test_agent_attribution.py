@@ -35,6 +35,10 @@ def db(tmp_path):
     with _scratch(False) as engine:
         code, report = _run(engine, tmp_path, restore_point="rp-2763")
         assert code == 0, report
+        # The upgrade's own roles.revised entry is not what these calls write.
+        with engine.begin() as conn:
+            conn.execute(text("TRUNCATE audit_trail, audit_trail_held"))
+            conn.execute(text("UPDATE audit_trail_anchor SET seq = 0, entry_hash = ''"))
         manager = get_db_manager()
         saved = manager._engine, manager._session_factory
         manager._engine = engine
@@ -158,9 +162,7 @@ def test_a_read_only_tool_adds_a_ledger_event_and_no_trail_row(db, monkeypatch):
         )
     with db.connect() as conn:
         kind = conn.execute(
-            text(
-                "SELECT kind FROM agent_events WHERE run_id = CAST(:run_id AS uuid)"
-            ),
+            text("SELECT kind FROM agent_events WHERE run_id = CAST(:run_id AS uuid)"),
             {"run_id": PARENT},
         ).scalar_one()
     assert kind == "call"

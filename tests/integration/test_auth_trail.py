@@ -87,7 +87,15 @@ def test_refused_logins_write_one_entry_then_a_closing_count(db, client):
         trail.close_windows(s, now=utcnow() + timedelta(minutes=5), everything=True)
     first, closing = _entries(db, "auth.sign_in_failed")
     assert closing["collapsed"]["count"] == 3
-    assert closing["collapsed"]["first_seq"] == 1
+    # The upgrade may already have written a row, so the window does not start at 1.
+    with db() as s:
+        first_seq = s.execute(
+            text(
+                "SELECT min(seq) FROM audit_trail "
+                "WHERE payload->>'action' = 'auth.sign_in_failed'"
+            )
+        ).scalar_one()
+    assert closing["collapsed"]["first_seq"] == first_seq
     # Nothing secret is recorded.
     with db() as s:
         dumped = s.execute(text("SELECT payload::text FROM audit_trail")).scalars()
