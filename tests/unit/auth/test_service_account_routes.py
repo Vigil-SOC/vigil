@@ -381,7 +381,6 @@ def test_a_normal_viewer_refresh_cookie_still_works(app, maker):
 def _stand_in(flag):
     return SimpleNamespace(
         user_id="u-viewer",
-        principal_id="u-viewer",
         username="viewer",
         email="viewer@example.com",
         role_id="role-viewer",

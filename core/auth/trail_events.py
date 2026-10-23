@@ -21,7 +21,8 @@ import json
 import logging
 from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import Connection, text
+from sqlalchemy.orm import Session
 
 from core.audit import trail
 from core.storage.unit_of_work import unit_of_work
@@ -35,10 +36,13 @@ _ready: set[str] = set()
 
 def ready(session=None) -> bool:
     with unit_of_work(session) as session:
-        bind = session.get_bind()
-        if bind.dialect.name != "postgresql":  # the trail is Postgres-only
+        # A stand-in session (unit tests) or another dialect has no trail.
+        if not isinstance(session, (Session, Connection)):
             return False
-        key = str(bind.url)
+        bind = session.get_bind() if isinstance(session, Session) else session
+        if bind.dialect.name != "postgresql":
+            return False
+        key = str(bind.engine.url)
         if key not in _ready and trail.trail_ready(session):
             _ready.add(key)
         return key in _ready
