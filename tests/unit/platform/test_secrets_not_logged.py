@@ -55,6 +55,7 @@ def _settings(monkeypatch, *, dev_mode: bool):
         dev_mode=dev_mode,
         smtp_from=real.smtp_from,
         vigil_frontend_url="",
+        vigil_context_path="",
         vigil_email_backend="console",
     )
     monkeypatch.setattr(email_service, "get_settings", lambda: patched)
@@ -80,7 +81,12 @@ class TestPasswordResetLogging:
     def test_console_backend_logs_neither_token_nor_address(self, monkeypatch, caplog):
         _settings(monkeypatch, dev_mode=False)
         user = SimpleNamespace(
-            user_id="u1", username="victim", full_name="V", email=EMAIL, is_active=True
+            user_id="u1",
+            username="victim",
+            full_name="V",
+            email=EMAIL,
+            is_active=True,
+            service_account=False,
         )
         sent = []
         real_send = email_service.ConsoleBackend.send
@@ -91,7 +97,7 @@ class TestPasswordResetLogging:
         )
         logged = _request_reset(monkeypatch, user, caplog)
 
-        token = sent[0].split("(token) ")[1].split()[0]
+        token = sent[0].split("?token=")[1].split()[0]
         assert token and token not in logged
         assert EMAIL not in logged
         assert "[email/console] not sent" in logged
@@ -99,9 +105,14 @@ class TestPasswordResetLogging:
     def test_dev_mode_still_shows_the_message(self, monkeypatch, caplog):
         _settings(monkeypatch, dev_mode=True)
         user = SimpleNamespace(
-            user_id="u1", username="victim", full_name="V", email=EMAIL, is_active=True
+            user_id="u1",
+            username="victim",
+            full_name="V",
+            email=EMAIL,
+            is_active=True,
+            service_account=False,
         )
-        assert "(token) " in _request_reset(monkeypatch, user, caplog)
+        assert "/reset-password?token=" in _request_reset(monkeypatch, user, caplog)
 
     def test_unknown_address_is_not_logged(self, monkeypatch, caplog):
         _settings(monkeypatch, dev_mode=False)

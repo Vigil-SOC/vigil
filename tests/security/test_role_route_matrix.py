@@ -25,7 +25,7 @@ from sqlalchemy.pool import StaticPool
 from core.auth import current_user as current_user_module
 from core.auth.auth_service import AuthService
 from core.routing import request_unit_of_work
-from core.storage.models import Role, User
+from core.storage.models import Principal, Role, User
 from core.storage.models.base import Base
 from services.api import main as backend_main
 from tests.security.test_route_permissions import _dependencies
@@ -44,13 +44,27 @@ def _jsonb_is_json_on_sqlite(type_, compiler, **kw):
 
 
 def _seeded_roles() -> dict[str, dict[str, bool]]:
-    """``{role_id: permissions}`` as the init SQL seeds them."""
+    """``{role_id: permissions}`` as the init SQL seeds them, plus revision grants.
+
+    ``06`` is the baseline seed. Later revisions add keys (``0002`` adds the
+    audit permissions). Existing keys win, matching ``grants || permissions``.
+    """
     rows = re.findall(
         r"\('(role-[\w-]+)', '[^']+', '[^']*', '(\{.*?\})', true\)",
         ROLES_SQL.read_text(),
         re.DOTALL,
     )
-    return {role_id: json.loads(grants) for role_id, grants in rows}
+    roles = {role_id: json.loads(grants) for role_id, grants in rows}
+    revisions = Path(__file__).parents[2] / "core" / "upgrade" / "versions"
+    for path in sorted(revisions.glob("*.sql")):
+        for role_id, grants in re.findall(
+            r"\('(role-[\w-]+)',\s*'(\{.*?\})'::jsonb\)",
+            path.read_text(),
+            re.DOTALL,
+        ):
+            if role_id in roles:
+                roles[role_id] = {**json.loads(grants), **roles[role_id]}
+    return roles
 
 
 def _gated_routes() -> list[tuple[str, str, tuple[tuple[str, bool], ...]]]:
@@ -111,13 +125,17 @@ def maker():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    Base.metadata.create_all(engine, tables=[Role.__table__, User.__table__])
+    Base.metadata.create_all(
+        engine, tables=[Principal.__table__, Role.__table__, User.__table__]
+    )
     maker = sessionmaker(bind=engine)
     with maker() as s:
         for role_id, grants in ROLES.items():
             s.add(
                 Role(role_id=role_id, name=role_id, description="", permissions=grants)
             )
+            # A person, so the audit.forward kind check reaches the role grant.
+            s.add(Principal(principal_id=f"u-{role_id}", kind="person", label=role_id))
             s.add(
                 User(
                     user_id=f"u-{role_id}",
@@ -157,7 +175,8 @@ def client(maker, monkeypatch):
 def _bearer(maker, role_id: str) -> dict[str, str]:
     with maker() as s:
         user = s.get(User, f"u-{role_id}")
-        token = AuthService.generate_jwt_token(user, "access")
+        # Poll refuses a token with no sign-in before it consults the role.
+        token = AuthService.generate_jwt_token(user, "access", sid="si-matrix")
     return {"Authorization": f"Bearer {token}"}
 
 

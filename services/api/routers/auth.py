@@ -15,7 +15,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from core.auth import sign_ins
+from core.audit.trail import SYSTEM
+from core.auth import sign_ins, trail_events
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -28,12 +29,15 @@ from core.auth.auth_service import (
     AuthService,
     _is_service_account,
     password_matches_any,
+    raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.password_reset import (
+    consume_reset_token,
+    decode_reset_token,
+    default_base_url,
     generate_reset_token,
     reset_link,
-    verify_reset_token,
 )
 from core.auth.password_validator import (
     PasswordPolicyError,
@@ -61,6 +65,7 @@ from services.api.middleware.auth_rate_key import (
     reset_request_rate_key,
     session_rate_key,
 )
+from services.api.middleware.client_address import client_host
 from services.api.middleware.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -97,6 +102,13 @@ async def _refuse_service_account(request: Request, session: UnitOfWorkSession):
             continue
         user = await asyncio.to_thread(_get_user, session, user_id)
         if user is not None and _is_service_account(user):
+            await asyncio.to_thread(
+                trail_events.refused,
+                "auth.denied",
+                {"source_ip": client_host(request)},
+                actor=user.principal_id,
+                attempted=request.url.path,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail=SERVICE_ACCOUNT_DETAIL
             )
@@ -143,20 +155,6 @@ ADMIN_ROLE_ID = "role-admin"
 
 # Arbitrary constant identifying the bootstrap advisory lock.
 _BOOTSTRAP_LOCK = 8_274_119
-
-
-def _reject_if_locked(user: User) -> None:
-    """423 when the account is already locked. A missing attribute (tests
-    that build a stand-in user) is not a lock."""
-    until = getattr(user, "locked_until", None)
-    if until is None or until <= utcnow():
-        return
-    retry_after = max(1, int((until - utcnow()).total_seconds()))
-    raise HTTPException(
-        status_code=status.HTTP_423_LOCKED,
-        detail="Account locked due to repeated failed login attempts",
-        headers={"Retry-After": str(retry_after)},
-    )
 
 
 # Request/Response Models
@@ -282,6 +280,13 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     user.password_changed_at = utcnow()
 
 
+def _session_sid(request: Request) -> Optional[str]:
+    """The sign-in the request's own token names, for its trail entry."""
+    raw = request.cookies.get(ACCESS_COOKIE_NAME) or _bearer_token(request)
+    payload = AuthService.verify_jwt_token(raw) if raw else None
+    return payload.get("sid") if payload else None
+
+
 def _get_user(session: Session, user_id: str) -> Optional[User]:
     return session.query(User).filter(User.user_id == user_id).first()
 
@@ -376,6 +381,14 @@ def bootstrap_admin(
             detail="Could not create the account. Try again.",
         )
 
+    trail_events.record(
+        session,
+        "user.created",
+        {"personal": trail_events.personal(user)},
+        actor=SYSTEM,
+        principal=user.principal_id,
+        role_id=user.role_id,
+    )
     logger.info("First admin account created: %s", user.username)
     return UserSchema.dump(user)
 
@@ -406,20 +419,29 @@ def login(
     Returns:
         Access and refresh tokens with user info
     """
+    source = client_host(request)
+    refusal: dict = {}
+
+    def failed(reason: Optional[str] = None) -> None:
+        # Its own transaction: the 401 or 423 rolls the request's back.
+        trail_events.sign_in_failed(
+            source,
+            payload.username_or_email,
+            reason or refusal.get("reason"),
+            refusal.get("principal"),
+        )
+
     # Authenticate user
     try:
         user = AuthService.authenticate_user(
-            payload.username_or_email, payload.password, session
+            payload.username_or_email, payload.password, session, refusal=refusal
         )
-    except AccountLockedError as exc:
-        retry_after = max(1, int((exc.locked_until - utcnow()).total_seconds()))
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail="Account locked due to repeated failed login attempts",
-            headers={"Retry-After": str(retry_after)},
-        )
+    except AccountLockedError:
+        failed()
+        raise
 
     if not user:
+        failed()
         raise _invalid_credentials()
 
     service_account = _is_service_account(user)
@@ -430,6 +452,7 @@ def login(
         if user in session:
             session.expire(user)
         logger.warning("Refused console sign-in for service account %s", user.username)
+        failed("service_account_console")
         raise _invalid_credentials()
 
     # Check MFA if enabled
@@ -451,6 +474,7 @@ def login(
         if pending_reset:
             session.expire(user)
         if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
+            failed("bad_mfa_code")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code",
@@ -474,6 +498,13 @@ def login(
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
     sign_ins.start(
         session, sid, user.principal_id, _exp_datetime(refresh_payload.get("exp"))
+    )
+    trail_events.record(
+        session,
+        "auth.sign_in",
+        {"source_ip": source},
+        actor=user.principal_id,
+        sign_in=sid,
     )
     # A service account gets body tokens only: a cookie is a console session.
     if not service_account:
@@ -579,17 +610,32 @@ async def logout(
         sids.add(sid)
 
     # Refresh refuses an ended sign-in, so end it even when the blacklist
-    # write did not happen.
+    # write did not happen. Record only a sign-in this call actually ended.
     ended = True
+    recorded = []
     for sid in sids - {None}:
         try:
-            await asyncio.to_thread(sign_ins.end, sid, sign_ins.SIGN_OUT)
+            if await asyncio.to_thread(sign_ins.end, sid, sign_ins.SIGN_OUT):
+                recorded.append(sid)
         except Exception as exc:
             logger.error("Failed to end sign-in for %s: %s", current_user.username, exc)
             ended = False
 
     # A token issued before sign-ins carries no sid. Nothing but the blacklist
     # revokes it, so a missed write must not be reported as success.
+    # That sign-out names no sign-in. A sign-in this call ended is recorded
+    # even when the rest of logout fails: the row is already closed.
+    if ended and revoked and not (sids - {None}):
+        recorded.append(None)
+    # A safety action: recorded, or held to be recorded late.
+    for sid in recorded:
+        await asyncio.to_thread(
+            trail_events.safety,
+            "auth.sign_out",
+            {"source_ip": client_host(request)},
+            actor=current_user.principal_id,
+            sign_in=sid,
+        )
     if not ended or (not revoked and not (sids - {None})):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -751,6 +797,7 @@ def _apply_profile_update(
     full_name: Optional[str],
     email: Optional[str],
     current_password: Optional[str],
+    sign_in: Optional[str] = None,
 ) -> tuple[bool, dict]:
     """Apply a profile edit; return whether the email changed and the new payload.
 
@@ -790,9 +837,13 @@ def _apply_profile_update(
                 detail="Email already in use",
             )
 
+    changed = []
+    if full_name and full_name != user.full_name:
+        changed.append("full_name")
     if full_name:
         user.full_name = full_name
     if changing_email:
+        changed.append("email")
         user.email = email
         user.is_verified = False
 
@@ -800,6 +851,16 @@ def _apply_profile_update(
     # of work commits.
     session.flush()
     session.refresh(user)
+    if changed:
+        trail_events.record(
+            session,
+            "user.updated",
+            {"personal": {k: getattr(user, k) for k in changed}},
+            actor=user.principal_id,
+            principal=user.principal_id,
+            sign_in=sign_in,
+            changed=changed,
+        )
     return changing_email, UserSchema.dump(user)
 
 
@@ -839,6 +900,7 @@ async def update_current_user(
             body.full_name,
             body.email,
             body.current_password,
+            _session_sid(request),
         )
 
         if email_changed:
@@ -917,6 +979,14 @@ async def change_password(
     try:
         # Enforce no-reuse + hash + history rotation
         await asyncio.to_thread(_apply_new_password, current_user, body.new_password)
+        await asyncio.to_thread(
+            trail_events.record,
+            session,
+            "auth.password_changed",
+            actor=current_user.principal_id,
+            principal=current_user.principal_id,
+            sign_in=_session_sid(request),
+        )
 
         # Invalidate every outstanding token for this user. The current
         # session is effectively logged out; the client should re-login.
@@ -945,6 +1015,16 @@ async def change_password(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to change password",
         )
+
+
+def _record_mfa(session: Session, request: Request, user: User, action: str) -> None:
+    trail_events.record(
+        session,
+        action,
+        actor=user.principal_id,
+        principal=user.principal_id,
+        sign_in=_session_sid(request),
+    )
 
 
 @router.post("/mfa/setup", response_model=MFASetupResponse)
@@ -1008,13 +1088,14 @@ def verify_mfa(
     Returns:
         Success message and one-time recovery codes (shown only once).
     """
-    _reject_if_locked(current_user)
+    raise_if_locked(current_user)
     codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
+    _record_mfa(session, request, current_user, "auth.mfa_enabled")
 
     return RecoveryCodesResponse(
         recovery_codes=codes, message="MFA enabled successfully"
@@ -1041,6 +1122,7 @@ def regenerate_recovery_codes(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="MFA is not set up for this user",
         )
+    _record_mfa(session, request, current_user, "auth.recovery_codes_regenerated")
 
     return RecoveryCodesResponse(recovery_codes=codes)
 
@@ -1065,12 +1147,13 @@ def disable_mfa(
     Returns:
         Success message
     """
-    _reject_if_locked(current_user)
+    raise_if_locked(current_user)
     if not AuthService.disable_mfa(current_user.user_id, body.code, session):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid MFA code or MFA is not enabled",
         )
+    _record_mfa(session, request, current_user, "auth.mfa_disabled")
 
     return {"message": "MFA disabled successfully"}
 
@@ -1101,13 +1184,7 @@ def password_reset_request(
     # A service account's password belongs to its program: no reset mail.
     if user and user.is_active and not _is_service_account(user):
         token = generate_reset_token(user.user_id)
-        frontend_base = settings.vigil_frontend_url
-        if frontend_base:
-            link = reset_link(frontend_base, token)
-        else:
-            # Fall back to a raw token so a dev console backend still shows
-            # something actionable when VIGIL_FRONTEND_URL isn't set.
-            link = f"(token) {token}"
+        link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
         body_text = (
             f"Hello {user.full_name or user.username},\n\n"
@@ -1154,10 +1231,11 @@ async def password_reset_confirm(
 ):
     """
     Complete a password reset. Validates the signed token, enforces the
-    password strength policy + reuse check, rotates the hash, and
-    revokes every outstanding token so any existing sessions die.
+    password strength policy + reuse check, consumes the token, rotates
+    the hash, and revokes every outstanding token so any existing
+    sessions die. A rejected password leaves the token usable.
     """
-    user_id = await verify_reset_token(body.token)
+    user_id = decode_reset_token(body.token)
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1191,9 +1269,23 @@ async def password_reset_confirm(
 
     try:
         await asyncio.to_thread(_apply_new_password, user, body.new_password)
+        if not await consume_reset_token(body.token):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_INVALID_RESET_TOKEN,
+            )
         # Clear any active lockout so the user can immediately log in.
         user.failed_login_count = 0
         user.locked_until = None
+        # The reset token's holder acted; they have no session.
+        await asyncio.to_thread(
+            trail_events.record,
+            session,
+            "auth.password_reset",
+            {"source_ip": client_host(request)},
+            actor=user.principal_id,
+            principal=user.principal_id,
+        )
 
         try:
             await revoke_all_for_user(user.user_id)

@@ -34,12 +34,34 @@
       button { background: #bcc1ab; border: 0; color: #0c0f14; font-weight: 600;
         padding: 7px 14px; border-radius: 6px; cursor: pointer; }
       button.ghost { background: transparent; color: #7c8593; border: 1px solid #232a35; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      /* Shown in place of the step list when no restore point could be taken. */
+      .ack { display: none; flex: 1; flex-direction: column; gap: 8px; min-height: 0; }
+      .report { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: #e8ebf0;
+        background: #131820; border: 1px solid #232a35; border-radius: 6px; padding: 7px 9px;
+        max-height: 96px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+      .ack p { margin: 0; font-size: 12px; color: #7c8593; line-height: 1.4; }
+      .ack label { font-size: 12px; color: #e8ebf0; }
+      textarea { width: 100%; resize: none; height: 52px; font: inherit; font-size: 12px; color: #e8ebf0;
+        background: #0c0f14; border: 1px solid #232a35; border-radius: 6px; padding: 6px 8px; user-select: text; }
+      textarea:focus { outline: none; border-color: #bcc1ab; }
     </style>
   </head>
   <body>
     <h1>Vigil</h1>
     <div class="sub" id="sub">Starting the security operations stack…</div>
     <ul id="steps"></ul>
+    <div class="ack" id="ack">
+      <div class="report" id="ack-report"></div>
+      <p id="ack-note"></p>
+      <label for="ack-reason">Reason for starting without a restore point</label>
+      <textarea id="ack-reason" maxlength="500"></textarea>
+      <div class="acts" style="display: flex; margin-top: 0">
+        <button id="ack-go" disabled>Start without a restore point</button>
+        <button id="ack-retry" class="ghost">Retry</button>
+        <button id="ack-quit" class="ghost">Quit</button>
+      </div>
+    </div>
     <div class="log" id="log"></div>
     <div class="acts">
       <button id="retry">Retry</button>
@@ -54,6 +76,7 @@
         images: "Preparing Vigil (first run only)",
         frontend: "Checking the UI build", schema: "Preparing the database",
         backend: "Starting the backend", setup: "Setup complete", up: "Ready",
+        restore: "Restoring the pre-upgrade point",
       };
       const stepsEl = document.getElementById("steps");
       const logEl = document.getElementById("log");
@@ -73,9 +96,42 @@
         li.className = status;
       });
       window.vigil.onLog((line) => { logEl.textContent = line; });
+      // No restore point could be taken. The reason is kept for this version
+      // only; the main process retries the launch with it.
+      window.vigil.onAck(({ report, version }) => {
+        const ack = document.getElementById("ack");
+        const reason = document.getElementById("ack-reason");
+        const go = document.getElementById("ack-go");
+        document.getElementById("sub").innerHTML =
+          '<span class="err">No restore point could be taken, so the upgrade did not start.</span>';
+        document.getElementById("ack-report").textContent = report;
+        document.getElementById("ack-note").textContent =
+          "Starting anyway upgrades without a way back. The reason is recorded and " +
+          "remembered for Vigil " + version + " only.";
+        stepsEl.style.display = "none";
+        logEl.style.display = "none";
+        document.querySelector("body > .acts").style.display = "none";
+        ack.style.display = "flex";
+        reason.oninput = () => { go.disabled = !reason.value.trim(); };
+        reason.focus();
+        const leave = () => {
+          ack.style.display = "none";
+          stepsEl.style.display = "";
+          logEl.style.display = "";
+          document.getElementById("sub").textContent = "Retrying…";
+        };
+        go.onclick = () => { leave(); window.vigil.acknowledge(reason.value); };
+        // A transient failure (a held backup lock, a database blip) needs no reason.
+        document.getElementById("ack-retry").onclick = () => { leave(); window.vigil.retry(); };
+        document.getElementById("ack-quit").onclick = () => window.vigil.quit();
+      });
       window.vigil.onError((msg) => {
-        document.getElementById("sub").innerHTML = '<span class="err">' + msg + "</span>";
-        const acts = document.querySelector(".acts");
+        // Text, not markup: messages carry exception and container output.
+        const err = document.createElement("span");
+        err.className = "err";
+        err.textContent = msg;
+        document.getElementById("sub").replaceChildren(err);
+        const acts = document.querySelector("body > .acts");
         acts.style.display = "flex";
         document.getElementById("retry").onclick = () => {
           acts.style.display = "none";

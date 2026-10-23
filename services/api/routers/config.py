@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
+from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth.permissions import permission_gate
 from core.config import (
     get_settings,
@@ -802,14 +803,23 @@ def get_integrations_config():
         redacted = {
             iid: redact_secrets(iid, cfg or {})
             for iid, cfg in loaded["integrations"].items()
+            if iid != AUDIT_FEED_INTEGRATION_ID
         }
         return {
             "configured": True,
-            "enabled_integrations": loaded["enabled_integrations"],
+            "enabled_integrations": [
+                iid
+                for iid in loaded["enabled_integrations"]
+                if iid != AUDIT_FEED_INTEGRATION_ID
+            ],
             "integrations": redacted,
             "secrets_set": _secrets_set_map(redacted),
             # {id: {at, success, error}} from POST .../test; untested ids absent
-            "last_test": loaded.get("last_test", {}),
+            "last_test": {
+                iid: info
+                for iid, info in (loaded.get("last_test") or {}).items()
+                if iid != AUDIT_FEED_INTEGRATION_ID
+            },
         }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
@@ -854,6 +864,10 @@ def set_integrations_config(
     # one requires the caller to supply the credential again. Checked for every
     # integration before anything is written.
     for integration_id, raw_config in config.integrations.items():
+        # The syslog feed has its own route and audit.forward. A settings save
+        # must not retarget it, and must not write a second trail entry for it.
+        if integration_id == AUDIT_FEED_INTEGRATION_ID:
+            continue
         stored = config_service.get_integration_config(integration_id) or {}
         missing = credentials_to_resupply(
             integration_id, stored.get("config") or {}, raw_config or {}
@@ -881,6 +895,8 @@ def set_integrations_config(
     sanitized_integrations: dict = {}
     not_stored: list[str] = []
     for integration_id, raw_config in config.integrations.items():
+        if integration_id == AUDIT_FEED_INTEGRATION_ID:
+            continue
         secrets, non_secrets = split_secrets(integration_id, raw_config)
         field_by_env = {
             env: field for field, env in secret_fields_for(integration_id).items()

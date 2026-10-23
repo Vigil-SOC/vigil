@@ -85,6 +85,10 @@ interface Config {
   postgresPassword?: string;
   postgresAppPassword?: string;
   bifrostAdminPassword?: string;
+  // Decision 6: an upgrade without a restore point, acknowledged for one app
+  // version. Ignored once the version changes.
+  upgradeAckVersion?: string;
+  upgradeAckReason?: string;
 }
 
 function readConfig(): Config {
@@ -157,6 +161,28 @@ function bifrostAdminPassword(): string {
   const pw = crypto.randomBytes(48).toString("base64url");
   writeConfig({ bifrostAdminPassword: pw });
   return pw;
+}
+
+// The release the upgrade command compares against: the image tag in
+// standalone, the checkout's VERSION in source mode (core/version.py).
+function stackVersion(): string {
+  if (mode !== "source") return app.getVersion();
+  try {
+    return fs.readFileSync(path.join(repoRoot!, "VERSION"), "utf8").trim() || app.getVersion();
+  } catch {
+    return app.getVersion();
+  }
+}
+
+// Passed to every compose and script run. Empty unless the stored pair is
+// for this exact version, so an older acknowledgement never carries over.
+function upgradeAckEnv(): { VIGIL_UPGRADE_ACK_VERSION: string; VIGIL_UPGRADE_ACK_REASON: string } {
+  const { upgradeAckVersion, upgradeAckReason } = readConfig();
+  const ok = upgradeAckVersion === stackVersion() && !!upgradeAckReason?.trim();
+  return {
+    VIGIL_UPGRADE_ACK_VERSION: ok ? upgradeAckVersion! : "",
+    VIGIL_UPGRADE_ACK_REASON: ok ? upgradeAckReason! : "",
+  };
 }
 
 /* ---------------- locating the Vigil source tree ---------------- */
@@ -446,6 +472,9 @@ function pingHealth(timeoutMs = 2000): Promise<boolean> {
   });
 }
 
+// The last script's stderr, for diagnoseSource. Bounded: setup can be chatty.
+let scriptErr: string[] = [];
+
 // Run one orchestration script, forwarding its `STEP <phase> <status>` stdout
 // lines to the splash. Resolves with an exit code; never rejects.
 //
@@ -460,9 +489,10 @@ function runScript(name: string, args: string[] = [], doneWhen?: string): Promis
       settled = true;
       resolve(code);
     };
+    scriptErr = [];
     const proc: ChildProcess = spawn("bash", [path.join(scriptsDir(), name), ...args], {
       cwd: repoRoot!,
-      env: augmentedEnv(),
+      env: { ...augmentedEnv(), ...upgradeAckEnv() },
     });
     // The splash keeps a single log line. "Ready at" would replace the setup
     // code, so remember that line and put it back as the script finishes.
@@ -486,6 +516,8 @@ function runScript(name: string, args: string[] = [], doneWhen?: string): Promis
     const err = readline.createInterface({ input: proc.stderr! });
     err.on("line", (line) => {
       if (line.includes(SETUP_CODE_LOG_MARK)) setupLine = line;
+      scriptErr.push(line);
+      if (scriptErr.length > 400) scriptErr.shift();
       sendSplash("log", line);
     });
     proc.on("close", (code) => finish(code ?? 1));
@@ -509,8 +541,20 @@ const spawnCompose = (args: string[]) =>
       POSTGRES_PASSWORD: postgresPassword(),
       POSTGRES_APP_PASSWORD: postgresAppPassword(),
       BIFROST_ADMIN_PASSWORD: bifrostAdminPassword(),
+      ...upgradeAckEnv(),
     },
   });
+
+// Run a child to completion and keep its stdout. Never rejects.
+function collect(proc: ChildProcess): Promise<{ code: number; stdout: string }> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    proc.stdout?.on("data", (d) => (stdout += d));
+    proc.stderr?.resume();
+    proc.on("close", (code) => resolve({ code: code ?? 1, stdout }));
+    proc.on("error", () => resolve({ code: 1, stdout }));
+  });
+}
 
 // Run `docker compose …`, streaming progress to the splash.
 function runCompose(args: string[]): Promise<number> {
@@ -662,6 +706,11 @@ async function bringUpStandalone(): Promise<boolean> {
   // The API and the agent processes wait on it; a non-zero exit leaves them down.
   if ((await runCompose(composeArgs("up", "-d", "--wait"))) !== 0) {
     phase("services", "fail");
+    const stop = await diagnoseStandalone();
+    if (stop) {
+      await onUpgradeStop(stop);
+      return false;
+    }
     sendSplash("error", "The Vigil containers did not start. See the log above.");
     return false;
   }
@@ -692,6 +741,258 @@ async function relayBackendSetupCode(): Promise<void> {
     .reverse()
     .find((l) => l.includes(SETUP_CODE_LOG_MARK));
   if (line && line.trim()) sendSplash("log", line.trim());
+}
+
+/* ---------------- upgrade: acknowledgement and restore point ---------------- */
+
+// Both images and the source tree mount the upgrade directory here.
+const UPGRADE_DIR = "/var/lib/vigil-upgrade";
+
+// Why the schema step stopped, when it is one of the two this app answers.
+// "ack": backup-pre-upgrade exited 1 (a BackupError) and the upgrade never
+// ran. "failed": the upgrade one-shot recorded outcome failed after a point.
+type UpgradeStop = { kind: "ack"; report: string } | { kind: "failed"; reason: string };
+
+type RestorePoint = { snapshot: string; version: string | null };
+// The point `current-point` names, when this release took it. Drives the tray.
+let restorePoint: RestorePoint | null = null;
+// One restore at a time, and no start while it runs.
+let restoring = false;
+
+// The upgrade one-shot's record: the last JSON line with an outcome. A failure
+// with "overridden" or no point has nothing to restore.
+function failedRecord(lines: string[]): UpgradeStop | null {
+  for (const line of [...lines].reverse()) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let rec: { outcome?: string; restore_point?: string | null; reason?: string };
+    try {
+      rec = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    if (!rec.outcome) continue;
+    const id = rec.restore_point;
+    if (rec.outcome !== "failed" || !id || id === "overridden") return null;
+    return { kind: "failed", reason: rec.reason || "" };
+  }
+  return null;
+}
+
+interface ContainerState {
+  Status: string;
+  ExitCode: number;
+  StartedAt: string;
+}
+
+async function containerState(service: string): Promise<ContainerState | null> {
+  // Not `compose ps`: it lists one-off `run` containers too.
+  const ids = await collect(
+    spawn(
+      "docker",
+      [
+        "ps", "-a", "-q",
+        "--filter", "label=com.docker.compose.project=vigil",
+        "--filter", `label=com.docker.compose.service=${service}`,
+        "--filter", "label=com.docker.compose.oneoff=False",
+      ],
+      { env: augmentedEnv() },
+    ),
+  );
+  const id = ids.stdout.trim().split(/\s+/)[0];
+  if (!id) return null;
+  const r = await collect(spawn("docker", ["inspect", "--format", "{{json .State}}", id], { env: augmentedEnv() }));
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    return null;
+  }
+}
+
+const serviceLogs = async (service: string) =>
+  (await collect(spawnCompose(composeArgs("logs", "--no-color", "--no-log-prefix", service)))).stdout
+    .split(/\r?\n/)
+    .filter((l) => l.trim());
+
+// Read from the containers themselves: a reused one-shot keeps its last run's
+// state, so the upgrade counts as not run when it started before the backup.
+async function diagnoseStandalone(): Promise<UpgradeStop | null> {
+  const pre = await containerState("backup-pre-upgrade");
+  const up = await containerState("upgrade");
+  if (pre?.Status === "exited" && pre.ExitCode === 1) {
+    const ran = up && up.Status !== "created" && Date.parse(up.StartedAt) >= Date.parse(pre.StartedAt);
+    const report = (await serviceLogs("backup-pre-upgrade")).pop();
+    if (!ran && report) return { kind: "ack", report: report.trim() };
+  }
+  if (up?.Status === "exited" && up.ExitCode !== 0) return failedRecord(await serviceLogs("upgrade"));
+  return null;
+}
+
+// scripts/lib.sh prints this only after the backup-pre-upgrade container
+// itself exits non-zero (its build is a separate step); the line before it is
+// that container's BackupError.
+const PRE_UPGRADE_FAILED = "Pre-upgrade backup failed.";
+
+function diagnoseSource(lines: string[]): UpgradeStop | null {
+  const i = lines.findIndex((l) => l.startsWith(PRE_UPGRADE_FAILED));
+  if (i > 0) return { kind: "ack", report: lines[i - 1].trim() };
+  if (i === 0) return null;
+  return failedRecord(lines);
+}
+
+async function onUpgradeStop(stop: UpgradeStop): Promise<void> {
+  if (stop.kind === "ack") {
+    // A stored pair for this version is already in the environment, so a
+    // second refusal is not one the acknowledgement can answer.
+    if (upgradeAckEnv().VIGIL_UPGRADE_ACK_VERSION) {
+      sendSplash("error", `No restore point could be taken: ${stop.report}`);
+      return;
+    }
+    appLog(`ERROR pre-upgrade backup failed: ${stop.report}`);
+    sendSplash("ack", { report: stop.report, version: stackVersion() });
+    return;
+  }
+  const failed = `The upgrade to ${stackVersion()} failed. ${stop.reason}`;
+  sendSplash("log", failed);
+  // Ask before the splash offers Retry: a retry snapshots the half-migrated
+  // database. current-point still names the point taken before it.
+  const point = await currentPoint();
+  if (!point) {
+    sendSplash("error", `${failed} No restore point was found in the upgrade directory.`);
+    return;
+  }
+  if (!(await restoreFlow(point))) sendSplash("error", failed);
+}
+
+// Stated before confirm, on both the failure dialog and the tray entry.
+const RESTORE_COST =
+  "Restoring logs everyone out, rejects pending approvals, and discards alerts, " +
+  "investigations and every other write made since the point was taken.";
+
+// Resolves false when the operator cancels (or another restore is running).
+async function restoreFlow({ snapshot, version }: RestorePoint): Promise<boolean> {
+  if (restoring) return false;
+  const previous = version ? `Vigil ${version}` : "the previous version of Vigil";
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    title: "Restore the pre-upgrade point",
+    message: `Restore the point taken before Vigil ${stackVersion()} upgraded the database?`,
+    detail: `${RESTORE_COST}\n\nAfterwards, quit and reinstall ${previous}.\n\nRestore point ${snapshot.slice(0, 12)}.`,
+    buttons: ["Restore", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response !== 0 || restoring) return false;
+
+  restoring = true;
+  stackReady = false;
+  updateTray();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    createSplash();
+    await new Promise<void>((r) => splashWindow!.webContents.once("did-finish-load", () => r()));
+  }
+  sendSplash("step", { phase: "restore", status: "start" });
+  const error = await (mode === "standalone" ? restoreStandalone(snapshot) : restoreSource(snapshot)).finally(
+    () => (restoring = false),
+  );
+  if (error) {
+    sendSplash("step", { phase: "restore", status: "fail" });
+    sendSplash("error", `Restore failed: ${error}`);
+    return true;
+  }
+  sendSplash("step", { phase: "restore", status: "ok" });
+  sendSplash("error", `Restored. Reinstall ${previous} before starting Vigil again.`);
+  restorePoint = null;
+  updateTray();
+  const done = await dialog.showMessageBox({
+    type: "info",
+    title: "Restored",
+    message: `The database is back at the restore point. Reinstall ${previous}.`,
+    detail:
+      `Starting Vigil ${stackVersion()} again would run the same upgrade. ` +
+      `Quit, install ${previous}, and open that instead.`,
+    buttons: ["Quit Vigil", "Close"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (done.response === 0) app.quit();
+  return true;
+}
+
+// Every container that holds a database session stops first; postgres stays
+// up. The restore rotates JWT_SECRET_KEY into secrets.enc, where this app's
+// environment value would outrank it, so the new key is read back and kept.
+async function restoreStandalone(snapshot: string): Promise<string | null> {
+  if ((await runCompose(composeArgs("stop", "backend", "agent-worker", "agent-serve", "bifrost"))) !== 0)
+    return "could not stop the Vigil containers";
+  if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres"))) !== 0) return "postgres did not start";
+  const restored = await runCompose(
+    composeArgs(
+      "run", "--rm", "--no-deps", "-T", "-e", "JWT_SECRET_KEY",
+      "--entrypoint", "python", "backup-pre-upgrade",
+      "-m", "core.backup", "restore",
+      "--repo", `${UPGRADE_DIR}/repo`, "--passphrase-file", `${UPGRADE_DIR}/passphrase`,
+      "--snapshot", snapshot, "--bifrost-data", "/var/lib/vigil/bifrost",
+    ),
+  );
+  // Read back even after a failure: an error past the swap still rotated the
+  // key. Same lookup as the restore's own; stdout is the key alone, and it
+  // never reaches the splash or the app log.
+  const key = await collect(
+    spawnCompose(
+      composeArgs(
+        "run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "backup-pre-upgrade", "-c",
+        "from core.backup.restore import _stored_jwt_secret; print(_stored_jwt_secret() or '')",
+      ),
+    ),
+  );
+  const secret = key.stdout.trim().split(/\r?\n/).pop()?.trim();
+  if (key.code === 0 && secret) writeConfig({ jwtSecret: secret });
+  if (restored !== 0) return "see the log above";
+  if (key.code !== 0 || !secret) return "restored, but the rotated JWT secret could not be read back";
+  return null;
+}
+
+async function restoreSource(snapshot: string): Promise<string | null> {
+  return (await runScript("app_restore.sh", [snapshot])) === 0 ? null : "see the log above";
+}
+
+// The point to restore, when this release took it: `python -m core.backup
+// current-point` in the backend image. A later release's upgrade replaces it.
+async function currentPoint(): Promise<RestorePoint | null> {
+  const r =
+    mode === "standalone"
+      ? await collect(
+          spawnCompose(
+            composeArgs(
+              "run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "backup-pre-upgrade",
+              "-m", "core.backup", "current-point",
+            ),
+          ),
+        )
+      : await collect(
+          spawn("bash", [path.join(scriptsDir(), "app_restore.sh"), "--point"], {
+            cwd: repoRoot!,
+            env: augmentedEnv(),
+          }),
+        );
+  let point: { snapshot?: string; taken_by?: string; version?: string | null } = {};
+  try {
+    point = JSON.parse(r.stdout.trim().split(/\r?\n/).pop() || "{}");
+  } catch {
+    /* no point to offer */
+  }
+  return r.code === 0 && point.snapshot && point.taken_by === stackVersion()
+    ? { snapshot: point.snapshot, version: point.version ?? null }
+    : null;
+}
+
+// The tray entry is shown while that point exists.
+async function refreshRestorePoint(): Promise<void> {
+  restorePoint = await currentPoint();
+  appLog(restorePoint ? `restore point ${restorePoint.snapshot} offered in the tray` : "no restore point to offer");
+  updateTray();
 }
 
 function createSplash(): void {
@@ -792,6 +1093,11 @@ async function bringUpSource(): Promise<boolean> {
     }
   }
   if ((await runScript("app_up.sh", [], "up")) !== 0) {
+    const stop = diagnoseSource(scriptErr);
+    if (stop) {
+      await onUpgradeStop(stop);
+      return false;
+    }
     sendSplash("error", "Could not start the Vigil stack. See the log above.");
     return false;
   }
@@ -799,6 +1105,7 @@ async function bringUpSource(): Promise<boolean> {
 }
 
 async function bringUpStack(): Promise<void> {
+  if (restoring) return;
   stackReady = false;
   updateTray();
   // Something already serving :6987 (a dev stack, or a previous run) would make
@@ -818,6 +1125,7 @@ async function bringUpStack(): Promise<void> {
       stackReady = true;
       updateTray();
       createMainWindow();
+      void refreshRestorePoint();
       return;
     }
     await new Promise((r) => setTimeout(r, 1000));
@@ -856,6 +1164,12 @@ function trayTemplate(): Electron.MenuItemConstructorOptions[] {
         updateTray();
       },
     },
+    {
+      label: "Restore Pre-Upgrade Point…",
+      visible: restorePoint !== null,
+      enabled: stackReady && !restoring,
+      click: () => restorePoint && void restoreFlow(restorePoint),
+    },
     { label: "Open Logs", click: () => openLogs() },
     { label: "Support Bundle Command…", click: () => void showSupportCommand() },
     { type: "separator" },
@@ -892,6 +1206,14 @@ ipcMain.handle("retry", async () => {
 });
 
 ipcMain.handle("quit", () => app.quit());
+
+// The reason is collected on the splash: dialog.showMessageBox has no field.
+ipcMain.handle("acknowledge", async (_e, reason: unknown) => {
+  if (typeof reason !== "string" || !reason.trim()) return;
+  writeConfig({ upgradeAckVersion: stackVersion(), upgradeAckReason: reason.trim() });
+  appLog(`upgrade to ${stackVersion()} acknowledged without a restore point`);
+  await bringUpStack();
+});
 
 app.whenReady().then(async () => {
   appLog = openAppLog(app.getPath("logs"));

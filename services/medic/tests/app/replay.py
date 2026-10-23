@@ -2,7 +2,7 @@
 
 The observations go in where the sensor pipeline hands them over (`Medic.sink`),
 so everything after that is the app's own path: engine tick on the 15 s grid,
-router R1, the store writer. Replay stores hold engine records only and run under
+the router, the store writer. Replay stores hold engine records only and run under
 the recording's instance id (decision-record.md §3, S0-2 (a)).
 """
 

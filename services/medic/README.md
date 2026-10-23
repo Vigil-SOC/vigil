@@ -16,8 +16,8 @@ python -m services.medic check --ready  # exit 0 only if the API answers the sta
 `run` works in 15 s cycles: the sensors that are due read (`http_ready` on the
 agent worker's `/readyz`, and on Compose agent-serve's), every observation passes
 the K2 redaction choke, the engine evaluates the tick (suppression, group cap,
-upgrade windows) and decides when each incident routes (`route`), router R1 gives
-it its rule's lane, and the store's single writer chains the record into
+upgrade windows) and decides when each incident routes (`route`), the router gives
+it its lane (the rule's, or lane 3 when a lane-1 rule fails the gate), and the store's single writer chains the record into
 `medic.db`. Each cycle then saves
 the engine state and writes the heartbeat; a loop that stops cycling for 180 s
 is ended by the watchdog. On start, if the last heartbeat shows Medic was

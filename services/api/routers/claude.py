@@ -16,7 +16,9 @@ from core.agents.projections import agent_route
 from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
+from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
 from core.cases.case_brief import case_brief
+from core.chat import conversation_service
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import (
@@ -28,7 +30,6 @@ from core.llm.chat_layers import (
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry
 from core.llm.router.router import get_provider_spec
-from core.llm.system_prompt import validate_system_prompt
 from core.llm.target import (
     component_fallback,
     first_servable,
@@ -92,14 +93,12 @@ def _persist_chat_turn(
     the user turn (always complete) and the assistant turn (``complete=False``
     on abort/error). Each ``conversation_service`` call is itself fail-open;
     this wrapper adds a final guard so nothing here can surface into the
-    request path. The authoritative per-iteration record (including full tool
-    calls / results) remains in ``llm_interaction_logs`` keyed by the same
-    ``session_id``.
+    request path. The text is stored in ``conversations`` / ``chat_messages``.
+    Tool calls, results, and cost are recorded in the agent ledger under this
+    conversation's run id.
     """
     try:
-        from core.chat import conversation_service
-
-        conversation_service.ensure_conversation(
+        if not conversation_service.ensure_conversation(
             session_id=session_id,
             user_id=user_id,
             agent_id=agent_id,
@@ -107,7 +106,8 @@ def _persist_chat_turn(
             first_user_text=user_text,
             case_id=case_id,
             page_context=page_context,
-        )
+        ):
+            return
         conversation_service.append_message(
             session_id=session_id,
             role="user",
@@ -141,20 +141,8 @@ NO_PROVIDER_DETAIL: Dict[str, str] = {
 
 
 def _resolve_provider_model_for_request(
-    requested_model: Optional[str], agent_id: Optional[str]
+    agent_id: Optional[str],
 ) -> Tuple[Optional[str], str]:
-    """Resolve provider + model for chat requests.
-
-    Older Chat UI state can persist model ids as ``provider_id::model_id``.
-    Keep accepting that shape so a stale localStorage value does not route an
-    Ollama/OpenAI model through the wrong provider.
-    """
-    if requested_model:
-        if "::" in requested_model:
-            provider_id, model_id = requested_model.split("::", 1)
-            return (provider_id or None, model_id or requested_model)
-        return (None, requested_model)
-
     registry = get_registry()
     agent = None
     category: str = "chat_default"
@@ -255,14 +243,9 @@ class ChatRequest(BaseModel):
     """Chat request model."""
 
     messages: List[ChatMessage]
-    system_prompt: Optional[str] = None
-    # None means "resolve via ai_model_configs" (GH #89). Callers may still
-    # override with an explicit model id.
-    model: Optional[str] = None
-    max_tokens: int = 4096
     agent_id: Optional[str] = None
     session_id: Optional[str] = (
-        None  # Chat session identifier for reasoning-trace persistence (GH #79)
+        None  # Conversation id. Its text is stored on that row; the ledger run is derived from it.
     )
     # A run this conversation follows up on. The console does not send one yet
     # (#634); when it does, the turn opens with what that run concluded.
@@ -271,11 +254,6 @@ class ChatRequest(BaseModel):
     # ``page_context`` is the route key and is stored only while still null.
     case_id: Optional[str] = None
     page_context: Optional[str] = None
-
-    @field_validator("system_prompt")
-    @classmethod
-    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
-        return validate_system_prompt(v, source="chat")
 
 
 LATEST_ONLY = (
@@ -330,17 +308,21 @@ async def chat_stream(
     workflows: WorkflowsService = Depends(provide_workflows),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
+    user_id = getattr(current_user, "user_id", None)
+    if request.session_id and await asyncio.to_thread(
+        conversation_service.held_by_another, request.session_id, user_id
+    ):
+        raise HTTPException(
+            status_code=403, detail="This conversation belongs to another user."
+        )
     # Before model resolution, whose agent lookup swallows errors.
     if request.agent_id and request.agent_id in disabled_agent_ids():
         raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
     # Resolved here because this is the side that knows what an agent is: the
     # harness is handed a prompt, a model and a tool list, never an agent id.
-    provider_id, resolved_model = _resolve_provider_model_for_request(
-        request.model, request.agent_id
-    )
-    request.model = resolved_model
+    provider_id, resolved_model = _resolve_provider_model_for_request(request.agent_id)
 
-    system_prompt = request.system_prompt
+    system_prompt: Optional[str] = None
     tools: Optional[List[str]] = None
     if request.agent_id:
         from core.agents.manager import AgentManager
@@ -369,7 +351,7 @@ async def chat_stream(
     active_provider = provider_for(provider_id)
     if active_provider is None:
         raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-    model = request.model = model_for(active_provider, request.model)
+    model = model_for(active_provider, resolved_model)
     provider_type = active_provider.provider_type
 
     # Whatever MCP integrations are connected right now (VirusTotal, OTX, MISP,
@@ -381,8 +363,18 @@ async def chat_stream(
         system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
+    # Read before the payload is built. Generation 0 (every row that exists
+    # today, and a session with no row) keeps run_id_for(session_id). A
+    # deleted conversation's later life uses a new run, so its old tool
+    # reads are not loaded. A missing row is a new session.
+    ledger_session = session_id
+    if request.session_id:
+        ledger_session = await asyncio.to_thread(
+            conversation_service.ledger_key, request.session_id
+        )
+    run_id = run_id_for(ledger_session)
     payload = {
-        "run_id": run_id_for(session_id),
+        "run_id": run_id,
         "turns": _turns_of(request.messages),
         "system_prompt": system_prompt or "",
         # The provider rides alongside the model so the gateway routes to the
@@ -398,7 +390,16 @@ async def chat_stream(
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
-        "principal": tool_principal.mint(current_user.username),
+        "principal": tool_principal.mint(
+            current_user.username,
+            person_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+            agent_id=agent_principal_id(CHAT_PLUGIN_ID),
+            run_id=run_id,
+            origin="person",
+        ),
+        "actor": agent_principal_id(CHAT_PLUGIN_ID),
+        "origin": "person",
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id
@@ -415,8 +416,9 @@ async def chat_stream(
         _relay(
             payload,
             request,
+            model,
             session_id,
-            getattr(current_user, "user_id", None),
+            user_id,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -446,6 +448,7 @@ def _turns_of(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 async def _relay(
     payload: Dict[str, Any],
     request: ChatRequest,
+    model: str,
     session_id: str,
     user_id: Optional[str],
 ):
@@ -489,7 +492,7 @@ async def _relay(
                 session_id=session_id,
                 user_id=user_id,
                 agent_id=request.agent_id,
-                model=request.model,
+                model=model,
                 # The question as asked: the agent turns merge consecutive user messages.
                 user_text=_user_text_from_content(request.messages[-1].content).strip()
                 or payload["turns"][-1]["content"],

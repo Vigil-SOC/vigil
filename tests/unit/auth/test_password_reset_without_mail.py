@@ -1,7 +1,6 @@
 """Password reset without a mail backend (#2247): the request reply is honest
 about the backend, and an operator can issue a link from the host."""
 
-import asyncio
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,6 +33,7 @@ ADMIN = SimpleNamespace(
     full_name="Admin",
     role_id="role-admin",
     is_active=True,
+    service_account=False,
 )
 
 
@@ -58,12 +58,21 @@ def _request(user, settings):
     limiter.reset()
     with patch.object(auth, "get_settings", return_value=settings), patch.object(
         email_service, "get_settings", return_value=settings
-    ), patch.object(auth, "send_email"):
+    ), patch.object(auth, "send_email") as send:
         resp = TestClient(app).post(
             "/api/auth/password-reset/request", json={"email": "admin@example.com"}
         )
     assert resp.status_code == 200
-    return resp.json()["message"]
+    return resp.json()["message"], send
+
+
+def _settings(backend="smtp", dev_mode=False, frontend_url=""):
+    return SimpleNamespace(
+        vigil_email_backend=backend,
+        dev_mode=dev_mode,
+        vigil_frontend_url=frontend_url,
+        vigil_context_path="/vigil",
+    )
 
 
 @pytest.mark.parametrize(
@@ -75,13 +84,28 @@ def _request(user, settings):
     ],
 )
 def test_reply_names_the_backend_not_the_account(backend, dev_mode, expect):
-    settings = SimpleNamespace(
-        vigil_email_backend=backend, dev_mode=dev_mode, vigil_frontend_url=""
-    )
-    known = _request(ADMIN, settings)
-    unknown = _request(None, settings)
+    settings = _settings(backend, dev_mode)
+    known, _ = _request(ADMIN, settings)
+    unknown, _ = _request(None, settings)
     assert expect in known
     assert known == unknown
+
+
+@pytest.mark.parametrize(
+    "frontend_url,origin",
+    [
+        ("", ("http", "localhost")),
+        ("https://soc.example/vigil", ("https", "soc.example")),
+    ],
+)
+def test_mail_links_to_the_reset_screen(frontend_url, origin):
+    _, send = _request(ADMIN, _settings(frontend_url=frontend_url))
+    body = send.call_args.kwargs["body"]
+    url = urlparse(next(w for w in body.split() if w.startswith("http")))
+    assert (url.scheme, url.hostname) == origin
+    assert url.path == "/vigil/reset-password"
+    token = parse_qs(url.query)["token"][0]
+    assert password_reset.decode_reset_token(token) == "u-admin"
 
 
 def test_list_shows_every_account(capsys):
@@ -107,7 +131,7 @@ def test_link_carries_a_token_for_that_user(capsys):
     parsed = urlparse(url)
     assert parsed.path == "/vigil/reset-password"
     token = parse_qs(parsed.query)["token"][0]
-    assert asyncio.run(password_reset.verify_reset_token(token)) == "u-admin"
+    assert password_reset.decode_reset_token(token) == "u-admin"
 
 
 @pytest.mark.parametrize(

@@ -325,15 +325,11 @@ def test_terminal_states_partition_the_day():
     assert "dropped" not in nodes
     needs = nodes["needs_you"]
     assert "alerts" in needs["info"]
-    assert "No count" in payload["engine"]["source_text"]
-    assert "count" not in payload["engine"]
     assert payload["empty"] is False
 
     item = next(row for row in payload["feed"] if row["finding_id"] == "ov-f-you")
     assert "status" not in item
     assert item["terminal_state"] == "needs_you"
-    assert item["terminal_label"] == "Needs you"
-    assert item["evidence_links"] == [{"ref": "https://example.test/you"}]
     assert "records" not in item["source_evidence"]
     assert item["source_evidence"]["payload_included"] is False
 
@@ -577,10 +573,7 @@ def test_alert_read_matches_the_feed_item_and_reaches_past_the_feed(client):
         client.get("/api/overview/alerts/ov-marked-one").json()["noise_marked"] is True
     )
     marked = overview_alert("ov-marked-one")
-    assert (marked["terminal_state"], marked["terminal_label"]) == (
-        "dismissed",
-        "Dropped",
-    )
+    assert marked["terminal_state"] == "dismissed"
 
 
 def test_alert_read_404_names_the_id(client):

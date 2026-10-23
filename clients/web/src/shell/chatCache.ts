@@ -15,7 +15,7 @@ export interface CachedConversation {
   id: string
   title: string
   ts: number
-  messages: Array<{ role: string; text: string; ms?: number }>
+  messages: Array<{ role: string; text: string }>
   key?: string
 }
 

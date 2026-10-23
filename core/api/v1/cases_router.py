@@ -27,6 +27,7 @@ from core.auth.permissions import permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
+from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.cases.combined_state import queue_item
@@ -437,7 +438,8 @@ def create_case(case_data: CaseCreate):
     Returns:
         Created case
     """
-    case = data_service.create_case(
+    case = open_case(
+        data_service,
         title=case_data.title,
         finding_ids=case_data.finding_ids,
         priority=case_data.priority,
@@ -447,29 +449,6 @@ def create_case(case_data: CaseCreate):
 
     if not case:
         raise HTTPException(status_code=500, detail="Failed to create case")
-
-    # Automatically assign SLA policy based on priority
-    try:
-        from core.cases.case_sla_service import CaseSLAService
-
-        sla_service = CaseSLAService()
-
-        case_id = case.get("case_id")
-        if case_id:
-            # This will auto-select the default policy for the case priority
-            sla_result = sla_service.assign_sla_to_case(case_id, sla_policy_id=None)
-            if sla_result:  # truthy only when the case ends up with an SLA
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.info(f"Auto-assigned SLA policy to case {case_id}")
-    except Exception as e:
-        # Don't fail case creation if SLA assignment fails
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to auto-assign SLA to case {case.get('case_id')}: {e}")
-
     return case
 
 
