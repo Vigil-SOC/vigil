@@ -1,0 +1,12 @@
+_________ test_a_failed_read_is_503_not_defaults[/api/config/general] __________
+    def test_a_failed_read_is_503_not_defaults(client, path):
+E       assert 200 == 503
+__________ test_a_failed_read_is_503_not_defaults[/api/config/theme] ___________
+    def test_a_failed_read_is_503_not_defaults(client, path):
+E       assert 200 == 503
+E       AssertionError: assert {} == {'auto_start_...yring': False}
+E       AssertionError: assert {} == {'theme': 'light'}
+E       AssertionError: assert {} == {'auto_start_...yring': False}
+0.04s setup    unit/api/test_general_theme_config.py::test_a_failed_read_is_503_not_defaults[/api/config/general]
+0.04s call     unit/api/test_general_theme_config.py::test_a_failed_read_is_503_not_defaults[/api/config/general]
+0.04s call     unit/api/test_general_theme_config.py::test_a_failed_read_is_503_not_defaults[/api/config/theme]
