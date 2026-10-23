@@ -4,7 +4,7 @@ which of them are excluded (core.findings.exclusions)."""
 import pytest
 
 from core.findings import exclusions as ex
-from core.findings.ip_address import normalize_ip
+from core.storage.ip_address import normalize_ip
 
 pytestmark = pytest.mark.unit
 

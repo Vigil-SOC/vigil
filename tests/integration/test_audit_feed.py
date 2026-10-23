@@ -283,13 +283,17 @@ def test_turning_the_feed_on_writes_an_entry(db, client):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["enabled"] is True
-    assert resp.json()["health"]["behind"] == 1
+    # Sign-in is on the trail now (#2760), then this save.
+    assert resp.json()["health"]["behind"] == 2
 
     with db.connect() as conn:
-        payload = conn.execute(
-            text("SELECT payload FROM audit_trail ORDER BY seq DESC LIMIT 1")
-        ).scalar_one()
-    assert payload[trail.ACTION] == "config.change"
+        rows = (
+            conn.execute(text("SELECT payload FROM audit_trail ORDER BY seq"))
+            .scalars()
+            .all()
+        )
+    assert [row[trail.ACTION] for row in rows] == ["auth.sign_in", "config.change"]
+    payload = rows[-1]
     assert payload[trail.ACTOR] == admin_id
     assert payload["config_key"] == feed.INTEGRATION_ID
     assert payload["enabled"] is True

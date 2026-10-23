@@ -6,7 +6,7 @@ closes collapse windows, writes the 15-minute checkpoint, imports upgrade runs
 from ``$VIGIL_UPGRADE_DIR/history.jsonl``, and, when an admin has turned the
 feed on, sends the trail as CEF in RFC 5425 frames over TLS.
 
-The feed's cursor is ``audit_feed_state`` (revision ``0006_audit_feed``),
+The feed's cursor is ``audit_feed_state`` (revision ``0007_audit_feed``),
 outside the chain. The cursor moves only after a batch is written to the
 socket; a failed batch is sent again from the same sequence. There is no
 queue: the trail is the backlog, so nothing on a request path waits on this.

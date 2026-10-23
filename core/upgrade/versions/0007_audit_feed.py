@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0006_audit_feed"
-down_revision = "0005_agent_attribution"
+revision = "0007_audit_feed"
+down_revision = "0006_canonical_finding_ips"
 
 
 def upgrade() -> None:
