@@ -723,8 +723,7 @@ async def execute_backend_tool(
     if tool_name in _SECURITY_TOOLS:
         from core.detections.tools import get_security_detection_tools
 
-        handler = getattr(get_security_detection_tools(), tool_name)
-        return await handler(**args), True
+        return await getattr(get_security_detection_tools(), tool_name)(**args), True
 
     if tool_name in _INTEL_TOOLS:
         return _INTEL_TOOLS[tool_name](args), True
