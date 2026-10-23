@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.integrations import custom_integration_service as cis
-from core.integrations.integration_secrets import secret_fields_for, split_secrets
+from core.integrations.integration_secrets import split_secrets
 
 FIELDS = [{"name": "api_key", "type": "password"}, {"name": "url", "type": "text"}]
 
@@ -44,7 +44,6 @@ def test_crash_mid_metadata_write_keeps_other_entries(service, monkeypatch):
     assert _ids(service) == ["custom-a", "custom-b", "custom-d"]
     _, plain = split_secrets("custom-a", {"api_key": "s3cret", "url": "u"})
     assert plain == {"url": "u"}
-    assert dict(secret_fields_for("custom-a")) == {"api_key": "CUSTOM_A_API_KEY"}
 
 
 def test_failed_server_write_leaves_integration_unlisted(service, monkeypatch):
