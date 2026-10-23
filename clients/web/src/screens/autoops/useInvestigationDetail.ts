@@ -1,3 +1,5 @@
+/* The custody load is best-effort: a failure leaves the Reasoning and Custody
+   tabs empty rather than failing the whole detail view. */
 import { useCallback, useEffect, useState } from 'react'
 import { orchestratorApi } from '../../services/api'
 import type { Phase } from '../cases/useCases'
