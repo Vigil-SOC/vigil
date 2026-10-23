@@ -1,5 +1,6 @@
 """An approval is decided once; a second decision is refused, not answered 200 (#2870)."""
 
+import logging
 import threading
 from contextlib import suppress
 from datetime import datetime
@@ -91,16 +92,20 @@ def _status(action_id: str) -> str:
     return ApprovalService().get_action(action_id).status
 
 
-def test_approve_after_reject_is_409_and_does_not_resume(client, resumed):
+def test_approve_after_reject_is_409_and_does_not_resume(client, resumed, caplog):
     action_id = _seed()
     rejected = client.post(f"/api/approvals/{action_id}/reject", json={"reason": "no"})
     assert rejected.status_code == 200
     assert len(resumed) == 1
 
-    late = client.post(f"/api/approvals/{action_id}/approve", json={})
+    with caplog.at_level(logging.ERROR, logger="core.storage.connection"):
+        late = client.post(f"/api/approvals/{action_id}/approve", json={})
 
     assert late.status_code == 409
     assert late.json()["detail"] == f"Action {action_id} is already rejected"
+    assert not any(
+        "Database transaction failed" in rec.message for rec in caplog.records
+    )
     assert len(resumed) == 1
     assert _status(action_id) == "rejected"
 
