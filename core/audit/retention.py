@@ -330,6 +330,11 @@ def _revoke(session, principal_id: str) -> None:
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
     sign_ins.end_all_for_user(user_id, sign_ins.REVOKED, session=session)
+    # A blanked account must not sign in again, and must not count as an active holder.
+    session.execute(
+        text("UPDATE public.users SET is_active = false WHERE user_id = :id"),
+        {"id": user_id},
+    )
 
 
 def _append_file(ids: list[str]) -> None:

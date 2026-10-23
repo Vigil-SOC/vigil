@@ -348,7 +348,8 @@ def test_erasure_leaves_verify_green_and_clears_the_beside_columns(
             ),
             {"id": mia},
         ).one()
-        assert user == ("mia", True, "mia@example.com")
+        # Disabled, as account deletion does, so the blanked account cannot sign in again.
+        assert user == ("mia", False, "mia@example.com")
         revoked = conn.execute(
             text(
                 "SELECT revoked_at IS NOT NULL FROM mcp_credentials WHERE credential_id = :id"
@@ -393,6 +394,8 @@ def test_two_managers_erasing_each_other_leave_one_holder(db, tmp_path, monkeypa
         retention.erase(session, quinn, pat, "left", NOW)
     feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
     # Each was the last active holder once the other was gone; only one may be blanked.
+    assert [_label(db, p)[0] for p in (pat, quinn)].count(None) == 1
+    feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=8))
     assert [_label(db, p)[0] for p in (pat, quinn)].count(None) == 1
 
 
