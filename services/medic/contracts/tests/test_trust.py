@@ -15,17 +15,20 @@ from jsonschema import Draft202012Validator
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 sys.path.insert(0, str(ROOT_DIR / "tools"))
-from gen_f2_fixtures import KID, dump, root_doc, sign
+from gen_f2_fixtures import KID, dump, root_doc, sign, sign_pack
 
 from pack_build import build
 from pack_check import check_pack
 from trust_check import (
     FIXPLAN,
+    MAX_ENVELOPE_BYTES,
+    MAX_IMPORT_BYTES,
     PACK,
     PACK_DEV,
     TRUST_ROOT,
     check_channel,
     load_root,
+    statement,
     update_trust_root,
     verify_envelope,
 )
@@ -72,7 +75,7 @@ def test_baked_root_must_carry_its_own_threshold() -> None:
 
 def test_signed_stable_pack_verifies_then_passes_pack_check(stable_pack: bytes) -> None:
     res = verify_envelope(
-        sign(stable_pack, PACK, ["pack-a"]), V1, expected=PACKS, now=NOW
+        sign_pack(stable_pack, PACK, ["pack-a"]), V1, expected=PACKS, now=NOW
     )
     assert res.ok and res.role == "packs" and res.signed_by == [KID["pack-a"]]
     assert res.payload == stable_pack
@@ -80,28 +83,92 @@ def test_signed_stable_pack_verifies_then_passes_pack_check(stable_pack: bytes) 
     assert check_pack(res.payload, vigil_version="0.6.0", now=NOW).ok
 
 
-def test_tampered_payload_is_refused(stable_pack: bytes) -> None:
-    env = json.loads(sign(stable_pack, PACK, ["pack-a"]))
-    env["payload"] = base64.b64encode(
-        stable_pack.replace(b"lane: 2", b"lane: 1", 1)
-    ).decode()
-    assert verify_envelope(
-        json.dumps(env).encode(), V1, expected=PACKS, now=NOW
-    ).codes == {"S-SIG"}
+def _verify(doc: dict, **kw) -> set[str]:
+    return verify_envelope(
+        json.dumps(doc).encode(), V1, expected=PACKS, now=NOW, **kw
+    ).codes
+
+
+def test_tampered_statement_is_refused(stable_pack: bytes) -> None:
+    doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
+    other = stable_pack.replace(b"lane: 2", b"lane: 1", 1)
+    doc["envelope"]["payload"] = base64.b64encode(statement(other, PACK)).decode()
+    assert _verify(doc) == {"S-SIG"}
 
 
 def test_payload_type_is_bound_by_the_signature(stable_pack: bytes) -> None:
-    env = json.loads(sign(stable_pack, PACK, ["pack-a"]))
-    env["payloadType"] = PACK_DEV
-    res = verify_envelope(
-        json.dumps(env).encode(), V1, expected=PACKS, now=NOW, dev_mode=True
-    )
-    assert "S-SCOPE" in res.codes
+    doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
+    doc["envelope"]["payloadType"] = PACK_DEV
+    assert "S-SCOPE" in _verify(doc, dev_mode=True)
+
+
+def test_statement_size_must_be_an_integer(stable_pack: bytes) -> None:
+    # Signed, and canonical for Python, but a float spelling a KMS would not sign.
+    stmt = json.loads(statement(stable_pack, PACK))
+    stmt["size"] = float(stmt["size"])
+    payload = json.dumps(stmt, sort_keys=True, separators=(",", ":")).encode()
+    doc = json.loads(sign(payload, PACK, ["pack-a"]))
+    doc = {
+        "format": "medic.signed-pack/v1",
+        "envelope": doc,
+        "pack": stable_pack.decode(),
+    }
+    assert _verify(doc) == {"S-STATEMENT"}
+
+
+def test_statement_over_different_bytes_is_refused(stable_pack: bytes) -> None:
+    doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
+    doc["pack"] = doc["pack"].replace("lane: 2", "lane: 1", 1)
+    assert _verify(doc) == {"S-DIGEST"}
+
+
+def test_wrong_size_is_refused(stable_pack: bytes) -> None:
+    doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
+    doc["pack"] += " "
+    assert _verify(doc) == {"S-DIGEST"}
+
+
+def test_old_whole_pack_envelope_is_refused(stable_pack: bytes) -> None:
+    bare = sign(stable_pack, PACK, ["pack-a"])
+    assert verify_envelope(bare, V1, expected=PACKS, now=NOW).codes == {"S-FORMAT"}
+    doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
+    doc["envelope"] = json.loads(bare)
+    assert _verify(doc) == {"S-STATEMENT"}
+
+
+def test_statement_type_must_match_envelope_type() -> None:
+    doc = json.loads(sign_pack(SAMPLE, PACK_DEV, ["dev-1"]))
+    doc["envelope"] = json.loads(sign(statement(SAMPLE, PACK), PACK_DEV, ["dev-1"]))
+    assert _verify(doc, dev_mode=True) == {"S-STATEMENT"}
+
+
+def test_bad_base64_payload_is_a_code() -> None:
+    doc = json.loads((TRUST / "sample-0.1.0.dev.signed-pack.json").read_text())
+    doc["envelope"]["payload"] = "A"
+    assert _verify(doc, dev_mode=True) == {"S-ENVELOPE"}
+
+
+def test_size_caps(stable_pack: bytes) -> None:
+    # The pack does not count towards the 64 KB envelope cap; the whole file does.
+    big = stable_pack + b" " * (MAX_ENVELOPE_BYTES * 2)
+    assert verify_envelope(
+        sign_pack(big, PACK, ["pack-a"]), V1, expected=PACKS, now=NOW
+    ).ok
+    huge = b'{"format":"medic.signed-pack/v1"}' + b" " * MAX_IMPORT_BYTES
+    assert verify_envelope(huge, V1, expected=PACKS, now=NOW).codes == {"S-SIZE"}
+    doc = json.loads(sign_pack(stable_pack, PACK, ["pack-a"]))
+    doc["envelope"]["signatures"][0]["keyid"] += "x" * MAX_ENVELOPE_BYTES
+    assert _verify(doc) == {"S-SIZE"}
+    # Unsigned dev packs may be up to 4 MB.
+    unsigned = SAMPLE[:-2] + b" " * (MAX_ENVELOPE_BYTES * 2) + SAMPLE[-2:]
+    assert verify_envelope(
+        unsigned, V1, expected=PACKS, now=NOW, dev_mode=True
+    ).unsigned_dev
 
 
 def test_unknown_key_is_out_of_scope(stable_pack: bytes) -> None:
     assert verify_envelope(
-        sign(stable_pack, PACK, ["root-4"]), V1, expected=PACKS, now=NOW
+        sign_pack(stable_pack, PACK, ["root-4"]), V1, expected=PACKS, now=NOW
     ).codes == {"S-SCOPE"}
 
 
@@ -114,15 +181,26 @@ def test_unsigned_pack_only_in_dev_mode() -> None:
     )
 
 
+def test_pack_format_with_envelope_keys_is_not_unsigned() -> None:
+    doc = json.loads(SAMPLE)
+    doc["payloadType"], doc["signatures"] = PACK_DEV, []
+    res = verify_envelope(
+        json.dumps(doc).encode(), V1, expected=PACKS, now=NOW, dev_mode=True
+    )
+    assert not res.ok and not res.unsigned_dev
+
+
 def test_dev_signed_pack_only_in_dev_mode() -> None:
-    data = (TRUST / "sample-0.1.0.dev.dsse.json").read_bytes()
+    data = (TRUST / "sample-0.1.0.dev.signed-pack.json").read_bytes()
     assert verify_envelope(data, V1, expected=PACKS, now=NOW).codes == {"S-DEV"}
     res = verify_envelope(data, V1, expected=PACKS, now=NOW, dev_mode=True)
     assert res.ok and res.role == "packs-dev" and check_channel(res, V1, "dev") == []
 
 
 def test_production_key_cannot_sign_a_dev_channel_pack() -> None:
-    res = verify_envelope(sign(SAMPLE, PACK, ["pack-a"]), V1, expected=PACKS, now=NOW)
+    res = verify_envelope(
+        sign_pack(SAMPLE, PACK, ["pack-a"]), V1, expected=PACKS, now=NOW
+    )
     assert res.ok
     assert [c for c, _ in check_channel(res, V1, "dev")] == ["S-CHANNEL"]
 
@@ -155,10 +233,10 @@ def test_rotation_and_revocation(stable_pack: bytes) -> None:
     assert res.ok, res.errors
     root2 = json.loads(res.payload)
     assert verify_envelope(
-        sign(stable_pack, PACK, ["pack-a"]), root2, expected=PACKS, now=NOW
+        sign_pack(stable_pack, PACK, ["pack-a"]), root2, expected=PACKS, now=NOW
     ).codes == {"S-REVOKED"}
     assert verify_envelope(
-        sign(stable_pack, PACK, ["pack-b"]), root2, expected=PACKS, now=NOW
+        sign_pack(stable_pack, PACK, ["pack-b"]), root2, expected=PACKS, now=NOW
     ).ok
 
 
@@ -209,11 +287,11 @@ def test_expired_delegated_key_and_expired_root(stable_pack: bytes) -> None:
     root = copy.deepcopy(V1)
     root["keys"][KID["pack-a"]]["not_after"] = "2026-10-01T00:00:00Z"
     assert verify_envelope(
-        sign(stable_pack, PACK, ["pack-a"]), root, expected=PACKS, now=NOW
+        sign_pack(stable_pack, PACK, ["pack-a"]), root, expected=PACKS, now=NOW
     ).codes == {"S-KEY-EXPIRED"}
     late = datetime(2027, 10, 8, tzinfo=UTC)
     assert verify_envelope(
-        sign(stable_pack, PACK, ["pack-a"]), V1, expected=PACKS, now=late
+        sign_pack(stable_pack, PACK, ["pack-a"]), V1, expected=PACKS, now=late
     ).codes == {"S-ROOT-EXPIRED"}
 
 
@@ -230,7 +308,7 @@ def test_expired_delegated_key_and_expired_root(stable_pack: bytes) -> None:
             ).encode(),
             "S-ENVELOPE",
         ),
-        (b" " * (6 * 1024 * 1024 + 1), "S-SIZE"),
+        (b"{}" + b" " * MAX_ENVELOPE_BYTES, "S-SIZE"),
     ],
     ids=["duplicate-key", "extra-field", "oversize"],
 )

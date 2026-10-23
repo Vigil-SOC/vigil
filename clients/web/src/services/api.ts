@@ -102,21 +102,6 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
 }
 
 export const aiDecisionsApi = {
-  create: (data: {
-    decision_id: string
-    agent_id: string
-    decision_type: string
-    confidence_score: number
-    reasoning: string
-    recommended_action: string
-    finding_id?: string
-    case_id?: string
-    workflow_id?: string
-    decision_metadata?: any
-  }) => api.post('/ai/decisions', data),
-  
-  getById: (decisionId: string) => api.get(`/ai/decisions/${decisionId}`),
-  
   list: (params?: {
     agent_id?: string
     finding_id?: string
@@ -136,10 +121,7 @@ export const aiDecisionsApi = {
     time_saved_minutes?: number
   }) => api.post(`/ai/decisions/${decisionId}/feedback`, data),
   
-  getStats: (params?: {
-    agent_id?: string
-    days?: number
-  }) => api.get('/ai/decisions/stats', { params }),
+  getStats: () => api.get('/ai/decisions/stats'),
   
   getPendingFeedback: (limit?: number) =>
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
@@ -177,8 +159,6 @@ export const approvalsApi = {
       params: caseId ? { case_id: caseId } : undefined,
     }),
 
-  getById: (actionId: string) => api.get(`/approvals/${actionId}`),
-
   approve: (actionId: string, approved_by?: string) =>
     api.post(`/approvals/${actionId}/approve`, { approved_by }),
 
@@ -206,11 +186,6 @@ export const findingsApi = {
   
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
-  
-  export: (format: 'json' | 'jsonl' = 'json') =>
-    api.post('/findings/export', null, { params: { output_format: format } }),
-  
-  update: (id: string, data: any) => api.patch(`/findings/${id}`, data),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
     // may restart the Bifrost gateway, then wait on the configured model
@@ -367,6 +342,14 @@ export const casesApi = {
       merged_by: 'user',
     }),
 
+  /** Exports the case to a Jira issue and returns the note to show; a refused export throws its error. */
+  exportJira: async (id: string, projectKey: string): Promise<string> => {
+    const res = await api.post<Schema<'JiraExportResponse'>>(`/cases/${encodeURIComponent(id)}/export/jira`, {
+      project_key: projectKey,
+    })
+    if (res.data?.success === false) throw new Error(res.data.error || 'Jira export failed')
+    return res.data?.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created'
+  },
 }
 
 export const slaPoliciesApi = {
@@ -424,14 +407,8 @@ export const caseMetricsApi = {
 }
 
 export const caseSearchApi = {
-  search: (data: {
-    query: string
-    filters?: Record<string, any>
-    sort_by?: string
-    sort_order?: string
-    limit?: number
-    offset?: number
-  }) => api.post('/case-search/', data),
+  search: (data: Schema<'SearchRequest'>) =>
+    api.post<Schema<'CaseSearchResponse'>>('/cases/search', data),
 }
 
 export interface ReloadServersResponse {
@@ -1344,7 +1321,6 @@ export interface OverviewOutcome {
   state: string
   label: string
   count: number | null
-  source_text: string
   info: string | null
   unmeasured_text: string | null
 }
@@ -1364,11 +1340,9 @@ export interface OverviewFeedItem {
   severity: string | null
   data_source: string
   terminal_state: string
-  terminal_label: string
   title: string | null
   description: string | null
   created_at: string | null
-  evidence_links: Array<{ ref?: string }>
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
@@ -1379,7 +1353,6 @@ export interface OverviewPayload {
   day: string
   empty: boolean
   arrivals: OverviewArrival[]
-  engine: { source_text: string }
   outcomes: OverviewOutcome[]
   running_source: string
   step_source: string

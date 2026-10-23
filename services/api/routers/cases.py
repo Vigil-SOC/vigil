@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
@@ -31,7 +30,6 @@ from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.cases.case_state import case_run_refs, primary_ref
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
-from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
@@ -53,7 +51,6 @@ from core.storage.schemas.case_api import (
     CasePurgeResponse,
     CaseRecordResponse,
     CaseRelationshipsResponse,
-    CaseReportResponse,
     CaseSuccessResponse,
     CaseTasksResponse,
     CaseWatchersResponse,
@@ -72,10 +69,6 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 data_service = DatabaseDataService()
-if REPORTLAB_AVAILABLE:
-    report_service = ReportService()
-else:
-    report_service = None
 
 
 class ActivityAdd(BaseModel):
@@ -217,61 +210,6 @@ async def add_resolution_step(case_id: str, step: ResolutionStepAdd):
         raise HTTPException(status_code=500, detail="Failed to add resolution step")
 
     return data_service.get_case(case_id)
-
-
-@router.post("/{case_id}/generate-report", response_model=CaseReportResponse)
-async def generate_case_report(case_id: str):
-    """
-    Generate a PDF report for a case.
-
-    Args:
-        case_id: The case ID
-
-    Returns:
-        Report file information
-    """
-    if not report_service:
-        raise HTTPException(
-            status_code=501,
-            detail="Report generation requires reportlab. Install with: pip install reportlab",
-        )
-
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    # Get associated findings in one fetch, kept in the case's finding order;
-    # an id with no finding is skipped.
-    finding_ids = case.get("finding_ids", [])
-    linked = data_service.get_findings_by_case(case_id) if finding_ids else []
-    by_id = {f.get("finding_id"): f for f in linked}
-    findings = [by_id[fid] for fid in finding_ids if fid in by_id]
-
-    # Generate report filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.realpath("TestOutputs")
-    resolved = os.path.realpath(
-        os.path.join(output_dir, f"{case_id}_report_{timestamp}.pdf")
-    )
-    # Kept inline so the case ID cannot steer the report outside the output dir.
-    if not resolved.startswith(output_dir + os.sep):
-        raise HTTPException(status_code=400, detail="Invalid case ID")
-    output_path = Path(resolved)
-    filename = output_path.name
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Generate the report
-    success = report_service.generate_case_report(output_path, case, findings)
-
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to generate report")
-
-    return {
-        "success": True,
-        "filename": filename,
-        "path": os.path.join("TestOutputs", filename),
-        "case_id": case_id,
-    }
 
 
 @router.delete(
