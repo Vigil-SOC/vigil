@@ -19,7 +19,6 @@ Design notes
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -27,8 +26,6 @@ from sqlalchemy.orm import Session
 from core.storage.models import CaseEvidence, CaseIOC
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
-
-logger = logging.getLogger(__name__)
 
 
 class SandboxCorrelationService:
@@ -67,7 +64,7 @@ class SandboxCorrelationService:
                 return {
                     "evidence_id": existing.evidence_id,
                     "iocs_added": 0,
-                    "verdict": (existing.analysis_results or {}).get("verdict"),
+                    "verdict": existing.analysis_results.get("verdict"),
                 }
 
             normalised = _normalise_report(sandbox_name, report)
