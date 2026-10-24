@@ -1,0 +1,15 @@
+14.36s call     unit/_ratchets/test_config_audit_actor.py::test_no_placeholder_or_anonymous_config_actor
+9.19s call     unit/_ratchets/test_no_ambient_state.py::test_no_lazy_singleton_accessors
+7.93s call     unit/_ratchets/test_no_datetime_utcnow.py::test_no_asyncio_get_event_loop
+5.92s call     unit/_ratchets/test_no_claude_agent_sdk.py::test_nothing_imports_claude_agent_sdk
+5.81s call     unit/_ratchets/test_one_egress.py::test_no_provider_host_is_dialled_directly
+5.74s call     unit/_ratchets/test_no_datetime_utcnow.py::test_no_datetime_utcnow
+5.29s call     unit/_ratchets/test_no_ambient_state.py::test_no_raw_env_reads
+5.13s call     unit/_ratchets/test_no_blocking_in_async_routes.py::test_no_blocking_calls_in_async_routes
+3.86s call     unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+3.82s call     unit/_ratchets/test_no_metadata_kwarg.py::test_no_model_is_constructed_with_a_metadata_kwarg
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 260 passed, 6 skipped, 2 warnings in 140.56s (0:02:20) ============

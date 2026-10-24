@@ -1,0 +1,14 @@
+adapters: ['aws_security_hub', 'azure_sentinel', 'crowdstrike', 'elastic', 'microsoft_defender', 'opensearch', 'splunk']
+aws_security_hub: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+azure_sentinel: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+crowdstrike: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+elastic: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+microsoft_defender: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+opensearch: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+splunk: params=['cursor', 'max_items'] configured=False -> findings=0 cursor_keys=['last_poll_at']
+runner attrs: ['_adapter_tasks', '_dedup', '_output_queue', '_unconfigured_warned']
+poller _azure_sentinel_state: PollState _azure_sentinel_service: None
+poller _aws_security_hub_state: PollState _aws_security_hub_service: None
+poller _microsoft_defender_state: PollState _microsoft_defender_service: None
+poller _opensearch_state: PollState _opensearch_service: None
+poller.stats keys: ['aws_security_hub_findings', 'aws_security_hub_polls', 'azure_sentinel_findings', 'azure_sentinel_polls', 'crowdstrike_findings', 'crowdstrike_polls', 'dropped', 'elastic_findings', 'elastic_polls', 'errors', 'microsoft_defender_findings', 'microsoft_defender_polls', 'opensearch_findings', 'opensearch_polls', 'splunk_findings', 'splunk_polls', 'webhook_findings', 'webhook_rejections']
