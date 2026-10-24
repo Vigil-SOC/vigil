@@ -55,15 +55,8 @@ async def test_get_cost_analytics_response_shape(monkeypatch):
     from core.reporting import analytics_service as svc
     from services.api.routers import analytics as mod
 
-    # Bifrost failures are swallowed inside costs.py, so record the attempt
-    # rather than rely on an assertion that the handler would never see.
     bifrost_calls = []
-
-    def no_bifrost(*a, **k):
-        bifrost_calls.append((a, k))
-        raise AssertionError("cost endpoint must not call Bifrost")
-
-    monkeypatch.setattr(httpx, "Client", no_bifrost)
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: bifrost_calls.append(a))
     fake_totals = {"calls": 3, "cost_usd": 0.01}
     fake_models = [{"model": "claude-sonnet-4-5", "calls": 3, "cost_usd": 0.01}]
     monkeypatch.setattr(svc, "_cost_totals", lambda db, f: fake_totals)
