@@ -6,16 +6,12 @@ without depending on the registry — which in turn lazily imports every adapter
 in :func:`core.federation.registry._ensure_builtins_loaded`. Keeping the
 contract here (a module that imports nothing from ``core.federation``) breaks
 what would otherwise be an adapter <-> registry import cycle.
-
-The registry re-exports these names, so existing
-``from core.federation.registry import FetchResult`` imports keep working.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Protocol
 
 
 @dataclass
@@ -52,14 +48,12 @@ class FederationAdapter(Protocol):
     async def fetch(
         self,
         *,
-        since: Optional[datetime],
         cursor: Dict[str, Any],
         max_items: int,
     ) -> FetchResult:
         """Pull new findings since the cursor.
 
-        ``since`` is an absolute fallback for adapters that don't honor the
-        cursor on first run; ``cursor`` is the per-source state previously
+        ``cursor`` is the per-source state previously
         returned by this adapter (empty dict on first run — adapters MUST
         treat empty as "from now", we do not backfill on cold start).
 
