@@ -1,4 +1,4 @@
-"""SandboxPoller marks a sub reported only once its report is on the case."""
+"""SandboxPoller marks a sub reported only once its report is on the cases."""
 
 import pytest
 
@@ -25,17 +25,16 @@ class _Correlation:
         self.fail_times = fail_times
         self.calls = []
 
-    def attach_report(self, case_id, sandbox_name, task_id, report):
-        self.calls.append((case_id, sandbox_name, task_id))
+    def attach_report(self, finding_id, sandbox_name, task_id, report):
+        self.calls.append((finding_id, sandbox_name, task_id))
         if len(self.calls) <= self.fail_times:
             raise RuntimeError("db down")
-        return {"evidence_id": 1, "iocs_added": 0, "verdict": None}
+        return {"evidence_ids": [1], "iocs_added": 0, "verdict": None}
 
 
-def _finding(case_id="case-1"):
+def _finding():
     return {
         "finding_id": "f-1",
-        "case_id": case_id,
         "ai_enrichment": {
             "enrichment": {
                 "sandbox_submissions": {
@@ -83,20 +82,9 @@ async def test_failed_correlation_counts_an_error_and_is_retried():
     stats = await poller.run_once()
     assert stats["errors"] == 0 and stats["completed"] == 1
     assert fetches == ["t1", "t1"]
-    assert correlation.calls == [("case-1", "cape", "t1")] * 2
+    assert correlation.calls == [("f-1", "cape", "t1")] * 2
     assert _enrichment(ds)["sandbox_submissions"]["h1"]["cape"]["status"] == "reported"
     assert list(_enrichment(ds)["sandbox_reports"]) == ["h1:cape"]
 
     await poller.run_once()
     assert fetches == ["t1", "t1"]
-
-
-@pytest.mark.asyncio
-async def test_finding_without_case_is_reported_without_correlation():
-    ds = _DataService(_finding(case_id=None))
-    correlation = _Correlation(fail_times=0)
-    poller = _poller(ds, correlation, [])
-
-    stats = await poller.run_once()
-    assert stats["completed"] == 1 and correlation.calls == []
-    assert _enrichment(ds)["sandbox_submissions"]["h1"]["cape"]["status"] == "reported"

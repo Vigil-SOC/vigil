@@ -14,7 +14,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
 import core.storage.unit_of_work as uow_module
-from core.storage.models import CaseEvidence, CaseIOC
+from core.storage.models import CaseEvidence, CaseIOC, case_findings
 from core.cases.sandbox_correlation_service import (
     SandboxCorrelationService,
     _cape_verdict,
@@ -150,6 +150,7 @@ class TestAttachReportAtomicity:
     @pytest.fixture
     def session(self, monkeypatch):
         mock_session = MagicMock()
+        mock_session.scalars.return_value = ["case-1"]
         # No pre-existing IOC rows, so each one takes the insert path.
         mock_session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: mock_session)
@@ -157,7 +158,7 @@ class TestAttachReportAtomicity:
 
     def _attach(self):
         return SandboxCorrelationService().attach_report(
-            case_id="case-1",
+            finding_id="finding-1",
             sandbox_name="cape",
             task_id="task-1",
             report=self.REPORT,
@@ -212,6 +213,15 @@ class TestAttachReportIdempotency:
         engine = create_engine("sqlite://")
         CaseEvidence.__table__.create(engine)
         CaseIOC.__table__.create(engine)
+        case_findings.create(engine)
+        with engine.begin() as conn:
+            conn.execute(
+                case_findings.insert(),
+                [
+                    {"case_id": "case-1", "finding_id": "f-1"},
+                    {"case_id": "case-2", "finding_id": "f-2"},
+                ],
+            )
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(uow_module, "get_db_session", lambda: Session())
         return Session
@@ -221,19 +231,19 @@ class TestAttachReportIdempotency:
 
     def test_same_task_twice_adds_one_evidence_row(self, db):
         svc = SandboxCorrelationService()
-        first = svc.attach_report("case-1", "cape", "t1", self.REPORT)
-        second = svc.attach_report("case-1", "cape", "t1", self.REPORT)
+        first = svc.attach_report("f-1", "cape", "t1", self.REPORT)
+        second = svc.attach_report("f-1", "cape", "t1", self.REPORT)
 
-        assert [e.evidence_id for e in self._evidence(db)] == [first["evidence_id"]]
-        assert second["evidence_id"] == first["evidence_id"]
+        assert [e.evidence_id for e in self._evidence(db)] == first["evidence_ids"]
+        assert second["evidence_ids"] == first["evidence_ids"]
         assert first["iocs_added"] == 2 and second["iocs_added"] == 0
 
     def test_other_task_sandbox_or_case_adds_its_own_row(self, db):
         svc = SandboxCorrelationService()
-        svc.attach_report("case-1", "cape", "t1", self.REPORT)
-        svc.attach_report("case-1", "cape", "t2", self.REPORT)
-        svc.attach_report("case-1", "joe", "t1", {})
-        svc.attach_report("case-2", "cape", "t1", self.REPORT)
+        svc.attach_report("f-1", "cape", "t1", self.REPORT)
+        svc.attach_report("f-1", "cape", "t2", self.REPORT)
+        svc.attach_report("f-1", "joe", "t1", {})
+        svc.attach_report("f-2", "cape", "t1", self.REPORT)
 
         keys = [
             (e.case_id, e.source, e.analysis_results["task_id"])
@@ -257,14 +267,14 @@ class TestVendorScoreScale:
     @pytest.mark.parametrize("sandbox", list(REPORTS))
     def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
         session = MagicMock()
+        session.scalars.return_value = ["case-1"]
         session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
 
-        result = SandboxCorrelationService().attach_report(
-            "case-1", sandbox, "task-1", self.REPORTS[sandbox]
+        SandboxCorrelationService().attach_report(
+            "finding-1", sandbox, "task-1", self.REPORTS[sandbox]
         )
 
-        assert "error" not in result
         (ioc,) = [
             c.args[0]
             for c in session.add.call_args_list
