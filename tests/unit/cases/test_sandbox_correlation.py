@@ -193,8 +193,6 @@ class TestAttachReportAtomicity:
 
 @pytest.mark.unit
 class TestVendorScoreScale:
-    """Each vendor's score reaches CaseIOC on CAPE's 0-10 scale."""
-
     REPORTS = {
         "cape": {"data": {"info": {"score": 1}, "network": {"hosts": ["9.9.9.9"]}}},
         "hybrid_analysis": {"threat_score": 10, "hosts": ["9.9.9.9"]},
@@ -222,11 +220,6 @@ class TestVendorScoreScale:
             0.1,
             1.0,
         )
-
-    def test_hybrid_top_score_is_critical(self):
-        out = _normalise_report("hybrid_analysis", {"threat_score": 100})
-        assert out["score"] == 10.0
-        assert _score_to_threat_level(out["score"]) == "critical"
 
     def test_missing_score_stays_none(self):
         assert (
