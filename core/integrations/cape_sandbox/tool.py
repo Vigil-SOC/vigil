@@ -34,6 +34,7 @@ from mcp.server.models import InitializationOptions
 from core.integrations._base.config import resolve
 from core.integrations._base.tool_result import run_tool
 from core.integrations.cape_sandbox.descriptor import CAPE_SANDBOX
+from core.integrations.cape_sandbox.report import extract_iocs
 
 logger = logging.getLogger(__name__)
 
@@ -62,49 +63,6 @@ def _load_config() -> Dict[str, str]:
 def _headers(api_key: str) -> Dict[str, str]:
     # CAPEv2 uses Token auth; some deployments use Bearer — Token is the canonical format.
     return {"Authorization": f"Token {api_key}"} if api_key else {}
-
-
-def _extract_iocs(report: Dict[str, Any]) -> Dict[str, List[str]]:
-    """Pull IPs, domains, hashes, mutexes, URLs out of a CAPE report."""
-    iocs: Dict[str, set] = {
-        "ips": set(),
-        "domains": set(),
-        "urls": set(),
-        "hashes": set(),
-        "mutexes": set(),
-    }
-
-    network = report.get("network") or {}
-    for host in network.get("hosts", []) or []:
-        if isinstance(host, dict):
-            ip = host.get("ip")
-            if ip:
-                iocs["ips"].add(ip)
-        elif isinstance(host, str):
-            iocs["ips"].add(host)
-
-    for dns in network.get("dns", []) or []:
-        req = dns.get("request") if isinstance(dns, dict) else None
-        if req:
-            iocs["domains"].add(req)
-
-    for http in network.get("http", []) or []:
-        u = http.get("uri") if isinstance(http, dict) else None
-        if u:
-            iocs["urls"].add(u)
-
-    for dropped in report.get("dropped", []) or []:
-        if isinstance(dropped, dict):
-            sha = dropped.get("sha256") or dropped.get("sha1") or dropped.get("md5")
-            if sha:
-                iocs["hashes"].add(sha)
-
-    behavior = report.get("behavior") or {}
-    for summary_key in ("mutexes", "mutex"):
-        for mx in behavior.get("summary", {}).get(summary_key, []) or []:
-            iocs["mutexes"].add(mx)
-
-    return {k: sorted(v) for k, v in iocs.items()}
 
 
 async def handle_list_tools() -> List[types.Tool]:
@@ -292,7 +250,7 @@ async def handle_call_tool(name: str, arguments: Optional[dict]):
             report = resp.json()
             # CAPE wraps the analysis under 'data' in some versions
             analysis = report.get("data") or report
-            return result({"task_id": tid, "iocs": _extract_iocs(analysis)})
+            return result({"task_id": tid, "iocs": extract_iocs(analysis)})
 
         if name == "cape_get_pcap":
             tid = args.get("task_id")
