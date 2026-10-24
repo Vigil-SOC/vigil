@@ -498,33 +498,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/estimate-cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Estimate Cost Endpoint
-         * @description Return a USD low/high band for a hypothetical LLM call.
-         *
-         *     The chat composer and daemon planner call this before submitting a
-         *     real request so they can show the user a cost preview or gate the
-         *     call against a budget. ``low_usd`` assumes zero output tokens (e.g.
-         *     an immediate tool_use stop); ``high_usd`` assumes the call writes
-         *     out ``max_tokens`` of output. Real-world cost lands in between, and
-         *     is typically much closer to ``low_usd`` for cache-friendly workloads.
-         */
-        post: operations["post_api_analytics_estimate-cost"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/insights": {
         parameters: {
             query?: never;
@@ -4093,29 +4066,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/mcp/connections/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Connections Status
-         * @description Get persistent connection status for all MCP servers.
-         *
-         *     Returns:
-         *         Connection status for each server
-         */
-        get: operations["get_api_mcp_connections_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/mcp/servers": {
         parameters: {
             query?: never;
@@ -4131,29 +4081,6 @@ export interface paths {
          *         List of server names
          */
         get: operations["get_api_mcp_servers"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/servers/enabled": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Enabled States
-         * @description Get enabled/disabled state for all MCP servers.
-         *
-         *     Returns:
-         *         Dictionary of server_name -> enabled boolean
-         */
-        get: operations["get_api_mcp_servers_enabled"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4220,8 +4147,6 @@ export interface paths {
          *       another worker). Not down;
          *     * ``disconnected`` otherwise. With no MCP client every server is: the
          *       catalog has no session state of its own.
-         *
-         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
@@ -4324,26 +4249,6 @@ export interface paths {
          * @description Withdraw a credential. What it could reach, it can no longer reach.
          */
         delete: operations["delete_api_mcp_surface_credentials_credential_id"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orchestrator/cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Cost Summary
-         * @description Get cost breakdown across all investigations.
-         */
-        get: operations["get_api_orchestrator_cost"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -8698,40 +8603,6 @@ export interface components {
             urgency_level: string;
         };
         /**
-         * EstimateCostRequest
-         * @description Body for POST /analytics/estimate-cost.
-         *
-         *     Mirrors the shape of an LLM call so the same payload a caller is
-         *     about to send can be passed straight in for an estimate. ``messages``
-         *     matches Anthropic / OpenAI message format — list of role+content
-         *     dicts; multimodal blocks are tolerated but token-counted as text-only
-         *     in the heuristic path.
-         */
-        EstimateCostRequest: {
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
-            /** Messages */
-            messages?: {
-                [key: string]: unknown;
-            }[];
-            /** Model Id */
-            model_id: string;
-            /**
-             * Provider Type
-             * @description Advisory only — the endpoint resolves the real provider from model_id (registry, then a namespaced id or the configured default) and treats this value as final only when neither matches.
-             */
-            provider_type?: string | null;
-            /** System Prompt */
-            system_prompt?: string | null;
-            /** Tools */
-            tools?: {
-                [key: string]: unknown;
-            }[] | null;
-        };
-        /**
          * EvidenceAdd
          * @description Add evidence to case.
          */
@@ -12264,43 +12135,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_analytics_estimate-cost": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EstimateCostRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -18592,69 +18426,7 @@ export interface operations {
             };
         };
     };
-    get_api_mcp_connections_status: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_mcp_servers: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_mcp_servers_enabled: {
         parameters: {
             query?: never;
             header?: {
@@ -18894,37 +18666,6 @@ export interface operations {
             path: {
                 credential_id: string;
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_orchestrator_cost: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
