@@ -13,8 +13,9 @@ Design notes
 - ``CaseIOC`` is used for extracted IOCs (network IPs/domains/URLs, dropped
   file hashes, mutexes). Per-IOC ``enrichment_data`` captures which sandbox
   report it came from, for back-reference.
-- ``reputation_score`` is derived heuristically from the sandbox verdict
-  score where present.
+- ``_normalise_hybrid`` and ``_normalise_cape`` return ``score`` on CAPE's
+  0-10 malscore scale, so ``reputation_score``, threat level and confidence
+  read one scale for both. Other vendors' scores are not rescaled yet.
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.storage.models import CaseEvidence, CaseIOC
+from core.storage.models import CaseEvidence, CaseIOC, case_findings
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -32,21 +34,21 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxCorrelationService:
-    """Attach a sandbox report to a case as evidence + IOCs."""
+    """Attach a sandbox report to a finding's cases as evidence + IOCs."""
 
     def __init__(self) -> None:
         pass
 
     def attach_report(
         self,
-        case_id: str,
+        finding_id: str,
         sandbox_name: str,
         task_id: str,
         report: Dict[str, Any],
         collected_by: str = "sandbox-poller",
         session: Optional[Session] = None,
     ) -> Dict[str, Any]:
-        """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows.
+        """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows per linked case.
 
         Returns a small summary dict for caller logging.
         """
@@ -55,55 +57,63 @@ class SandboxCorrelationService:
         # half-written report commit.
         try:
             with unit_of_work(session) as session:
-                normalised = _normalise_report(sandbox_name, report)
-                evidence = CaseEvidence(
-                    case_id=case_id,
-                    evidence_type="sandbox_report",
-                    name=f"{sandbox_name} report {task_id}",
-                    description=f"Automated sandbox detonation from {sandbox_name}",
-                    file_path=None,
-                    file_size=None,
-                    file_hash_md5=normalised.get("md5"),
-                    file_hash_sha256=normalised.get("sha256"),
-                    source=sandbox_name,
-                    collected_by=collected_by,
-                    collected_at=utcnow(),
-                    chain_of_custody=[
-                        {
-                            "timestamp": utcnow().isoformat(),
-                            "action": "collected",
-                            "user": collected_by,
-                            "notes": f"Retrieved from {sandbox_name} task {task_id}",
-                        }
-                    ],
-                    analysis_results={
-                        "sandbox": sandbox_name,
-                        "task_id": task_id,
-                        "verdict": normalised.get("verdict"),
-                        "score": normalised.get("score"),
-                        "mitre_techniques": normalised.get("mitre_techniques", []),
-                        "raw": report,
-                    },
-                    tags=["sandbox", sandbox_name],
+                case_ids = session.scalars(
+                    select(case_findings.c.case_id).where(
+                        case_findings.c.finding_id == finding_id
+                    )
                 )
-                session.add(evidence)
-                session.flush()
-
+                normalised = _normalise_report(sandbox_name, report)
+                evidence_ids = []
                 iocs_added = 0
-                for ioc_type, value in _iter_iocs(normalised.get("iocs", {})):
-                    if self._upsert_ioc(
-                        session=session,
+                for case_id in case_ids:
+                    evidence = CaseEvidence(
                         case_id=case_id,
-                        ioc_type=ioc_type,
-                        value=value,
+                        evidence_type="sandbox_report",
+                        name=f"{sandbox_name} report {task_id}",
+                        description=f"Automated sandbox detonation from {sandbox_name}",
+                        file_path=None,
+                        file_size=None,
+                        file_hash_md5=normalised.get("md5"),
+                        file_hash_sha256=normalised.get("sha256"),
                         source=sandbox_name,
-                        sandbox_task_id=task_id,
-                        score=normalised.get("score"),
-                    ):
-                        iocs_added += 1
+                        collected_by=collected_by,
+                        collected_at=utcnow(),
+                        chain_of_custody=[
+                            {
+                                "timestamp": utcnow().isoformat(),
+                                "action": "collected",
+                                "user": collected_by,
+                                "notes": f"Retrieved from {sandbox_name} task {task_id}",
+                            }
+                        ],
+                        analysis_results={
+                            "sandbox": sandbox_name,
+                            "task_id": task_id,
+                            "verdict": normalised.get("verdict"),
+                            "score": normalised.get("score"),
+                            "mitre_techniques": normalised.get("mitre_techniques", []),
+                            "raw": report,
+                        },
+                        tags=["sandbox", sandbox_name],
+                    )
+                    session.add(evidence)
+                    session.flush()
+                    evidence_ids.append(evidence.evidence_id)
+
+                    for ioc_type, value in _iter_iocs(normalised.get("iocs", {})):
+                        if self._upsert_ioc(
+                            session=session,
+                            case_id=case_id,
+                            ioc_type=ioc_type,
+                            value=value,
+                            source=sandbox_name,
+                            sandbox_task_id=task_id,
+                            score=normalised.get("score"),
+                        ):
+                            iocs_added += 1
 
                 return {
-                    "evidence_id": evidence.evidence_id,
+                    "evidence_ids": evidence_ids,
                     "iocs_added": iocs_added,
                     "verdict": normalised.get("verdict"),
                 }
@@ -261,7 +271,7 @@ def _normalise_hybrid(report: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "md5": report.get("md5"),
         "sha256": report.get("sha256"),
-        "score": report.get("threat_score"),
+        "score": _percent_to_tenths(report.get("threat_score")),
         "verdict": report.get("verdict"),
         "mitre_techniques": report.get("mitre_attcks", []) or [],
         "iocs": _flatten_iocs(
@@ -283,6 +293,13 @@ def _normalise_anyrun(report: Dict[str, Any]) -> Dict[str, Any]:
         "mitre_techniques": [],
         "iocs": _flatten_iocs(data.get("iocs", {})),
     }
+
+
+def _percent_to_tenths(score: Any) -> Optional[float]:
+    try:
+        return float(score) / 10.0
+    except (TypeError, ValueError):
+        return None
 
 
 def _flatten_iocs(raw: Dict[str, Any]) -> Dict[str, List[str]]:
