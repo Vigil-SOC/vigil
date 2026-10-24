@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
-from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import (
@@ -49,21 +48,15 @@ _cached_orchestrator = None
 
 
 def _get_orchestrator():
-    """Get a cached orchestrator instance for DB-only queries from the API layer."""
     global _cached_orchestrator
-    if _cached_orchestrator is not None:
-        return _cached_orchestrator
     try:
-        from services.daemon.config import OrchestratorConfig
+        from services.daemon.config import DaemonConfig
         from services.daemon.orchestrator import Orchestrator
 
-        # The daemon's fallback when Settings holds no hourly cap; must match it.
-        config = OrchestratorConfig(
-            max_total_hourly_cost=get_settings().orchestrator_max_hourly_cost
-        )
-        orch = Orchestrator(config)
-        _cached_orchestrator = orch
-        return orch
+        config = DaemonConfig.from_env().orchestrator
+        if _cached_orchestrator is None or _cached_orchestrator.config != config:
+            _cached_orchestrator = Orchestrator(config)
+        return _cached_orchestrator
     except Exception as e:
         logger.debug(f"Orchestrator init: {e}")
         return None
@@ -308,15 +301,11 @@ def get_investigation(investigation_id: str):
 
         files = orch.workdir.list_files(investigation_id)
         log = orch.workdir.get_log(investigation_id, tail=20)
-        state = orch.workdir.read_state(investigation_id)
-        disk_usage = orch.workdir.get_disk_usage(investigation_id)
 
         return {
             **inv,
             "files": files,
             "recent_log": log,
-            "state": state,
-            "disk_usage_bytes": disk_usage,
         }
     except HTTPException:
         raise
@@ -593,20 +582,12 @@ def get_cost_summary():
 # ---- Chain of Custody ----
 
 # Workdir files to include in the chain-of-custody package.
-#
-# `hypotheses.txt`, not `.json`: WorkdirManager scaffolds an empty `hypotheses.json`
-# and nothing ever writes it, so the export carried a truthy "[]" while the claims
-# the run was opened to test sat unread in the file beside it. An audit document
-# that says "no hypotheses" is worse than one that says nothing.
 _COC_WORKDIR_FILES = [
     "state.json",
     "context.md",
-    "iocs.json",
-    "timeline.json",
     "hypotheses.txt",
     "hypothesis_subjects.json",
     "recall_keys.json",
-    "review.md",
 ]
 
 
