@@ -1,0 +1,194 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1c28bf73-fea7-4697-bfde-fe08d3c784b5/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 30 items / 23 deselected / 7 selected
+
+tests/unit/integrations/test_darktrace_webhook.py FF..FFF                [100%]
+
+=================================== FAILURES ===================================
+________ TestEnableGate.test_ui_toggle_wins_over_env[stored0-None-True] ________
+
+self = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf5970>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3a18dd0>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3a027a0>
+stored = {'enabled': True}, env = None, expected = True
+
+    @pytest.mark.parametrize(
+        "stored,env,expected",
+        [
+            ({"enabled": True}, None, True),
+            ({"enabled": False}, "true", False),
+            ({}, "true", True),
+            ({}, None, False),
+        ],
+    )
+    def test_ui_toggle_wins_over_env(
+        self, monkeypatch, env_enabled, stored, env, expected
+    ):
+        monkeypatch.setattr(_mod, "_get_settings", lambda: stored)
+        env_enabled(env)
+>       assert _mod.ROUTER_META.is_enabled is expected
+E       AssertionError: assert False is True
+E        +  where False = RouterMeta(prefix='/api/webhooks/darktrace', tags=['darktrace'], auth=<Auth.PUBLIC_WEBHOOK: 'public_webhook'>, reason=...ret is configured.', enabled=<function darktrace_enabled at 0x7f56e62a4a40>, extra_dependencies=(), legacy_prefixes=()).is_enabled
+E        +    where RouterMeta(prefix='/api/webhooks/darktrace', tags=['darktrace'], auth=<Auth.PUBLIC_WEBHOOK: 'public_webhook'>, reason=...ret is configured.', enabled=<function darktrace_enabled at 0x7f56e62a4a40>, extra_dependencies=(), legacy_prefixes=()) = _mod.ROUTER_META
+
+env        = None
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3a027a0>
+expected   = True
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3a18dd0>
+self       = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf5970>
+stored     = {'enabled': True}
+
+tests/unit/integrations/test_darktrace_webhook.py:377: AssertionError
+_______ TestEnableGate.test_ui_toggle_wins_over_env[stored1-true-False] ________
+
+self = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf5610>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3a28170>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3a02980>
+stored = {'enabled': False}, env = 'true', expected = False
+
+    @pytest.mark.parametrize(
+        "stored,env,expected",
+        [
+            ({"enabled": True}, None, True),
+            ({"enabled": False}, "true", False),
+            ({}, "true", True),
+            ({}, None, False),
+        ],
+    )
+    def test_ui_toggle_wins_over_env(
+        self, monkeypatch, env_enabled, stored, env, expected
+    ):
+        monkeypatch.setattr(_mod, "_get_settings", lambda: stored)
+        env_enabled(env)
+>       assert _mod.ROUTER_META.is_enabled is expected
+E       AssertionError: assert True is False
+E        +  where True = RouterMeta(prefix='/api/webhooks/darktrace', tags=['darktrace'], auth=<Auth.PUBLIC_WEBHOOK: 'public_webhook'>, reason=...ret is configured.', enabled=<function darktrace_enabled at 0x7f56e62a4a40>, extra_dependencies=(), legacy_prefixes=()).is_enabled
+E        +    where RouterMeta(prefix='/api/webhooks/darktrace', tags=['darktrace'], auth=<Auth.PUBLIC_WEBHOOK: 'public_webhook'>, reason=...ret is configured.', enabled=<function darktrace_enabled at 0x7f56e62a4a40>, extra_dependencies=(), legacy_prefixes=()) = _mod.ROUTER_META
+
+env        = 'true'
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3a02980>
+expected   = False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3a28170>
+self       = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf5610>
+stored     = {'enabled': False}
+
+tests/unit/integrations/test_darktrace_webhook.py:377: AssertionError
+_ TestEnableGate.test_toggle_off_rejects_signed_push_with_env_on[model-breach] _
+
+self = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf4470>
+client = <starlette.testclient.TestClient object at 0x7f56e3af4110>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3a67ce0>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3aaede0>
+path = 'model-breach'
+
+    @pytest.mark.parametrize(
+        "path", ["model-breach", "ai-analyst", "system-status"]
+    )
+    def test_toggle_off_rejects_signed_push_with_env_on(
+        self, client, monkeypatch, env_enabled, path
+    ):
+        wr._counts.clear()
+        monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": False})
+        env_enabled("true")
+        with patch("darktrace_webhook_under_test.DarktraceIngestionService") as svc:
+            r = _post(client, f"/api/webhooks/darktrace/{path}", MODEL_BREACH_SAMPLE)
+>       assert r.status_code == 503
+E       assert 202 == 503
+E        +  where 202 = <Response [202 Accepted]>.status_code
+
+client     = <starlette.testclient.TestClient object at 0x7f56e3af4110>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3aaede0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3a67ce0>
+path       = 'model-breach'
+r          = <Response [202 Accepted]>
+self       = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf4470>
+svc        = <MagicMock name='DarktraceIngestionService' id='140011163831856'>
+
+tests/unit/integrations/test_darktrace_webhook.py:390: AssertionError
+__ TestEnableGate.test_toggle_off_rejects_signed_push_with_env_on[ai-analyst] __
+
+self = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf5fd0>
+client = <starlette.testclient.TestClient object at 0x7f56e3af6930>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3af6bd0>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3aaff60>
+path = 'ai-analyst'
+
+    @pytest.mark.parametrize(
+        "path", ["model-breach", "ai-analyst", "system-status"]
+    )
+    def test_toggle_off_rejects_signed_push_with_env_on(
+        self, client, monkeypatch, env_enabled, path
+    ):
+        wr._counts.clear()
+        monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": False})
+        env_enabled("true")
+        with patch("darktrace_webhook_under_test.DarktraceIngestionService") as svc:
+            r = _post(client, f"/api/webhooks/darktrace/{path}", MODEL_BREACH_SAMPLE)
+>       assert r.status_code == 503
+E       assert 202 == 503
+E        +  where 202 = <Response [202 Accepted]>.status_code
+
+client     = <starlette.testclient.TestClient object at 0x7f56e3af6930>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3aaff60>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3af6bd0>
+path       = 'ai-analyst'
+r          = <Response [202 Accepted]>
+self       = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf5fd0>
+svc        = <MagicMock name='DarktraceIngestionService' id='140011163747104'>
+
+tests/unit/integrations/test_darktrace_webhook.py:390: AssertionError
+_ TestEnableGate.test_toggle_off_rejects_signed_push_with_env_on[system-status] _
+
+self = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf6090>
+client = <starlette.testclient.TestClient object at 0x7f56e3900cb0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3af6a20>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3ac84a0>
+path = 'system-status'
+
+    @pytest.mark.parametrize(
+        "path", ["model-breach", "ai-analyst", "system-status"]
+    )
+    def test_toggle_off_rejects_signed_push_with_env_on(
+        self, client, monkeypatch, env_enabled, path
+    ):
+        wr._counts.clear()
+        monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": False})
+        env_enabled("true")
+        with patch("darktrace_webhook_under_test.DarktraceIngestionService") as svc:
+            r = _post(client, f"/api/webhooks/darktrace/{path}", MODEL_BREACH_SAMPLE)
+>       assert r.status_code == 503
+E       assert 202 == 503
+E        +  where 202 = <Response [202 Accepted]>.status_code
+
+client     = <starlette.testclient.TestClient object at 0x7f56e3900cb0>
+env_enabled = <function TestEnableGate.env_enabled.<locals>.set_env at 0x7f56e3ac84a0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f56e3af6a20>
+path       = 'system-status'
+r          = <Response [202 Accepted]>
+self       = <tests.unit.integrations.test_darktrace_webhook.TestEnableGate object at 0x7f56e3bf6090>
+svc        = <MagicMock name='DarktraceIngestionService' id='140011161793456'>
+
+tests/unit/integrations/test_darktrace_webhook.py:390: AssertionError
+============================= slowest 10 durations =============================
+0.28s setup    unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored0-None-True]
+0.09s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[system-status]
+0.06s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[model-breach]
+0.05s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored0-None-True]
+0.04s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[ai-analyst]
+0.02s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored1-true-False]
+0.02s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored3-None-False]
+0.02s call     unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored2-true-True]
+0.01s setup    unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[model-breach]
+
+(1 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored0-None-True]
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_ui_toggle_wins_over_env[stored1-true-False]
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[model-breach]
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[ai-analyst]
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestEnableGate::test_toggle_off_rejects_signed_push_with_env_on[system-status]
+================== 5 failed, 2 passed, 23 deselected in 6.47s ==================

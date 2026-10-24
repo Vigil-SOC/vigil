@@ -1,0 +1,17 @@
+== branch @ cfd58dbd dirty_files=4
+-- A: env off, UI toggle on
+  [restart DARKTRACE_ENABLED=false] Routers not mounted (feature-gated off): cloudflare_webhooks, darktrace_webhook
+  POST /api/config/darktrace {"enabled":true,"url":"","max_body_kb":1024,"webhook_secret":"s3cret"} -> {"success":true,"message":"Darktrace config saved"}
+  GET  /api/config/darktrace -> {"enabled":true,"url":"","max_body_kb":1024,"configured":true}
+  [restart DARKTRACE_ENABLED=false] Routers not mounted (feature-gated off): cloudflare_webhooks
+  signed push -> 202
+-- B: env on, UI toggle off, no restart
+  [restart DARKTRACE_ENABLED=true] Routers not mounted (feature-gated off): cloudflare_webhooks
+  GET  /api/config/darktrace -> {"enabled":true,"url":"","max_body_kb":1024,"configured":true}
+  signed push -> 202
+  POST /api/config/darktrace {"enabled":false,"url":"","max_body_kb":1024} -> {"success":true,"message":"Darktrace config saved"}
+  GET  /api/config/darktrace -> {"enabled":false,"url":"","max_body_kb":1024,"configured":true}
+  signed push -> 503
+-- B': same state after restart
+  [restart DARKTRACE_ENABLED=true] Routers not mounted (feature-gated off): cloudflare_webhooks, darktrace_webhook
+  signed push -> 404

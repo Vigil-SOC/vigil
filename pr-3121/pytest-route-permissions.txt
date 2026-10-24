@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/1c28bf73-fea7-4697-bfde-fe08d3c784b5/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 66 items
+
+tests/security/test_route_permissions.py ............................... [ 46%]
+...................................                                      [100%]
+
+============================= slowest 10 durations =============================
+0.65s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+0.51s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+0.43s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.21s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/workflows/runs/r-1/cancel-body27-ai_decisions.approve]
+0.14s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/skills-body32-settings.write]
+0.13s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases-body16-cases.write]
+0.08s setup    security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+0.07s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[PATCH-/api/v1/findings/f-1-body23-findings.write]
+0.07s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/ingest/ingest-string-None-findings.write]
+0.07s call     security/test_route_permissions.py::test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list
+======================== 66 passed, 1 warning in 11.60s ========================
