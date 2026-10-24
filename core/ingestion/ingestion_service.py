@@ -582,10 +582,14 @@ class IngestionService:
 
             if peek == b"{":
                 self._ingest_findings_batched(
-                    self._counted(ijson.items(f, "findings.item", use_float=True), "findings_total")
+                    self._counted(
+                        ijson.items(f, "findings.item", use_float=True),
+                        "findings_total",
+                    )
                 )
                 f.seek(0)
-                for item in self._counted(ijson.items(f, "cases.item", use_float=True), "cases_total"):
+                cases = ijson.items(f, "cases.item", use_float=True)
+                for item in self._counted(cases, "cases_total"):
                     self.ingest_case(item)
             elif peek == b"[":
                 items = ijson.items(f, "item", use_float=True)
