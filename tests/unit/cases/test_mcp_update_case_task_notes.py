@@ -18,7 +18,7 @@ def call(monkeypatch):
         yield object()
 
     monkeypatch.setattr(case_records_service, "update_task", lambda *a: task)
-    monkeypatch.setattr(vigil, "_service_session", fake_session)
+    monkeypatch.setattr(vigil, "service_session", fake_session)
     monkeypatch.setattr(
         vigil.CaseTaskSchema, "dump", staticmethod(lambda t: {"task_id": t.task_id})
     )
