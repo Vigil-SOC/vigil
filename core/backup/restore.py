@@ -182,6 +182,7 @@ def restore_snapshot(
             # Resolved before the swap: an unknown operator refuses the restore
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
+            _check_erasure_list(root, dump_in_snapshot)
             swap_lines, abandoned = _swap(cfg, staged_name, pre_name, placed, stamp)
             lines.extend(swap_lines)
             swapped = True
@@ -191,6 +192,10 @@ def restore_snapshot(
             # is recorded after settle so a missing history file does not skip
             # JWT rotation, and a write error still carries those lines.
             try:
+                # The restored database is the live name. Point this process at
+                # it before blanking, or the erasure list is applied nowhere.
+                _point_at_live(cfg)
+                _reapply_erased(root, dump_in_snapshot)
                 lines.extend(
                     _settle_restored(
                         cfg, manifest, snapshot_id, restoring_user, abandoned
@@ -616,6 +621,31 @@ def _check_secrets(placed: list[_Placed]) -> str:
     if key_path.read_bytes() != key_bytes:
         raise BackupError("secrets check failed: master.key was rewritten")
     return "ok"
+
+
+def _check_erasure_list(root: Path, dump_in_snapshot: str) -> None:
+    """Refuse before the swap when the snapshot's erasures could not be re-applied."""
+    from core.audit.retention import LIST_NAME, outside_path, read_ids
+
+    path = _under_target(root, str(Path(dump_in_snapshot).parent / LIST_NAME))
+    if path.is_file() and read_ids(path) and outside_path() is None:
+        raise BackupError(
+            "the snapshot erases principals and VIGIL_UPGRADE_DIR is unset; "
+            "set it, then restore again"
+        )
+
+
+def _reapply_erased(root: Path, dump_in_snapshot: str) -> None:
+    """Union the snapshot's erasure list with the outside file and blank each id."""
+    from core.audit.retention import LIST_NAME, read_ids, reapply
+    from core.storage.unit_of_work import unit_of_work
+
+    path = _under_target(root, str(Path(dump_in_snapshot).parent / LIST_NAME))
+    try:
+        with unit_of_work() as session:
+            reapply(session, read_ids(path) if path.is_file() else [])
+    except Exception as exc:
+        raise BackupError(f"could not reapply erased principals: {exc}") from exc
 
 
 def _record_restored(

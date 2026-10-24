@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { auditApi, auditParams } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
 import AuditSection, { EMPTY_DRAFT, auditFilter, verifyLine } from './AuditSection'
+
+const manager = { hasPermission: (p: string) => p === 'audit.manage' || p === 'audit.read' }
+
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: vi.fn(() => manager),
+}))
 
 vi.mock('../../services/api', async (orig) => {
   const real = await orig<typeof import('../../services/api')>()
@@ -11,6 +18,11 @@ vi.mock('../../services/api', async (orig) => {
       entries: vi.fn(() => Promise.resolve({ data: { entries: [], tip: { seq: 0, hash: 'h' } } })),
       download: vi.fn(() => Promise.resolve()),
       verify: vi.fn(),
+      retention: vi.fn(() => Promise.resolve({
+        data: { effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasure_unconfirmed: false, erasures: [] },
+      })),
+      saveRetention: vi.fn(),
+      erasePrincipal: vi.fn(),
     },
   }
 })
@@ -53,5 +65,19 @@ describe('audit section', () => {
   it('reads a verify result as ok or the first break', () => {
     expect(verifyLine({ first: 1, last: 9, first_bad: null, reason: '', ok: true })).toEqual({ level: 'good', text: 'Chain verified · seq 1–9' })
     expect(verifyLine({ first: 1, last: 9, first_bad: 4, reason: 'hash mismatch', ok: false }).text).toBe('Chain break at seq 4: hash mismatch')
+  })
+})
+
+describe('retention card', () => {
+  it('says the period could not load for a viewer rather than that none is in force', async () => {
+    vi.mocked(useAuth).mockReturnValue({ hasPermission: (p: string) => p === 'audit.read' } as unknown as ReturnType<typeof useAuth>)
+    vi.mocked(auditApi.retention).mockRejectedValueOnce(new Error('network down'))
+    try {
+      render(<AuditSection notify={vi.fn()} />)
+      expect(await screen.findByText('Could not load the retention period.')).toBeTruthy()
+      expect(screen.queryByText('No retention period is in force yet.')).toBeNull()
+    } finally {
+      vi.mocked(useAuth).mockReturnValue(manager as unknown as ReturnType<typeof useAuth>)
+    }
   })
 })

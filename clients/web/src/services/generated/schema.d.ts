@@ -722,6 +722,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/erasure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erase Principal
+         * @description Blank one principal's personal details. An audit manager waits seven days.
+         */
+        post: operations["post_api_audit_erasure"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/export": {
         parameters: {
             query?: never;
@@ -799,6 +819,30 @@ export interface paths {
          */
         get: operations["get_api_audit_poll"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Retention
+         * @description The period in force, the one waiting, and which announcements have not left the box.
+         */
+        get: operations["get_api_audit_retention"];
+        /**
+         * Put Retention
+         * @description Set the retention period. At least 365 days, in force seven days later.
+         */
+        put: operations["put_api_audit_retention"];
         post?: never;
         delete?: never;
         options?: never;
@@ -8486,6 +8530,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EraseIn */
+        EraseIn: {
+            /**
+             * Principal Id
+             * @default
+             */
+            principal_id: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /**
          * EscalationAdd
          * @description Escalate case.
@@ -9697,6 +9754,14 @@ export interface components {
             workflow_phase_id?: string | null;
             /** Workflow Run Id */
             workflow_run_id?: string | null;
+        };
+        /** PeriodIn */
+        PeriodIn: {
+            /**
+             * Days
+             * @default 0
+             */
+            days: number;
         };
         /** PhaseUpdate */
         PhaseUpdate: {
@@ -12383,6 +12448,41 @@ export interface operations {
             };
         };
     };
+    post_api_audit_erasure: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EraseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_audit_export: {
         parameters: {
             query?: {
@@ -12544,6 +12644,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_audit_retention: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_audit_retention: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PeriodIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

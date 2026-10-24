@@ -409,6 +409,11 @@
   "nullable": true,
   "type": "text"
  },
+ "column audit_feed_state.pending_announcements": {
+  "default": "'{}'::bigint[]",
+  "nullable": false,
+  "type": "bigint[]"
+ },
  "column audit_trail.actor_text": {
   "acl": [
    "app:UPDATE"

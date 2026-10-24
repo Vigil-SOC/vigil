@@ -5,24 +5,25 @@ One filter, from ``core.audit.trail``. List, export, and range verify need
 ``audit.read``, and anyone else needs ``audit.forward``. A missing sign-in is
 refused before that check. ``audit.forward`` and ``audit.manage`` stay a
 person's own act inside ``check_permission``, including in dev mode. A poll
-writes nothing.
+adds no trail row.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from core.audit import trail
+from core.audit import retention, trail
 from core.auth import current_user as current_user_module
 from core.auth import principals
 from core.auth.auth_service import AuthService, _is_service_account
 from core.auth.current_user import get_current_user
-from core.auth.permissions import require_permission
+from core.auth.permissions import require_permission, require_person_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 
@@ -35,6 +36,7 @@ ROUTER_META = RouterMeta(
 )
 
 _READ = require_permission("audit.read")
+_MANAGE = require_person_permission("audit.manage")
 _SIGN_IN_REQUIRED = "A person sign-in is required"
 _KINDS = frozenset(
     {
@@ -108,6 +110,33 @@ def require_forward():
     return _check
 
 
+class PeriodIn(BaseModel):
+    days: int = 0
+
+
+class EraseIn(BaseModel):
+    principal_id: str = ""
+    reason: str = ""
+
+
+def _actor(user: User) -> str:
+    if not user.principal_id:
+        raise HTTPException(status_code=403, detail="A principal is required")
+    return user.principal_id
+
+
+def _retention(fn):
+    try:
+        return fn()
+    except retention.RetentionError as exc:
+        status = 404 if str(exc) == "unknown principal" else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+def _carried(session, rows: list[dict]) -> None:
+    retention.carried(session, [row["seq"] for row in rows if "seq" in row])
+
+
 def _ndjson(rows: list[dict], tip: trail.Tip):
     for row in rows:
         yield json.dumps(row, separators=(",", ":")) + "\n"
@@ -138,6 +167,7 @@ def export_entries(
     if not user.principal_id:
         raise HTTPException(status_code=403, detail="A principal is required")
     rows, tip = trail.export(session, query, user.principal_id)
+    _carried(session, rows)
     return StreamingResponse(
         _ndjson(rows, tip),
         media_type="application/x-ndjson",
@@ -158,7 +188,9 @@ def poll_entries(
     page = trail.poll(session, query, limit)
     if page.reset:
         return {"reset": True, "tip": page.tip.public(), "restore": page.restore}
-    return {"entries": list(page.entries), "tip": page.tip.public()}
+    rows = list(page.entries)
+    _carried(session, rows)
+    return {"entries": rows, "tip": page.tip.public()}
 
 
 @router.get("/verify")
@@ -177,3 +209,46 @@ def verify_range(
         "reason": result.reason,
         "ok": result.ok,
     }
+
+
+@router.get("/retention")
+def get_retention(session: UnitOfWorkSession, _: User = Depends(_READ)):
+    """The period in force, the one waiting, and which announcements have not left the box."""
+    return retention.view(session, datetime.now(timezone.utc))
+
+
+@router.put("/retention")
+def put_retention(
+    body: PeriodIn,
+    session: UnitOfWorkSession,
+    user: User = Depends(_MANAGE),
+):
+    """Set the retention period. At least 365 days, in force seven days later."""
+    return _retention(
+        lambda: retention.set_period(
+            session,
+            body.days,
+            _actor(user),
+            datetime.now(timezone.utc),
+            updated_by=user.user_id,
+        )
+    )
+
+
+@router.post("/erasure")
+def erase_principal(
+    body: EraseIn,
+    session: UnitOfWorkSession,
+    user: User = Depends(_MANAGE),
+):
+    """Blank one principal's personal details. An audit manager waits seven days."""
+    return _retention(
+        lambda: retention.erase(
+            session,
+            _actor(user),
+            body.principal_id,
+            body.reason,
+            datetime.now(timezone.utc),
+            updated_by=user.user_id,
+        )
+    )
