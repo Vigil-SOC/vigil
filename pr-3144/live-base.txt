@@ -1,0 +1,9 @@
+$ kill -TERM 1339186   (daemon base)
+exit=0
+23:20:25.959 INFO __main__ | SOC Daemon fully operational
+23:20:36.745 INFO __main__ | Shutdown signal received
+23:20:36.746 INFO services.daemon.kafka_ingestor | Kafka ingestor stopped
+23:20:36.762 INFO __main__ | Shutting down daemon components...
+23:20:36.769 INFO services.daemon.metrics | Health and Prometheus servers stopped
+23:20:36.770 INFO services.daemon.poller | Polling tasks cancelled
+23:20:36.777 INFO __main__ | SOC Daemon shutdown complete

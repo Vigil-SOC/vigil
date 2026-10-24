@@ -1,0 +1,2 @@
+0.14s call     tests/unit/daemon/test_orchestrator_runs.py::TestShadowAdjudication::test_on_enqueues_exactly_one_more_adjudicate_run
+======================= 413 passed, 1 warning in 23.37s ========================

@@ -1,0 +1,15 @@
+#!/bin/bash
+# usage: live.sh <label>; runs the daemon, waits for "fully operational", SIGTERMs it, prints shutdown log lines
+export JWT_SECRET_KEY=throwaway-3134-$(date +%s)-abcdefghijklmnopqrstuvwxyz POSTGRES_DB=shutdown3134 DAEMON_HEALTH_PORT=39191 DAEMON_METRICS_PORT=39190 DAEMON_WEBHOOK_ENABLED=false
+LOG=$TMPDIR/daemon-$1.log
+python services/daemon/main.py > $LOG 2>&1 &
+PID=$!
+for i in $(seq 90); do grep -q "fully operational" $LOG && break; sleep 1; done
+sleep 3
+echo "\$ kill -TERM $PID   (daemon $1)"
+kill -TERM $PID; wait $PID; echo "exit=$?"
+python3 -c "import json,sys,re
+for l in open(sys.argv[1]):
+  try: m=json.loads(l)
+  except: continue
+  if re.search(r\"operational|Shutdown signal|Shutting down|stopped|shutdown complete|did not stop|cancell\",m[\"message\"]): print(m[\"ts\"][11:23],m[\"level\"],m[\"logger\"],\"|\",m[\"message\"])" $LOG

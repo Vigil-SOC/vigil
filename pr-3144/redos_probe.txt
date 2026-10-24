@@ -1,0 +1,14 @@
+dashes                   before n=5k 0.2818s n=50k 27.2668s ratio 97x
+dashes                   after  n=5k 0.0006s n=50k 0.0055s ratio 10x
+quote + \' repeats       before n=5k 1.3718s n=50k 150.2022s ratio 109x
+quote + \' repeats       after  n=5k 0.0005s n=50k 0.0087s ratio 19x
+path + .' repeats        before n=5k 0.0072s n=50k 0.0519s ratio 7x
+path + .' repeats        after  n=5k 0.0034s n=50k 0.0412s ratio 12x
+a:b.'a:b.' repeats       before n=5k 0.0080s n=50k 0.0969s ratio 12x
+a:b.'a:b.' repeats       after  n=5k 0.0051s n=50k 0.0776s ratio 15x
+words no colon           before n=5k 0.0018s n=50k 0.0183s ratio 10x
+words no colon           after  n=5k 0.0019s n=50k 0.0183s ratio 9x
+path, spaces, no op      before n=5k 0.0009s n=50k 0.0079s ratio 9x
+path, spaces, no op      after  n=5k 0.0010s n=50k 0.0099s ratio 10x
+a:b = '\' repeats        before n=5k 1.3306s n=50k 113.0414s ratio 85x
+a:b = '\' repeats        after  n=5k 0.0007s n=50k 0.0074s ratio 11x

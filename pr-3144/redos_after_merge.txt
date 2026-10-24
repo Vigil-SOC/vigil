@@ -1,0 +1,5 @@
+dashes                   after n=5k 0.0070s n=50k 0.0323s
+quote + \' repeats       after n=5k 0.0067s n=50k 0.0610s
+a:b.'a:b.' repeats       after n=5k 0.0574s n=50k 0.5095s
+a:b = '\' repeats        after n=5k 0.0188s n=50k 0.2997s
+path, spaces, no op      after n=5k 0.0412s n=50k 0.2975s

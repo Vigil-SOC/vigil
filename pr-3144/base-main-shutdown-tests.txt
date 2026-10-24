@@ -1,0 +1,16 @@
+>       assert cleaned == [True]
+E       assert [] == [True]
+>       assert calls == [1]
+E       assert [] == [1]
+>       assert calls == [1]
+E       assert [] == [1]
+>       assert refresher_cancelled == [True]
+E       assert [] == [True]
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_component_cleanup_after_shutdown_event_runs
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_component_past_grace_is_cancelled
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_orchestrator_abandons_in_flight_on_sigterm
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_kafka_ingestor_stops_consumer_on_sigterm
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_scheduler_cancels_rates_refresher_on_sigterm
+============================== 5 failed in 3.76s ===============================
