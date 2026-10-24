@@ -1,0 +1,4 @@
+$ pytest tests/unit/_ratchets
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+260 passed, 6 skipped, 2 warnings in 205.89s (0:03:25)

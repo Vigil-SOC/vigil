@@ -1,0 +1,4 @@
+$ pytest -o addopts= --asyncio-mode=auto tests/unit/threat_intel tests/unit/daemon tests/unit/integrations tests/unit/agents/test_hunt_coverage.py tests/unit/agents/test_mcp_tools.py  (venv from new requirements.lock; stix2/stix2patterns/simplejson/antlr4 find_spec all False)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1309 passed, 3 warnings in 72.69s (0:01:12)
