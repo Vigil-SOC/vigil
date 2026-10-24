@@ -94,15 +94,13 @@ describe('WorkflowsStep', () => {
   })
 
   it('reverts the automatic-investigation switch when saving fails', async () => {
-    vi.mocked(configApi.setOrchestrator).mockRejectedValue(new Error('500'))
+    vi.mocked(configApi.setOrchestrator).mockRejectedValue(new Error('Network Error'))
     render(<WorkflowsStep />)
     const target = await screen.findByRole('switch', { name: 'Investigate new alerts automatically' })
     await act(async () => {
       fireEvent.click(target)
     })
-    expect(
-      await screen.findByText('Could not save the automatic investigation setting.'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Network Error')).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Investigate new alerts automatically' })).not.toBeChecked()
   })
 })

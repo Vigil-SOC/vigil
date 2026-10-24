@@ -10,6 +10,7 @@ import { LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { HOME_SETUP_ID, hideSetupStep, openSetupSteps, readSetupHidden } from './setupHidden'
+import { errorText } from '../../shared/errorText'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -55,13 +56,6 @@ function waited(createdAt: string): string {
   const hours = Math.floor(minutes / 60)
   const rem = minutes % 60
   return rem ? `Waited ${hours}h ${rem}m` : `Waited ${hours}h`
-}
-
-function errorText(error: unknown, fallback: string): string {
-  const data = (error as { response?: { data?: { detail?: unknown } } })?.response?.data
-  if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
-  const message = (error as { message?: string })?.message
-  return message && message.trim() ? message : fallback
 }
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
