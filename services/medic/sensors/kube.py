@@ -18,7 +18,6 @@ import ssl
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,30 +67,6 @@ async def _read_capped(response: httpx.Response, cap: int) -> bytes:
             raise _TooLarge
         chunks.append(chunk)
     return b"".join(chunks)
-
-
-def _timestamp(raw: object) -> tuple[datetime, str] | None:
-    """RFC3339 trimmed to the observation timestamp pattern, with its instant."""
-    if not isinstance(raw, str) or not (match := _TS.fullmatch(raw.strip())):
-        return None
-    frac = ""
-    if match.group(2):
-        digits = match.group(2)[1:7].rstrip("0")
-        if digits:
-            frac = "." + digits
-    text = f"{match.group(1)}{frac}{match.group(3)}"
-    iso = text[:-1] + "+00:00" if text.endswith("Z") else text
-    try:
-        parsed = datetime.fromisoformat(iso)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    parsed = parsed.astimezone(UTC)
-    out = parsed.strftime("%Y-%m-%dT%H:%M:%S")
-    if parsed.microsecond:
-        out += "." + f"{parsed.microsecond:06d}".rstrip("0")
-    return parsed, out + "Z"
 
 
 def _tag(image: object) -> str | None:
@@ -164,37 +139,12 @@ def _restarts(status: Mapping[str, Any]) -> int:
     return total
 
 
-def _starts(status: Mapping[str, Any]) -> list[tuple[datetime, str]]:
-    found: list[tuple[datetime, str]] = []
-    for key in ("initContainerStatuses", "containerStatuses"):
-        statuses = status.get(key)
-        if not isinstance(statuses, list):
-            continue
-        for item in statuses:
-            if not isinstance(item, dict):
-                continue
-            for state_key in ("state", "lastState"):
-                state = item.get(state_key)
-                if not isinstance(state, dict):
-                    continue
-                for kind in ("running", "terminated"):
-                    block = state.get(kind)
-                    if isinstance(block, dict):
-                        stamped = _timestamp(block.get("startedAt"))
-                        if stamped is not None:
-                            found.append(stamped)
-    return found
-
-
-def _epoch(status: Mapping[str, Any], meta: Mapping[str, Any]) -> str:
-    starts = _starts(status)
-    if not starts:
-        created = _timestamp(meta.get("creationTimestamp"))
-        if created is not None:
-            starts = [created]
-    if not starts:
-        return "container:unknown"
-    return "container:" + max(starts)[1]
+def _epoch(meta: Mapping[str, Any]) -> str:
+    # restartCount is cumulative for the pod's life and restarts at 0 only
+    # with a new pod, so the UID marks the counter's epoch. A container's own
+    # start time moves on every restart and would read as a reset.
+    uid = meta.get("uid")
+    return f"pod:{uid}" if isinstance(uid, str) and uid else "pod:unknown"
 
 
 def _workload_tag(obj: Mapping[str, Any]) -> str | None:
@@ -244,7 +194,7 @@ def _pod_readings(pods: list[dict[str, Any]]) -> list[Reading]:
                     Value.counter("restart_count", _restarts(status), labels),
                 ],
                 instance=name,
-                epoch=_epoch(status, _meta(pod)),
+                epoch=_epoch(_meta(pod)),
             )
         )
     return readings
@@ -381,13 +331,17 @@ class KubePods:
             if missing is not None:
                 return self._down(missing)
         verify: bool | str = str(self.ca_path) if self.scheme == "https" else False
-        async with httpx.AsyncClient(
-            transport=self.transport,
-            timeout=httpx.Timeout(self.timeout_s * 0.8),
-            trust_env=False,
-            follow_redirects=False,
-            verify=verify,
-        ) as client:
+        try:
+            client = httpx.AsyncClient(
+                transport=self.transport,
+                timeout=httpx.Timeout(self.timeout_s * 0.8),
+                trust_env=False,
+                follow_redirects=False,
+                verify=verify,
+            )
+        except ssl.SSLError:
+            return self._down(ReadError("tls"))
+        async with client:
             pods = await self._list(
                 client, f"/api/v1/namespaces/{namespace}/pods", deadline
             )

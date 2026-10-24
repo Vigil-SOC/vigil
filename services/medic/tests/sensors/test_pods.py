@@ -24,7 +24,6 @@ from services.medic.tests.sensors.harness import Rig
 
 CANARY = "CANARY9f3c7a"
 STARTED = "2026-10-07T08:12:01.123456789Z"
-STARTED_OUT = "2026-10-07T08:12:01.123456Z"
 EARLIER = "2026-10-07T08:00:00Z"
 CREATED = "2026-10-07T07:00:00Z"
 NS = "vigil"
@@ -82,6 +81,7 @@ def _pod(
     return {
         "metadata": {
             "name": name,
+            "uid": f"uid-{name}",
             "creationTimestamp": created,
             "labels": {"app.kubernetes.io/component": component},
             "annotations": {"note": CANARY},
@@ -374,7 +374,7 @@ async def test_pod_states_versions_and_a_skipped_component(
     ready = by_instance["vigil-backend-a"]
     assert ready["outcome"] == "ok"
     assert ready["target"]["service"] == "backend"
-    assert ready["epoch"] == f"container:{STARTED_OUT}"
+    assert ready["epoch"] == "pod:uid-vigil-backend-a"
     assert _value(ready, "phase")["value"] == "Running"
     assert _value(ready, "ready")["value"] is True
     assert _value(ready, "restart_count")["value"] == 0
@@ -389,13 +389,13 @@ async def test_pod_states_versions_and_a_skipped_component(
     assert _value(looping, "phase")["value"] == "Running"
     assert _value(looping, "ready")["value"] is False
     assert _value(looping, "restart_count")["value"] == 5
-    assert looping["epoch"] == f"container:{STARTED_OUT}"
+    assert looping["epoch"] == "pod:uid-vigil-backend-crash"
     waiting = by_instance["vigil-backend-pending"]
     assert waiting["outcome"] == "ok"
     assert _value(waiting, "phase")["value"] == "Pending"
     assert _value(waiting, "ready")["value"] is False
     assert _value(waiting, "restart_count")["value"] == 0
-    assert waiting["epoch"] == f"container:{CREATED}"
+    assert waiting["epoch"] == "pod:uid-vigil-backend-pending"
     dead = by_instance["vigil-backend-failed"]
     assert dead["outcome"] == "ok"
     assert _value(dead, "phase")["value"] == "Failed"
@@ -582,10 +582,22 @@ async def test_unreachable_api_is_an_error_then_blind(tmp_path: Path) -> None:
         obs["values"] == [] and obs["target"]["service"] == "medic" for obs in samples
     )
     await _cycle(rig, sensor.interval_s)
+    assert rig.health(sensor.id)[-1]["state"] != "blind"
     third = await _cycle(rig, sensor.interval_s)
     assert rig.health(sensor.id)[-1]["state"] == "blind"
     assert any(obs["kind"] == "sensor_health" for obs in third)
     rig.assert_all_valid()
+
+
+async def test_a_malformed_ca_is_a_tls_error(tmp_path: Path) -> None:
+    sensor = _sensor(tmp_path, _closed_port())
+    sensor.scheme = "https"
+    ca_path = tmp_path / "ca.crt"
+    ca_path.write_text("not a pem")
+    sensor.ca_path = ca_path
+    rig = Rig([sensor])
+    samples = _samples(await _cycle(rig), "pods")
+    assert [obs["error"]["class"] for obs in samples] == ["tls"]
 
 
 async def test_a_list_that_is_not_a_list_is_a_parse_error(tmp_path: Path) -> None:
