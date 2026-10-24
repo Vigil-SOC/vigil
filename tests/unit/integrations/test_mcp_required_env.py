@@ -272,6 +272,9 @@ class TestRetryDormantIfReady:
             def __init__(self, srv):
                 self.servers = {srv.name: srv}
 
+            def setup_required(self, name: str) -> None:
+                return None
+
         return MCPClient(_StubService(server))
 
     @pytest.mark.asyncio
