@@ -1,7 +1,7 @@
 """Custom Integration Builder API - AI-powered integration generation.
 
-All mutating routes require an authenticated admin
-(``integrations.write`` permission). ``/save`` accepts a JSON body
+All routes require ``integrations.install`` (``integrations.write`` until the
+catalog revision). ``/save`` accepts a JSON body
 only — the previous query-string-based shape allowed traversal payloads
 to be smuggled through ``--url-query`` (see 2026-05 disclosure).
 """
@@ -13,10 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth.permissions import deny_unless
-from core.integrations.custom_integration_service import (
-    CustomIntegrationService,
-    InvalidIntegrationIdError,
-)
+from core.integrations.custom_integration_service import CustomIntegrationService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
@@ -98,30 +95,11 @@ async def save_custom_integration(
     inside the custom-integrations directory before any disk I/O.
     """
     deny_unless(current_user.user_id, "integrations.install")
-
-    try:
-        service = CustomIntegrationService()
-        result = await service.save_integration(
-            integration_id=request.integration_id,
-            metadata=request.metadata,
-            server_code=request.server_code,
-        )
-
-        if not result["success"]:
-            # Treat validation errors as 400 so the caller can fix the
-            # request; treat anything else as a 500.
-            error = result.get("error", "Failed to save integration")
-            status_code = (
-                400 if "integration_id" in error or "server_code" in error else 500
-            )
-            raise HTTPException(status_code=status_code, detail=error)
-
-        return result
-
-    except HTTPException:
-        raise
-    except InvalidIntegrationIdError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await CustomIntegrationService().save_integration(
+        integration_id=request.integration_id,
+        metadata=request.metadata,
+        server_code=request.server_code,
+    )
 
 
 @router.get("/list")
@@ -148,21 +126,7 @@ async def delete_custom_integration(
 ):
     """Delete a custom integration."""
     deny_unless(current_user.user_id, "integrations.install")
-    try:
-        service = CustomIntegrationService()
-        result = await service.delete_integration(integration_id)
-
-        if not result["success"]:
-            error = result.get("error", "Integration not found")
-            status_code = 400 if "integration_id" in error else 404
-            raise HTTPException(status_code=status_code, detail=error)
-
-        return result
-
-    except HTTPException:
-        raise
-    except InvalidIntegrationIdError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await CustomIntegrationService().delete_integration(integration_id)
 
 
 @router.post("/{integration_id}/validate")
@@ -172,11 +136,4 @@ async def validate_custom_integration(
 ):
     """Validate a custom integration's server code."""
     deny_unless(current_user.user_id, "integrations.install")
-    try:
-        service = CustomIntegrationService()
-        result = await service.validate_integration(integration_id)
-
-        return result
-
-    except InvalidIntegrationIdError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await CustomIntegrationService().validate_integration(integration_id)

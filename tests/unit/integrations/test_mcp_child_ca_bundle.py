@@ -162,6 +162,9 @@ async def test_stdio_params_receive_the_parent_snapshot_from_server_env():
         def is_server_enabled(self, name: str) -> bool:
             return True
 
+        def setup_required(self, name: str) -> None:
+            return None
+
     client = MCPClient(_StubService())
     captured: dict = {}
 
