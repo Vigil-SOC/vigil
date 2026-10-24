@@ -48,7 +48,7 @@ def _fetch(responses: List[Any]):
     adapter = SplunkAdapter()
     svc = _FakeSplunk(responses)
     adapter._service = svc
-    return asyncio.run(adapter.fetch(since=None, cursor=CURSOR, max_items=10)), svc
+    return asyncio.run(adapter.fetch(cursor=CURSOR, max_items=10)), svc
 
 
 def _event(n: int) -> Dict[str, Any]:
@@ -140,14 +140,14 @@ def test_service_construction_failure_raises_and_is_retried():
         ),
     ):
         with pytest.raises(ValueError, match="bad url"):
-            asyncio.run(adapter.fetch(since=None, cursor=CURSOR, max_items=10))
+            asyncio.run(adapter.fetch(cursor=CURSOR, max_items=10))
     assert adapter._service is None
 
 
 def test_not_configured_returns_empty():
     adapter = SplunkAdapter()
     with patch.object(adapter, "is_configured", return_value=False):
-        res = asyncio.run(adapter.fetch(since=None, cursor=CURSOR, max_items=10))
+        res = asyncio.run(adapter.fetch(cursor=CURSOR, max_items=10))
     assert res.findings == []
     assert "last_poll_at" in res.cursor
 
@@ -200,7 +200,7 @@ def test_full_batch_keeps_the_oldest_and_stops_the_cursor_at_the_newest_kept():
     )
 
     res = asyncio.run(
-        adapter.fetch(since=None, cursor={"last_poll_at": T0.isoformat()}, max_items=3)
+        adapter.fetch(cursor={"last_poll_at": T0.isoformat()}, max_items=3)
     )
 
     assert [f["external_id"] for f in res.findings] == ["e1", "e2", "e3"]
@@ -217,7 +217,7 @@ def test_events_in_one_minute_still_progress_the_cursor():
     cursor = {"last_poll_at": T0.isoformat()}
     seen: List[str] = []
     for _ in range(4):
-        res = asyncio.run(adapter.fetch(since=None, cursor=cursor, max_items=3))
+        res = asyncio.run(adapter.fetch(cursor=cursor, max_items=3))
         seen += [f["external_id"] for f in res.findings]
         cursor = res.cursor
 
@@ -231,9 +231,7 @@ def test_events_at_one_instant_step_the_cursor_forward(caplog):
 
     with caplog.at_level("WARNING"):
         res = asyncio.run(
-            adapter.fetch(
-                since=None, cursor={"last_poll_at": T0.isoformat()}, max_items=3
-            )
+            adapter.fetch(cursor={"last_poll_at": T0.isoformat()}, max_items=3)
         )
 
     assert parse_cursor_since(res.cursor) == T0 + timedelta(milliseconds=1)
@@ -247,7 +245,7 @@ def test_full_batch_with_unreadable_times_warns_and_moves_to_now(caplog):
 
     before = utcnow()
     with caplog.at_level("WARNING"):
-        res = asyncio.run(adapter.fetch(since=None, cursor=CURSOR, max_items=3))
+        res = asyncio.run(adapter.fetch(cursor=CURSOR, max_items=3))
 
     assert parse_cursor_since(res.cursor) >= before
     assert "no alert carried a readable time" in caplog.text

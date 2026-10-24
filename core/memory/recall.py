@@ -46,7 +46,6 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
-    Sequence,
     Tuple,
 )
 
@@ -56,9 +55,11 @@ from sqlalchemy.dialects.postgresql import ARRAY as PGArray
 from sqlalchemy.orm import Session
 
 from core.agents.attribution import column_present, current_claims
-from core.memory.entity_keys import normalise_keys
+from core.agents.mcp_tools import MCPFailure
+from core.memory.entity_keys import normalise_key, normalise_keys
 from core.memory.recall_contract import (
     DROPPED_KINDS,
+    ENTITY_KEY_TYPES,
     RECALL_IGNORED_ARGS,
     RECALL_KEY_ARGS,
     RECALL_ORDER,
@@ -211,21 +212,15 @@ def _caller_principal_column(session: Session) -> bool:
     return _has_caller_principal
 
 
-def _iso(value: Any) -> Any:
+def iso(value: Any) -> Any:
     """Timestamps travel as ISO-8601 with an offset, matching the contract."""
     if isinstance(value, datetime):
         return value.isoformat().replace("+00:00", "Z")
     return value
 
 
-# What tools_router._is_bad_arguments matches on, so a mistake the caller can fix
-# comes back as invalid_args and not backend_error -- the contract keeps "the call
-# was wrong" apart from "the tool could not answer", and only the first tells the
-# model to try again. Coupling to the router's wording is fragile in both
-# directions; it is the router's contract, and stating it once here is better than
-# two error classes for two spellings of the same caller mistake.
-def _refuse(detail: str) -> TypeError:
-    return TypeError(f"{RECALL_TOOL}: {detail} (required keyword-only argument)")
+def _refuse(detail: str) -> MCPFailure:
+    return MCPFailure("invalid_args", f"{RECALL_TOOL}: {detail}")
 
 
 def _as_of(raw: Any) -> datetime:
@@ -250,14 +245,14 @@ def _as_of(raw: Any) -> datetime:
 
 
 def _window(row: Mapping[str, Any]) -> Dict[str, Any]:
-    return {"first_seen": _iso(row["first_seen"]), "last_seen": _iso(row["last_seen"])}
+    return {"first_seen": iso(row["first_seen"]), "last_seen": iso(row["last_seen"])}
 
 
 def _provenance(row: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "investigation_kind": row["investigation_kind"],
         "investigation_id": row["investigation_id"],
-        "concluded_at": _iso(row["concluded_at"]),
+        "concluded_at": iso(row["concluded_at"]),
     }
 
 
@@ -272,7 +267,7 @@ def _sighting(row: Mapping[str, Any]) -> Row:
     }
 
 
-def _verdict(row: Mapping[str, Any]) -> Row:
+def verdict_row(row: Mapping[str, Any]) -> Row:
     return {
         **_provenance(row),
         "hypothesis_id": row["hypothesis_id"],
@@ -284,12 +279,11 @@ def _verdict(row: Mapping[str, Any]) -> Row:
         "trust": row["trust"],
         "window": _window(row),
         "window_source": row["window_source"],
-        # Filled once the overall cap has said which Verdicts survive.
         "sources": [],
     }
 
 
-def _gap(row: Mapping[str, Any]) -> Row:
+def gap_row(row: Mapping[str, Any]) -> Row:
     return {
         **_provenance(row),
         "hypothesis_id": row["hypothesis_id"],
@@ -300,7 +294,7 @@ def _gap(row: Mapping[str, Any]) -> Row:
     }
 
 
-_SHAPES = {"sightings": _sighting, "verdicts": _verdict, "gaps": _gap}
+_SHAPES = {"sightings": _sighting, "verdicts": verdict_row, "gaps": gap_row}
 
 
 class _Selected(NamedTuple):
@@ -397,9 +391,8 @@ def _apply_overall_cap(
     return kept, dropped
 
 
-def _attach_sources(session: Session, verdicts: Sequence[_Selected]) -> None:
-    """Give each surviving Verdict its per-source Stance and stamped Source Tier."""
-    by_id = {selected.id: selected.row for selected in verdicts}
+def attach_sources(session: Session, by_id: Mapping[int, Row]) -> None:
+    """Give each Verdict, keyed by id, its per-source Stance and stamped Source Tier."""
     if not by_id:
         return
     for row in session.execute(
@@ -470,7 +463,7 @@ def recall(
     moment = _as_of(as_of)
     result: Dict[str, Any] = {
         "keys": normalised,
-        "as_of": _iso(moment),
+        "as_of": iso(moment),
         "sightings": [],
         "verdicts": [],
         "gaps": [],
@@ -495,7 +488,7 @@ def recall(
                 result[kind] = [selected.row for selected in kept[kind]]
                 result["dropped"][kind]["overall_cap"] = spent[kind]
 
-            _attach_sources(db, kept["verdicts"])
+            attach_sources(db, {s.id: s.row for s in kept["verdicts"]})
 
         _log(db, result, moment, caller_kind, caller_id, caller_principal_id)
 
@@ -522,6 +515,15 @@ def recall_entity(args: Args) -> Dict[str, Any]:
         keys = [single] if single else []
     if not keys:
         raise _refuse("a call needs " + " or ".join(RECALL_KEY_ARGS))
+    unknown = [
+        key
+        for key in keys
+        if normalise_key(str(key)).partition(":")[0] not in ENTITY_KEY_TYPES
+    ]
+    if unknown:
+        raise _refuse(
+            f"{unknown} are not type:value with a type in {list(ENTITY_KEY_TYPES)}"
+        )
 
     claims = current_claims()
     principal = None if claims is None else (claims.agent_id or claims.person_id)

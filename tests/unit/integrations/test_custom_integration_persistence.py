@@ -1,0 +1,76 @@
+"""A failed save leaves every other Custom Integration listed and its secrets routed."""
+
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
+
+from core.integrations import custom_integration_service as cis
+from core.integrations.integration_secrets import split_secrets
+
+FIELDS = [{"name": "api_key", "type": "password"}, {"name": "url", "type": "text"}]
+
+
+@pytest.fixture
+def service(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    svc = cis.CustomIntegrationService()
+    for iid in ("custom-a", "custom-b"):
+        assert _save(svc, iid)["success"]
+    return svc
+
+
+def _save(svc, iid):
+    return asyncio.run(svc.save_integration(iid, {"id": iid, "fields": FIELDS}, "x = 1\n"))
+
+
+def _ids(svc):
+    return sorted(m["id"] for m in svc.list_custom_integrations())
+
+
+def test_crash_mid_metadata_write_keeps_other_entries(service, monkeypatch):
+    real_open = open
+
+    def torn_open(path, mode="r", *a, **kw):
+        if "w" in mode and Path(path).name.startswith("metadata.json"):
+            with real_open(path, "w") as f:
+                f.write("{trunc")
+            raise OSError("disk full")
+        return real_open(path, mode, *a, **kw)
+
+    with monkeypatch.context() as m:
+        m.setattr("builtins.open", torn_open)
+        with pytest.raises(OSError, match="disk full"):
+            _save(service, "custom-c")
+
+    assert _ids(service) == ["custom-a", "custom-b"]
+    assert _save(service, "custom-d")["success"]
+    assert _ids(service) == ["custom-a", "custom-b", "custom-d"]
+    _, plain = split_secrets("custom-a", {"api_key": "s3cret", "url": "u"})
+    assert plain == {"url": "u"}
+
+
+def test_failed_server_write_leaves_integration_unlisted(service, monkeypatch):
+    real_open = open
+
+    def failing_open(path, *a, **kw):
+        if Path(path).name.startswith("custom-c_server"):
+            raise OSError("read-only")
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    with pytest.raises(OSError, match="read-only"):
+        _save(service, "custom-c")
+    assert _ids(service) == ["custom-a", "custom-b"]
+
+
+def test_corrupt_metadata_refuses_save_and_list(service):
+    service.metadata_file.write_text("{not json")
+
+    with pytest.raises(json.JSONDecodeError):
+        _save(service, "custom-c")
+    assert service.metadata_file.read_text() == "{not json"
+    assert not (service.custom_integrations_dir / "custom-c_server.py").exists()
+    with pytest.raises(json.JSONDecodeError):
+        service.list_custom_integrations()
