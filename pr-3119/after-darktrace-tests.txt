@@ -1,0 +1,5 @@
+0.08s call     unit/integrations/test_darktrace_webhook.py::TestSignatureVerification::test_bad_signature_rejected
+0.08s call     unit/integrations/test_darktrace_webhook.py::TestRoutes::test_system_status_accepted
+0.07s call     unit/integrations/test_darktrace_webhook.py::TestRoutes::test_model_breach_accepted
+0.07s call     unit/integrations/test_darktrace_webhook.py::TestRoutes::test_malformed_json_422
+================== 32 passed, 3 warnings in 65.48s (0:01:05) ===================

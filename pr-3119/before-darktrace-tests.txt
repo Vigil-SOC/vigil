@@ -1,0 +1,7 @@
+E         comparison failed
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+E         comparison failed
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestTransforms::test_ai_analyst_group_score_is_0_100[0.5-info]
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestTransforms::test_ai_analyst_group_score_is_0_100[1-info]
+================== 2 failed, 30 passed, 3 warnings in 40.90s ===================

@@ -1,0 +1,12 @@
+heuristic path mismatches: []
+model_breach 0.8 0.8 high -> 0.8 high
+model_breach 80 0.8 high -> 0.8 high
+model_breach None 0.5 medium -> 0.5 medium
+ai_analyst groupScore 0 0.0 info -> 0.0 info
+ai_analyst groupScore 0.5 0.5 medium -> 0.005 info
+ai_analyst groupScore 1 1.0 critical -> 0.01 info
+ai_analyst groupScore 2 0.02 info -> 0.02 info
+ai_analyst groupScore 92 0.92 critical -> 0.92 critical
+ai_analyst groupScore 100 1.0 critical -> 1.0 critical
+ai_analyst groupScore 150 1.0 critical -> 1.0 critical
+ai_analyst groupScore 'junk' 0.5 medium -> 0.5 medium
