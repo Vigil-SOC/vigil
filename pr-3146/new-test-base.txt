@@ -1,0 +1,4 @@
+>       assert polls == [True]
+E       assert [] == [True]
+tests/unit/daemon/test_threat_feed_poller.py:410: AssertionError
+================= 1 failed, 14 deselected in 63.54s (0:01:03) ==================

@@ -1,0 +1,4 @@
+== base 3d06590c
+tasks at start (disabled): ['threat_hunt', 'weekly_report', 'cleanup', 'probe_sweep', 'health_check']
+operator enabled cloudforce_one in integrations_config.json
+FAIL: threat_feed_poll not registered, enabling it cannot start polling

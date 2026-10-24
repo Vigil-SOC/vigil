@@ -1,0 +1,5 @@
+== branch 16792282
+tasks at start (disabled): ['threat_hunt', 'weekly_report', 'cleanup', 'probe_sweep', 'health_check', 'threat_feed_poll']
+tick while disabled: {'skipped': 'integration_disabled'}
+operator enabled cloudforce_one in integrations_config.json
+tick after enable: {'skipped': 'incomplete_config'}
