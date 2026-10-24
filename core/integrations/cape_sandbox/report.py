@@ -1,14 +1,8 @@
-"""IOC extraction from a CAPE analysis report.
-
-Shared by the ``cape_get_iocs`` MCP tool and case correlation. Keys are the
-``CaseIOC.ioc_type`` values.
-"""
-
 from typing import Any, Dict, List
 
 
 def extract_iocs(analysis: Dict[str, Any]) -> Dict[str, List[str]]:
-    """Return deduped, sorted IPs, domains, URLs, dropped hashes and mutexes."""
+    """Return deduped, sorted IOCs keyed by ``CaseIOC.ioc_type``."""
     iocs: Dict[str, set] = {
         "ip": set(),
         "domain": set(),

@@ -1,5 +1,3 @@
-"""Unit tests for core/integrations/cape_sandbox/report.py."""
-
 import pytest
 
 from core.integrations.cape_sandbox.report import extract_iocs
