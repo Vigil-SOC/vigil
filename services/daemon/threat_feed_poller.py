@@ -1,7 +1,7 @@
 """Periodic poller for STIX/TAXII threat feeds (Cloudforce One et al).
 
-Registered as a scheduled task by `daemon/scheduler.py` when the
-`cloudforce_one` integration is enabled. No-op when disabled.
+Always registered as a scheduled task by `daemon/scheduler.py`; each run is a
+no-op while the `cloudforce_one` integration is disabled.
 
 After the upsert loop it offers the poll's uncovered indicators to the Intake
 as one case-less `kind="schedule"` row carrying every key (#1009). It does not

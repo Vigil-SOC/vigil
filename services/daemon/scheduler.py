@@ -14,6 +14,7 @@ from core.workflows.enablement import is_enabled
 from core.workflows.routing import SCHEDULED_WORKFLOW
 from services.daemon.config import SchedulerConfig
 from services.daemon.probes import inject_probes, score_probes
+from services.daemon.threat_feed_poller import ThreatFeedPoller
 
 logger = logging.getLogger(__name__)
 
@@ -152,21 +153,15 @@ class TaskScheduler:
                 )
             )
 
-        # Threat-feed poller — only runs when the Cloudforce One integration is enabled.
-        try:
-            from services.daemon.threat_feed_poller import ThreatFeedPoller
-
-            if ThreatFeedPoller.is_enabled():
-                self._tasks.append(
-                    ScheduledTask(
-                        name="threat_feed_poll",
-                        func=self._run_threat_feed_poll,
-                        interval=ThreatFeedPoller.poll_interval_seconds(),
-                        enabled=True,
-                    )
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Threat feed poller unavailable: {e}")
+        # Always registered: each tick asks whether Cloudforce One is turned off.
+        self._tasks.append(
+            ScheduledTask(
+                name="threat_feed_poll",
+                func=self._run_threat_feed_poll,
+                interval=ThreatFeedPoller.poll_interval_seconds(),
+                enabled=True,
+            )
+        )
 
     def set_processor_queue(self, queue: asyncio.Queue):
         """Set the processor's input queue that probe sweeps inject onto."""
@@ -447,15 +442,7 @@ class TaskScheduler:
 
     async def _run_threat_feed_poll(self):
         """Pull Cloudforce One STIX/TAXII indicators into threat_indicators."""
-        try:
-            from services.daemon.threat_feed_poller import ThreatFeedPoller
-        except Exception as e:
-            logger.warning(f"Threat feed poller unavailable: {e}")
-            return
-        if not ThreatFeedPoller.is_enabled():
-            return
-        poller = ThreatFeedPoller()
-        return await poller.run_once()
+        return await ThreatFeedPoller().run_once()
 
     async def _run_health_check(self):
         """Run system health check."""

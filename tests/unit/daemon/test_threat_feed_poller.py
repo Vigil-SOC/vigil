@@ -365,3 +365,46 @@ async def test_incomplete_config_warns_once_per_state_and_is_counted(
     config.pop("taxii_server_url")
     await run.run_once()
     assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_enabling_cloudforce_one_after_the_scheduler_starts_polls(monkeypatch):
+    import asyncio
+
+    from services.daemon import scheduler as sched_mod
+    from services.daemon.config import SchedulerConfig
+    from services.daemon.scheduler import TaskScheduler
+
+    enabled = {"cloudforce_one": False}
+    monkeypatch.setattr("core.config.is_integration_enabled", enabled.get)
+    monkeypatch.setattr("core.config.get_integration_config", lambda _id: {})
+    scheduler = TaskScheduler(SchedulerConfig())
+    enabled["cloudforce_one"] = True
+
+    polls = []
+
+    async def run_once(self):
+        polls.append(self.is_enabled())
+        return {}
+
+    monkeypatch.setattr(ThreatFeedPoller, "run_once", run_once)
+    for task in scheduler._tasks:
+        task.enabled = task.name == "threat_feed_poll"
+    monkeypatch.setattr(scheduler, "_init_services", lambda: None)
+
+    async def noop():
+        return None
+
+    monkeypatch.setattr(sched_mod, "refresh_gateway_rates", noop)
+    monkeypatch.setattr(sched_mod, "run_gateway_rates_refresher", noop)
+    monkeypatch.setattr(sched_mod, "_last_scheduled_hunt_at", lambda: None)
+
+    shutdown = asyncio.Event()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    await asyncio.gather(scheduler.run(shutdown), stop_soon())
+
+    assert polls == [True]
