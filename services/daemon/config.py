@@ -223,7 +223,7 @@ class DaemonConfig:
                     if key in db_config:
                         setattr(config.orchestrator, key, cast(db_config[key]))
                         config.sources[f"orchestrator.{key}"] = "db"
-                logger.info("Orchestrator config overridden from database settings")
+                logger.debug("Orchestrator config overridden from database settings")
         except Exception as e:
             logger.debug(
                 f"Could not load orchestrator config from DB (using env/defaults): {e}"
@@ -258,7 +258,7 @@ class DaemonConfig:
                     config.kafka.session_timeout_ms = int(
                         kafka_db["session_timeout_ms"]
                     )
-                logger.info("Kafka config overridden from database settings")
+                logger.debug("Kafka config overridden from database settings")
         except Exception as e:
             logger.debug(
                 f"Could not load Kafka config from DB (using env/defaults): {e}"

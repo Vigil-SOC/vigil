@@ -7,6 +7,7 @@ The surviving keys are the local-Ollama recovery toggles.
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -302,17 +303,32 @@ class TestCacheBehavior:
 class TestDbOutageLogging:
     def test_outage_logs_error_once_then_recovery(self, caplog):
         from core.platform import runtime_config
+        from core.storage import config_service as cs
 
-        svc = MagicMock()
-        svc.get_system_config.side_effect = RuntimeError("db down")
-        with patch("core.storage.config_service.get_config_service", return_value=svc):
-            with caplog.at_level("INFO", logger=runtime_config.logger.name):
+        db_up = False
+        stored = {"local_ollama_recovery_retry_limit": 3}
+
+        @contextmanager
+        def session():
+            if not db_up:
+                raise RuntimeError("db down")
+            s = MagicMock()
+            s.query.return_value.filter_by.return_value.first.return_value.value = (
+                stored
+            )
+            yield s
+
+        with patch.object(cs, "get_session", session), patch.object(
+            cs, "get_config_service", return_value=cs.ConfigService()
+        ):
+            with caplog.at_level("INFO"):
                 for _ in range(3):
                     assert runtime_config._fetch_db_config() is None
-                assert [r.levelname for r in caplog.records] == ["ERROR"]
+                assert [(r.name, r.levelname) for r in caplog.records] == [
+                    (runtime_config.logger.name, "ERROR")
+                ]
 
                 caplog.clear()
-                svc.get_system_config.side_effect = None
-                svc.get_system_config.return_value = {}
-                assert runtime_config._fetch_db_config() == {}
+                db_up = True
+                assert runtime_config._fetch_db_config() == stored
                 assert [r.levelname for r in caplog.records] == ["INFO"]

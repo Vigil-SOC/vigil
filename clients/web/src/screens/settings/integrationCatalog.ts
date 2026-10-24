@@ -4,9 +4,9 @@ import {
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
-  SERVER_TO_INTEGRATION,
   WIP_SERVERS,
   prettyServerName,
+  serverForIntegration,
 } from './integrationsData'
 import type { ServerRow } from './integrationHealth'
 
@@ -25,14 +25,13 @@ export interface CatalogEntry {
 
 const OTHER_CATEGORY = 'Other'
 
-const INTEGRATION_TO_SERVER = new Map([...SERVER_TO_INTEGRATION].map(([server, id]) => [id, server]))
 const categoryOf = (server: string) => MCP_CATEGORIES.find((c) => c.servers.includes(server))?.label ?? OTHER_CATEGORY
 
 /** What the console really offers: the client catalog plus servers that have no
  *  descriptor, minus work-in-progress servers, in category order. */
 export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], connectedIds: Set<string>): CatalogEntry[] {
   const fromCatalog = catalog.map((i): CatalogEntry => {
-    const server = INTEGRATION_TO_SERVER.get(i.id) ?? i.id
+    const server = serverForIntegration(i.id)
     return {
       key: `i:${i.id}`,
       server,

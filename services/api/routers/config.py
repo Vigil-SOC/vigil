@@ -12,6 +12,7 @@ from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth.permissions import permission_gate
 from core.config import (
+    _load_json_config,
     get_settings,
     is_demo_mode,
     load_integrations_config,
@@ -134,9 +135,7 @@ class IntegrationsConfig(BaseModel):
 class GeneralConfig(BaseModel):
     """General application settings."""
 
-    auto_start_sync: bool = False
     show_notifications: bool = True
-    theme: str = "dark"
     enable_keyring: bool = False  # Whether to use OS keyring for secrets
 
 
@@ -1184,7 +1183,11 @@ def get_general_config():
         config_value = config_service.get_system_config("general.settings")
 
         if config_value:
-            return config_value
+            # Rows written before the removal still carry the dead keys
+            return {
+                "show_notifications": config_value.get("show_notifications", True),
+                "enable_keyring": config_value.get("enable_keyring", False),
+            }
 
         # Fallback to file-based config
         config_file = vigil_path("general_config.json")
@@ -1193,25 +1196,19 @@ def get_general_config():
             with open(config_file, "r") as f:
                 config = json.load(f)
                 return {
-                    "auto_start_sync": config.get("auto_start_sync", False),
                     "show_notifications": config.get("show_notifications", True),
-                    "theme": config.get("theme", "dark"),
                     "enable_keyring": config.get("enable_keyring", False),
                 }
 
         # Default values
         return {
-            "auto_start_sync": False,
             "show_notifications": True,
-            "theme": "dark",
             "enable_keyring": False,
         }
     except Exception as e:
         logger.error(f"Error getting general config: {e}")
         return {
-            "auto_start_sync": False,
             "show_notifications": True,
-            "theme": "dark",
             "enable_keyring": False,
         }
 
@@ -1231,9 +1228,7 @@ def set_general_config(
         Success status
     """
     config_data = {
-        "auto_start_sync": config.auto_start_sync,
         "show_notifications": config.show_notifications,
-        "theme": config.theme,
         "enable_keyring": config.enable_keyring,
     }
 
@@ -1252,7 +1247,8 @@ def set_general_config(
             status_code=500, detail="Failed to save configuration to database"
         )
 
-    _mirror_to_file("general_config.json", config_data)
+    existing = _load_json_config(vigil_path("general_config.json"))
+    _mirror_to_file("general_config.json", {**existing, **config_data})
 
     # Update the global secrets manager if keyring setting changed
     try:
@@ -1640,9 +1636,7 @@ def set_orchestrator_config(
     config: OrchestratorSettingsConfig,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Set orchestrator configuration. Persists settings AND syncs the
-    runtime enabled flag used by GET /api/orchestrator/status (which
-    NavigationRail uses to show/hide the Auto Ops tab).
+    """Set orchestrator configuration.
 
     A ``profiles`` field on the body is ignored. The stored object stays the
     flat keys; no profile name is written.
@@ -1662,22 +1656,6 @@ def set_orchestrator_config(
         raise HTTPException(
             status_code=500, detail="Failed to save orchestrator config to database"
         )
-
-    # Poke the in-process orchestrator (if the API happens to share one)
-    # so a running daemon reacts immediately. No-op in backend-only
-    # deployments — the daemon polls orchestrator.settings every few
-    # seconds.
-    try:
-        from services.api.routers.orchestrator import _get_orchestrator
-
-        orch = _get_orchestrator()
-        if orch is not None:
-            if config_data.get("enabled"):
-                orch.enable()
-            else:
-                orch.disable()
-    except Exception as e:
-        logger.debug("In-process orchestrator runtime apply skipped: %s", e)
 
     return {"success": True, "message": "Orchestrator settings saved"}
 
