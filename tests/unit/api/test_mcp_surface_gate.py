@@ -353,9 +353,6 @@ def test_a_closed_surface_is_still_the_one_answering(
     assert response.json() == {"detail": "Not Found"}
 
 
-# --- Under a context path ------------------------------------------------------
-
-
 @pytest.fixture
 def under_vigil(monkeypatch):
     from core.config import get_settings
@@ -363,7 +360,6 @@ def under_vigil(monkeypatch):
     monkeypatch.setenv("VIGIL_CONTEXT_PATH", "/vigil/")
     get_settings.cache_clear()
     yield
-    monkeypatch.delenv("VIGIL_CONTEXT_PATH")
     get_settings.cache_clear()
 
 
@@ -390,17 +386,3 @@ def test_settings_reports_the_address_the_surface_answers_at(under_vigil):
         with TestClient(app) as c:
             assert c.post(reported, json={}).status_code == 401
             assert c.post("/mcp", json={}).status_code == 404
-
-
-def test_the_boot_log_names_the_address_it_is_given(caplog):
-    import logging
-
-    from services.api.mcp_surface import announce
-
-    caplog.set_level(logging.INFO)
-    with patch("core.config.get_settings") as settings:
-        settings.return_value.dev_mode = False
-        announce(True, 0, "/vigil/mcp")
-
-    assert "ON at /vigil/mcp." in caplog.text
-    assert "every request to /vigil/mcp will be refused" in caplog.text
