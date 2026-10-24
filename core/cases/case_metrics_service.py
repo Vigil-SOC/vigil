@@ -5,15 +5,14 @@ Handles MTTD, MTTR, MTTA, SLA compliance, and analyst performance metrics.
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from core.cases.case_status import CLOSED
 from core.storage.models import Case, CaseMetrics, CaseSLA, CaseTask
 from core.storage.unit_of_work import unit_of_work
-from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -132,96 +131,3 @@ class CaseMetricsService:
         except Exception as e:
             logger.error(f"Error calculating case metrics: {e}")
             return None
-
-    def get_dashboard_metrics(
-        self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        session: Optional[Session] = None,
-    ) -> Dict:
-        """
-        Get dashboard metrics for cases.
-
-        Args:
-            start_date: Start date filter
-            end_date: End date filter
-            session: Database session (optional)
-
-        Returns:
-            Dictionary with dashboard metrics
-        """
-        with unit_of_work(session) as session:
-            # Build base query
-            query = session.query(Case)
-
-            if start_date:
-                query = query.filter(Case.created_at >= start_date)
-            if end_date:
-                query = query.filter(Case.created_at <= end_date)
-
-            all_cases = query.all()
-
-            # Count by status
-            status_counts = {}
-            for case in all_cases:
-                status = case.status
-                status_counts[status] = status_counts.get(status, 0) + 1
-
-            # Count by priority
-            priority_counts = {}
-            for case in all_cases:
-                priority = case.priority
-                priority_counts[priority] = priority_counts.get(priority, 0) + 1
-
-            # Calculate average resolution time
-            resolved_cases = [c for c in all_cases if c.status == CLOSED]
-            avg_resolution_time = None
-            if resolved_cases:
-                total_time = 0
-                count = 0
-                for case in resolved_cases:
-                    metrics = (
-                        session.query(CaseMetrics)
-                        .filter(CaseMetrics.case_id == case.case_id)
-                        .first()
-                    )
-                    if metrics and metrics.time_to_resolve:
-                        total_time += metrics.time_to_resolve
-                        count += 1
-
-                if count > 0:
-                    avg_resolution_time = total_time / count
-
-            # SLA compliance
-            total_with_sla = session.query(CaseSLA).count()
-            sla_met_count = (
-                session.query(CaseSLA)
-                .filter(CaseSLA.resolution_sla_met.is_(True))
-                .count()
-            )
-
-            sla_compliance_rate = (
-                (sla_met_count / total_with_sla * 100) if total_with_sla > 0 else 0.0
-            )
-
-            # Cases opened per day (last 30 days)
-            thirty_days_ago = utcnow() - timedelta(days=30)
-            recent_cases = (
-                session.query(Case).filter(Case.created_at >= thirty_days_ago).all()
-            )
-
-            cases_per_day = {}
-            for case in recent_cases:
-                day = case.created_at.date().isoformat()
-                cases_per_day[day] = cases_per_day.get(day, 0) + 1
-
-            return {
-                "total_cases": len(all_cases),
-                "status_breakdown": status_counts,
-                "priority_breakdown": priority_counts,
-                "average_resolution_time_seconds": avg_resolution_time,
-                "sla_compliance_rate": sla_compliance_rate,
-                "cases_per_day": cases_per_day,
-                "resolved_cases_count": len(resolved_cases),
-                "open_cases_count": len(all_cases) - len(resolved_cases),
-            }

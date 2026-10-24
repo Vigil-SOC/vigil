@@ -92,9 +92,6 @@ def test_signed_in_user_is_who_changed_the_config(
     authenticate_app, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        "services.api.routers.orchestrator._get_orchestrator", lambda: None
-    )
     session = _Session()
     client, user, fake_session = _client(authenticate_app, session)
     actor = str(user.user_id)

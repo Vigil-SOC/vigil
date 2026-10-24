@@ -6,7 +6,7 @@ import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup, TextInput, Toggle, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle, skillUsageText } from '../../data/appData'
-import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
+import { useWorkflows, useAgents, useAgentMeta, AgentRowsProvider, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedDraft, type ReplayReport } from '../../services/api'
 import DescribeDialog from './DescribeDialog'
@@ -81,7 +81,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   // the Watch a run page carries its own header, as the board has it; the tab strip comes back with the catalog
   const watching = tab === 'workflows' && runId !== null
   return (
-    <>
+    <AgentRowsProvider value={agents.rows}>
       <div className={`flex flex-col gap-3.5 px-[26px] pt-5${watching ? ' hidden' : ''}`}>
         <div className="flex items-end justify-between gap-5">
           <div className="flex flex-col gap-[5px] min-w-0">
@@ -113,7 +113,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
       {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
-    </>
+    </AgentRowsProvider>
   )
 }
 
