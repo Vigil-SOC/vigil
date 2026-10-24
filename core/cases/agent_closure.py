@@ -12,6 +12,12 @@ from core.storage.connection import get_db_session
 CALLER_UNAUTHENTICATED = "agent"
 
 
+# Who this server acts as when it writes a name into a record.
+#
+# A caller that supplies its own name is not identifying itself, it is choosing
+# what the record will say, so the name comes from the credential the door
+# bound: the /mcp surface, or chat through the principal token
+# /internal/tools/invoke verifies. A call with no person behind it binds nothing.
 def actor() -> str:
     """Who this call writes into a record. Never an argument the model supplied."""
     return current_caller() or CALLER_UNAUTHENTICATED

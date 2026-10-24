@@ -12,7 +12,7 @@ Three gates, in order, because each one's answer means something different:
 * **Unauthenticated.** No credential, or one that does not work. 401 with a
   challenge, and the same answer for every way a credential can fail.
 * **Open.** The principal is bound for the duration of the call, which is what
-  ``caller()`` reads when a tool records who did something.
+  ``actor()`` reads when a tool records who did something.
 """
 
 from __future__ import annotations
