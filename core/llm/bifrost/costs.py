@@ -12,10 +12,11 @@ What's wrapped (verified against docs.getbifrost.ai):
 
   * ``POST /api/logs/recalculate-cost``— batch recompute against current
                                           pricing (admin operation)
+  * ``GET /api/governance/virtual-keys/quota`` — per-key quota (``get_vk_quota``)
 
 What's *not* wrapped here: provider config (``core.llm.bifrost.admin``
-already owns provider key/model writes) and governance/budget endpoints
-(those land in PR C / #186 alongside the VK enforcement work).
+already owns provider key/model writes) and the rest of the governance/budget
+endpoints (those land in PR C / #186 alongside the VK enforcement work).
 """
 
 from __future__ import annotations
