@@ -37,13 +37,16 @@ _STIX_TO_VIGIL_TYPE: Dict[str, str] = {
 
 
 # A comparison, or else any other string literal so a quoted operand such as
-# ``'a = b'`` is consumed whole and never read as a comparison.
+# ``'a = b'`` is consumed whole and never read as a comparison. A path starts
+# only at a word boundary and an unterminated literal runs to the end, so a
+# hostile pattern is scanned in linear time.
 _STIX_COMPARISON = re.compile(
-    r"(?P<path>[\w-]+:[\w-]+(?:\.(?:[\w-]+|'[^']*')|\[(?:\d+|\*)\])*)"
+    r"(?<![\w-])(?P<path>[\w-]+:[\w-]+(?:\.(?:[\w-]+|'[\w-]+')|\[(?:\d+|\*)\])*)"
     r"\s*(?P<op>[!<>]?=)\s*'(?P<value>(?:[^'\\]|\\.)*)'"
-    r"|'(?:[^'\\]|\\.)*'"
+    r"|'(?:[^'\\]|\\.)*(?:'|\\?\Z)",
+    re.S,
 )
-_STIX_ESCAPE = re.compile(r"\\(.)")
+_STIX_ESCAPE = re.compile(r"\\(.)", re.S)
 
 
 @dataclass
