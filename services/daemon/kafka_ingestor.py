@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.kafka_config import KafkaConfig, apply_kafka_settings
-from core.ingestion.kafka_consumer_service import KafkaConsumerService
+from core.ingestion.kafka_consumer_service import KafkaConsumerService, idle_stats
 
 logger = logging.getLogger(__name__)
 
@@ -40,19 +40,7 @@ class KafkaIngestor:
     def stats(self) -> Dict[str, Any]:
         if self._service is not None:
             return self._service.stats
-        return {
-            "connected": False,
-            "messages_consumed": 0,
-            "messages_enqueued": 0,
-            "duplicates_skipped": 0,
-            "decode_errors": 0,
-            "missing_id_errors": 0,
-            "last_message_at": None,
-            "last_error": None,
-            "last_error_at": None,
-            "topics": list(self.config.topics),
-            "consumer_group": self.config.consumer_group,
-        }
+        return idle_stats(list(self.config.topics), self.config.consumer_group)
 
     def set_output_queue(self, queue: asyncio.Queue) -> None:
         self._output_queue = queue
