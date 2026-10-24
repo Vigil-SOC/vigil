@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 from core.config import load_integrations_config
 from core.integrations._base.descriptor import get_descriptor
@@ -93,16 +93,3 @@ class IntegrationBridgeService:
                 list(applied),
             )
         return applied
-
-    def get_integration_config(self, integration_id: str) -> Optional[Dict]:
-        """
-        Get configuration for a specific integration.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            Integration configuration dictionary or None
-        """
-        config = self.load_integration_config()
-        return config.get("integrations", {}).get(integration_id)
