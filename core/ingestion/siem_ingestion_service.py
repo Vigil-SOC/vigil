@@ -15,21 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_severity(severity: Any) -> str:
-    """
-    Normalize severity to standard values.
-
-    Args:
-        severity: Raw severity value
-
-    Returns:
-        Normalized severity: critical, high, medium, low, info
-    """
+    """Map a raw severity to critical, high, medium, low or info."""
     if not severity:
         return "medium"
 
     severity_str = str(severity).lower()
 
-    # Map various severity formats
     if any(s in severity_str for s in ["critical", "crit", "5", "emergency"]):
         return "critical"
     elif any(s in severity_str for s in ["high", "4", "error"]):
