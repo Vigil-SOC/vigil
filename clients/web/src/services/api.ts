@@ -875,10 +875,7 @@ interface WorkflowPhase {
   tools: string[]
   steps: string[]
   expected_output?: string
-  timeout_seconds?: number
   approval_required?: boolean
-  conditions?: any
-  parallel_group?: string | null
 }
 
 /** What POST /workflows/generate returns: a definition that is not saved anywhere. */

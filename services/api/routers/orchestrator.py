@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
-from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import (
@@ -49,21 +48,15 @@ _cached_orchestrator = None
 
 
 def _get_orchestrator():
-    """Get a cached orchestrator instance for DB-only queries from the API layer."""
     global _cached_orchestrator
-    if _cached_orchestrator is not None:
-        return _cached_orchestrator
     try:
-        from services.daemon.config import OrchestratorConfig
+        from services.daemon.config import DaemonConfig
         from services.daemon.orchestrator import Orchestrator
 
-        # The daemon's fallback when Settings holds no hourly cap; must match it.
-        config = OrchestratorConfig(
-            max_total_hourly_cost=get_settings().orchestrator_max_hourly_cost
-        )
-        orch = Orchestrator(config)
-        _cached_orchestrator = orch
-        return orch
+        config = DaemonConfig.from_env().orchestrator
+        if _cached_orchestrator is None or _cached_orchestrator.config != config:
+            _cached_orchestrator = Orchestrator(config)
+        return _cached_orchestrator
     except Exception as e:
         logger.debug(f"Orchestrator init: {e}")
         return None
