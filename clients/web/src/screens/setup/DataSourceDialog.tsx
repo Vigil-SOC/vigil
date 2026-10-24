@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import { getAllIntegrations } from '../../config/integrations'
+import { serverForIntegration } from '../settings/integrationsData'
 import { CATALOG_TO_SOURCE } from '../../config/sourceBadges'
 import { DATA_SOURCE_CATEGORIES } from './setupSteps'
 import { configApi, mcpApi } from '../../services/api'
@@ -10,17 +11,6 @@ import ChoiceCard from './ChoiceCard'
 import ConnectSource, { type ConnectResult } from './ConnectSource'
 import { fieldsOf, type ConnectConfig } from './connectConfig'
 import { DemoSource, UploadSource } from './FileAndDemoSources'
-
-// for the few ids whose mcp-config.json server key differs from the catalog id.
-// Shared by the picker filter and connect-on-save, so the two can't diverge.
-// Splunk maps to the self-hosted REST server: that is the one the form's URL and
-// credentials configure. The official server takes SPLUNK_MCP_URL instead.
-const CATALOG_TO_SERVER: Record<string, string> = {
-  'aws-security-hub': 'aws-security',
-  'elastic-siem': 'elastic',
-  'splunk': 'splunk-selfhosted',
-}
-const serverFor = (catalogId: string) => CATALOG_TO_SERVER[catalogId] ?? catalogId
 
 interface IntegrationsConfig {
   enabled_integrations: string[]
@@ -91,7 +81,7 @@ const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
   const dataSources = useMemo(() => {
     if (!availableServers) return []
     return getAllIntegrations().filter(
-      (i) => DATA_SOURCE_CATEGORIES.has(i.category) && availableServers.has(serverFor(i.id)),
+      (i) => DATA_SOURCE_CATEGORIES.has(i.category) && availableServers.has(serverForIntegration(i.id)),
     )
   }, [availableServers])
 
@@ -132,7 +122,7 @@ const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
       secrets_set: { ...cur.secrets_set, [id]: secrets },
     }
 
-    const serverName = serverFor(id)
+    const serverName = serverForIntegration(id)
     const { data } = await mcpApi.setServerEnabled(serverName, true)
     // success:true only means the enabled bit persisted; `connected` is the real
     // result. null = MCP subsystem down, not a cred failure, so it is let through.
