@@ -509,7 +509,7 @@ export interface AgentSummary {
 /** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
-  getProcesses: () => api.get<{ agent_layer?: string; daemon?: string }>('/processes'),
+  getProcesses: () => api.get<Schema<'ProcessStates'>>('/processes'),
   getRoutability: () =>
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
@@ -555,9 +555,7 @@ export const configApi = {
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
-    auto_start_sync: boolean
     show_notifications: boolean
-    theme: string
     enable_keyring: boolean
   }) => api.post('/config/general', data),
   
@@ -645,6 +643,15 @@ export const extensionsApi = {
     api.get<{ token: string | null; expires_in: number | null; user: string }>(
       `/integrations/${integrationId}/session-token`,
     ),
+}
+
+export const customIntegrationsApi = {
+  generate: (data: Schema<'CustomIntegrationRequest'>) =>
+    api.post('/custom-integrations/generate', data, { timeout: LLM_TIMEOUT }),
+  save: (data: Schema<'SaveIntegrationRequest'>) =>
+    api.post('/custom-integrations/save', data),
+  validate: (integrationId: string) =>
+    api.post(`/custom-integrations/${integrationId}/validate`),
 }
 
 export interface LLMProvider {
@@ -875,10 +882,7 @@ interface WorkflowPhase {
   tools: string[]
   steps: string[]
   expected_output?: string
-  timeout_seconds?: number
   approval_required?: boolean
-  conditions?: any
-  parallel_group?: string | null
 }
 
 /** What POST /workflows/generate returns: a definition that is not saved anywhere. */

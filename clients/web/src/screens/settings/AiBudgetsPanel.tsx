@@ -109,7 +109,9 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
 
   const loading =
     (vigilPhase === 'loading' && !quota) || (vkPhase === 'loading' && vks.length === 0)
-  const failed = vigilPhase === 'error' || vkPhase === 'error'
+  // A key is set but its quota read failed: say the card could not load, not that no key is set.
+  const quotaFailed = vigilPhase === 'ready' && !quota && !!settings.default_vk
+  const failed = vigilPhase === 'error' || vkPhase === 'error' || quotaFailed
 
   return (
     <SettingsCard

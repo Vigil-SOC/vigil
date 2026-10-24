@@ -113,10 +113,7 @@ class WorkflowPhaseSchema(BaseModel):
     tools: List[str] = Field(default_factory=list)
     steps: List[str] = Field(default_factory=list)
     expected_output: Optional[str] = ""
-    timeout_seconds: Optional[int] = 300
     approval_required: bool = False
-    conditions: Optional[Any] = None  # reserved for branching
-    parallel_group: Optional[str] = None  # reserved for parallel paths
 
 
 class CustomWorkflowCreate(BaseModel):

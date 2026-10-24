@@ -3,8 +3,6 @@ import { caseMetricsApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import type { Phase } from '../cases/useCases'
 
-export type { Phase } from '../cases/useCases'
-
 interface AnalystRow {
   analyst_id: string
   analyst_name: string
