@@ -116,10 +116,16 @@ class TestBeforeSendFilter(unittest.TestCase):
             result = monitoring.before_send_filter(event, {})
         self.assertIsNotNone(result)
 
-    def test_drops_health_check(self):
-        event = {"request": {"url": "http://localhost/health"}}
-        result = monitoring.before_send_filter(event, {})
-        self.assertIsNone(result)
+    def test_drops_health_checks(self):
+        for url in (
+            "http://localhost/api/health",
+            "http://localhost/api/health/ready",
+            "http://localhost/vigil/api/health/ready",
+        ):
+            with self.subTest(url=url), patch.dict(os.environ, {"TESTING": "false"}):
+                self.assertIsNone(
+                    monitoring.before_send_filter({"request": {"url": url}}, {})
+                )
 
     def test_drops_events_during_testing(self):
         event = {"request": {"url": "http://localhost/api/cases"}}
