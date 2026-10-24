@@ -153,7 +153,6 @@ class TaskScheduler:
                 )
             )
 
-        # Always registered: each tick asks whether Cloudforce One is turned off.
         self._tasks.append(
             ScheduledTask(
                 name="threat_feed_poll",
