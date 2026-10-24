@@ -478,47 +478,12 @@ export interface paths {
          * Get Cost Analytics
          * @description Return LLM cost + token breakdown for the given window.
          *
-         *     Groups `LLMInteractionLog` rows by agent, model, and investigation.
-         *     Cache hit rate is cached-input / total-input across the window; it
-         *     should read 0 until prompt caching ships in GH #84 PR-C — this
-         *     endpoint is the baseline dashboard that will surface the jump.
-         *
-         *     The ``time_series`` block is sourced from Bifrost's
-         *     ``/api/logs/histogram/cost`` (#185), giving us authoritative cost
-         *     actuals against current pricing. If Bifrost is unavailable the
-         *     block is omitted but the local aggregations still return — the UI
-         *     degrades gracefully from "actuals + trend" to "actuals only".
+         *     Totals and a per-model grouping of `LLMInteractionLog` rows. Cache hit
+         *     rate is cached-input / total-input across the window.
          */
         get: operations["get_api_analytics_cost"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/estimate-cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Estimate Cost Endpoint
-         * @description Return a USD low/high band for a hypothetical LLM call.
-         *
-         *     The chat composer and daemon planner call this before submitting a
-         *     real request so they can show the user a cost preview or gate the
-         *     call against a budget. ``low_usd`` assumes zero output tokens (e.g.
-         *     an immediate tool_use stop); ``high_usd`` assumes the call writes
-         *     out ``max_tokens`` of output. Real-world cost lands in between, and
-         *     is typically much closer to ``low_usd`` for cache-friendly workloads.
-         */
-        post: operations["post_api_analytics_estimate-cost"];
         delete?: never;
         options?: never;
         head?: never;
@@ -544,37 +509,6 @@ export interface paths {
         get: operations["get_api_analytics_insights"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/recalculate-cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Recalculate Cost Endpoint
-         * @description Trigger Bifrost's batch cost-recompute against current pricing.
-         *
-         *     Admin operation. When Anthropic or OpenAI publishes new pricing,
-         *     Bifrost's catalog updates automatically — but historical log rows
-         *     keep the cost they were billed at the time. This endpoint asks
-         *     Bifrost to re-cost a batch of rows so the time-series and
-         *     histograms reflect the new pricing without a redeploy.
-         *
-         *     NOTE: this is a *cumulative* operation. Bifrost caps each call at
-         *     1000 rows; the response's ``remaining`` field tells the caller how
-         *     many rows still need processing. The UI button loops until
-         *     ``remaining == 0`` (or fails fast on a 5xx).
-         */
-        post: operations["post_api_analytics_recalculate-cost"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4093,29 +4027,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/mcp/connections/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Connections Status
-         * @description Get persistent connection status for all MCP servers.
-         *
-         *     Returns:
-         *         Connection status for each server
-         */
-        get: operations["get_api_mcp_connections_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/mcp/servers": {
         parameters: {
             query?: never;
@@ -4131,29 +4042,6 @@ export interface paths {
          *         List of server names
          */
         get: operations["get_api_mcp_servers"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/servers/enabled": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Enabled States
-         * @description Get enabled/disabled state for all MCP servers.
-         *
-         *     Returns:
-         *         Dictionary of server_name -> enabled boolean
-         */
-        get: operations["get_api_mcp_servers_enabled"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4220,8 +4108,6 @@ export interface paths {
          *       another worker). Not down;
          *     * ``disconnected`` otherwise. With no MCP client every server is: the
          *       catalog has no session state of its own.
-         *
-         *     Dormant reconnect stays on ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
@@ -4324,26 +4210,6 @@ export interface paths {
          * @description Withdraw a credential. What it could reach, it can no longer reach.
          */
         delete: operations["delete_api_mcp_surface_credentials_credential_id"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orchestrator/cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Cost Summary
-         * @description Get cost breakdown across all investigations.
-         */
-        get: operations["get_api_orchestrator_cost"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4687,26 +4553,6 @@ export interface paths {
          *     AGENT_INTERNAL_TOKEN. Up to five seconds old.
          */
         get: operations["get_api_processes"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reasoning/investigation/{investigation_id}/interactions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Investigation Interactions
-         * @description List interactions for an investigation (orchestrator detail view).
-         */
-        get: operations["get_api_reasoning_investigation_investigation_id_interactions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6380,11 +6226,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Custom Workflows
-         * @description List database-backed custom workflows.
-         */
-        get: operations["get_api_workflows_custom"];
+        get?: never;
         put?: never;
         /**
          * Create Custom Workflow
@@ -6404,11 +6246,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get Custom Workflow
-         * @description Fetch a single custom workflow.
-         */
-        get: operations["get_api_workflows_custom_workflow_id"];
+        get?: never;
         /**
          * Update Custom Workflow
          * @description Update an existing custom workflow. Increments version only when its definition changes.
@@ -6441,28 +6279,6 @@ export interface paths {
          *     Does NOT save. Frontend can tweak the draft and POST to /workflows/custom.
          */
         post: operations["post_api_workflows_generate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/workflows/reload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reload Workflows
-         * @description Force reload all file-based workflows from disk.
-         *
-         *     Does not affect database-backed custom workflows.
-         */
-        post: operations["post_api_workflows_reload"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6597,30 +6413,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workflows/runs/{run_id}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Resume Workflow Run
-         * @description Resume a paused workflow run (#128).
-         *
-         *     Looks up the run's pending approval action, approves it, and
-         *     re-enters the phase loop. If there is no pending approval action
-         *     linked to the run, returns 409.
-         */
-        post: operations["post_api_workflows_runs_run_id_resume"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/workflows/runs/{run_id}/verify": {
         parameters: {
             query?: never;
@@ -6724,9 +6516,6 @@ export interface paths {
         /**
          * Get Workflow
          * @description Get one workflow.
-         *
-         *     Defined after /workflows/custom so decorator order resolves the {workflow_id}
-         *     vs /custom ambiguity within this router.
          */
         get: operations["get_api_workflows_workflow_id"];
         put?: never;
@@ -8718,40 +8507,6 @@ export interface components {
             urgency_level: string;
         };
         /**
-         * EstimateCostRequest
-         * @description Body for POST /analytics/estimate-cost.
-         *
-         *     Mirrors the shape of an LLM call so the same payload a caller is
-         *     about to send can be passed straight in for an estimate. ``messages``
-         *     matches Anthropic / OpenAI message format — list of role+content
-         *     dicts; multimodal blocks are tolerated but token-counted as text-only
-         *     in the heuristic path.
-         */
-        EstimateCostRequest: {
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
-            /** Messages */
-            messages?: {
-                [key: string]: unknown;
-            }[];
-            /** Model Id */
-            model_id: string;
-            /**
-             * Provider Type
-             * @description Advisory only — the endpoint resolves the real provider from model_id (registry, then a namespaced id or the configured default) and treats this value as final only when neither matches.
-             */
-            provider_type?: string | null;
-            /** System Prompt */
-            system_prompt?: string | null;
-            /** Tools */
-            tools?: {
-                [key: string]: unknown;
-            }[] | null;
-        };
-        /**
          * EvidenceAdd
          * @description Add evidence to case.
          */
@@ -10077,36 +9832,6 @@ export interface components {
             max_cost_usd: number;
         };
         /**
-         * RecalculateCostRequest
-         * @description Body for POST /analytics/recalculate-cost.
-         *
-         *     Optional filters scope which Bifrost log rows get re-costed. The
-         *     common case (no filters) only touches rows where Bifrost recorded
-         *     ``missing_cost`` — i.e. calls that happened before pricing data
-         *     was available. After a known repricing event, scope by model or
-         *     time window to reprice only the affected rows.
-         */
-        RecalculateCostRequest: {
-            /** End Time */
-            end_time?: string | null;
-            /**
-             * Limit
-             * @default 200
-             */
-            limit: number;
-            /**
-             * Missing Cost Only
-             * @default true
-             */
-            missing_cost_only: boolean | null;
-            /** Models */
-            models?: string[] | null;
-            /** Providers */
-            providers?: string[] | null;
-            /** Start Time */
-            start_time?: string | null;
-        };
-        /**
          * RecoveryCodesResponse
          * @description One-time MFA recovery codes (shown once, cannot be retrieved again).
          */
@@ -11267,14 +10992,6 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /**
-         * WorkflowRunResumeRequest
-         * @description Optional payload when manually resuming a paused run.
-         */
-        WorkflowRunResumeRequest: {
-            /** Approved By */
-            approved_by?: string | null;
-        };
         /** _SecretsMigrateRequest */
         _SecretsMigrateRequest: {
             /** Keys */
@@ -12307,43 +12024,6 @@ export interface operations {
             };
         };
     };
-    "post_api_analytics_estimate-cost": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EstimateCostRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_analytics_insights: {
         parameters: {
             query?: {
@@ -12356,43 +12036,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_analytics_recalculate-cost": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["RecalculateCostRequest"] | null;
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -18612,69 +18255,7 @@ export interface operations {
             };
         };
     };
-    get_api_mcp_connections_status: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_mcp_servers: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_mcp_servers_enabled: {
         parameters: {
             query?: never;
             header?: {
@@ -18914,37 +18495,6 @@ export interface operations {
             path: {
                 credential_id: string;
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_orchestrator_cost: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -19508,42 +19058,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProcessStates"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_reasoning_investigation_investigation_id_interactions: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                investigation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -22406,39 +21920,6 @@ export interface operations {
             };
         };
     };
-    get_api_workflows_custom: {
-        parameters: {
-            query?: {
-                active_only?: boolean;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_workflows_custom: {
         parameters: {
             query?: never;
@@ -22456,39 +21937,6 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_workflows_custom_workflow_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                workflow_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22591,37 +22039,6 @@ export interface operations {
                 "application/json": components["schemas"]["WorkflowGenerateRequest"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_workflows_reload: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -22830,43 +22247,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_workflows_runs_run_id_resume: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkflowRunResumeRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {

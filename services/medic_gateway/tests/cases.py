@@ -69,7 +69,6 @@ CASES: list[Case] = [
         "analytics-cost",
         b"/api/analytics/cost?time_range=24h",
         (R, 403),
-        note="sync Bifrost call blocks a backend worker up to 5 s",
     ),
     # --- slashes -----------------------------------------------------------------
     Case(
@@ -165,12 +164,6 @@ CASES: list[Case] = [
         b"/api/analytics/insights",
         (R, 403),
         note="GET starts an LLM regeneration (C3 4.6)",
-    ),
-    Case(
-        "side-effect-mcp",
-        b"/api/mcp/connections/status",
-        (R, 403),
-        note="GET reconnects",
     ),
     Case("openapi", b"/openapi.json", (R, 400), note="'.' is outside the path charset"),
     Case("docs", b"/docs", (R, 403)),

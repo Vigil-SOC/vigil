@@ -3,8 +3,8 @@
 Two routers answer these reads and neither owns the answer. The frozen contract
 serves them at ``/api/v1/workflows`` (``core/api/v1/workflows_router.py``); the
 console serves the pre-version ``/api/workflows`` paths from its own router,
-because ``/workflows/custom`` and ``/workflows/{workflow_id}`` are only
-order-safe inside one router. So the reads live here, in the domain whose
+because the console's ``/workflows/custom`` routes and ``/workflows/{workflow_id}``
+are only order-safe inside one router. So the reads live here, in the domain whose
 language they speak, and both routers call down into them.
 
 The detail read is the definition, plus the lead and model for a single-agent

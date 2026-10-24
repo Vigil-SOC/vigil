@@ -1005,9 +1005,6 @@ export const workflowApi = {
   steer: (runId: string, kind: string, text = '', fields?: Record<string, unknown>) =>
     api.post(`/agent-runs/${runId}/directives`, { kind, text, ...(fields && { fields }) }),
 
-  listCustom: (activeOnly: boolean = true) =>
-    api.get('/workflows/custom', { params: { active_only: activeOnly } }),
-  getCustom: (id: string) => api.get(`/workflows/custom/${id}`),
   createCustom: (data: {
     name: string
     description: string
@@ -1206,11 +1203,6 @@ export const reasoningApi = {
   getInteraction: (sessionId: string, interactionId: string) =>
     api
       .get(`/reasoning/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`)
-      .then(r => r.data),
-
-  listInvestigationInteractions: (investigationId: string, params?: { limit?: number; offset?: number }) =>
-    api
-      .get(`/reasoning/investigation/${encodeURIComponent(investigationId)}/interactions`, { params })
       .then(r => r.data),
 }
 
