@@ -602,6 +602,19 @@ describe('SetupScreen', () => {
         expect(screen.getByLabelText('Interval (s)')).toBeInTheDocument()
       })
 
+      it('show for OpenSearch', async () => {
+        vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ source_id: 'opensearch' })]))
+        await openStep(SERVERS)
+        fireEvent.click(screen.getByRole('button', { name: 'More sources' }))
+        fireEvent.change(screen.getByLabelText('Search data sources'), { target: { value: 'opensearch' } })
+        fireEvent.click(screen.getByRole('button', { name: /OpenSearch/ }))
+        await screen.findByText('Connect OpenSearch')
+        fireEvent.change(screen.getByLabelText(/^OpenSearch URL/), { target: { value: 'https://os.example:9200' } })
+        testConnection()
+        await screen.findByText('Connected to OpenSearch')
+        expect(await screen.findByRole('switch', { name: 'Collect alerts' })).toBeInTheDocument()
+      })
+
       it('stay while Test again runs', async () => {
         await connect()
         await screen.findByRole('switch', { name: 'Collect alerts' })
