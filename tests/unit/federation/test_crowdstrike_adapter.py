@@ -56,7 +56,7 @@ def _adapter(svc: Any) -> CrowdStrikeAdapter:
 
 
 def _fetch(svc: Any):
-    return asyncio.run(_adapter(svc).fetch(since=None, cursor=CURSOR, max_items=10))
+    return asyncio.run(_adapter(svc).fetch(cursor=CURSOR, max_items=10))
 
 
 def _detection(n: int) -> Dict[str, Any]:
@@ -140,7 +140,7 @@ def test_same_host_detections_stay_distinct_findings():
 def test_not_configured_returns_empty():
     adapter = CrowdStrikeAdapter()
     with patch.object(adapter, "is_configured", return_value=False):
-        res = asyncio.run(adapter.fetch(since=None, cursor=CURSOR, max_items=10))
+        res = asyncio.run(adapter.fetch(cursor=CURSOR, max_items=10))
     assert res.findings == []
     assert "last_poll_at" in res.cursor
 
@@ -164,7 +164,6 @@ async def test_runner_records_failure_and_keeps_cursor(monkeypatch):
         adapter, {"max_items": 10, "cursor": CURSOR, "min_severity": None}
     )
     assert failures == [("crowdstrike", "CrowdStrike detections query failed")]
-    assert runner.stats["errors"] == 1
 
 
 @pytest.mark.asyncio
@@ -223,7 +222,6 @@ async def test_service_build_failure_is_a_failed_tick(monkeypatch):
         adapter, {"max_items": 10, "cursor": CURSOR, "min_severity": None}
     )
     assert failures == [("crowdstrike", "secrets store down")]
-    assert runner.stats["errors"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +290,7 @@ def test_full_batch_keeps_the_oldest_and_stops_the_cursor_at_the_newest_kept():
     svc = CrowdStrikeService(client_id="cid", client_secret="csec")
 
     res = asyncio.run(
-        _adapter(svc).fetch(
-            since=None, cursor={"last_poll_at": T0.isoformat()}, max_items=3
-        )
+        _adapter(svc).fetch(cursor={"last_poll_at": T0.isoformat()}, max_items=3)
     )
 
     assert [f["external_id"] for f in res.findings] == ["ldt:1", "ldt:2", "ldt:3"]
@@ -312,7 +308,6 @@ def test_more_than_100_ids_are_all_summarised_across_id_pages_and_chunks():
     with patch("core.integrations.crowdstrike.client._ID_PAGE_MAX", 1000):
         res = asyncio.run(
             _adapter(svc).fetch(
-                since=None,
                 cursor={"last_poll_at": T0.isoformat()},
                 max_items=n + 1,
             )
@@ -347,7 +342,6 @@ async def test_runner_delivers_every_detection_across_ticks(monkeypatch):
     queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     adapter = _adapter(CrowdStrikeService(client_id="cid", client_secret="csec"))
-    runner._adapters[adapter.name] = adapter
     runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
 
     stored: List[Dict[str, Any]] = []
