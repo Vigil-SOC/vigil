@@ -997,7 +997,7 @@ def update_case_task(
     notes: Optional[str] = None,
 ) -> str:
     """
-    Update a task status.
+    Update a task's status or assignee, or add a note to it.
 
     Args:
         task_id: The task ID
@@ -1008,6 +1008,7 @@ def update_case_task(
     Examples:
         - update_case_task(5, status="in_progress")
         - update_case_task(5, status="completed", notes="Malware analysis complete - ransomware variant")
+        - update_case_task(5, notes="Sample sent to sandbox")
     """
     try:
         from core.cases import case_records_service
@@ -1026,11 +1027,15 @@ def update_case_task(
 
         # Activity is its own transaction, after the update has committed, so a
         # failure to record it cannot roll the update back.
-        if status:
+        if status or notes:
             add_case_activity(
                 case_id,
                 "task_update",
-                f"Task '{title}' status changed to {status}",
+                (
+                    f"Task '{title}' status changed to {status}"
+                    if status
+                    else f"Task '{title}' note added"
+                ),
                 (
                     {"task_id": task_id, "notes": notes}
                     if notes

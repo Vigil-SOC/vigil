@@ -437,7 +437,7 @@ show_status() {
   echo -n "  Autonomy          : "
   get /config/orchestrator | python3 -c "import sys,json;print('enabled' if json.load(sys.stdin).get('enabled') else 'disabled')"
   echo -n "  Connected MCP     : "
-  get /mcp/connections/status | python3 -c "import sys,json;c=[x['name'] for x in json.load(sys.stdin).get('connections',[]) if x.get('connected')];print(', '.join(c) or 'none')"
+  get /mcp/servers/status | python3 -c "import sys,json;c=[x['name'] for x in json.load(sys.stdin).get('statuses',[]) if x.get('status')=='running'];print(', '.join(c) or 'none')"
 }
 
 echo -e "${YELLOW}Current setup state${NC}"
