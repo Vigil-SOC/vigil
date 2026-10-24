@@ -1,0 +1,72 @@
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8bc6a432-bc72-4aca-a5dc-1e3d4c99891f/core/integrations/darktrace/darktrace_webhook_router.py:103: StarletteDeprecationWarning: 'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated. Use 'HTTP_413_CONTENT_TOO_LARGE' instead.
+  return await read_signed_json(
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8bc6a432-bc72-4aca-a5dc-1e3d4c99891f/core/integrations/cloudflare/cloudflare_webhooks_router.py:116: StarletteDeprecationWarning: 'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated. Use 'HTTP_413_CONTENT_TOO_LARGE' instead.
+  payload = await read_signed_json(
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8bc6a432-bc72-4aca-a5dc-1e3d4c99891f/core/integrations/darktrace/darktrace_webhook_router.py:103: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  return await read_signed_json(
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8bc6a432-bc72-4aca-a5dc-1e3d4c99891f/core/integrations/cloudflare/cloudflare_webhooks_router.py:116: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  payload = await read_signed_json(
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8bc6a432-bc72-4aca-a5dc-1e3d4c99891f/core/integrations/darktrace/darktrace_webhook_router.py:121: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  return ingest(service, transform(service, payload), f"Darktrace {alert_type}")
+/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8bc6a432-bc72-4aca-a5dc-1e3d4c99891f/core/integrations/cloudflare/cloudflare_webhooks_router.py:84: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  return ingest(service, service.transform_event(payload), "Cloudy event")
+ok             dt/mb  202 {"accepted":true,"finding_id":"F"}
+ok             dt/ss  202 {"accepted":true,"finding_id":"F"}
+ok             cf     202 {"accepted":true,"finding_id":"F"}
+prefix         dt/mb  202 {"accepted":true,"finding_id":"F"}
+prefix         dt/ss  202 {"accepted":true,"finding_id":"F"}
+prefix         cf     202 {"accepted":true,"finding_id":"F"}
+lookupfail     dt/mb  503 {"detail":"Darktrace webhook secret lookup failed"}
+lookupfail     dt/ss  503 {"detail":"Darktrace webhook secret lookup failed"}
+lookupfail     cf     503 {"detail":"Cloudy webhook secret lookup failed"}
+nosecret       dt/mb  503 {"detail":"Darktrace webhook receiver not configured (DARKTRACE_WEBHOOK_SECRET missing)"}
+nosecret       dt/ss  503 {"detail":"Darktrace webhook receiver not configured (DARKTRACE_WEBHOOK_SECRET missing)"}
+nosecret       cf     503 {"detail":"Cloudy webhook receiver not configured (CLOUDY_WEBHOOK_SECRET missing)"}
+toobig         dt/mb  413 {"detail":"Body exceeds 1024 bytes"}
+toobig         dt/ss  413 {"detail":"Body exceeds 1024 bytes"}
+toobig         cf     413 {"detail":"Body exceeds 1024 bytes"}
+missingsig     dt/mb  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+missingsig     dt/ss  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+missingsig     cf     401 {"detail":"Invalid or missing X-Cloudflare-Signature"}
+badsig         dt/mb  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+badsig         dt/ss  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+badsig         cf     401 {"detail":"Invalid or missing X-Cloudflare-Signature"}
+badjson        dt/mb  422 {"detail":"Invalid JSON body"}
+badjson        dt/ss  422 {"detail":"Invalid JSON body"}
+badjson        cf     422 {"detail":"Invalid JSON body"}
+array          dt/mb  422 {"detail":"Webhook payload must be a JSON object"}
+array          dt/ss  422 {"detail":"Webhook payload must be a JSON object"}
+array          cf     422 {"detail":"Webhook payload must be a JSON object"}
+nonutf8        dt/mb  422 {"detail":"Invalid JSON body"}
+nonutf8        dt/ss  422 {"detail":"Invalid JSON body"}
+nonutf8        cf     422 {"detail":"Invalid JSON body"}
+transformNone  dt/mb  422 {"detail":"Unable to transform Darktrace model-breach payload"}
+transformNone  dt/ss  422 {"detail":"Unable to transform Darktrace system-status payload"}
+transformNone  cf     422 {"detail":"Unable to transform Cloudy event payload"}
+notpersisted   dt/mb  500 {"detail":"Finding was not persisted"}
+notpersisted   dt/ss  500 {"detail":"Finding was not persisted"}
+notpersisted   cf     500 {"detail":"Finding was not persisted"}
+disabled       dt/mb  202 {"accepted":true,"finding_id":"F"}
+disabled       dt/ss  202 {"accepted":true,"finding_id":"F"}
+disabled       cf     503 {"detail":"Cloudy ingestion is disabled. Set CLOUDY_INGESTION_ENABLED=true to enable."}
+{
+ "cloudflare/cloudy": {
+  "bad_signature": 1,
+  "disabled": 1,
+  "missing_signature": 1,
+  "no_secret": 1,
+  "secret_lookup_failed": 1
+ },
+ "darktrace/model-breach": {
+  "bad_signature": 1,
+  "missing_signature": 1,
+  "no_secret": 1,
+  "secret_lookup_failed": 1
+ },
+ "darktrace/system-status": {
+  "bad_signature": 1,
+  "missing_signature": 1,
+  "no_secret": 1,
+  "secret_lookup_failed": 1
+ }
+}

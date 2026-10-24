@@ -1,0 +1,74 @@
+/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-191746/tmp/base/core/integrations/darktrace/darktrace_webhook_router.py:239: StarletteDeprecationWarning: 'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated. Use 'HTTP_413_CONTENT_TOO_LARGE' instead.
+  raw = await _read_and_verify(
+/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-191746/tmp/base/core/integrations/darktrace/darktrace_webhook_router.py:271: StarletteDeprecationWarning: 'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated. Use 'HTTP_413_CONTENT_TOO_LARGE' instead.
+  raw = await _read_and_verify(
+/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-191746/tmp/base/core/integrations/cloudflare/cloudflare_webhooks_router.py:216: StarletteDeprecationWarning: 'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated. Use 'HTTP_413_CONTENT_TOO_LARGE' instead.
+  raw = await _read_and_verify(request, x_cloudflare_signature)
+/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-191746/tmp/base/core/integrations/darktrace/darktrace_webhook_router.py:242: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  payload = _parse_json(raw)
+/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-191746/tmp/base/core/integrations/darktrace/darktrace_webhook_router.py:274: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  payload = _parse_json(raw)
+/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-191746/tmp/base/core/integrations/cloudflare/cloudflare_webhooks_router.py:217: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  payload = _parse_json(raw)
+/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/concurrent/futures/thread.py:59: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+  result = self.fn(*self.args, **self.kwargs)
+ok             dt/mb  202 {"accepted":true,"finding_id":"F"}
+ok             dt/ss  202 {"accepted":true,"finding_id":"F"}
+ok             cf     202 {"accepted":true,"finding_id":"F"}
+prefix         dt/mb  202 {"accepted":true,"finding_id":"F"}
+prefix         dt/ss  202 {"accepted":true,"finding_id":"F"}
+prefix         cf     202 {"accepted":true,"finding_id":"F"}
+lookupfail     dt/mb  503 {"detail":"Darktrace webhook secret lookup failed"}
+lookupfail     dt/ss  503 {"detail":"Darktrace webhook secret lookup failed"}
+lookupfail     cf     503 {"detail":"Cloudy webhook secret lookup failed"}
+nosecret       dt/mb  503 {"detail":"Darktrace webhook receiver not configured"}
+nosecret       dt/ss  503 {"detail":"Darktrace webhook receiver not configured"}
+nosecret       cf     503 {"detail":"Cloudy webhook receiver not configured (CLOUDY_WEBHOOK_SECRET missing)"}
+toobig         dt/mb  413 {"detail":"Body exceeds 1024 bytes"}
+toobig         dt/ss  413 {"detail":"Body exceeds 1024 bytes"}
+toobig         cf     413 {"detail":"Body exceeds 1024 bytes"}
+missingsig     dt/mb  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+missingsig     dt/ss  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+missingsig     cf     401 {"detail":"Invalid or missing X-Cloudflare-Signature"}
+badsig         dt/mb  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+badsig         dt/ss  401 {"detail":"Invalid or missing X-Darktrace-Signature"}
+badsig         cf     401 {"detail":"Invalid or missing X-Cloudflare-Signature"}
+badjson        dt/mb  422 {"detail":"Invalid JSON body"}
+badjson        dt/ss  422 {"detail":"Invalid JSON body"}
+badjson        cf     422 {"detail":"Invalid JSON body"}
+array          dt/mb  422 {"detail":"Webhook payload must be a JSON object"}
+array          dt/ss  422 {"detail":"Webhook payload must be a JSON object"}
+array          cf     422 {"detail":"Webhook payload must be a JSON object"}
+nonutf8        dt/mb  422 {"detail":"Invalid JSON body"}
+nonutf8        dt/ss  422 {"detail":"Invalid JSON body"}
+nonutf8        cf     422 {"detail":"Invalid JSON body"}
+transformNone  dt/mb  422 {"detail":"Unable to transform Darktrace model-breach payload"}
+transformNone  dt/ss  422 {"detail":"Unable to transform Darktrace system-status payload"}
+transformNone  cf     422 {"detail":"Unable to transform Cloudy event payload"}
+notpersisted   dt/mb  500 {"detail":"Finding was not persisted"}
+notpersisted   dt/ss  500 {"detail":"Finding was not persisted"}
+notpersisted   cf     500 {"detail":"Finding was not persisted"}
+disabled       dt/mb  202 {"accepted":true,"finding_id":"F"}
+disabled       dt/ss  202 {"accepted":true,"finding_id":"F"}
+disabled       cf     503 {"detail":"Cloudy ingestion is disabled. Set CLOUDY_INGESTION_ENABLED=true to enable."}
+{
+ "cloudflare/cloudy": {
+  "bad_signature": 1,
+  "disabled": 1,
+  "missing_signature": 1,
+  "no_secret": 1,
+  "secret_lookup_failed": 1
+ },
+ "darktrace/model-breach": {
+  "bad_signature": 1,
+  "missing_signature": 1,
+  "no_secret": 1,
+  "secret_lookup_failed": 1
+ },
+ "darktrace/system-status": {
+  "bad_signature": 1,
+  "missing_signature": 1,
+  "no_secret": 1,
+  "secret_lookup_failed": 1
+ }
+}
