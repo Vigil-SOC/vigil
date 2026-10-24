@@ -1,8 +1,3 @@
-"""JSON uploads with fractional numbers in JSONB fields are stored (#3087).
-
-Runs on the throwaway database tests/unit/conftest.py provisions per process.
-"""
-
 import json
 
 import pytest
