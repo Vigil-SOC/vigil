@@ -19,6 +19,7 @@ from core.cases.sandbox_correlation_service import (
     _score_to_confidence,
     _score_to_threat_level,
 )
+from core.storage.models import CaseIOC
 
 
 @pytest.mark.unit
@@ -188,3 +189,47 @@ class TestAttachReportAtomicity:
         session.commit.assert_not_called()
         session.rollback.assert_called_once()
         session.close.assert_called_once()
+
+
+@pytest.mark.unit
+class TestVendorScoreScale:
+    """Each vendor's score reaches CaseIOC on CAPE's 0-10 scale."""
+
+    REPORTS = {
+        "cape": {"data": {"info": {"score": 1}, "network": {"hosts": ["9.9.9.9"]}}},
+        "hybrid_analysis": {"threat_score": 10, "hosts": ["9.9.9.9"]},
+        "anyrun": {"data": {"scores": {"malconf": 10}, "iocs": {"ip": ["9.9.9.9"]}}},
+    }
+
+    @pytest.mark.parametrize("sandbox", list(REPORTS))
+    def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = None
+        monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
+
+        result = SandboxCorrelationService().attach_report(
+            "case-1", sandbox, "task-1", self.REPORTS[sandbox]
+        )
+
+        assert "error" not in result
+        (ioc,) = [
+            c.args[0]
+            for c in session.add.call_args_list
+            if isinstance(c.args[0], CaseIOC)
+        ]
+        assert (ioc.threat_level, ioc.confidence, ioc.reputation_score) == (
+            "low",
+            0.1,
+            1.0,
+        )
+
+    def test_hybrid_top_score_is_critical(self):
+        out = _normalise_report("hybrid_analysis", {"threat_score": 100})
+        assert out["score"] == 10.0
+        assert _score_to_threat_level(out["score"]) == "critical"
+
+    def test_missing_score_stays_none(self):
+        assert (
+            _normalise_report("hybrid_analysis", {"threat_score": None})["score"]
+            is None
+        )
