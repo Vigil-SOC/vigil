@@ -26,6 +26,7 @@ describe('sourceBadge', () => {
       'azure-sentinel': 'azure_sentinel',
       'aws-security-hub': 'aws_security_hub',
       'microsoft-defender': 'microsoft_defender',
+      opensearch: 'opensearch',
     })
     for (const stored of Object.values(CATALOG_TO_SOURCE)) {
       expect(sourceBadge(stored).label).not.toBe(stored)
