@@ -19,6 +19,7 @@ from core.cases.sandbox_correlation_service import (
     _score_to_confidence,
     _score_to_threat_level,
 )
+from core.storage.models import CaseIOC
 
 
 @pytest.mark.unit
@@ -145,6 +146,7 @@ class TestAttachReportAtomicity:
     @pytest.fixture
     def session(self, monkeypatch):
         mock_session = MagicMock()
+        mock_session.scalars.return_value = ["case-1"]
         # No pre-existing IOC rows, so each one takes the insert path.
         mock_session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: mock_session)
@@ -152,11 +154,23 @@ class TestAttachReportAtomicity:
 
     def _attach(self):
         return SandboxCorrelationService().attach_report(
-            case_id="case-1",
+            finding_id="finding-1",
             sandbox_name="cape",
             task_id="task-1",
             report=self.REPORT,
         )
+
+    def test_null_behavior_still_writes_evidence(self, session):
+        result = SandboxCorrelationService().attach_report(
+            finding_id="finding-1",
+            sandbox_name="cape",
+            task_id="task-1",
+            report={"data": {**self.REPORT["data"], "behavior": None}},
+        )
+
+        assert "error" not in result
+        assert result["iocs_added"] == 2
+        session.commit.assert_called_once()
 
     def test_commits_once_when_every_step_succeeds(self, session):
         result = self._attach()
@@ -188,3 +202,43 @@ class TestAttachReportAtomicity:
         session.commit.assert_not_called()
         session.rollback.assert_called_once()
         session.close.assert_called_once()
+
+
+@pytest.mark.unit
+class TestVendorScoreScale:
+    REPORTS = {
+        "cape": {"data": {"info": {"score": 1}, "network": {"hosts": ["9.9.9.9"]}}},
+        "hybrid_analysis": {"threat_score": 10, "hosts": ["9.9.9.9"]},
+    }
+
+    @pytest.mark.parametrize("sandbox", list(REPORTS))
+    def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
+        session = MagicMock()
+        session.scalars.return_value = ["case-1"]
+        session.query.return_value.filter.return_value.first.return_value = None
+        monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
+
+        result = SandboxCorrelationService().attach_report(
+            "finding-1", sandbox, "task-1", self.REPORTS[sandbox]
+        )
+
+        assert "error" not in result
+        (ioc,) = [
+            c.args[0]
+            for c in session.add.call_args_list
+            if isinstance(c.args[0], CaseIOC)
+        ]
+        assert (ioc.threat_level, ioc.confidence, ioc.reputation_score) == (
+            "low",
+            0.1,
+            1.0,
+        )
+
+    @pytest.mark.parametrize("threat_score", [None, "n/a"])
+    def test_unusable_hybrid_score_is_none(self, threat_score):
+        assert (
+            _normalise_report("hybrid_analysis", {"threat_score": threat_score})[
+                "score"
+            ]
+            is None
+        )

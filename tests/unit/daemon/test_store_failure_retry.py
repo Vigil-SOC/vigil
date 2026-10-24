@@ -3,8 +3,9 @@
 The processor retries ``_store_finding`` in place. On give-up it forgets the
 dedup key that was marked at enqueue, on the same ``RedisDedupSet`` instance.
 
-Splunk, CrowdStrike, and Elastic re-read a lookback of
-``max(interval // 60 + 1, 5)`` minutes, so an unmarked id is queued again.
+Splunk, CrowdStrike, and Elastic re-read back to their last successful poll,
+or ``max(interval // 60 + 1, 5)`` minutes before the first, so an unmarked id
+is queued again.
 The webhook does not: the HTTP response has already moved. Federation and
 Kafka hold their cursor/offset until the store is acked (test_ack_before_advance).
 """
@@ -191,7 +192,7 @@ async def test_a_store_that_keeps_failing_is_dropped_and_splunk_requeues(
 
 @pytest.mark.asyncio
 async def test_crowdstrike_and_elastic_requeue_inside_their_lookback(monkeypatch):
-    """Both re-read max(interval // 60 + 1, 5) minutes, so an unmarked id returns."""
+    """Both re-read their lookback before the first success, so an unmarked id returns."""
     poller = _poller(monkeypatch)
     processor = _processor(monkeypatch)
     ingest = _Ingest(_down() + _down())
