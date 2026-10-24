@@ -48,7 +48,9 @@ def test_config_returns_none_when_token_missing():
     cf = _import_cloudflare_tool()
     # The token comes from the secrets store via the descriptor-driven resolver,
     # not from get_integration_config — that store never holds a secret.
-    with patch.object(cf, "resolve", return_value={"account_id": "abc", "api_token": None}):
+    with patch.object(
+        cf, "resolve", return_value={"account_id": "abc", "api_token": None}
+    ):
         assert cf._config() is None
 
 
@@ -274,3 +276,115 @@ def test_cloudy_rejections_are_logged_counted_and_distinguished(
         "bad_signature": 100,
         "disabled": 1,
     }
+
+
+class _FakeFindingsDB:
+    """Mirrors the findings columns the Cloudy transform writes."""
+
+    def __init__(self):
+        self.rows = {}
+
+    def get_finding(self, finding_id):
+        return self.rows.get(finding_id)
+
+    def get_finding_by_external_id(self, data_source, external_id):
+        return any(
+            row["data_source"] == data_source and row["external_id"] == external_id
+            for row in self.rows.values()
+        )
+
+    def create_finding(self, **row):
+        if len(row["finding_id"]) > 50 or len(row["external_id"] or "") > 255:
+            raise ValueError("value too long for type character varying")
+        if not all(isinstance(row[c], str) for c in ("title", "description")):
+            raise ValueError("can't adapt type 'dict'")
+        self.rows[row["finding_id"]] = row
+        return row
+
+
+@pytest.fixture()
+def cloudy_client(gated_app, monkeypatch):
+    from core.ingestion.ingestion_service import IngestionService
+
+    app, mod = gated_app
+    db = _FakeFindingsDB()
+    real_init = IngestionService.__init__
+
+    def init(self):
+        real_init(self)
+        self.db_service = db
+        self.use_database = True
+
+    monkeypatch.setattr(IngestionService, "__init__", init)
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: True)
+    monkeypatch.setattr(mod, "_get_secret", lambda: "s3cret")
+    client = TestClient(app, raise_server_exceptions=False)
+    return (
+        lambda payload: _signed_post(client, json.dumps(payload).encode(), "s3cret"),
+        db,
+    )
+
+
+def test_cloudy_retry_without_id_creates_one_finding(cloudy_client):
+    post, db = cloudy_client
+    payload = {
+        "summary": "bot attack on login",
+        "event": {"action": "block", "client_ip": "1.2.3.4"},
+        "timestamp": "2026-10-01T00:00:00Z",
+    }
+    first, retry = post(payload), post(payload)
+    assert first.status_code == retry.status_code == 202
+    assert first.json()["finding_id"] == retry.json()["finding_id"]
+    assert len(db.rows) == 1
+    assert post({**payload, "summary": "another attack"}).status_code == 202
+    assert len(db.rows) == 2
+
+
+def test_cloudy_long_event_id_is_stored_as_external_id(cloudy_client):
+    post, db = cloudy_client
+    event_id = "x" * 64
+    first, retry = post({"event_id": event_id, "summary": "s"}), post(
+        {"event_id": event_id, "summary": "s"}
+    )
+    assert first.status_code == retry.status_code == 202
+    (row,) = db.rows.values()
+    assert row["external_id"] == event_id
+    assert len(row["finding_id"]) <= 50
+
+
+def test_cloudy_payload_is_persisted_as_source_evidence(cloudy_client):
+    post, db = cloudy_client
+    payload = {
+        "event_id": "e1",
+        "summary": "s",
+        "event": {"action": "log", "rule_id": "R9"},
+    }
+    assert post(payload).status_code == 202
+    (row,) = db.rows.values()
+    assert row["entity_context"]["source_evidence"]["records"] == [payload]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"summary": "s", "anomaly_score": "high"},
+        {"event": "a string event"},
+        {"summary": {"text": "s"}},
+        {"summary": "s", "event": {"action": 3}},
+        {"summary": "s", "title": {"text": "t"}},
+        {"event_id": "x" * 256, "summary": "s"},
+    ],
+)
+def test_cloudy_malformed_payload_is_422(cloudy_client, payload):
+    post, db = cloudy_client
+    resp = post(payload)
+    assert resp.status_code == 422
+    assert "Unable to transform" in resp.json()["detail"]
+    assert db.rows == {}
+
+
+def test_cloudy_null_anomaly_score_takes_default(cloudy_client):
+    post, db = cloudy_client
+    assert post({"summary": "s", "anomaly_score": None}).status_code == 202
+    (row,) = db.rows.values()
+    assert row["anomaly_score"] == 0.5
