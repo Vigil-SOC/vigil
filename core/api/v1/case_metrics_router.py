@@ -1,8 +1,8 @@
 """Case metrics — versioned contract surface (``/api/v1/cases/metrics``).
 
 Reporting numbers about cases (MTTR, MTTD, breach counts, breakdowns). Six are
-frozen; one is marked beta via ``openapi_extra`` and are excluded from the
-contract snapshot — their shape may change while the feature matures. Beta
+frozen; one is marked beta via ``openapi_extra`` and is excluded from the
+contract snapshot — its shape may change while the feature matures. Beta
 still ships and returns data; it is a "do not rely on this yet" label, not a
 hidden route.
 
