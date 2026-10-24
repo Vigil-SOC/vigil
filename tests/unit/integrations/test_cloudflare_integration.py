@@ -204,7 +204,7 @@ def test_cloudy_health_reports_disabled_state(gated_app, monkeypatch):
     assert body["receiver"] == "cloudflare-cloudy"
 
 
-def _signed_post(client, body: bytes, secret: str, sig: str | None = None):
+def _signed_post(client, body: bytes, secret: str, sig: str | bytes | None = None):
     import hashlib
     import hmac
 
@@ -273,4 +273,18 @@ def test_cloudy_rejections_are_logged_counted_and_distinguished(
         "missing_signature": 1,
         "bad_signature": 100,
         "disabled": 1,
+    }
+
+
+def test_cloudy_non_ascii_signature_is_counted_401(gated_app, monkeypatch):
+    from core import webhook_rejections as wr
+
+    wr._counts.clear()
+    app, mod = gated_app
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: True)
+    monkeypatch.setattr(mod, "_get_secret", lambda: "s3cret")
+    client = TestClient(app, raise_server_exceptions=False)
+    assert _signed_post(client, b"{}", "s3cret", sig=b"\xe9").status_code == 401
+    assert wr.rejection_counts("cloudflare/") == {
+        "cloudflare/cloudy": {"bad_signature": 1}
     }
