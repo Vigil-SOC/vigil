@@ -152,7 +152,14 @@ describe('FederationSection', () => {
   it('disables an unconfigured source', () => {
     state.sources = [source({ source_id: 'elastic', is_configured: false, enabled: false })]
     render(<FederationSection notify={notify} />)
-    expect(screen.getByRole('switch', { name: 'Collect from Elastic Security' })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Collect from Elastic Security (SIEM)' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Poll now' })).toBeDisabled()
+  })
+
+  it('names a source after its catalog entry, and an unknown one by its id', () => {
+    state.sources = [source({ source_id: 'opensearch' }), source({ source_id: 'okta' })]
+    render(<FederationSection notify={notify} />)
+    expect(screen.getByRole('switch', { name: 'Collect from OpenSearch' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Collect from okta' })).toBeInTheDocument()
   })
 })
