@@ -14,6 +14,27 @@ from core.ingestion.ingestion_service import IngestionService
 logger = logging.getLogger(__name__)
 
 
+def normalize_severity(severity: Any) -> str:
+    """Map a raw severity to critical, high, medium, low or info."""
+    if not severity:
+        return "medium"
+
+    severity_str = str(severity).lower()
+
+    if any(s in severity_str for s in ["critical", "crit", "5", "emergency"]):
+        return "critical"
+    elif any(s in severity_str for s in ["high", "4", "error"]):
+        return "high"
+    elif any(s in severity_str for s in ["medium", "med", "3", "warning", "warn"]):
+        return "medium"
+    elif any(s in severity_str for s in ["low", "2", "notice"]):
+        return "low"
+    elif any(s in severity_str for s in ["info", "informational", "1", "debug"]):
+        return "info"
+    else:
+        return "medium"
+
+
 class SIEMIngestionService(ABC):
     """Base class for SIEM ingestion services."""
 
@@ -163,33 +184,7 @@ class SIEMIngestionService(ABC):
         )
 
     def normalize_severity(self, severity: Any) -> str:
-        """
-        Normalize severity to standard values.
-
-        Args:
-            severity: Raw severity value
-
-        Returns:
-            Normalized severity: critical, high, medium, low, info
-        """
-        if not severity:
-            return "medium"
-
-        severity_str = str(severity).lower()
-
-        # Map various severity formats
-        if any(s in severity_str for s in ["critical", "crit", "5", "emergency"]):
-            return "critical"
-        elif any(s in severity_str for s in ["high", "4", "error"]):
-            return "high"
-        elif any(s in severity_str for s in ["medium", "med", "3", "warning", "warn"]):
-            return "medium"
-        elif any(s in severity_str for s in ["low", "2", "notice"]):
-            return "low"
-        elif any(s in severity_str for s in ["info", "informational", "1", "debug"]):
-            return "info"
-        else:
-            return "medium"
+        return normalize_severity(severity)
 
     def extract_entities(self, alert: Dict[str, Any]) -> Dict[str, List[str]]:
         """
