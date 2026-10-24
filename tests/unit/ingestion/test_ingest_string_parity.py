@@ -101,3 +101,29 @@ def test_single_object_from_string(body, data_type, findings, cases):
     svc = _svc()
     stats = svc.ingest_from_string(body, "json", data_type)
     assert _outcome(svc, stats)[1:] == (findings, cases)
+
+
+@pytest.mark.parametrize(
+    "name,total,imported,errors",
+    [
+        ("json_list_keyed_by_id", 2, 2, 0),
+        ("jsonl_one_bad_line", 2, 2, 1),
+        ("csv_one_bad_row", 3, 2, 1),
+    ],
+)
+def test_string_counts_good_rows_and_errors(name, total, imported, errors):
+    body, fmt, data_type = CASES[name]
+    svc = _svc()
+    stats = svc.ingest_from_string(body, fmt, data_type)
+    assert stats["findings_total"] == total
+    assert stats["findings_imported"] == imported
+    assert stats["findings_errors"] == errors
+    assert len(svc.db_service.batch) == imported
+
+
+def test_id_keyed_list_is_not_imported_as_cases():
+    svc = _svc()
+    stats = svc.ingest_from_string('[{"id":"c-1","title":"t"}]', "json", "case")
+    assert stats["findings_total"] == 0
+    assert svc.db_service.batch == []
+    assert svc.db_service.cases == []

@@ -603,7 +603,7 @@ class IngestionService:
         with open(file_path, "r") as f:
             self._ingest_json_data(json.load(f))
 
-    def _ingest_json_data(self, data: Any) -> None:
+    def _ingest_json_data(self, data: Any, data_type: str = "finding") -> None:
         findings = []
         cases = []
 
@@ -615,7 +615,7 @@ class IngestionService:
                 findings = data
             elif data and "case_id" in data[0]:
                 cases = data
-            elif data and "id" in data[0]:
+            elif data and "id" in data[0] and data_type == "finding":
                 findings = data
 
         self.stats["findings_total"] = len(findings)
@@ -1197,7 +1197,7 @@ class IngestionService:
                 data = json.loads(data_string)
                 if isinstance(data, dict) and f"{data_type}_id" in data:
                     data = {f"{data_type}s": [data]}
-                self._ingest_json_data(data)
+                self._ingest_json_data(data, data_type)
             elif format == "jsonl":
                 self._ingest_jsonl_lines(StringIO(data_string), data_type)
             elif format == "csv":
