@@ -18,6 +18,7 @@ sys.path.insert(0, str(REPO))
 from core.integrations.custom_integration_service import (  # noqa: E402
     CustomIntegrationService,
     InvalidIntegrationIdError,
+    ServerCodeTooLargeError,
     _validate_integration_id,
 )
 
@@ -58,24 +59,19 @@ def test_validate_integration_id_accepts_safe():
         assert _validate_integration_id(ok) == ok
 
 
-def test_server_path_stays_in_base(tmp_path, monkeypatch):
-    """A crafted (now-impossible) ID can't escape the base dir even if
-    validation were bypassed — the resolved-path check is the second
-    line of defense."""
+def test_server_path_stays_in_base(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    outside = tmp_path / "outside.py"
+    (base / "evil_server.py").symlink_to(outside)
     svc = CustomIntegrationService.__new__(CustomIntegrationService)
-    svc.custom_integrations_dir = tmp_path.resolve()
-    # Sanity: legitimate ID
-    path = svc._server_path_for("custom-misp")
-    assert str(path).startswith(str(svc.custom_integrations_dir))
+    svc.custom_integrations_dir = base.resolve()
 
-    # Forcing a bad ID past the regex (simulating an internal bypass)
-    # — _server_path_for still rejects the resolved path.
-    class _FakePath:
-        pass
-
-    with pytest.raises(InvalidIntegrationIdError):
-        # Re-run validation explicitly to confirm rejection
-        _validate_integration_id("../escape")
+    assert (
+        svc._server_path_for("custom-misp") == base.resolve() / "custom-misp_server.py"
+    )
+    with pytest.raises(InvalidIntegrationIdError, match="escapes"):
+        svc._server_path_for("evil")
 
 
 @pytest.mark.asyncio
@@ -86,13 +82,12 @@ async def test_save_integration_refuses_traversal(tmp_path):
     svc.custom_integrations_dir = tmp_path.resolve()
     svc.metadata_file = svc.custom_integrations_dir / "metadata.json"
 
-    result = await svc.save_integration(
-        integration_id="../../../proc/self/cwd/core/integrations/mcp",
-        metadata={"name": "evil"},
-        server_code="print('pwn')",
-    )
-    assert result["success"] is False
-    assert "integration_id" in result["error"] or "escape" in result["error"]
+    with pytest.raises(InvalidIntegrationIdError):
+        await svc.save_integration(
+            integration_id="../../../proc/self/cwd/core/integrations/mcp",
+            metadata={"name": "evil"},
+            server_code="print('pwn')",
+        )
 
     # Refused before anything was written, so the base directory is still empty --
     # stronger than naming the payload, which a legitimate file could also contain.
@@ -106,10 +101,10 @@ async def test_save_integration_size_cap(tmp_path):
     svc.metadata_file = svc.custom_integrations_dir / "metadata.json"
 
     huge = "a" * (300 * 1024)  # over the 256 KB cap
-    result = await svc.save_integration(
-        integration_id="huge-thing",
-        metadata={},
-        server_code=huge,
-    )
-    assert result["success"] is False
-    assert "byte" in result["error"].lower() or "size" in result["error"].lower()
+    with pytest.raises(ServerCodeTooLargeError):
+        await svc.save_integration(
+            integration_id="huge-thing",
+            metadata={},
+            server_code=huge,
+        )
+    assert list(tmp_path.glob("*")) == []

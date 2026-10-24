@@ -211,7 +211,7 @@ export function useSystemChecks() {
     const processes = () =>
       (processesRead ??= consoleApi.getProcesses().then((res) => {
         if (!res.data) throw new Error('processes has no body')
-        return res.data as ProcessesRead
+        return res.data
       }))
     // one after another: only the current row shows Checking, the rest wait
     ;(async () => {
