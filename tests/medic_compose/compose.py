@@ -49,6 +49,29 @@ HAVE_COMPOSE = shutil.which("docker") is not None and (
 )
 
 
+class ComposeProjectRefused(RuntimeError):
+    """A live suite was pointed at a Compose project it does not own."""
+
+
+def compose_project(env_var: str, default: str) -> str:
+    """Project name for one live suite, from its own variable or `default`.
+
+    `docker compose` with no `-p` and no COMPOSE_PROJECT_NAME uses the directory
+    of `infra/docker` (`docker`): docker-compose.yml has no top-level `name:`.
+    That, and any name outside `medic-`, is a developer's stack.
+    """
+    return require_compose_project(os.environ.get(env_var, default))
+
+
+def require_compose_project(name: str) -> str:
+    if not name.startswith("medic-") or name == COMPOSE_DIR.name:
+        raise ComposeProjectRefused(
+            f"refusing Compose project {name!r}: "
+            "need a medic- name other than the default project 'docker'"
+        )
+    return name
+
+
 def clean_env(home: Path, **extra: str) -> dict[str, str]:
     env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
     for name in ("DOCKER_HOST", "DOCKER_CONTEXT"):

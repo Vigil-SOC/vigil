@@ -93,7 +93,7 @@ async def test_full_batch_stops_the_cursor_at_the_newest_returned_alert(monkeypa
     svc = _WindowService([_alert(i, T0 + timedelta(minutes=i)) for i in range(1, 6)])
     adapter = _adapter(svc, monkeypatch)
 
-    result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+    result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
 
     assert svc.calls[0]["oldest_first"] is True
     assert [f["external_id"] for f in result.findings] == ["a1", "a2", "a3"]
@@ -106,8 +106,8 @@ async def test_next_tick_starts_at_that_time_and_returns_the_remainder(monkeypat
     svc = _WindowService([_alert(i, T0 + timedelta(minutes=i)) for i in range(1, 6)])
     adapter = _adapter(svc, monkeypatch)
 
-    first = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
-    second = await adapter.fetch(since=None, cursor=first.cursor, max_items=3)
+    first = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
+    second = await adapter.fetch(cursor=first.cursor, max_items=3)
 
     assert svc.calls[1]["start_time"] == T0 + timedelta(minutes=3)
     # The boundary alert a3 comes back (start is inclusive) and is left to the
@@ -121,7 +121,7 @@ async def test_short_batch_still_advances_the_cursor_to_now(monkeypatch):
     adapter = _adapter(svc, monkeypatch)
 
     before = utcnow()
-    result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+    result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
 
     assert len(result.findings) == 2
     assert parse_cursor_since(result.cursor) >= before
@@ -136,7 +136,7 @@ async def test_full_batch_not_past_the_tick_start_steps_the_cursor_forward(
     adapter = _adapter(svc, monkeypatch)
 
     with caplog.at_level("WARNING"):
-        result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+        result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
 
     # One millisecond, not one microsecond: Elastic date fields and Security
     # Hub CreatedAt resolve to the millisecond, so a finer step would round
@@ -166,7 +166,7 @@ async def test_a_future_stamped_alert_does_not_move_the_cursor_past_now(
     monkeypatch.setattr("core.federation.adapters._siem_base.utcnow", lambda: now)
 
     with caplog.at_level("WARNING"):
-        result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+        result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
 
     assert len(result.findings) == 3
     assert parse_cursor_since(result.cursor) == now
@@ -179,7 +179,7 @@ async def test_an_aware_time_from_a_reader_is_compared_as_naive_utc(monkeypatch)
     adapter = _adapter(svc, monkeypatch)
     adapter._alert_time = lambda a: a["t"].replace(tzinfo=timezone.utc)
 
-    result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+    result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
     assert parse_cursor_since(result.cursor) == T0 + timedelta(minutes=3)
 
 
@@ -190,7 +190,7 @@ async def test_full_batch_without_a_time_reader_falls_back_to_now(monkeypatch):
     adapter = _adapter(svc, monkeypatch, with_time_reader=False)
 
     before = utcnow()
-    result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+    result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
 
     assert parse_cursor_since(result.cursor) >= before
 
@@ -203,7 +203,7 @@ async def test_full_batch_with_unreadable_times_falls_back_to_now(monkeypatch, c
 
     before = utcnow()
     with caplog.at_level("WARNING"):
-        result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+        result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
 
     assert parse_cursor_since(result.cursor) >= before
     assert "no alert carried a readable time" in caplog.text
@@ -220,7 +220,7 @@ async def test_a_reader_that_raises_on_one_record_does_not_fail_the_poll(monkeyp
         return alert["t"]
 
     adapter._alert_time = flaky
-    result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
+    result = await adapter.fetch(cursor=cursor_at(T0), max_items=3)
     assert parse_cursor_since(result.cursor) == T0 + timedelta(minutes=3)
 
 
@@ -252,7 +252,6 @@ async def test_runner_persists_the_newest_time_and_the_next_tick_drains(monkeypa
     runner = FederationRunner(output_queue=queue)
     svc = _WindowService([_alert(i, T0 + timedelta(minutes=i)) for i in range(1, 6)])
     adapter = _adapter(svc, monkeypatch)
-    runner._adapters[adapter.name] = adapter
     runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
 
     stored: List[Dict[str, Any]] = []

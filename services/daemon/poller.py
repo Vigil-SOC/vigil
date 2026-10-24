@@ -134,14 +134,10 @@ class DataPoller:
         self._microsoft_defender_state = PollState()
         self._elastic_state = PollState()
         self._opensearch_state = PollState()
-        self._generic_state = PollState()
 
         # Durable per-source dedup sets (Redis-backed)
         self._splunk_dedup = RedisDedupSet("poller:splunk")
         self._crowdstrike_dedup = RedisDedupSet("poller:crowdstrike")
-        self._azure_sentinel_dedup = RedisDedupSet("poller:azure_sentinel")
-        self._aws_security_hub_dedup = RedisDedupSet("poller:aws_security_hub")
-        self._microsoft_defender_dedup = RedisDedupSet("poller:microsoft_defender")
         self._elastic_dedup = RedisDedupSet("poller:elastic")
         self._webhook_dedup = RedisDedupSet("poller:webhook")
 
