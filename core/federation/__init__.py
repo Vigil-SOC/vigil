@@ -7,17 +7,3 @@ source on a configurable cadence and yields normalized findings. The
 ``federation_sources`` for every adapter whose underlying integration is
 configured (default disabled, opt-in).
 """
-
-from core.federation.registry import (
-    FederationAdapter,
-    FetchResult,
-    get_adapter,
-    list_adapters,
-)
-
-__all__ = [
-    "FederationAdapter",
-    "FetchResult",
-    "get_adapter",
-    "list_adapters",
-]
