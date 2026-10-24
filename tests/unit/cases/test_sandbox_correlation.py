@@ -146,6 +146,7 @@ class TestAttachReportAtomicity:
     @pytest.fixture
     def session(self, monkeypatch):
         mock_session = MagicMock()
+        mock_session.scalars.return_value = ["case-1"]
         # No pre-existing IOC rows, so each one takes the insert path.
         mock_session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: mock_session)
@@ -153,7 +154,7 @@ class TestAttachReportAtomicity:
 
     def _attach(self):
         return SandboxCorrelationService().attach_report(
-            case_id="case-1",
+            finding_id="finding-1",
             sandbox_name="cape",
             task_id="task-1",
             report=self.REPORT,
@@ -161,7 +162,7 @@ class TestAttachReportAtomicity:
 
     def test_null_behavior_still_writes_evidence(self, session):
         result = SandboxCorrelationService().attach_report(
-            case_id="case-1",
+            finding_id="finding-1",
             sandbox_name="cape",
             task_id="task-1",
             report={"data": {**self.REPORT["data"], "behavior": None}},
@@ -213,11 +214,12 @@ class TestVendorScoreScale:
     @pytest.mark.parametrize("sandbox", list(REPORTS))
     def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
         session = MagicMock()
+        session.scalars.return_value = ["case-1"]
         session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
 
         result = SandboxCorrelationService().attach_report(
-            "case-1", sandbox, "task-1", self.REPORTS[sandbox]
+            "finding-1", sandbox, "task-1", self.REPORTS[sandbox]
         )
 
         assert "error" not in result
