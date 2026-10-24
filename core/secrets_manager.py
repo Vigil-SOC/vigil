@@ -422,7 +422,7 @@ class EncryptedFileBackend(SecretsBackend):
         # instance in this process) has written to the file since we
         # last read it. Without this, the backend couldn't see secrets
         # saved by sibling processes (CLI tools, other workers, the MCP
-        # dormant-retry auto-reconnect path, etc.).
+        # connect path, etc.).
         current_mtime = self._current_mtime()
         if (
             self._cache is not None
