@@ -1,0 +1,26 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/2df8a198-795e-44bf-9e1b-8a38b72e9f70/clients/web
+
+ ❯ src/screens/metrics/MetricsScreen.window.test.tsx (1 test | 1 failed) 308ms
+     × sends the selected window to every metrics read 300ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/metrics/MetricsScreen.window.test.tsx > MetricsScreen time range > sends the selected window to every metrics read
+TypeError: Cannot read properties of undefined (reading 'end_date')
+ ❯ src/screens/metrics/MetricsScreen.window.test.tsx:35:40
+     33|     expect(gets.map((g) => g.url).sort()).toEqual([...READS].sort())
+     34|     for (const { url, params } of gets) {
+     35|       const days = (Date.parse(params!.end_date) - Date.parse(params!.…
+       |                                        ^
+     36|       expect(days, url).toBe(7)
+     37|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  15:58:16
+   Duration  2.60s (transform 542ms, setup 381ms, import 537ms, tests 308ms, environment 1.03s)
+
