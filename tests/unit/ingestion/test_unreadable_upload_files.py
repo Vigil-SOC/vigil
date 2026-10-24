@@ -25,10 +25,18 @@ pytestmark = pytest.mark.unit
 class _Db:
     def __init__(self):
         self.rows = []
+        self.cases = []
 
     def bulk_create_findings(self, rows):
         self.rows.extend(rows)
         return {"imported": len(rows), "skipped": 0}
+
+    def get_case(self, case_id):
+        return None
+
+    def create_case(self, **kwargs):
+        self.cases.append(kwargs)
+        return kwargs
 
 
 @pytest.fixture
@@ -124,7 +132,30 @@ def test_csv_rows_read_before_a_decode_error_are_kept(tmp_path, db):
 
     assert job.status == FAILED
     imported = int(job.message.split()[1])
-    assert imported == len(db.rows) > 1000
+    assert imported == len(db.rows) == 1500
+    assert db.rows[-1]["finding_id"] == "f-1499"
+
+
+def test_short_csv_keeps_every_row_before_a_decode_error(tmp_path, db):
+    # Smaller than the text-mode buffer: a chunked decode used to drop these.
+    path = tmp_path / "short.csv"
+    path.write_bytes(b"finding_id,title\nf-0,a\nf-1,b\nf-2,c\nf-x,caf\xe9\n")
+
+    job = _run(path, "csv")
+
+    assert job.status == FAILED
+    assert "Could not read the CSV file:" in job.message
+    assert [row["finding_id"] for row in db.rows] == ["f-0", "f-1", "f-2"]
+
+
+def test_crlf_csv_imports(tmp_path, db):
+    path = tmp_path / "win.csv"
+    path.write_bytes(b"finding_id,title\r\nf-1,hello\r\n")
+
+    job = _run(path, "csv")
+
+    assert job.status == SUCCEEDED
+    assert [row["finding_id"] for row in db.rows] == ["f-1"]
 
 
 def test_unreadable_case_csv_counts_a_case_error(tmp_path, db):
@@ -145,6 +176,47 @@ def test_non_utf8_jsonl_fails_with_the_decode_error(tmp_path, db):
 
     assert job.status == FAILED
     assert "Could not read the JSONL file:" in job.message
+
+
+def test_jsonl_rows_before_a_decode_error_are_kept(tmp_path, db):
+    def line(i):
+        return json.dumps(_finding(i)).encode() + b"\n"
+
+    path = tmp_path / "late.jsonl"
+    path.write_bytes(b"".join(line(i) for i in range(3)) + b'{"title":"caf\xe9"}\n')
+
+    job = _run(path, "jsonl")
+
+    assert job.status == FAILED
+    assert "Could not read the JSONL file:" in job.message
+    assert [row["finding_id"] for row in db.rows] == ["f-0", "f-1", "f-2"]
+
+
+def test_jsonl_rows_past_one_batch_before_a_decode_error_are_kept(tmp_path, db):
+    def line(i):
+        return json.dumps(_finding(i)).encode() + b"\n"
+
+    path = tmp_path / "late.jsonl"
+    path.write_bytes(b"".join(line(i) for i in range(1002)) + b'{"title":"caf\xe9"}\n')
+
+    job = _run(path, "jsonl")
+
+    assert job.status == FAILED
+    assert int(job.message.split()[1]) == len(db.rows) == 1002
+
+
+def test_truncated_case_json_counts_a_case_error(tmp_path, db):
+    text = json.dumps([{"case_id": f"c-{i}", "title": "t"} for i in range(8)])
+    path = tmp_path / "cases.json"
+    path.write_text(text[:-15])
+
+    job = _run(path, "json")
+
+    assert job.status == FAILED
+    assert job.message.startswith(
+        "Imported 7 cases. 1 case errors. First error: Could not read the JSON file:"
+    )
+    assert [case["case_id"] for case in db.cases] == [f"c-{i}" for i in range(7)]
 
 
 def test_json_with_nan_imports(tmp_path, db):

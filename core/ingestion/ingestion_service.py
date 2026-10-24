@@ -102,6 +102,41 @@ def _blank(value: Any) -> bool:
     return value is None or value == "" or value == {}
 
 
+def _utf8_lines(path: Path):
+    """Yield each line as text, decoded as UTF-8.
+
+    A text-mode read fills an 8KiB chunk and raises UnicodeDecodeError for a
+    bad byte before it yields any line from that chunk, so a short file drops
+    every row that was already well formed. ``\\n``, ``\\r\\n`` and ``\\r`` are
+    line breaks; those bytes never occur inside a UTF-8 character.
+    """
+    with open(path, "rb") as raw:
+        pending = b""
+        while True:
+            chunk = raw.read(8192)
+            if not chunk:
+                if pending.endswith(b"\r"):
+                    pending = pending[:-1]
+                if pending:
+                    yield pending.decode("utf-8")
+                return
+            pending += chunk
+            while True:
+                newline = pending.find(b"\n")
+                carriage = pending.find(b"\r")
+                breaks = [index for index in (newline, carriage) if index != -1]
+                if not breaks:
+                    break
+                at = min(breaks)
+                # A trailing CR may be the first byte of CRLF in the next chunk.
+                if pending[at : at + 1] == b"\r" and at + 1 == len(pending):
+                    break
+                end = at + 2 if pending[at : at + 2] == b"\r\n" else at + 1
+                line = pending[:at]
+                pending = pending[end:]
+                yield line.decode("utf-8")
+
+
 def _json_object(value: Any) -> Any:
     """A JSON-encoded object/array string is parsed; anything else is returned as-is."""
     if isinstance(value, str) and value.lstrip()[:1] in ("{", "["):
@@ -574,7 +609,10 @@ class IngestionService:
                 self.stats["findings_total"] = len(findings)
                 self.stats["cases_total"] = len(cases)
         except Exception as e:
-            self._file_failed("JSON", e)
+            # A case file that fails after its cases were read is a case error.
+            # A failure before any case was counted stays a finding error.
+            data_type = "case" if self.stats["cases_total"] else "finding"
+            self._file_failed("JSON", e, data_type)
 
         logger.info(f"JSON ingestion complete: {self.stats}")
         return self.stats
@@ -635,31 +673,30 @@ class IngestionService:
 
         finding_batch = []
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
+            for line_num, line in enumerate(_utf8_lines(file_path), 1):
+                line = line.strip()
+                if not line:
+                    continue
 
-                    try:
-                        data = json.loads(line)
+                try:
+                    data = json.loads(line)
 
-                        if data_type == "finding":
-                            self.stats["findings_total"] += 1
-                            finding_batch.append(data)
-                            if len(finding_batch) >= 1000:
-                                self._ingest_finding_batch(finding_batch)
-                                finding_batch = []
-                        elif data_type == "case":
-                            self.stats["cases_total"] += 1
-                            self.ingest_case(data)
+                    if data_type == "finding":
+                        self.stats["findings_total"] += 1
+                        finding_batch.append(data)
+                        if len(finding_batch) >= 1000:
+                            self._ingest_finding_batch(finding_batch)
+                            finding_batch = []
+                    elif data_type == "case":
+                        self.stats["cases_total"] += 1
+                        self.ingest_case(data)
 
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Invalid JSON on line {line_num}: {e}")
-                        if data_type == "finding":
-                            self.stats["findings_errors"] += 1
-                        else:
-                            self.stats["cases_errors"] += 1
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON on line {line_num}: {e}")
+                    if data_type == "finding":
+                        self.stats["findings_errors"] += 1
+                    else:
+                        self.stats["cases_errors"] += 1
         except Exception as e:
             self._file_failed("JSONL", e, data_type)
         self._ingest_finding_batch(finding_batch)
@@ -680,28 +717,27 @@ class IngestionService:
 
         finding_batch = []
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
+            reader = csv.DictReader(_utf8_lines(file_path))
 
-                for row_num, row in enumerate(reader, 1):
-                    try:
-                        if data_type == "finding":
-                            self.stats["findings_total"] += 1
-                            finding_batch.append(self._csv_row_to_finding(row))
-                            if len(finding_batch) >= 1000:
-                                self._ingest_finding_batch(finding_batch)
-                                finding_batch = []
-                        elif data_type == "case":
-                            self.stats["cases_total"] += 1
-                            case_data = self._csv_row_to_case(row)
-                            self.ingest_case(case_data)
+            for row_num, row in enumerate(reader, 1):
+                try:
+                    if data_type == "finding":
+                        self.stats["findings_total"] += 1
+                        finding_batch.append(self._csv_row_to_finding(row))
+                        if len(finding_batch) >= 1000:
+                            self._ingest_finding_batch(finding_batch)
+                            finding_batch = []
+                    elif data_type == "case":
+                        self.stats["cases_total"] += 1
+                        case_data = self._csv_row_to_case(row)
+                        self.ingest_case(case_data)
 
-                    except Exception as e:
-                        logger.error(f"Error processing CSV row {row_num}: {e}")
-                        if data_type == "finding":
-                            self.stats["findings_errors"] += 1
-                        else:
-                            self.stats["cases_errors"] += 1
+                except Exception as e:
+                    logger.error(f"Error processing CSV row {row_num}: {e}")
+                    if data_type == "finding":
+                        self.stats["findings_errors"] += 1
+                    else:
+                        self.stats["cases_errors"] += 1
         except Exception as e:
             self._file_failed("CSV", e, data_type)
         self._ingest_finding_batch(finding_batch)
