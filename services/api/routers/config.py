@@ -12,6 +12,7 @@ from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth.permissions import permission_gate
 from core.config import (
+    _load_json_config,
     get_settings,
     is_demo_mode,
     load_integrations_config,
@@ -36,7 +37,10 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.approval_service import APPROVAL_CONFIG_KEY
+from core.response.approval_service import (
+    APPROVAL_CONFIG_KEY,
+    read_stored_force_manual_approval,
+)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -131,9 +135,7 @@ class IntegrationsConfig(BaseModel):
 class GeneralConfig(BaseModel):
     """General application settings."""
 
-    auto_start_sync: bool = False
     show_notifications: bool = True
-    theme: str = "dark"
     enable_keyring: bool = False  # Whether to use OS keyring for secrets
 
 
@@ -563,31 +565,15 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
 
 @router.get("/theme")
 def get_theme_config():
-    """
-    Get theme configuration.
-
-    Returns:
-        Theme configuration
-    """
+    """Get theme configuration; 503 when the database read fails."""
     try:
-        # Try database first
-        config_service = get_config_service()
-        config_value = config_service.get_system_config("theme.current")
-
-        if config_value:
-            return config_value
-
-        # Fallback to file-based config
-        config_file = vigil_path("theme_config.json")
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                return {"theme": config.get("theme", "dark")}
-
-        return {"theme": "dark"}
+        value = get_config_service().read_system_config("theme.current")
     except Exception as e:
-        logger.error(f"Error getting theme config: {e}")
-        return {"theme": "dark"}
+        logger.error("Error getting theme config: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Could not read the theme setting"
+        ) from e
+    return value or ThemeConfig().model_dump()
 
 
 @router.post("/theme", dependencies=_SETTINGS_WRITE)
@@ -619,8 +605,6 @@ def set_theme_config(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save theme to database")
 
-    _mirror_to_file("theme_config.json", config_data)
-
     return {"success": True, "message": "Theme saved"}
 
 
@@ -634,6 +618,20 @@ def assigned_model_ids(session) -> set[str]:
             if text:
                 found.add(text)
     return found
+
+
+class SetupStep(BaseModel):
+    id: str
+    title: str
+    state_line: str
+    done: bool
+    href: str
+
+
+class SetupStepsResponse(BaseModel):
+    steps: List[SetupStep]
+    alerts_exist: int
+    demo_enabled: bool
 
 
 def _step(step_id: str, title: str, state_line: str, done: bool, href: str) -> dict:
@@ -738,7 +736,7 @@ def build_setup_steps(
     }
 
 
-@router.get("/setup-steps")
+@router.get("/setup-steps", response_model=SetupStepsResponse)
 def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
@@ -1162,48 +1160,16 @@ async def test_integration(
 
 @router.get("/general")
 def get_general_config():
-    """
-    Get general application settings.
-
-    Returns:
-        General configuration
-    """
+    """Get general application settings; 503 when the database read fails."""
     try:
-        # Try database first
-        config_service = get_config_service()
-        config_value = config_service.get_system_config("general.settings")
-
-        if config_value:
-            return config_value
-
-        # Fallback to file-based config
-        config_file = vigil_path("general_config.json")
-
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                return {
-                    "auto_start_sync": config.get("auto_start_sync", False),
-                    "show_notifications": config.get("show_notifications", True),
-                    "theme": config.get("theme", "dark"),
-                    "enable_keyring": config.get("enable_keyring", False),
-                }
-
-        # Default values
-        return {
-            "auto_start_sync": False,
-            "show_notifications": True,
-            "theme": "dark",
-            "enable_keyring": False,
-        }
+        value = get_config_service().read_system_config("general.settings")
     except Exception as e:
-        logger.error(f"Error getting general config: {e}")
-        return {
-            "auto_start_sync": False,
-            "show_notifications": True,
-            "theme": "dark",
-            "enable_keyring": False,
-        }
+        logger.error("Error getting general config: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Could not read the general settings"
+        ) from e
+    # Rows written before the removal still carry the dead keys
+    return GeneralConfig.model_validate(value or {}).model_dump()
 
 
 @router.post("/general", dependencies=_SETTINGS_WRITE)
@@ -1221,9 +1187,7 @@ def set_general_config(
         Success status
     """
     config_data = {
-        "auto_start_sync": config.auto_start_sync,
         "show_notifications": config.show_notifications,
-        "theme": config.theme,
         "enable_keyring": config.enable_keyring,
     }
 
@@ -1242,7 +1206,8 @@ def set_general_config(
             status_code=500, detail="Failed to save configuration to database"
         )
 
-    _mirror_to_file("general_config.json", config_data)
+    existing = _load_json_config(vigil_path("general_config.json"))
+    _mirror_to_file("general_config.json", {**existing, **config_data})
 
     # Update the global secrets manager if keyring setting changed
     try:
@@ -1630,9 +1595,7 @@ def set_orchestrator_config(
     config: OrchestratorSettingsConfig,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Set orchestrator configuration. Persists settings AND syncs the
-    runtime enabled flag used by GET /api/orchestrator/status (which
-    NavigationRail uses to show/hide the Auto Ops tab).
+    """Set orchestrator configuration.
 
     A ``profiles`` field on the body is ignored. The stored object stays the
     flat keys; no profile name is written.
@@ -1652,22 +1615,6 @@ def set_orchestrator_config(
         raise HTTPException(
             status_code=500, detail="Failed to save orchestrator config to database"
         )
-
-    # Poke the in-process orchestrator (if the API happens to share one)
-    # so a running daemon reacts immediately. No-op in backend-only
-    # deployments — the daemon polls orchestrator.settings every few
-    # seconds.
-    try:
-        from services.api.routers.orchestrator import _get_orchestrator
-
-        orch = _get_orchestrator()
-        if orch is not None:
-            if config_data.get("enabled"):
-                orch.enable()
-            else:
-                orch.disable()
-    except Exception as e:
-        logger.debug("In-process orchestrator runtime apply skipped: %s", e)
 
     return {"success": True, "message": "Orchestrator settings saved"}
 
@@ -1690,13 +1637,6 @@ def _environment_wins() -> bool:
     return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
 
 
-def _stored_force_manual(config_service) -> bool:
-    value = config_service.read_system_config(APPROVAL_CONFIG_KEY)
-    if isinstance(value, dict):
-        return bool(value.get("enabled", False))
-    return False
-
-
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
 def get_force_manual_approval():
     """Read ``approval.force_manual_approval`` without inserting a default row.
@@ -1705,7 +1645,7 @@ def get_force_manual_approval():
     approvals as off while the stored flag may be forcing them on.
     """
     try:
-        enabled = _stored_force_manual(get_config_service())
+        enabled = read_stored_force_manual_approval()
     except Exception as e:
         logger.error(f"Error getting force-manual approval: {e}")
         raise HTTPException(

@@ -122,9 +122,7 @@ async def call_tool(
 def register(registry) -> int:
     """Put Vigil's own tools in the registry, without connecting to anything.
 
-    The registry is how the rest of Vigil discovers which tools exist. Vigil's
-    own belong in it for the same reason as everyone else's; that reaching them
-    needs no connection is what the config here records.
+    The registry is how the rest of Vigil discovers which tools exist.
     """
     try:
         tools = list_tools()
@@ -132,5 +130,5 @@ def register(registry) -> int:
         logger.exception("Could not list Vigil's own tools")
         return 0
 
-    registry.register_server(VIGIL_SERVER, {"in_process": True}, tools=tools)
+    registry.register_server(VIGIL_SERVER, tools=tools)
     return len(tools)

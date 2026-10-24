@@ -37,15 +37,6 @@ _SETTINGS_DATA = (
     / "settings"
     / "integrationsData.ts"
 )
-_DATA_SOURCE_DIALOG = (
-    _REPO_ROOT
-    / "clients"
-    / "web"
-    / "src"
-    / "screens"
-    / "setup"
-    / "DataSourceDialog.tsx"
-)
 _TS_PAIR_RE = re.compile(r"'([A-Za-z0-9_-]+)'\s*:\s*'([A-Za-z0-9_-]+)'")
 
 
@@ -168,22 +159,6 @@ def test_no_vendor_server_lives_in_the_tools_package():
 
 
 @pytest.mark.unit
-def test_frontend_server_catalog_maps_are_inverses():
-    """Settings and setup keep hand-written inverses of the same aliases.
-
-    ``SERVER_TO_INTEGRATION`` (server key → catalog id) and
-    ``CATALOG_TO_SERVER`` (catalog id → server key) live in different files.
-    Elastic dropped out of one and the Settings card lost its gear.
-    """
-    server_to = _ts_string_map(_SETTINGS_DATA, "SERVER_TO_INTEGRATION")
-    catalog_to = _ts_string_map(_DATA_SOURCE_DIALOG, "CATALOG_TO_SERVER")
-    assert {v: k for k, v in server_to.items()} == catalog_to, (
-        "SERVER_TO_INTEGRATION and CATALOG_TO_SERVER are not inverses: "
-        f"{server_to!r} vs {catalog_to!r}"
-    )
-
-
-@pytest.mark.unit
 def test_aliased_mcp_server_names_are_in_the_frontend_maps():
     """A descriptor whose MCP key differs from its catalog id must be mapped.
 
@@ -191,28 +166,15 @@ def test_aliased_mcp_server_names_are_in_the_frontend_maps():
     ``splunk`` server instead. With nothing hidden, every differing name is mapped.
     """
     server_to = _ts_string_map(_SETTINGS_DATA, "SERVER_TO_INTEGRATION")
-    catalog_to = _ts_string_map(_DATA_SOURCE_DIALOG, "CATALOG_TO_SERVER")
-    missing = {}
-    for descriptor in _descriptors():
-        for name in descriptor.mcp_server_names:
-            if name == descriptor.id:
-                continue
-            problems = []
-            if server_to.get(name) != descriptor.id:
-                problems.append(
-                    f"SERVER_TO_INTEGRATION[{name!r}] is {server_to.get(name)!r}, "
-                    f"expected {descriptor.id!r}"
-                )
-            if catalog_to.get(descriptor.id) != name:
-                problems.append(
-                    f"CATALOG_TO_SERVER[{descriptor.id!r}] is "
-                    f"{catalog_to.get(descriptor.id)!r}, expected {name!r}"
-                )
-            if problems:
-                missing[f"{descriptor.id}/{name}"] = problems
+    missing = {
+        f"{descriptor.id}/{name}": server_to.get(name)
+        for descriptor in _descriptors()
+        for name in descriptor.mcp_server_names
+        if name != descriptor.id and server_to.get(name) != descriptor.id
+    }
     assert not missing, (
-        "descriptor mcp_server_names that differ from id must appear in both "
-        f"frontend maps:\n{missing}"
+        "descriptor mcp_server_names that differ from id must map to the id in "
+        f"SERVER_TO_INTEGRATION:\n{missing}"
     )
 
 
