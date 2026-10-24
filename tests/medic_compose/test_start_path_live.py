@@ -43,7 +43,6 @@ from tests.medic_compose.compose import (
     REPO,
     clean_env,
     compose_project,
-    require_compose_project,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -117,7 +116,6 @@ class Stack:
         (and the test overrides, VIGIL_MEDIC_COMPOSE_OVERRIDE) once compose.env
         exists: the rendering step 2 must keep."""
         # dc() takes no -p; COMPOSE_PROJECT_NAME is what keeps it off `docker`.
-        require_compose_project(self.env["COMPOSE_PROJECT_NAME"])
         done = subprocess.run(
             [
                 "bash",
