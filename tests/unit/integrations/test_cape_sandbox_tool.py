@@ -1,7 +1,6 @@
 """Unit tests for core/integrations/cape_sandbox/tool.py.
 
-We test the pure helpers (IOC extraction from a CAPE report) and the tool
-dispatcher with ``httpx`` fully mocked. No CAPE instance required.
+We test the tool dispatcher with ``httpx`` fully mocked. No CAPE instance required.
 """
 
 import json
@@ -9,35 +8,6 @@ import json
 import pytest
 
 import core.integrations.cape_sandbox.tool as cape
-
-
-@pytest.mark.unit
-class TestIocExtraction:
-    def test_empty_report(self):
-        out = cape._extract_iocs({})
-        assert out["ips"] == []
-        assert out["domains"] == []
-        assert out["hashes"] == []
-
-    def test_extracts_network_and_dropped(self):
-        report = {
-            "network": {
-                "hosts": [{"ip": "8.8.8.8"}, "9.9.9.9"],
-                "dns": [{"request": "bad.example"}, {"request": "bad.example"}],
-                "http": [{"uri": "http://bad.example/p"}],
-            },
-            "dropped": [{"sha256": "z" * 64}],
-            "behavior": {"summary": {"mutexes": ["m1"]}},
-        }
-        out = cape._extract_iocs(report)
-        assert "8.8.8.8" in out["ips"]
-        assert "9.9.9.9" in out["ips"]
-        assert "bad.example" in out["domains"]
-        # deduped
-        assert out["domains"].count("bad.example") == 1
-        assert "http://bad.example/p" in out["urls"]
-        assert "z" * 64 in out["hashes"]
-        assert "m1" in out["mutexes"]
 
 
 @pytest.mark.unit
@@ -119,7 +89,7 @@ class TestCallTool:
 
         out = await cape.handle_call_tool("cape_get_iocs", {"task_id": "5"})
         body = json.loads(out[0].text)
-        assert "1.1.1.1" in body["iocs"]["ips"]
+        assert body["iocs"]["ip"] == ["1.1.1.1"]
 
     @pytest.mark.asyncio
     async def test_unknown_tool(self, monkeypatch):

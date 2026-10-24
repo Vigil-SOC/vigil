@@ -160,6 +160,18 @@ class TestAttachReportAtomicity:
             report=self.REPORT,
         )
 
+    def test_null_behavior_still_writes_evidence(self, session):
+        result = SandboxCorrelationService().attach_report(
+            finding_id="finding-1",
+            sandbox_name="cape",
+            task_id="task-1",
+            report={"data": {**self.REPORT["data"], "behavior": None}},
+        )
+
+        assert "error" not in result
+        assert result["iocs_added"] == 2
+        session.commit.assert_called_once()
+
     def test_commits_once_when_every_step_succeeds(self, session):
         result = self._attach()
 
@@ -202,11 +214,12 @@ class TestVendorScoreScale:
     @pytest.mark.parametrize("sandbox", list(REPORTS))
     def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
         session = MagicMock()
+        session.scalars.return_value = ["case-1"]
         session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
 
         result = SandboxCorrelationService().attach_report(
-            "case-1", sandbox, "task-1", self.REPORTS[sandbox]
+            "finding-1", sandbox, "task-1", self.REPORTS[sandbox]
         )
 
         assert "error" not in result
