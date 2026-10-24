@@ -1,0 +1,18 @@
+Failed to list findings for sandbox poll: boom
+run_once TypeError -> {'checked': 0, 'completed': 0, 'expired': 0, 'failed': 0, 'errors': 1} calls 1
+run_once no data service -> {'checked': 0, 'completed': 0, 'expired': 0, 'failed': 0, 'errors': 0}
+fetch cape -> _fetch_cape
+fetch hybrid_analysis -> _fetch_hybrid
+fetch anyrun -> _fetch_anyrun
+fetch joe_sandbox -> _fetch_joe
+fetch cape-sandbox -> None
+fetch made-up -> None
+normalise cape -> cape
+normalise hybrid_analysis -> hybrid
+normalise anyrun -> anyrun
+normalise joe_sandbox -> joe
+normalise made-up -> {'iocs': {}, 'mitre_techniques': [], 'verdict': None, 'score': None}
+'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ' True md5
+' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' True sha1
+'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' True sha256
+safe hashes with no hash_type: 0

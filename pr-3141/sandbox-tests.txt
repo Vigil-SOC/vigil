@@ -1,0 +1,3 @@
+0.03s setup    unit/cases/test_sandbox_correlation.py::TestCapeNormalisation::test_extracts_network_and_dropped_iocs
+0.02s teardown unit/daemon/test_vendor_errors.py::test_processor_429_cools_down_shodan_and_vt
+================== 36 passed, 1 warning in 317.92s (0:05:17) ===================
