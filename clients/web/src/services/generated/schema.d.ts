@@ -1587,7 +1587,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_cases_metrics_summary"];
         put?: never;
@@ -5954,7 +5955,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_v1_cases_metrics_summary"];
         put?: never;
