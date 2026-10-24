@@ -10,12 +10,9 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.attribution import current_claims
+from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
-from core.auth.permissions import (
-    APPROVE_PERMISSION,
-    permission_refusal,
-    username_has_permission,
-)
+from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
     CASE_STATUSES,
@@ -445,7 +442,9 @@ def _step(value: Any, name: str) -> Optional[int]:
     try:
         return int(value)
     except (TypeError, ValueError):
-        raise TypeError(f"replay_hunt {name} must be a whole step number") from None
+        raise MCPFailure(
+            "invalid_args", f"replay_hunt {name} must be a whole step number"
+        ) from None
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -518,7 +517,9 @@ async def replay_hunt(
     to_step: Any = None,
 ) -> Any:
     if not run_id:
-        raise TypeError("replay_hunt is missing a required argument: run_id")
+        raise MCPFailure(
+            "invalid_args", "replay_hunt is missing a required argument: run_id"
+        )
     first, last = _step(from_step, "from_step"), _step(to_step, "to_step")
     only = _step(step, "step")
     if only is not None:
@@ -556,7 +557,9 @@ def _indicator_lookup(args: Args) -> Any:
 
     values = args.get("values") or ([args["value"]] if args.get("value") else [])
     if not values:
-        raise TypeError("lookup_indicators is missing a required argument: values")
+        raise MCPFailure(
+            "invalid_args", "lookup_indicators is missing a required argument: values"
+        )
 
     indicator_type = args.get("indicator_type", "ip")
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
@@ -613,7 +616,7 @@ def _check_hunt_coverage(args: Args) -> Any:
             techniques=args.get("techniques") or (),
         )
     except ValueError as exc:
-        return {"error": str(exc)}
+        raise MCPFailure("invalid_args", str(exc)) from None
 
 
 # Learning episodes (#906): a window over Distil markers, and a JSONL export of a
@@ -647,18 +650,6 @@ def get_approval_action(*, action_id: str) -> Args:
     return _decided(_approvals().get_action(action_id), "read")
 
 
-# Chat and /mcp reach approvals without passing the HTTP routes, so the right is
-# checked here against the bound person. No principal (a hunt) holds none to
-# check; rejecting then only keeps a row held, and approving is refused above.
-def _without_approval_right() -> Optional[Args]:
-    caller = current_caller()
-    if caller is None or username_has_permission(caller, APPROVE_PERMISSION):
-        return None
-    return {
-        "error": f"{caller} may not decide approvals: {APPROVE_PERMISSION} required"
-    }
-
-
 # The actor is the caller, not an argument. A model that names one is choosing
 # what the record will say. A hunt reaches this with nobody bound; approving
 # would stamp "agent" and release a row the requirement already held.
@@ -668,7 +659,7 @@ def approve_action(*, action_id: str) -> Args:
 
     if current_caller() is None:
         return {"error": "Action cannot be approved: no principal is bound"}
-    if refusal := _without_approval_right():
+    if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
@@ -685,7 +676,7 @@ def reject_action(*, action_id: str, reason: str) -> Args:
     from core.cases.agent_closure import actor
     from core.response.approval_service import AlreadyDecided
 
-    if refusal := _without_approval_right():
+    if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)

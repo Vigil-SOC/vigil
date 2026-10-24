@@ -29,7 +29,13 @@ from core.integrations.mcp.surface import acting_as, is_enabled
 
 logger = logging.getLogger(__name__)
 
-MOUNT_PATH = "/mcp"
+
+def surface_address() -> str:
+    """Where the surface is served, with the install's context path."""
+    from core.auth.auth_cookies import context_path_prefix
+
+    return context_path_prefix() + "/mcp"
+
 
 # The credential a developer gets for free, and only with the bypass on.
 #
@@ -49,7 +55,7 @@ class BareMountPath:
     """Makes ``/mcp`` and ``/mcp/`` the same address, before routing decides.
 
     A Starlette mount at ``/mcp`` compiles to ``^/mcp/(?P<path>.*)$``, so the
-    bare spelling -- the one MOUNT_PATH, the README and env.example all
+    bare spelling -- the one surface_address(), the README and env.example all
     advertise, and the one anyone configuring a client will paste -- does not
     match it. What answers instead depends on what else is registered:
 
@@ -80,15 +86,11 @@ class BareMountPath:
         await self.app(scope, receive, send)
 
 
-def serve_at(app, gate: ASGIApp, context_path: str = "") -> str:
-    """Put ``gate`` at the advertised address, both ways of writing it.
-
-    Returns the address, which is what an operator is told at startup.
-    """
-    address = f"{context_path}{MOUNT_PATH}"
+def serve_at(app, gate: ASGIApp) -> None:
+    """Put ``gate`` at the advertised address, both ways of writing it."""
+    address = surface_address()
     app.mount(address, gate, name="mcp")
     app.add_middleware(BareMountPath, path=address)
-    return address
 
 
 def _bearer(scope: Scope) -> Optional[str]:
@@ -212,7 +214,7 @@ def _dev_mode_user(token: str):
         return _get_dev_user(session)
 
 
-def announce(enabled: bool, credential_count: int) -> None:
+def announce(enabled: bool, credential_count: int, address: str) -> None:
     """Say at startup what this install is serving, and to whom.
 
     A surface that is open but that no credential can open is not broken and
@@ -225,7 +227,7 @@ def announce(enabled: bool, credential_count: int) -> None:
 
     logger.warning(
         "MCP surface: ON at %s. Vigil's own tools are reachable from the network.",
-        MOUNT_PATH,
+        address,
     )
     from core.config import get_settings
 
@@ -233,11 +235,11 @@ def announce(enabled: bool, credential_count: int) -> None:
         logger.warning(
             "MCP surface: the development bypass is on, so %s also accepts a "
             "fixed credential that is not a secret and works nowhere else.",
-            MOUNT_PATH,
+            address,
         )
     elif credential_count == 0:
         logger.warning(
             "MCP surface: no credentials exist, so every request to %s will be "
             "refused. Mint one before a caller can use it.",
-            MOUNT_PATH,
+            address,
         )

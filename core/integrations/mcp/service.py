@@ -133,26 +133,19 @@ class MCPService:
     def _load_enabled_state(self) -> Dict[str, bool]:
         """Load the enabled/disabled state from disk. Returns empty dict if no file."""
         try:
-            state_file = vigil_path(self._STATE_FILENAME)
-            if state_file.exists():
-                with open(state_file, "r") as f:
-                    data = json.load(f)
-                return data.get("enabled", {})
-        except Exception as e:
-            logger.warning(f"Could not load MCP enabled state: {e}")
-        return {}
+            with open(vigil_path(self._STATE_FILENAME)) as f:
+                return json.load(f).get("enabled", {})
+        except FileNotFoundError:
+            return {}
 
     def _save_enabled_state(self, enabled: Dict[str, bool]) -> None:
         """Persist the enabled/disabled state to disk."""
-        try:
-            write_path = vigil_path(self._STATE_FILENAME, write=True)
-            # Replaced whole: the other worker and the daemon read it on every check.
-            tmp = write_path.with_name(f".{write_path.name}.{os.getpid()}")
-            with open(tmp, "w") as f:
-                json.dump({"enabled": enabled}, f, indent=2)
-            os.replace(tmp, write_path)
-        except Exception as e:
-            logger.error(f"Could not save MCP enabled state: {e}")
+        write_path = vigil_path(self._STATE_FILENAME, write=True)
+        # Replaced whole: the other worker and the daemon read it on every check.
+        tmp = write_path.with_name(f".{write_path.name}.{os.getpid()}")
+        with open(tmp, "w") as f:
+            json.dump({"enabled": enabled}, f, indent=2)
+        os.replace(tmp, write_path)
 
     # Internal/platform servers that should be on by default.
     #

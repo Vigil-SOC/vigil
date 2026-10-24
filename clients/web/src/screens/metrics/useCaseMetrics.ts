@@ -1,19 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { caseMetricsApi } from '../../services/api'
+import type { Schema } from '../../services/apiTypes'
 import type { Phase } from '../cases/useCases'
-
-export type { Phase } from '../cases/useCases'
-
-interface PriorityRow {
-  priority: string
-  count: number
-  closed_count: number
-}
-
-interface StatusRow {
-  status: string
-  count: number
-}
 
 interface AnalystRow {
   analyst_id: string
@@ -27,27 +15,13 @@ export interface CaseMetricsData {
   totalCases: number
   openCases: number
   criticalCases: number
-  mttdHours: number
-  mttrHours: number
-  mttdByPriority: Record<string, number>
-  mttrByPriority: Record<string, number>
-  byPriority: PriorityRow[]
-  byStatus: StatusRow[]
+  mttdHours: number | null
+  mttrHours: number | null
+  mttdByPriority: Record<string, number | null>
+  mttrByPriority: Record<string, number | null>
+  byPriority: Schema<'PriorityBreakdownRow'>[]
+  byStatus: Schema<'StatusBreakdownRow'>[]
   analysts: AnalystRow[]
-}
-
-interface SummaryResp {
-  total_cases?: number
-  open_cases?: number
-  critical_cases?: number
-}
-interface MttdResp {
-  average_mttd_hours?: number
-  mttd_by_priority?: Record<string, number>
-}
-interface MttrResp {
-  average_mttr_hours?: number
-  mttr_by_priority?: Record<string, number>
 }
 
 export function useCaseMetrics(days: number) {
@@ -76,19 +50,19 @@ export function useCaseMetrics(days: number) {
     ])
       .then(([sRes, mttdRes, mttrRes, priRes, statRes, anaRes]) => {
         if (cancelled) return
-        const s = (sRes.data || {}) as SummaryResp
-        const mttd = (mttdRes.data || {}) as MttdResp
-        const mttr = (mttrRes.data || {}) as MttrResp
+        const s = sRes.data
+        const mttd = mttdRes.data
+        const mttr = mttrRes.data
         setData({
-          totalCases: s.total_cases ?? 0,
-          openCases: s.open_cases ?? 0,
-          criticalCases: s.critical_cases ?? 0,
-          mttdHours: mttd.average_mttd_hours ?? 0,
-          mttrHours: mttr.average_mttr_hours ?? 0,
+          totalCases: s.total_cases,
+          openCases: s.open_cases,
+          criticalCases: s.critical_cases,
+          mttdHours: mttd.average_mttd_hours ?? null,
+          mttrHours: mttr.average_mttr_hours ?? null,
           mttdByPriority: mttd.mttd_by_priority ?? {},
           mttrByPriority: mttr.mttr_by_priority ?? {},
-          byPriority: (priRes.data?.priority_breakdown || []) as PriorityRow[],
-          byStatus: (statRes.data?.status_breakdown || []) as StatusRow[],
+          byPriority: priRes.data.priority_breakdown ?? [],
+          byStatus: statRes.data.status_breakdown ?? [],
           analysts: (anaRes.data?.analyst_performance || []) as AnalystRow[],
         })
         setPhase('ready')
