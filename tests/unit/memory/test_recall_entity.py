@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from core.agents.mcp_tools import MCPFailure
 from core.memory.recall import expire_read_log, recall, recall_entity
 from core.memory.recall_contract import (
     RECALL_OVERALL_CAP,
@@ -35,6 +36,7 @@ from core.storage.models import (
 pytestmark = [pytest.mark.unit, pytest.mark.database, pytest.mark.external_service]
 
 EPOCH = datetime(2026, 8, 1, tzinfo=timezone.utc)
+HASH = "5d41402abc4b2a76b9719d911017c592"
 
 
 # The clean-table fixture lives in tests/unit/conftest.py: #735's grant test
@@ -457,22 +459,30 @@ def test_the_row_bound_the_router_injects_is_ignored(session):
 @pytest.mark.parametrize(
     "args",
     [
-        {"caller_kind": "worker"},
-        {"entity_key": "ip:10.9.0.1", "as_of": "last tuesday"},
+        pytest.param({"caller_kind": "worker"}, id="no key named"),
+        pytest.param(
+            {"entity_key": "ip:10.9.0.1", "as_of": "last tuesday"},
+            id="unreadable as_of",
+        ),
+        pytest.param({"entity_key": f"sha256:{HASH}"}, id="sha256 type"),
+        pytest.param({"entity_key": f"md5:{HASH}"}, id="md5 type"),
+        pytest.param({"entity_key": HASH}, id="bare hash"),
+        pytest.param({"entity_key": "10.0.0.7"}, id="bare ip"),
+        pytest.param({"entity_key": "ip:"}, id="empty value"),
+        pytest.param(
+            {"entity_keys": [f"hash:{HASH}", "bogus:x"]},
+            id="one unknown type among good keys",
+        ),
+        pytest.param(
+            {"entity_keys": ["bogus:x", f"hash:{HASH}"]},
+            id="unknown type before good keys",
+        ),
     ],
-    ids=["no key named", "unreadable as_of"],
 )
 def test_a_caller_mistake_is_invalid_args_however_it_is_spelled(session, args):
-    # Both are the caller's to fix, so both must come back the same way. The
-    # router answers invalid_args only for Python's own wording for a call that
-    # did not fit its signature; anything else is a backend_error, which tells
-    # the model the tool broke rather than that it should call again.
-    from core.agents.tools_router import _is_bad_arguments
-
-    with pytest.raises(TypeError) as raised:
+    with pytest.raises(MCPFailure) as raised:
         recall_entity(args)
-
-    assert _is_bad_arguments(raised.value)
+    assert raised.value.kind == "invalid_args"
 
 
 def test_the_bridge_resolves_recall_entity_without_reaching_mcp(
@@ -515,3 +525,32 @@ def test_the_bridge_resolves_recall_entity_without_reaching_mcp(
 
     # Attributed even though it arrived over HTTP, which is what the log is for.
     assert read_log(session)[0]["caller_id"] == "threat_hunter"
+
+
+def test_a_key_memory_cannot_know_is_refused_rather_than_read_as_no_history(
+    invoke, session
+):
+    sighting(session, f"hash:{HASH}", investigation="hunt-a", concluded=EPOCH)
+    session.commit()
+    args = {"caller_kind": "worker", "caller_id": "threat_hunter"}
+
+    good = invoke(RECALL_TOOL, {"entity_keys": [f"hash:{HASH}"], **args}).json()
+    bad = invoke(RECALL_TOOL, {"entity_keys": [f"sha256:{HASH}"], **args}).json()
+
+    assert len(good["rows"][0]["sightings"]) == 1
+    assert bad["ok"] is False
+    assert bad["failure"]["kind"] == "invalid_args"
+    assert f"sha256:{HASH}" in bad["failure"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["IP:10.0.0.7", "ip:2001:db8::1", "url:https://evil.example/a:8080/x"],
+)
+def test_a_well_formed_key_in_any_case_or_shape_is_accepted(invoke, session, key):
+    # The refusal guards the type, not the value's shape: a key whose type is in
+    # the vocabulary must still reach the read, however it is written.
+    args = {"entity_keys": [key], "caller_kind": "t", "caller_id": "t"}
+    body = invoke(RECALL_TOOL, args).json()
+
+    assert body["ok"] is True, body

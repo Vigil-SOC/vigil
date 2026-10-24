@@ -167,7 +167,7 @@ class AutonomousResponder:
         response_action, rule = decided
 
         # Check if escalation is needed
-        should_escalate = self._should_escalate(severity, confidence)
+        should_escalate = self._should_escalate(severity)
 
         if should_escalate:
             await self._escalate_finding(finding, response_action)
@@ -178,15 +178,7 @@ class AutonomousResponder:
                 finding, response_action, entity_context, rule
             )
 
-    def _determine_action(
-        self, severity: str, confidence: float, recommended: str
-    ) -> Optional[Tuple[str, str]]:
-        """``(action, rule)`` from :func:`response_action_decision` (#917)."""
-        return response_action_decision(
-            severity, confidence, recommended, self.response_config
-        )
-
-    def _should_escalate(self, severity: str, confidence: float) -> bool:
+    def _should_escalate(self, severity: str) -> bool:
         """Determine if finding should be escalated."""
         if not self.escalation_config.enabled:
             return False

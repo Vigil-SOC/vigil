@@ -146,6 +146,18 @@ def test_re_saving_an_already_closed_case_is_an_edit_and_not_a_close(
     assert service.calls == []
 
 
+@pytest.mark.parametrize("status", ["resolved", "Closed", "done", ""])
+def test_a_status_outside_the_vocabulary_is_refused(status):
+    from pydantic import ValidationError
+
+    from core.api.v1.cases_router import CaseCreate, CaseUpdate
+
+    with pytest.raises(ValidationError):
+        CaseUpdate(status=status)
+    with pytest.raises(ValidationError):
+        CaseCreate(title="t", finding_ids=[], status=status)
+
+
 def test_a_failed_update_records_no_close(monkeypatch, service):
     from fastapi import HTTPException
 

@@ -16,7 +16,12 @@ from core.integrations.mcp import client as mcp_client
 from core.integrations.mcp import in_process
 from core.integrations.mcp import registry as mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
-from core.llm.chat_layers import _is_destructive_mcp, chat_config, integrations_line
+from core.llm.chat_layers import (
+    _is_destructive_mcp,
+    chat_config,
+    integrations_how,
+    integrations_line,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -35,9 +40,9 @@ def registry(monkeypatch):
     # The registry is the test's; nothing is read from a running client.
     monkeypatch.setattr(mcp_registry, "refresh_from_client", lambda _r: 0)
     reg = MCPRegistry()
-    reg.register_server("vigil", {}, in_process.list_tools())
-    reg.register_server(SD, {}, _fixture("security_detections_tools.json"))
-    reg.register_server(SPLUNK, {}, _fixture("splunk_selfhosted_tools.json"))
+    reg.register_server("vigil", in_process.list_tools())
+    reg.register_server(SD, _fixture("security_detections_tools.json"))
+    reg.register_server(SPLUNK, _fixture("splunk_selfhosted_tools.json"))
     return reg
 
 
@@ -58,12 +63,13 @@ def test_nothing_connected_declares_neither_tool_nor_line():
     ids = {t["id"] for t in yaml.safe_load(chat_config("m", None, None))["tools"]}
     assert not ids & {"find_integration_tools", "call_integration_tool"}
     assert integrations_line(None, {}) == ""
+    assert integrations_how(None) == ""
 
 
 def test_the_prompt_line_names_the_connected_servers(registry):
     line = integrations_line(registry.get_all_tools(), registry.tool_servers())
     assert f"{SD}, {SPLUNK}, vigil" in line
-    assert "find_integration_tools" in line
+    assert "find_integration_tools" in integrations_how(registry.get_all_tools())
 
 
 def test_find_returns_matching_tools_with_schemas_and_nothing_destructive(registry):
@@ -87,7 +93,6 @@ def test_connecting_a_server_changes_what_is_found_not_what_is_declared(registry
     assert not find_integration_tools(registry, "falcon")
     registry.register_server(
         "crowdstrike",
-        {},
         [
             {
                 "name": f"get_detections_{i}",
@@ -161,7 +166,7 @@ def test_call_runs_a_connected_read_tool_under_the_same_bounds(invoke):
 )
 def test_call_refuses_what_chat_may_not_reach(invoke, registry, name):
     registry.register_server(
-        "atomic-red-team", {}, [{"name": "atomic_red_team_execute", "description": "x"}]
+        "atomic-red-team", [{"name": "atomic_red_team_execute", "description": "x"}]
     )
     body = invoke("call_integration_tool", {"name": name, "arguments": {}})
     assert body == {

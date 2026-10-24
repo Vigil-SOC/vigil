@@ -430,9 +430,6 @@ export default function AnalyticsScreen() {
           <button className="btn ghost icon" title="Refresh" onClick={reload}>
             <Icon name="refresh" />
           </button>
-          <button className="btn primary">
-            <Icon name="download" /> Export report
-          </button>
         </div>
 
         {phase === 'loading' && <EmptyState loading icon="chart" title="Loading analytics…" />}
