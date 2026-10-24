@@ -1,10 +1,8 @@
 """The recall contract is declared twice and must say the same thing.
 
-A mismatch fails as "no history" — indistinguishable from an entity nobody has
-looked at. Nothing calls either half yet (rows are #731, the tool #732, the
-event the harness's), so by the time a call exists three slices will have been
-written against one of the two declarations. The agreement is enforced here,
-statically, while both halves are still only text.
+A mismatch fails as "no history", indistinguishable from an entity nobody has
+looked at. Neither side runs the other's code, so the agreement is checked here,
+statically.
 
 Field order is not checked: it is a struct on one side and a tuple on the other,
 and neither reads by position.
@@ -24,7 +22,6 @@ from core.memory.source_tier import SourceTier
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT = REPO_ROOT / "services" / "agent"
 TYPESCRIPT = AGENT / "contracts" / "memory.ts"
-ARCH = AGENT / "plugins" / "hunt/plugin.yaml"
 ENTITIES = AGENT / "plugins" / "hunt" / "entities.ts"
 HUNT_TYPES = AGENT / "plugins" / "hunt" / "types.ts"
 SCREENS = REPO_ROOT / "clients" / "web" / "src" / "screens"
@@ -165,74 +162,8 @@ def test_every_argument_is_declared_in_the_registrable_schema():
     ), "the schema must require nothing; the key invariant is RECALL_KEY_ARGS"
 
 
-def test_the_tool_and_capability_names_agree(ts: str):
-    # A capability spelled differently binds to nothing, and `providersOf` drops
-    # what nothing provides rather than failing, so the role silently loses it.
+def test_the_tool_names_agree(ts: str):
     assert ts_const(ts, "RECALL_TOOL") == py.RECALL_TOOL
-    assert ts_const(ts, "RECALL_CAPABILITY") == py.RECALL_CAPABILITY
-
-
-def test_the_role_grants_agree(ts: str):
-    match = re.search(r"RECALL_GRANTS = \{(.*?)\} as const", ts, re.S)
-    assert match, f"RECALL_GRANTS not found in {TYPESCRIPT}"
-    # The capability arrives as an identifier, which is the point of the constant.
-    names = {"RECALL_CAPABILITY": ts_const(ts, "RECALL_CAPABILITY")}
-    granted = {
-        role: tuple(
-            names.get(entry.strip(), entry.strip().strip('"'))
-            for entry in capabilities.split(",")
-            if entry.strip()
-        )
-        for role, capabilities in re.findall(r"(\w+):\s*\[([^\]]*)\]", match.group(1))
-    }
-    assert granted == dict(py.RECALL_GRANTS), (
-        "the role grants differ. A role granted on one side only either calls a "
-        "tool it was never meant to hold, or silently holds none."
-    )
-
-
-# The plugin declares the lead and the critic as roles; "agent" is its one querying
-# agent, which exists where the plugin states top-level `needs`.
-def _hunt_roles() -> tuple[dict, frozenset]:
-    import yaml
-
-    plugin = yaml.safe_load(ARCH.read_text())
-    agent = {"agent"} if plugin.get("needs") else set()
-    return plugin, frozenset(plugin["roles"]) | frozenset(agent)
-
-
-def test_every_granted_role_is_a_role_the_hunt_names():
-    _, declared = _hunt_roles()
-    missing = frozenset(py.RECALL_GRANTS) - declared
-    assert not missing, (
-        "RECALL_GRANTS names roles plugins/hunt/plugin.yaml does not declare, and a "
-        "grant on a role that does not exist is dropped silently:\n  "
-        + "\n  ".join(sorted(missing))
-    )
-
-
-def test_the_plugin_asks_for_what_the_grants_declare():
-    # Where the grant takes effect (#732). The plugin's one agent holds what its
-    # top-level `needs` asks for, and the binding drops an unasked-for capability
-    # silently -- the run goes without the tool and nothing
-    # says why. The lead and the critic hold only what their own role asks for.
-    plugin, _ = _hunt_roles()
-    roles = plugin["roles"]
-    agent = frozenset(plugin.get("needs") or ())
-    holds = {
-        role: (
-            (py.RECALL_CAPABILITY,)
-            if py.RECALL_CAPABILITY
-            in (roles[role].get("needs") or () if role in roles else agent)
-            else ()
-        )
-        for role in py.RECALL_GRANTS
-    }
-    assert holds == dict(py.RECALL_GRANTS), (
-        "plugins/hunt/plugin.yaml's `needs` disagree with RECALL_GRANTS. A role "
-        "granted recall in the contract and not in the plugin runs without the "
-        "tool, and the binding drops it silently rather than failing."
-    )
 
 
 def test_key_normalisation_defers_to_the_extractor():

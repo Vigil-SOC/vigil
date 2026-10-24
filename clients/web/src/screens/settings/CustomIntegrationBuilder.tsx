@@ -1,11 +1,11 @@
-// Talks to /api/custom-integrations/* by fetch — those endpoints aren't in
-// services/api.ts. Board: SettingsCustom.dc.html.
+// Board: SettingsCustom.dc.html.
 import { useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { Field, Select, TextInput } from '../../shared/ui'
-import { basePath } from '../../config/basePath'
 import { INTEGRATION_CATEGORIES } from '../../config/integrations'
+import { customIntegrationsApi } from '../../services/api'
+import { errorText } from '../setup/errorText'
 import type { SectionProps } from './types'
 
 interface Props {
@@ -39,7 +39,6 @@ interface Validation {
 
 const STEPS = ['Provide documentation', 'Review and edit', 'Test and save']
 const CATEGORY_OPTIONS = INTEGRATION_CATEGORIES.map((c) => ({ value: c, label: c }))
-const JSON_POST = { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } } as const
 
 const chipLabel = (f: SettingField) => (f.type === 'password' ? `${f.label} (secret)` : f.label)
 const checkLabel = (k: string) => k.replace(/_/g, ' ').replace(/^\w/, (l) => l.toUpperCase())
@@ -96,18 +95,13 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
     setBusy('generate')
     setError(null)
     try {
-      const resp = await fetch(`${basePath}/api/custom-integrations/generate`, {
-        ...JSON_POST,
-        body: JSON.stringify({
-          documentation,
-          integration_name: integrationName || null,
-          category,
-          conversation_history: conversation.length ? conversation : null,
-          user_response: userResponse || null,
-        }),
+      const { data: result } = await customIntegrationsApi.generate({
+        documentation,
+        integration_name: integrationName || null,
+        category,
+        conversation_history: conversation.length ? conversation : null,
+        user_response: userResponse || null,
       })
-      const result = await resp.json()
-      if (!resp.ok || !result.success) throw new Error(result.detail || result.error || 'Failed to generate integration')
       if (result.needs_clarification) {
         setQuestion(result.message)
         setConversation(result.conversation_history || [])
@@ -120,7 +114,7 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
         setQuestion(null)
       }
     } catch (e) {
-      setError((e as { message?: string })?.message || 'Failed to generate integration')
+      setError(errorText(e, 'Failed to generate integration'))
     } finally {
       setBusy(null)
     }
@@ -129,11 +123,7 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
   // writes the server file and metadata, unless this exact code is already on disk
   const write = async (g: GeneratedIntegration) => {
     if (savedCode === serverCode) return false
-    const resp = await fetch(`${basePath}/api/custom-integrations/save`, {
-      ...JSON_POST,
-      body: JSON.stringify({ integration_id: g.integration_id, metadata: g.metadata, server_code: serverCode }),
-    })
-    if (!resp.ok) throw new Error('Failed to save integration')
+    await customIntegrationsApi.save({ integration_id: g.integration_id, metadata: g.metadata, server_code: serverCode })
     setSavedCode(serverCode)
     return true
   }
@@ -145,14 +135,10 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
     try {
       const wrote = await write(generated)
       if (wrote) onWrote()
-      const res = await fetch(`${basePath}/api/custom-integrations/${generated.integration_id}/validate`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      if (!res.ok) throw new Error('Failed to validate integration')
-      setValidation(await res.json())
+      const { data } = await customIntegrationsApi.validate(generated.integration_id)
+      setValidation(data)
     } catch (e) {
-      setError((e as { message?: string })?.message || 'Failed to validate integration')
+      setError(errorText(e, 'Failed to validate integration'))
     } finally {
       setBusy(null)
     }
@@ -168,7 +154,7 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
       onSaved(generated.integration_id)
       reset()
     } catch (e) {
-      setError((e as { message?: string })?.message || 'Failed to save integration')
+      setError(errorText(e, 'Failed to save integration'))
     } finally {
       setBusy(null)
     }

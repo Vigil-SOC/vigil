@@ -102,21 +102,6 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
 }
 
 export const aiDecisionsApi = {
-  create: (data: {
-    decision_id: string
-    agent_id: string
-    decision_type: string
-    confidence_score: number
-    reasoning: string
-    recommended_action: string
-    finding_id?: string
-    case_id?: string
-    workflow_id?: string
-    decision_metadata?: any
-  }) => api.post('/ai/decisions', data),
-  
-  getById: (decisionId: string) => api.get(`/ai/decisions/${decisionId}`),
-  
   list: (params?: {
     agent_id?: string
     finding_id?: string
@@ -142,23 +127,7 @@ export const aiDecisionsApi = {
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
 }
 
-export interface NeedsYouItem {
-  /** `parked`: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id. */
-  kind: 'checkpoint' | 'approval' | 'parked'
-  source_id: string
-  title: string
-  reason: string
-  /** '' when nothing recorded when it started waiting. */
-  created_at: string
-  reversibility: string
-  case_id: string | null
-  run_id?: string | null
-  /** The run's own checkpoint this item answers, so a page reading the run can tell it was answered. */
-  checkpoint_id?: string | null
-  checkpoint_class?: string | null
-  /** A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat. */
-  hypotheses?: { hypothesis_id: string; statement: string; provenance: string }[]
-}
+export type NeedsYouItem = Schema<'NeedsYouItem'>
 
 export const approvalsApi = {
   list: (params?: {
@@ -173,8 +142,6 @@ export const approvalsApi = {
     api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', {
       params: caseId ? { case_id: caseId } : undefined,
     }),
-
-  getById: (actionId: string) => api.get(`/approvals/${actionId}`),
 
   approve: (actionId: string, approved_by?: string) =>
     api.post(`/approvals/${actionId}/approve`, { approved_by }),
@@ -413,13 +380,13 @@ export const slaPoliciesApi = {
 }
 
 export const caseMetricsApi = {
-  getSummary: () => api.get('/cases/metrics/summary'),
+  getSummary: () => api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary'),
   getMTTD: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttd', { params }),
+    api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
   getMTTR: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttr', { params }),
-  getByPriority: () => api.get('/cases/metrics/by-priority'),
-  getByStatus: () => api.get('/cases/metrics/by-status'),
+    api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
+  getByPriority: () => api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority'),
+  getByStatus: () => api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status'),
   getAnalystPerformance: () => api.get('/cases/metrics/analyst-performance'),
 }
 
@@ -542,7 +509,7 @@ export interface AgentSummary {
 /** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
-  getProcesses: () => api.get<{ agent_layer?: string; daemon?: string }>('/processes'),
+  getProcesses: () => api.get<Schema<'ProcessStates'>>('/processes'),
   getRoutability: () =>
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
@@ -574,11 +541,7 @@ export const configApi = {
   getDemoMode: () => api.get('/config/demo-mode'),
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
   getSetupSteps: () =>
-    api.get<{
-      steps: { id: string; title: string; state_line: string; done: boolean; href: string }[]
-      alerts_exist: number
-      demo_enabled: boolean
-    }>('/config/setup-steps'),
+    api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps'),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
@@ -592,9 +555,7 @@ export const configApi = {
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
-    auto_start_sync: boolean
     show_notifications: boolean
-    theme: string
     enable_keyring: boolean
   }) => api.post('/config/general', data),
   
@@ -682,6 +643,15 @@ export const extensionsApi = {
     api.get<{ token: string | null; expires_in: number | null; user: string }>(
       `/integrations/${integrationId}/session-token`,
     ),
+}
+
+export const customIntegrationsApi = {
+  generate: (data: Schema<'CustomIntegrationRequest'>) =>
+    api.post('/custom-integrations/generate', data, { timeout: LLM_TIMEOUT }),
+  save: (data: Schema<'SaveIntegrationRequest'>) =>
+    api.post('/custom-integrations/save', data),
+  validate: (integrationId: string) =>
+    api.post(`/custom-integrations/${integrationId}/validate`),
 }
 
 export interface LLMProvider {
@@ -912,10 +882,7 @@ interface WorkflowPhase {
   tools: string[]
   steps: string[]
   expected_output?: string
-  timeout_seconds?: number
   approval_required?: boolean
-  conditions?: any
-  parallel_group?: string | null
 }
 
 /** What POST /workflows/generate returns: a definition that is not saved anywhere. */
@@ -1022,8 +989,8 @@ export const workflowApi = {
 
   // Stop, as opposed to steer. Queues the abort so the run can settle itself and write
   // a report, and escalates behind that: steer('abort') alone leaves a wedged worker running.
-  cancelRun: (runId: string, reason: string, rejectedBy?: string) =>
-    api.post(`/workflows/runs/${runId}/cancel`, { reason, ...(rejectedBy && { rejected_by: rejectedBy }) }),
+  cancelRun: (runId: string, reason: string) =>
+    api.post(`/workflows/runs/${runId}/cancel`, { reason }),
 
   // Another pass over the same ledger, for a finished run whose write-up reads badly.
   // The timeout sits above the backend's own 180s so its answer — the account is still
@@ -1047,7 +1014,6 @@ export const workflowApi = {
     use_case?: string
     trigger_examples?: string[]
     phases: WorkflowPhase[]
-    created_by?: string
   }) => api.post('/workflows/custom', data),
   updateCustom: (id: string, data: Partial<{
     name: string

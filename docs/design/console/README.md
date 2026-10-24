@@ -36,6 +36,7 @@ Numbers on the boards are sample data (1,284 alerts, 73 cases, 214 agents, 34 de
 | 11 Ask Vigil | `PulseChat` for the dock layout only (Pulse itself is phase 2), `ChatHistory`, `TourAsk` |
 | 12 Agents & workflows | `Agents`, `AgentEditor`, `SkillEditor`, `WorkflowRun` (`ToolPermissions` is phase 2 and not included) |
 | 13 Settings | `Settings`, `SettingsIntegrations`, `SettingsCustom`, `SettingsCollection`, `SettingsSLA`, `SettingsLimits`, `SettingsData` (`SettingsTeam`, `SettingsFeedback` are phase 2 and not included) |
+| Sessions and sign-in (vigil-mu sessions epic) | `SettingsSessions`, `AccountSignIns`, `SignIn` |
 | reference | `DesignSystem` (tokens, type, Good/Fair/Poor, components, shadcn/ui mapping in section 08), `Logo` |
 
 Not included on purpose: `Pulse*`, `FleetWall`, `Coverage`, `ToolPermissions`, `Main`, `HomeBusy`, `TourIsland`, `SettingsTeam`, `SettingsFeedback`, the `*V1` case boards (deprecated), `Handoff`, `HandoffData`, `Index`, and the five component specs for phase-2 components.

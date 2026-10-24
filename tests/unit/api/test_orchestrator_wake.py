@@ -68,7 +68,9 @@ def test_wake_sends_no_hypothesis_when_the_file_is_empty():
     assert insert.call_args.kwargs["payload"]["hypothesis"] is None
 
 
-@pytest.mark.parametrize("status", ["executing", "assigned", "sleeping"])
+@pytest.mark.parametrize(
+    "status", ["executing", "assigned", "waiting_approval", "paused"]
+)
 def test_wake_rejects_unfinished_investigations(status):
     orch = _orch(status)
     with (

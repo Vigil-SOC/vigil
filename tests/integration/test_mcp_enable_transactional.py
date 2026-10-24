@@ -176,7 +176,6 @@ class TestEnableUpdatesRegistry:
         registry = MCPRegistry()
         registry.register_server(
             "splunk-selfhosted",
-            {},
             [{"name": "list_findings", "description": "list them", "inputSchema": {}}],
         )
         fake_client = MagicMock()
