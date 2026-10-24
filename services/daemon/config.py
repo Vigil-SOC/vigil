@@ -3,10 +3,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from core.config import get_settings
-from core.ingestion.kafka_config import (  # KafkaConfig re-exported for DaemonConfig
-    KafkaConfig,
-    apply_kafka_settings,
-)
+from core.ingestion.kafka_config import KafkaConfig, apply_kafka_settings
 from core.intent import INTENT_FIELDS
 from core.response.config import ResponseConfig  # re-exported for DaemonConfig
 from core.secrets import get_secret
