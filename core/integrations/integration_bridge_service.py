@@ -2,10 +2,10 @@
 
 import logging
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 from core.config import load_integrations_config
-from core.integrations._base.descriptor import get_descriptor, iter_descriptors
+from core.integrations._base.descriptor import get_descriptor
 from core.integrations.extension.trust import is_trusted_connector_url
 
 logger = logging.getLogger(__name__)
@@ -93,75 +93,3 @@ class IntegrationBridgeService:
                 list(applied),
             )
         return applied
-
-    def is_integration_enabled(self, integration_id: str) -> bool:
-        """
-        Check if an integration is enabled.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            True if integration is enabled, False otherwise
-        """
-        config = self.load_integration_config()
-        return integration_id in config.get("enabled_integrations", [])
-
-    def get_integration_config(self, integration_id: str) -> Optional[Dict]:
-        """
-        Get configuration for a specific integration.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            Integration configuration dictionary or None
-        """
-        config = self.load_integration_config()
-        return config.get("integrations", {}).get(integration_id)
-
-    def get_integration_status(self, integration_id: str) -> Dict:
-        """
-        Get status information for an integration.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            Dictionary with status information
-        """
-        config = self.load_integration_config()
-
-        is_enabled = integration_id in config.get("enabled_integrations", [])
-        has_config = integration_id in config.get("integrations", {})
-        server_names = self.server_names_for(integration_id)
-        has_server = bool(server_names)
-
-        status = {
-            "enabled": is_enabled,
-            "configured": has_config,
-            "server_available": has_server,
-            "ready": is_enabled and has_config and has_server,
-        }
-
-        if has_server:
-            status["server_names"] = list(server_names)
-
-        return status
-
-    def get_all_integration_statuses(self) -> Dict[str, Dict]:
-        """
-        Get status information for all integrations.
-
-        Returns:
-            Dictionary mapping integration IDs to their status
-        """
-        config = self.load_integration_config()
-        all_integrations = {d.id for d in iter_descriptors() if d.mcp_server_names}
-        all_integrations.update(config.get("integrations", {}).keys())
-
-        statuses = {}
-        for integration_id in all_integrations:
-            statuses[integration_id] = self.get_integration_status(integration_id)
-
-        return statuses
