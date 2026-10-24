@@ -1,0 +1,6 @@
+0.24s call     unit/daemon/test_cleanup_expires_approvals.py::test_cleanup_expires_approvals_using_the_configured_window
+0.23s call     unit/daemon/test_orchestrator_runs.py::TestEnqueue::test_a_refused_enqueue_finalizes_the_row_it_wrote
+0.22s setup    unit/daemon/test_ack_before_advance.py::test_federation_stop_with_unstored_items_keeps_cursor_then_replays
+0.22s call     unit/daemon/test_orchestrator_hourly_cost_db.py::test_the_pause_survives_enabled_sync_and_lifts_as_spend_ages_out
+0.21s call     unit/daemon/test_orchestrator_runs.py::TestShadowAdjudication::test_a_shadow_that_fails_never_fails_the_real_run
+================ 510 passed, 241 warnings in 167.42s (0:02:47) =================

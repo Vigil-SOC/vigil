@@ -1,0 +1,6 @@
+14.29s call     unit/_ratchets/test_no_metadata_kwarg.py::test_no_model_is_constructed_with_a_metadata_kwarg
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 260 passed, 6 skipped, 2 warnings in 580.03s (0:09:40) ============

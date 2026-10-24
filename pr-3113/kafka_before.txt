@@ -1,0 +1,8 @@
+0.01s call     unit/daemon/test_kafka_settings_sync.py::test_sync_tick_matches_startup
+0.01s setup    unit/daemon/test_kafka_settings_sync.py::test_change_saved_after_startup_reaches_ingestor
+
+(2 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/daemon/test_kafka_settings_sync.py::test_sync_tick_matches_startup
+FAILED tests/unit/daemon/test_kafka_settings_sync.py::test_change_saved_after_startup_reaches_ingestor
+======================== 2 failed in 145.77s (0:02:25) =========================
