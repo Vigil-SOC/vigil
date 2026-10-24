@@ -88,13 +88,13 @@ async def test_short_batch_persists_now_minus_delay_and_the_next_tick_starts_the
     adapter = _adapter(svc, monkeypatch, clock)
 
     first = await adapter.fetch(
-        since=None, cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
+        cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
     )
     assert svc.calls[0]["end_time"] == T0 - DELAY
     assert parse_cursor_since(first.cursor) == T0 - DELAY
 
     clock.now = T0 + timedelta(minutes=5)
-    await adapter.fetch(since=None, cursor=first.cursor, max_items=10)
+    await adapter.fetch(cursor=first.cursor, max_items=10)
     assert svc.calls[1]["start_time"] == T0 - DELAY
     assert svc.calls[1]["end_time"] == clock.now - DELAY
 
@@ -108,12 +108,12 @@ async def test_an_alert_indexed_after_the_poll_is_read_on_the_next_tick(monkeypa
     adapter = _adapter(svc, monkeypatch, clock)
 
     first = await adapter.fetch(
-        since=None, cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
+        cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
     )
     assert first.findings == []
 
     clock.now = T0 + timedelta(minutes=5)
-    second = await adapter.fetch(since=None, cursor=first.cursor, max_items=10)
+    second = await adapter.fetch(cursor=first.cursor, max_items=10)
     assert [f["external_id"] for f in second.findings] == ["late"]
 
 
@@ -127,11 +127,11 @@ async def test_without_a_delay_the_same_alert_is_skipped(monkeypatch):
     monkeypatch.setattr("core.federation.adapters._base.utcnow", clock)
 
     first = await adapter.fetch(
-        since=None, cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
+        cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
     )
     assert svc.calls[0]["end_time"] is None
     clock.now = T0 + timedelta(minutes=5)
-    second = await adapter.fetch(since=None, cursor=first.cursor, max_items=10)
+    second = await adapter.fetch(cursor=first.cursor, max_items=10)
     assert first.findings == second.findings == []
 
 
@@ -145,7 +145,7 @@ async def test_full_batch_stops_at_the_newest_alert_and_drains(monkeypatch):
     cursor = cursor_at(T0 - timedelta(minutes=6))
     seen: List[str] = []
     for _ in range(10):
-        result = await adapter.fetch(since=None, cursor=cursor, max_items=2)
+        result = await adapter.fetch(cursor=cursor, max_items=2)
         seen += [f["external_id"] for f in result.findings]
         if len(result.findings) < 2:
             break
@@ -171,7 +171,7 @@ async def test_full_batch_cursor_is_capped_at_the_window_end(monkeypatch):
     svc.fetch_alerts = ignore_end
     adapter = _adapter(svc, monkeypatch, clock)
     result = await adapter.fetch(
-        since=None, cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=1
+        cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=1
     )
     assert parse_cursor_since(result.cursor) == T0 - DELAY
 
@@ -182,12 +182,12 @@ async def test_a_restarted_adapter_resumes_from_the_persisted_cursor(monkeypatch
     late = _alert("late", T0 - timedelta(seconds=10), lag=timedelta(seconds=30))
     svc = _Indexer(clock, [late])
     first = await _adapter(svc, monkeypatch, clock).fetch(
-        since=None, cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
+        cursor=cursor_at(T0 - timedelta(minutes=5)), max_items=10
     )
 
     clock.now = T0 + timedelta(minutes=5)
     fresh = _adapter(_Indexer(clock, [late]), monkeypatch, clock)
-    second = await fresh.fetch(since=None, cursor=first.cursor, max_items=10)
+    second = await fresh.fetch(cursor=first.cursor, max_items=10)
     assert [f["external_id"] for f in second.findings] == ["late"]
 
 
@@ -196,7 +196,7 @@ async def test_a_cursor_later_than_the_window_end_is_not_moved_back(monkeypatch)
     clock = _Clock(T0)
     svc = _Indexer(clock, [])
     adapter = _adapter(svc, monkeypatch, clock)
-    result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=10)
+    result = await adapter.fetch(cursor=cursor_at(T0), max_items=10)
     assert parse_cursor_since(result.cursor) == T0
 
 

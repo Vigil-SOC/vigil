@@ -40,6 +40,7 @@ export const CATALOG_TO_SOURCE: Record<string, string> = {
   'azure-sentinel': 'azure_sentinel',
   'aws-security-hub': 'aws_security_hub',
   'microsoft-defender': 'microsoft_defender',
+  opensearch: 'opensearch',
 }
 
 const DEFAULT_BADGE: Omit<SourceBadge, 'label'> = { color: '#8a90a6', icon: 'link' }

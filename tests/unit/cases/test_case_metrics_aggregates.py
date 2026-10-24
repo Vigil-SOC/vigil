@@ -262,6 +262,24 @@ def test_analyst_performance_breakdown(session):
     ]
 
 
+def test_analyst_performance_respects_the_window(session):
+    _seed(session)
+
+    result = _run(
+        get_all_analyst_performance, session, start_date=T0 + timedelta(hours=12)
+    )
+
+    assert result["analyst_performance"] == [
+        {
+            "analyst_id": "alice",
+            "analyst_name": "alice",
+            "cases_assigned": 1,
+            "cases_resolved": 1,
+            "avg_resolution_time": pytest.approx(4.0),
+        },
+    ]
+
+
 def _by_status(result) -> dict:
     # The route promises no order between statuses, so compare as a mapping.
     rows = result["status_breakdown"]
