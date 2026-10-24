@@ -102,6 +102,17 @@ class PollState:
 
     last_poll_time: Optional[datetime] = None
 
+    def lookback_minutes(self, interval_seconds: int) -> int:
+        # After a successful poll, look back to that timestamp (rounded up one
+        # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
+        # Cap at 60 minutes: an uncapped window can exceed the ~110s job deadline,
+        # fail, and then retry the same window forever. First run keeps the
+        # fixed interval window.
+        if self.last_poll_time is None:
+            return max(interval_seconds // 60 + 1, 5)
+        elapsed = int((utcnow() - self.last_poll_time).total_seconds() // 60) + 1
+        return min(max(elapsed, 1), 60)
+
 
 class DataPoller:
     """Polls various data sources for new security findings."""
@@ -358,18 +369,8 @@ class DataPoller:
         self.stats["splunk_polls"] += 1
         logger.debug("Polling Splunk for new alerts...")
 
-        # After a successful poll, look back to that timestamp (rounded up one
-        # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
-        # Cap at 60 minutes: an uncapped window can exceed the ~110s job deadline,
-        # fail, and then retry the same window forever. First run keeps the
-        # fixed interval window.
-        last = self._splunk_state.last_poll_time
-        if last is not None:
-            delta_minutes = max(int((utcnow() - last).total_seconds() // 60) + 1, 1)
-            lookback_minutes = min(delta_minutes, 60)
-        else:
-            lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
-        earliest_time = f"-{lookback_minutes}m"
+        lookback = self._splunk_state.lookback_minutes(self.config.splunk_interval)
+        earliest_time = f"-{lookback}m"
 
         # Query for notable events / security alerts
         queries = [
@@ -520,9 +521,10 @@ class DataPoller:
         logger.debug("Polling CrowdStrike for new detections...")
 
         try:
-            # Get recent detections
-            lookback_minutes = max(self.config.crowdstrike_interval // 60 + 1, 5)
-            since = utcnow() - timedelta(minutes=lookback_minutes)
+            lookback = self._crowdstrike_state.lookback_minutes(
+                self.config.crowdstrike_interval
+            )
+            since = utcnow() - timedelta(minutes=lookback)
 
             detections = await asyncio.to_thread(
                 self._crowdstrike_service.get_detections,
@@ -905,8 +907,8 @@ class DataPoller:
         logger.debug("Polling Elastic Security for new alerts...")
 
         try:
-            lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
-            start_time = utcnow() - timedelta(minutes=lookback_minutes)
+            lookback = self._elastic_state.lookback_minutes(self.config.splunk_interval)
+            start_time = utcnow() - timedelta(minutes=lookback)
 
             alerts = await self._elastic_service.fetch_alerts(
                 start_time=start_time, limit=100
