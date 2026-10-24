@@ -45,7 +45,7 @@ def test_dropped_session_still_appears_in_live_mcp_tools(monkeypatch):
     )
 
     registry = MCPRegistry()
-    registry.register_server("splunk-selfhosted", {}, [TOOL])
+    registry.register_server("splunk-selfhosted", [TOOL])
     assert registry.get_tool_names() == [FLAT]
 
     # Vigil's own tools are in this process and always present, so the
@@ -113,7 +113,6 @@ async def test_failed_detections_restart_keeps_registered_tools():
     registry = MCPRegistry()
     registry.register_server(
         "security-detections",
-        {},
         [{"name": "search", "description": "x", "inputSchema": {}}],
     )
 

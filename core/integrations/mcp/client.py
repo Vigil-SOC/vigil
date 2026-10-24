@@ -300,14 +300,6 @@ class MCPClient:
         Returns:
             True if successful, False otherwise
         """
-        # Defensive init for deployments that upgraded without reinstantiating
-        # the client — keeps the legacy __init__ compatible.
-        if not hasattr(self, "last_errors"):
-            self.last_errors: Dict[str, str] = {}
-        if not hasattr(self, "last_missing_credentials"):
-            self.last_missing_credentials: Dict[str, List[str]] = {}
-        if not hasattr(self, "last_setup_required"):
-            self.last_setup_required: Dict[str, str] = {}
         # Clear any stale state from a prior attempt so the UI always
         # reflects the most recent connect.
         self.last_errors.pop(server_name, None)
@@ -485,9 +477,7 @@ class MCPClient:
 
     def setup_required(self, server_name: str) -> Optional[str]:
         """Why ``server_name`` is not set up yet, or None (see ``MCPService``)."""
-        check = getattr(self.mcp_service, "setup_required", None)
-        reason = check(server_name) if callable(check) else None
-        return reason if isinstance(reason, str) and reason else None
+        return self.mcp_service.setup_required(server_name)
 
     def was_dialled(self, server_name: str) -> bool:
         """Whether this process has tried to connect ``server_name`` at all.
@@ -497,21 +487,21 @@ class MCPClient:
         """
         return (
             server_name in self.persistent_sessions
-            or server_name in getattr(self, "last_errors", {})
-            or server_name in getattr(self, "last_missing_credentials", {})
+            or server_name in self.last_errors
+            or server_name in self.last_missing_credentials
         )
 
     def held_for_setup(self, server_name: str) -> bool:
         """Whether the last connect of ``server_name`` stopped at the setup gate."""
-        return server_name in getattr(self, "last_setup_required", {})
+        return server_name in self.last_setup_required
 
     def get_missing_credentials(self, server_name: str) -> Optional[List[str]]:
         """Return the list of unset required env vars from the last connect."""
-        return getattr(self, "last_missing_credentials", {}).get(server_name)
+        return self.last_missing_credentials.get(server_name)
 
     def get_last_error(self, server_name: str) -> Optional[str]:
         """Return the most recent connect-failure reason for a server, if any."""
-        return getattr(self, "last_errors", {}).get(server_name)
+        return self.last_errors.get(server_name)
 
     # Per-server rate limit between auto-retry attempts. Prevents a
     # misconfigured secret (wrong value, typo) from hammering the MCP
@@ -678,7 +668,7 @@ class MCPClient:
         if server_name not in self.persistent_sessions:
             logger.info(f"Creating persistent connection to {server_name}...")
             if not await self.connect_to_server(server_name, persistent=True):
-                needs = getattr(self, "last_setup_required", {}).get(server_name)
+                needs = self.last_setup_required.get(server_name)
                 _err = {
                     "error": True,
                     "content": [
