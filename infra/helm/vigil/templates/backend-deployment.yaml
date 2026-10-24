@@ -6,9 +6,9 @@ metadata:
   labels:
     {{- include "vigil.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
 spec:
-  {{- if not .Values.backend.autoscaling.enabled }}
-  replicas: {{ .Values.backend.replicaCount }}
-  {{- end }}
+  # Always set, the autoscaler's minimum under one: the upgrade hook scales
+  # every workload to 0, and Helm only scales back what the manifest names.
+  replicas: {{ ternary .Values.backend.autoscaling.minReplicas .Values.backend.replicaCount .Values.backend.autoscaling.enabled }}
   selector:
     matchLabels:
       {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "backend") | nindent 6 }}

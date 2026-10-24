@@ -1,9 +1,9 @@
 """Default rows for the tables that only create_all builds.
 
 ``05_case_management_extended.sql`` holds the default SLA policies and case
-templates. A fresh install gets those rows from the upgrade baseline. The Helm
-db-init Job cannot apply the file: it runs before the tables exist and then
-records it as applied. ``seed_reference_tables`` fills each empty table.
+templates. A fresh install gets those rows from the upgrade baseline. A 0.7 or
+0.8 Helm install never applied the file. ``seed_reference_tables`` fills each
+empty table.
 """
 
 import re
