@@ -26,23 +26,30 @@ from core.config import get_settings
 from core.integrations.darktrace.ingestion import DarktraceIngestionService
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
-from core.webhook_receiver import ingest, read_signed_json
-from core.webhook_rejections import rejection_counts
+from core.webhook_receiver import ingest, read_signed_json, reject
+from core.webhook_rejections import DISABLED, rejection_counts
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def darktrace_enabled() -> bool:
-    """Master flag for the Darktrace webhook receiver.
+def _get_settings() -> Dict[str, Any]:
+    try:
+        from core.storage.config_service import get_config_service
 
-    Off unless explicitly enabled. Lives here rather than inline in
-    ``services/api/main.py`` so the gate travels with the receiver it guards and
-    can be unit-tested directly (issue #478). Reads the typed ``Settings``
-    field rather than the raw env var so there is a single source of truth
-    for the flag, matching ``cloudflare_webhooks.cloudy_ingestion_enabled``.
-    """
+        return get_config_service().get_system_config("darktrace.settings") or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("darktrace.settings read failed: %s", exc)
+        return {}
+
+
+# Off unless explicitly enabled. The Settings UI toggle in system_config wins;
+# env is the fallback for deployments that never saved it.
+def darktrace_enabled() -> bool:
+    enabled = _get_settings().get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
     return get_settings().darktrace_enabled
 
 
@@ -53,27 +60,11 @@ ROUTER_META = RouterMeta(
     reason=(
         "Inbound receiver for Darktrace pushes — the caller is a machine, so "
         "there is no session to authenticate. Each endpoint verifies an "
-        "HMAC-SHA256 X-Darktrace-Signature and fails closed when no shared "
-        "secret is configured."
+        "HMAC-SHA256 X-Darktrace-Signature, fails closed when no shared "
+        "secret is configured, and re-checks the enable flag at request time."
     ),
-    # env.example and https://vigilsoc.org/docs/integrations/darktrace/
-    # document DARKTRACE_ENABLED as the on/off toggle; leaving it unset
-    # must leave the receiver off.
     enabled=darktrace_enabled,
 )
-
-
-def _get_settings() -> Dict[str, Any]:
-    """Read darktrace.settings from system_config (DB). Falls back to env vars."""
-    try:
-        from core.storage.config_service import get_config_service
-
-        value = get_config_service().get_system_config("darktrace.settings") or {}
-        if value:
-            return value
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("darktrace.settings read failed, using env: %s", exc)
-    return {}
 
 
 def _get_max_body_bytes() -> int:
@@ -100,6 +91,14 @@ def _get_console_url() -> str:
 
 
 async def _read(request: Request, signature: Optional[str], endpoint: str) -> Dict:
+    if not darktrace_enabled():
+        raise reject(
+            request,
+            endpoint,
+            DISABLED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Darktrace webhook receiver is disabled",
+        )
     return await read_signed_json(
         request,
         signature,

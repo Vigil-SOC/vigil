@@ -45,6 +45,11 @@ SECRET = "unit-test-secret"
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def enabled_in_settings(monkeypatch):
+    monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": True})
+
+
 @pytest.fixture()
 def app(monkeypatch):
     monkeypatch.setenv("DARKTRACE_WEBHOOK_SECRET", SECRET)
@@ -338,6 +343,53 @@ class TestMisconfiguration:
             },
         )
         assert r.status_code == 503
+
+
+class TestEnableGate:
+    @pytest.fixture()
+    def env_enabled(self, monkeypatch):
+        from core.config import get_settings
+
+        def set_env(value):
+            if value is None:
+                monkeypatch.delenv("DARKTRACE_ENABLED", raising=False)
+            else:
+                monkeypatch.setenv("DARKTRACE_ENABLED", value)
+            get_settings.cache_clear()
+
+        yield set_env
+        get_settings.cache_clear()
+
+    @pytest.mark.parametrize(
+        "stored,env,expected",
+        [
+            ({"enabled": True}, None, True),
+            ({"enabled": False}, "true", False),
+            ({}, "true", True),
+            ({}, None, False),
+        ],
+    )
+    def test_ui_toggle_wins_over_env(
+        self, monkeypatch, env_enabled, stored, env, expected
+    ):
+        monkeypatch.setattr(_mod, "_get_settings", lambda: stored)
+        env_enabled(env)
+        assert _mod.ROUTER_META.is_enabled is expected
+
+    @pytest.mark.parametrize("path", ["model-breach", "ai-analyst", "system-status"])
+    def test_toggle_off_rejects_signed_push_with_env_on(
+        self, client, monkeypatch, env_enabled, path
+    ):
+        wr._counts.clear()
+        monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": False})
+        env_enabled("true")
+        with patch("darktrace_webhook_under_test.DarktraceIngestionService") as svc:
+            r = _post(client, f"/api/webhooks/darktrace/{path}", MODEL_BREACH_SAMPLE)
+        assert r.status_code == 503
+        svc.assert_not_called()
+        assert wr.rejection_counts("darktrace/") == {
+            f"darktrace/{path}": {wr.DISABLED: 1}
+        }
 
 
 class TestRejectionLogging:
