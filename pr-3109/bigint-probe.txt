@@ -1,0 +1,22 @@
+PROBE n=3 stats total=3 imported=3 skipped=0 errors=0 stored=3 big={'big': 12345678901234567890, 'risk': 0.5}
+PROBE n=1500 stats total=1500 imported=1500 skipped=1000 errors=0 stored=1500 big={'big': 12345678901234567890, 'risk': 0.5}
+========================= 2 passed, 1 warning in 2.87s =========================
+import json, pytest
+from sqlalchemy import func, select
+from core.ingestion.ingestion_service import IngestionService
+from core.storage.connection import get_db_session
+from core.storage.models import Finding
+pytestmark = [pytest.mark.external_service]
+
+@pytest.mark.parametrize("n,where", [(3, 0), (1500, 1400)])
+def test_probe(tmp_path, n, where):
+    prefix = f"zzb-{n}-"
+    rows = [{"finding_id": f"{prefix}{i}", "data_source": "t", "timestamp": "2026-01-01T00:00:00Z",
+             "entity_context": {"risk": 0.5, **({"big": 12345678901234567890} if i == where else {})}} for i in range(n)]
+    p = tmp_path / "u.json"; p.write_text(json.dumps(rows))
+    stats = IngestionService().ingest_json_file(p)
+    s = get_db_session()
+    stored = s.execute(select(func.count()).select_from(Finding).where(Finding.finding_id.like(f"{prefix}%"))).scalar()
+    big = s.execute(select(Finding.entity_context).where(Finding.finding_id == f"{prefix}{where}")).scalar()
+    s.close()
+    print(f"\nPROBE n={n} stats total={stats['findings_total']} imported={stats['findings_imported']} skipped={stats.get('findings_skipped')} errors={stats['findings_errors']} stored={stored} big={big}")

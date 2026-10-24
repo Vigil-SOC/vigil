@@ -1,0 +1,12 @@
+yajl2_c use_float False [{'b': 12345678901234567890}]
+python use_float False [{'b': 12345678901234567890}]
+yajl2_cffi use_float False [{'b': 12345678901234567890}]
+yajl2_c use_float True ERR parse error: integer overflow
+                                  [{"b":12345678901234567890}]
+                     (right here) ------^
+
+python use_float True [{'b': 12345678901234567890}]
+yajl2_cffi use_float True ERR parse error: integer overflow
+                                  [{"b":12345678901234567890}]
+                     (right here) ------^
+

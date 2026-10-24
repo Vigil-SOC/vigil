@@ -1,0 +1,263 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/c789ea2b-af72-4f35-8b99-6f4cdf64e379/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 3 items
+
+tests/unit/ingestion/test_json_fractional_values_db.py FFF               [100%]
+
+=================================== FAILURES ===================================
+_________ test_findings_with_fractional_jsonb_values_are_stored[dict] __________
+
+tmp_path = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_findings_with_fractional_0')
+shape = 'dict'
+
+    @pytest.mark.parametrize("shape", ["dict", "list"])
+    def test_findings_with_fractional_jsonb_values_are_stored(tmp_path, shape):
+        prefix = f"jfv-{shape}-"
+        findings = [
+            {
+                "finding_id": f"{prefix}{i}",
+                "data_source": "test",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "entity_context": {"risk": 0.5},
+                "evidence_links": [{"score": 0.25}],
+            }
+            for i in range(3)
+        ]
+        path = tmp_path / "upload.json"
+        path.write_text(json.dumps({"findings": findings} if shape == "dict" else findings))
+    
+        stats = IngestionService().ingest_json_file(path)
+    
+>       assert stats["findings_errors"] == 0
+E       assert 3 == 0
+
+findings   = [{'finding_id': 'jfv-dict-0', 'data_source': 'test', 'timestamp': '2026-01-01T00:00:00Z', 'entity_context': {'risk': 0...g_id': 'jfv-dict-2', 'data_source': 'test', 'timestamp': '2026-01-01T00:00:00Z', 'entity_context': {'risk': 0.5}, ...}]
+path       = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_findings_with_fractional_0/upload.json')
+prefix     = 'jfv-dict-'
+shape      = 'dict'
+stats      = {'findings_total': 3, 'findings_imported': 0, 'findings_skipped': 0, 'findings_errors': 3, ...}
+tmp_path   = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_findings_with_fractional_0')
+
+tests/unit/ingestion/test_json_fractional_values_db.py:46: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+WARNING  core.storage.service:service.py:362 Bulk insert of 3 findings failed ((builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]); retrying row by row
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.service:service.py:378 Error creating finding 'jfv-dict-0': (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.service:service.py:378 Error creating finding 'jfv-dict-1': (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.service:service.py:378 Error creating finding 'jfv-dict-2': (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+_________ test_findings_with_fractional_jsonb_values_are_stored[list] __________
+
+tmp_path = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_findings_with_fractional_1')
+shape = 'list'
+
+    @pytest.mark.parametrize("shape", ["dict", "list"])
+    def test_findings_with_fractional_jsonb_values_are_stored(tmp_path, shape):
+        prefix = f"jfv-{shape}-"
+        findings = [
+            {
+                "finding_id": f"{prefix}{i}",
+                "data_source": "test",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "entity_context": {"risk": 0.5},
+                "evidence_links": [{"score": 0.25}],
+            }
+            for i in range(3)
+        ]
+        path = tmp_path / "upload.json"
+        path.write_text(json.dumps({"findings": findings} if shape == "dict" else findings))
+    
+        stats = IngestionService().ingest_json_file(path)
+    
+>       assert stats["findings_errors"] == 0
+E       assert 3 == 0
+
+findings   = [{'finding_id': 'jfv-list-0', 'data_source': 'test', 'timestamp': '2026-01-01T00:00:00Z', 'entity_context': {'risk': 0...g_id': 'jfv-list-2', 'data_source': 'test', 'timestamp': '2026-01-01T00:00:00Z', 'entity_context': {'risk': 0.5}, ...}]
+path       = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_findings_with_fractional_1/upload.json')
+prefix     = 'jfv-list-'
+shape      = 'list'
+stats      = {'findings_total': 3, 'findings_imported': 0, 'findings_skipped': 0, 'findings_errors': 3, ...}
+tmp_path   = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_findings_with_fractional_1')
+
+tests/unit/ingestion/test_json_fractional_values_db.py:46: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+WARNING  core.storage.service:service.py:362 Bulk insert of 3 findings failed ((builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}, {'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]); retrying row by row
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.service:service.py:378 Error creating finding 'jfv-list-0': (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.service:service.py:378 Error creating finding 'jfv-list-1': (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+ERROR    core.storage.service:service.py:378 Error creating finding 'jfv-list-2': (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO findings (finding_id, anomaly_score, title, description, entity_context, evidence_links, timestamp, data_source, external_id, cluster_id, severity, noise_marked_at, noise_marked_by, noise_marked_by_kind, noise_reason, created_at, updated_at) VALUES (%(finding_id)s, %(anomaly_score)s, %(title)s, %(description)s, %(entity_context)s::JSONB, %(evidence_links)s::JSONB, %(timestamp)s, %(data_source)s, %(external_id)s, %(cluster_id)s, %(severity)s, %(noise_marked_at)s, %(noise_marked_by)s, %(noise_marked_by_kind)s, %(noise_reason)s, %(created_at)s, %(updated_at)s)]
+[parameters: [{'entity_context': {'risk': Decimal('0.5')}, 'data_source': 'test', 'timestamp': datetime.datetime(2026, 1, 1, 0, 0), 'evidence_links': [{'score': Dec ... (113 characters truncated) ... verity': None, 'noise_reason': None, 'noise_marked_at': None, 'external_id': None, 'anomaly_score': None, 'noise_marked_by_kind': None, 'title': None}]]
+_______________ test_case_with_fractional_jsonb_value_is_stored ________________
+
+tmp_path = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_case_with_fractional_json0')
+
+    def test_case_with_fractional_jsonb_value_is_stored(tmp_path):
+        prefix = "jfv-case-"
+        case = {
+            "case_id": f"{prefix}0",
+            "title": "fractional",
+            "timeline": [{"event": "scored", "score": 0.75}],
+        }
+        path = tmp_path / "upload.json"
+        path.write_text(json.dumps({"findings": [], "cases": [case]}))
+    
+        stats = IngestionService().ingest_json_file(path)
+    
+>       assert stats["cases_errors"] == 0
+E       assert 1 == 0
+
+case       = {'case_id': 'jfv-case-0', 'title': 'fractional', 'timeline': [{'event': 'scored', 'score': 0.75}]}
+path       = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_case_with_fractional_json0/upload.json')
+prefix     = 'jfv-case-'
+stats      = {'findings_total': 0, 'findings_imported': 0, 'findings_skipped': 0, 'findings_errors': 0, ...}
+tmp_path   = PosixPath('/home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/pytest-of-gray/pytest-16/test_case_with_fractional_json0')
+
+tests/unit/ingestion/test_json_fractional_values_db.py:62: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO cases (case_id, title, description, status, priority, assignee, tags, notes, timeline, activities, resolution_steps, mitre_techniques, created_at, updated_at) VALUES (%(case_id)s, %(title)s, %(description)s, %(status)s, %(priority)s, %(assignee)s, %(tags)s::VARCHAR[], %(notes)s::JSONB, %(timeline)s::JSONB, %(activities)s::JSONB, %(resolution_steps)s::JSONB, %(mitre_techniques)s::VARCHAR[], %(created_at)s, %(updated_at)s)]
+[parameters: [{'status': 'new', 'description': '', 'activities': [], 'priority': 'medium', 'notes': [], 'timeline': [{'event': 'scored', 'score': Decimal('0.75')}], 'resolution_steps': [], 'tags': [], 'case_id': 'jfv-case-0', 'title': 'fractional', 'assignee': None, 'mitre_techniques': None}]]
+ERROR    core.storage.service:exceptions.py:77 DatabaseService.create_case failed
+Traceback (most recent call last):
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1791, in _execute_context
+    context = constructor(
+              ^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 1784, in _init_compiled
+    flattened_processors[key](compiled_params[key])
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/sql/sqltypes.py", line 2972, in process
+    return json_serializer(value)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type Decimal is not JSON serializable
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/c789ea2b-af72-4f35-8b99-6f4cdf64e379/core/exceptions.py", line 74, in wrapper
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/c789ea2b-af72-4f35-8b99-6f4cdf64e379/core/storage/service.py", line 932, in create_case
+    session.flush()
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4536, in flush
+    self._flush(objects)
+  File "<sqlalchemy generated warned() wrapper for sqlalchemy.orm.session.Session._flush>", line 2, in _flush
+    return target(fn, self, objects=objects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py", line 281, in warned
+    return fn(*args, **kwargs)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4679, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 166, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4640, in _flush
+    flush_context.execute()
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 467, in execute
+    rec.execute(self)
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 643, in execute
+    util.preloaded.orm_persistence._save_obj(
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 92, in _save_obj
+    _emit_insert_statements(
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 1237, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1448, in execute
+    return meth(
+           ^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 533, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1668, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1797, in _execute_context
+    self._handle_dbapi_exception(
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2332, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1791, in _execute_context
+    context = constructor(
+              ^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 1784, in _init_compiled
+    flattened_processors[key](compiled_params[key])
+  File "/home/gray/Deeptempo/vigil/venv/lib/python3.12/site-packages/sqlalchemy/sql/sqltypes.py", line 2972, in process
+    return json_serializer(value)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "/home/gray/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+sqlalchemy.exc.StatementError: (builtins.TypeError) Object of type Decimal is not JSON serializable
+[SQL: INSERT INTO cases (case_id, title, description, status, priority, assignee, tags, notes, timeline, activities, resolution_steps, mitre_techniques, created_at, updated_at) VALUES (%(case_id)s, %(title)s, %(description)s, %(status)s, %(priority)s, %(assignee)s, %(tags)s::VARCHAR[], %(notes)s::JSONB, %(timeline)s::JSONB, %(activities)s::JSONB, %(resolution_steps)s::JSONB, %(mitre_techniques)s::VARCHAR[], %(created_at)s, %(updated_at)s)]
+[parameters: [{'status': 'new', 'description': '', 'activities': [], 'priority': 'medium', 'notes': [], 'timeline': [{'event': 'scored', 'score': Decimal('0.75')}], 'resolution_steps': [], 'tags': [], 'case_id': 'jfv-case-0', 'title': 'fractional', 'assignee': None, 'mitre_techniques': None}]]
+ERROR    core.ingestion.ingestion_service:ingestion_service.py:521 Failed to create case: jfv-case-0
+============================= slowest 10 durations =============================
+1.07s setup    unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[dict]
+0.26s call     unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[dict]
+0.24s teardown unit/ingestion/test_json_fractional_values_db.py::test_case_with_fractional_jsonb_value_is_stored
+0.03s call     unit/ingestion/test_json_fractional_values_db.py::test_case_with_fractional_jsonb_value_is_stored
+0.02s call     unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[list]
+
+(4 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[dict]
+FAILED tests/unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[list]
+FAILED tests/unit/ingestion/test_json_fractional_values_db.py::test_case_with_fractional_jsonb_value_is_stored
+========================= 3 failed, 1 warning in 2.47s =========================

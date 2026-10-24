@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/c789ea2b-af72-4f35-8b99-6f4cdf64e379/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 104 items
+
+tests/unit/ingestion/test_dedup.py .........                             [  8%]
+tests/unit/ingestion/test_dedup_batch.py ..........                      [ 18%]
+tests/unit/ingestion/test_ingest_case_notes.py ..                        [ 20%]
+tests/unit/ingestion/test_ingestion_common_keys.py .......               [ 26%]
+tests/unit/ingestion/test_ingestion_finding_ids.py ...............       [ 41%]
+tests/unit/ingestion/test_ingestion_jobs.py ..................           [ 58%]
+tests/unit/ingestion/test_ingestion_nullable_fields.py ................  [ 74%]
+tests/unit/ingestion/test_ingestion_upload_api.py ............           [ 85%]
+tests/unit/ingestion/test_json_fractional_values_db.py ...               [ 88%]
+tests/unit/ingestion/test_kafka_consumer.py ........                     [ 96%]
+tests/unit/ingestion/test_reupload_external_id.py ....                   [100%]
+
+============================= slowest 10 durations =============================
+1.59s setup    unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[dict]
+0.37s setup    unit/ingestion/test_ingestion_common_keys.py::test_sample_findings_import_with_every_field_kept
+0.21s call     unit/ingestion/test_ingestion_upload_api.py::test_upload_is_accepted_without_waiting_for_the_ingest
+0.11s call     unit/ingestion/test_ingestion_upload_api.py::test_a_second_upload_is_refused_while_one_is_running
+0.08s call     unit/ingestion/test_ingestion_upload_api.py::test_jobs_are_listed_newest_first_for_re_attach
+0.07s call     unit/ingestion/test_ingestion_upload_api.py::test_an_oversized_upload_is_rejected_before_a_job_is_created
+0.07s teardown unit/ingestion/test_reupload_external_id.py::test_a_database_failure_is_recorded_in_plain_language
+0.05s setup    unit/ingestion/test_dedup.py::TestRedisDedupFallback::test_is_processed_empty
+0.05s call     unit/ingestion/test_ingestion_upload_api.py::test_a_payload_that_can_create_cases_needs_cases_write
+0.05s call     unit/ingestion/test_ingestion_upload_api.py::test_the_slot_is_released_once_the_running_job_finishes
+====================== 104 passed, 241 warnings in 5.45s =======================
