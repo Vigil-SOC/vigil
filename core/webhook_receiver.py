@@ -44,7 +44,6 @@ async def read_signed_json(
     get_secret: Callable[[], Optional[str]],
     get_max_body_bytes: Callable[[], int],
 ) -> Dict[str, Any]:
-    """Authenticate the raw body against the shared secret and parse it as a JSON object."""
     try:
         secret = get_secret()
     except Exception as exc:  # noqa: BLE001
@@ -72,7 +71,6 @@ async def read_signed_json(
             detail=f"Body exceeds {max_body_bytes} bytes",
         )
     expected = hmac.new(secret.encode("utf-8"), raw, sha256).hexdigest()
-    # Accept a "sha256=" prefix on the signature.
     if not signature or not hmac.compare_digest(
         expected, signature.split("=", 1)[-1].strip()
     ):
@@ -99,7 +97,6 @@ async def read_signed_json(
 
 
 def ingest(service: Any, finding: Optional[Dict], label: str) -> Dict[str, Any]:
-    """Store a transformed finding through ``service.ingestion_service``."""
     if finding is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
