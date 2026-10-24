@@ -70,6 +70,15 @@ async def test_lookback_caps_at_60_minutes():
 
 
 @pytest.mark.asyncio
+async def test_steady_state_keeps_fixed_window_as_floor():
+    # A poll one tick after the last success must not narrow below the fixed window,
+    # or detections indexed a few minutes late fall between two polls.
+    cs, elastic = await _query_starts(_NOW - timedelta(minutes=1))
+    assert cs == _NOW - timedelta(minutes=5)
+    assert elastic == _NOW - timedelta(minutes=6)
+
+
+@pytest.mark.asyncio
 async def test_first_run_keeps_fixed_window():
     cs, elastic = await _query_starts(None)
     assert cs == _NOW - timedelta(minutes=5)

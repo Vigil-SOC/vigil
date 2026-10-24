@@ -107,11 +107,14 @@ class PollState:
         # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
         # Cap at 60 minutes: an uncapped window can exceed the ~110s job deadline,
         # fail, and then retry the same window forever. First run keeps the
-        # fixed interval window.
+        # fixed interval window. Never narrower than that window: sources index
+        # detections a minute or more after creation, so a poll one tick after
+        # the last success must still reach back past the previous poll.
+        floor = max(interval_seconds // 60 + 1, 5)
         if self.last_poll_time is None:
-            return max(interval_seconds // 60 + 1, 5)
+            return floor
         elapsed = int((utcnow() - self.last_poll_time).total_seconds() // 60) + 1
-        return min(max(elapsed, 1), 60)
+        return min(max(elapsed, floor), 60)
 
 
 class DataPoller:
