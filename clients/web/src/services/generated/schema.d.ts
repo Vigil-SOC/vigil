@@ -1587,7 +1587,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_cases_metrics_summary"];
         put?: never;
@@ -2807,9 +2808,7 @@ export interface paths {
         put?: never;
         /**
          * Set Orchestrator Config
-         * @description Set orchestrator configuration. Persists settings AND syncs the
-         *     runtime enabled flag used by GET /api/orchestrator/status (which
-         *     NavigationRail uses to show/hide the Auto Ops tab).
+         * @description Set orchestrator configuration.
          *
          *     A ``profiles`` field on the body is ignored. The stored object stays the
          *     flat keys; no profile name is written.
@@ -5956,7 +5955,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_v1_cases_metrics_summary"];
         put?: never;
@@ -11242,8 +11242,6 @@ export interface components {
              * @default false
              */
             approval_required: boolean;
-            /** Conditions */
-            conditions?: unknown | null;
             /**
              * Expected Output
              * @default
@@ -11253,8 +11251,6 @@ export interface components {
             name: string;
             /** Order */
             order?: number | null;
-            /** Parallel Group */
-            parallel_group?: string | null;
             /** Phase Id */
             phase_id?: string | null;
             /**
@@ -11264,11 +11260,6 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
-            /**
-             * Timeout Seconds
-             * @default 300
-             */
-            timeout_seconds: number | null;
             /** Tools */
             tools?: string[];
         };
