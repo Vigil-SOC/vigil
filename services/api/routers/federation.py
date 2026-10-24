@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 
 from core.auth.permissions import permission_gate
 from core.federation import registry as fed_registry
-from core.federation.contract import FederationAdapter
 from core.federation import store as fed_store
+from core.federation.contract import FederationAdapter
 from core.federation.lag import source_collection_lag
 from core.federation.runner import request_poll_now
 from core.routing import Auth, RouterMeta
