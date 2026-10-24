@@ -1,0 +1,21 @@
+==========================.............................................. [ 27%]
+............................................sss..ss..................... [ 54%]
+........................................................................ [ 81%]
+..................................................                       [100%]
+=============================== warnings summary ===============================
+unit/_ratchets/test_desktop_version_tracks_release.py::test_support_tarball_is_stamped_runnable_and_verifiable
+  /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/43020eec-5725-421f-a718-daa478b92b78/tests/unit/_ratchets/test_desktop_version_tracks_release.py:95: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    tar.extractall(tmp_path / "x")
+
+unit/_ratchets/test_hunt_capabilities_agree.py::test_backend_candidates_are_in_the_tool_manifest
+  /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/43020eec-5725-421f-a718-daa478b92b78/core/storage/service.py:124: SADeprecationWarning: The noload() option is deprecated and will be removed in a future release.  This option produces incorrect results by returning ``None`` for related items. (deprecated since: 2.1)
+    noload(Finding.cases),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 5 durations ==============================
+32.93s call     unit/_ratchets/test_config_audit_actor.py::test_no_placeholder_or_anonymous_config_actor
+30.79s call     unit/_ratchets/test_one_egress.py::test_no_provider_client_is_built_outside_the_sanctioned_sites
+28.89s call     unit/_ratchets/test_no_ambient_state.py::test_no_lazy_singleton_accessors
+25.36s call     unit/_ratchets/test_one_loop_gate.py::test_fails_on_a_planted_loop[\nasync def investigate(client, messages, tools):\n    while True:\n        response = await client.chat.completions.create(model="m", messages=messages)\n        if not response.choices[0].message.tool_calls:\n            return response\n        messages.append(response.choices[0].message)\n]
+24.97s call     unit/_ratchets/test_one_egress.py::test_no_provider_host_is_dialled_directly
+260 passed, 6 skipped, 2 warnings in 482.91s (0:08:02)
