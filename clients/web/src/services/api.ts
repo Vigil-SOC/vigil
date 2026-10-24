@@ -1204,11 +1204,6 @@ export const reasoningApi = {
     api
       .get(`/reasoning/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`)
       .then(r => r.data),
-
-  listInvestigationInteractions: (investigationId: string, params?: { limit?: number; offset?: number }) =>
-    api
-      .get(`/reasoning/investigation/${encodeURIComponent(investigationId)}/interactions`, { params })
-      .then(r => r.data),
 }
 
 // returns raw axios responses (read `res.data`), matching casesApi
