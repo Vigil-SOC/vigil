@@ -58,24 +58,19 @@ def test_validate_integration_id_accepts_safe():
         assert _validate_integration_id(ok) == ok
 
 
-def test_server_path_stays_in_base(tmp_path, monkeypatch):
-    """A crafted (now-impossible) ID can't escape the base dir even if
-    validation were bypassed — the resolved-path check is the second
-    line of defense."""
+def test_server_path_stays_in_base(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    outside = tmp_path / "outside.py"
+    (base / "evil_server.py").symlink_to(outside)
     svc = CustomIntegrationService.__new__(CustomIntegrationService)
-    svc.custom_integrations_dir = tmp_path.resolve()
-    # Sanity: legitimate ID
-    path = svc._server_path_for("custom-misp")
-    assert str(path).startswith(str(svc.custom_integrations_dir))
+    svc.custom_integrations_dir = base.resolve()
 
-    # Forcing a bad ID past the regex (simulating an internal bypass)
-    # — _server_path_for still rejects the resolved path.
-    class _FakePath:
-        pass
-
-    with pytest.raises(InvalidIntegrationIdError):
-        # Re-run validation explicitly to confirm rejection
-        _validate_integration_id("../escape")
+    assert (
+        svc._server_path_for("custom-misp") == base.resolve() / "custom-misp_server.py"
+    )
+    with pytest.raises(InvalidIntegrationIdError, match="escapes"):
+        svc._server_path_for("evil")
 
 
 @pytest.mark.asyncio

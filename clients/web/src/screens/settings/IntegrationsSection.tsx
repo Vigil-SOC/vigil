@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -6,7 +6,6 @@ import { PageHead } from '../../shared/PageHead'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
-import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
 import { detectionRulesApi, mcpApi } from '../../services/api'
 import {
@@ -50,11 +49,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const { reload: reloadExtensions } = useExtensions()
   const [busy, setBusy] = useState<string | null>(null)
   const [reloadingServers, setReloadingServers] = useState(false)
-  // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
-  const [customCount, setCustomCount] = useState<number | null>(null)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
   const { error, reload: reloadMcp, setServerEnabled } = mcp
-  const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = int
+  const { config: intCfg, custom, reloadCustom, reload: reloadInt, saveIntegration, setIntegrationEnabled } = int
 
   // state lives above the section, so a visit does not refetch: Refresh does
   const reload = () => {
@@ -90,23 +87,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     }
   }
 
-  const reloadCustom = useCallback(async () => {
-    try {
-      const r = await fetch(`${basePath}/api/custom-integrations/list`, { credentials: 'include' })
-      const d = r.ok ? await r.json() : null
-      setCustomCount(Array.isArray(d?.integrations) ? d.integrations.length : null)
-    } catch {
-      setCustomCount(null)
-    }
-  }, [])
-
   useEffect(() => {
     setTab(requested)
   }, [requested])
-
-  useEffect(() => {
-    reloadCustom()
-  }, [reloadCustom])
 
   const connected = useMemo(
     () => rows.filter((r) => r.connected).sort((a, b) => categoryRank(a.name) - categoryRank(b.name)),
@@ -169,7 +152,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const tabs: [IntegrationsTab, string, number | null][] = [
     ['connected', 'Connected', ready ? connected.length : null],
     ['add', 'Add integration', ready ? available : null],
-    ['custom', 'Custom', customCount],
+    ['custom', 'Custom', custom?.length ?? null],
     ['surface', 'Vigil MCP server', null],
   ]
   const first = attention[0]
@@ -349,10 +332,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         <CustomIntegrationBuilder
           notify={notify}
           onWrote={reloadCustom}
-          onSaved={() => {
-            reloadCustom()
-            reload()
-          }}
+          onSaved={reload}
         />
       </div>
 

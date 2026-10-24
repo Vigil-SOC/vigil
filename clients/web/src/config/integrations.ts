@@ -1180,32 +1180,18 @@ export const INTEGRATION_CATEGORIES = [
   'Custom',
 ]
 
-let customIntegrations: IntegrationMetadata[] = []
-
 let allIntegrations: IntegrationMetadata[] = [...INTEGRATIONS]
 
-export async function loadCustomIntegrations(): Promise<void> {
-  try {
-    const response = await fetch(`${basePath}/api/custom-integrations/list`, {
-      credentials: 'include',
-    })
-    const data = await response.json()
-    
-    if (data.success && data.integrations) {
-      customIntegrations = data.integrations.map((metadata: any) => ({
-        ...metadata,
-        is_custom: true,
-      }))
-      
-      allIntegrations = [...INTEGRATIONS, ...customIntegrations]
-      
-      console.log(`Loaded ${customIntegrations.length} custom integrations`)
-    }
-  } catch (error) {
-    console.error('Error loading custom integrations:', error)
-    customIntegrations = []
-    allIntegrations = [...INTEGRATIONS]
-  }
+/** Refreshes getAllIntegrations(). Resolves to the saved custom integrations, or null when the list is refused (non-admin) or unreadable. */
+export async function loadCustomIntegrations(): Promise<IntegrationMetadata[] | null> {
+  const data = await fetch(`${basePath}/api/custom-integrations/list`, { credentials: 'include' })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+  const custom: IntegrationMetadata[] | null = Array.isArray(data?.integrations)
+    ? data.integrations.map((m: IntegrationMetadata) => ({ ...m, is_custom: true }))
+    : null
+  allIntegrations = [...INTEGRATIONS, ...(custom ?? [])]
+  return custom
 }
 
 export function getAllIntegrations(): IntegrationMetadata[] {
