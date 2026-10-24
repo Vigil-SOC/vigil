@@ -36,7 +36,6 @@ SINGLETON_ALLOWED = {
     ("services/api/routers/custom_agents.py", "service"),
     ("services/api/routers/findings.py", "data_service"),
     ("services/api/routers/vstrike.py", "data_service"),
-    ("core/cases/case_automation_service.py", "automation_service"),
     ("core/ingestion/ingestion_jobs.py", "_registry"),
 }
 

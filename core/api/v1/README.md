@@ -108,7 +108,7 @@ the v1 functions, staying in-router with the literal siblings.
 | workflows  | done          | 2 / 16     | catalog only (list + get); runs are agent-runs, not workflow runs. Additive v1 + console delegates (see below) |
 | runs (agent-runs) | done   | 4/3       | whole move of the 3 routes (start/get/directives) + built `GET /api/v1/agent-runs` (`list_runs`, reads workflow_runs filtered to source=agent). Frozen run surface = agent runs, not workflow runs or `/internal/runs` |
 | analytics  | deferred      | —          | RULED: not frozen now (routes exist but shape will churn)     |
-| cases/metrics | done       | 6 / 8      | all 8 under `/api/v1/cases/metrics`; 6 frozen, 2 marked `x-vigil-beta` (excluded from the contract snapshot). Frozen: by-priority, by-status, breached, mttr, mttd, summary |
+| cases/metrics | done       | 6 / 7      | all 7 under `/api/v1/cases/metrics`; 6 frozen, 1 marked `x-vigil-beta` (excluded from the contract snapshot). Frozen: by-priority, by-status, breached, mttr, mttd, summary |
 | verdicts   | deferred      | build      | no routes exist yet                          |
 | learning   | deferred      | build      | no routes exist yet                          |
 
