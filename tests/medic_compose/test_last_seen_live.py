@@ -15,7 +15,8 @@ The real backend, Postgres, the upgrade one-shot, Redis, gateway and **Medic** (
 3. Medic stopped: ``down`` within 270 s of the kill, failure kind ``refused``.
 4. The backend restarted: still ``down``, same ``first_failed_at``.
 5. Medic started again: ``running``, the failure cleared, its restart counted.
-Own project (`medic-s9`), torn down at the end; nothing outside it is touched.
+Own project (`medic-s9`, or VIGIL_MEDIC_COMPOSE_PROJECT_S9), torn down at the
+end; nothing outside it is touched.
 """
 
 from __future__ import annotations
@@ -26,11 +27,12 @@ import re
 import subprocess
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
-from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE, REPO
-from tests.medic_compose.test_enable_live import INSTALL, OVERRIDE, Stack
+from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE, REPO, compose_project
+from tests.medic_compose.test_enable_live import INSTALL, OVERRIDE, Stack as EnableStack
 
 # core.platform.medic_status.DOWN_AFTER_S, read from the source: this suite runs
 # without Vigil's dependencies (medic.yml's Compose job), so it can't import it.
@@ -43,7 +45,19 @@ DOWN_AFTER_S = int(
 )
 # One status sample = `docker exec backend python -c …` (a few seconds) + 3 s.
 SAMPLE_SLACK_S = 10
-PROJECT = os.environ.get("VIGIL_MEDIC_LAST_SEEN_PROJECT", "medic-s9")
+PROJECT_ENV = "VIGIL_MEDIC_COMPOSE_PROJECT_S9"
+
+
+class Stack(EnableStack):
+    """Enable's stack on this suite's own project."""
+
+    def __init__(self, home: Path) -> None:
+        super().__init__(
+            home,
+            project=compose_project(PROJECT_ENV, "medic-s9"),
+            files=(OVERRIDE,),
+        )
+
 
 pytestmark = [
     pytest.mark.integration,
@@ -80,11 +94,7 @@ MEDIC_STATES = (
 
 @pytest.fixture(scope="module")
 def stack(tmp_path_factory):
-    s = Stack(
-        tmp_path_factory.mktemp("medic-v2-home"),
-        project=PROJECT,
-        files=(OVERRIDE,),
-    )
+    s = Stack(tmp_path_factory.mktemp("medic-v2-home"))
     try:
         s.compose("build", "backend")
         s.compose("up", "-d", *INSTALL)
