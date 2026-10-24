@@ -22,19 +22,6 @@ import type { ToolResult } from "./tool.js";
 
 export const RECALL_TOOL = "recall_entity";
 
-// What the arch asks for; a ToolSpec binds it to the tool id via `provides`.
-export const RECALL_CAPABILITY = "entity_recall";
-
-// Keyed by what plugins/hunt/plugin.yaml declares: its roles, and "agent" for the
-// one agent that queries, which holds the plugin's top-level `needs`. Empties are
-// decisions: the lead never queries, and narrative search -- the lead's alone --
-// ships no tool here.
-export const RECALL_GRANTS = {
-  lead: [],
-  critic: [],
-  agent: [RECALL_CAPABILITY],
-} as const;
-
 // Who concluded, as opposed to what the source is.
 export const TRUST_LEVELS = ["analyst", "agent"] as const;
 export type Trust = (typeof TRUST_LEVELS)[number];

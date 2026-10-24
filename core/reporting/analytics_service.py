@@ -5,7 +5,7 @@ request-scoped ``Session``; nothing here commits — the unit of work owns that.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func
@@ -33,12 +33,7 @@ _NOT_PROBE = Finding.data_source != "probe"
 async def collect_insights_inputs(
     db: Session, time_range: str
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """Collect the metrics + time_series inputs that the insights model needs.
-
-    Kept small so both the GET (opportunistic background refresh) and POST
-    (forced refresh) insights endpoints can schedule regeneration without
-    duplicating logic.
-    """
+    """Collect the metrics + time_series inputs that the insights model needs."""
     start_time, end_time = get_time_range(time_range)
     period_duration = end_time - start_time
     prev_start = start_time - period_duration
@@ -219,27 +214,21 @@ async def calculate_metrics(
     }
 
 
+_BUCKET_COUNTS = {"24h": 24, "7d": 28}
+
+
 async def get_time_series_data(
     db: Session, start_time: datetime, end_time: datetime, time_range: str
 ) -> List[Dict[str, Any]]:
     """Get time series data for findings, cases, and alerts."""
-
-    # Determine bucket size based on time range
-    if time_range == "24h":
-        bucket_size = timedelta(hours=1)
-        bucket_count = 24
-    elif time_range == "7d":
-        bucket_size = timedelta(hours=6)
-        bucket_count = 28
-    else:  # 30d
-        bucket_size = timedelta(days=1)
-        bucket_count = 30
+    bucket_count = _BUCKET_COUNTS.get(time_range, 30)
+    window = end_time - start_time
 
     time_series = []
     current_time = start_time
 
-    for _ in range(bucket_count):
-        bucket_end = min(current_time + bucket_size, end_time)
+    for i in range(1, bucket_count + 1):
+        bucket_end = start_time + window * i / bucket_count
 
         findings_count = (
             db.query(func.count(Finding.finding_id))
@@ -330,57 +319,6 @@ async def get_top_alert_sources(
     return [
         {"name": source or "Unknown", "count": count} for source, count in top_sources
     ]
-
-
-async def get_response_time_trend(
-    db: Session, start_time: datetime, end_time: datetime, time_range: str
-) -> List[Dict[str, Any]]:
-    """Get response time trend over the period."""
-
-    # Determine periods based on time range
-    if time_range == "24h":
-        period_size = timedelta(hours=4)
-        period_count = 6
-    elif time_range == "7d":
-        period_size = timedelta(days=1)
-        period_count = 7
-    else:  # 30d
-        period_size = timedelta(days=5)
-        period_count = 6
-
-    trend_data = []
-    current_time = start_time
-    target_time = 30  # 30 minute target response time
-
-    for i in range(period_count):
-        period_end = min(current_time + period_size, end_time)
-
-        avg_time_result = (
-            db.query(
-                func.avg(func.extract("epoch", Case.updated_at - Case.created_at) / 60)
-            )
-            .filter(
-                and_(
-                    Case.created_at.between(current_time, period_end),
-                    Case.status != "new",
-                )
-            )
-            .scalar()
-        )
-
-        avg_time = round(avg_time_result or 0, 1)
-
-        trend_data.append(
-            {
-                "period": f"P{i+1}",
-                "avgTime": avg_time,
-                "target": target_time,
-            }
-        )
-
-        current_time = period_end
-
-    return trend_data
 
 
 async def get_affected_entities(

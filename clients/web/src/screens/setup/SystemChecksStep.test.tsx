@@ -4,6 +4,7 @@ import SystemChecksStep from './SystemChecksStep'
 import { useSystemChecks } from './useSystemChecks'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
 import { readProviderStatus } from '../../routing/useSetupStatus'
+import type { ProcessesRead } from '../../shell/statusLine'
 
 vi.mock('../../services/api', () => ({
   consoleApi: { getHealth: vi.fn(), getProcesses: vi.fn() },
@@ -20,8 +21,8 @@ vi.mock('../../routing/useSetupStatus', () => ({
 const Harness = () => <SystemChecksStep {...useSystemChecks()} />
 
 // what the backend reports when both processes are up
-const RUNNING = { agent_layer: 'running', daemon: 'running' }
-const processes = (read: Record<string, string>) =>
+const RUNNING: ProcessesRead = { agent_layer: 'running', daemon: 'running' }
+const processes = (read: ProcessesRead) =>
   vi.mocked(consoleApi.getProcesses).mockResolvedValue({ data: read } as never)
 
 const row = (label: string) => screen.getByText(label).closest('[role="listitem"]') as HTMLElement
@@ -192,7 +193,7 @@ describe('SystemChecksStep', () => {
     ).toBeInTheDocument()
   })
 
-  it.each([
+  it.each<[ProcessesRead['agent_layer'], string]>([
     ['no_token', 'AGENT_INTERNAL_TOKEN is not set · chat and workflow runs fail'],
     ['not_running', 'Not running · chat and workflow runs fail'],
     ['unhealthy', 'Not ready · chat and workflow runs fail'],
@@ -207,7 +208,7 @@ describe('SystemChecksStep', () => {
     ).toBeInTheDocument()
   })
 
-  it.each([
+  it.each<[ProcessesRead['daemon'], string]>([
     ['not_running', 'Not running · alerts are not polled or triaged'],
     ['unhealthy', 'Running, but a component stopped'],
   ])('needs you, and counts a warning, when the SOC daemon is %s', async (daemon, detail) => {

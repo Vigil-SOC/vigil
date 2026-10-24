@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import IntegrationsSection from './IntegrationsSection'
 import { tabFromQuery } from './integrationsData'
 import { IntegrationsStateProvider } from './IntegrationsState'
-import { configApi, detectionRulesApi, mcpApi } from '../../services/api'
+import { configApi, customIntegrationsApi, detectionRulesApi, mcpApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   default: {},
@@ -13,6 +13,11 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
     setIntegrations: vi.fn(),
+  },
+  customIntegrationsApi: {
+    generate: vi.fn(),
+    save: vi.fn(),
+    validate: vi.fn(),
   },
   detectionRulesApi: {
     listSources: vi.fn(() => Promise.resolve({ data: { sources: [] } })),
@@ -372,25 +377,31 @@ describe('Integrations: Custom tab', () => {
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: { statuses: [] } } as never)
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string, init?: { body?: string }) => {
-        calls.push({ url, body: init?.body ? JSON.parse(init.body) : null })
+      vi.fn(async (url: string) => {
+        calls.push({ url, body: null })
         const ok = (body: unknown) => ({ ok: true, json: async () => body })
         if (url.endsWith('/list')) {
           if (listed < 0) return { ok: false, json: async () => ({}) }
           return ok({ success: true, integrations: Array.from({ length: listed }, (_, i) => ({ id: `c${i}` })) })
         }
-        if (url.endsWith('/generate')) {
-          const r = generateReply() as { fail?: string }
-          return r.fail ? { ok: false, json: async () => ({ detail: r.fail }) } : ok(r)
-        }
-        if (url.endsWith('/save')) {
-          listed += 1
-          return ok({ success: true })
-        }
-        if (url.endsWith('/validate')) return ok({ valid: true, checks: { has_server: true, has_main: true } })
         return ok({})
       }),
     )
+    vi.mocked(customIntegrationsApi.generate).mockImplementation((async (body: Record<string, unknown>) => {
+      calls.push({ url: '/generate', body })
+      const r = generateReply() as { fail?: string }
+      if (r.fail) throw { response: { data: { detail: r.fail } } }
+      return { data: r }
+    }) as never)
+    vi.mocked(customIntegrationsApi.save).mockImplementation((async (body: Record<string, unknown>) => {
+      calls.push({ url: '/save', body })
+      listed += 1
+      return { data: { success: true } }
+    }) as never)
+    vi.mocked(customIntegrationsApi.validate).mockImplementation((async (id: string) => {
+      calls.push({ url: `/${id}/validate`, body: null })
+      return { data: { valid: true, checks: { has_server: true, has_main: true } } }
+    }) as never)
   })
 
   const open = async (n = 'Custom 1') => {
@@ -424,10 +435,8 @@ describe('Integrations: Custom tab', () => {
   it('shows loading while Vigil drafts, then the draft: settings, tools and editable code', async () => {
     let finish: (v: unknown) => void = () => {}
     const pending = new Promise((r) => { finish = r })
-    const base = vi.mocked(fetch).getMockImplementation()!
-    vi.mocked(fetch).mockImplementation(async (url, init) =>
-      String(url).endsWith('/generate') ? ((await pending, base(url, init)) as never) : (base(url, init) as never),
-    )
+    const base = vi.mocked(customIntegrationsApi.generate).getMockImplementation()!
+    vi.mocked(customIntegrationsApi.generate).mockImplementation(async (body) => (await pending, base(body)))
     await open()
     fireEvent.change(screen.getByLabelText(/^API documentation/), { target: { value: 'GET /v2/findings' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }))

@@ -14,7 +14,9 @@ import {
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
   CLOSURE_CATEGORIES,
+  isCaseStatus,
   type CaseFilters,
+  type CaseStatus,
   type Phase,
 } from './useCases'
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select, activateOnKey } from '../../shared/ui'
@@ -632,7 +634,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
 function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState('medium')
-  const [status, setStatus] = useState('open')
+  const [status, setStatus] = useState<CaseStatus>('open')
   const [description, setDescription] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -682,7 +684,7 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
             <span>Status</span>
             <Select
               value={status}
-              onSelect={setStatus}
+              onSelect={(v) => isCaseStatus(v) && setStatus(v)}
               options={[
                 { value: 'open', label: 'Open' },
                 { value: 'investigating', label: 'Investigating' },
@@ -756,7 +758,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
       await casesApi.update(c.id, {
         title: title.trim(),
         priority,
-        ...(closing ? {} : { status }),
+        ...(closing || !isCaseStatus(status) ? {} : { status }),
         // '' (not omitted) so clearing the field unassigns
         assignee: assignee.trim(),
         description: description.trim() || undefined,

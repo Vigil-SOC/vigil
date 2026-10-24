@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { authBypassed, foldStatus, type StatusReads } from './statusLine'
+import { authBypassed, foldStatus, type ProcessesRead, type StatusReads } from './statusLine'
 
 const reads = (health: StatusReads['health']): StatusReads => ({
   health,
@@ -39,7 +39,7 @@ describe('foldStatus processes', () => {
     processes,
   })
 
-  it.each([
+  it.each<[ProcessesRead['agent_layer'], string]>([
     ['no_token', 'Agent layer has no internal token.'],
     ['not_running', 'Agent layer is not running.'],
     ['unhealthy', 'Agent layer is not ready.'],
@@ -62,7 +62,7 @@ describe('foldStatus processes', () => {
   })
 
   it('says nothing when the read failed or the state is unknown', () => {
-    for (const processes of [null, { agent_layer: 'unknown', daemon: 'unknown' }]) {
+    for (const processes of [null, { agent_layer: 'unknown', daemon: 'unknown' } as const]) {
       expect(foldStatus(healthy(processes))).toEqual({ level: 'good', sentence: 'No problems reported.' })
     }
   })
@@ -71,7 +71,7 @@ describe('foldStatus processes', () => {
     expect(
       foldStatus({
         ...reads({ status: 'degraded', storage: { database_available: false, demo_mode: false } }),
-        processes: { agent_layer: 'not_running' },
+        processes: { agent_layer: 'not_running', daemon: 'running' },
       }),
     ).toEqual({ level: 'poor', sentence: 'Database is unavailable.' })
     expect(

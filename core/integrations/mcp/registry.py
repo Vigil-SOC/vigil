@@ -6,7 +6,6 @@ whatever MCP servers are currently active, without hardcoding.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -22,43 +21,30 @@ class MCPRegistry:
     """
 
     def __init__(self):
-        self._servers: Dict[str, Dict[str, Any]] = {}
+        self._servers: Dict[str, bool] = {}
         self._tools_cache: Dict[str, List[Dict]] = {}
-        self._last_refresh: Optional[datetime] = None
 
-    def register_server(
-        self, name: str, config: Dict[str, Any], tools: Optional[List[Dict]] = None
-    ):
+    def register_server(self, name: str, tools: Optional[List[Dict]] = None):
         """
         Register an MCP server and its tools.
 
         Args:
             name: Server name (e.g., 'security-detections', 'vigil')
-            config: Server config (command, args, env, etc.)
             tools: List of tool definitions (name, description, input_schema)
         """
-        self._servers[name] = {
-            "name": name,
-            "config": config,
-            "registered_at": datetime.now().isoformat(),
-            "active": True,
-        }
+        self._servers[name] = True
         if tools:
             self._tools_cache[name] = tools
         logger.info(f"Registered MCP server: {name} ({len(tools or [])} tools)")
 
     def get_active_servers(self) -> List[str]:
         """Get names of all active servers."""
-        return [
-            name for name, info in self._servers.items() if info.get("active", False)
-        ]
+        return [name for name, active in self._servers.items() if active]
 
     def set_active(self, server_name: str, active: bool) -> None:
         """Mark one server active or inactive. No-op when it is not registered."""
-        info = self._servers.get(server_name)
-        if info is None:
-            return
-        info["active"] = active
+        if server_name in self._servers:
+            self._servers[server_name] = active
 
     def get_all_tools(self) -> List[Dict]:
         """
@@ -147,20 +133,11 @@ def _cached_tools() -> Dict[str, List[Dict[str, Any]]]:
     return {}
 
 
-def _server_config(mcp_client, name: str) -> Dict[str, Any]:
-    service = getattr(mcp_client, "mcp_service", None)
-    server = getattr(service, "servers", {}).get(name) if service else None
-    if server is None:
-        return {}
-    return {"command": server.command, "args": server.args, "env": server.env}
-
-
 def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
+    # Input can be the on-disk cache, which is hand-editable, so keep the dict guard.
     schema = tool.get("inputSchema", {})
-    if hasattr(schema, "model_dump"):
-        schema = schema.model_dump()
-    elif not isinstance(schema, dict):
-        schema = dict(schema) if schema else {}
+    if not isinstance(schema, dict):
+        schema = {}
     return {
         "name": tool.get("name", "unknown"),
         "description": tool.get("description", ""),
@@ -211,9 +188,7 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         if connected and not connected.get(name, False):
             logger.debug("Skipping %s: cached but not connected this boot", name)
             continue
-        registry.register_server(
-            name, _server_config(mcp_client, name), [_normalised(t) for t in tools]
-        )
+        registry.register_server(name, [_normalised(t) for t in tools])
         registered += 1
 
     logger.info("MCP registry populated from %d server(s)", registered)
@@ -246,11 +221,7 @@ def register_connected(registry: MCPRegistry, mcp_client, server_name: str) -> b
         tools = (getattr(mcp_client, "tools_cache", None) or {}).get(server_name)
         if not isinstance(tools, list) or not tools:
             return False
-        registry.register_server(
-            server_name,
-            _server_config(mcp_client, server_name),
-            [_normalised(t) for t in tools],
-        )
+        registry.register_server(server_name, [_normalised(t) for t in tools])
         return True
     except Exception as exc:  # noqa: BLE001 — callers must not 500 on a registry write
         logger.warning("Could not register MCP server %s: %s", server_name, exc)
@@ -306,9 +277,7 @@ def refresh_from_client(registry: MCPRegistry) -> int:
     for name, tools in tools_dict.items():
         if connected and not connected.get(name, False):
             continue
-        registry.register_server(
-            name, _server_config(mcp_client, name), [_normalised(t) for t in tools]
-        )
+        registry.register_server(name, [_normalised(t) for t in tools])
         added += 1
     return added
 
