@@ -1,0 +1,5 @@
+0.20s setup    unit/daemon/test_orchestrator_runs.py::TestShadowAdjudication::test_a_shadow_that_fails_never_fails_the_real_run
+0.18s call     unit/daemon/test_cleanup_expires_approvals.py::test_cleanup_expires_approvals_using_the_configured_window
+0.15s call     unit/daemon/test_orchestrator_hourly_cost_db.py::test_the_pause_survives_enabled_sync_and_lifts_as_spend_ages_out
+0.15s call     unit/daemon/test_orchestrator_intake_db.py::test_claim_mints_case_then_launches
+======================= 447 passed, 1 warning in 30.22s ========================

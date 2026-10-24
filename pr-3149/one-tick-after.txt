@@ -1,0 +1,5 @@
+tasks ['threat_hunt', 'cleanup', 'probe_sweep']
+stats ['cleanups_run', 'errors', 'probes_injected', 'probes_scored', 'tasks_run', 'threat_hunts']
+ran ['threat_hunt', 'cleanup', 'probe_sweep'] tasks_run 3 errors 0
+OK
+exit 0

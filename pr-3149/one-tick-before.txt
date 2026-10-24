@@ -1,0 +1,9 @@
+
+
+
+
+
+tasks ['threat_hunt', 'weekly_report', 'cleanup', 'probe_sweep', 'health_check']
+stats ['cleanups_run', 'errors', 'probes_injected', 'probes_scored', 'reports_generated', 'tasks_run', 'threat_hunts']
+ran ['threat_hunt', 'weekly_report', 'cleanup', 'probe_sweep', 'health_check'] tasks_run 5 errors 0
+exit 1
