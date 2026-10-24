@@ -1,0 +1,3 @@
+E       assert None == 200
+{"ts": "2026-10-24T23:28:23.288883+00:00", "level": "ERROR", "logger": "core.storage.connection", "message": "Database transaction failed: (psycopg2.OperationalError) could not translate host name \"postgres-blocked-in-unit-tests.invalid\" to address: Name or service not known\n\n(Background on this error at: https://sqlalche.me/e/21/e3q8)", "msg_template": "Database transaction failed: (psycopg2.OperationalError) could not translate host name \"postgres-blocked-in-unit-tests.invalid\" to address: Name or service not known\n\n(Background on this error at: https://sqlalche.me/e/21/e3q8)", "trace_id": "", "span_id": ""}
+=================== 1 failed, 1 passed, 1 warning in 38.31s ====================

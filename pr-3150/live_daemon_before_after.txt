@@ -1,0 +1,25 @@
+== 3d06590c DAEMON_METRICS_ENABLED=false
+GET :19391/health -> 000
+connection refused
+GET :19391/status -> 000
+connection refused
+GET :19390/metrics -> 000
+connection refused
+== 3d06590c DAEMON_METRICS_ENABLED=true
+GET :19391/health -> 200
+GET :19391/status -> 200
+GET :19390/metrics -> 200
+"message": "Health server starting on port 19391"
+"message": "Prometheus server starting on port 19390"
+== 3d06590c DAEMON_METRICS_ENABLED=false
+GET :19391/health -> 200
+GET :19391/status -> 200
+GET :19390/metrics -> 000
+connection refused
+"message": "Health server starting on port 19391"
+== 3d06590c DAEMON_METRICS_ENABLED=true
+GET :19391/health -> 200
+GET :19391/status -> 200
+GET :19390/metrics -> 200
+"message": "Health server starting on port 19391"
+"message": "Prometheus server starting on port 19390"

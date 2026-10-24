@@ -1,0 +1,12 @@
+== 192eb442 DAEMON_METRICS_ENABLED=false
+GET :19391/health -> 200
+GET :19391/status -> 200
+GET :19390/metrics -> 000
+connection refused
+"message": "Health server starting on port 19391"
+== 192eb442 DAEMON_METRICS_ENABLED=true
+GET :19391/health -> 200
+GET :19391/status -> 200
+GET :19390/metrics -> 200
+"message": "Health server starting on port 19391"
+"message": "Prometheus server starting on port 19390"
