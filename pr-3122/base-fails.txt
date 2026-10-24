@@ -1,0 +1,23 @@
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_retry_without_id_creates_one_finding
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_long_event_id_is_stored_as_external_id
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_payload_is_persisted_as_source_evidence
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_malformed_payload_is_422[payload0]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_malformed_payload_is_422[payload1]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_malformed_payload_is_422[payload2]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_malformed_payload_is_422[payload3]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_malformed_payload_is_422[payload4]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_malformed_payload_is_422[payload5]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_null_anomaly_score_takes_default
+============ 10 failed, 3 passed, 7 deselected, 1 warning in 6.66s =============

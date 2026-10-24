@@ -1,0 +1,15 @@
+score None           ok   ('f-36a44cdb20ae027c', None)
+score list           ok   None
+score NaN str        ok   ('f-55319d2de81969a2', None)
+summary int          ok   None
+summary dict         ok   None
+action int           ok   None
+ruleAction list      ok   None
+title dict           ok   None
+timestamp int        ok   ('f-99325ba1edd44d43', None)
+event list           ok   None
+event_id dict        ok   ('f-5ebc15afc611c9df', 8)
+id 300 chars         ok   None
+severity int         ok   ('f-47539915845e4222', None)
+mitre list nonstr    ok   ('f-41516a9ffd4416b7', None)
+user_email int       ok   ('f-23130debcc74d8be', None)

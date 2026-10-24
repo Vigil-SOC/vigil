@@ -1,0 +1,29 @@
+import sys; sys.path.insert(0, ".")
+from core.integrations.cloudflare.ingestion import CloudyIngestionService
+from core.ingestion.ingestion_service import to_internal_finding
+from core.findings.source_evidence import normalize_finding_source_evidence
+svc = CloudyIngestionService.__new__(CloudyIngestionService)
+cases = {
+ "score None": {"summary":"s","anomaly_score":None},
+ "score list": {"summary":"s","anomaly_score":[1]},
+ "score NaN str": {"summary":"s","anomaly_score":"nan"},
+ "summary int": {"summary":5},
+ "summary dict": {"summary":{"a":1}},
+ "action int": {"summary":"s","event":{"action":3}},
+ "ruleAction list": {"summary":"s","event":{"ruleAction":["x"]}},
+ "title dict": {"summary":"s","title":{"x":1}},
+ "timestamp int": {"summary":"s","timestamp":1700000000},
+ "event list": {"event":[1,2]},
+ "event_id dict": {"event_id":{"a":1},"summary":"s"},
+ "id 300 chars": {"id":"y"*300,"summary":"s"},
+ "severity int": {"summary":"s","severity":3},
+ "mitre list nonstr": {"summary":"s","attack_techniques":[1,"T1"]},
+ "user_email int": {"summary":"s","event":{"user_email":4}},
+}
+for name, p in cases.items():
+    try:
+        f = svc.transform_event(p)
+        if f: normalize_finding_source_evidence(to_internal_finding(f))
+        print(f"{name:20} ok  ", None if f is None else (f["finding_id"], f["external_id"] and len(f["external_id"])))
+    except Exception as e:
+        print(f"{name:20} RAISE {type(e).__name__}: {e}")

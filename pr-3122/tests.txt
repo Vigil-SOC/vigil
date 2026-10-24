@@ -1,0 +1,25 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/7bbb0c7c-af04-4a1f-8966-f943fe803b9d/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 43 items
+
+tests/unit/integrations/test_cloudflare_integration.py ................. [ 39%]
+...                                                                      [ 46%]
+tests/unit/integrations/test_darktrace_webhook.py ...................... [ 97%]
+.                                                                        [100%]
+
+============================= slowest 10 durations =============================
+3.90s call     unit/integrations/test_cloudflare_integration.py::test_config_returns_none_when_token_missing
+1.52s call     unit/integrations/test_darktrace_webhook.py::TestRejectionLogging::test_burst_is_one_log_line_and_exact_count
+1.16s call     unit/integrations/test_cloudflare_integration.py::test_cloudy_rejections_are_logged_counted_and_distinguished
+0.37s call     unit/integrations/test_darktrace_webhook.py::TestSignatureVerification::test_missing_signature_rejected
+0.34s call     unit/integrations/test_cloudflare_integration.py::test_cloudy_retry_without_id_creates_one_finding
+0.27s call     unit/integrations/test_cloudflare_integration.py::test_cloudy_long_event_id_is_stored_as_external_id
+0.19s call     unit/integrations/test_darktrace_webhook.py::TestSignatureVerification::test_bad_signature_rejected
+0.12s call     unit/integrations/test_darktrace_webhook.py::TestRejectionLogging::test_valid_request_is_not_a_rejection
+0.12s setup    unit/integrations/test_cloudflare_integration.py::test_config_returns_none_when_token_missing
+0.10s setup    unit/integrations/test_darktrace_webhook.py::TestSignatureVerification::test_bad_signature_rejected
+======================= 43 passed, 9 warnings in 12.88s ========================
