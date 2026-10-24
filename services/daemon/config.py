@@ -187,7 +187,7 @@ class DaemonConfig:
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
 
-        config.kafka = KafkaConfig.from_env()  # SystemConfig may override below
+        config.kafka = KafkaConfig.from_env()
 
         # Override with DB-persisted settings (set via Settings UI)
         try:
