@@ -1,0 +1,10 @@
+     × maps every catalog id with a collector to a stored name that has a badge 10ms
+     × disables an unconfigured source 177ms
+     × names a source after its catalog entry, and an unknown one by its id 206ms
+         × show for OpenSearch 1346ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected { crowdstrike: 'crowdstrike', …(5) } to deeply equal { crowdstrike: 'crowdstrike', …(6) }
+TestingLibraryElementError: Unable to find an accessible element with the role "switch" and name "Collect from Elastic Security (SIEM)"
+TestingLibraryElementError: Unable to find an accessible element with the role "switch" and name "Collect from OpenSearch"
+TestingLibraryElementError: Unable to find role="switch" and name "Collect alerts"
+      Tests  4 failed | 77 passed (81)

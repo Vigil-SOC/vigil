@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /home/gray/Deeptempo/deslop-factory/telemetry/agent-vigil-state/deslop-agents-11291/tmp/w3083/clients/web
+
+
+ Test Files  32 passed (32)
+      Tests  375 passed (375)
+   Start at  16:24:27
+   Duration  22.05s (transform 6.44s, setup 12.09s, import 11.28s, tests 59.35s, environment 34.46s)
+
