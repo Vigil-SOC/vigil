@@ -12,9 +12,7 @@ from services.api.middleware.auth import get_current_active_user
 pytestmark = pytest.mark.unit
 
 _GENERAL = {
-    "auto_start_sync": True,
     "show_notifications": False,
-    "theme": "light",
     "enable_keyring": True,
 }
 
@@ -67,10 +65,10 @@ def test_demo_mode_save_keeps_general_settings(client):
     client.post("/api/config/general", json=_GENERAL)
 
     client.post("/api/config/demo-mode", json={"enabled": True})
-    client.post("/api/config/general", json={**_GENERAL, "theme": "dark"})
+    client.post("/api/config/general", json={**_GENERAL, "enable_keyring": False})
 
     assert _load_json_config(vigil_path("general_config.json")) == {
         **_GENERAL,
-        "theme": "dark",
+        "enable_keyring": False,
         "demo_mode": True,
     }

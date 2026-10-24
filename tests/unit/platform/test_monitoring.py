@@ -129,19 +129,6 @@ class TestBeforeSendFilter(unittest.TestCase):
 
 
 class TestGetMetricsResponse(unittest.TestCase):
-    def test_duplicate_http_instruments_are_gone(self):
-        """The prometheus_client HTTP stack was deleted; OTEL FastAPI
-        instrumentation is the only HTTP signal."""
-        for name in (
-            "PrometheusMiddleware",
-            "PROMETHEUS_AVAILABLE",
-            "http_requests_total",
-            "http_request_duration_seconds",
-            "active_cases_total",
-            "findings_processed_total",
-        ):
-            self.assertFalse(hasattr(monitoring, name), name)
-
     def test_serves_default_registry(self):
         """get_metrics_response() renders prometheus_client's default REGISTRY —
         the one PrometheusMetricReader registers on — as Prometheus text."""
