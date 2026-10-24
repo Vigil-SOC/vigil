@@ -1,0 +1,15 @@
+E       AssertionError: assert {'enabled': F...ics': [], ...} == {'enabled': T...events'], ...}
+E         
+E         Omitting 6 identical items, use -vv to show
+E         Differing items:
+E         {'topics': []} != {'topics': ['sec.alerts', 'edr.events']}
+E         {'enabled': False} != {'enabled': True}
+E         {'bootstrap_servers': 'localhost:9092'} != {'bootstrap_servers': 'broker-1:9092'}
+E         {'consumer_group': 'vigil-soc'} != {'consumer_group': 'grp-x'}
+E         Use -v to get more diff
+E       assert False is True
+E       AssertionError: assert 'localhost:9092' == 'broker-1:9092'
+E         
+E         - broker-1:9092
+E         + localhost:9092
+============================== 3 failed in 7.00s ===============================

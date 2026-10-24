@@ -1,0 +1,5 @@
+0.01s setup    unit/ingestion/test_kafka_router_env_defaults.py::test_saved_row_overrides_env
+0.01s teardown unit/ingestion/test_kafka_router_env_defaults.py::test_status_without_saved_row_matches_daemon
+
+(2 durations < 0.005s hidden.  Use -vv to show these durations.)
+============================== 3 passed in 8.93s ===============================

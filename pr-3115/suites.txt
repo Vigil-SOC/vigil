@@ -1,0 +1,3 @@
+0.35s call     unit/daemon/test_daemon.py::TestTriageTimeout::test_raised_timeout_triages_on_first_attempt
+0.34s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/cases-body16-cases.write]
+====================== 581 passed, 241 warnings in 53.62s ======================

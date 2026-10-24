@@ -1,0 +1,4 @@
+0.65s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.52s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+0.36s call     unit/ingestion/test_dedup.py::TestRedisDedupFallback::test_empty_finding_id_is_noop
+====================== 197 passed, 241 warnings in 38.43s ======================
