@@ -19,6 +19,7 @@ import pytest
 from core.federation import registry as fed_registry
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
 from core.federation.adapters._siem_base import SIEMIngestionAdapter
+from core.federation.contract import FetchResult, register_adapter
 from core.federation.runner import FederationRunner, _severity_passes
 from tests.unit._acking_queue import AckingQueue
 
@@ -44,11 +45,8 @@ class _FakeAdapter:
     def default_interval(self) -> int:
         return self._default_interval
 
-    async def fetch(self, *, since, cursor, max_items):
-        self.fetch_calls.append(
-            {"since": since, "cursor": cursor, "max_items": max_items}
-        )
-        from core.federation.registry import FetchResult
+    async def fetch(self, *, cursor, max_items):
+        self.fetch_calls.append({"cursor": cursor, "max_items": max_items})
 
         return FetchResult(
             findings=list(self.next_findings), cursor={"tick": len(self.fetch_calls)}
@@ -56,7 +54,7 @@ class _FakeAdapter:
 
 
 def test_register_and_lookup_adapter():
-    fed_registry.register_adapter("fake-test-1", lambda: _FakeAdapter())
+    register_adapter("fake-test-1", lambda: _FakeAdapter())
     a = fed_registry.get_adapter("fake-test-1")
     assert a is not None
     assert a.name == "fake"
@@ -164,7 +162,6 @@ async def test_runner_do_one_tick_filters_by_severity(monkeypatch):
             "data_source": "fake",
         },
     ]
-    runner._adapters[fake.name] = fake
     runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
 
     record_success_calls = []
@@ -211,7 +208,6 @@ async def test_runner_do_one_tick_dedups(monkeypatch):
             "data_source": "fake",
         },
     ]
-    runner._adapters[fake.name] = fake
     runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
 
     monkeypatch.setattr(
@@ -239,7 +235,6 @@ async def test_runner_do_one_tick_records_failure(monkeypatch):
             raise RuntimeError("boom")
 
     bad = _RaisingAdapter()
-    runner._adapters[bad.name] = bad
     runner._dedup[bad.name] = _FakeDedup()  # type: ignore[assignment]
 
     failures = []
@@ -258,7 +253,6 @@ async def test_runner_do_one_tick_records_failure(monkeypatch):
     assert len(failures) == 1
     assert failures[0][0] == "fake"
     assert "boom" in failures[0][1]
-    assert runner.stats["errors"] == 1
 
 
 @pytest.mark.asyncio
@@ -279,7 +273,7 @@ async def test_siem_adapter_propagates_a_failed_fetch(monkeypatch):
     )
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     with pytest.raises(ConnectionError):
-        await adapter.fetch(since=None, cursor={}, max_items=10)
+        await adapter.fetch(cursor={}, max_items=10)
 
 
 @pytest.mark.asyncio
@@ -358,7 +352,6 @@ async def test_missing_sdk_records_failure_and_keeps_cursor(monkeypatch):
     )
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     runner = FederationRunner(output_queue=AckingQueue())
-    runner._adapters[adapter.name] = adapter
     runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
 
     failures = []
@@ -468,7 +461,7 @@ async def test_siem_adapter_propagates_a_service_that_cannot_be_built(monkeypatc
     )
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     with pytest.raises(RuntimeError, match="secret store"):
-        await adapter.fetch(since=None, cursor={}, max_items=10)
+        await adapter.fetch(cursor={}, max_items=10)
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +497,7 @@ async def test_siem_adapter_counts_dropped_and_warns_once(monkeypatch, caplog):
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
 
     with caplog.at_level("WARNING"):
-        result = await adapter.fetch(since=None, cursor={}, max_items=10)
+        result = await adapter.fetch(cursor={}, max_items=10)
 
     assert [f["external_id"] for f in result.findings] == ["a", "b"]
     assert result.dropped == 2
@@ -515,8 +508,6 @@ async def test_siem_adapter_counts_dropped_and_warns_once(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_runner_adds_idless_findings_to_dropped(monkeypatch):
-    from core.federation.registry import FetchResult
-
     queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
@@ -532,7 +523,6 @@ async def test_runner_adds_idless_findings_to_dropped(monkeypatch):
         )
 
     fake.fetch = fetch  # type: ignore[method-assign]
-    runner._adapters[fake.name] = fake
     runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
     calls = []
     monkeypatch.setattr(
@@ -552,7 +542,6 @@ async def test_clean_tick_adds_zero_dropped(monkeypatch):
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
     fake.next_findings = [{"finding_id": "f-1", "severity": "high"}]
-    runner._adapters[fake.name] = fake
     runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
     calls = []
     monkeypatch.setattr(
@@ -675,7 +664,6 @@ async def test_unconfigured_integration_is_skipped_not_recorded_as_success(
             await runner._do_one_tick(adapter, {"max_items": 10, "cursor": {}})
 
     assert adapter.fetch_calls == []
-    assert runner.stats["polls"] == 0
     assert len([r for r in caplog.records if "not configured" in r.getMessage()]) == 1
 
 

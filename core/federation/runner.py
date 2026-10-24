@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.federation import registry, store
+from core.federation.contract import FederationAdapter
 from core.federation.seed import seed_federation_sources
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
@@ -55,14 +56,9 @@ class FederationRunner:
         self._output_queue = output_queue
         self._adapter_tasks: Dict[str, asyncio.Task] = {}
         self._dedup: Dict[str, RedisDedupSet] = {}
-        # Sources that are currently "polling" — used so a source toggled OFF
-        # then ON quickly doesn't double-fire while the old task winds down.
-        self._adapters: Dict[str, registry.FederationAdapter] = {}
         # Sources already warned about as unconfigured, so the warning is
         # logged on the transition rather than every tick.
         self._unconfigured_warned: set = set()
-        # Stats for the metrics endpoint.
-        self.stats: Dict[str, Any] = {"polls": 0, "findings": 0, "errors": 0}
 
     def set_output_queue(self, queue: asyncio.Queue) -> None:
         self._output_queue = queue
@@ -81,7 +77,6 @@ class FederationRunner:
 
         # 2. Spawn one task per registered adapter (instantiated once, reused).
         for adapter in registry.list_adapters():
-            self._adapters[adapter.name] = adapter
             self._dedup[adapter.name] = RedisDedupSet(f"federation:{adapter.name}")
             self._adapter_tasks[adapter.name] = asyncio.create_task(
                 self._adapter_loop(adapter, shutdown_event)
@@ -119,7 +114,7 @@ class FederationRunner:
 
     async def _adapter_loop(
         self,
-        adapter: registry.FederationAdapter,
+        adapter: FederationAdapter,
         shutdown_event: asyncio.Event,
     ) -> None:
         source_id = adapter.name
@@ -179,7 +174,7 @@ class FederationRunner:
 
     async def _do_one_tick(
         self,
-        adapter: registry.FederationAdapter,
+        adapter: FederationAdapter,
         row: Dict[str, Any],
     ) -> None:
         source_id = adapter.name
@@ -201,10 +196,8 @@ class FederationRunner:
         cursor = row.get("cursor") or {}
         min_severity = row.get("min_severity")
 
-        self.stats["polls"] = self.stats.get("polls", 0) + 1
         try:
             result = await adapter.fetch(
-                since=None,
                 cursor=cursor if isinstance(cursor, dict) else {},
                 max_items=max_items,
             )
@@ -220,7 +213,6 @@ class FederationRunner:
                     failures,
                     e,
                 )
-            self.stats["errors"] = self.stats.get("errors", 0) + 1
             store.record_failure(source_id, str(e))
             return
 
@@ -264,7 +256,6 @@ class FederationRunner:
                 new_count = len(stored)
 
         if new_count:
-            self.stats["findings"] = self.stats.get("findings", 0) + new_count
             logger.info("Federation %s ingested %d finding(s)", source_id, new_count)
 
         if not all_enqueued or new_count < len(pending):
@@ -273,12 +264,9 @@ class FederationRunner:
                 f"{len(pending) - new_count} finding(s) not stored; cursor not advanced"
             )
             logger.warning("Federation %s: %s", source_id, msg)
-            self.stats["errors"] = self.stats.get("errors", 0) + 1
             store.record_failure(source_id, msg)
             return
 
-        if dropped:
-            self.stats["dropped"] = self.stats.get("dropped", 0) + dropped
         prior_failures = int(row.get("consecutive_errors") or 0)
         if prior_failures:
             logger.info(
