@@ -61,10 +61,7 @@ from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
-from services.api.middleware.auth import (
-    get_current_active_user,
-    require_integrations_admin,
-)
+from services.api.middleware.auth import get_current_active_user
 from services.daemon.config import DaemonConfig
 from services.daemon.intent import effective_daemon_config, intent_report
 
@@ -1045,7 +1042,7 @@ async def _probe_connector_integration(integration_id: str, current_user: User) 
     return {"success": success, "message": message}
 
 
-@router.post("/integrations/{integration_id}/test")
+@router.post("/integrations/{integration_id}/test", dependencies=_INTEGRATIONS_WRITE)
 async def test_integration(
     integration_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -1066,8 +1063,6 @@ async def test_integration(
     servers started (``credentials`` in the answer): a server starts whatever
     it is pointed at, and the adapter that pulls alerts does not go through it.
     """
-    require_integrations_admin(current_user)
-
     server_names = list(bridge.server_names_for(integration_id))
     integrations = bridge.load_integration_config().get("integrations", {})
     # A UI-extension connector has no MCP server of its own: probe its URL.

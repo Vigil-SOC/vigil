@@ -18,7 +18,6 @@ from fastapi import (
 from pydantic import BaseModel, Field, field_validator
 
 from core.agents.projections import read_events
-from core.auth.auth_service import AuthService
 from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_attachment_service import attach_document
@@ -119,10 +118,7 @@ async def clear_all_cases(
     current_user: User = Depends(get_current_user),
 ):
     """Delete all cases and case-derived generated data (requires cases.delete)."""
-    if not AuthService.check_permission(current_user.user_id, "cases.delete"):
-        raise HTTPException(
-            status_code=403, detail="Permission denied: cases.delete required"
-        )
+    deny_unless(current_user.user_id, "cases.delete")
 
     result = case_records_service.purge_all_cases(session)
     killed = len(result.killed_investigation_ids)

@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # A saved skill's description reaches every agent's system prompt, so writing
-# one is a settings change, not an analyst action. Reads and tests stay open.
+# one is a settings change, not an analyst action. Reads stay open.
 _SKILLS_WRITE = [permission_gate("automation.write")]
 router.dependencies.append(permission_gate("automation.read"))
 

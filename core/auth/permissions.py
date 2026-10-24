@@ -210,28 +210,23 @@ def catalog_revision_applied(session) -> bool:
     """Whether ``session``'s database includes ``0008_permission_catalog``.
 
     The same walk as ``trail_ready``: the table, then each stamped revision's
-    ancestors. A database we cannot read counts as not yet upgraded, so today's
-    gates stay in force. Not a setting, and not a call to ``trail_ready``.
+    ancestors. A database that cannot be opened is handled by the caller as
+    not yet upgraded. A read error once it is open raises, so a transient
+    failure cannot read the revision as absent and open the split gates. Not a
+    setting, and not a call to ``trail_ready``.
     """
     from alembic.util import CommandError
     from sqlalchemy import text
-    from sqlalchemy.exc import SQLAlchemyError
 
     from core.upgrade.command import script_directory
 
-    try:
-        present = session.execute(
-            text("SELECT to_regclass('public.alembic_version')")
-        ).scalar()
-    except SQLAlchemyError:
-        return False
+    present = session.execute(
+        text("SELECT to_regclass('public.alembic_version')")
+    ).scalar()
     if present is None:
         return False
-    try:
-        script = script_directory()
-        rows = session.execute(text("SELECT version_num FROM alembic_version"))
-    except SQLAlchemyError:
-        return False
+    script = script_directory()
+    rows = session.execute(text("SELECT version_num FROM alembic_version"))
     for (version,) in rows:
         try:
             if any(
