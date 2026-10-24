@@ -392,16 +392,11 @@ async def _connect_external_services(mcp_client, registry):
                 for server_name, server_tools in tools.items():
                     cache_data[server_name] = []
                     for tool in server_tools:
-                        input_schema = tool.get("inputSchema", {})
-                        if hasattr(input_schema, "model_dump"):
-                            input_schema = input_schema.model_dump()
-                        elif not isinstance(input_schema, dict):
-                            input_schema = dict(input_schema) if input_schema else {}
                         cache_data[server_name].append(
                             {
                                 "name": tool.get("name"),
                                 "description": tool.get("description", ""),
-                                "inputSchema": input_schema,
+                                "inputSchema": tool.get("inputSchema", {}),
                             }
                         )
 

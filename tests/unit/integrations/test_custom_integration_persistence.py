@@ -41,7 +41,8 @@ def test_crash_mid_metadata_write_keeps_other_entries(service, monkeypatch):
 
     with monkeypatch.context() as m:
         m.setattr("builtins.open", torn_open)
-        assert _save(service, "custom-c") == {"success": False, "error": "disk full"}
+        with pytest.raises(OSError, match="disk full"):
+            _save(service, "custom-c")
 
     assert _ids(service) == ["custom-a", "custom-b"]
     assert _save(service, "custom-d")["success"]
@@ -59,14 +60,16 @@ def test_failed_server_write_leaves_integration_unlisted(service, monkeypatch):
         return real_open(path, *a, **kw)
 
     monkeypatch.setattr("builtins.open", failing_open)
-    assert _save(service, "custom-c")["success"] is False
+    with pytest.raises(OSError, match="read-only"):
+        _save(service, "custom-c")
     assert _ids(service) == ["custom-a", "custom-b"]
 
 
 def test_corrupt_metadata_refuses_save_and_list(service):
     service.metadata_file.write_text("{not json")
 
-    assert _save(service, "custom-c")["success"] is False
+    with pytest.raises(json.JSONDecodeError):
+        _save(service, "custom-c")
     assert service.metadata_file.read_text() == "{not json"
     assert not (service.custom_integrations_dir / "custom-c_server.py").exists()
     with pytest.raises(json.JSONDecodeError):
