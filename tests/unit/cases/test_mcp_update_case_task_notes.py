@@ -1,5 +1,3 @@
-"""update_case_task records its notes as a task_update activity."""
-
 import contextlib
 import json
 from types import SimpleNamespace
