@@ -17,6 +17,11 @@ _GENERAL = {
     "theme": "light",
     "enable_keyring": True,
 }
+# auto_start_sync and theme were dropped from the saved record (#3056).
+_STORED = {
+    "show_notifications": False,
+    "enable_keyring": True,
+}
 
 
 @pytest.fixture
@@ -60,7 +65,7 @@ def test_general_save_survives_unusable_config_file(client, content):
     saved = client.post("/api/config/general", json=_GENERAL)
 
     assert saved.status_code == 200, saved.text
-    assert _load_json_config(vigil_path("general_config.json")) == _GENERAL
+    assert _load_json_config(vigil_path("general_config.json")) == _STORED
 
 
 def test_demo_mode_save_keeps_general_settings(client):
@@ -70,7 +75,6 @@ def test_demo_mode_save_keeps_general_settings(client):
     client.post("/api/config/general", json={**_GENERAL, "theme": "dark"})
 
     assert _load_json_config(vigil_path("general_config.json")) == {
-        **_GENERAL,
-        "theme": "dark",
+        **_STORED,
         "demo_mode": True,
     }

@@ -12,11 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 from core.agents.attribution import current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
-from core.auth.permissions import (
-    APPROVE_PERMISSION,
-    permission_refusal,
-    username_has_permission,
-)
+from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
     CASE_STATUSES,
@@ -782,16 +778,11 @@ async def execute_backend_tool(
     registry: Optional["MCPRegistry"] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
-    # The module binding, so a test that stubs username_has_permission is the
-    # check the door and the tool body share. An unbound caller stays allowed.
+    # permission_refusal reads the permissions-module binding, which is what
+    # the tool tests stub. An unbound caller stays allowed.
     permission = TOOL_PERMISSIONS.get(tool_name)
-    caller = current_caller()
-    if (
-        permission
-        and caller is not None
-        and not username_has_permission(caller, permission)
-    ):
-        return {"error": f"{caller} may not do this: {permission} required"}, True
+    if permission and (refusal := permission_refusal(permission)):
+        return refusal, True
 
     if tool_name == FIND_INTEGRATION_TOOLS and registry is not None:
         from core.agents.integration_tools import find_integration_tools
