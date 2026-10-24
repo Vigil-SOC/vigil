@@ -140,6 +140,40 @@ def test_parse_stix_indicator_handles_or_pattern():
     assert all(i.indicator_type == "domain" for i in out)
 
 
+@pytest.mark.parametrize(
+    "pattern, expected",
+    [
+        (
+            "[ipv4-addr:value = '198.51.100.1'] OR [ipv4-addr:value = '198.51.100.2']",
+            [("ip", "198.51.100.1"), ("ip", "198.51.100.2")],
+        ),
+        (
+            "[domain-name:value = 'evil.example' AND url:value = 'http://evil.example/x']",
+            [("domain", "evil.example"), ("url", "http://evil.example/x")],
+        ),
+        ("[file:hashes.'SHA-256' = 'abc']", [("hash_sha256", "abc")]),
+        ("[url:value = 'http://a/?a=b']", [("url", "http://a/?a=b")]),
+        (r"[url:value = 'http://a/it\'s']", [("url", "http://a/it's")]),
+        (
+            "[ipv4-addr:value != '1.2.3.4' AND ipv4-addr:value <= '1.2.3.5'"
+            " AND ipv4-addr:value NOT = '1.2.3.6']",
+            [],
+        ),
+        (
+            "[url:value MATCHES 'k = ' AND ipv4-addr:value = '1.2.3.4']",
+            [("ip", "1.2.3.4")],
+        ),
+    ],
+)
+def test_parse_stix_indicator_reads_every_equality_comparison(pattern, expected):
+    from core.threat_intel.threat_feed_service import parse_stix_indicator
+
+    out = parse_stix_indicator(
+        {"type": "indicator", "pattern": pattern}, source="t", collection_id=None
+    )
+    assert [(i.indicator_type, i.indicator_value) for i in out] == expected
+
+
 def test_parse_stix_indicator_skips_non_indicator():
     from core.threat_intel.threat_feed_service import parse_stix_indicator
 
