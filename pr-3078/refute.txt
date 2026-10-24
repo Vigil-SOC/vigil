@@ -1,0 +1,4 @@
+unbound agent
+bound nestor
+empty agent
+unpatched session hits DB: RuntimeError

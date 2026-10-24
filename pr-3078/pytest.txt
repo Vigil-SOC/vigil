@@ -1,0 +1,8 @@
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_mcp_case_tools_persistence.py:73: requires a local PostgreSQL (docker compose up -d postgres): (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+
+(Background on this error at: https://sqlalche.me/e/21/e3q8)
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 334 passed, 7 skipped, 3 warnings in 179.76s (0:02:59) ============

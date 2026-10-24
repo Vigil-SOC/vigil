@@ -1,0 +1,3 @@
+0.03s call     unit/agents/test_bound_tool_permissions.py::test_the_backend_door_refuses_a_demoted_principal[update_case-cases.write-args2]
+0.03s call     unit/response/test_decide_once.py::test_sweeps_skip_a_row_decided_after_it_was_listed
+======================== 36 passed, 1 warning in 35.99s ========================
