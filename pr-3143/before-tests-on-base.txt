@@ -1,0 +1,5 @@
+E       assert 'error' not in {'error': "'NoneType' object has no attribute 'get'"}
+E       KeyError: 'ip'
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestAttachReportAtomicity::test_null_behavior_still_writes_evidence
+FAILED tests/unit/integrations/test_cape_sandbox_tool.py::TestCallTool::test_get_iocs_returns_extracted
+=================== 2 failed, 20 passed in 227.56s (0:03:47) ===================

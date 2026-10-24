@@ -1,0 +1,5 @@
+0.05s setup    unit/integrations/test_cape_sandbox_tool.py::TestCallTool::test_search_hash_not_found
+0.05s setup    unit/cases/test_sandbox_correlation.py::TestCapeNormalisation::test_extracts_primary_hashes_and_score
+0.04s teardown unit/integrations/test_cape_sandbox_tool.py::TestCallTool::test_missing_config
+0.04s setup    unit/integrations/test_cape_sandbox_tool.py::TestCallTool::test_unknown_tool
+======================== 29 passed in 188.77s (0:03:08) ========================

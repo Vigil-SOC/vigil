@@ -1,0 +1,5 @@
+(A3-1) KEPT
+The Medic Docker proxy imports nothing from core, tools, Medic or any other 
+service (A3-1) KEPT
+
+Contracts: 8 kept, 0 broken.

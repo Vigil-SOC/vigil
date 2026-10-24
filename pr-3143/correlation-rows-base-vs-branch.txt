@@ -1,0 +1,12 @@
+== base
+full             {"md5": "m", "sha256": "s", "score": 9, "verdict": "malicious", "mitre_techniques": ["T1059"], "rows": [["domain", "a.com"], ["domain", "b.com"], ["hash", "M"], ["hash", "S"], ["ip", "1.1.1.1"], ["ip", "9.9.9.9"], ["mutex", "MX1"], ["url", "http://x"]]}
+mutex singular   {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": [["mutex", "MX1"]]}
+host int         {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": [["ip", "2.2.2.2"], ["ip", 123]]}
+behavior None    "EXC AttributeError: 'NoneType' object has no attribute 'get'"
+summary None     {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": []}
+== branch
+full             {"md5": "m", "sha256": "s", "score": 9, "verdict": "malicious", "mitre_techniques": ["T1059"], "rows": [["domain", "a.com"], ["domain", "b.com"], ["hash", "M"], ["hash", "S"], ["ip", "1.1.1.1"], ["ip", "9.9.9.9"], ["mutex", "MX1"], ["url", "http://x"]]}
+mutex singular   {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": [["mutex", "MX1"], ["mutex", "MX2"]]}
+host int         {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": [["ip", "2.2.2.2"]]}
+behavior None    {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": [["ip", "3.3.3.3"]]}
+summary None     {"md5": null, "sha256": null, "score": null, "verdict": null, "mitre_techniques": [], "rows": []}
