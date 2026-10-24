@@ -34,6 +34,7 @@ import {
   type SearchHits,
   useJiraReadiness,
 } from './commandBarModel'
+import { errorText } from '../shared/errorText'
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() ? value : undefined)
 
@@ -87,14 +88,6 @@ async function searchAll(query: string): Promise<SearchHits> {
     iocCases: casesOf(ioc),
     alertHits: Array.isArray(alerts) ? alerts.map(alertOf).filter((hit): hit is Hit => hit !== null) : [],
   }
-}
-
-function errorText(error: unknown, fallback: string): string {
-  const data = (error as { response?: { data?: { detail?: unknown; error?: unknown } } })?.response?.data
-  if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
-  if (typeof data?.error === 'string' && data.error.trim()) return data.error
-  const message = (error as { message?: string })?.message
-  return message && message.trim() ? message : fallback
 }
 
 // A disabled button gets no hover, so the tooltip sits on a wrapper.

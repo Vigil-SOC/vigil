@@ -5,7 +5,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { Field, Select, TextInput } from '../../shared/ui'
 import { INTEGRATION_CATEGORIES } from '../../config/integrations'
 import { customIntegrationsApi } from '../../services/api'
-import { errorText } from '../setup/errorText'
+import { errorText } from '../../shared/errorText'
 import type { SectionProps } from './types'
 
 interface Props {
