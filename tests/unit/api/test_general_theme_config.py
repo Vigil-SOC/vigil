@@ -9,9 +9,7 @@ from services.api.routers import config as config_router
 pytestmark = pytest.mark.unit
 
 GENERAL_DEFAULTS = {
-    "auto_start_sync": False,
     "show_notifications": True,
-    "theme": "dark",
     "enable_keyring": False,
 }
 

@@ -129,7 +129,9 @@ def test_tool_path_reports_already_decided(monkeypatch, verb):
 
     monkeypatch.setattr(tool_registry, "current_caller", lambda: "analyst-b")
     monkeypatch.setattr("core.cases.agent_closure.current_caller", lambda: "analyst-b")
-    monkeypatch.setattr(tool_registry, "_without_approval_right", lambda: None)
+    monkeypatch.setattr(
+        "core.auth.permissions.username_has_permission", lambda *_: True
+    )
     action_id = _seed(status="rejected")
 
     if verb == "approve":

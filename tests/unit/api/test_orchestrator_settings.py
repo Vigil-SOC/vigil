@@ -103,10 +103,7 @@ def test_get_profiles_and_post_keeps_the_flat_config():
             "profile": "aggressive",
         }
     )
-    with (
-        patch("services.api.routers.config.get_config_service", return_value=svc),
-        patch("services.api.routers.orchestrator._get_orchestrator", return_value=None),
-    ):
+    with patch("services.api.routers.config.get_config_service", return_value=svc):
         set_orchestrator_config(body, current_user=MagicMock())
         result = get_orchestrator_config()
 
@@ -256,10 +253,7 @@ def test_a_config_saved_before_the_bounds_still_loads_and_can_be_corrected():
         "max_concurrent_agents": 0,
         "max_cost_per_investigation": 0,
     }
-    with (
-        patch("services.api.routers.config.get_config_service", return_value=svc),
-        patch("services.api.routers.orchestrator._get_orchestrator", return_value=None),
-    ):
+    with patch("services.api.routers.config.get_config_service", return_value=svc):
         result = OrchestratorConfigResponse.model_validate(get_orchestrator_config())
         assert result.max_concurrent_agents == 0
         set_orchestrator_config(
