@@ -47,7 +47,7 @@ class SandboxCorrelationService:
         collected_by: str = "sandbox-poller",
         session: Optional[Session] = None,
     ) -> Dict[str, Any]:
-        """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows on every case linked to the finding.
+        """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows per linked case.
 
         Returns a small summary dict for caller logging.
         """
@@ -56,14 +56,10 @@ class SandboxCorrelationService:
         # half-written report commit.
         try:
             with unit_of_work(session) as session:
-                case_ids = (
-                    session.execute(
-                        select(case_findings.c.case_id).where(
-                            case_findings.c.finding_id == finding_id
-                        )
+                case_ids = session.scalars(
+                    select(case_findings.c.case_id).where(
+                        case_findings.c.finding_id == finding_id
                     )
-                    .scalars()
-                    .all()
                 )
                 normalised = _normalise_report(sandbox_name, report)
                 evidence_ids = []

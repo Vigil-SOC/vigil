@@ -57,14 +57,13 @@ def _seed():
 @pytest.mark.asyncio
 async def test_report_reaches_every_linked_case(monkeypatch):
     ds = DatabaseDataService()
-
-    class _DS:
-        get_findings = staticmethod(
-            lambda: [f for f in ds.get_findings() if f["finding_id"] == FID]
-        )
-        update_finding = staticmethod(ds.update_finding)
-
-    poller = SandboxPoller(data_service=_DS())
+    all_findings = ds.get_findings
+    monkeypatch.setattr(
+        ds,
+        "get_findings",
+        lambda: [f for f in all_findings() if f["finding_id"] == FID],
+    )
+    poller = SandboxPoller(data_service=ds)
 
     async def fake_fetch(name, task_id):
         return {
