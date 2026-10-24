@@ -10,21 +10,17 @@ functions, env-driven base URL, ``httpx.Client``, failures returned as
 
 What's wrapped (verified against docs.getbifrost.ai):
 
-  * ``GET /api/logs/histogram/cost``   — time-bucketed cost + by_model
-  * ``GET /api/logs/histogram/cost-by-provider``
-  * ``GET /api/logs/histogram/token-usage``
-  * ``GET /api/logs/stats``            — aggregate totals (cost, tokens,
-                                          requests, latency, success rate)
+  * ``GET /api/governance/virtual-keys/quota``, per-key quota (``get_vk_quota``)
 
 What's *not* wrapped here: provider config (``core.llm.bifrost.admin``
-already owns provider key/model writes) and governance/budget endpoints
-(those land in PR C / #186 alongside the VK enforcement work).
+already owns provider key/model writes) and the rest of the governance/budget
+endpoints (those land in PR C / #186 alongside the VK enforcement work).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -38,125 +34,6 @@ _DEFAULT_TIMEOUT = 5.0
 
 def _bifrost_base_url() -> str:
     return get_settings().bifrost_url.rstrip("/")
-
-
-# ---------------------------------------------------------------------------
-# Filter helpers
-# ---------------------------------------------------------------------------
-
-
-def _filter_params(
-    *,
-    providers: Optional[List[str]] = None,
-    models: Optional[List[str]] = None,
-    virtual_key_ids: Optional[List[str]] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    min_cost: Optional[float] = None,
-    max_cost: Optional[float] = None,
-    missing_cost_only: Optional[bool] = None,
-    status: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """Build the comma-separated query string Bifrost expects.
-
-    All filter params are flattened to comma-separated strings (Bifrost's
-    convention) so callers pass real Python lists. Falsy values are dropped
-    so query strings stay tight.
-    """
-    params: Dict[str, Any] = {}
-    if providers:
-        params["providers"] = ",".join(providers)
-    if models:
-        params["models"] = ",".join(models)
-    if virtual_key_ids:
-        params["virtual_key_ids"] = ",".join(virtual_key_ids)
-    if status:
-        params["status"] = ",".join(status)
-    if start_time:
-        params["start_time"] = start_time
-    if end_time:
-        params["end_time"] = end_time
-    if min_cost is not None:
-        params["min_cost"] = min_cost
-    if max_cost is not None:
-        params["max_cost"] = max_cost
-    if missing_cost_only is not None:
-        params["missing_cost_only"] = "true" if missing_cost_only else "false"
-    return params
-
-
-# ---------------------------------------------------------------------------
-# Histograms — time-bucketed analytics
-# ---------------------------------------------------------------------------
-
-
-def histogram_cost(
-    *,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    providers: Optional[List[str]] = None,
-    models: Optional[List[str]] = None,
-    virtual_key_ids: Optional[List[str]] = None,
-) -> Optional[Dict[str, Any]]:
-    """Time-bucketed cost with per-model breakdown.
-
-    Response shape (per Bifrost docs):
-
-    .. code-block:: json
-
-        {
-          "buckets": [
-            {"timestamp": "...", "total_cost": 125.50,
-             "by_model": {"openai/gpt-4": 85.30, ...}}
-          ],
-          "bucket_size_seconds": 3600,
-          "models": ["openai/gpt-4", ...]
-        }
-
-    Returns ``None`` on failure so the caller can fall back to local
-    aggregation against ``LLMInteractionLog`` (the daemon's existing
-    write path) without surfacing a 500 to the user.
-    """
-    return _get_json(
-        "/api/logs/histogram/cost",
-        params=_filter_params(
-            start_time=start_time,
-            end_time=end_time,
-            providers=providers,
-            models=models,
-            virtual_key_ids=virtual_key_ids,
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Aggregates
-# ---------------------------------------------------------------------------
-
-
-def stats(
-    *,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    providers: Optional[List[str]] = None,
-    models: Optional[List[str]] = None,
-    virtual_key_ids: Optional[List[str]] = None,
-) -> Optional[Dict[str, Any]]:
-    """Aggregate ``LogStats`` for the filtered window:
-
-    - ``total_requests``, ``total_tokens``, ``total_cost``
-    - ``average_latency``, ``success_rate``
-    """
-    return _get_json(
-        "/api/logs/stats",
-        params=_filter_params(
-            start_time=start_time,
-            end_time=end_time,
-            providers=providers,
-            models=models,
-            virtual_key_ids=virtual_key_ids,
-        ),
-    )
 
 
 # ---------------------------------------------------------------------------

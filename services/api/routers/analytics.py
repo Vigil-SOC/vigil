@@ -147,15 +147,7 @@ async def get_cost_analytics(
 ) -> Dict[str, Any]:
     """Return LLM cost + token breakdown for the given window.
 
-    Groups `LLMInteractionLog` rows by agent, model, and investigation.
-    Cache hit rate is cached-input / total-input across the window; it
-    should read 0 until prompt caching ships in GH #84 PR-C — this
-    endpoint is the baseline dashboard that will surface the jump.
-
-    The ``time_series`` block is sourced from Bifrost's
-    ``/api/logs/histogram/cost`` (#185), giving us authoritative cost
-    actuals against current pricing. If Bifrost is unavailable the
-    block is omitted but the local aggregations still return — the UI
-    degrades gracefully from "actuals + trend" to "actuals only".
+    Totals and a per-model grouping of `LLMInteractionLog` rows. Cache hit
+    rate is cached-input / total-input across the window.
     """
     return await get_cost_breakdown(db, time_range)

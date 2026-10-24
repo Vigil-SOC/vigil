@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { LevelBadge, type Level } from '../../shared/LevelBadge'
 import { configApi, type IntegrationTestResult } from '../../services/api'
-import { Field, NumberInput, PasswordInput, Popup, Select, TextInput, ToggleRow } from '../../shared/ui'
+import { Field, NumberInput, PasswordInput, Select, TextInput, ToggleRow } from '../../shared/ui'
 import { Banner, extractApiError } from '../../shared/formKit'
 import { relativeTime, type LastTest } from './integrationHealth'
 import {
@@ -20,8 +20,6 @@ interface Props {
   secretsSet?: Record<string, boolean>
   onClose: () => void
   onSave: (id: string, config: Record<string, unknown>) => Promise<void>
-  // 'drawer' is Settings' setup drawer; 'setup' is the first-run popup: fields only.
-  variant?: 'drawer' | 'setup'
   // drawer header: the stored last test, and the category line under the name
   lastTest?: LastTest
   // the Connected table's health for this integration, so the two never disagree
@@ -45,7 +43,6 @@ export default function IntegrationWizard({
   secretsSet = {},
   onClose,
   onSave,
-  variant = 'drawer',
   lastTest,
   health,
   category,
@@ -79,11 +76,10 @@ export default function IntegrationWizard({
   }, [fields])
 
   useEffect(() => {
-    if (variant !== 'drawer') return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [variant, onClose])
+  }, [onClose])
 
   const set = (name: string, val: unknown) => setConfig((c) => ({ ...c, [name]: val }))
 
@@ -165,10 +161,6 @@ export default function IntegrationWizard({
     setError(null)
     try {
       await onSave(integration.id, config)
-      if (variant === 'setup') {
-        onClose()
-        return
-      }
       setSaved(config)
       setStep(1)
       void runTest()
@@ -177,55 +169,6 @@ export default function IntegrationWizard({
     } finally {
       setSaving(false)
     }
-  }
-
-  const form = (
-    <>
-      {error && <Banner kind="err">{error}</Banner>}
-
-      {mainFields.map(renderField)}
-
-      {Object.entries(sections).map(([name, secFields]) => (
-        <div key={name} className="card card-sq shrink-0">
-          <button
-            className="card-h w-full text-left"
-            style={{ cursor: 'pointer' }}
-            onClick={() => setProxyOpen((o) => !o)}
-          >
-            <h3 className="flex-1">{SECTION_LABELS[name] || name}</h3>
-            <Icon name={proxyOpen ? 'chevD' : 'chevR'} size={15} />
-          </button>
-          {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
-        </div>
-      ))}
-    </>
-  )
-  const intro = (
-    <>
-      <p className="text-sm text-tx-3 leading-relaxed">{integration.description}</p>
-      {integration.docs_url && (
-        <a className="text-xs text-accent-2 inline-flex items-center gap-1 -mt-1" href={integration.docs_url} target="_blank" rel="noreferrer">
-          <Icon name="link" size={12} /> Documentation
-        </a>
-      )}
-    </>
-  )
-
-  if (variant === 'setup') {
-    return (
-      <Popup open onClose={onClose} title={`Configure ${integration.name}`} width={520}>
-        <div className="flex flex-col gap-3.5">
-          {intro}
-          {form}
-          <div className="flex justify-end gap-2.5 mt-1">
-            <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
-            <button className="btn primary" onClick={handleSave} disabled={saving}>
-              <Icon name="check2" /> {saving ? 'Saving…' : 'Save Configuration'}
-            </button>
-          </div>
-        </div>
-      </Popup>
-    )
   }
 
   const level: Level =
@@ -276,8 +219,29 @@ export default function IntegrationWizard({
 
         {step === 0 && (
           <>
-            {intro}
-            {form}
+            <p className="text-sm text-tx-3 leading-relaxed">{integration.description}</p>
+            {integration.docs_url && (
+              <a className="text-xs text-accent-2 inline-flex items-center gap-1 -mt-1" href={integration.docs_url} target="_blank" rel="noreferrer">
+                <Icon name="link" size={12} /> Documentation
+              </a>
+            )}
+            {error && <Banner kind="err">{error}</Banner>}
+
+            {mainFields.map(renderField)}
+
+            {Object.entries(sections).map(([name, secFields]) => (
+              <div key={name} className="card card-sq shrink-0">
+                <button
+                  className="card-h w-full text-left"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setProxyOpen((o) => !o)}
+                >
+                  <h3 className="flex-1">{SECTION_LABELS[name] || name}</h3>
+                  <Icon name={proxyOpen ? 'chevD' : 'chevR'} size={15} />
+                </button>
+                {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
+              </div>
+            ))}
           </>
         )}
         {step === 1 && <VerifyStep probe={probe} onRun={runTest} />}
