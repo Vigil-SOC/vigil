@@ -22,6 +22,7 @@ import api, {
 } from '../../services/api'
 import { loadCustomIntegrations } from '../../config/integrations'
 import type { LastTest } from './integrationHealth'
+import type { IntegrationMetadata } from '../../config/integrationSchema'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -940,6 +941,7 @@ export function useIntegrationsConfig() {
     secrets_set: {},
     last_test: {},
   })
+  const [custom, setCustom] = useState<IntegrationMetadata[] | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -949,8 +951,9 @@ export function useIntegrationsConfig() {
     setPhase('loading')
     // custom-integration metadata first, so getAllIntegrations() is complete
     loadCustomIntegrations()
-      .catch(() => {})
-      .finally(() => {
+      .then((list) => {
+        if (cancelled) return
+        setCustom(list)
         configApi
           .getIntegrations()
           .then((res) => {
@@ -1014,7 +1017,9 @@ export function useIntegrationsConfig() {
     [config],
   )
 
-  return { config, phase, reload, saveIntegration, setIntegrationEnabled }
+  const reloadCustom = () => loadCustomIntegrations().then(setCustom)
+
+  return { config, custom, reloadCustom, phase, reload, saveIntegration, setIntegrationEnabled }
 }
 
 export interface S3Config {

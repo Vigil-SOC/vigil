@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { workflowApi, agentsApi } from '../../services/api'
 import { skillsApi } from '../../services/skillsApi'
 import {
@@ -102,56 +102,24 @@ export function useAgents() {
   return { rows, grants, phase, error, reload }
 }
 
-/* sourced from GET /agents (#482 — replaces the old
-   hardcoded AGENT_META mirror). Fetched once and cached module-wide so the many
-   sequence chips share a single request; unknown/custom ids fall back to a
-   prettified handle + the accent color. Covers customs too, which the old
-   built-ins-only map didn't. */
 interface AgentMeta {
   label: string
   color: string
 }
 
-let agentMetaCache: Promise<Record<string, AgentMeta>> | null = null
+const AgentRows = createContext<AgentTemplate[]>([])
+export const AgentRowsProvider = AgentRows.Provider
 
-function loadAgentMeta(): Promise<Record<string, AgentMeta>> {
-  if (!agentMetaCache) {
-    agentMetaCache = agentsApi
-      .listAgents()
-      .then((res) => {
-        const list = (res.data?.agents || []) as ApiAgent[]
-        const map: Record<string, AgentMeta> = {}
-        for (const a of list) {
-          map[a.id] = { label: a.name || a.id, color: a.color || 'var(--accent)' }
-        }
-        return map
-      })
-      .catch(() => {
-        // a failed fetch isn't cached: a transient error shouldn't pin every
-        // chip to the fallback for the rest of the session. Reset so the next
-        // mount retries.
-        agentMetaCache = null
-        return {}
-      })
-  }
-  return agentMetaCache
-}
-
-/** Returns a resolver `(agentId) => { label, color }` for agent chips. */
+/** Returns a resolver `(agentId) => { label, color }` for agent chips, read from
+ *  the agents feed the nearest AgentRowsProvider holds. */
 export function useAgentMeta(): (id: string) => AgentMeta {
-  const [map, setMap] = useState<Record<string, AgentMeta>>({})
-  useEffect(() => {
-    let cancelled = false
-    loadAgentMeta().then((m) => {
-      if (!cancelled) setMap(m)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const rows = useContext(AgentRows)
   return useCallback(
-    (id: string): AgentMeta => map[id] || { label: prettyHandle(id), color: 'var(--accent)' },
-    [map],
+    (id: string): AgentMeta => {
+      const a = rows.find((r) => r.handle === id)
+      return a ? { label: a.name, color: a.color } : { label: prettyHandle(id), color: 'var(--accent)' }
+    },
+    [rows],
   )
 }
 
