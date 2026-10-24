@@ -29,6 +29,7 @@ from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     # Bare /api, deliberately the same prefix as analytics, so
@@ -63,7 +64,7 @@ async def get_budget_settings() -> Dict[str, Any]:
 @router.put(
     "/analytics/budget",
     response_model=BudgetSettingsResponse,
-    dependencies=[permission_gate("settings.write")],
+    dependencies=[permission_gate("platform.write")],
 )
 async def put_budget_settings(
     payload: BudgetSettingsUpdate,

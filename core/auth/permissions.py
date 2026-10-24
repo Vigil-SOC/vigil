@@ -198,6 +198,117 @@ CATALOG = {
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
+# The revision that copies successor grants onto roles (#2915). While it is
+# missing from alembic_version, a gate split from a live write keeps that
+# write, and a gate this revision introduces stays open.
+CATALOG_REVISION = "0008_permission_catalog"
+_WRITE_PARENTS = frozenset({"settings.write", "integrations.write"})
+_SPLIT_PREFIX = "split from "
+
+
+def catalog_revision_applied(session) -> bool:
+    """Whether ``session``'s database includes ``0008_permission_catalog``.
+
+    The same walk as ``trail_ready``: the table, then each stamped revision's
+    ancestors. A database we cannot read counts as not yet upgraded, so today's
+    gates stay in force. Not a setting, and not a call to ``trail_ready``.
+    """
+    from alembic.util import CommandError
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from core.upgrade.command import script_directory
+
+    try:
+        present = session.execute(
+            text("SELECT to_regclass('public.alembic_version')")
+        ).scalar()
+    except SQLAlchemyError:
+        return False
+    if present is None:
+        return False
+    try:
+        script = script_directory()
+        rows = session.execute(text("SELECT version_num FROM alembic_version"))
+    except SQLAlchemyError:
+        return False
+    for (version,) in rows:
+        try:
+            if any(
+                revision.revision == CATALOG_REVISION
+                for revision in script.iterate_revisions(version, "base")
+            ):
+                return True
+        except CommandError:  # newer than this image: the upgrade refuses it too
+            continue
+    return False
+
+
+def enforced_permission(permission: str, session) -> Optional[str]:
+    """The name to check, or None when the gate stays open.
+
+    With the catalog revision applied, the declared name is the check. Without
+    it, a successor of ``settings.write`` or ``integrations.write`` keeps that
+    parent, and every other catalog permission is new and stays open. A name
+    the catalog does not re-origin (the live gates, and ``{integration}.view``)
+    is checked either way. ``session`` may be None when no database is open;
+    that counts as the revision being absent unless the revision check is
+    stubbed to say otherwise.
+    """
+    if session is not None and catalog_revision_applied(session):
+        return permission
+    if session is None:
+        try:
+            if catalog_revision_applied(None):  # type: ignore[arg-type]
+                return permission
+        except Exception:
+            pass
+    origin = CATALOG["permissions"].get(permission)
+    if isinstance(origin, str) and origin.startswith(_SPLIT_PREFIX):
+        parent = origin[len(_SPLIT_PREFIX) :]
+        if parent in _WRITE_PARENTS:
+            return parent
+    if origin is not None:
+        return None
+    return permission
+
+
+def _missing(user_id: str, permission: str, session) -> Optional[str]:
+    enforced = enforced_permission(permission, session)
+    if enforced is None:
+        return None
+    if AuthService.check_permission(user_id, enforced, session=session):
+        return None
+    return enforced
+
+
+def missing_permission(user_id: str, permission: str, session=None) -> Optional[str]:
+    """The permission a refusal should name, or None when the call is allowed.
+
+    No database yet (a unit test, or a process that has not connected) is the
+    same as the revision being absent: today's gates, and a stubbed
+    ``check_permission`` still runs.
+    """
+    if session is not None:
+        return _missing(user_id, permission, session)
+    try:
+        with unit_of_work() as owned:
+            return _missing(user_id, permission, owned)
+    except RuntimeError:
+        return _missing(user_id, permission, None)
+
+
+def deny_unless(user_id: str, permission: str, session=None) -> None:
+    """403 naming the permission the check actually used."""
+    missing = missing_permission(user_id, permission, session)
+    if missing is None:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Permission denied: {missing} required",
+    )
+
+
 # A credential is refused before the role check (decision 9). 403, including
 # in dev mode, where the session dependency would otherwise accept it.
 MCP_CREDENTIAL_DENIED = "An MCP credential cannot do this"
@@ -216,11 +327,7 @@ def require_permission(
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         if unsafe_only and request.method in _SAFE_METHODS:
             return user
-        if not AuthService.check_permission(user.user_id, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {permission} required",
-            )
+        deny_unless(user.user_id, permission)
         return user
 
     # Introspectable by the role x route matrix test.
@@ -286,11 +393,7 @@ def require_person_permission(permission: str) -> Callable[..., User]:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED, detail=SIGN_IN_REQUIRED
                 )
-        if not AuthService.check_permission(user.user_id, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {permission} required",
-            )
+        deny_unless(user.user_id, permission)
         return user
 
     _check.permission, _check.unsafe_only = permission, False
@@ -305,13 +408,15 @@ def permission_gate(permission: str, *, unsafe_only: bool = False) -> Depends:
 def username_has_permission(username: str, permission: str) -> bool:
     """Whether the account named ``username`` holds ``permission``.
 
-    For paths that carry only a username (chat and MCP tool calls).
+    For paths that carry only a username (chat and MCP tool calls). An unknown
+    account holds nothing, except under DEV_MODE, which holds built-in Admin.
     """
     with unit_of_work() as session:
         user = session.query(User).filter(User.username == username).first()
-        user_id = user.user_id if user else ""
-    # An unknown id holds nothing, except under DEV_MODE, which grants all.
-    return AuthService.check_permission(user_id, permission)
+        return (
+            missing_permission(user.user_id if user else "", permission, session)
+            is None
+        )
 
 
 def permission_refusal(permission: str) -> Optional[dict[str, str]]:

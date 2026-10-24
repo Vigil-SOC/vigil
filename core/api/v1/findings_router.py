@@ -35,6 +35,7 @@ from core.storage.database_data_service import DatabaseDataService
 from core.storage.schemas.finding import FindingSchema
 
 router = APIRouter()
+router.dependencies.append(permission_gate("findings.read"))
 
 _FINDINGS_WRITE = [permission_gate("findings.write")]
 

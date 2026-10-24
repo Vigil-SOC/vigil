@@ -4,10 +4,12 @@ from typing import Optional
 
 from fastapi import APIRouter
 
+from core.auth.permissions import permission_gate
 from core.cases.case_search_service import CaseSearchService
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/cases/search",

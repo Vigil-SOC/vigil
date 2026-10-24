@@ -26,9 +26,10 @@ OLDER = datetime(2099, 1, 1, 8, 0, 0)
 
 
 @pytest.fixture
-def client():
+def client(authenticate_app):
     app = FastAPI()
     app.include_router(approvals_router, prefix="/api")
+    authenticate_app(app)
     return TestClient(app)
 
 

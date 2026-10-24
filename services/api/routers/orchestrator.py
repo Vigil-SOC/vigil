@@ -36,8 +36,10 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 
-# Turning the orchestrator off, or wiping its records, is a settings change.
+# Kill, enable and disable stay settings.write. Wiping investigations is platform.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
+_PLATFORM_WRITE = [permission_gate("platform.write")]
+router.dependencies.append(permission_gate("automation.read"))
 # Queueing an investigation is the same act as POST /api/v1/agent-runs.
 _RUN_AGENTS = [permission_gate("ai_chat.use")]
 # Stopping one investigation is a decision, like resuming or cancelling a run.
@@ -233,7 +235,7 @@ async def kill_orchestrator(
         raise HTTPException(status_code=500, detail="Failed to kill the orchestrator")
 
 
-@router.post("/investigations/purge", dependencies=_SETTINGS_WRITE)
+@router.post("/investigations/purge", dependencies=_PLATFORM_WRITE)
 async def purge_investigations(
     current_user: User = Depends(get_current_active_user),
 ):

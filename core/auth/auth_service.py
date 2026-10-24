@@ -715,9 +715,12 @@ class AuthService:
         if permission in _PERSON_ONLY and not _is_person(user_id, session):
             return False
 
-        # DEV MODE: Grant all permissions
+        # DEV MODE: built-in Admin, through the catalog. A name it does not
+        # list is denied. The person-only refusal above still wins.
         if _is_dev_mode():
-            return True
+            from core.auth.permissions import CATALOG
+
+            return bool(CATALOG["builtins"]["role-admin"].get(permission))
 
         with unit_of_work(session) as session:
             user = session.query(User).filter(User.user_id == user_id).first()
@@ -745,31 +748,11 @@ class AuthService:
         Returns:
             Dictionary of permissions
         """
-        # DEV MODE: Return all permissions
+        # DEV MODE: the same built-in Admin the permission check grants.
         if _is_dev_mode():
-            return {
-                "findings.read": True,
-                "findings.write": True,
-                "findings.delete": True,
-                "cases.read": True,
-                "cases.write": True,
-                "cases.delete": True,
-                "cases.assign": True,
-                "integrations.read": True,
-                "integrations.write": True,
-                "users.read": True,
-                "users.write": True,
-                "users.delete": True,
-                "settings.read": True,
-                "settings.write": True,
-                "ai_chat.use": True,
-                "ai_decisions.approve": True,
-                "medic.read": True,
-                "medic.admin": True,
-                "audit.read": True,
-                "audit.forward": True,
-                "audit.manage": True,
-            }
+            from core.auth.permissions import CATALOG
+
+            return dict(CATALOG["builtins"]["role-admin"])
 
         with unit_of_work(session) as session:
             user = session.query(User).filter(User.user_id == user_id).first()

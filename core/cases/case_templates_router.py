@@ -11,6 +11,7 @@ from core.routing import Auth, RouterMeta
 from core.storage.schemas import CaseSchema, CaseTemplateSchema
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/cases/templates",

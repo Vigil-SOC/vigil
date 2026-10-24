@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from core.auth import mcp_credential_service, principals, sign_ins, trail_events
 from core.auth.auth_service import AuthService
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
+from core.auth.permissions import deny_unless
 from core.auth.session_cutoff import stamp_session_cutoff
 from core.auth.token_blacklist import revoke_all_for_user
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -186,11 +187,7 @@ def list_users(
     """
     # Check permission
     with _denials(current_user, "user.list"):
-        if not AuthService.check_permission(current_user.user_id, "users.read"):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission denied: users.read required",
-            )
+        deny_unless(current_user.user_id, "users.read")
 
     try:
         query = _not_deleted(session.query(User))
@@ -251,11 +248,7 @@ def get_user(
     # Check permission (or allow users to view their own profile)
     if user_id != current_user.user_id:
         with _denials(current_user, "user.read"):
-            if not AuthService.check_permission(current_user.user_id, "users.read"):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied: users.read required",
-                )
+            deny_unless(current_user.user_id, "users.read")
 
     user = _live_user(session, user_id)
     user_dict = UserSchema.dump(user)
@@ -289,16 +282,13 @@ def create_user(
         Created user information
     """
     with _denials(current_user, "user.create"):
+        deny_unless(current_user.user_id, "users.write")
         return _create_user(request, current_user, session)
 
 
 def _create_user(request: CreateUserRequest, current_user: User, session: Session):
     # Check permission
-    if not AuthService.check_permission(current_user.user_id, "users.write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required",
-        )
+    deny_unless(current_user.user_id, "users.write")
 
     # Validate password against the full strength policy. Penalize passwords
     # built from the new account's own identifiers.
@@ -367,11 +357,7 @@ def _apply_user_update(
 ) -> tuple[User, Optional[str], dict]:
     """Sync half of update_user. Returns the user, what made its existing
     tokens stale (an email or role change, else None), and the payload."""
-    if not AuthService.check_permission(current_user.user_id, "users.write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required",
-        )
+    deny_unless(current_user.user_id, "users.write")
 
     user = _live_user(session, user_id)
     _require_privileges_cover_target(current_user, user, session, action="update")
@@ -493,6 +479,7 @@ async def update_user(
     """
     try:
         async with _denials_async(current_user, "user.update"):
+            await asyncio.to_thread(deny_unless, current_user.user_id, "users.write")
             user, stale_reason, payload = await asyncio.to_thread(
                 _apply_user_update, session, current_user, user_id, request
             )
@@ -584,13 +571,7 @@ async def delete_user(
         Success message
     """
     async with _denials_async(current_user, "user.delete"):
-        if not await asyncio.to_thread(
-            AuthService.check_permission, current_user.user_id, "users.delete"
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission denied: users.delete required",
-            )
+        await asyncio.to_thread(deny_unless, current_user.user_id, "users.delete")
 
         user = await asyncio.to_thread(_delete_user, session, current_user, user_id)
     try:
@@ -620,11 +601,7 @@ def list_roles(
         List of roles
     """
     with _denials(current_user, "role.list"):
-        if not AuthService.check_permission(current_user.user_id, "users.read"):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission denied: users.read required",
-            )
+        deny_unless(current_user.user_id, "users.read")
     try:
         roles = session.query(Role).all()
         return {"roles": RoleSchema.dump_many(roles)}

@@ -44,19 +44,13 @@ def test_every_v1_path_is_also_served_at_its_legacy_prefix():
     assert not missing, "dual-mount incomplete:\n" + "\n".join(missing)
 
 
-def test_both_paths_return_the_same_response():
+def test_both_paths_return_the_same_response(authenticate_app):
     """Functional: hit both addresses through the app and get identical output.
     Auth and the data layer are overridden so this needs no DB."""
-    from services.api.main import app
-    from services.api.middleware.auth import get_current_active_user
     import core.api.v1.findings_router as v1_findings
+    from services.api.main import app
 
-    class _User:
-        is_active = True
-        username = "test"
-        user_id = "test"
-
-    app.dependency_overrides[get_current_active_user] = lambda: _User()
+    authenticate_app(app)
     orig_count = v1_findings.data_service.count_findings
     orig_list = v1_findings.data_service.get_findings
     v1_findings.data_service.count_findings = lambda **_: 0
@@ -70,6 +64,5 @@ def test_both_paths_return_the_same_response():
         assert v1.json() == legacy.json()
         assert v1.json()["total"] == 0
     finally:
-        app.dependency_overrides.pop(get_current_active_user, None)
         v1_findings.data_service.count_findings = orig_count
         v1_findings.data_service.get_findings = orig_list

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from core.auth.permissions import permission_gate
 from core.llm.cost.pricing_router import GATEWAY, priced_as
 from core.llm.providers.registry import get_registry
 from core.reporting.ai_insights_service import AIInsightsService
@@ -35,6 +36,8 @@ from core.threat_intel.mitre_lookup import get_time_range
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_PLATFORM_WRITE = [permission_gate("platform.write")]
+router.dependencies.append(permission_gate("platform.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api",
@@ -194,7 +197,7 @@ class EstimateCostRequest(BaseModel):
     max_tokens: int = Field(default=4096, ge=1, le=200_000)
 
 
-@router.post("/analytics/estimate-cost")
+@router.post("/analytics/estimate-cost", dependencies=_PLATFORM_WRITE)
 async def estimate_cost_endpoint(payload: EstimateCostRequest) -> Dict[str, Any]:
     """Return a USD low/high band for a hypothetical LLM call.
 
@@ -257,7 +260,7 @@ class RecalculateCostRequest(BaseModel):
     limit: int = Field(default=200, ge=1, le=1000)
 
 
-@router.post("/analytics/recalculate-cost")
+@router.post("/analytics/recalculate-cost", dependencies=_PLATFORM_WRITE)
 async def recalculate_cost_endpoint(
     payload: Optional[RecalculateCostRequest] = None,
 ) -> Dict[str, Any]:

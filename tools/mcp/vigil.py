@@ -1,4 +1,5 @@
 import functools
+import inspect
 import json
 import logging
 from contextlib import contextmanager
@@ -97,12 +98,25 @@ def requires(permission: str):
     """
 
     def deco(fn):
-        @functools.wraps(fn)
-        def wrapped(*args, **kwargs):
+        def refused():
             refusal = permission_refusal(permission)
-            if refusal is not None:
-                return jdump(refusal)
-            return fn(*args, **kwargs)
+            return None if refusal is None else jdump(refusal)
+
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def wrapped(*args, **kwargs):
+                if (refusal := refused()) is not None:
+                    return refusal
+                return await fn(*args, **kwargs)
+
+        else:
+
+            @functools.wraps(fn)
+            def wrapped(*args, **kwargs):
+                if (refusal := refused()) is not None:
+                    return refusal
+                return fn(*args, **kwargs)
 
         return wrapped
 
@@ -139,6 +153,7 @@ def get_data_service():
 
 
 @mcp.tool()
+@requires("findings.read")
 def list_findings(
     severity: Optional[str] = None,
     data_source: Optional[str] = None,
@@ -167,6 +182,7 @@ def list_findings(
 
 
 @mcp.tool()
+@requires("findings.read")
 def get_finding(finding_id: str) -> str:
     """Get a specific finding by ID."""
     return _call(tool_registry.get_finding, finding_id=finding_id)
@@ -180,6 +196,7 @@ def dismiss_finding(finding_id: str, reason: str) -> str:
 
 
 @mcp.tool()
+@requires("automation.read")
 async def list_completed_hunts(
     start: str,
     end: str,
@@ -192,6 +209,7 @@ async def list_completed_hunts(
 
 
 @mcp.tool()
+@requires("automation.read")
 async def replay_hunt(
     run_id: str,
     decision_id: Optional[str] = None,
@@ -213,6 +231,7 @@ async def replay_hunt(
 
 
 @mcp.tool()
+@requires("findings.read")
 def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -> str:
     """Roll up ATT&CK techniques by finding count and severity."""
     return _call(
@@ -223,6 +242,7 @@ def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -
 
 
 @mcp.tool()
+@requires("cases.read")
 def list_cases(
     status: Optional[str] = None,
     severity: Optional[str] = None,
@@ -240,6 +260,7 @@ def list_cases(
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case(case_id: str) -> str:
     """Get one case."""
     return _call(tool_registry.get_case, case_id=case_id)
@@ -691,6 +712,7 @@ def add_case_comment(
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case_comments(case_id: str) -> str:
     """Get all comments for a case."""
     try:
@@ -906,6 +928,7 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
     """Get all IOCs for a case, optionally filtered by type."""
     try:
@@ -1050,6 +1073,7 @@ def update_case_task(
 
 
 @mcp.tool()
+@requires("cases.read")
 def get_case_tasks(case_id: str) -> str:
     """Get all tasks for a case."""
     try:
@@ -1314,6 +1338,7 @@ def get_approval_svc():
 
 
 @mcp.tool()
+@requires("ai_chat.use")
 def create_approval_action(
     action_type: str,
     title: str,
@@ -1367,6 +1392,7 @@ def create_approval_action(
 
 
 @mcp.tool()
+@requires("ai_decisions.read")
 def list_approval_actions(
     status: Optional[str] = None,
     action_type: Optional[str] = None,
@@ -1408,18 +1434,21 @@ def list_approval_actions(
 
 
 @mcp.tool()
+@requires("ai_decisions.read")
 def get_approval_action(action_id: str) -> str:
     """Get action details."""
     return _call(tool_registry.get_approval_action, action_id=action_id)
 
 
 @mcp.tool()
+@requires("ai_decisions.approve")
 def approve_action(action_id: str) -> str:
     """Approve a pending action. The actor is the caller, not an argument."""
     return _call(tool_registry.approve_action, action_id=action_id)
 
 
 @mcp.tool()
+@requires("ai_decisions.approve")
 def reject_action(
     action_id: str,
     reason: str,

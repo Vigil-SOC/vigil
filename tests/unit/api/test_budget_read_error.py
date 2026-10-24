@@ -12,9 +12,10 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "path", ["/api/analytics/budget", "/api/analytics/budget/quota"]
 )
-def test_budget_reads_answer_5xx_when_settings_read_fails(path):
+def test_budget_reads_answer_5xx_when_settings_read_fails(path, authenticate_app):
     app = FastAPI()
     app.include_router(budgets.router, prefix="/api")
+    authenticate_app(app)
     client = TestClient(app, raise_server_exceptions=False)
     with patch(
         "core.llm.cost.budget.get_session", side_effect=RuntimeError("DB exploded")

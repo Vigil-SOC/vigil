@@ -32,10 +32,10 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 
-# The on/off switch for federation as a whole is a platform setting. A single
-# source is an integration, same as the other integration write routes.
-_SETTINGS_WRITE = [permission_gate("settings.write")]
+# Federation is connector configuration: the switch and each source.
+_SETTINGS_WRITE = [permission_gate("integrations.write")]
 _INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
+router.dependencies.append(permission_gate("integrations.read"))
 
 
 _VALID_SEVERITIES = {"low", "medium", "high", "critical"}

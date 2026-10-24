@@ -27,18 +27,18 @@ RUN_ID = "9c1c2d3e-0000-4000-8000-000000000592"
 
 # (method, path, body, permission the route must ask for)
 GATED_ROUTES = [
-    ("POST", "/api/config/postgresql", {"connection_string": "x"}, "settings.write"),
-    ("POST", "/api/config/claude", {"api_key": "x"}, "settings.write"),
-    ("POST", "/api/config/secrets/migrate-to-encrypted", None, "settings.write"),
+    ("POST", "/api/config/postgresql", {"connection_string": "x"}, "platform.write"),
+    ("POST", "/api/config/claude", {"api_key": "x"}, "platform.write"),
+    ("POST", "/api/config/secrets/migrate-to-encrypted", None, "platform.write"),
     ("POST", "/api/config/force-manual-approval", {"enabled": True}, "settings.write"),
     ("POST", "/api/config/integrations", {"integrations": {}}, "integrations.write"),
     ("POST", "/api/config/darktrace", {}, "integrations.write"),
     ("POST", "/api/orchestrator/enable", None, "settings.write"),
     ("POST", "/api/orchestrator/disable", None, "settings.write"),
     ("POST", "/api/orchestrator/kill", None, "settings.write"),
-    ("POST", "/api/orchestrator/investigations/purge", None, "settings.write"),
+    ("POST", "/api/orchestrator/investigations/purge", None, "platform.write"),
     ("DELETE", "/api/findings/all", None, "findings.delete"),
-    ("PUT", "/api/analytics/budget", {}, "settings.write"),
+    ("PUT", "/api/analytics/budget", {}, "platform.write"),
     ("POST", "/api/v1/cases", {"title": "t"}, "cases.write"),
     ("PATCH", "/api/v1/cases/c-1", {"status": "closed"}, "cases.write"),
     ("POST", "/api/v1/cases/c-1/close", {}, "cases.write"),
@@ -89,32 +89,32 @@ GATED_ROUTES = [
         "POST",
         "/api/skills",
         {"name": "s", "description": "d", "body": "b"},
-        "settings.write",
+        "automation.write",
     ),
-    ("POST", "/api/skills/upload", None, "settings.write"),
-    ("DELETE", "/api/skills/s", None, "settings.write"),
-    ("POST", "/api/agents/custom", {"name": "n", "role": "r"}, "settings.write"),
-    ("PATCH", "/api/agents/custom/custom-1", {"name": "n"}, "settings.write"),
-    ("DELETE", "/api/agents/custom/custom-1", None, "settings.write"),
-    ("POST", "/api/agents/triage/fork", {}, "settings.write"),
+    ("POST", "/api/skills/upload", None, "automation.write"),
+    ("DELETE", "/api/skills/s", None, "automation.write"),
+    ("POST", "/api/agents/custom", {"name": "n", "role": "r"}, "automation.write"),
+    ("PATCH", "/api/agents/custom/custom-1", {"name": "n"}, "automation.write"),
+    ("DELETE", "/api/agents/custom/custom-1", None, "automation.write"),
+    ("POST", "/api/agents/triage/fork", {}, "automation.write"),
     (
         "PUT",
         "/api/agents/agents/triage/enabled",
         {"enabled": False},
-        "settings.write",
+        "automation.write",
     ),
-    ("PUT", "/api/workflows/w-1/enabled", {"enabled": False}, "settings.write"),
-    ("POST", "/api/workflows/reload", None, "settings.write"),
+    ("PUT", "/api/workflows/w-1/enabled", {"enabled": False}, "automation.write"),
+    ("POST", "/api/workflows/reload", None, "automation.write"),
     (
         "POST",
         "/api/workflows/custom",
         {"name": "n", "description": "d"},
-        "settings.write",
+        "automation.write",
     ),
-    ("PUT", "/api/workflows/custom/w-1", {"name": "n"}, "settings.write"),
-    ("DELETE", "/api/workflows/custom/w-1", None, "settings.write"),
-    ("PUT", "/api/kafka/config", {"enabled": False}, "settings.write"),
-    ("PUT", "/api/federation/settings", {"enabled": False}, "settings.write"),
+    ("PUT", "/api/workflows/custom/w-1", {"name": "n"}, "automation.write"),
+    ("DELETE", "/api/workflows/custom/w-1", None, "automation.write"),
+    ("PUT", "/api/kafka/config", {"enabled": False}, "integrations.write"),
+    ("PUT", "/api/federation/settings", {"enabled": False}, "integrations.write"),
     (
         "PATCH",
         "/api/federation/sources/src",
@@ -126,19 +126,19 @@ GATED_ROUTES = [
         "PUT",
         "/api/ai/config/triage",
         {"provider_id": "p", "model_id": "m"},
-        "settings.write",
+        "platform.write",
     ),
-    ("DELETE", "/api/ai/config/triage", None, "settings.write"),
+    ("DELETE", "/api/ai/config/triage", None, "platform.write"),
     (
         "POST",
         "/api/detection-rules/sources",
         {"name": "n", "source_type": "local", "format": "sigma"},
-        "settings.write",
+        "detections.write",
     ),
-    ("DELETE", "/api/detection-rules/sources/s", None, "settings.write"),
-    ("POST", "/api/detection-rules/sources/s/update", None, "settings.write"),
-    ("POST", "/api/detection-rules/update-all", None, "settings.write"),
-    ("POST", "/api/detection-rules/reload", None, "settings.write"),
+    ("DELETE", "/api/detection-rules/sources/s", None, "detections.write"),
+    ("POST", "/api/detection-rules/sources/s/update", None, "detections.write"),
+    ("POST", "/api/detection-rules/update-all", None, "detections.write"),
+    ("POST", "/api/detection-rules/reload", None, "detections.write"),
     ("POST", "/api/orchestrator/investigations", {"hypothesis": "h"}, "ai_chat.use"),
     ("POST", "/api/orchestrator/investigations/inv/wake", None, "ai_chat.use"),
     ("POST", "/api/orchestrator/scan-findings", {}, "ai_chat.use"),
@@ -176,6 +176,10 @@ def test_a_route_refuses_a_user_who_lacks_its_permission(
         return perm != permission
 
     monkeypatch.setattr("core.auth.auth_service.AuthService.check_permission", _check)
+    # The catalog revision is applied, so the route's declared name is the check.
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: True
+    )
     app = backend_main.app
     app.dependency_overrides[auth_module.get_current_active_user] = lambda: viewer
     app.dependency_overrides[auth_module.get_current_user] = lambda: viewer
@@ -222,6 +226,8 @@ _INLINE_GUARDS = (
     "check_permission",
     "username_has_permission",
     "require_permission",
+    "deny_unless",
+    "missing_permission",
 )
 
 
@@ -231,8 +237,23 @@ def _dependencies(dependant):
         yield from _dependencies(dep)
 
 
-def _write_routes_without_a_guard() -> set[str]:
-    """``METHOD path`` for each state-changing /api route with no visible guard."""
+def _is_public(path: str) -> bool:
+    from services.api.main import PUBLIC_API_PATHS
+
+    if path in PUBLIC_API_PATHS:
+        return True
+    return any(
+        public.endswith("/*") and path.startswith(public[:-1])
+        for public in PUBLIC_API_PATHS
+    )
+
+
+def _routes_without_a_guard() -> set[str]:
+    """``METHOD path`` for each /api route with no visible permission guard.
+
+    Reads are included. Paths already on ``PUBLIC_API_PATHS`` are not: they
+    have no session to grant a permission to.
+    """
     app = backend_main.app
     found: set[str] = set()
 
@@ -243,13 +264,17 @@ def _write_routes_without_a_guard() -> set[str]:
                 visit(candidate)
             return
         path = getattr(obj, "path", None)
-        writes = set(getattr(obj, "methods", None) or ()) - _SAFE_METHODS
-        if not isinstance(path, str) or not path.startswith("/api/") or not writes:
+        methods = set(getattr(obj, "methods", None) or ()) - {"HEAD", "OPTIONS"}
+        if not isinstance(path, str) or not path.startswith("/api/") or not methods:
+            return
+        concrete = getattr(obj, "path_format", None) or path
+        if _is_public(concrete) or _is_public(path):
             return
         if any(
             getattr(dep.call, "__qualname__", "").startswith(
                 ("require_permission.", "require_person_permission.")
             )
+            or hasattr(dep.call, "permission")
             for dep in _dependencies(obj.dependant)
         ):
             return
@@ -259,31 +284,31 @@ def _write_routes_without_a_guard() -> set[str]:
             source = ""
         if any(guard in source for guard in _INLINE_GUARDS):
             return
-        for method in writes:
-            found.add(f"{method} {getattr(obj, 'path_format', None) or path}")
+        for method in methods:
+            found.add(f"{method} {concrete}")
 
     for route in app.routes:
         visit(route)
     return found
 
 
-def test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list():
-    """A new write route must ask for a permission or be listed as auth-only.
+def test_a_route_without_a_permission_guard_is_on_the_reviewed_list():
+    """A route must ask for a permission or be the caller's own session.
 
     ``test_route_auth_coverage`` proves a login; this proves someone decided what
-    the login's role may do. The list is the set of routes that had no visible
-    guard when this test was added (some check inside a helper the handler calls,
-    some are login-only on purpose). Adding a line is a decision to review.
+    the login's role may do. The list is that session: login, MFA, bootstrap,
+    password reset, and the caller's own profile. A data route is not an entry.
+    Paths on ``PUBLIC_API_PATHS`` are skipped.
     """
     listed = {
         line.strip()
         for line in AUTH_ONLY_ROUTES.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     }
-    unguarded = _write_routes_without_a_guard()
+    unguarded = _routes_without_a_guard()
 
     assert not unguarded - listed, (
-        "Write routes with no permission guard and not in "
+        "Routes with no permission guard and not in "
         f"{AUTH_ONLY_ROUTES.name}; add a permission_gate(...) or list them:\n  - "
         + "\n  - ".join(sorted(unguarded - listed))
     )
@@ -291,3 +316,42 @@ def test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list():
         f"{AUTH_ONLY_ROUTES.name} lists routes that are now guarded or gone; "
         "remove them:\n  - " + "\n  - ".join(sorted(listed - unguarded))
     )
+
+
+def test_every_chat_tool_names_a_permission():
+    """A new chat tool with no permission fails here, the same way a route does."""
+    from core.agents.tool_registry import TOOL_PERMISSIONS
+    from core.llm.tool_schemas import ALL_TOOLS, INTEGRATION_TOOLS
+
+    names = {tool["name"] for tool in (*ALL_TOOLS, *INTEGRATION_TOOLS)}
+    missing = sorted(names - set(TOOL_PERMISSIONS))
+    assert missing == []
+
+
+def test_every_vigil_mcp_tool_names_a_permission():
+    """A Vigil MCP tool with no ``@requires`` fails here."""
+    import ast
+
+    tree = ast.parse(
+        Path(__file__).parents[2].joinpath("tools/mcp/vigil.py").read_text()
+    )
+    missing = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(
+            isinstance(dec, ast.Call)
+            and isinstance(dec.func, ast.Attribute)
+            and dec.func.attr == "tool"
+            for dec in node.decorator_list
+        ):
+            continue
+        named = any(
+            isinstance(dec, ast.Call)
+            and isinstance(dec.func, ast.Name)
+            and dec.func.id == "requires"
+            for dec in node.decorator_list
+        )
+        if not named:
+            missing.append(node.name)
+    assert missing == []

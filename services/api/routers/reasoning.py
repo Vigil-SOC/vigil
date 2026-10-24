@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import and_, cast, func, literal, select
 from sqlalchemy.dialects.postgresql import JSONB
 
+from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_manager
 from core.storage.models import LLMInteractionLog
@@ -16,6 +17,7 @@ from core.storage.schemas import LLMInteractionLogSchema
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("automation.read"))
 
 ROUTER_META = RouterMeta(
     prefix="/api/reasoning",

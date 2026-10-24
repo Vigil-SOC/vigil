@@ -60,6 +60,7 @@ from services.api.middleware.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.dependencies.append(permission_gate("cases.read"))
 
 _CASES_WRITE = [permission_gate("cases.write")]
 

@@ -70,9 +70,13 @@ from services.daemon.intent import effective_daemon_config, intent_report
 router = APIRouter()
 
 # Writes change what the platform connects to and trusts, so Auth.REQUIRED alone
-# (any active account) is not enough. Reads stay open to every role.
+# (any active account) is not enough.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
+_SETTINGS_READ = [permission_gate("settings.read")]
+_PLATFORM_WRITE = [permission_gate("platform.write")]
+_PLATFORM_READ = [permission_gate("platform.read")]
 _INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
+_INTEGRATIONS_READ = [permission_gate("integrations.read")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/config",
@@ -171,7 +175,7 @@ class PlatformDatabaseProxyConfig(BaseModel):
     verify_proxy_tls: bool = True
 
 
-@router.get("/demo-mode")
+@router.get("/demo-mode", dependencies=_SETTINGS_READ)
 def get_demo_mode():
     """
     Get demo mode configuration.
@@ -250,7 +254,7 @@ def reset_demo_data(demo_service=Depends(provide_demo_data)):
     }
 
 
-@router.get("/claude")
+@router.get("/claude", dependencies=_PLATFORM_READ)
 def get_claude_config():
     """
     Get Claude API configuration status.
@@ -278,7 +282,7 @@ def get_claude_config():
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/claude", dependencies=_SETTINGS_WRITE)
+@router.post("/claude", dependencies=_PLATFORM_WRITE)
 def set_claude_config(config: ClaudeConfig):
     """
     Set Claude API configuration.
@@ -332,7 +336,7 @@ def set_claude_config(config: ClaudeConfig):
     return {"success": True, "message": "API key saved securely"}
 
 
-@router.get("/s3")
+@router.get("/s3", dependencies=_PLATFORM_READ)
 def get_s3_config():
     """
     Get S3 configuration status.
@@ -376,7 +380,7 @@ def get_s3_config():
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/s3", dependencies=_SETTINGS_WRITE)
+@router.post("/s3", dependencies=_PLATFORM_WRITE)
 def set_s3_config(
     config: S3Config,
     current_user: User = Depends(get_current_active_user),
@@ -477,7 +481,7 @@ _PLATFORM_DB_PROXY_KEYS = {
 _PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
 
 
-@router.get("/platform-database")
+@router.get("/platform-database", dependencies=_PLATFORM_READ)
 def get_platform_database_config():
     """Return the current proxy config in front of the platform DB.
 
@@ -514,7 +518,7 @@ def get_platform_database_config():
     return result
 
 
-@router.post("/platform-database", dependencies=_SETTINGS_WRITE)
+@router.post("/platform-database", dependencies=_PLATFORM_WRITE)
 def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     """Persist the platform-DB proxy config to the encrypted secrets
     store. Takes effect on the next backend restart — the live engine
@@ -563,7 +567,7 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     }
 
 
-@router.get("/theme")
+@router.get("/theme", dependencies=_SETTINGS_READ)
 def get_theme_config():
     """Get theme configuration; 503 when the database read fails."""
     try:
@@ -736,7 +740,11 @@ def build_setup_steps(
     }
 
 
-@router.get("/setup-steps", response_model=SetupStepsResponse)
+@router.get(
+    "/setup-steps",
+    response_model=SetupStepsResponse,
+    dependencies=_SETTINGS_READ,
+)
 def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
@@ -775,7 +783,7 @@ def _secrets_set_map(integrations: dict) -> dict:
     return result
 
 
-@router.get("/integrations")
+@router.get("/integrations", dependencies=_INTEGRATIONS_READ)
 def get_integrations_config():
     """
     Get integrations configuration.
@@ -1158,7 +1166,7 @@ async def test_integration(
     return result
 
 
-@router.get("/general")
+@router.get("/general", dependencies=_SETTINGS_READ)
 def get_general_config():
     """Get general application settings; 503 when the database read fails."""
     try:
@@ -1223,7 +1231,7 @@ def set_general_config(
     return {"success": True, "message": "General settings saved"}
 
 
-@router.get("/postgresql")
+@router.get("/postgresql", dependencies=_PLATFORM_READ)
 def get_postgresql_config():
     """
     Get PostgreSQL database backend configuration status.
@@ -1254,7 +1262,7 @@ def get_postgresql_config():
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/postgresql", dependencies=_SETTINGS_WRITE)
+@router.post("/postgresql", dependencies=_PLATFORM_WRITE)
 def set_postgresql_config(config: PostgreSQLConfig):
     """
     Set PostgreSQL database backend configuration.
@@ -1299,7 +1307,7 @@ class AIOperationsSettingsConfig(BaseModel):
 AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 
-@router.get("/ai-operations")
+@router.get("/ai-operations", dependencies=_SETTINGS_READ)
 def get_ai_operations_config():
     """Return the local-Ollama recovery toggles (defaults merged with DB overrides).
 
@@ -1525,7 +1533,7 @@ class IntentReportResponse(BaseModel):
     rows: list[IntentDiffRow] = Field(default_factory=list)
 
 
-@router.get("/intent", response_model=IntentReportResponse)
+@router.get("/intent", response_model=IntentReportResponse, dependencies=_SETTINGS_READ)
 def get_intent_report() -> IntentReportResponse:
     """Declared intent beside effective config.
 
@@ -1564,7 +1572,7 @@ class AutonomyConfig(BaseModel):
     force_manual_approval: bool
 
 
-@router.get("/autonomy", response_model=AutonomyConfig)
+@router.get("/autonomy", response_model=AutonomyConfig, dependencies=_SETTINGS_READ)
 def get_autonomy_config() -> AutonomyConfig:
     """Effective response autonomy for the console chip."""
     effective = effective_daemon_config(DaemonConfig.from_env())
@@ -1574,7 +1582,11 @@ def get_autonomy_config() -> AutonomyConfig:
     )
 
 
-@router.get("/orchestrator", response_model=OrchestratorConfigResponse)
+@router.get(
+    "/orchestrator",
+    response_model=OrchestratorConfigResponse,
+    dependencies=_SETTINGS_READ,
+)
 def get_orchestrator_config():
     """Get orchestrator configuration.
 
@@ -1637,7 +1649,11 @@ def _environment_wins() -> bool:
     return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
 
 
-@router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
+@router.get(
+    "/force-manual-approval",
+    response_model=ForceManualApprovalResponse,
+    dependencies=_SETTINGS_READ,
+)
 def get_force_manual_approval():
     """Read ``approval.force_manual_approval`` without inserting a default row.
 
@@ -1712,7 +1728,7 @@ DARKTRACE_DEFAULTS: Dict[str, Any] = {
 }
 
 
-@router.get("/darktrace")
+@router.get("/darktrace", dependencies=_INTEGRATIONS_READ)
 def get_darktrace_config():
     """Return the current Darktrace webhook receiver config (without the secret)."""
     try:
@@ -1769,7 +1785,7 @@ class _SecretsMigrateRequest(BaseModel):
     remove_from_dotenv: bool = True
 
 
-@router.get("/secrets/status")
+@router.get("/secrets/status", dependencies=_PLATFORM_READ)
 def secrets_status() -> Dict[str, Any]:
     """Report which backend the secrets manager is using and why.
 
@@ -1802,7 +1818,7 @@ def _audit_secrets_migration(report: Dict[str, Any], remove: bool, user: User) -
         logger.warning("Could not write secrets migration audit log: %s", e)
 
 
-@router.post("/secrets/migrate-to-encrypted", dependencies=_SETTINGS_WRITE)
+@router.post("/secrets/migrate-to-encrypted", dependencies=_PLATFORM_WRITE)
 def secrets_migrate_to_encrypted(
     request: Optional[_SecretsMigrateRequest] = None,
     current_user: User = Depends(get_current_active_user),

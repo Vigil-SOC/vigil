@@ -44,7 +44,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from core.auth.auth_service import AuthService
+from core.auth.permissions import deny_unless
 from core.config import get_settings
 from core.llm.bifrost import mirror
 from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
@@ -146,10 +146,7 @@ def _is_masked(value: Any) -> bool:
 
 
 def _require_settings_admin(current_user: User) -> None:
-    if not AuthService.check_permission(current_user.user_id, "settings.write"):
-        raise HTTPException(
-            status_code=403, detail="Permission denied: settings.write required"
-        )
+    deny_unless(current_user.user_id, "platform.write")
 
 
 def _resolve_vertex_scope(vertex: Dict[str, Any], key_id: Optional[str]) -> None:

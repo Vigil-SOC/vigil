@@ -20,9 +20,9 @@ from fastapi.responses import StreamingResponse
 from core.audit import trail
 from core.auth import current_user as current_user_module
 from core.auth import principals
-from core.auth.auth_service import AuthService, _is_service_account
+from core.auth.auth_service import _is_service_account
 from core.auth.current_user import get_current_user
-from core.auth.permissions import require_permission
+from core.auth.permissions import deny_unless, require_permission
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 
@@ -97,10 +97,7 @@ def require_forward():
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         _require_sign_in(request)
         permission = "audit.read" if _is_service_account(user) else "audit.forward"
-        if not AuthService.check_permission(user.user_id, permission):
-            raise HTTPException(
-                status_code=403, detail=f"Permission denied: {permission} required"
-            )
+        deny_unless(user.user_id, permission)
         return user
 
     # The role x route matrix reads these off the dependency (the person audience).
