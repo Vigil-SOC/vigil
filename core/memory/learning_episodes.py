@@ -36,6 +36,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
+from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import parse_window_instant, read_projection
 from core.config import vigil_path
 from core.detections.reconstruction import (
@@ -44,12 +45,11 @@ from core.detections.reconstruction import (
     steps_from_dispatch_results,
 )
 from core.detections.tools import get_security_detection_tools
-from core.memory.recall import _gap, _iso, _verdict
+from core.memory.recall import attach_sources, gap_row, iso, verdict_row
 from core.storage.models.episodic import (
     EpisodicDistilMarker,
     EpisodicGap,
     EpisodicVerdict,
-    EpisodicVerdictSource,
 )
 from core.storage.unit_of_work import unit_of_work
 from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
@@ -72,9 +72,8 @@ DEFAULT_LIMIT = 200
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
-def _refuse(tool: str, detail: str) -> TypeError:
-    # Worded so tools_router reads it as invalid_args rather than backend_error.
-    return TypeError(f"{tool}: {detail} (required keyword-only argument)")
+def _refuse(tool: str, detail: str) -> MCPFailure:
+    return MCPFailure("invalid_args", f"{tool}: {detail}")
 
 
 def _bound(tool: str, value: Any, *, end: bool) -> datetime:
@@ -96,7 +95,7 @@ def _envelope(marker: EpisodicDistilMarker) -> Dict[str, Any]:
         "origin_run_id": (
             str(marker.origin_run_id) if marker.origin_run_id is not None else None
         ),
-        "concluded_at": _iso(marker.concluded_at),
+        "concluded_at": iso(marker.concluded_at),
         "payload": {"verdicts": [], "gaps": []},
     }
 
@@ -108,8 +107,8 @@ def _payloads(db: Session, episodes: Mapping[Pair, Dict[str, Any]]) -> None:
     pairs = list(episodes)
     verdicts_by_id: Dict[int, Dict[str, Any]] = {}
     for table, build, bucket in (
-        (EpisodicVerdict.__table__, _verdict, "verdicts"),
-        (EpisodicGap.__table__, _gap, "gaps"),
+        (EpisodicVerdict.__table__, verdict_row, "verdicts"),
+        (EpisodicGap.__table__, gap_row, "gaps"),
     ):
         stmt = (
             select(table)
@@ -124,22 +123,7 @@ def _payloads(db: Session, episodes: Mapping[Pair, Dict[str, Any]]) -> None:
             episodes[key]["payload"][bucket].append(built)
             if bucket == "verdicts":
                 verdicts_by_id[row["id"]] = built
-    if not verdicts_by_id:
-        return
-    sources = EpisodicVerdictSource.__table__
-    stmt = (
-        select(sources)
-        .where(sources.c.verdict_id.in_(list(verdicts_by_id)))
-        .order_by(sources.c.verdict_id, sources.c.source_system)
-    )
-    for row in db.execute(stmt).mappings():
-        verdicts_by_id[row["verdict_id"]]["sources"].append(
-            {
-                "source_system": row["source_system"],
-                "stance": row["stance"],
-                "source_tier": row["source_tier"],
-            }
-        )
+    attach_sources(db, verdicts_by_id)
 
 
 def _episodes(
@@ -178,7 +162,7 @@ def _instant(value: Any) -> datetime:
 def _stamp(value: Any) -> Any:
     if not isinstance(value, (datetime, str)) or value == "":
         return None
-    return _iso(_instant(value))
+    return iso(_instant(value))
 
 
 def _distil_page(
@@ -290,8 +274,8 @@ async def list_episodes(
     episodes = _newest(distil + emulations, limit)
     total = marker_total + len(emulations)
     return {
-        "start": _iso(start),
-        "end": _iso(end),
+        "start": iso(start),
+        "end": iso(end),
         "episodes": episodes,
         "total": total,
         "dropped": max(total - len(episodes), 0),

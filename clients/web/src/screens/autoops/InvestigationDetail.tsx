@@ -4,8 +4,9 @@ import { Icon } from '../../shared/icons'
 import { Markdown } from '../../shared/Markdown'
 import { Cost, fmtCost } from '../../shared/cost'
 import { orchestratorApi } from '../../services/api'
-import { useInvestigationDetail, type InvestigationDetailData } from './useInvestigationDetail'
+import { useInvestigationDetail, type Coc, type Interaction, type InvestigationDetailData } from './useInvestigationDetail'
 import { StatusBadge } from './statusBadge'
+import { canKill, canRestart } from './investigationStatus'
 
 interface Props {
   id: string
@@ -20,7 +21,7 @@ type TabKey = 'overview' | 'files' | 'reasoning' | 'custody'
 
 export default function InvestigationDetail({ id, onBack, openChat, busy, wake, killInvestigation }: Props) {
   const navigate = useNavigate()
-  const { detail, reasoning, coc, phase, error, reload } = useInvestigationDetail(id)
+  const { detail, coc, phase, error, reload } = useInvestigationDetail(id)
   const [tab, setTab] = useState<TabKey>('overview')
 
   const runAndReload = async (p: unknown) => {
@@ -42,15 +43,13 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
   }
 
   const files = detail?.files || []
+  const reasoning = coc?.llm_interactions || []
   const tabs: [TabKey, string][] = [
     ['overview', 'Overview'],
     ['files', `Files${files.length ? ` · ${files.length}` : ''}`],
     ['reasoning', `Reasoning${reasoning.length ? ` · ${reasoning.length}` : ''}`],
     ['custody', 'Chain of custody'],
   ]
-
-  const canWake = detail && ['failed', 'completed'].includes(detail.status)
-  const canKill = detail && ['executing', 'assigned'].includes(detail.status)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -68,12 +67,12 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
           </p>
         </div>
         <span className="grow" />
-        {canWake && (
+        {detail && canRestart(detail.status) && (
           <button className="btn ghost" disabled={busy === `wake:${id}`} onClick={() => runAndReload(wake(id))}>
             <Icon name="play" /> Restart
           </button>
         )}
-        {canKill && (
+        {detail && canKill(detail.status) && (
           <button className="btn danger" disabled={busy === `kill:${id}`} onClick={() => runAndReload(killInvestigation(id))}>
             <Icon name="x2" /> Kill
           </button>
@@ -112,8 +111,8 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
               <OverviewTab detail={detail} />
             )}
             {tab === 'files' && <FilesTab id={id} files={files} />}
-            {tab === 'reasoning' && <ReasoningTab interactions={reasoning as unknown as Interaction[]} />}
-            {tab === 'custody' && <CustodyTab coc={coc as unknown as Coc | null} />}
+            {tab === 'reasoning' && <ReasoningTab interactions={reasoning} />}
+            {tab === 'custody' && <CustodyTab coc={coc} />}
           </>
         )}
       </div>
@@ -216,19 +215,6 @@ function FilesTab({ id, files }: { id: string; files: string[] }) {
   )
 }
 
-interface Interaction {
-  interaction_id?: string
-  created_at?: string
-  stop_reason?: string
-  thinking_content?: string
-  response_content?: string
-  tool_calls?: { name?: string; input?: unknown }[]
-  tool_results?: { tool_use_id?: string; is_error?: boolean; content?: unknown }[]
-  input_tokens?: number
-  output_tokens?: number
-  cost_usd?: number
-}
-
 function ReasoningTab({ interactions }: { interactions: Interaction[] }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   if (!interactions.length) return <div className="text-sm text-tx-3 py-10 text-center">No reasoning traces recorded for this investigation.</div>
@@ -299,15 +285,6 @@ function Section({ label, color, children }: { label: string; color?: string; ch
       {children}
     </div>
   )
-}
-
-interface CocLog { timestamp?: string; event_type?: string; details?: Record<string, unknown>; tokens_used?: number }
-interface CocLlm { created_at?: string; model?: string; input_tokens?: number; output_tokens?: number; cost_usd?: number; duration_ms?: number; stop_reason?: string; has_thinking?: boolean; thinking_content?: string; tool_calls?: unknown[] }
-interface Coc {
-  investigation?: { created_at?: string; workflow_id?: string; trigger_type?: string; priority?: string }
-  logs?: CocLog[]
-  llm_interactions?: CocLlm[]
-  otel_trace_id?: string
 }
 
 const TYPE_COLORS: Record<string, string> = {

@@ -1,0 +1,24 @@
+{
+  "fault": {
+    "mode": null,
+    "cause": null,
+    "class": null,
+    "lane_expected": null
+  },
+  "windows": {
+    "baseline": {
+      "start": "2026-10-07T10:00:00Z",
+      "end": "2026-10-07T10:30:00Z"
+    }
+  },
+  "expected": {
+    "baseline": {
+      "fires": [],
+      "may_fire": [
+        "L-4"
+      ],
+      "detect_within_s": null,
+      "clear_within_s": null
+    }
+  }
+}

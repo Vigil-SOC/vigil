@@ -189,12 +189,9 @@ def _do_init(service_name: str) -> None:
     # Wire Sentry alongside OTEL when configured (prevents double-tracing)
     sentry_dsn = get_settings().sentry_dsn
     if sentry_dsn:
-        try:
-            from core.platform.monitoring import SentrySpanProcessor
+        from core.platform.monitoring import SentrySpanProcessor
 
-            tracer_provider.add_span_processor(SentrySpanProcessor())
-        except Exception:
-            pass  # core.platform.monitoring may not be importable in daemon context
+        tracer_provider.add_span_processor(SentrySpanProcessor())
 
     trace.set_tracer_provider(tracer_provider)
     _tracer_provider = tracer_provider

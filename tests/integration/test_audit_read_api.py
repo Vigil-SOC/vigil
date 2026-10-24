@@ -1,8 +1,10 @@
 """Read, export, and poll the trail (#2765), on a database the upgrade built.
 
 Manager exports and is refused on poll. An Admin's sign-in polls, including a
-cursor past the tip, and that admin's MCP credential does not. Export writes
-one entry and closes the file with the tip. Poll writes nothing.
+cursor past the tip, and that admin's MCP credential does not. A service
+account whose role holds ``audit.read`` polls; without it, and a Viewer
+service account, the refusal names ``audit.read``. Export writes one entry
+and closes the file with the tip. Poll writes nothing.
 """
 
 from __future__ import annotations
@@ -176,6 +178,10 @@ def test_manager_can_export_and_cannot_poll(db, client):
 def test_a_cursor_past_the_tip_is_a_reset(db, client):
     _user("ada", "role-admin")
     admin = _bearer(_login(client, "ada"))
+    # Login records auth.sign_in. This test is about an empty trail.
+    with db.begin() as conn:
+        conn.execute(text("TRUNCATE audit_trail, audit_trail_held"))
+        conn.execute(text("UPDATE audit_trail_anchor SET seq = 0, entry_hash = ''"))
 
     caught_up = client.get("/api/audit/poll?after=0", headers=admin)
     assert caught_up.status_code == 200, caught_up.text
@@ -220,8 +226,9 @@ def test_an_mcp_credential_and_a_token_without_a_sign_in_cannot_poll(db, client)
 def test_export_writes_one_entry_and_poll_writes_none(db, client):
     admin_id = _user("ada", "role-admin")
     _append({trail.ACTION: "case.comment", trail.ACTOR: "not-the-caller"})
-    before = _count(db)
     admin = _bearer(_login(client, "ada"))
+    # Login records auth.sign_in. Poll and export are what this count watches.
+    before = _count(db)
 
     polled = client.get("/api/audit/poll?after=0", headers=admin)
     assert polled.status_code == 200, polled.text
@@ -336,7 +343,47 @@ def test_verify_returns_the_first_break(db, client):
     assert broken.json()["ok"] is False
 
 
-def test_the_kind_check_refuses_a_service_account_in_dev_mode(db, client, monkeypatch):
+def test_a_service_account_with_audit_read_can_poll(db, client):
+    role_id = "role-siem"
+    with unit_of_work() as session:
+        role = session.get(Role, role_id)
+        if role is None:
+            session.add(
+                Role(
+                    role_id=role_id,
+                    name="SIEM",
+                    description="",
+                    permissions={"audit.read": True},
+                )
+            )
+        else:
+            role.permissions = {"audit.read": True}
+    _user("siem", role_id, service=True)
+    # No Origin or Sec-Fetch-Site: a browser login is refused for this account.
+    headers = _bearer(_login(client, "siem"))
+    before = _count(db)
+
+    polled = client.get("/api/audit/poll?after=0", headers=headers)
+    assert polled.status_code == 200, polled.text
+    assert _count(db) == before
+
+    with unit_of_work() as session:
+        session.get(Role, role_id).permissions = {}
+    refused = client.get("/api/audit/poll?after=0", headers=headers)
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "Permission denied: audit.read required"
+
+    _user("medic", "role-viewer", service=True)
+    viewer = client.get(
+        "/api/audit/poll?after=0", headers=_bearer(_login(client, "medic"))
+    )
+    assert viewer.status_code == 403
+    assert viewer.json()["detail"] == "Permission denied: audit.read required"
+
+
+def test_dev_mode_lets_a_service_account_poll_and_still_refuses_forward(
+    db, client, monkeypatch
+):
     viewer = _user("vera", "role-viewer")
     service = _user("admin", "role-admin", service=True)
     with unit_of_work() as session:
@@ -346,8 +393,9 @@ def test_the_kind_check_refuses_a_service_account_in_dev_mode(db, client, monkey
     monkeypatch.setattr("core.auth.auth_service._is_dev_mode", lambda: True)
     assert AuthService.check_permission(viewer, "audit.forward") is True
     assert AuthService.check_permission(service, "audit.forward") is False
+    # Dev mode grants audit.read, so the poll gate allows this account.
+    assert AuthService.check_permission(service, "audit.read") is True
 
     monkeypatch.setattr(current_user_module, "DEV_MODE", True)
-    refused = client.get("/api/audit/poll?after=0")
-    assert refused.status_code == 403
-    assert refused.json()["detail"] == "Permission denied: audit.forward required"
+    allowed = client.get("/api/audit/poll?after=0")
+    assert allowed.status_code == 200, allowed.text

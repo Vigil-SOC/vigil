@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import HomeScreen, { parseCreatedAt } from './HomeScreen'
+import HomeScreen from './HomeScreen'
 import homeCss from './home.css?inline'
 import { SETUP_HIDDEN_CHANGED } from './setupHidden'
 import { ToastProvider } from '../../shell/toast'
@@ -107,7 +107,8 @@ describe('Home command chips', () => {
     expect(fillCommand).toHaveBeenCalledWith('/hunt ')
     fireEvent.click(screen.getByRole('button', { name: '/investigate' }))
     expect(fillCommand).toHaveBeenLastCalledWith('/investigate ')
-    expect(screen.getByText('·')).toBeInTheDocument()
+    // The chips paint before the pickup share resolves, so the dot is not there yet.
+    expect(await screen.findByText('·')).toBeInTheDocument()
     expect(screen.getByText(/50% of alerts picked up automatically today/)).toBeInTheDocument()
     expect(homeCss).toMatch(/\.home-chips \{[^}]*flex-wrap: wrap/)
     expect(homeCss).toMatch(/\.home-chip \{[^}]*white-space: nowrap/)
@@ -122,11 +123,6 @@ describe('Home command chips', () => {
 })
 
 describe('Home', () => {
-  it('reads a zone-less created_at as UTC', () => {
-    expect(parseCreatedAt('2026-10-01T23:00:00')).toBe(Date.UTC(2026, 9, 1, 23, 0, 0))
-    expect(parseCreatedAt('2026-10-01T23:00:00Z')).toBe(Date.UTC(2026, 9, 1, 23, 0, 0))
-  })
-
   it('shows the pickup share under the headline and omits it when the share is null', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(triageApi.get).mockResolvedValue({
@@ -194,7 +190,7 @@ describe('Home', () => {
     await act(async () => resolve({ data: { count: 0, items: [] } } as never))
     expect(await screen.findByText(/Nothing waits on you\./)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Needs your attention is calculated' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Pending approvals and checkpoints (B1)')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Pending approvals, checkpoints and hunts stopped at a limit')
     expect(screen.getByRole('tooltip')).toHaveTextContent('Calculation Oldest first, top four shown')
   })
 
@@ -304,7 +300,7 @@ describe('Home', () => {
     )
     expect(screen.getByText('Fixed order · most impact first')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Get more from Vigil is calculated' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Setup steps (B8)')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Setup stepsCalculation')
 
     fireEvent.click(within(rows()[0]).getByRole('button', { name: 'Not now' }))
     expect(rows().map((row) => row.querySelector('h3')?.textContent)).toEqual([

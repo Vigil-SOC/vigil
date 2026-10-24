@@ -2,12 +2,14 @@
 
 import logging
 import re
+from contextlib import suppress
 from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
+from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -26,7 +28,7 @@ from core.memory.source_tier import (
     SourceTier,
     resolve_source_tier,
 )
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import AlreadyDecided, ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.workflows import catalog, hunt_preflight
@@ -34,13 +36,15 @@ from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
 from core.workflows.handoff_cases import stamp_handoff_cases
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import (
+    IN_FLIGHT_STATUSES,
+    WorkflowRunService,
+)
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
-# Enabling, reloading, or saving a workflow changes what every run can do.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
 
 ROUTER_META = RouterMeta(
@@ -78,10 +82,10 @@ class WorkflowExecuteRequest(BaseModel):
     # sentence, so a subject is declared or a Verdict is recalled by nobody.
     hypothesis_subjects: Optional[Dict[str, List[str]]] = None
     # Turns, not model calls. Bounded so a typo cannot enqueue an hour of spend.
-    iterations: Optional[int] = Field(default=None, ge=1, le=40)
+    iterations: Optional[int] = Field(default=None, ge=1, le=MAX_ITERATIONS)
     # What the caller will spend on this question, which is not a property of the
     # definition. Bounded because a mistyped ceiling is money.
-    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=100)
+    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=MAX_COST_USD)
     # Whether the hunt stops and asks before it spends. The policy defaults to auto,
     # so a headless run advances with nobody at a terminal.
     approve_hypotheses: Optional[bool] = None
@@ -108,10 +112,7 @@ class WorkflowPhaseSchema(BaseModel):
     tools: List[str] = Field(default_factory=list)
     steps: List[str] = Field(default_factory=list)
     expected_output: Optional[str] = ""
-    timeout_seconds: Optional[int] = 300
     approval_required: bool = False
-    conditions: Optional[Any] = None  # reserved for branching
-    parallel_group: Optional[str] = None  # reserved for parallel paths
 
 
 class CustomWorkflowCreate(BaseModel):
@@ -120,7 +121,6 @@ class CustomWorkflowCreate(BaseModel):
     use_case: Optional[str] = ""
     trigger_examples: List[str] = Field(default_factory=list)
     phases: List[WorkflowPhaseSchema] = Field(default_factory=list)
-    created_by: Optional[str] = None
 
 
 class CustomWorkflowUpdate(BaseModel):
@@ -136,17 +136,10 @@ class WorkflowGenerateRequest(BaseModel):
     description: str
 
 
-class WorkflowRunResumeRequest(BaseModel):
-    """Optional payload when manually resuming a paused run."""
-
-    approved_by: Optional[str] = None
-
-
 class WorkflowRunCancelRequest(BaseModel):
     """Payload when cancelling a paused / running run from the UI."""
 
     reason: str
-    rejected_by: Optional[str] = None
 
 
 # -----------------------------------------------------------------------------
@@ -154,12 +147,6 @@ class WorkflowRunCancelRequest(BaseModel):
 # -----------------------------------------------------------------------------
 
 
-# The catalog reads are the frozen contract, served at /api/v1/workflows by
-# core/api/v1/workflows_router.py. These two routes keep the pre-version
-# /api/workflows paths working by reading the same core.workflows.catalog
-# functions. They must stay in THIS router so first-match order with
-# /workflows/custom (which looks like a {workflow_id}) is decided by decorator
-# order, not cross-router mount order.
 @router.get("/workflows")
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """List all available workflows."""
@@ -193,65 +180,23 @@ async def set_enabled(
     return {"id": workflow_id, "enabled": body.enabled}
 
 
-# Static routes MUST come before parameterized {workflow_id} routes
-@router.post("/workflows/reload", dependencies=_SETTINGS_WRITE)
-async def reload_workflows(service: WorkflowsService = Depends(provide_workflows)):
-    """
-    Force reload all file-based workflows from disk.
-
-    Does not affect database-backed custom workflows.
-    """
-    service.reload()
-    workflows = service.list_workflows()
-
-    return {
-        "success": True,
-        "message": f"Reloaded workflows (total={len(workflows)})",
-        "count": len(workflows),
-    }
-
-
 # -----------------------------------------------------------------------------
 # Custom workflow CRUD (database-backed)
 # -----------------------------------------------------------------------------
-
-
-@router.get("/workflows/custom")
-async def list_custom_workflows(
-    active_only: bool = True,
-    service: CustomWorkflowService = Depends(provide_custom_workflows),
-):
-    """List database-backed custom workflows."""
-    rows = service.list(active_only=active_only)
-    return {"workflows": rows, "count": len(rows)}
 
 
 @router.post("/workflows/custom", status_code=201, dependencies=_SETTINGS_WRITE)
 async def create_custom_workflow(
     payload: CustomWorkflowCreate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Create a new custom workflow."""
     try:
-        created = service.create(payload.model_dump())
+        created = service.create(payload.model_dump(), created_by=current_user.username)
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/workflows/custom/{workflow_id}")
-async def get_custom_workflow(
-    workflow_id: str,
-    service: CustomWorkflowService = Depends(provide_custom_workflows),
-):
-    """Fetch a single custom workflow."""
-    wf = service.get(workflow_id)
-    if not wf:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Custom workflow not found: {workflow_id}",
-        )
-    return wf
 
 
 @router.put("/workflows/custom/{workflow_id}", dependencies=_SETTINGS_WRITE)
@@ -379,8 +324,7 @@ async def propose_feed_hunts(limit: int = 200):
 
 
 # -----------------------------------------------------------------------------
-# Parameterized discovery/execution routes (keep at bottom so specific paths
-# like /workflows/custom and /workflows/reload match first)
+# Parameterized discovery/execution routes
 # -----------------------------------------------------------------------------
 
 
@@ -389,11 +333,7 @@ async def get_workflow(
     workflow_id: str,
     service: WorkflowsService = Depends(provide_workflows),
 ):
-    """Get one workflow.
-
-    Defined after /workflows/custom so decorator order resolves the {workflow_id}
-    vs /custom ambiguity within this router.
-    """
+    """Get one workflow."""
     workflow = catalog.detail(service, workflow_id)
     if workflow is None:
         raise HTTPException(
@@ -657,58 +597,6 @@ async def get_workflow_run(
     return row
 
 
-@router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)
-async def resume_workflow_run(
-    run_id: str,
-    request: WorkflowRunResumeRequest,
-    run_service: WorkflowRunService = Depends(provide_workflow_runs),
-    approval_service: ApprovalService = Depends(provide_approvals),
-    workflows: WorkflowsService = Depends(provide_workflows),
-    current_user: User = Depends(get_current_user),
-):
-    """Resume a paused workflow run (#128).
-
-    Looks up the run's pending approval action, approves it, and
-    re-enters the phase loop. If there is no pending approval action
-    linked to the run, returns 409.
-    """
-    from core.response.approval_service import ActionStatus
-    from core.workflows.run_resume import resume_run
-
-    run = run_service.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    if run.get("status") != "paused":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run {run_id} is not paused (status={run.get('status')})",
-        )
-
-    approved_by = current_user.username
-    pending = approval_service.list_actions(
-        status=ActionStatus.PENDING, workflow_run_id=run_id
-    )
-    if not pending:
-        raise HTTPException(
-            status_code=409, detail=f"Run {run_id} has no pending approval"
-        )
-    if len(pending) > 1:
-        # Resume names no action, so with several pending it would pick one unseen.
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run {run_id} has {len(pending)} pending approvals; "
-            "decide each through /approvals/{action_id}",
-        )
-
-    approval_service.approve_action(
-        pending[0].action_id,
-        approved_by=approved_by,
-        approved_by_principal_id=getattr(current_user, "principal_id", None)
-        or getattr(current_user, "user_id", None),
-    )
-    return await resume_run(run_id, pending[0].action_id, approved_by)
-
-
 @router.post("/workflows/runs/{run_id}/cancel", dependencies=_DECIDE)
 async def cancel_workflow_run(
     run_id: str,
@@ -730,19 +618,25 @@ async def cancel_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run.get("status") not in IN_FLIGHT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} has already finished (status={run.get('status')})",
+        )
 
     rejected_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
     for action in pending:
-        approval_service.reject_action(
-            action.action_id,
-            reason=request.reason,
-            rejected_by=rejected_by,
-            approved_by_principal_id=getattr(current_user, "principal_id", None)
-            or getattr(current_user, "user_id", None),
-        )
+        with suppress(AlreadyDecided):
+            approval_service.reject_action(
+                action.action_id,
+                reason=request.reason,
+                rejected_by=rejected_by,
+                approved_by_principal_id=getattr(current_user, "principal_id", None)
+                or getattr(current_user, "user_id", None),
+            )
 
     # A rejection ends the run, but the agent layer is what ends it: this hands
     # the decision over and that side journals it and stops.
@@ -903,7 +797,7 @@ async def delete_workflow_run(
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    if run.get("status") in ("running", "paused"):
+    if run.get("status") in IN_FLIGHT_STATUSES:
         raise HTTPException(
             status_code=409,
             detail="This run has not finished. Cancel it before removing it.",

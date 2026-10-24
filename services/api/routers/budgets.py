@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth.permissions import permission_gate
-from core.llm.cost.budget import get_active_vk, get_settings, set_settings
+from core.llm.cost.budget import get_settings, read_vk, set_settings
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
@@ -92,7 +92,7 @@ async def get_budget_quota() -> Dict[str, Any]:
     """Live spend/quota for the configured VK, proxied from Bifrost."""
     from core.llm.bifrost.costs import get_vk_quota
 
-    vk = get_active_vk()
+    vk = read_vk()
     if not vk:
         return {
             "configured": False,

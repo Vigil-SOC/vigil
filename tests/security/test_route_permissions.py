@@ -46,10 +46,18 @@ GATED_ROUTES = [
     ("POST", "/api/cases", {"title": "t"}, "cases.write"),
     ("POST", "/api/cases/c-1/comments", {"content": "x"}, "cases.write"),
     ("DELETE", "/api/cases/c-1", None, "cases.delete"),
+    (
+        "POST",
+        "/api/cases/templates/",
+        {"name": "n", "template_type": "t"},
+        "cases.write",
+    ),
+    ("PUT", "/api/cases/templates/t-1", {"name": "n"}, "cases.write"),
+    ("DELETE", "/api/cases/templates/t-1", None, "cases.write"),
+    ("POST", "/api/cases/templates/t-1/create-case", {"title": "t"}, "cases.write"),
     ("PATCH", "/api/v1/findings/f-1", {"severity": "low"}, "findings.write"),
     ("POST", "/api/v1/approvals/a-1/approve", {}, "ai_decisions.approve"),
     ("POST", "/api/v1/approvals/a-1/reject", {"reason": "no"}, "ai_decisions.approve"),
-    ("POST", "/api/workflows/runs/r-1/resume", {}, "ai_decisions.approve"),
     (
         "POST",
         "/api/ai/decisions/d-1/feedback",
@@ -95,7 +103,6 @@ GATED_ROUTES = [
         "settings.write",
     ),
     ("PUT", "/api/workflows/w-1/enabled", {"enabled": False}, "settings.write"),
-    ("POST", "/api/workflows/reload", None, "settings.write"),
     (
         "POST",
         "/api/workflows/custom",
@@ -238,7 +245,9 @@ def _write_routes_without_a_guard() -> set[str]:
         if not isinstance(path, str) or not path.startswith("/api/") or not writes:
             return
         if any(
-            getattr(dep.call, "__qualname__", "").startswith("require_permission.")
+            getattr(dep.call, "__qualname__", "").startswith(
+                ("require_permission.", "require_person_permission.")
+            )
             for dep in _dependencies(obj.dependant)
         ):
             return

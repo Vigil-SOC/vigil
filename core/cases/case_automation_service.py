@@ -11,7 +11,7 @@ from typing import Dict, List
 
 from core.cases.case_metrics_service import CaseMetricsService
 from core.cases.case_notification_service import CaseNotificationService
-from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_sla_service import CaseSLAService, open_case
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.storage.models import Case, CaseSLA
 from core.storage.unit_of_work import unit_of_work
@@ -41,7 +41,6 @@ class CaseAutomationService:
             self.sla_monitor_task(),
             self.metrics_update_task(),
             self.stale_case_detector_task(),
-            self.digest_generator_task(),
         ]
 
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -189,48 +188,6 @@ class CaseAutomationService:
         except Exception as e:
             logger.error(f"Error detecting stale cases: {e}")
 
-    async def digest_generator_task(self):
-        """Generate daily digest emails."""
-        while self.running:
-            try:
-                # Calculate time until next 9 AM
-                now = utcnow()
-                next_run = now.replace(hour=9, minute=0, second=0, microsecond=0)
-                if now.hour >= 9:
-                    next_run += timedelta(days=1)
-
-                wait_seconds = (next_run - now).total_seconds()
-                logger.info(f"Next digest in {wait_seconds/3600:.1f} hours")
-
-                await asyncio.sleep(wait_seconds)
-
-                logger.info("Generating daily digest")
-                await self._generate_daily_digest()
-            except Exception as e:
-                logger.error(f"Error in digest generator: {e}")
-                await asyncio.sleep(3600)
-
-    async def _generate_daily_digest(self):
-        """Generate and send daily digest."""
-        try:
-            with unit_of_work() as session:
-                # Get metrics for last 24 hours
-                yesterday = utcnow() - timedelta(days=1)
-                metrics = self.metrics_service.get_dashboard_metrics(
-                    start_date=yesterday, session=session
-                )
-
-                # Get breached cases
-                breached = self.sla_service.get_breached_cases(session)
-
-                # In a real implementation, would send digest emails here
-                logger.info(
-                    f"Daily digest: {metrics.get('total_cases', 0)} total cases, "
-                    f"{len(breached)} breached"
-                )
-        except Exception as e:
-            logger.error(f"Error generating digest: {e}")
-
 
 # Singleton instance
 automation_service = CaseAutomationService()
@@ -314,7 +271,8 @@ def cluster_findings_by_attack_path(finding_ids: List[str]) -> List[str]:
         )
         title = f"VStrike: {segment} via {initial_asset}"
 
-        case = data_service.create_case(
+        case = open_case(
+            data_service,
             title=title,
             finding_ids=ids,
             priority=priority,

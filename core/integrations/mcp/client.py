@@ -300,14 +300,6 @@ class MCPClient:
         Returns:
             True if successful, False otherwise
         """
-        # Defensive init for deployments that upgraded without reinstantiating
-        # the client — keeps the legacy __init__ compatible.
-        if not hasattr(self, "last_errors"):
-            self.last_errors: Dict[str, str] = {}
-        if not hasattr(self, "last_missing_credentials"):
-            self.last_missing_credentials: Dict[str, List[str]] = {}
-        if not hasattr(self, "last_setup_required"):
-            self.last_setup_required: Dict[str, str] = {}
         # Clear any stale state from a prior attempt so the UI always
         # reflects the most recent connect.
         self.last_errors.pop(server_name, None)
@@ -421,24 +413,11 @@ class MCPClient:
             # Cache tools
             self.tools_cache[server_name] = []
             for tool in tools_result.tools:
-                # Get input schema - handle both dict and object formats
-                input_schema = tool.input_schema
-                if hasattr(input_schema, "model_dump"):
-                    input_schema = input_schema.model_dump()
-                elif hasattr(input_schema, "dict"):
-                    input_schema = input_schema.dict()
-                elif not isinstance(input_schema, dict):
-                    input_schema = dict(input_schema) if input_schema else {}
-
-                # Ensure it's a valid JSON schema
-                if not isinstance(input_schema, dict):
-                    input_schema = {}
-
                 self.tools_cache[server_name].append(
                     {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "inputSchema": input_schema,
+                        "inputSchema": tool.input_schema,
                     }
                 )
 
@@ -498,9 +477,7 @@ class MCPClient:
 
     def setup_required(self, server_name: str) -> Optional[str]:
         """Why ``server_name`` is not set up yet, or None (see ``MCPService``)."""
-        check = getattr(self.mcp_service, "setup_required", None)
-        reason = check(server_name) if callable(check) else None
-        return reason if isinstance(reason, str) and reason else None
+        return self.mcp_service.setup_required(server_name)
 
     def was_dialled(self, server_name: str) -> bool:
         """Whether this process has tried to connect ``server_name`` at all.
@@ -510,87 +487,21 @@ class MCPClient:
         """
         return (
             server_name in self.persistent_sessions
-            or server_name in getattr(self, "last_errors", {})
-            or server_name in getattr(self, "last_missing_credentials", {})
+            or server_name in self.last_errors
+            or server_name in self.last_missing_credentials
         )
 
     def held_for_setup(self, server_name: str) -> bool:
         """Whether the last connect of ``server_name`` stopped at the setup gate."""
-        return server_name in getattr(self, "last_setup_required", {})
+        return server_name in self.last_setup_required
 
     def get_missing_credentials(self, server_name: str) -> Optional[List[str]]:
         """Return the list of unset required env vars from the last connect."""
-        return getattr(self, "last_missing_credentials", {}).get(server_name)
+        return self.last_missing_credentials.get(server_name)
 
     def get_last_error(self, server_name: str) -> Optional[str]:
         """Return the most recent connect-failure reason for a server, if any."""
-        return getattr(self, "last_errors", {}).get(server_name)
-
-    # Per-server rate limit between auto-retry attempts. Prevents a
-    # misconfigured secret (wrong value, typo) from hammering the MCP
-    # child process with connect storms on every /connections/status
-    # poll. 15s balances "user saves key and sees it online quickly"
-    # with "don't spin up 20 subprocesses a minute on a stuck setup".
-    _RETRY_MIN_INTERVAL_S = 15.0
-
-    async def retry_dormant_if_ready(self) -> Dict[str, bool]:
-        """Re-attempt connect for any dormant server whose required env
-        vars have since resolved (e.g. user saved the credential via the
-        integration wizard). Safe to call from a read-path endpoint:
-        no-op when nothing's dormant or when creds are still missing.
-
-        Returns a dict ``{server_name: connected_bool}`` recording what
-        we actually tried this call — the common case is an empty dict.
-        """
-        # Defensive init — mirrors connect_to_server's compat shim.
-        if not hasattr(self, "_last_retry_at"):
-            self._last_retry_at: Dict[str, float] = {}
-        if not hasattr(self, "last_missing_credentials"):
-            return {}
-
-        import time
-
-        now = time.monotonic()
-        attempted: Dict[str, bool] = {}
-
-        # Snapshot the keys — ``last_missing_credentials`` is mutated
-        # by ``connect_to_server`` we're about to call.
-        candidates = [
-            name
-            for name, missing in list(self.last_missing_credentials.items())
-            if missing
-        ] + list(getattr(self, "last_setup_required", {}))
-        for server_name in candidates:
-            server = self.mcp_service.servers.get(server_name)
-            if server is None:
-                continue
-            # Cheap precheck — skip unless creds actually resolve now, and the
-            # install has set the server up.
-            if self._missing_credentials_for(server) or self.setup_required(
-                server_name
-            ):
-                continue
-            # Rate-limit: don't retry the same server more than once
-            # per _RETRY_MIN_INTERVAL_S seconds.
-            last = self._last_retry_at.get(server_name, 0.0)
-            if now - last < self._RETRY_MIN_INTERVAL_S:
-                continue
-            self._last_retry_at[server_name] = now
-            try:
-                attempted[server_name] = await self.connect_to_server(
-                    server_name, persistent=True
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Dormant-retry for %s raised: %s", server_name, exc)
-                attempted[server_name] = False
-        if attempted:
-            connected = sum(1 for v in attempted.values() if v)
-            logger.info(
-                "Auto-reconnect: %d/%d dormant server(s) came online",
-                connected,
-                len(attempted),
-            )
-        return attempted
+        return self.last_errors.get(server_name)
 
     async def list_tools(
         self, server_name: Optional[str] = None
@@ -691,7 +602,7 @@ class MCPClient:
         if server_name not in self.persistent_sessions:
             logger.info(f"Creating persistent connection to {server_name}...")
             if not await self.connect_to_server(server_name, persistent=True):
-                needs = getattr(self, "last_setup_required", {}).get(server_name)
+                needs = self.last_setup_required.get(server_name)
                 _err = {
                     "error": True,
                     "content": [

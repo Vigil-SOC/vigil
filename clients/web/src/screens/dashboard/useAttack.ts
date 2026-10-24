@@ -1,9 +1,8 @@
-/* Min-confidence and time-range filter server-side. Tactic and name resolve
-   client-side from ./mitre — the rollup leaves them "Unknown" / == id. */
 import { useCallback, useEffect, useState } from 'react'
 import { attackApi } from '../../services/api'
-import { techniqueName, techniqueTactic } from '../../data/mitre'
 import type { Phase } from '../cases/useCases'
+
+const DASH = '—'
 
 export type LayerVerdict = 'rule' | 'loglm' | 'both' | 'missed'
 
@@ -40,6 +39,8 @@ export interface AttackTechnique {
 
 interface RollupRow {
   technique_id: string
+  technique_name: string
+  tactic: string
   count?: number
   severities?: { critical?: number; high?: number; medium?: number; low?: number }
   verdict?: LayerVerdict
@@ -84,8 +85,8 @@ export function useAttack(minConfidence: number, timeRange: string, runId: strin
           const s = r.severities || {}
           return {
             id: r.technique_id,
-            name: techniqueName(r.technique_id),
-            tactic: techniqueTactic(r.technique_id),
+            name: r.technique_name === r.technique_id ? DASH : r.technique_name,
+            tactic: r.tactic === 'Unknown' ? DASH : r.tactic,
             c: s.critical ?? 0,
             h: s.high ?? 0,
             m: s.medium ?? 0,

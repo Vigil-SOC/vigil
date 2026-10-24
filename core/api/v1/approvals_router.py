@@ -7,7 +7,8 @@ the paused run; rejecting cancels it with the supplied reason.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.deps import provide_approvals
-from core.response.approval_service import ApprovalService, needs_you
+from core.response.approval_service import AlreadyDecided, ApprovalService, needs_you
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 
@@ -57,7 +58,7 @@ class RejectRequest(BaseModel):
 
 
 class PendingActionResponse(BaseModel):
-    """Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+    """Frozen shape of an approval action.
 
     Value types are permissive where the underlying dataclass carries open JSON
     (evidence, parameters, execution_result); the key set is the promise.
@@ -104,57 +105,32 @@ class NeedsYouHypothesis(BaseModel):
 
 
 class NeedsYouItem(BaseModel):
-    # approval, checkpoint, or parked: a hunt stopped at a limit, answered with
-    # Keep going on its case rather than here.
-    kind: str
+    kind: Literal["approval", "checkpoint", "parked"] = Field(
+        description="parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id."
+    )
     source_id: str
     title: str
     reason: str
-    created_at: str
-    reversibility: str
+    created_at: str = Field(
+        description="'' when nothing recorded when it started waiting."
+    )
+    reversibility: Literal["reversible", "irreversible"]
     case_id: Optional[str] = None
     run_id: Optional[str] = None
-    checkpoint_id: Optional[str] = None
+    checkpoint_id: Optional[str] = Field(
+        default=None,
+        description="The run's own checkpoint this item answers, so a page reading the run can tell it was answered.",
+    )
     checkpoint_class: Optional[str] = None
-    hypotheses: List[NeedsYouHypothesis] = Field(default_factory=list)
+    hypotheses: List[NeedsYouHypothesis] = Field(
+        default_factory=list,
+        description="A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
+    )
 
 
 class NeedsYouResponse(BaseModel):
     count: int
     items: List[NeedsYouItem] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _pending_to_dict(action: Any) -> Dict[str, Any]:
-    """Normalise a ``PendingAction`` dataclass to a response dict."""
-    return {
-        "action_id": action.action_id,
-        "action_type": action.action_type,
-        "title": action.title,
-        "description": action.description,
-        "target": action.target,
-        "confidence": action.confidence,
-        "reason": action.reason,
-        "evidence": action.evidence,
-        "created_at": action.created_at,
-        "created_by": action.created_by,
-        "requires_approval": action.requires_approval,
-        "status": action.status,
-        "approved_at": action.approved_at,
-        "approved_by": action.approved_by,
-        "executed_at": action.executed_at,
-        "execution_result": action.execution_result,
-        "rejection_reason": action.rejection_reason,
-        "parameters": action.parameters,
-        "workflow_run_id": action.workflow_run_id,
-        "workflow_phase_id": action.workflow_phase_id,
-        "reversibility": action.reversibility,
-        "idempotency_key": action.idempotency_key,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +170,7 @@ async def list_approvals(
     )
     return {
         "count": len(actions),
-        "actions": [_pending_to_dict(a) for a in actions],
+        "actions": [asdict(a) for a in actions],
     }
 
 
@@ -205,7 +181,7 @@ async def list_pending_approvals(
     """Shortcut: only actions with ``status=pending`` and
     ``requires_approval=True``. Used by the AI Decisions approvals tab."""
     actions = service.list_pending_approvals()
-    return {"actions": [_pending_to_dict(a) for a in actions]}
+    return {"actions": [asdict(a) for a in actions]}
 
 
 @router.get("/approvals/needs-you", response_model=NeedsYouResponse)
@@ -232,7 +208,7 @@ async def get_approval(
     action = service.get_action(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
-    return _pending_to_dict(action)
+    return asdict(action)
 
 
 @router.post(
@@ -259,17 +235,20 @@ async def approve_action(
 
     # The body field is kept for the frozen contract; the record names the session user.
     approved_by = current_user.username
-    updated = service.approve_action(
-        action_id,
-        approved_by=approved_by,
-        approved_by_principal_id=getattr(current_user, "principal_id", None)
-        or getattr(current_user, "user_id", None),
-    )
+    try:
+        updated = service.approve_action(
+            action_id,
+            approved_by=approved_by,
+            approved_by_principal_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+        )
+    except AlreadyDecided as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to approve action")
 
     response: Dict[str, Any] = {
-        "action": _pending_to_dict(updated),
+        "action": asdict(updated),
         "resume_result": None,
     }
 
@@ -304,18 +283,21 @@ async def reject_action(
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
 
     rejected_by = current_user.username
-    updated = service.reject_action(
-        action_id,
-        reason=request.reason,
-        rejected_by=rejected_by,
-        approved_by_principal_id=getattr(current_user, "principal_id", None)
-        or getattr(current_user, "user_id", None),
-    )
+    try:
+        updated = service.reject_action(
+            action_id,
+            reason=request.reason,
+            rejected_by=rejected_by,
+            approved_by_principal_id=getattr(current_user, "principal_id", None)
+            or getattr(current_user, "user_id", None),
+        )
+    except AlreadyDecided as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to reject action")
 
     response: Dict[str, Any] = {
-        "action": _pending_to_dict(updated),
+        "action": asdict(updated),
         "resume_result": None,
     }
 

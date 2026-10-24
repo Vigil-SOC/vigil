@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
-import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, auditApi, casesApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, extendRun, useRunDetail, type Grant } from '../workflows/runRead'
@@ -17,6 +17,7 @@ import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
+import { useAuth } from '../../contexts/AuthContext'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
@@ -27,7 +28,7 @@ import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
 import { fmtCost } from '../../shared/cost'
-import { costAcross, runLabel, timeLeft, when } from './caseFormat'
+import { costAcross, errorDetail, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -109,13 +110,7 @@ function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
 }
 
-function detailOf(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  return (error as { message?: string })?.message || fallback
-}
-
-const decisionFailText = (error: unknown) => detailOf(error, 'Could not update that decision')
+const decisionFailText = (error: unknown) => errorDetail(error, 'Could not update that decision')
 
 /** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
 function waiting(since: string): string {
@@ -423,7 +418,7 @@ function KeepGoingRow({ runId }: { runId: string }) {
     setSaid(null)
     extendRun(runId, '', amount)
       .then(() => setSaid({ ok: true, text: `Keep going sent: ${label}. The hunt carries on from where it stopped at its next turn.` }))
-      .catch((e) => setSaid({ ok: false, text: detailOf(e, 'Could not send Keep going') }))
+      .catch((e) => setSaid({ ok: false, text: errorDetail(e, 'Could not send Keep going') }))
       .finally(() => setBusy(false))
   }
   if (said?.ok) return <p className="needs-sent" role="status">{said.text}</p>
@@ -1019,6 +1014,7 @@ export function CasePage({
   const [recStatus, setRecStatus] = useState<{ level: Level; text: string } | null>(null)
   const recStatusTicket = useRef(0)
   const [busy, setBusy] = useState(false)
+  const canReadAudit = useAuth().hasPermission('audit.read')
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
@@ -1246,7 +1242,7 @@ export function CasePage({
       .catch((e) => {
         if (cancelled || quiet) return
         setRows([])
-        setRecordError(detailOf(e, 'Couldn’t load the record'))
+        setRecordError(errorDetail(e, 'Couldn’t load the record'))
         setRecordPhase('error')
       })
     return () => {
@@ -1286,28 +1282,21 @@ export function CasePage({
           : { level: 'poor', text: `Chain break${data.reason ? `: ${data.reason}` : ''}` },
       )
     } catch (e) {
-      report({ level: 'poor', text: detailOf(e, 'Verify failed') })
+      report({ level: 'poor', text: errorDetail(e, 'Verify failed') })
     } finally {
       setBusy(false)
     }
   }
 
+  // The audit trail's entries naming this case (decision 16): the trail export with the case as object.
   const download = async () => {
-    if (!latest?.investigation_id) return
     const ticket = ++recStatusTicket.current
     setBusy(true)
     setRecStatus(null)
     try {
-      const res = await orchestratorApi.exportInvestigation(latest.investigation_id)
-      const blob = res.data instanceof Blob ? res.data : new Blob([JSON.stringify(res.data)])
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${latest.investigation_id}-export`
-      a.click()
-      URL.revokeObjectURL(url)
+      await auditApi.download({ object: id }, `audit-${id}.ndjson`)
     } catch (e) {
-      if (ticket === recStatusTicket.current) setRecStatus({ level: 'poor', text: detailOf(e, 'Export failed') })
+      if (ticket === recStatusTicket.current) setRecStatus({ level: 'poor', text: errorDetail(e, 'Export failed') })
     } finally {
       setBusy(false)
     }
@@ -1350,7 +1339,7 @@ export function CasePage({
         act(served)
       } else setDecisionError('This decision has not reached the approvals queue yet. Try again in a moment.')
     } catch (e) {
-      if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
+      if (seenCase.current === forCase) setDecisionError(errorDetail(e, 'Could not update that decision'))
     }
   }
 
@@ -1385,7 +1374,7 @@ export function CasePage({
         onChanged()
       }
     } catch (e) {
-      if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
+      if (seenCase.current === forCase) setDecisionError(errorDetail(e, 'Could not update that decision'))
     } finally {
       if (seenCase.current === forCase && decisionBusyRef.current === sourceId) {
         decisionBusyRef.current = null
@@ -1401,7 +1390,7 @@ export function CasePage({
       await casesApi.update(id, { status: 'open' })
       onChanged()
     } catch (e) {
-      setNote(detailOf(e, 'Couldn’t reopen the case'))
+      setNote(errorDetail(e, 'Couldn’t reopen the case'))
     } finally {
       setBusy(false)
     }
@@ -1697,14 +1686,14 @@ export function CasePage({
                     </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
-                  {latest && (latest.investigation_id ? (
+                  {canReadAudit ? (
                     <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>
                   ) : (
                     <>
                       <button type="button" className="rec-btn" disabled>Export audit</button>
-                      <InfoTip label="Why Export audit is unavailable" text="This run has no investigation record to export." />
+                      <InfoTip label="Why Export audit is unavailable" text="Exporting this case’s audit trail needs the audit.read permission." />
                     </>
-                  ))}
+                  )}
                 </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}

@@ -3,7 +3,8 @@
 ``check_overlap`` names the live investigations sharing an entity. The finding
 goes into the first one's Case. Overlap with only caseless runs (hunts) is not
 a merge: the row proceeds to Claim. A failed write is not a merge either, and
-neither is an overlapping run that will not read: the row stays queued (#997).
+neither is an overlapping run that is gone by the time it is read: the row stays
+queued (#997). A database error on that read raises out of the tick.
 ``merged_into`` is always a ``cases.case_id``.
 """
 
@@ -99,20 +100,28 @@ async def test_overlap_with_caseless_run_is_not_a_merge(attach):
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_overlapping_investigation_holds_the_row(attach, caplog):
-    """``check_overlap`` only names live rows, so a read that comes back empty
-    is a failed read, not a caseless run. Launching on it would open a second
-    run on an entity a Case already covers."""
+async def test_a_gone_overlapping_investigation_holds_the_row(attach):
     orch = _orchestrator(["inv-1"], {})
 
-    with caplog.at_level("WARNING"):
-        await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
+    await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
 
-    assert any("would not read" in r.message for r in caplog.records)
     attach.assert_not_called()
     orch._create_investigation.assert_not_awaited()
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_overlapping_read_that_errors_raises_without_launching(attach):
+    orch = _orchestrator(["inv-1"], {})
+    orch.get_investigation = MagicMock(side_effect=ConnectionError("db down"))
+
+    with pytest.raises(ConnectionError):
+        await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
+
+    attach.assert_not_called()
+    orch._create_investigation.assert_not_awaited()
+    orch._decide_trigger.assert_not_called()
 
 
 @pytest.mark.asyncio
