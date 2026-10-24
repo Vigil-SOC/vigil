@@ -1,9 +1,7 @@
-"""DAEMON_METRICS_ENABLED gates only the Prometheus listener; /health and /status stay up (#3135)."""
-
 import asyncio
 import socket
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from aiohttp import ClientConnectorError, ClientSession
@@ -70,13 +68,10 @@ async def test_health_served_and_prometheus_follows_flag(metrics_enabled):
     ] + [
         patch.object(SOCDaemon, "_setup_signal_handlers"),
         patch("core.storage.connection.get_db_manager"),
-        patch("core.integrations.mcp.client.build_mcp_client", MagicMock()),
+        patch("core.integrations.mcp.client.build_mcp_client"),
         patch("core.integrations.mcp.client.set_process_mcp_client"),
-        patch("core.response.approval_service.ApprovalService", MagicMock()),
-        patch(
-            "core.response.autonomous_response_service.AutonomousResponseService",
-            MagicMock(),
-        ),
+        patch("core.response.approval_service.ApprovalService"),
+        patch("core.response.autonomous_response_service.AutonomousResponseService"),
         patch(
             "services.daemon.metrics.get_settings",
             return_value=SimpleNamespace(daemon_bind_host="127.0.0.1"),
@@ -90,7 +85,6 @@ async def test_health_served_and_prometheus_follows_flag(metrics_enabled):
         daemon = SOCDaemon(config)
         task = asyncio.create_task(daemon.run())
         async with ClientSession() as session:
-            health = None
             for _ in range(100):
                 health = await _status(
                     session, f"http://127.0.0.1:{health_port}/health"
