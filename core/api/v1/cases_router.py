@@ -87,9 +87,14 @@ data_service = DatabaseDataService()
 
 
 async def _sync_upstream_status(case_id: str, new_status: str) -> None:
+    try:
+        findings = data_service.get_findings_by_case(case_id)
+    except Exception as exc:
+        logger.warning("Upstream status sync error for case %s: %s", case_id, exc)
+        return
     alert_ids = [
         alert_id
-        for finding in data_service.get_findings_by_case(case_id)
+        for finding in findings
         if (alert_id := (finding.get("metadata") or {}).get("elastic_alert_id"))
     ]
     if not alert_ids:
