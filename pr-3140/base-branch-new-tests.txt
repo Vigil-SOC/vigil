@@ -1,0 +1,15 @@
+services/worker/__init__.py                                      1      1   0.00%   6
+services/worker/__main__.py                                      8      8   0.00%   1-15
+services/worker/jobs.py                                        119    119   0.00%   4-240
+-------------------------------------------------------------------------------------------
+TOTAL                                                        48382  46725   3.42%
+
+74 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+=========================== short test summary info ============================
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_low_vendor_score_yields_low_ioc[hybrid_analysis]
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_low_vendor_score_yields_low_ioc[anyrun]
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_hybrid_top_score_is_critical
+=================== 3 failed, 18 passed in 304.01s (0:05:04) ===================
