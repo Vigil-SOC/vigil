@@ -1,0 +1,11 @@
+unterminated: []
+no spaces: [('ip', '1.2.3.4'), ('domain', 'a.example')]
+sha256: [('hash_sha256', 'abc')]
+index path: [('url', 'u')]
+dashes                   n=5k 0.0000s n=50k 0.0004s ratio 9x
+quote + \' repeats       n=5k 0.0007s n=50k 0.0069s ratio 11x
+a:b.'a:b.' repeats       n=5k 0.0063s n=50k 0.0767s ratio 12x
+a:b = '\' repeats        n=5k 0.0003s n=50k 0.0042s ratio 15x
+path, spaces, no op      n=5k 0.0003s n=50k 0.0030s ratio 10x
+a:b.'aaa                 n=5k 0.0003s n=50k 0.0030s ratio 11x
+= ' pairs                n=5k 0.0072s n=50k 0.0879s ratio 12x

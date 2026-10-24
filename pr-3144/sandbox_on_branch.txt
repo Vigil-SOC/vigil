@@ -1,0 +1,3 @@
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_low_vendor_score_yields_low_ioc[cape]
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_low_vendor_score_yields_low_ioc[hybrid_analysis]
+======================== 2 failed, 18 passed in 32.90s =========================
