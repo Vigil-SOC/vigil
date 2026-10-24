@@ -201,6 +201,20 @@ def test_an_escalation_keeps_the_reason_out_of_the_payload(monkeypatch):
     )
 
 
+def test_a_joined_failure_before_the_append_propagates(monkeypatch):
+    # The gate and the actor lookup are queries too; a failure there must not
+    # look like a comment that was never written.
+    monkeypatch.setattr(
+        case_trail, "ready", MagicMock(side_effect=OperationalError("select", {}, None))
+    )
+    session = _session()
+
+    with pytest.raises(case_trail.TrailWriteError):
+        CaseCollaborationService().add_comment("c-1", "ada", "noted", session=session)
+
+    session.commit.assert_not_called()
+
+
 def test_a_joined_non_trail_failure_returns_the_default(monkeypatch):
     # Only a trail failure propagates on a joined session. Anything else keeps
     # the old default_on_error contract, which MCP callers read as falsy.

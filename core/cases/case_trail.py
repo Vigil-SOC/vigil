@@ -103,20 +103,22 @@ def append_or_legacy(
     assigned by the insert is in the hashed payload. Previous comment text
     and an escalation reason go in ``operator_text``, not the payload.
     """
-    if not ready(session):
-        if legacy is not None:
-            session.add(legacy)
-        return
-    session.flush()
-    principal, actor_text = resolve_actor(session, signed_in)
-    fields = {"case_id": case_id, **(ids() if ids else {})}
-    beside: dict[str, Any] = {"actor_text": actor_text}
-    if operator_text is not None:
-        beside["operator_text"] = operator_text
+    # Any failure on the trail path is a TrailWriteError, so a joined caller
+    # sees it whatever the cause, not only from the append itself.
     try:
-        trail.append(session, _payload(action, principal, **fields), **beside)
+        use_trail = ready(session)
+        if use_trail:
+            session.flush()
+            principal, actor_text = resolve_actor(session, signed_in)
+            fields = {"case_id": case_id, **(ids() if ids else {})}
+            beside: dict[str, Any] = {"actor_text": actor_text}
+            if operator_text is not None:
+                beside["operator_text"] = operator_text
+            trail.append(session, _payload(action, principal, **fields), **beside)
     except Exception as exc:
         raise TrailWriteError(str(exc)) from exc
+    if not use_trail and legacy is not None:
+        session.add(legacy)
 
 
 def append_approval(
