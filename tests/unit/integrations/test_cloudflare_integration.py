@@ -296,6 +296,8 @@ class _FakeFindingsDB:
             raise ValueError("value too long for type character varying")
         if not all(isinstance(row[c], str) for c in ("title", "description")):
             raise ValueError("can't adapt type 'dict'")
+        if row["finding_id"] in self.rows:
+            raise ValueError("duplicate key value violates unique constraint")
         self.rows[row["finding_id"]] = row
         return row
 
