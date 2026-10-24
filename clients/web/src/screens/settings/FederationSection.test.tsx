@@ -152,7 +152,7 @@ describe('FederationSection', () => {
   it('disables an unconfigured source', () => {
     state.sources = [source({ source_id: 'elastic', is_configured: false, enabled: false })]
     render(<FederationSection notify={notify} />)
-    expect(screen.getByRole('switch', { name: 'Collect from Elastic Security (SIEM)' })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Collect from Elastic Security' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Poll now' })).toBeDisabled()
   })
 

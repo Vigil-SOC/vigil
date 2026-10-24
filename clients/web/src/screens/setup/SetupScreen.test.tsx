@@ -400,7 +400,7 @@ describe('SetupScreen', () => {
           'CrowdStrike Falcon',
           'SentinelOne',
           'VMware Carbon Black',
-          'Microsoft Defender for Endpoint',
+          'Microsoft Defender',
           'LogLM',
           'Splunk',
           'Upload a file',
