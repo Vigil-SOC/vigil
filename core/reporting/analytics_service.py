@@ -33,12 +33,7 @@ _NOT_PROBE = Finding.data_source != "probe"
 async def collect_insights_inputs(
     db: Session, time_range: str
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """Collect the metrics + time_series inputs that the insights model needs.
-
-    Kept small so both the GET (opportunistic background refresh) and POST
-    (forced refresh) insights endpoints can schedule regeneration without
-    duplicating logic.
-    """
+    """Collect the metrics + time_series inputs that the insights model needs."""
     start_time, end_time = get_time_range(time_range)
     period_duration = end_time - start_time
     prev_start = start_time - period_duration
