@@ -48,68 +48,80 @@ class SandboxCorrelationService:
     ) -> Dict[str, Any]:
         """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows.
 
+        A report already attached for (case, sandbox, task) is not inserted
+        again. Raises on any DB failure, after rolling the whole report back.
         Returns a small summary dict for caller logging.
         """
-        # The unit of work must see any failure, so it sits inside the try —
-        # the handler below swallows the exception and would otherwise let a
-        # half-written report commit.
-        try:
-            with unit_of_work(session) as session:
-                normalised = _normalise_report(sandbox_name, report)
-                evidence = CaseEvidence(
-                    case_id=case_id,
-                    evidence_type="sandbox_report",
-                    name=f"{sandbox_name} report {task_id}",
-                    description=f"Automated sandbox detonation from {sandbox_name}",
-                    file_path=None,
-                    file_size=None,
-                    file_hash_md5=normalised.get("md5"),
-                    file_hash_sha256=normalised.get("sha256"),
-                    source=sandbox_name,
-                    collected_by=collected_by,
-                    collected_at=utcnow(),
-                    chain_of_custody=[
-                        {
-                            "timestamp": utcnow().isoformat(),
-                            "action": "collected",
-                            "user": collected_by,
-                            "notes": f"Retrieved from {sandbox_name} task {task_id}",
-                        }
-                    ],
-                    analysis_results={
-                        "sandbox": sandbox_name,
-                        "task_id": task_id,
-                        "verdict": normalised.get("verdict"),
-                        "score": normalised.get("score"),
-                        "mitre_techniques": normalised.get("mitre_techniques", []),
-                        "raw": report,
-                    },
-                    tags=["sandbox", sandbox_name],
+        with unit_of_work(session) as session:
+            existing = (
+                session.query(CaseEvidence)
+                .filter(
+                    CaseEvidence.case_id == case_id,
+                    CaseEvidence.evidence_type == "sandbox_report",
+                    CaseEvidence.source == sandbox_name,
+                    CaseEvidence.analysis_results["task_id"].as_string() == task_id,
                 )
-                session.add(evidence)
-                session.flush()
-
-                iocs_added = 0
-                for ioc_type, value in _iter_iocs(normalised.get("iocs", {})):
-                    if self._upsert_ioc(
-                        session=session,
-                        case_id=case_id,
-                        ioc_type=ioc_type,
-                        value=value,
-                        source=sandbox_name,
-                        sandbox_task_id=task_id,
-                        score=normalised.get("score"),
-                    ):
-                        iocs_added += 1
-
+                .first()
+            )
+            if existing:
                 return {
-                    "evidence_id": evidence.evidence_id,
-                    "iocs_added": iocs_added,
-                    "verdict": normalised.get("verdict"),
+                    "evidence_id": existing.evidence_id,
+                    "iocs_added": 0,
+                    "verdict": (existing.analysis_results or {}).get("verdict"),
                 }
-        except Exception as e:
-            logger.exception("Failed to correlate sandbox report")
-            return {"error": str(e)}
+
+            normalised = _normalise_report(sandbox_name, report)
+            evidence = CaseEvidence(
+                case_id=case_id,
+                evidence_type="sandbox_report",
+                name=f"{sandbox_name} report {task_id}",
+                description=f"Automated sandbox detonation from {sandbox_name}",
+                file_path=None,
+                file_size=None,
+                file_hash_md5=normalised.get("md5"),
+                file_hash_sha256=normalised.get("sha256"),
+                source=sandbox_name,
+                collected_by=collected_by,
+                collected_at=utcnow(),
+                chain_of_custody=[
+                    {
+                        "timestamp": utcnow().isoformat(),
+                        "action": "collected",
+                        "user": collected_by,
+                        "notes": f"Retrieved from {sandbox_name} task {task_id}",
+                    }
+                ],
+                analysis_results={
+                    "sandbox": sandbox_name,
+                    "task_id": task_id,
+                    "verdict": normalised.get("verdict"),
+                    "score": normalised.get("score"),
+                    "mitre_techniques": normalised.get("mitre_techniques", []),
+                    "raw": report,
+                },
+                tags=["sandbox", sandbox_name],
+            )
+            session.add(evidence)
+            session.flush()
+
+            iocs_added = 0
+            for ioc_type, value in _iter_iocs(normalised.get("iocs", {})):
+                if self._upsert_ioc(
+                    session=session,
+                    case_id=case_id,
+                    ioc_type=ioc_type,
+                    value=value,
+                    source=sandbox_name,
+                    sandbox_task_id=task_id,
+                    score=normalised.get("score"),
+                ):
+                    iocs_added += 1
+
+            return {
+                "evidence_id": evidence.evidence_id,
+                "iocs_added": iocs_added,
+                "verdict": normalised.get("verdict"),
+            }
 
     # ---------- internals ----------
 

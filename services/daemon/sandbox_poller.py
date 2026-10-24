@@ -154,16 +154,6 @@ class SandboxPoller:
                     if not report:
                         continue
 
-                    reports[report_key] = {
-                        "sandbox": sandbox_name,
-                        "task_id": task_id,
-                        "fetched_at": utcnow().isoformat(),
-                        "report": report,
-                    }
-                    sub["status"] = "reported"
-                    stats["completed"] += 1
-                    updated = True
-
                     case_id = finding.get("case_id")
                     if case_id and self._correlation:
                         try:
@@ -174,10 +164,22 @@ class SandboxPoller:
                                 str(task_id),
                                 report,
                             )
-                        except Exception as e:
-                            logger.error(
-                                f"Correlation failed for {sandbox_name}/{task_id}: {e}"
+                        except Exception:
+                            logger.exception(
+                                "Correlation failed for %s/%s", sandbox_name, task_id
                             )
+                            stats["errors"] += 1
+                            continue
+
+                    reports[report_key] = {
+                        "sandbox": sandbox_name,
+                        "task_id": task_id,
+                        "fetched_at": utcnow().isoformat(),
+                        "report": report,
+                    }
+                    sub["status"] = "reported"
+                    stats["completed"] += 1
+                    updated = True
 
             if updated:
                 enrichment["sandbox_submissions"] = pending
