@@ -1,0 +1,16 @@
+import ok
+/api/cases/metrics/analyst-performance
+/api/cases/metrics/breached
+/api/cases/metrics/by-priority
+/api/cases/metrics/by-status
+/api/cases/metrics/mttd
+/api/cases/metrics/mttr
+/api/cases/metrics/summary
+/api/v1/cases/metrics/analyst-performance
+/api/v1/cases/metrics/breached
+/api/v1/cases/metrics/by-priority
+/api/v1/cases/metrics/by-status
+/api/v1/cases/metrics/mttd
+/api/v1/cases/metrics/mttr
+/api/v1/cases/metrics/summary
+calculate gone, 14 metrics paths remain

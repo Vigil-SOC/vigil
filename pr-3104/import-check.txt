@@ -1,0 +1,1 @@
+RuntimeError: JWT_SECRET_KEY is required when DEV_MODE=false. Set it in the environment or .env before starting the backend.

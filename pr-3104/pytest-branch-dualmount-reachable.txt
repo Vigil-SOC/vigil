@@ -1,0 +1,2 @@
+3.06s setup    unit/api/test_api_v1_reachable.py::test_the_other_spelling_is_redirected_rather_than_swallowed[/api/v1/findings/]
+================== 13 passed, 2 warnings in 115.59s (0:01:55) ==================

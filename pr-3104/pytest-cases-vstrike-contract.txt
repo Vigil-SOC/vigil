@@ -1,0 +1,2 @@
+0.11s call     unit/cases/test_case_metrics_aggregates.py::test_query_count_does_not_grow_with_cases[mttr]
+======================= 302 passed, 2 warnings in 43.85s =======================
