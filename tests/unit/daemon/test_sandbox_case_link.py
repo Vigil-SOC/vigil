@@ -79,8 +79,15 @@ async def test_report_reaches_every_linked_case(monkeypatch):
     stats = await poller.run_once()
     assert stats["completed"] == 1
 
+    ours = (*LINKED, UNLINKED)
     with unit_of_work() as s:
-        evidence = s.execute(select(CaseEvidence.case_id, CaseEvidence.name)).all()
-        iocs = s.execute(select(CaseIOC.case_id, CaseIOC.value)).all()
+        evidence = s.execute(
+            select(CaseEvidence.case_id, CaseEvidence.name).where(
+                CaseEvidence.case_id.in_(ours)
+            )
+        ).all()
+        iocs = s.execute(
+            select(CaseIOC.case_id, CaseIOC.value).where(CaseIOC.case_id.in_(ours))
+        ).all()
     assert sorted(evidence) == [(cid, "anyrun report t-1") for cid in LINKED]
     assert sorted(iocs) == [(cid, "1.2.3.4") for cid in LINKED]
