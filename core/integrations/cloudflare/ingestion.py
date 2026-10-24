@@ -2,10 +2,8 @@
 
 Transforms a Cloudflare-pushed event (with an attached Cloudy natural-language
 summary) into a Vigil finding. Because the public Cloudy webhook contract is
-not stable as of writing, this transformer is intentionally permissive: any
-fields the upstream payload happens to provide are forwarded into the finding:
-the summary as `description`, the raw payload as
-`entity_context.source_evidence`.
+not stable as of writing, this transformer is intentionally permissive. The
+summary becomes `description` and the raw payload `entity_context.source_evidence`.
 
 Gated by `CLOUDY_INGESTION_ENABLED` — the webhook router refuses traffic when
 the flag is off, and this service is only constructed by the router.
@@ -58,9 +56,7 @@ class CloudyIngestionService:
             isinstance(v, str) for v in (cloudy_summary, action, title, description)
         ):
             return None
-        if (
-            external_id and len(external_id) > 255
-        ):  # findings.external_id is String(255)
+        if external_id and len(external_id) > 255:
             return None
         if not cloudy_summary and not event:
             return None

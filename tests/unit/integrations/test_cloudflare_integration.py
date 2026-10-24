@@ -48,9 +48,7 @@ def test_config_returns_none_when_token_missing():
     cf = _import_cloudflare_tool()
     # The token comes from the secrets store via the descriptor-driven resolver,
     # not from get_integration_config — that store never holds a secret.
-    with patch.object(
-        cf, "resolve", return_value={"account_id": "abc", "api_token": None}
-    ):
+    with patch.object(cf, "resolve", return_value={"account_id": "abc", "api_token": None}):
         assert cf._config() is None
 
 
@@ -342,13 +340,11 @@ def test_cloudy_retry_without_id_creates_one_finding(cloudy_client):
 
 def test_cloudy_long_event_id_is_stored_as_external_id(cloudy_client):
     post, db = cloudy_client
-    event_id = "x" * 64
-    first, retry = post({"event_id": event_id, "summary": "s"}), post(
-        {"event_id": event_id, "summary": "s"}
-    )
+    payload = {"event_id": "x" * 64, "summary": "s"}
+    first, retry = post(payload), post(payload)
     assert first.status_code == retry.status_code == 202
     (row,) = db.rows.values()
-    assert row["external_id"] == event_id
+    assert row["external_id"] == payload["event_id"]
     assert len(row["finding_id"]) <= 50
 
 
