@@ -27,7 +27,6 @@ SINGLETON_ALLOWED = {
     ("services/api/routers/agents.py", "agent_manager"),
     ("services/api/routers/analytics.py", "ai_insights_service"),
     ("core/threat_intel/attack_router.py", "data_service"),
-    ("core/api/v1/case_metrics_router.py", "metrics_service"),
     ("core/api/v1/cases_router.py", "data_service"),
     ("core/api/v1/findings_router.py", "data_service"),
     ("core/cases/case_search_router.py", "search_service"),
