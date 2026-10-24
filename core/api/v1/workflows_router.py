@@ -64,14 +64,6 @@ class WorkflowDetailResponse(BaseModel):
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    # Additive, NOT legacy-mounted. The catalog read is GET /{workflow_id}, and
-    # the console router keeps its /workflows/custom writes beside it. A
-    # parameterised route and a literal are only order-safe inside ONE router;
-    # mounting this router's /{workflow_id} at /api/workflows as well would put
-    # them in two routers and make first-match depend on mount order — exactly
-    # what test_no_cross_router_path_shadowing forbids. So the frozen catalog
-    # lives only at /api/v1/workflows here, and the console's own GET /workflows
-    # and GET /workflows/{id} read the same catalog functions, staying in-router.
     prefix="/api/v1/workflows",
     tags=["workflows"],
     auth=Auth.REQUIRED,

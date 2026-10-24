@@ -147,11 +147,6 @@ class WorkflowRunCancelRequest(BaseModel):
 # -----------------------------------------------------------------------------
 
 
-# The catalog reads are the frozen contract, served at /api/v1/workflows by
-# core/api/v1/workflows_router.py. These two routes keep the pre-version
-# /api/workflows paths working by reading the same core.workflows.catalog
-# functions. They must stay in THIS router so first-match order is decided by
-# decorator order, not cross-router mount order.
 @router.get("/workflows")
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """List all available workflows."""
