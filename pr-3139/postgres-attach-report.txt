@@ -1,0 +1,6 @@
+t1 {'evidence_id': 1, 'iocs_added': 1, 'verdict': 'malicious'}
+t1 {'evidence_id': 1, 'iocs_added': 0, 'verdict': 'malicious'}
+t2 {'evidence_id': 2, 'iocs_added': 0, 'verdict': 'malicious'}
+rows: [(1, 'cape', 't1'), (2, 'cape', 't2')]
+iocs: [('1.2.3.4', 2)]
+missing case raises: IntegrityError

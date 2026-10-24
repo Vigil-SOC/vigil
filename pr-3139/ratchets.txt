@@ -1,0 +1,37 @@
+.....s.................................................................. [ 27%]
+............................................sss..ss..................... [ 54%]
+.........................................................F.............. [ 81%]
+..................................................                       [100%]
+=================================== FAILURES ===================================
+______________________ test_fstring_log_calls_do_not_grow ______________________
+
+    @pytest.mark.unit
+    def test_fstring_log_calls_do_not_grow():
+        count = len(_fstring_log_calls())
+        assert count <= BASELINE, (
+            f"{count} f-string logger.warning/error/exception/critical calls, "
+            f"baseline is {BASELINE}. Use %-style arguments "
+            "(logger.error('failed for %s', x)) so the message template stays "
+            "constant."
+        )
+>       assert count == BASELINE, (
+            f"Only {count} f-string log calls remain; lower BASELINE in this file "
+            f"from {BASELINE} to {count} so the gain is locked in."
+        )
+E       AssertionError: Only 287 f-string log calls remain; lower BASELINE in this file from 288 to 287 so the gain is locked in.
+E       assert 287 == 288
+
+tests/unit/_ratchets/test_no_logger_fstrings.py:55: AssertionError
+=============================== warnings summary ===============================
+unit/_ratchets/test_desktop_version_tracks_release.py::test_support_tarball_is_stamped_runnable_and_verifiable
+  /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e0321909-a868-494f-ab16-54a206500fde/tests/unit/_ratchets/test_desktop_version_tracks_release.py:95: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    tar.extractall(tmp_path / "x")
+
+unit/_ratchets/test_hunt_capabilities_agree.py::test_backend_candidates_are_in_the_tool_manifest
+  /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e0321909-a868-494f-ab16-54a206500fde/core/storage/service.py:124: SADeprecationWarning: The noload() option is deprecated and will be removed in a future release.  This option produces incorrect results by returning ``None`` for related items. (deprecated since: 2.1)
+    noload(Finding.cases),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+1 failed, 259 passed, 6 skipped, 2 warnings in 548.16s (0:09:08)

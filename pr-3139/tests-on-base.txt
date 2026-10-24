@@ -1,0 +1,74 @@
+...............FF.F.                                                     [100%]
+=================================== FAILURES ===================================
+_ TestAttachReportAtomicity.test_failure_partway_rolls_back_the_evidence_row_too _
+
+self = <tests.unit.cases.test_sandbox_correlation.TestAttachReportAtomicity object at 0x7f925324a030>
+session = <MagicMock id='140266435446736'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f9253289460>
+
+    def test_failure_partway_rolls_back_the_evidence_row_too(
+        self, session, monkeypatch
+    ):
+        # Let the first IOC through, then blow up on the second.
+        calls = {"n": 0}
+    
+        def _flaky_upsert(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("constraint violation on the second IOC")
+            return True
+    
+        monkeypatch.setattr(SandboxCorrelationService, "_upsert_ioc", _flaky_upsert)
+    
+>       with pytest.raises(RuntimeError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RuntimeError
+
+tests/unit/cases/test_sandbox_correlation.py:187: Failed
+------------------------------ Captured log call -------------------------------
+ERROR    core.cases.sandbox_correlation_service:sandbox_correlation_service.py:111 Failed to correlate sandbox report
+Traceback (most recent call last):
+  File "/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e0321909-a868-494f-ab16-54a206500fde/core/cases/sandbox_correlation_service.py", line 94, in attach_report
+    if self._upsert_ioc(
+       ^^^^^^^^^^^^^^^^^
+  File "/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e0321909-a868-494f-ab16-54a206500fde/tests/unit/cases/test_sandbox_correlation.py", line 182, in _flaky_upsert
+    raise RuntimeError("constraint violation on the second IOC")
+RuntimeError: constraint violation on the second IOC
+____ TestAttachReportIdempotency.test_same_task_twice_adds_one_evidence_row ____
+
+self = <tests.unit.cases.test_sandbox_correlation.TestAttachReportIdempotency object at 0x7f925324a540>
+db = sessionmaker(class_='Session', bind=Engine(sqlite://), autoflush=True, expire_on_commit=True)
+
+    def test_same_task_twice_adds_one_evidence_row(self, db):
+        svc = SandboxCorrelationService()
+        first = svc.attach_report("case-1", "cape", "t1", self.REPORT)
+        second = svc.attach_report("case-1", "cape", "t1", self.REPORT)
+    
+>       assert [e.evidence_id for e in self._evidence(db)] == [first["evidence_id"]]
+E       assert [1, 2] == [1]
+E         
+E         Left contains one more item: 2
+E         Use -v to get more diff
+
+tests/unit/cases/test_sandbox_correlation.py:227: AssertionError
+____________ test_failed_correlation_counts_an_error_and_is_retried ____________
+
+    @pytest.mark.asyncio
+    async def test_failed_correlation_counts_an_error_and_is_retried():
+        ds = _DataService(_finding())
+        correlation = _Correlation(fail_times=1)
+        fetches = []
+        poller = _poller(ds, correlation, fetches)
+    
+        stats = await poller.run_once()
+>       assert stats["errors"] == 1 and stats["completed"] == 0
+E       assert (0 == 1)
+
+tests/unit/daemon/test_sandbox_poller_correlation.py:78: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    services.daemon.sandbox_poller:sandbox_poller.py:178 Correlation failed for cape/t1: db down
+=========================== short test summary info ============================
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestAttachReportAtomicity::test_failure_partway_rolls_back_the_evidence_row_too
+FAILED tests/unit/cases/test_sandbox_correlation.py::TestAttachReportIdempotency::test_same_task_twice_adds_one_evidence_row
+FAILED tests/unit/daemon/test_sandbox_poller_correlation.py::test_failed_correlation_counts_an_error_and_is_retried
+3 failed, 17 passed in 14.12s

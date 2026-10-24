@@ -1,0 +1,8 @@
+............................                                             [100%]
+=============================== warnings summary ===============================
+core/storage/service.py:124
+  /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/e0321909-a868-494f-ab16-54a206500fde/core/storage/service.py:124: SADeprecationWarning: The noload() option is deprecated and will be removed in a future release.  This option produces incorrect results by returning ``None`` for related items. (deprecated since: 2.1)
+    noload(Finding.cases),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+28 passed, 1 warning in 44.74s
