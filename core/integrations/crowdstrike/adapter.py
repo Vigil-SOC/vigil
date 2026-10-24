@@ -68,7 +68,6 @@ class CrowdStrikeAdapter:
     async def fetch(
         self,
         *,
-        since: Optional[datetime],
         cursor: Dict[str, Any],
         max_items: int,
     ) -> FetchResult:
@@ -78,7 +77,7 @@ class CrowdStrikeAdapter:
 
         # Taken before the fetch: the cursor never moves past this instant.
         now = utcnow()
-        cutoff = parse_cursor_since(cursor) or since
+        cutoff = parse_cursor_since(cursor)
         if cutoff is None:
             # First run: small window, no backfill.
             cutoff = now - timedelta(minutes=1)
