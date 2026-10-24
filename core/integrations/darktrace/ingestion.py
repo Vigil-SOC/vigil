@@ -57,11 +57,6 @@ def _parse_dt_time(value: Any) -> datetime:
 
 
 def _score_to_anomaly(score: Any, full_scale: Optional[float] = None) -> float:
-    """Normalize a Darktrace score to 0-1.
-
-    Without ``full_scale`` the scale is guessed: breach scores are 0-1 floats,
-    but some older payloads ship 0-100 integers.
-    """
     try:
         s = float(score)
     except (TypeError, ValueError):
