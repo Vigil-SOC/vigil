@@ -6,6 +6,7 @@ import { Cost, fmtCost } from '../../shared/cost'
 import { orchestratorApi } from '../../services/api'
 import { useInvestigationDetail, type InvestigationDetailData } from './useInvestigationDetail'
 import { StatusBadge } from './statusBadge'
+import { canKill, canRestart } from './investigationStatus'
 
 interface Props {
   id: string
@@ -49,9 +50,6 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
     ['custody', 'Chain of custody'],
   ]
 
-  const canWake = detail && ['failed', 'completed'].includes(detail.status)
-  const canKill = detail && ['executing', 'assigned'].includes(detail.status)
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* header */}
@@ -68,12 +66,12 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
           </p>
         </div>
         <span className="grow" />
-        {canWake && (
+        {detail && canRestart(detail.status) && (
           <button className="btn ghost" disabled={busy === `wake:${id}`} onClick={() => runAndReload(wake(id))}>
             <Icon name="play" /> Restart
           </button>
         )}
-        {canKill && (
+        {detail && canKill(detail.status) && (
           <button className="btn danger" disabled={busy === `kill:${id}`} onClick={() => runAndReload(killInvestigation(id))}>
             <Icon name="x2" /> Kill
           </button>

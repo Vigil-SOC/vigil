@@ -10,6 +10,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.attribution import current_claims
+from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import (
     APPROVE_PERMISSION,
@@ -445,7 +446,9 @@ def _step(value: Any, name: str) -> Optional[int]:
     try:
         return int(value)
     except (TypeError, ValueError):
-        raise TypeError(f"replay_hunt {name} must be a whole step number") from None
+        raise MCPFailure(
+            "invalid_args", f"replay_hunt {name} must be a whole step number"
+        ) from None
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -518,7 +521,9 @@ async def replay_hunt(
     to_step: Any = None,
 ) -> Any:
     if not run_id:
-        raise TypeError("replay_hunt is missing a required argument: run_id")
+        raise MCPFailure(
+            "invalid_args", "replay_hunt is missing a required argument: run_id"
+        )
     first, last = _step(from_step, "from_step"), _step(to_step, "to_step")
     only = _step(step, "step")
     if only is not None:
@@ -556,7 +561,9 @@ def _indicator_lookup(args: Args) -> Any:
 
     values = args.get("values") or ([args["value"]] if args.get("value") else [])
     if not values:
-        raise TypeError("lookup_indicators is missing a required argument: values")
+        raise MCPFailure(
+            "invalid_args", "lookup_indicators is missing a required argument: values"
+        )
 
     indicator_type = args.get("indicator_type", "ip")
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
@@ -613,7 +620,7 @@ def _check_hunt_coverage(args: Args) -> Any:
             techniques=args.get("techniques") or (),
         )
     except ValueError as exc:
-        return {"error": str(exc)}
+        raise MCPFailure("invalid_args", str(exc)) from None
 
 
 # Learning episodes (#906): a window over Distil markers, and a JSONL export of a
