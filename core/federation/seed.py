@@ -30,15 +30,7 @@ def seed_federation_sources() -> List[str]:
             if not adapter.is_configured():
                 continue
             row = upsert_source(
-                adapter.name,
-                {
-                    "enabled": False,
-                    "interval_seconds": adapter.default_interval(),
-                    "max_items": 100,
-                    "min_severity": None,
-                    "cursor": {},
-                    "consecutive_errors": 0,
-                },
+                adapter.name, {"interval_seconds": adapter.default_interval()}
             )
             if row:
                 seeded.append(adapter.name)
