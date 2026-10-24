@@ -285,7 +285,7 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     except S3_LIST_ERRORS as e:
         raise _s3_list_http_error(e) from e
 
-    success, summary = summarize_stats(stats)
+    success, summary = summarize_stats(stats, ingestion_service.first_error)
 
     prefix = []
     fp = stats.get("files_processed", 0)
@@ -464,7 +464,7 @@ def ingest_s3_file(
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
 
-    success, message = summarize_stats(stats)
+    success, message = summarize_stats(stats, ingestion_service.first_error)
 
     return IngestionStats(
         findings_total=stats.get("findings_total", 0),
