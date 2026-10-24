@@ -50,54 +50,19 @@ class TestCacheHitRate:
 
 @pytest.mark.asyncio
 async def test_get_cost_analytics_response_shape(monkeypatch):
-    """The endpoint must return the envelope the frontend expects.
+    import httpx
 
-    Mocks the four aggregation helpers to isolate the response shape from
-    SQL — we care that ``window``, ``totals``, ``by_agent``, ``by_model``,
-    and ``top_investigations`` are all present and JSON-serializable.
-
-    Patches the helpers on the service and drives the endpoint, so the
-    handler's delegation to ``get_cost_breakdown`` is covered too.
-    """
     from core.reporting import analytics_service as svc
     from services.api.routers import analytics as mod
 
-    fake_totals = {
-        "calls": 3,
-        "input_tokens": 100,
-        "output_tokens": 50,
-        "cache_read_tokens": 25,
-        "cache_creation_tokens": 10,
-        "cost_usd": 0.01,
-        "cache_hit_rate": 0.2,
-    }
-    fake_agents = [{"agent_id": "triage", "calls": 3, "cost_usd": 0.01}]
+    bifrost_calls = []
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: bifrost_calls.append(a))
+    fake_totals = {"calls": 3, "cost_usd": 0.01}
     fake_models = [{"model": "claude-sonnet-4-5", "calls": 3, "cost_usd": 0.01}]
-    fake_top = [{"investigation_id": "inv-1", "calls": 3, "cost_usd": 0.01}]
-
     monkeypatch.setattr(svc, "_cost_totals", lambda db, f: fake_totals)
-    monkeypatch.setattr(svc, "_cost_group_by_agent", lambda db, f: fake_agents)
     monkeypatch.setattr(svc, "_cost_group_by_model", lambda db, f: fake_models)
-    monkeypatch.setattr(svc, "_cost_top_investigations", lambda db, f: fake_top)
 
-    fake_db = MagicMock()
-    result = await mod.get_cost_analytics(time_range="24h", db=fake_db)
+    result = await mod.get_cost_analytics(time_range="24h", db=MagicMock())
 
-    assert set(result.keys()) == {
-        "window",
-        "totals",
-        "by_agent",
-        "by_model",
-        "top_investigations",
-        # #185: time_series block sourced from Bifrost's
-        # /api/logs/histogram/cost; None when Bifrost is unreachable.
-        "time_series",
-    }
-    assert result["totals"] == fake_totals
-    assert result["by_agent"] == fake_agents
-    assert result["by_model"] == fake_models
-    assert result["top_investigations"] == fake_top
-    # window carries ISO timestamps + a seconds count we can display
-    assert "start" in result["window"]
-    assert "end" in result["window"]
-    assert result["window"]["seconds"] == 24 * 3600
+    assert result == {"totals": fake_totals, "by_model": fake_models}
+    assert bifrost_calls == []

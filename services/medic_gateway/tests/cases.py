@@ -69,7 +69,6 @@ CASES: list[Case] = [
         "analytics-cost",
         b"/api/analytics/cost?time_range=24h",
         (R, 403),
-        note="sync Bifrost call blocks a backend worker up to 5 s",
     ),
     # --- slashes -----------------------------------------------------------------
     Case(
