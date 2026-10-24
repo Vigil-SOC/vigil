@@ -1,0 +1,14 @@
+== base cfd58dbd
+json list keyed by id                  [0, 0, 0, 0, 0] stored=0 msg='No data imported'
+json single finding (sample script)    [1, 1, 0, 0, 0] stored=1 msg='Imported 1 findings'
+json single case (sample script)       [0, 0, 0, 1, 1] stored=1 msg='Imported 1 cases'
+jsonl one bad line                     [1, 0, 0, 0, 0] stored=0 msg='No data imported'
+csv one bad row                        [2, 0, 0, 0, 0] stored=0 msg='No data imported'
+csv plain                              [2, 2, 0, 0, 0] stored=2 msg='Imported 2 findings'
+== branch
+json list keyed by id                  [2, 2, 0, 0, 0] stored=2 msg='Imported 2 findings'
+json single finding (sample script)    [1, 1, 0, 0, 0] stored=1 msg='Imported 1 findings'
+json single case (sample script)       [0, 0, 0, 1, 1] stored=1 msg='Imported 1 cases'
+jsonl one bad line                     [2, 2, 1, 0, 0] stored=2 msg='Imported 2 findings. 1 finding errors'
+csv one bad row                        [3, 2, 1, 0, 0] stored=2 msg='Imported 2 findings. 1 finding errors'
+csv plain                              [2, 2, 0, 0, 0] stored=2 msg='Imported 2 findings'

@@ -1,0 +1,25 @@
+services/medic_dockerproxy/logs.py                              24     24   0.00%   7-45
+services/medic_dockerproxy/policy.py                           103    103   0.00%   9-181
+services/medic_dockerproxy/project.py                           32     32   0.00%   10-88
+services/medic_dockerproxy/server.py                           170    170   0.00%   10-261
+services/medic_gateway/__main__.py                               3      3   0.00%   1-5
+services/medic_gateway/cli.py                                   90     90   0.00%   3-137
+services/medic_gateway/logs.py                                  57     57   0.00%   8-89
+services/medic_gateway/policy.py                                94     94   0.00%   8-198
+services/medic_gateway/server.py                               209    209   0.00%   9-303
+services/medic_gateway/session.py                              130    130   0.00%   9-182
+services/worker/__init__.py                                      1      1   0.00%   6
+services/worker/__main__.py                                      8      8   0.00%   1-15
+services/worker/jobs.py                                        119    119   0.00%   4-240
+-------------------------------------------------------------------------------------------
+TOTAL                                                        48535  36403  25.00%
+
+73 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+=========== 462 passed, 6 skipped, 242 warnings in 488.01s (0:08:08) ===========

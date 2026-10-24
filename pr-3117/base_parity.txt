@@ -1,0 +1,15 @@
+1.51s call     unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[json_list_keyed_by_id]
+0.02s setup    unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[csv_plain]
+0.02s setup    unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[jsonl_one_bad_line]
+0.02s call     unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[csv_one_bad_row]
+0.02s call     unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[json_wrapper]
+0.02s call     unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[jsonl_cases_one_bad_line]
+0.02s setup    unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[jsonl_cases_one_bad_line]
+0.01s setup    unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[json_wrapper]
+0.01s setup    unit/ingestion/test_ingest_string_parity.py::test_single_case_object_imports_from_string
+=========================== short test summary info ============================
+FAILED tests/unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[json_list_keyed_by_id]
+FAILED tests/unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[jsonl_one_bad_line]
+FAILED tests/unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[jsonl_cases_one_bad_line]
+FAILED tests/unit/ingestion/test_ingest_string_parity.py::test_string_matches_file[csv_one_bad_row]
+============== 4 failed, 5 passed, 1 warning in 126.52s (0:02:06) ==============
