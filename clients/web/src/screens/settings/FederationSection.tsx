@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { getAllIntegrations } from '../../config/integrations'
+import { CATALOG_TO_SOURCE } from '../../config/sourceBadges'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Select, TextInput, Toggle } from '../../shared/ui'
@@ -14,17 +16,9 @@ const SEVERITY_OPTIONS = [
   { value: 'critical', label: 'Critical only' },
 ]
 
-// Source ids come from the backend's federation config, which can carry sources
-// this list has never heard of — hence a lookup that can miss, falling back to
-// the raw id at the call site.
-const SOURCE_LABELS = new Map([
-  ['splunk', 'Splunk'],
-  ['crowdstrike', 'CrowdStrike Falcon'],
-  ['azure_sentinel', 'Azure Sentinel'],
-  ['aws_security_hub', 'AWS Security Hub'],
-  ['microsoft_defender', 'Microsoft Defender'],
-  ['elastic', 'Elastic Security'],
-])
+function nameOf(id: string): string {
+  return getAllIntegrations().find((i) => CATALOG_TO_SOURCE[i.id] === id)?.name ?? id
+}
 
 function formatDuration(sec: number): string {
   sec = Math.max(0, Math.floor(sec))
@@ -135,8 +129,6 @@ export default function FederationSection({ notify }: SectionProps) {
       </div>
     )
   }
-
-  const nameOf = (id: string) => SOURCE_LABELS.get(id) ?? id
 
   const onToggleGlobal = async () => {
     try {

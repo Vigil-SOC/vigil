@@ -17,25 +17,17 @@ Signature header: ``X-Darktrace-Signature`` (hex HMAC-SHA256 of raw body).
 """
 
 import asyncio
-import hmac
 import logging
-from hashlib import sha256
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, Request, status
 
 from core.config import get_settings
 from core.integrations.darktrace.ingestion import DarktraceIngestionService
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
-from core.webhook_rejections import (
-    BAD_SIGNATURE,
-    MISSING_SIGNATURE,
-    NO_SECRET,
-    SECRET_LOOKUP_FAILED,
-    record_rejection,
-    rejection_counts,
-)
+from core.webhook_receiver import ingest, read_signed_json
+from core.webhook_rejections import rejection_counts
 
 logger = logging.getLogger(__name__)
 
@@ -107,87 +99,17 @@ def _get_console_url() -> str:
     return get_settings().darktrace_url
 
 
-def _verify_signature(raw_body: bytes, provided: str, secret: str) -> bool:
-    expected = hmac.new(secret.encode("utf-8"), raw_body, sha256).hexdigest()
-    # Strip common prefix if Darktrace wraps signature (e.g. "sha256=...").
-    clean = provided.split("=", 1)[-1].strip()
-    return hmac.compare_digest(expected, clean)
-
-
-def _reject(
-    request: Request,
-    endpoint: str,
-    reason: str,
-    status_code: int,
-    detail: str,
-    exc: Optional[BaseException] = None,
-) -> HTTPException:
-    record_rejection(
-        endpoint,
-        reason,
-        request.client.host if request.client else None,
-        exc=exc,
+async def _read(request: Request, signature: Optional[str], endpoint: str) -> Dict:
+    return await read_signed_json(
+        request,
+        signature,
+        endpoint=endpoint,
+        vendor="Darktrace",
+        header="X-Darktrace-Signature",
+        secret_name="DARKTRACE_WEBHOOK_SECRET",
+        get_secret=_get_secret,
+        get_max_body_bytes=_get_max_body_bytes,
     )
-    return HTTPException(status_code=status_code, detail=detail)
-
-
-async def _read_and_verify(
-    request: Request, signature: Optional[str], endpoint: str
-) -> bytes:
-    # Fetch the secret once per request: a second lookup would double-count.
-    try:
-        secret = _get_secret()
-    except Exception as exc:  # noqa: BLE001
-        raise _reject(
-            request,
-            endpoint,
-            SECRET_LOOKUP_FAILED,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Darktrace webhook secret lookup failed",
-            exc,
-        )
-    if not secret:
-        # Fail closed: without a configured secret we cannot authenticate.
-        raise _reject(
-            request,
-            endpoint,
-            NO_SECRET,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Darktrace webhook receiver not configured",
-        )
-    raw = await request.body()
-    if len(raw) > _get_max_body_bytes():
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Body exceeds {_get_max_body_bytes()} bytes",
-        )
-    if not signature or not _verify_signature(raw, signature, secret):
-        raise _reject(
-            request,
-            endpoint,
-            BAD_SIGNATURE if signature else MISSING_SIGNATURE,
-            status.HTTP_401_UNAUTHORIZED,
-            "Invalid or missing X-Darktrace-Signature",
-        )
-    return raw
-
-
-def _parse_json(raw: bytes) -> Dict:
-    import json
-
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid JSON body",
-        )
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Webhook payload must be a JSON object",
-        )
-    return payload
 
 
 def _ingest(
@@ -196,24 +118,7 @@ def _ingest(
     alert_type: str,
 ) -> Dict:
     service = DarktraceIngestionService(console_url=_get_console_url())
-    finding = transform(service, payload)
-    if finding is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unable to transform Darktrace {alert_type} payload",
-        )
-    ok = service.ingestion_service.ingest_finding(finding)
-    if not ok:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Finding was not persisted",
-        )
-    logger.info(
-        "Darktrace %s ingested: finding_id=%s",
-        alert_type,
-        finding.get("finding_id"),
-    )
-    return {"accepted": True, "finding_id": finding["finding_id"]}
+    return ingest(service, transform(service, payload), f"Darktrace {alert_type}")
 
 
 @router.get("/health")
@@ -236,10 +141,7 @@ async def model_breach(
     request: Request,
     x_darktrace_signature: Optional[str] = Header(default=None),
 ) -> Dict:
-    raw = await _read_and_verify(
-        request, x_darktrace_signature, "darktrace/model-breach"
-    )
-    payload = _parse_json(raw)
+    payload = await _read(request, x_darktrace_signature, "darktrace/model-breach")
     return await asyncio.to_thread(
         _ingest,
         payload,
@@ -253,8 +155,7 @@ async def ai_analyst(
     request: Request,
     x_darktrace_signature: Optional[str] = Header(default=None),
 ) -> Dict:
-    raw = await _read_and_verify(request, x_darktrace_signature, "darktrace/ai-analyst")
-    payload = _parse_json(raw)
+    payload = await _read(request, x_darktrace_signature, "darktrace/ai-analyst")
     return await asyncio.to_thread(
         _ingest,
         payload,
@@ -268,10 +169,7 @@ async def system_status(
     request: Request,
     x_darktrace_signature: Optional[str] = Header(default=None),
 ) -> Dict:
-    raw = await _read_and_verify(
-        request, x_darktrace_signature, "darktrace/system-status"
-    )
-    payload = _parse_json(raw)
+    payload = await _read(request, x_darktrace_signature, "darktrace/system-status")
     return await asyncio.to_thread(
         _ingest,
         payload,

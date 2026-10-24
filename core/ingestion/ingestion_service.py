@@ -567,19 +567,19 @@ class IngestionService:
             if peek == b"{":
 
                 def _findings():
-                    for item in ijson.items(f, "findings.item"):
+                    for item in ijson.items(f, "findings.item", use_float=True):
                         self.stats["findings_total"] += 1
                         yield item
 
                 self._ingest_findings_batched(_findings())
                 f.seek(0)
-                for item in ijson.items(f, "cases.item"):
+                for item in ijson.items(f, "cases.item", use_float=True):
                     self.stats["cases_total"] += 1
                     self.ingest_case(item)
             elif peek == b"[":
                 first_key = None
                 finding_batch = []
-                for item in ijson.items(f, "item"):
+                for item in ijson.items(f, "item", use_float=True):
                     if first_key is None:
                         first_key = (
                             "finding"

@@ -282,7 +282,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   },
   {
     id: 'microsoft-defender',
-    name: 'Microsoft Defender for Endpoint',
+    name: 'Microsoft Defender',
     category: 'EDR/XDR',
     description: 'Integrate with Microsoft Defender for Endpoint (MDE) for enterprise endpoint protection.',
     functionality_type: 'Detection & Response',
@@ -456,7 +456,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
   },
   {
     id: 'elastic-siem',
-    name: 'Elastic Security (SIEM)',
+    name: 'Elastic Security',
     category: 'SIEM',
     description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities. Also hunts over an OpenSearch-based Wazuh indexer.',
     functionality_type: 'Log Analysis & SIEM',
