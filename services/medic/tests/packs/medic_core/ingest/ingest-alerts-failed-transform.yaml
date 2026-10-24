@@ -1,0 +1,30 @@
+rule: ingest.alerts-failed-transform
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-on-a-transform-drop
+    title: Sentinel drops 2 of 40 alerts that failed to transform
+    end: +15m
+    logs:
+      - {at: +5m, signal: log_soc_daemon, level: WARNING, logger: core.federation.adapters._siem_base,
+         template: '%s dropped %d of %d alert(s) that failed to transform%s',
+         message: "sentinel dropped 2 of 40 alert(s) that failed to transform (first error: KeyError: 'properties')"}
+    expect:
+      - {at: +5m, rule: ingest.alerts-failed-transform, eval: true, state: pending}
+      - {at: +7m, rule: ingest.alerts-failed-transform, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.alerts-failed-transform, active_since: +5m, opened_at: +7m, resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-an-untrusted-copy
+    title: The same words from an f-string or forged line (not catalog-trusted) don't count
+    end: +65m
+    logs:
+      - {at: +5m, signal: log_soc_daemon, level: WARNING, logger: core.federation.adapters._siem_base, trusted: false,
+         template: sentinel dropped 2 of 40 alert(s) that failed to transform,
+         message: sentinel dropped 2 of 40 alert(s) that failed to transform}
+    expect:
+      - {at: +10m, rule: ingest.alerts-failed-transform, eval: unknown, state: inactive}
+      - {at: +65m, rule: ingest.alerts-failed-transform, eval: false, state: inactive}
+    incidents: {}
