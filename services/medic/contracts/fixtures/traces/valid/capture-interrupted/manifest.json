@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "trace_id": "capture-interrupted",
+  "provenance": "synthetic",
+  "medic": {
+    "version": "0.1.0",
+    "install_shape": "compose",
+    "instance_id": "mi_3f9a2c1b0d4e5f60",
+    "pack": {
+      "id": "medic-core",
+      "version": "0.1.0"
+    }
+  },
+  "capture": {
+    "started_at": "2026-10-07T10:00:00Z",
+    "ended_at": "2026-10-07T10:12:00Z",
+    "interrupted": true
+  },
+  "sources": [
+    {
+      "sensor": "http.daemon_status",
+      "file": "observations/http.daemon_status.jsonl",
+      "sha256": "a23d752b884d613a1871f148ad63102f59fc9bd6d3cfa58f1af9915d5d0ee85e",
+      "lines": 3
+    },
+    {
+      "sensor": "http.triage",
+      "file": "observations/http.triage.jsonl",
+      "sha256": "becf9ab3387f50c2773130b4f7c3bec909e1d3df55b3df75533d485424b66b5b",
+      "lines": 6
+    }
+  ]
+}

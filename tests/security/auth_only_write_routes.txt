@@ -9,8 +9,6 @@ DELETE /api/sla-policies/{policy_id}
 DELETE /api/workflows/runs/{run_id}
 PATCH /api/conversations/{conversation_id}
 POST /api/agents/custom/generate
-POST /api/ai/decisions
-POST /api/analytics/estimate-cost
 POST /api/analytics/recalculate-cost
 POST /api/auth/bootstrap
 POST /api/auth/change-password
@@ -23,10 +21,6 @@ POST /api/auth/password-reset/confirm
 POST /api/auth/password-reset/request
 POST /api/auth/refresh
 POST /api/cases/search
-POST /api/cases/{case_id}/generate-report
-POST /api/exclusions
-POST /api/exclusions/{exclusion_id}/remove
-POST /api/findings/export
 POST /api/findings/{finding_id}/enrich
 POST /api/findings/{finding_id}/intake
 POST /api/findings/{finding_id}/noise

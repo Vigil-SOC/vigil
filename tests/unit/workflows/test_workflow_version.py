@@ -75,7 +75,7 @@ class TestVersionOf:
 
 class TestAgentRunPath:
     @staticmethod
-    def _begin(playbook, run_kind="compose", versions=None):
+    def _begin(playbook, run_kind="compose", lookup=None):
         request = agent_runs_router.StartRunRequest(
             run_kind=run_kind, playbook=playbook, config="", prompt="p"
         )
@@ -83,8 +83,9 @@ class TestAgentRunPath:
         with patch(
             "core.workflows.workflow_run_service.WorkflowRunService", return_value=runs
         ), patch(
-            "core.workflows.workflows_service.WorkflowsService.version_of",
-            side_effect=versions or (lambda self, wid: 1),
+            "core.workflows.workflows_service.WorkflowsService.get_workflow",
+            side_effect=lookup
+            or (lambda self, wid: WorkflowDefinition(wid, None, {"version": 4}, "")),
             autospec=True,
         ):
             agent_runs_router._begin_run_row("r-1", request, "api")
@@ -93,7 +94,7 @@ class TestAgentRunPath:
     def test_named_workflow_stores_its_version(self):
         kwargs = self._begin("workflow:incident-response")
         assert kwargs["workflow_id"] == "incident-response"
-        assert kwargs["workflow_version"] == 1
+        assert kwargs["workflow_version"] == 4
 
     def test_bare_run_kind_stores_none(self):
         assert self._begin("")["workflow_version"] is None
@@ -102,7 +103,7 @@ class TestAgentRunPath:
         def boom(self, wid):
             raise RuntimeError("no db")
 
-        assert self._begin("workflow:x", versions=boom)["workflow_version"] is None
+        assert self._begin("workflow:x", lookup=boom)["workflow_version"] is None
 
 
 @pytest.mark.database
@@ -123,7 +124,8 @@ class TestUpdateVersion:
     @pytest.fixture
     def wf_id(self, service):
         return service.create(
-            {"name": "Ransom", "description": "Contain it", "phases": [self.PHASE]}
+            {"name": "Ransom", "description": "Contain it", "phases": [self.PHASE]},
+            created_by="analyst",
         )["workflow_id"]
 
     def test_identical_save_keeps_version(self, service, wf_id):

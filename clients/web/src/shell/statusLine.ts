@@ -1,5 +1,7 @@
 /** One level and one sentence from the five reads the shell polls. */
 
+import type { Schema } from '../services/apiTypes'
+
 type StatusLevel = 'good' | 'fair' | 'poor'
 
 export interface StatusFold {
@@ -21,11 +23,7 @@ export function authBypassed(health: HealthRead | null): boolean {
   return import.meta.env.VITE_DEV_MODE === 'true' || health?.auth_bypassed === true
 }
 
-/** Each running, unhealthy, not_running or unknown; the agent layer also no_token. */
-export interface ProcessesRead {
-  agent_layer?: string
-  daemon?: string
-}
+export type ProcessesRead = Schema<'ProcessStates'>
 
 export interface FederationRead {
   sources?: { source_id?: string; enabled?: boolean; consecutive_errors?: number }[]
@@ -70,7 +68,7 @@ interface Fact {
 }
 
 /** Each one stops chat and workflow runs. */
-const AGENT_LAYER_FACT: Partial<Record<string, string>> = {
+const AGENT_LAYER_FACT: Partial<Record<ProcessesRead['agent_layer'], string>> = {
   no_token: 'Agent layer has no internal token.',
   not_running: 'Agent layer is not running.',
   unhealthy: 'Agent layer is not ready.',
@@ -96,7 +94,7 @@ export function foldStatus(reads: StatusReads): StatusFold {
     }
   }
 
-  const agentLayer = AGENT_LAYER_FACT[reads.processes?.agent_layer ?? '']
+  const agentLayer = reads.processes && AGENT_LAYER_FACT[reads.processes.agent_layer]
   if (agentLayer) facts.push({ level: 'fair', sentence: agentLayer })
   // Not running is the foreground default (#902), not a fault; the setup checks say it.
   if (reads.processes?.daemon === 'unhealthy') {

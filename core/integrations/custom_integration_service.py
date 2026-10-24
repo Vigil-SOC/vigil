@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import vigil_path
+from core.exceptions import NotFoundError, SOCError
 from core.llm.defaults import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,16 @@ _INTEGRATION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _MAX_SERVER_CODE_BYTES = 256 * 1024
 
 
-class InvalidIntegrationIdError(ValueError):
+class InvalidIntegrationIdError(SOCError):
     """Raised when an integration_id fails validation."""
+
+    status_code = 400
+
+
+class ServerCodeTooLargeError(SOCError):
+    """Raised when server_code is over ``_MAX_SERVER_CODE_BYTES``."""
+
+    status_code = 400
 
 
 def _validate_integration_id(integration_id: str) -> str:
@@ -515,53 +524,33 @@ Only generate the JSON response when you have enough information to create a com
         response carries only the integration_id, never an absolute
         filesystem path.
         """
-        try:
-            try:
-                _validate_integration_id(integration_id)
-                server_file = self._server_path_for(integration_id)
-            except InvalidIntegrationIdError as exc:
-                return {"success": False, "error": str(exc)}
+        server_file = self._server_path_for(integration_id)
+        if len(server_code.encode("utf-8")) > _MAX_SERVER_CODE_BYTES:
+            raise ServerCodeTooLargeError(
+                f"server_code exceeds {_MAX_SERVER_CODE_BYTES} byte limit"
+            )
 
-            if not isinstance(server_code, str):
-                return {"success": False, "error": "server_code must be a string"}
-            if len(server_code.encode("utf-8")) > _MAX_SERVER_CODE_BYTES:
-                return {
-                    "success": False,
-                    "error": (
-                        f"server_code exceeds {_MAX_SERVER_CODE_BYTES} byte limit"
-                    ),
-                }
+        all_metadata = self._load_metadata()
+        all_metadata[integration_id] = {
+            **metadata,
+            "created_at": datetime.now().isoformat(),
+            "is_custom": True,
+        }
+        self._save_metadata(all_metadata)
 
-            # Save metadata
-            all_metadata = self._load_metadata()
-            all_metadata[integration_id] = {
-                **metadata,
-                "created_at": datetime.now().isoformat(),
-                "is_custom": True,
-            }
-            self._save_metadata(all_metadata)
+        server_file.write_text(server_code)
 
-            # Save server code
-            server_file.write_text(server_code)
+        init_file = self.custom_integrations_dir / "__init__.py"
+        if not init_file.exists():
+            init_file.write_text('"""Custom integrations directory."""\n')
 
-            # Create __init__.py if it doesn't exist
-            init_file = self.custom_integrations_dir / "__init__.py"
-            if not init_file.exists():
-                init_file.write_text('"""Custom integrations directory."""\n')
+        logger.info(f"Saved custom integration '{integration_id}'")
 
-            logger.info(f"Saved custom integration '{integration_id}'")
-
-            return {
-                "success": True,
-                "message": (
-                    f"Custom integration '{integration_id}' saved successfully"
-                ),
-                "integration_id": integration_id,
-            }
-
-        except Exception as e:
-            logger.error(f"Error saving custom integration: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+        return {
+            "success": True,
+            "message": f"Custom integration '{integration_id}' saved successfully",
+            "integration_id": integration_id,
+        }
 
     def list_custom_integrations(self) -> List[Dict[str, Any]]:
         """
@@ -579,92 +568,62 @@ Only generate the JSON response when you have enough information to create a com
 
     async def delete_integration(self, integration_id: str) -> Dict[str, Any]:
         """Delete a custom integration."""
-        try:
-            try:
-                _validate_integration_id(integration_id)
-                server_file = self._server_path_for(integration_id)
-            except InvalidIntegrationIdError as exc:
-                return {"success": False, "error": str(exc)}
+        server_file = self._server_path_for(integration_id)
 
-            # Remove from metadata
-            all_metadata = self._load_metadata()
+        all_metadata = self._load_metadata()
 
-            if integration_id not in all_metadata:
-                return {
-                    "success": False,
-                    "error": f"Integration '{integration_id}' not found",
-                }
+        if integration_id not in all_metadata:
+            raise NotFoundError(f"Integration '{integration_id}' not found")
 
-            del all_metadata[integration_id]
-            self._save_metadata(all_metadata)
+        del all_metadata[integration_id]
+        self._save_metadata(all_metadata)
 
-            # Remove server file
-            if server_file.exists():
-                server_file.unlink()
+        if server_file.exists():
+            server_file.unlink()
 
-            logger.info(f"Deleted custom integration '{integration_id}'")
+        logger.info(f"Deleted custom integration '{integration_id}'")
 
-            return {
-                "success": True,
-                "message": f"Custom integration '{integration_id}' deleted successfully",
-            }
-
-        except Exception as e:
-            logger.error(f"Error deleting custom integration: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+        return {
+            "success": True,
+            "message": f"Custom integration '{integration_id}' deleted successfully",
+        }
 
     async def validate_integration(self, integration_id: str) -> Dict[str, Any]:
         """Validate a custom integration's server code."""
+        server_file = self._server_path_for(integration_id)
+        if not server_file.exists():
+            raise NotFoundError(f"Integration '{integration_id}' not found")
+
+        code = server_file.read_text()
         try:
-            try:
-                _validate_integration_id(integration_id)
-                server_file = self._server_path_for(integration_id)
-            except InvalidIntegrationIdError as exc:
-                return {"success": False, "valid": False, "error": str(exc)}
+            compile(code, str(server_file), "exec")
+            syntax_valid = True
+            syntax_error = None
+        except SyntaxError as e:
+            syntax_valid = False
+            syntax_error = str(e)
 
-            if not server_file.exists():
-                return {
-                    "success": False,
-                    "valid": False,
-                    "error": "Server file not found",
-                }
+        has_server_init = "Server(" in code
+        has_list_tools = "on_list_tools" in code
+        has_call_tool = "on_call_tool" in code
+        has_main = "async def main():" in code
 
-            # Try to compile the code
-            code = server_file.read_text()
-            try:
-                compile(code, str(server_file), "exec")
-                syntax_valid = True
-                syntax_error = None
-            except SyntaxError as e:
-                syntax_valid = False
-                syntax_error = str(e)
+        validation_checks = {
+            "syntax_valid": syntax_valid,
+            "has_server_init": has_server_init,
+            "has_list_tools": has_list_tools,
+            "has_call_tool": has_call_tool,
+            "has_main": has_main,
+        }
 
-            # Check for required components
-            has_server_init = "Server(" in code
-            has_list_tools = "on_list_tools" in code
-            has_call_tool = "on_call_tool" in code
-            has_main = "async def main():" in code
+        all_valid = all(validation_checks.values())
 
-            validation_checks = {
-                "syntax_valid": syntax_valid,
-                "has_server_init": has_server_init,
-                "has_list_tools": has_list_tools,
-                "has_call_tool": has_call_tool,
-                "has_main": has_main,
-            }
-
-            all_valid = all(validation_checks.values())
-
-            return {
-                "success": True,
-                "valid": all_valid,
-                "checks": validation_checks,
-                "syntax_error": syntax_error,
-            }
-
-        except Exception as e:
-            logger.error(f"Error validating integration: {e}", exc_info=True)
-            return {"success": False, "valid": False, "error": str(e)}
+        return {
+            "success": True,
+            "valid": all_valid,
+            "checks": validation_checks,
+            "syntax_error": syntax_error,
+        }
 
     def _load_metadata(self) -> Dict[str, Any]:
         """Load custom integrations metadata."""

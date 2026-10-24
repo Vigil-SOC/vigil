@@ -13,11 +13,13 @@ from sqlalchemy import event
 from core.api.v1.case_metrics_router import (
     ByPriorityResponse,
     ByStatusResponse,
+    CaseMetricsSummaryResponse,
     get_all_analyst_performance,
     get_by_priority,
     get_by_status,
     get_mttd,
     get_mttr,
+    get_summary,
 )
 from core.storage.connection import get_db_session
 from core.storage.models import Case, CaseClosureInfo, CaseMetrics
@@ -111,11 +113,11 @@ def _seed(session) -> None:
         closed_at=T0 + timedelta(days=1) + 4 * HOUR,
         first_activity=T0 + timedelta(days=1) + 1.5 * HOUR,
     )
-    # Resolved by a status edit: no closure row, updated_at is the close.
+    # Closed before closure rows existed: updated_at is the close.
     _case(
         session,
         "c-low-1",
-        status="resolved",
+        status="closed",
         priority="low",
         assignee="bob",
         updated_at=T0 + 9 * HOUR,
@@ -294,8 +296,7 @@ def test_by_status_counts(session):
     result = _run(get_by_status, session)
 
     assert _by_status(result) == {
-        "closed": 2,
-        "resolved": 1,
+        "closed": 3,
         "open": 1,
         "investigating": 1,
         "unknown": 1,
@@ -312,8 +313,7 @@ def test_by_priority_and_status_respect_the_window(session):
     }
     assert _by_status(_run(get_by_status, session, **second_day)) == {"closed": 1}
     assert _by_status(_run(get_by_status, session, **first_day)) == {
-        "closed": 1,
-        "resolved": 1,
+        "closed": 2,
         "open": 1,
         "investigating": 1,
     }
@@ -341,6 +341,39 @@ def test_by_priority_and_status_empty(session):
     assert _run(get_by_status, session, **window) == {"status_breakdown": []}
 
 
+def test_summary_counts_new_as_open_and_only_open_critical(session):
+    _seed(session)
+    _case(session, "n-crit", status="new", priority="critical")
+    _case(session, "c-crit", status="closed", priority="critical")
+    session.commit()
+
+    result = _run(get_summary, session)
+
+    assert result == {
+        "total_cases": 7,
+        "open_cases": 3,
+        "resolved_cases": 4,
+        "critical_cases": 1,
+        "status_breakdown": {
+            "closed": 4,
+            "open": 1,
+            "investigating": 1,
+            "new": 1,
+        },
+        "priority_breakdown": {"high": 3, "low": 2, "critical": 2},
+    }
+    CaseMetricsSummaryResponse.model_validate(result)
+
+
+def test_summary_respects_the_window(session):
+    _seed(session)
+
+    result = _run(get_summary, session, start_date=T0 + timedelta(hours=12))
+
+    assert result["total_cases"] == 1
+    assert result["status_breakdown"] == {"closed": 1}
+
+
 def _count_queries(session, fn) -> int:
     statements = []
 
@@ -364,8 +397,9 @@ def _count_queries(session, fn) -> int:
         (get_all_analyst_performance, {}),
         (get_by_priority, {}),
         (get_by_status, {}),
+        (get_summary, {}),
     ],
-    ids=["mttr", "mttd", "analyst-performance", "by-priority", "by-status"],
+    ids=["mttr", "mttd", "analyst-performance", "by-priority", "by-status", "summary"],
 )
 def test_query_count_does_not_grow_with_cases(session, handler, kwargs):
     def seed(prefix: str, n: int) -> None:
