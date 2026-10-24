@@ -1834,8 +1834,7 @@ class Orchestrator:
     def _hourly_cost_limit(self) -> float:
         """The cap as saved in Settings, falling back to startup config.
 
-        Read live so the daemon's gate and the API's status payload (a separate
-        process on default config) agree, and a saved change applies at once.
+        Read live so a saved change reaches the running daemon at once.
         """
         try:
             from core.storage.connection import get_db_manager
