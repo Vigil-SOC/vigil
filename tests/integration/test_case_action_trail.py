@@ -14,7 +14,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from core.audit import trail
-from core.cases import case_records_service
+from core.cases import case_records_service, case_trail
 from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
@@ -187,7 +187,7 @@ def test_a_joined_trail_failure_is_not_committed(db, monkeypatch):
     _fail(monkeypatch)
     session = get_db_session()
     try:
-        with pytest.raises(OperationalError):
+        with pytest.raises(case_trail.TrailWriteError):
             CaseCollaborationService().add_comment(
                 "c-1", "ada", "noted", session=session
             )
