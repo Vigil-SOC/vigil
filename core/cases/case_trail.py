@@ -29,6 +29,10 @@ APPROVE = "approval.approve"
 REJECT = "approval.reject"
 
 
+class TrailWriteError(Exception):
+    """A trail append failed. A joined caller must not commit past it."""
+
+
 def ready(session) -> bool:
     """Whether ``session`` should append instead of inserting ``CaseAuditLog``."""
     get_bind = getattr(session, "get_bind", None)
@@ -109,7 +113,10 @@ def append_or_legacy(
     beside: dict[str, Any] = {"actor_text": actor_text}
     if operator_text is not None:
         beside["operator_text"] = operator_text
-    trail.append(session, _payload(action, principal, **fields), **beside)
+    try:
+        trail.append(session, _payload(action, principal, **fields), **beside)
+    except Exception as exc:
+        raise TrailWriteError(str(exc)) from exc
 
 
 def append_approval(

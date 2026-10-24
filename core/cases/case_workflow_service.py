@@ -376,8 +376,8 @@ class CaseWorkflowService:
 
                 logger.info(f"Escalated case {case_id} to {escalated_to}")
                 return True
-        except Exception:
-            if joined:
+        except Exception as exc:
+            if joined and isinstance(exc, case_trail.TrailWriteError):
                 raise
             logger.exception("CaseWorkflowService.escalate_case failed")
             return False

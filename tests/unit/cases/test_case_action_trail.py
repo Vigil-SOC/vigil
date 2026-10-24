@@ -124,7 +124,7 @@ def test_a_joined_comment_trail_failure_propagates(monkeypatch):
     )
     session = _session()
 
-    with pytest.raises(OperationalError):
+    with pytest.raises(case_trail.TrailWriteError):
         CaseCollaborationService().add_comment("c-1", "ada", "noted", session=session)
 
     session.commit.assert_not_called()
@@ -201,6 +201,25 @@ def test_an_escalation_keeps_the_reason_out_of_the_payload(monkeypatch):
     )
 
 
+def test_a_joined_non_trail_failure_returns_the_default(monkeypatch):
+    # Only a trail failure propagates on a joined session. Anything else keeps
+    # the old default_on_error contract, which MCP callers read as falsy.
+    monkeypatch.setattr(case_trail, "ready", lambda session: False)
+    session = _session()
+    session.query.side_effect = OperationalError("select", {}, None)
+
+    assert (
+        CaseCollaborationService().add_comment("c-1", "ada", "noted", session=session)
+        is None
+    )
+    assert (
+        CaseWorkflowService().escalate_case(
+            "c-1", "ada", "soc-lead", "why", session=session
+        )
+        is False
+    )
+
+
 def test_a_joined_escalation_trail_failure_propagates(monkeypatch):
     monkeypatch.setattr(case_trail, "ready", lambda session: True)
     monkeypatch.setattr(
@@ -211,7 +230,7 @@ def test_a_joined_escalation_trail_failure_propagates(monkeypatch):
     session = _session()
     session.query.return_value.filter.return_value.first.return_value = case
 
-    with pytest.raises(OperationalError):
+    with pytest.raises(case_trail.TrailWriteError):
         CaseWorkflowService().escalate_case(
             "c-1", "ada", "soc-lead", "needs a lead", session=session
         )

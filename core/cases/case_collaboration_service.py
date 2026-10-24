@@ -144,8 +144,8 @@ class CaseCollaborationService:
 
                 logger.info(f"Added comment to case {case_id} by {author}")
                 return comment
-        except Exception:
-            if joined:
+        except Exception as exc:
+            if joined and isinstance(exc, case_trail.TrailWriteError):
                 raise
             logger.exception("CaseCollaborationService.add_comment failed")
             return None
