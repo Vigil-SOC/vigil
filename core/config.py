@@ -432,10 +432,11 @@ def _load_json_config(path: Path) -> dict:
         return {}
     try:
         with open(path, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+            data = json.load(f)
+    except (ValueError, IOError) as e:
         logger.error(f"Config load error {path}: {e}")
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def load_integrations_config(config_service: Any = None) -> dict[str, Any]:

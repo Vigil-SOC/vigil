@@ -665,20 +665,6 @@ class _TriggerAlreadyDecided(Exception):
     """The CAS on a queued trigger matched zero rows."""
 
 
-def _inv_as_dict(inv):
-    """Serialize an investigation to a dict, passing through one already a dict.
-
-    The polling loops receive investigations already serialized; the model
-    branch is a safety net. Imports the schema lazily to keep this module
-    importable without a database.
-    """
-    if isinstance(inv, dict):
-        return inv
-    from core.storage.schemas import InvestigationSchema
-
-    return InvestigationSchema.dump(inv)
-
-
 class Orchestrator:
     """Master agent that manages autonomous SOC investigations."""
 
@@ -751,7 +737,12 @@ class Orchestrator:
             )
             logger.info(f"  Dry run: {self.config.dry_run}")
 
-            await self._complete_legacy_review_rows()
+            try:
+                await self._complete_legacy_review_rows()
+            except Exception as e:
+                logger.error(
+                    "Completing legacy review rows failed: %s", e, exc_info=True
+                )
 
             tasks = [
                 asyncio.create_task(self._intake_loop(shutdown_event)),
@@ -1056,20 +1047,13 @@ class Orchestrator:
         and none of them is on a Case: not a merge, so the caller goes on to
         Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
         next tick retries.
-
-        ``check_overlap`` names only rows that are live, so an investigation
-        that will not read is a failed read rather than a caseless run:
-        ``get_investigation`` answers ``None`` for a database error the same
-        way it does for a row that is gone. Launching on that would open a
-        second run on an entity a Case already covers, so an unreadable row
-        holds.
         """
         for inv_id in overlapping:
             investigation = self.get_investigation(inv_id)
             if investigation is None:
                 logger.warning(
                     f"Finding {finding_id} overlaps investigation {inv_id} "
-                    f"but it would not read; leaving queued"
+                    f"but it is gone; leaving queued"
                 )
                 return _Overlap.HOLD, None
             case_id = investigation.get("case_id")
@@ -1282,18 +1266,14 @@ class Orchestrator:
             return
 
         for inv in self._get_investigations_by_status("assigned"):
-            inv_id = inv.get("investigation_id") or (
-                inv.investigation_id if hasattr(inv, "investigation_id") else None
-            )
+            inv_id = inv.get("investigation_id")
             if not inv_id:
                 continue
             if self._running() >= self.config.max_concurrent_agents:
                 return
 
             self._update_investigation_status(inv_id, "assigned")
-            inv_dict = _inv_as_dict(inv)
-            inv_dict["status"] = "assigned"
-            await self._enqueue_investigation(inv_dict)
+            await self._enqueue_investigation(inv)
 
     # -------------------------------------------------------------------------
     # Supervision Loop
@@ -1313,14 +1293,13 @@ class Orchestrator:
                 # them only here. They are never stale- or cost-checked below.
                 for status in ("executing", "waiting_approval", "paused"):
                     for inv in self._get_investigations_by_status(status):
-                        reconciling = _inv_as_dict(inv).get("investigation_id")
+                        reconciling = inv.get("investigation_id")
                         if reconciling:
                             await self._reconcile(reconciling)
 
                 waiting = self._get_investigations_by_status("waiting_approval")
                 for inv in waiting:
-                    inv_dict = _inv_as_dict(inv)
-                    w_inv_id = inv_dict.get("investigation_id")
+                    w_inv_id = inv.get("investigation_id")
                     if not w_inv_id:
                         continue
                     notified_key = f"approval_notified:{w_inv_id}"
@@ -1343,8 +1322,7 @@ class Orchestrator:
                 executing = self._get_investigations_by_status("executing")
                 now = utcnow()
 
-                for inv in executing:
-                    inv_dict = _inv_as_dict(inv)
+                for inv_dict in executing:
                     inv_id = inv_dict.get("investigation_id")
                     if not inv_id:
                         continue
@@ -1408,8 +1386,7 @@ class Orchestrator:
                 self._supervision_tick += 1
                 if self._supervision_tick % 5 == 0:
                     for inv in executing:
-                        inv_dict = _inv_as_dict(inv)
-                        x_inv_id = inv_dict.get("investigation_id")
+                        x_inv_id = inv.get("investigation_id")
                         if x_inv_id:
                             await self._check_cross_correlations(x_inv_id)
 
@@ -1453,7 +1430,7 @@ class Orchestrator:
     def _abandon_in_flight(self) -> None:
         for status in self.IN_FLIGHT:
             for inv in self._get_investigations_by_status(status):
-                inv_id = _inv_as_dict(inv).get("investigation_id")
+                inv_id = inv.get("investigation_id")
                 if inv_id:
                     self._update_investigation_status(
                         inv_id,
@@ -1971,7 +1948,7 @@ class Orchestrator:
     async def _complete_legacy_review_rows(self) -> None:
         """Finish rows a pre-#2324 daemon left in ``review_submitted``."""
         for inv in self._get_investigations_by_status("review_submitted"):
-            inv_id = _inv_as_dict(inv).get("investigation_id")
+            inv_id = inv.get("investigation_id")
             if not inv_id:
                 continue
             # One bad row must not keep the loops from starting.
@@ -2397,56 +2374,40 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"Failed to decide intake row {trigger_id}: {e}")
 
-    def _get_investigations_by_status(self, status: str) -> List:
+    def _get_investigations_by_status(self, status: str) -> List[Dict]:
         """Query investigations by status from the database."""
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
+        from core.storage.connection import get_db_manager
+        from core.storage.models import Investigation
+        from core.storage.schemas import InvestigationSchema
 
-            with get_db_manager().session_scope() as session:
-                from core.storage.schemas import InvestigationSchema
-
-                results = session.query(Investigation).filter_by(status=status).all()
-                return InvestigationSchema.dump_many(results)
-        except Exception as e:
-            logger.debug(f"DB query for status={status} failed: {e}")
-            return []
+        with get_db_manager().session_scope() as session:
+            results = session.query(Investigation).filter_by(status=status).all()
+            return InvestigationSchema.dump_many(results)
 
     def get_all_investigations(self, status: Optional[str] = None) -> List[Dict]:
         """Get all investigations, optionally filtered by status."""
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
+        from core.storage.connection import get_db_manager
+        from core.storage.models import Investigation
+        from core.storage.schemas import InvestigationSchema
 
-            with get_db_manager().session_scope() as session:
-                from core.storage.schemas import InvestigationSchema
-
-                query = session.query(Investigation)
-                if status:
-                    query = query.filter_by(status=status)
-                return InvestigationSchema.dump_many(
-                    query.order_by(Investigation.created_at.desc()).all()
-                )
-        except Exception as e:
-            logger.debug(f"DB query failed: {e}")
-            return []
+        with get_db_manager().session_scope() as session:
+            query = session.query(Investigation)
+            if status:
+                query = query.filter_by(status=status)
+            return InvestigationSchema.dump_many(
+                query.order_by(Investigation.created_at.desc()).all()
+            )
 
     def get_investigation(self, inv_id: str) -> Optional[Dict]:
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
+        from core.storage.connection import get_db_manager
+        from core.storage.models import Investigation
+        from core.storage.schemas import InvestigationSchema
 
-            with get_db_manager().session_scope() as session:
-                inv = (
-                    session.query(Investigation)
-                    .filter_by(investigation_id=inv_id)
-                    .first()
-                )
-                from core.storage.schemas import InvestigationSchema
-
-                return InvestigationSchema.dump(inv) if inv else None
-        except Exception:
-            return None
+        with get_db_manager().session_scope() as session:
+            inv = (
+                session.query(Investigation).filter_by(investigation_id=inv_id).first()
+            )
+            return InvestigationSchema.dump(inv) if inv else None
 
     # Returns the status the row had, or None when it was not read. Activity is
     # the park reason a paused row shows; any other status clears it.

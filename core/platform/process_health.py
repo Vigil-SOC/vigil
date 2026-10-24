@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Dict, Optional, Tuple
+from typing import Literal, Optional, Tuple, TypedDict, TypeVar
 
 import httpx
 
@@ -30,7 +30,14 @@ READ_TIMEOUT_S = 1.0
 # flight: the status line polls from every open console.
 CACHE_S = 5.0
 
-UNKNOWN = {"agent_layer": "unknown", "daemon": "unknown"}
+DaemonState = Literal["running", "unhealthy", "not_running", "unknown"]
+AgentLayerState = Literal[DaemonState, "no_token"]
+_State = TypeVar("_State", AgentLayerState, DaemonState)
+
+
+class ProcessStates(TypedDict):
+    agent_layer: AgentLayerState
+    daemon: DaemonState
 
 
 class ProcessHealth:
@@ -43,39 +50,36 @@ class ProcessHealth:
         self._client = client or httpx.AsyncClient(
             timeout=READ_TIMEOUT_S, trust_env=False
         )
-        self._answer: Optional[Tuple[float, Dict[str, str]]] = None
-        self._reading: Optional[asyncio.Task[Dict[str, str]]] = None
+        self._answer: Optional[Tuple[float, ProcessStates]] = None
+        self._reading: Optional[asyncio.Task[ProcessStates]] = None
 
-    async def read(self) -> Dict[str, str]:
-        """``agent_layer`` and ``daemon``: running, unhealthy, not_running or
-        unknown, and no_token for the agent layer. At most CACHE_S old."""
+    async def read(self) -> ProcessStates:
+        """At most CACHE_S old."""
         if self._answer is not None and time.monotonic() - self._answer[0] < CACHE_S:
-            return dict(self._answer[1])
+            return self._answer[1].copy()
         if self._reading is None or self._reading.done():
             self._reading = asyncio.ensure_future(self._read())
         # Shielded: one caller going away must not cancel the read the others
         # are waiting on. _read never raises.
-        return dict(await asyncio.shield(self._reading))
+        return (await asyncio.shield(self._reading)).copy()
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _read(self) -> Dict[str, str]:
+    async def _read(self) -> ProcessStates:
         # Each row on its own: a secrets error says nothing about the daemon.
         # A status read never fails its caller; an error is that row's unknown.
-        results = await asyncio.gather(
+        agent_layer, daemon = await asyncio.gather(
             self._agent_layer(), self._daemon(), return_exceptions=True
         )
-        states = {}
-        for name, result in zip(("agent_layer", "daemon"), results):
-            if isinstance(result, BaseException):
-                logger.error("Could not read the %s state", name, exc_info=result)
-                result = UNKNOWN[name]
-            states[name] = result
+        states = ProcessStates(
+            agent_layer=_or_unknown("agent_layer", agent_layer),
+            daemon=_or_unknown("daemon", daemon),
+        )
         self._answer = (time.monotonic(), states)
         return states
 
-    async def _agent_layer(self) -> str:
+    async def _agent_layer(self) -> AgentLayerState:
         # The backend's half of the seam. Without it every /internal call answers
         # 503, so an agent layer that is up still can't run anything.
         if not get_secret("AGENT_INTERNAL_TOKEN"):
@@ -84,13 +88,13 @@ class ProcessHealth:
         # its port is probe-only under the chart's NetworkPolicy.
         return await self._state(f"{get_settings().agent_url.rstrip('/')}/readyz")
 
-    async def _daemon(self) -> str:
+    async def _daemon(self) -> DaemonState:
         # A 503 here means a component task died (services/daemon/metrics.py).
         settings = get_settings()
         host, port = settings.daemon_health_host, settings.daemon_health_port
         return await self._state(f"http://{host}:{port}/health")
 
-    async def _state(self, url: str) -> str:
+    async def _state(self, url: str) -> Literal["running", "unhealthy", "not_running"]:
         """running on a 200. not_running when refused or unresolvable. unhealthy
         for anything else (another status, too slow, not HTTP): something is
         there but not serving."""
@@ -103,3 +107,10 @@ class ProcessHealth:
             logger.debug("process health read of %s failed: %s", url, exc)
             return "unhealthy"
         return "running" if response.status_code == 200 else "unhealthy"
+
+
+def _or_unknown(name: str, result: _State | BaseException) -> _State:
+    if isinstance(result, BaseException):
+        logger.error("Could not read the %s state", name, exc_info=result)
+        return "unknown"
+    return result

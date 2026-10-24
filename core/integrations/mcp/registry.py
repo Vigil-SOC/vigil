@@ -156,11 +156,10 @@ def _server_config(mcp_client, name: str) -> Dict[str, Any]:
 
 
 def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
+    # Input can be the on-disk cache, which is hand-editable, so keep the dict guard.
     schema = tool.get("inputSchema", {})
-    if hasattr(schema, "model_dump"):
-        schema = schema.model_dump()
-    elif not isinstance(schema, dict):
-        schema = dict(schema) if schema else {}
+    if not isinstance(schema, dict):
+        schema = {}
     return {
         "name": tool.get("name", "unknown"),
         "description": tool.get("description", ""),
