@@ -69,18 +69,15 @@ class FederationSourcePatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _enrich_with_adapter(row: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_with_adapter(
+    row: Dict[str, Any], adapter: fed_registry.FederationAdapter
+) -> Dict[str, Any]:
     """Merge live adapter state (is_configured, default_interval) into a row dict."""
-    adapter = fed_registry.get_adapter(row["source_id"])
-    if adapter is None:
+    try:
+        row["is_configured"] = bool(adapter.is_configured())
+    except Exception:
         row["is_configured"] = False
-        row["default_interval_seconds"] = row.get("interval_seconds", 300)
-    else:
-        try:
-            row["is_configured"] = bool(adapter.is_configured())
-        except Exception:
-            row["is_configured"] = False
-        row["default_interval_seconds"] = adapter.default_interval()
+    row["default_interval_seconds"] = adapter.default_interval()
     return row
 
 
@@ -149,7 +146,7 @@ async def list_sources() -> Dict[str, Any]:
         row = dict(
             row, lag_seconds=lag.get("lag_seconds"), quiet=lag.get("quiet", True)
         )
-        out.append(_enrich_with_adapter(row))
+        out.append(_enrich_with_adapter(row, adapter))
 
     return {"sources": out, "global": fed_store.get_global_settings()}
 
@@ -158,7 +155,8 @@ async def list_sources() -> Dict[str, Any]:
 async def patch_source(
     source_id: str, payload: FederationSourcePatch
 ) -> Dict[str, Any]:
-    if fed_registry.get_adapter(source_id) is None:
+    adapter = fed_registry.get_adapter(source_id)
+    if adapter is None:
         raise HTTPException(status_code=404, detail=f"Unknown source: {source_id}")
 
     fields: Dict[str, Any] = {}
@@ -183,23 +181,15 @@ async def patch_source(
     # Auto-create the row on first PATCH so the UI doesn't need a separate
     # "register" endpoint — same shape we'd seed on daemon boot.
     if fed_store.get_source(source_id) is None:
-        adapter = fed_registry.get_adapter(source_id)
-        seed_defaults = {
-            "enabled": False,
-            "interval_seconds": adapter.default_interval() if adapter else 300,
-            "max_items": 100,
-            "min_severity": None,
-            "cursor": {},
-            "consecutive_errors": 0,
-        }
-        seed_defaults.update(fields)
-        row = fed_store.upsert_source(source_id, seed_defaults)
+        row = fed_store.upsert_source(
+            source_id, {"interval_seconds": adapter.default_interval(), **fields}
+        )
     else:
         row = fed_store.update_source(source_id, fields)
 
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to persist source")
-    return _enrich_with_adapter(row)
+    return _enrich_with_adapter(row, adapter)
 
 
 @router.post("/sources/{source_id}/poll-now", dependencies=_INTEGRATIONS_WRITE)
