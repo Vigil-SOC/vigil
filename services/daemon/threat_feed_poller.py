@@ -216,9 +216,7 @@ class ThreatFeedPoller:
         keys: List[str] = []
         skipped = 0
         for proposal in result.get("proposals") or []:
-            key = proposal.get("entity_key")
-            if not key:
-                continue
+            key = proposal["entity_key"]
             if key in intake.spoken_for:
                 skipped += 1
                 continue
