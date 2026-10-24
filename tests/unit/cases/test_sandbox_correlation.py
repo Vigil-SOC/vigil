@@ -245,3 +245,42 @@ class TestAttachReportIdempotency:
             ("case-1", "joe", "t1"),
             ("case-2", "cape", "t1"),
         ]
+
+
+@pytest.mark.unit
+class TestVendorScoreScale:
+    REPORTS = {
+        "cape": {"data": {"info": {"score": 1}, "network": {"hosts": ["9.9.9.9"]}}},
+        "hybrid_analysis": {"threat_score": 10, "hosts": ["9.9.9.9"]},
+    }
+
+    @pytest.mark.parametrize("sandbox", list(REPORTS))
+    def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = None
+        monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
+
+        result = SandboxCorrelationService().attach_report(
+            "case-1", sandbox, "task-1", self.REPORTS[sandbox]
+        )
+
+        assert "error" not in result
+        (ioc,) = [
+            c.args[0]
+            for c in session.add.call_args_list
+            if isinstance(c.args[0], CaseIOC)
+        ]
+        assert (ioc.threat_level, ioc.confidence, ioc.reputation_score) == (
+            "low",
+            0.1,
+            1.0,
+        )
+
+    @pytest.mark.parametrize("threat_score", [None, "n/a"])
+    def test_unusable_hybrid_score_is_none(self, threat_score):
+        assert (
+            _normalise_report("hybrid_analysis", {"threat_score": threat_score})[
+                "score"
+            ]
+            is None
+        )
