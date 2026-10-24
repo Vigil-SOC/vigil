@@ -158,6 +158,16 @@ def test_crlf_csv_imports(tmp_path, db):
     assert [row["finding_id"] for row in db.rows] == ["f-1"]
 
 
+def test_csv_quoted_newlines_are_kept_in_the_field(tmp_path, db):
+    path = tmp_path / "multiline.csv"
+    path.write_bytes(b'case_id,title\nc-1,"line one\nline two"\n')
+
+    job = _run(path, "csv", "case")
+
+    assert job.status == SUCCEEDED
+    assert [case["title"] for case in db.cases] == ["line one\nline two"]
+
+
 def test_unreadable_case_csv_counts_a_case_error(tmp_path, db):
     path = tmp_path / "latin1.csv"
     path.write_bytes("case_id,title\nc-1,caf\xe9\n".encode("latin-1"))

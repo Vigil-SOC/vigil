@@ -15,6 +15,7 @@ import itertools
 import json
 import logging
 import math
+import re
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -101,38 +102,22 @@ def _blank(value: Any) -> bool:
     return value is None or value == "" or value == {}
 
 
+_NEWLINE = re.compile(rb"\r\n?")
+_LINE = re.compile(rb"[^\n]*\n|[^\n]+")
+
+
 def _utf8_lines(path: Path):
-    """Yield each line as text, decoded as UTF-8.
+    """Yield each line as text, decoded as UTF-8, with universal newlines.
 
     A text-mode read fills an 8KiB chunk and raises UnicodeDecodeError for a
     bad byte before it yields any line from that chunk, so a short file drops
-    every row that was already well formed. ``\\n``, ``\\r\\n`` and ``\\r`` are
-    line breaks; those bytes never occur inside a UTF-8 character.
+    every row that was already well formed. Decoding one line at a time keeps
+    those rows. UTF-8 never uses the bytes ``\\r`` or ``\\n`` inside a
+    character, so splitting on them first is safe.
     """
     with open(path, "rb") as raw:
-        pending = b""
-        while True:
-            chunk = raw.read(8192)
-            if not chunk:
-                if pending.endswith(b"\r"):
-                    pending = pending[:-1]
-                if pending:
-                    yield pending.decode("utf-8")
-                return
-            pending += chunk
-            while True:
-                newline = pending.find(b"\n")
-                carriage = pending.find(b"\r")
-                breaks = [index for index in (newline, carriage) if index != -1]
-                if not breaks:
-                    break
-                at = min(breaks)
-                # A trailing CR may be the first byte of CRLF in the next chunk.
-                if pending[at : at + 1] == b"\r" and at + 1 == len(pending):
-                    break
-                end = at + 2 if pending[at : at + 2] == b"\r\n" else at + 1
-                line = pending[:at]
-                pending = pending[end:]
+        for chunk in raw:
+            for line in _LINE.findall(_NEWLINE.sub(b"\n", chunk)):
                 yield line.decode("utf-8")
 
 
