@@ -3783,42 +3783,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/ingest/sync-s3-folder": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync S3 Folder
-         * @description Discover and ingest all supported files from an S3 prefix.
-         *
-         *     Scans the given prefix (or the configured parquet_prefix) and auto-detects
-         *     file types by extension:
-         *       .parquet -> supported parquet ingestion
-         *       .csv     -> CSV finding ingestion
-         *       .json    -> JSON finding/case ingestion
-         *       .jsonl / .ndjson -> JSON-Lines finding ingestion
-         *
-         *     Unsupported file types are skipped.
-         *
-         *     Args:
-         *         prefix: S3 key prefix (folder) to scan. Overrides the configured
-         *                 parquet_prefix if provided.
-         *
-         *     Returns:
-         *         Ingestion statistics
-         */
-        post: operations["post_api_ingest_sync-s3-folder"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/ingest/upload": {
         parameters: {
             query?: never;
@@ -17735,39 +17699,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_ingest_sync-s3-folder": {
-        parameters: {
-            query?: {
-                prefix?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IngestionStats"];
                 };
             };
             /** @description Validation Error */

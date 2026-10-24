@@ -8,7 +8,7 @@ Opt-in (it builds the backend image and runs a stack for a few minutes):
    for Bifrost, the backup and the agents, `compose.v1.yml`): the backend says
    ``off`` and no service account exists.
 2. `scripts/medic/enable-compose.sh`, for real, under its own project
-   (`medic-v1`, or VIGIL_MEDIC_COMPOSE_PROJECT).
+   (`medic-v1`, or VIGIL_MEDIC_COMPOSE_PROJECT_V1).
 3. The account exists (random name, Viewer, service account), the backend says
    ``unknown`` (V2 adds running/down), Medic's `check` exits 0, and the gateway
    logs in to the real backend with the generated password and serves a read.
@@ -36,11 +36,13 @@ from tests.medic_compose.compose import (
     REPO,
     clean_env,
     compose_cmd,
+    compose_project,
+    require_compose_project,
 )
 
 HERE = Path(__file__).resolve().parent
 OVERRIDE = HERE / "compose.v1.yml"
-PROJECT = os.environ.get("VIGIL_MEDIC_COMPOSE_PROJECT", "medic-v1")
+PROJECT_ENV = "VIGIL_MEDIC_COMPOSE_PROJECT_V1"
 INSTALL = (
     "postgres",
     "redis",
@@ -97,8 +99,18 @@ print(json.dumps(codes))
 
 class Stack:
     def __init__(
-        self, home: Path, project: str = PROJECT, files: tuple[Path, ...] = (OVERRIDE,)
+        self,
+        home: Path,
+        project: str | None = None,
+        files: tuple[Path, ...] = (OVERRIDE,),
     ) -> None:
+        # Before any docker or enable-compose.sh call. An explicit name (S9
+        # passes its own) is held to the same rule as this suite's variable.
+        project = (
+            compose_project(PROJECT_ENV, "medic-v1")
+            if project is None
+            else require_compose_project(project)
+        )
         self.project, self.files = project, files
         self.secrets_dir = home / "medic-secrets"
         self.env = clean_env(
@@ -107,7 +119,9 @@ class Stack:
             VIGIL_MEDIC_SECRETS_DIR=str(self.secrets_dir),
             VIGIL_MEDIC_COMPOSE_OVERRIDE=":".join(str(f) for f in files),
             MEDIC_V1_STUB_DIR=str(HERE),
-            VIGIL_UPGRADE_ACK_VERSION=(REPO / "VERSION").read_text(encoding="utf-8").strip(),
+            VIGIL_UPGRADE_ACK_VERSION=(REPO / "VERSION")
+            .read_text(encoding="utf-8")
+            .strip(),
             VIGIL_UPGRADE_ACK_REASON="medic compose live test",
             JWT_SECRET_KEY="V1JWT" + secrets.token_hex(24),
             AGENT_INTERNAL_TOKEN="V1TOKEN" + secrets.token_hex(8),
