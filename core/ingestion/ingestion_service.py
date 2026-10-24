@@ -19,7 +19,7 @@ import tempfile
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 import ijson
 
@@ -660,6 +660,28 @@ class IngestionService:
                         self._counted(items, "findings_total")
                     )
 
+    def _ingest_json_data(self, data: Any) -> None:
+        findings = []
+        cases = []
+
+        if isinstance(data, dict):
+            findings = data.get("findings", [])
+            cases = data.get("cases", [])
+        elif isinstance(data, list):
+            if data and "finding_id" in data[0]:
+                findings = data
+            elif data and "case_id" in data[0]:
+                cases = data
+            elif data and "id" in data[0]:
+                findings = data
+
+        self.stats["findings_total"] = len(findings)
+        self.stats["cases_total"] = len(cases)
+
+        self._ingest_findings_batched(findings)
+        for case in cases:
+            self.ingest_case(case)
+
     def ingest_jsonl_file(
         self, file_path: Union[str, Path], data_type: str = "finding"
     ) -> Dict[str, Any]:
@@ -671,9 +693,18 @@ class IngestionService:
             logger.error(f"File not found: {file_path}")
             return self.stats
 
+        try:
+            self._ingest_jsonl_lines(_utf8_lines(file_path), data_type)
+        except Exception as e:
+            self._file_failed("JSONL", e, data_type)
+
+        logger.info(f"JSONL ingestion complete: {self.stats}")
+        return self.stats
+
+    def _ingest_jsonl_lines(self, lines: Iterable[str], data_type: str) -> None:
         finding_batch = []
         try:
-            for line_num, line in enumerate(_utf8_lines(file_path), 1):
+            for line_num, line in enumerate(lines, 1):
                 line = line.strip()
                 if not line:
                     continue
@@ -685,8 +716,8 @@ class IngestionService:
                         self.stats["findings_total"] += 1
                         finding_batch.append(data)
                         if len(finding_batch) >= 1000:
-                            self._ingest_finding_batch(finding_batch)
-                            finding_batch = []
+                            full, finding_batch = finding_batch, []
+                            self._ingest_finding_batch(full)
                     elif data_type == "case":
                         self.stats["cases_total"] += 1
                         self.ingest_case(data)
@@ -697,12 +728,10 @@ class IngestionService:
                         self.stats["findings_errors"] += 1
                     else:
                         self.stats["cases_errors"] += 1
-        except Exception as e:
-            self._file_failed("JSONL", e, data_type)
-        self._ingest_finding_batch(finding_batch)
-
-        logger.info(f"JSONL ingestion complete: {self.stats}")
-        return self.stats
+        finally:
+            # Keep the rows read before a bad byte; swap so none is sent twice.
+            pending, finding_batch = finding_batch, []
+            self._ingest_finding_batch(pending)
 
     def ingest_csv_file(
         self, file_path: Union[str, Path], data_type: str = "finding"
@@ -715,18 +744,25 @@ class IngestionService:
             logger.error(f"File not found: {file_path}")
             return self.stats
 
+        try:
+            self._ingest_csv_rows(_utf8_lines(file_path), data_type)
+        except Exception as e:
+            self._file_failed("CSV", e, data_type)
+
+        logger.info(f"CSV ingestion complete: {self.stats}")
+        return self.stats
+
+    def _ingest_csv_rows(self, text: Iterable[str], data_type: str) -> None:
         finding_batch = []
         try:
-            reader = csv.DictReader(_utf8_lines(file_path))
-
-            for row_num, row in enumerate(reader, 1):
+            for row_num, row in enumerate(csv.DictReader(text), 1):
                 try:
                     if data_type == "finding":
                         self.stats["findings_total"] += 1
                         finding_batch.append(self._csv_row_to_finding(row))
                         if len(finding_batch) >= 1000:
-                            self._ingest_finding_batch(finding_batch)
-                            finding_batch = []
+                            full, finding_batch = finding_batch, []
+                            self._ingest_finding_batch(full)
                     elif data_type == "case":
                         self.stats["cases_total"] += 1
                         case_data = self._csv_row_to_case(row)
@@ -738,12 +774,10 @@ class IngestionService:
                         self.stats["findings_errors"] += 1
                     else:
                         self.stats["cases_errors"] += 1
-        except Exception as e:
-            self._file_failed("CSV", e, data_type)
-        self._ingest_finding_batch(finding_batch)
-
-        logger.info(f"CSV ingestion complete: {self.stats}")
-        return self.stats
+        finally:
+            # Keep the rows read before a bad byte; swap so none is sent twice.
+            pending, finding_batch = finding_batch, []
+            self._ingest_finding_batch(pending)
 
     def _is_tempo_csv(self, row: Dict[str, str]) -> bool:
         """Detect Tempo alert CSV format by checking for characteristic columns."""
@@ -1218,67 +1252,14 @@ class IngestionService:
         try:
             if format == "json":
                 data = json.loads(data_string)
-
-                findings = []
-                cases = []
-
-                if isinstance(data, dict):
-                    # Check if it's a single finding or case based on data_type
-                    if data_type == "finding" and "finding_id" in data:
-                        findings = [data]
-                    elif data_type == "case" and "case_id" in data:
-                        cases = [data]
-                    else:
-                        # Try to get from wrapped arrays
-                        findings = data.get("findings", [])
-                        cases = data.get("cases", [])
-                elif isinstance(data, list):
-                    if data and "finding_id" in data[0]:
-                        findings = data
-                    elif data and "case_id" in data[0]:
-                        cases = data
-
-                self.stats["findings_total"] = len(findings)
-                self.stats["cases_total"] = len(cases)
-
-                self._ingest_findings_batched(findings)
-                for case in cases:
-                    self.ingest_case(case)
-
+                if isinstance(data, dict) and f"{data_type}_id" in data:
+                    data = {f"{data_type}s": [data]}
+                self._ingest_json_data(data)
             elif format == "jsonl":
-                finding_batch = []
-                for line in data_string.strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    data = json.loads(line)
-
-                    if data_type == "finding":
-                        self.stats["findings_total"] += 1
-                        finding_batch.append(data)
-                    elif data_type == "case":
-                        self.stats["cases_total"] += 1
-                        self.ingest_case(data)
-                self._ingest_findings_batched(finding_batch)
-
+                self._ingest_jsonl_lines(StringIO(data_string), data_type)
             elif format == "csv":
-                reader = csv.DictReader(StringIO(data_string))
-
-                finding_batch = []
-                for row in reader:
-                    if data_type == "finding":
-                        self.stats["findings_total"] += 1
-                        finding_batch.append(self._csv_row_to_finding(row))
-                    elif data_type == "case":
-                        self.stats["cases_total"] += 1
-                        case_data = self._csv_row_to_case(row)
-                        self.ingest_case(case_data)
-                self._ingest_findings_batched(finding_batch)
-
+                self._ingest_csv_rows(StringIO(data_string), data_type)
             logger.info(f"String ingestion complete: {self.stats}")
-            return self.stats
-
         except Exception as e:
             logger.error(f"Error ingesting from string: {e}")
-            return self.stats
+        return self.stats

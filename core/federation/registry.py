@@ -8,7 +8,7 @@ The adapter contract itself (``FetchResult``, ``FederationAdapter``,
 ``register_adapter``) lives in :mod:`core.federation.contract` so adapter
 modules can import it without depending on this module — which lazily imports
 every adapter in :func:`_ensure_builtins_loaded` and would otherwise form an
-import cycle. Those names are re-exported here for backward compatibility.
+import cycle.
 """
 
 from __future__ import annotations
@@ -17,23 +17,9 @@ import importlib
 import logging
 from typing import List, Optional
 
-from core.federation.contract import (
-    _ADAPTER_FACTORIES,
-    FederationAdapter,
-    FetchResult,
-    register_adapter,
-)
+from core.federation.contract import _ADAPTER_FACTORIES, FederationAdapter
 
 logger = logging.getLogger(__name__)
-
-__all__ = [
-    "FederationAdapter",
-    "FetchResult",
-    "register_adapter",
-    "list_adapters",
-    "get_adapter",
-    "is_registered",
-]
 
 _BUILTIN_ADAPTER_MODULES = (
     "core.integrations.aws_security_hub.adapter",
