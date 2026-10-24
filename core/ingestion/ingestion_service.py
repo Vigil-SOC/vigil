@@ -14,7 +14,6 @@ import hashlib
 import json
 import logging
 import math
-import tempfile
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -1090,82 +1089,6 @@ class IngestionService:
             "cluster_id": None,
             "severity": row.get("severity") or None,
         }
-
-    # Extension -> (ingestion method name, temp file suffix, file mode for write)
-    _S3_FORMAT_MAP = {
-        ".parquet": "parquet",
-        ".csv": "csv",
-        ".json": "json",
-        ".jsonl": "jsonl",
-        ".ndjson": "jsonl",
-    }
-
-    def ingest_s3_folder(
-        self, s3_service, prefix: str = "", data_source: str = "flow"
-    ) -> Dict[str, Any]:
-        """Discover and ingest all supported files from an S3 prefix, routed by extension."""
-        self.reset_stats()
-        files_processed = 0
-        files_skipped = 0
-
-        all_keys = s3_service.list_files(prefix=prefix)
-        if not all_keys:
-            logger.warning(f"No files found under S3 prefix '{prefix}'")
-            return {**self.stats, "files_processed": 0, "files_skipped": 0}
-
-        logger.info(f"Found {len(all_keys)} file(s) under S3 prefix '{prefix}'")
-
-        for key in all_keys:
-            ext = self._s3_key_extension(key)
-            fmt = self._S3_FORMAT_MAP.get(ext)
-
-            if fmt is None:
-                logger.debug(f"Skipping unsupported file type '{ext}': {key}")
-                files_skipped += 1
-                continue
-
-            logger.info(
-                f"Downloading s3://{s3_service.bucket_name}/{key} (format: {fmt})"
-            )
-            content = s3_service.get_file(key)
-            if content is None:
-                logger.error(f"Failed to download {key} from S3")
-                self.stats["findings_errors"] += 1
-                continue
-
-            tmp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                    tmp.write(content)
-                    tmp_path = Path(tmp.name)
-
-                file_stats = self._ingest_file_by_format(tmp_path, fmt, data_source)
-
-                for key in self.stats:
-                    self.stats[key] += file_stats.get(key, 0)
-                files_processed += 1
-
-            except Exception as e:
-                logger.error(f"Error processing S3 file {key}: {e}")
-                self.stats["findings_errors"] += 1
-            finally:
-                if tmp_path and tmp_path.exists():
-                    tmp_path.unlink()
-
-        logger.info(
-            f"S3 folder ingestion complete: {files_processed} processed, "
-            f"{files_skipped} skipped, stats={self.stats}"
-        )
-        return {
-            **self.stats,
-            "files_processed": files_processed,
-            "files_skipped": files_skipped,
-        }
-
-    @staticmethod
-    def _s3_key_extension(key: str) -> str:
-        """Extract the lowercase file extension from an S3 key."""
-        return Path(key).suffix.lower()
 
     def _ingest_file_by_format(
         self,
