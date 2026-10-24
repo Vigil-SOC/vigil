@@ -102,7 +102,7 @@ def enforcement_status() -> Tuple[EnforcementReason, Optional[str]]:
     if app_settings.llm_budget_unlimited:
         return UNLIMITED, None
     try:
-        vk = _read_vk()
+        vk = read_vk()
     except Exception as e:
         _note_read(READ_ERROR, e)
         return READ_ERROR, None
@@ -127,7 +127,7 @@ def should_enforce() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _read_vk() -> Optional[str]:
+def read_vk() -> Optional[str]:
     """The configured VK, None if unset. Raises if the settings can't be read."""
     settings = _get_settings()
     if not isinstance(settings, dict):
@@ -146,7 +146,7 @@ def get_active_vk() -> Optional[str]:
     the failure is logged as READ_ERROR, distinct from "not configured".
     """
     try:
-        vk = _read_vk()
+        vk = read_vk()
     except Exception as e:
         _note_read(READ_ERROR, e)
         return None
@@ -155,12 +155,8 @@ def get_active_vk() -> Optional[str]:
 
 
 def get_settings() -> dict:
-    """Public read of the full settings dict (for the Budgets UI)."""
-    try:
-        val = _get_settings() or {}
-    except Exception as e:
-        logger.debug("budget_service: settings read failed: %s", e)
-        return {"default_vk": ""}
+    """Settings dict for the Budgets UI. Raises on DB errors."""
+    val = _get_settings() or {}
     if not isinstance(val, dict):
         return {}
     return {"default_vk": val.get("default_vk", "") or ""}
@@ -171,19 +167,20 @@ def set_settings(*, default_vk: str, updated_by: str) -> dict:
 
     ``updated_by`` is the signed-in user, stored on the audit row.
     """
+    value = {"default_vk": default_vk or ""}
     try:
         from core.storage.config_service import get_config_service
 
         get_config_service(user_id=updated_by).set_system_config(
             key=GLOBAL_KEY,
-            value={"default_vk": default_vk or ""},
+            value=value,
             description="Bifrost virtual-key configuration and budget settings",
             config_type="ai",
         )
     except Exception as e:
         logger.error("budget_service: failed to write settings: %s", e)
         raise
-    return get_settings()
+    return value
 
 
 def _get_settings():

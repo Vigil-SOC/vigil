@@ -392,16 +392,11 @@ async def _connect_external_services(mcp_client, registry):
                 for server_name, server_tools in tools.items():
                     cache_data[server_name] = []
                     for tool in server_tools:
-                        input_schema = tool.get("inputSchema", {})
-                        if hasattr(input_schema, "model_dump"):
-                            input_schema = input_schema.model_dump()
-                        elif not isinstance(input_schema, dict):
-                            input_schema = dict(input_schema) if input_schema else {}
                         cache_data[server_name].append(
                             {
                                 "name": tool.get("name"),
                                 "description": tool.get("description", ""),
-                                "inputSchema": input_schema,
+                                "inputSchema": tool.get("inputSchema", {}),
                             }
                         )
 
@@ -489,9 +484,9 @@ def _build_services(app: FastAPI):
 
 
 def _announce_mcp_surface() -> None:
-    """Say what this install is serving on /mcp, and whether anyone can open it."""
+    """Say what this install is serving as its MCP surface, and whether anyone can open it."""
     from core.integrations.mcp.surface import is_enabled
-    from services.api.mcp_surface import announce
+    from services.api.mcp_surface import announce, surface_address
 
     try:
         enabled = is_enabled()
@@ -506,7 +501,7 @@ def _announce_mcp_surface() -> None:
                     .filter(McpCredential.revoked_at.is_(None))
                     .count()
                 )
-        announce(enabled, count)
+        announce(enabled, count, surface_address())
     except Exception:  # noqa: BLE001 - an announcement must never fail a boot
         logger.exception("Could not report the state of the MCP surface")
 
@@ -972,7 +967,7 @@ def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool
 from services.api.mcp_surface import McpSurfaceGate, serve_at  # noqa: E402
 
 _mcp_gate = McpSurfaceGate()
-serve_at(app, _mcp_gate, _CONTEXT_PATH)
+serve_at(app, _mcp_gate)
 
 
 frontend_build_dir = _repo_root / "clients" / "web" / "build"
