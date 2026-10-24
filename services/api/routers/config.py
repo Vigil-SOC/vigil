@@ -565,31 +565,15 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
 
 @router.get("/theme")
 def get_theme_config():
-    """
-    Get theme configuration.
-
-    Returns:
-        Theme configuration
-    """
+    """Get theme configuration; 503 when the database read fails."""
     try:
-        # Try database first
-        config_service = get_config_service()
-        config_value = config_service.get_system_config("theme.current")
-
-        if config_value:
-            return config_value
-
-        # Fallback to file-based config
-        config_file = vigil_path("theme_config.json")
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                return {"theme": config.get("theme", "dark")}
-
-        return {"theme": "dark"}
+        value = get_config_service().read_system_config("theme.current")
     except Exception as e:
-        logger.error(f"Error getting theme config: {e}")
-        return {"theme": "dark"}
+        logger.error("Error getting theme config: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Could not read the theme setting"
+        ) from e
+    return value or ThemeConfig().model_dump()
 
 
 @router.post("/theme", dependencies=_SETTINGS_WRITE)
@@ -620,8 +604,6 @@ def set_theme_config(
 
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save theme to database")
-
-    _mirror_to_file("theme_config.json", config_data)
 
     return {"success": True, "message": "Theme saved"}
 
@@ -1178,46 +1160,16 @@ async def test_integration(
 
 @router.get("/general")
 def get_general_config():
-    """
-    Get general application settings.
-
-    Returns:
-        General configuration
-    """
+    """Get general application settings; 503 when the database read fails."""
     try:
-        # Try database first
-        config_service = get_config_service()
-        config_value = config_service.get_system_config("general.settings")
-
-        if config_value:
-            # Rows written before the removal still carry the dead keys
-            return {
-                "show_notifications": config_value.get("show_notifications", True),
-                "enable_keyring": config_value.get("enable_keyring", False),
-            }
-
-        # Fallback to file-based config
-        config_file = vigil_path("general_config.json")
-
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                return {
-                    "show_notifications": config.get("show_notifications", True),
-                    "enable_keyring": config.get("enable_keyring", False),
-                }
-
-        # Default values
-        return {
-            "show_notifications": True,
-            "enable_keyring": False,
-        }
+        value = get_config_service().read_system_config("general.settings")
     except Exception as e:
-        logger.error(f"Error getting general config: {e}")
-        return {
-            "show_notifications": True,
-            "enable_keyring": False,
-        }
+        logger.error("Error getting general config: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Could not read the general settings"
+        ) from e
+    # Rows written before the removal still carry the dead keys
+    return GeneralConfig.model_validate(value or {}).model_dump()
 
 
 @router.post("/general", dependencies=_SETTINGS_WRITE)

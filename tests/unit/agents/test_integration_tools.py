@@ -40,9 +40,9 @@ def registry(monkeypatch):
     # The registry is the test's; nothing is read from a running client.
     monkeypatch.setattr(mcp_registry, "refresh_from_client", lambda _r: 0)
     reg = MCPRegistry()
-    reg.register_server("vigil", {}, in_process.list_tools())
-    reg.register_server(SD, {}, _fixture("security_detections_tools.json"))
-    reg.register_server(SPLUNK, {}, _fixture("splunk_selfhosted_tools.json"))
+    reg.register_server("vigil", in_process.list_tools())
+    reg.register_server(SD, _fixture("security_detections_tools.json"))
+    reg.register_server(SPLUNK, _fixture("splunk_selfhosted_tools.json"))
     return reg
 
 
@@ -93,7 +93,6 @@ def test_connecting_a_server_changes_what_is_found_not_what_is_declared(registry
     assert not find_integration_tools(registry, "falcon")
     registry.register_server(
         "crowdstrike",
-        {},
         [
             {
                 "name": f"get_detections_{i}",
@@ -167,7 +166,7 @@ def test_call_runs_a_connected_read_tool_under_the_same_bounds(invoke):
 )
 def test_call_refuses_what_chat_may_not_reach(invoke, registry, name):
     registry.register_server(
-        "atomic-red-team", {}, [{"name": "atomic_red_team_execute", "description": "x"}]
+        "atomic-red-team", [{"name": "atomic_red_team_execute", "description": "x"}]
     )
     body = invoke("call_integration_tool", {"name": name, "arguments": {}})
     assert body == {

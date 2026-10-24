@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from core.llm.cost.pricing_router import GATEWAY, priced_as
-from core.llm.providers.registry import get_registry
 from core.reporting.ai_insights_service import AIInsightsService
 from core.reporting.analytics_service import (
     calculate_metrics,
@@ -25,7 +23,6 @@ from core.reporting.analytics_service import (
     get_attack_time_heatmap,
     get_cost_breakdown,
     get_mitre_technique_distribution,
-    get_response_time_trend,
     get_severity_distribution,
     get_time_series_data,
     get_top_alert_sources,
@@ -79,11 +76,6 @@ async def get_analytics(
     # Get top sources
     top_sources = await get_top_alert_sources(db, start_time, end_time)
 
-    # Get response time trend
-    response_time_data = await get_response_time_trend(
-        db, start_time, end_time, time_range
-    )
-
     # Get affected entities/devices
     affected_entities = await get_affected_entities(db, start_time, end_time)
 
@@ -101,7 +93,6 @@ async def get_analytics(
         "timeSeriesData": time_series,
         "severityDistribution": severity_dist,
         "topSources": top_sources,
-        "responseTimeData": response_time_data,
         "affectedEntities": affected_entities,
         "attackHeatmap": attack_heatmap,
         "mitreTechniques": mitre_techniques,
@@ -169,76 +160,6 @@ async def get_cost_analytics(
     degrades gracefully from "actuals + trend" to "actuals only".
     """
     return await get_cost_breakdown(db, time_range)
-
-
-# ---------------------------------------------------------------------------
-# Pre-call cost estimation (#184 Phase 2)
-# ---------------------------------------------------------------------------
-
-
-class EstimateCostRequest(BaseModel):
-    """Body for POST /analytics/estimate-cost.
-
-    Mirrors the shape of an LLM call so the same payload a caller is
-    about to send can be passed straight in for an estimate. ``messages``
-    matches Anthropic / OpenAI message format — list of role+content
-    dicts; multimodal blocks are tolerated but token-counted as text-only
-    in the heuristic path.
-    """
-
-    provider_type: Optional[str] = Field(
-        default=None,
-        description=(
-            "Advisory only — the endpoint resolves the real provider from "
-            "model_id (registry, then a namespaced id or the configured "
-            "default) and treats this value as final only when neither matches."
-        ),
-    )
-    model_id: str
-    messages: List[Dict[str, Any]] = Field(default_factory=list)
-    system_prompt: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    max_tokens: int = Field(default=4096, ge=1, le=200_000)
-
-
-@router.post("/analytics/estimate-cost")
-async def estimate_cost_endpoint(payload: EstimateCostRequest) -> Dict[str, Any]:
-    """Return a USD low/high band for a hypothetical LLM call.
-
-    The chat composer and daemon planner call this before submitting a
-    real request so they can show the user a cost preview or gate the
-    call against a budget. ``low_usd`` assumes zero output tokens (e.g.
-    an immediate tool_use stop); ``high_usd`` assumes the call writes
-    out ``max_tokens`` of output. Real-world cost lands in between, and
-    is typically much closer to ``low_usd`` for cache-friendly workloads.
-    """
-    from core.llm.cost.estimator import estimate_cost
-
-    # The composer always sends a placeholder provider_type (the bare model id
-    # it picked routes to the active default on the send path), so resolve the
-    # real provider from configuration: the model registry first, then
-    # priced_as, which reads a namespaced id or the configured default.
-    provider_type: Optional[str] = None
-    model_id = payload.model_id
-    try:
-        for m in await get_registry().list_available_models():
-            if m.model_id == model_id:
-                provider_type = m.provider_type
-                break
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("estimate-cost: registry lookup failed: %s", exc)
-    if provider_type is None:
-        provider_type, model_id = priced_as(payload.provider_type or GATEWAY, model_id)
-
-    estimate = await estimate_cost(
-        provider_type=provider_type,
-        model_id=model_id,
-        messages=payload.messages,
-        system_prompt=payload.system_prompt,
-        tools=payload.tools,
-        max_tokens=payload.max_tokens,
-    )
-    return estimate.to_dict()
 
 
 # ---------------------------------------------------------------------------

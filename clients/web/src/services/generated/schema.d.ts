@@ -498,33 +498,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/estimate-cost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Estimate Cost Endpoint
-         * @description Return a USD low/high band for a hypothetical LLM call.
-         *
-         *     The chat composer and daemon planner call this before submitting a
-         *     real request so they can show the user a cost preview or gate the
-         *     call against a budget. ``low_usd`` assumes zero output tokens (e.g.
-         *     an immediate tool_use stop); ``high_usd`` assumes the call writes
-         *     out ``max_tokens`` of output. Real-world cost lands in between, and
-         *     is typically much closer to ``low_usd`` for cache-friendly workloads.
-         */
-        post: operations["post_api_analytics_estimate-cost"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/insights": {
         parameters: {
             query?: never;
@@ -2667,10 +2640,7 @@ export interface paths {
         };
         /**
          * Get General Config
-         * @description Get general application settings.
-         *
-         *     Returns:
-         *         General configuration
+         * @description Get general application settings; 503 when the database read fails.
          */
         get: operations["get_api_config_general"];
         put?: never;
@@ -3005,10 +2975,7 @@ export interface paths {
         };
         /**
          * Get Theme Config
-         * @description Get theme configuration.
-         *
-         *     Returns:
-         *         Theme configuration
+         * @description Get theme configuration; 503 when the database read fails.
          */
         get: operations["get_api_config_theme"];
         put?: never;
@@ -8724,40 +8691,6 @@ export interface components {
             urgency_level: string;
         };
         /**
-         * EstimateCostRequest
-         * @description Body for POST /analytics/estimate-cost.
-         *
-         *     Mirrors the shape of an LLM call so the same payload a caller is
-         *     about to send can be passed straight in for an estimate. ``messages``
-         *     matches Anthropic / OpenAI message format — list of role+content
-         *     dicts; multimodal blocks are tolerated but token-counted as text-only
-         *     in the heuristic path.
-         */
-        EstimateCostRequest: {
-            /**
-             * Max Tokens
-             * @default 4096
-             */
-            max_tokens: number;
-            /** Messages */
-            messages?: {
-                [key: string]: unknown;
-            }[];
-            /** Model Id */
-            model_id: string;
-            /**
-             * Provider Type
-             * @description Advisory only — the endpoint resolves the real provider from model_id (registry, then a namespaced id or the configured default) and treats this value as final only when neither matches.
-             */
-            provider_type?: string | null;
-            /** System Prompt */
-            system_prompt?: string | null;
-            /** Tools */
-            tools?: {
-                [key: string]: unknown;
-            }[] | null;
-        };
-        /**
          * EvidenceAdd
          * @description Add evidence to case.
          */
@@ -12290,43 +12223,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_analytics_estimate-cost": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EstimateCostRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
