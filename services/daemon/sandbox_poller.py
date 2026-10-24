@@ -168,7 +168,7 @@ class SandboxPoller:
                         try:
                             await asyncio.to_thread(
                                 self._correlation.attach_report,
-                                finding.get("finding_id"),
+                                finding["finding_id"],
                                 sandbox_name,
                                 str(task_id),
                                 report,
