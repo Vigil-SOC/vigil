@@ -2,9 +2,8 @@
 
 Transforms a Cloudflare-pushed event (with an attached Cloudy natural-language
 summary) into a Vigil finding. Because the public Cloudy webhook contract is
-not stable as of writing, this transformer is intentionally permissive: any
-fields the upstream payload happens to provide are forwarded into the finding
-under `evidence.cloudy_summary` and `entity_context`.
+not stable as of writing, this transformer is intentionally permissive. The
+summary becomes `description` and the raw payload `entity_context.source_evidence`.
 
 Gated by `CLOUDY_INGESTION_ENABLED` — the webhook router refuses traffic when
 the flag is off, and this service is only constructed by the router.
@@ -12,10 +11,11 @@ the flag is off, and this service is only constructed by the router.
 
 from __future__ import annotations
 
+import json
 import logging
-import uuid
 from typing import Any, Dict, List, Optional
 
+from core.ingestion.ingestion_service import IngestionService, _content_finding_id
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -29,10 +29,6 @@ class CloudyIngestionService:
     """Build Vigil findings from Cloudflare Cloudy event payloads."""
 
     def __init__(self):
-        # Lazy import: ingestion_service is also lazy elsewhere in the codebase;
-        # this keeps Cloudy off the hot import path when the flag is off.
-        from core.ingestion.ingestion_service import IngestionService
-
         self.ingestion_service = IngestionService()
 
     def transform_event(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -41,10 +37,9 @@ class CloudyIngestionService:
         Returns ``None`` if the payload is unparseable. Returns a dict suitable
         for `IngestionService.ingest_finding()` otherwise.
         """
-        if not isinstance(payload, dict):
-            return None
-
         event = payload.get("event") or payload
+        if not isinstance(event, dict):
+            return None
         cloudy_summary = (
             payload.get("cloudy_summary")
             or payload.get("summary")
@@ -52,15 +47,31 @@ class CloudyIngestionService:
             or event.get("summary")
             or ""
         )
+        action = event.get("action") or event.get("ruleAction") or ""
+        title = payload.get("title") or event.get("title") or ""
+        description = cloudy_summary or event.get("description", "")
+        source_id = payload.get("event_id") or payload.get("id")
+        external_id = str(source_id) if source_id else None
+        if not all(
+            isinstance(v, str) for v in (cloudy_summary, action, title, description)
+        ):
+            return None
+        if external_id and len(external_id) > 255:
+            return None
         if not cloudy_summary and not event:
             return None
 
-        finding_id = str(payload.get("event_id") or payload.get("id") or uuid.uuid4())
+        score = payload.get("anomaly_score")
+        try:
+            anomaly_score = float(0.5 if score is None else score)
+        except (TypeError, ValueError):
+            return None
+
+        identity = external_id or json.dumps(payload, sort_keys=True)
         ip = (
             payload.get("client_ip") or event.get("client_ip") or event.get("source_ip")
         )
         host = payload.get("host") or event.get("host") or event.get("zone_name")
-        action = (event.get("action") or event.get("ruleAction") or "").lower()
 
         severity = self._infer_severity(payload, event, cloudy_summary)
         mitre = self._extract_mitre(payload, event)
@@ -75,36 +86,20 @@ class CloudyIngestionService:
         if event.get("user_agent"):
             entity_context["user_agents"] = [event["user_agent"]]
 
-        evidence: Dict[str, Any] = {
-            "cloudy_summary": cloudy_summary,
-            "cloudy_provenance": {
-                "event_id": payload.get("event_id"),
-                "rule_id": event.get("rule_id"),
-                "service": event.get("service"),
-                "action": event.get("action"),
-                "kind": event.get("kind") or payload.get("kind"),
-            },
-            "raw_payload": payload,
-        }
-
         return {
-            "finding_id": finding_id,
+            "finding_id": _content_finding_id(f"cloudflare_cloudy:{identity}"),
+            "external_id": external_id,
             "data_source": "cloudflare_cloudy",
             "timestamp": payload.get("timestamp")
             or event.get("timestamp")
             or _utcnow_iso(),
-            "anomaly_score": float(payload.get("anomaly_score", 0.5)),
+            "anomaly_score": anomaly_score,
             "mitre_predictions": mitre,
             "severity": severity,
-            "title": (
-                payload.get("title")
-                or event.get("title")
-                or f"Cloudflare event ({action})"
-                or "Cloudflare Cloudy alert"
-            ),
-            "description": cloudy_summary or event.get("description", ""),
+            "title": title or f"Cloudflare event ({action.lower()})",
+            "description": description,
             "entity_context": entity_context,
-            "evidence": evidence,
+            "raw_data": payload,
         }
 
     @staticmethod

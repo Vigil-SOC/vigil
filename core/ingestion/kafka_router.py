@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -24,6 +25,8 @@ from pydantic import BaseModel, Field
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.config import get_settings
+from core.ingestion.kafka_config import KafkaConfig
+from core.ingestion.kafka_consumer_service import idle_stats
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import User
@@ -69,7 +72,8 @@ class KafkaConfigBody(BaseModel):
 
 
 def _default_config() -> Dict[str, Any]:
-    return KafkaConfigBody().model_dump()
+    env = asdict(KafkaConfig.from_env())
+    return {name: env[name] for name in KafkaConfigBody.model_fields}
 
 
 # ---------------------------------------------------------------------------
@@ -155,19 +159,7 @@ async def get_kafka_status() -> Dict[str, Any]:
     stats = await _fetch_daemon_kafka_stats()
     daemon_reachable = stats is not None
     if stats is None:
-        stats = {
-            "connected": False,
-            "messages_consumed": 0,
-            "messages_enqueued": 0,
-            "duplicates_skipped": 0,
-            "decode_errors": 0,
-            "missing_id_errors": 0,
-            "last_message_at": None,
-            "last_error": None,
-            "last_error_at": None,
-            "topics": merged.get("topics", []),
-            "consumer_group": merged.get("consumer_group", ""),
-        }
+        stats = idle_stats(merged["topics"], merged["consumer_group"])
 
     return {
         "enabled": bool(merged.get("enabled", False)),
