@@ -53,9 +53,8 @@ class FederationAdapter(Protocol):
     ) -> FetchResult:
         """Pull new findings since the cursor.
 
-        ``cursor`` is the per-source state previously
-        returned by this adapter (empty dict on first run — adapters MUST
-        treat empty as "from now", we do not backfill on cold start).
+        ``cursor`` is the state this adapter last returned. It is empty on first
+        run, and adapters MUST treat empty as "from now": no cold-start backfill.
 
         Implementations should honor ``max_items`` to bound first-run blast
         radius if the source happens to return everything in its history.
