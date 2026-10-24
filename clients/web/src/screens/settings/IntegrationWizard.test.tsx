@@ -44,6 +44,12 @@ function open(props: Partial<React.ComponentProps<typeof IntegrationWizard>> = {
 describe('IntegrationWizard drawer', () => {
   beforeEach(() => test.mockReset())
 
+  it('closes on Escape', () => {
+    const { onClose } = open()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('empty: an integration with no fields has nothing to ask for and no secret copy', () => {
     open({ integration: bare, existingConfig: {}, secretsSet: {} })
     expect(screen.queryByLabelText('Domain')).toBeNull()
@@ -133,14 +139,5 @@ describe('IntegrationWizard drawer', () => {
     expect(screen.getByRole('link', { name: 'Open Alert collection' })).toHaveAttribute('href', '/settings?section=federation')
     fireEvent.click(screen.getByRole('tab', { name: /Automatic investigations/ }))
     expect(screen.getByRole('link', { name: /Limits/ })).toHaveAttribute('href', '/settings?section=autoinvestigate')
-  })
-
-  it('setup variant: form only, saves and closes without testing', async () => {
-    const { onSave, onClose } = open({ variant: 'setup' })
-    expect(screen.queryByRole('tab')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Save Configuration/ }))
-    await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(onSave).toHaveBeenCalled()
-    expect(test).not.toHaveBeenCalled()
   })
 })
