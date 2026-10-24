@@ -1,0 +1,3 @@
+nan in cases after findings | findings sent ['f-0', 'f-1', 'f-2'] | cases ['c-0', 'c-1', 'c-2'] | totals 3 3 | errors 0 None
+nan in findings with cases | findings sent ['f-0', 'f-1'] | cases ['c-0', 'c-1'] | totals 2 2 | errors 0 None
+case array nan at 3 | findings sent [] | cases ['c-0', 'c-1', 'c-2', 'c-3', 'c-4'] | totals 0 5 | errors 0 None

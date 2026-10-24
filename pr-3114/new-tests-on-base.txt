@@ -1,0 +1,30 @@
+E       AssertionError: assert 'succeeded' == 'failed'
+E         - failed
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+WARNING  core.ingestion.ingestion_service:ingestion_service.py:550 Streaming JSON parse failed, falling back to json.load: parse error: premature EOF
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+WARNING  core.ingestion.ingestion_service:ingestion_service.py:550 Streaming JSON parse failed, falling back to json.load: parse error: premature EOF
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+WARNING  core.ingestion.ingestion_service:ingestion_service.py:550 Streaming JSON parse failed, falling back to json.load: argument of type 'int' is not iterable
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+E       AssertionError: assert 'succeeded' == 'failed'
+E         - failed
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+WARNING  core.ingestion.ingestion_service:ingestion_service.py:550 Streaming JSON parse failed, falling back to json.load: lexical error: invalid char in json text.
+ERROR    core.storage.connection:connection.py:829 Database health check failed: Database not initialized. Call initialize() first.
+WARNING  core.ingestion.ingestion_service:ingestion_service.py:550 Streaming JSON parse failed, falling back to json.load: lexical error: invalid char in json text.
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_truncated_json_past_one_batch_fails_with_the_parse_error
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_truncated_small_json_fails_with_the_parse_error
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_json_array_of_non_objects_fails_with_the_cause
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_corrupt_parquet_fails_with_the_parse_error
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_non_utf8_csv_fails_with_the_decode_error
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_csv_rows_read_before_a_decode_error_are_kept
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_unreadable_case_csv_counts_a_case_error
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_non_utf8_jsonl_fails_with_the_decode_error
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_nan_after_the_first_batch_imports_each_finding_once[False]
+FAILED tests/unit/ingestion/test_unreadable_upload_files.py::test_nan_after_the_first_batch_imports_each_finding_once[True]
+=================== 10 failed, 8 passed, 1 warning in 16.47s ===================
