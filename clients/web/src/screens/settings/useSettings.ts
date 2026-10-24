@@ -1122,10 +1122,9 @@ export function useKafka() {
     return kafkaApi
       .getStatus()
       .then((res) => {
-        const data = res.data as { daemon_reachable?: boolean; stats?: KafkaStats; config?: Partial<KafkaConfig> }
+        const data = res.data as { daemon_reachable?: boolean; stats?: KafkaStats }
         setDaemonReachable(!!data.daemon_reachable)
         setStats(data.stats || null)
-        if (data.config) setConfig((prev) => ({ ...prev, ...data.config }))
       })
       .catch(() => setDaemonReachable(false))
   }, [])
