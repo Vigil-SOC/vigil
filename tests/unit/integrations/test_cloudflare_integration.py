@@ -163,6 +163,7 @@ def test_parse_stix_indicator_handles_or_pattern():
             "[url:value MATCHES 'k = ' AND ipv4-addr:value = '1.2.3.4']",
             [("ip", "1.2.3.4")],
         ),
+        (r"[ipv4-addr:value = '1.2.3.4\']", []),
     ],
 )
 def test_parse_stix_indicator_reads_every_equality_comparison(pattern, expected):

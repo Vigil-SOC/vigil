@@ -36,10 +36,11 @@ _STIX_TO_VIGIL_TYPE: Dict[str, str] = {
 }
 
 
-_STIX_COMPARISON = re.compile(
-    r"(?<![\w-])(?P<path>[\w-]+:[\w-]+(?:\.(?:[\w-]+|'[\w-]+')|\[(?:\d+|\*)\])*)"
-    r"\s*(?P<op>[!<>]?=)\s*'(?P<value>(?:[^'\\]|\\.)*)'"
-    r"|'(?:[^'\\]|\\.)*(?:'|\\?\Z)",
+_STIX_TOKEN = re.compile(
+    r"'(?P<value>(?:[^'\\]|\\.)*)(?P<closed>'?)"
+    r"|[\w-]+(?::[\w-]+(?:\.(?:[\w-]+|'[\w-]+'))*)?"
+    r"|[!<>]?="
+    r"|\S",
     re.S,
 )
 _STIX_ESCAPE = re.compile(r"\\(.)", re.S)
@@ -101,14 +102,15 @@ def parse_stix_indicator(
 
 def _extract_observables(pattern: str) -> Iterable[Tuple[str, str]]:
     """(vigil_type, value) for each ``path = 'value'`` comparison in a STIX 2.1 pattern."""
-    for m in _STIX_COMPARISON.finditer(pattern):
-        if m["op"] != "=" or not m["value"]:
+    tokens = list(_STIX_TOKEN.finditer(pattern))
+    for path, op, literal in zip(tokens, tokens[1:], tokens[2:]):
+        if op[0] != "=" or not literal["closed"] or not literal["value"]:
             continue
-        vigil_type = _STIX_TO_VIGIL_TYPE.get(m["path"])
+        vigil_type = _STIX_TO_VIGIL_TYPE.get(path[0])
         if not vigil_type:
-            logger.debug("Skipping unrecognized STIX pattern key: %s", m["path"])
+            logger.debug("Skipping unrecognized STIX pattern key: %s", path[0])
             continue
-        yield vigil_type, _STIX_ESCAPE.sub(r"\1", m["value"])
+        yield vigil_type, _STIX_ESCAPE.sub(r"\1", literal["value"])
 
 
 # ---------------------------------------------------------------------------
