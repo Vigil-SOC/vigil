@@ -1,7 +1,5 @@
 """The 5s Kafka sync applies the same saved settings as daemon startup."""
 
-import dataclasses
-
 from core.ingestion.kafka_config import KafkaConfig
 from services.daemon.config import DaemonConfig
 from services.daemon.kafka_ingestor import KafkaIngestor
@@ -33,5 +31,10 @@ def test_sync_tick_matches_startup(monkeypatch):
     ingestor = KafkaIngestor(KafkaConfig())
     ingestor._sync_config_from_db()
 
-    assert dataclasses.asdict(ingestor.config) == dataclasses.asdict(startup)
+    # Compare the saved fields only: env-sourced secrets (KAFKA_SASL_PASSWORD,
+    # KAFKA_SSL_CA_LOCATION) reach startup but never the tick, so a full
+    # asdict comparison fails on any machine that sets them.
+    assert {k: getattr(ingestor.config, k) for k in SAVED} == {
+        k: getattr(startup, k) for k in SAVED
+    }
     assert {k: getattr(startup, k) for k in SAVED} == SAVED
