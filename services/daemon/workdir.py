@@ -2,7 +2,6 @@
 
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -21,11 +20,7 @@ class WorkdirManager:
     REQUIRED_FILES = {
         "state.json": "{}",
         "context.md": "",
-        "iocs.json": "[]",
-        "timeline.json": "[]",
-        "hypotheses.json": "[]",
         "log.jsonl": "",
-        "review.md": "",
     }
 
     def __init__(self, base_dir: str = "data/investigations"):
@@ -35,9 +30,6 @@ class WorkdirManager:
     def create(self, investigation_id: str) -> Path:
         workdir = self.base_dir / investigation_id
         workdir.mkdir(parents=True, exist_ok=True)
-        (workdir / "evidence").mkdir(exist_ok=True)
-        (workdir / "evidence" / "query_results").mkdir(exist_ok=True)
-        (workdir / "evidence" / "enrichments").mkdir(exist_ok=True)
 
         for filename, default_content in self.REQUIRED_FILES.items():
             filepath = workdir / filename
@@ -126,28 +118,6 @@ class WorkdirManager:
             except json.JSONDecodeError:
                 continue
         return entries
-
-    def get_disk_usage(self, investigation_id: str) -> int:
-        """Return total bytes used by investigation directory."""
-        workdir = self.base_dir / investigation_id
-        if not workdir.is_dir():
-            return 0
-        total = 0
-        for p in workdir.rglob("*"):
-            if p.is_file():
-                total += p.stat().st_size
-        return total
-
-    def archive(self, investigation_id: str) -> Optional[Path]:
-        workdir = self.base_dir / investigation_id
-        if not workdir.is_dir():
-            return None
-        archive_dir = self.base_dir / "_archived"
-        archive_dir.mkdir(exist_ok=True)
-        dest = archive_dir / investigation_id
-        shutil.move(str(workdir), str(dest))
-        logger.info(f"Archived investigation {investigation_id}")
-        return dest
 
     def _safe_path(self, investigation_id: str, filename: str) -> Optional[Path]:
         base = self.base_dir.resolve()

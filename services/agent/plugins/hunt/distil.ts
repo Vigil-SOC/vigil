@@ -203,7 +203,7 @@ export function huntDistil(_runId: string, events: readonly HuntEvent[]): Distil
 
   // Memory is read by later runs' models: a handle becomes a neutral marker, never
   // its value (core/guards.ts). A no-op with guards off.
-  return forModelsDeep({
+  return forModelsDeep<DistilPayload>({
     investigation_kind: "hunt",
     investigation_id: projection.hunt.hunt_id,
     outcome: projection.hunt.outcome,
@@ -211,5 +211,5 @@ export function huntDistil(_runId: string, events: readonly HuntEvent[]): Distil
     distil_schema_version: DISTIL_SCHEMA_VERSION,
     sightings: sightingsIn(projection),
     conclusions: conclusionsIn(projection),
-  } as DistilPayload);
+  });
 }
