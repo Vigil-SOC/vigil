@@ -1,0 +1,2 @@
+FAILED tests/unit/daemon/test_sandbox_case_link.py::test_report_reaches_every_linked_case
+1 failed, 11 passed, 17 deselected, 1 warning in 9.63s
