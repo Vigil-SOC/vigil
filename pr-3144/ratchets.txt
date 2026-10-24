@@ -1,0 +1,535 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/71b9e348-ce95-421f-b3c1-2f9ff38dfb53/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 266 items
+
+tests/unit/_ratchets/test_app_db_password_split.py .....s                [  2%]
+tests/unit/_ratchets/test_bifrost_management_auth.py ....                [  3%]
+tests/unit/_ratchets/test_bifrost_no_content_logging.py .                [  4%]
+tests/unit/_ratchets/test_builtin_definitions_name_capabilities.py ....  [  5%]
+tests/unit/_ratchets/test_checkpoints_agree.py .........                 [  9%]
+tests/unit/_ratchets/test_compose_backup_service.py ....                 [ 10%]
+tests/unit/_ratchets/test_compose_bifrost_healthcheck.py ..              [ 11%]
+tests/unit/_ratchets/test_compose_daemon_agent.py ....                   [ 12%]
+tests/unit/_ratchets/test_compose_daemon_profile.py .........            [ 16%]
+tests/unit/_ratchets/test_compose_db_seed.py ..                          [ 16%]
+tests/unit/_ratchets/test_compose_llm_worker_healthcheck.py ...          [ 18%]
+tests/unit/_ratchets/test_compose_one_builder_per_image.py .......       [ 20%]
+tests/unit/_ratchets/test_compose_state_volumes.py ...                   [ 21%]
+tests/unit/_ratchets/test_config_audit_actor.py ....                     [ 23%]
+tests/unit/_ratchets/test_database_url_split.py .....                    [ 25%]
+tests/unit/_ratchets/test_dependabot_directories.py .............        [ 30%]
+tests/unit/_ratchets/test_desktop_compose_agent_layer.py .........       [ 33%]
+tests/unit/_ratchets/test_desktop_version_tracks_release.py ......       [ 35%]
+tests/unit/_ratchets/test_dockerfile_node_major.py .                     [ 36%]
+tests/unit/_ratchets/test_dockerfile_version_not_clobbered.py ......     [ 38%]
+tests/unit/_ratchets/test_helm_db_init_sql_files.py ....                 [ 39%]
+tests/unit/_ratchets/test_helm_env_names_are_read.py ........            [ 42%]
+tests/unit/_ratchets/test_helm_environment_label.py ..                   [ 43%]
+tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py sss [ 44%]
+.                                                                        [ 45%]
+tests/unit/_ratchets/test_helm_postgres_password_not_published.py .      [ 45%]
+tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py ss           [ 46%]
+tests/unit/_ratchets/test_hunt_capabilities_agree.py ................    [ 52%]
+tests/unit/_ratchets/test_init_sql_model_indexes.py ..                   [ 53%]
+tests/unit/_ratchets/test_integration_registries.py .........            [ 56%]
+tests/unit/_ratchets/test_logs_rotate_before_truncate.py .               [ 56%]
+tests/unit/_ratchets/test_mcp_runtime_pins.py .......................... [ 66%]
+...                                                                      [ 67%]
+tests/unit/_ratchets/test_mcp_tool_schemas.py ..                         [ 68%]
+tests/unit/_ratchets/test_no_ambient_state.py ...                        [ 69%]
+tests/unit/_ratchets/test_no_blocking_in_async_routes.py ........        [ 72%]
+tests/unit/_ratchets/test_no_claude_agent_sdk.py ....                    [ 74%]
+tests/unit/_ratchets/test_no_datetime_utcnow.py ..                       [ 74%]
+tests/unit/_ratchets/test_no_exception_text_in_responses.py .            [ 75%]
+tests/unit/_ratchets/test_no_import_time_db_connection.py .              [ 75%]
+tests/unit/_ratchets/test_no_logger_fstrings.py .                        [ 75%]
+tests/unit/_ratchets/test_no_metadata_kwarg.py ...                       [ 77%]
+tests/unit/_ratchets/test_no_tls_verify_disabled.py ...                  [ 78%]
+tests/unit/_ratchets/test_one_egress.py ...                              [ 79%]
+tests/unit/_ratchets/test_one_loop_gate.py .....                         [ 81%]
+tests/unit/_ratchets/test_pr_d_mechanical.py ....                        [ 82%]
+tests/unit/_ratchets/test_recall_contract_agrees.py .................... [ 90%]
+.........                                                                [ 93%]
+tests/unit/_ratchets/test_redis_noeviction.py ...                        [ 94%]
+tests/unit/_ratchets/test_run_kinds_agree.py ....                        [ 96%]
+tests/unit/_ratchets/test_seed_insert_columns.py ...                     [ 97%]
+tests/unit/_ratchets/test_settings_env_example.py ...                    [ 98%]
+tests/unit/_ratchets/test_shutdown_all_destructive_flag.py ..            [ 99%]
+tests/unit/_ratchets/test_support_secret_names.py ..                     [100%]
+
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.14-final-0 _______________
+
+Name                                                         Stmts   Miss   Cover   Missing
+-------------------------------------------------------------------------------------------
+core/agents/agent_ai_generator.py                              106    106   0.00%   1-299
+core/agents/attribution.py                                     223    178  20.18%   61-68, 72, 77, 82-94, 99-101, 106-107, 117-118, 123-129, 133, 138-143, 147-153, 162-184, 189-192, 204-217, 234-253, 258-272, 276-309, 321-326, 344-365, 374-406, 411-426, 430-443, 447
+core/agents/builtins.py                                         42      2  95.24%   54-55
+core/agents/custom_agent_service.py                            118    118   0.00%   3-327
+core/agents/directives.py                                       89     89   0.00%   4-238
+core/agents/enablement.py                                       17      9  47.06%   20-22, 27-31, 41
+core/agents/integration_tools.py                                38     38   0.00%   5-112
+core/agents/internal_auth.py                                    15     15   0.00%   4-40
+core/agents/manager.py                                          98     66  32.65%   71-72, 80-85, 97-122, 125-130, 144-189, 198-202, 207-216
+core/agents/mcp_tools.py                                        82     68  17.07%   22-24, 32-44, 50-71, 75-80, 84-94, 103-143
+core/agents/projections.py                                     126     92  26.98%   31, 35, 39-42, 48-56, 62-80, 89-90, 98, 111-130, 136-150, 162-163, 172, 182-188, 198, 206-207, 216-221, 225-226, 237-258
+core/agents/prompts.py                                          35      1  97.14%   197
+core/agents/queue.py                                            67     39  41.79%   47, 62-80, 91, 110-116, 122-127, 132-134, 140-165, 169-171, 175
+core/agents/run_limits.py                                       23     23   0.00%   10-60
+core/agents/run_stats.py                                        24     13  45.83%   26-60
+core/agents/tool_registry.py                                   321    253  21.18%   48, 66-69, 79-81, 85-87, 91-93, 108-126, 138-154, 166-167, 171, 177-195, 213-224, 228, 232-234, 250-275, 294-335, 339-345, 354-361, 378-391, 401-403, 411, 425-430, 436-437, 441-492, 504-515, 533-535, 541-551, 564-573, 588-590, 595-604, 610-612, 616-618, 630-631, 635, 642-657, 661-674, 678, 715-749
+core/agents/tools_router.py                                    230    230   0.00%   4-416
+core/api/v1/agent_runs_router.py                               151    151   0.00%   4-376
+core/api/v1/approvals_router.py                                126    126   0.00%   9-309
+core/api/v1/case_metrics_router.py                             168    168   0.00%   13-516
+core/api/v1/cases_router.py                                    279    279   0.00%   17-741
+core/api/v1/findings_router.py                                 105    105   0.00%   10-315
+core/api/v1/workflows_router.py                                 40     40   0.00%   21-104
+core/audit/feed.py                                             457    457   0.00%   10-741
+core/audit/trail.py                                            322    210  34.78%   99, 104-108, 112-115, 119-129, 141-155, 162-163, 183-200, 209-229, 234-235, 240, 246, 250, 255-256, 288-339, 346-363, 374-420, 425-442, 465-483, 492, 532-535, 540-542, 546-552, 568, 587-642, 646, 650, 666-674, 679-686, 691-699, 704-716, 724-729, 737-739
+core/auth/auth_cookies.py                                       47     26  44.68%   36, 41-42, 47, 52, 58, 62-68, 72-75, 87-110, 116, 128-137
+core/auth/auth_service.py                                      402    291  27.61%   38-49, 64, 75-82, 93, 118, 125-126, 130-131, 135-141, 146-157, 174-176, 191, 203, 216-242, 253-257, 270-278, 284-296, 307-365, 376-396, 405-406, 411-425, 442-479, 491-497, 509-555, 565-578, 583-585, 590-591, 596, 606-612, 620-624, 638, 649-656, 661-668, 684-695, 715-732, 749-783, 809-845
+core/auth/bootstrap_code.py                                     38     38   0.00%   9-87
+core/auth/current_user.py                                       62     42  32.26%   44, 65-87, 117-215
+core/auth/mcp_credential_service.py                             74     49  33.78%   59, 63, 78-109, 121-163, 168-179, 188-192
+core/auth/password_reset.py                                     51     51   0.00%   23-117
+core/auth/password_validator.py                                 48     48   0.00%   3-116
+core/auth/permissions.py                                        78     45  42.31%   216-228, 232-240, 249-251, 262-270, 282-297, 302, 310-314, 326-330
+core/auth/principals.py                                         33     16  51.52%   33, 39-47, 52-61, 65-67
+core/auth/service_account.py                                   144    144   0.00%   31-256
+core/auth/session_cutoff.py                                     15     10  33.33%   21, 26-36
+core/auth/sign_ins.py                                           34     19  44.12%   26, 32-36, 45-54, 61-67
+core/auth/token_blacklist.py                                   127     97  23.62%   66-85, 90-95, 100, 104, 114-126, 135-159, 171-185, 197-209, 225-241, 246-272
+core/auth/tool_principal.py                                     69     40  42.03%   75-76, 80-85, 97-111, 116-135, 150-153
+core/auth/trail_events.py                                       75     53  29.33%   42-52, 57, 65, 70, 75-76, 81-87, 92-96, 106-118, 128-156, 163-177, 183
+core/backup/__main__.py                                         87     87   0.00%   3-177
+core/backup/connection.py                                       24     24   0.00%   10-45
+core/backup/create.py                                          333    333   0.00%   8-649
+core/backup/preupgrade.py                                      147    147   0.00%   16-289
+core/backup/restore.py                                         760    760   0.00%   19-1270
+core/backup/schedule.py                                        274    274   0.00%   8-450
+core/backup/status.py                                           22     22   0.00%   8-35
+core/cases/agent_closure.py                                     15      6  60.00%   23, 33-38
+core/cases/case_attachment_service.py                           29     29   0.00%   8-73
+core/cases/case_automation_service.py                          139    139   0.00%   7-290
+core/cases/case_brief.py                                       214    214   0.00%   8-357
+core/cases/case_collaboration_service.py                        83     83   0.00%   7-334
+core/cases/case_evidence_service.py                             72     72   0.00%   7-241
+core/cases/case_ioc_service.py                                  71     71   0.00%   7-289
+core/cases/case_journal_service.py                              77     77   0.00%   25-196
+core/cases/case_metrics_service.py                              48     48   0.00%   7-133
+core/cases/case_notification_service.py                         54     54   0.00%   7-280
+core/cases/case_record.py                                      333    333   0.00%   10-621
+core/cases/case_records_service.py                              92     92   0.00%   8-334
+core/cases/case_search_router.py                                15     15   0.00%   3-58
+core/cases/case_search_service.py                               46     46   0.00%   7-238
+core/cases/case_sla_service.py                                 224    180  19.64%   60, 80-83, 87-91, 104-130, 134-152, 160, 193-312, 332-357, 372-430, 467-482, 496-521, 537-551, 563-600, 617-636
+core/cases/case_state.py                                        60     60   0.00%   7-197
+core/cases/case_status.py                                       21      8  61.90%   24-26, 38-50
+core/cases/case_templates_router.py                             74     74   0.00%   3-195
+core/cases/case_workflow_service.py                            180    180   0.00%   8-692
+core/cases/closure.py                                           13      0 100.00%
+core/cases/combined_state.py                                    73     73   0.00%   8-145
+core/cases/linked_entities.py                                   41     30  26.83%   47-51, 56-57, 69-81, 86-92, 99-106
+core/cases/sandbox_correlation_service.py                      157    157   0.00%   20-359
+core/cases/sla_policies_router.py                              166    166   0.00%   3-454
+core/chat/conversation_service.py                              153    153   0.00%   19-359
+core/config.py                                                 299     85  71.57%   24-36, 52-53, 57-58, 63, 75-92, 120, 384, 397, 407-412, 416-420, 424-427, 431-439, 455-476, 482-501, 505-514, 524-527, 531, 535-536
+core/deps.py                                                    43     43   0.00%   13-88
+core/detections/detection_rules_service.py                     303    255  15.84%   98-101, 105-125, 129, 133-167, 171-205, 210-214, 223-229, 232-233, 237-242, 249-257, 261-265, 269-272, 278, 282-285, 289, 294-305, 329-427, 431-455, 459-480, 484-506, 510-527, 541, 551-556, 559-585, 592-608, 612-622
+core/detections/lint.py                                        163    163   0.00%   9-293
+core/detections/reconstruction.py                              314    314   0.00%   9-457
+core/detections/tools.py                                       321    321   0.00%   6-718
+core/documents/condense.py                                      49     49   0.00%   8-107
+core/documents/extract.py                                      111    111   0.00%   9-186
+core/documents/fence.py                                          9      4  55.56%   19-20, 25-26
+core/exceptions.py                                              32     13  59.38%   21-23, 28, 37, 64, 69, 73-78
+core/federation/adapters/_base.py                               51     51   0.00%   3-139
+core/federation/adapters/_siem_base.py                          82     82   0.00%   11-206
+core/federation/contract.py                                     19      4  78.95%   42, 46, 62, 80
+core/federation/lag.py                                          26     26   0.00%   3-53
+core/federation/registry.py                                     39     27  30.77%   41-48, 53-54, 59-67, 81-90
+core/federation/runner.py                                      175    175   0.00%   20-347
+core/federation/seed.py                                         20     20   0.00%   9-43
+core/federation/store.py                                       103    103   0.00%   7-190
+core/findings/alert_outcomes.py                                 63     42  33.33%   51-62, 66-90, 95, 100-103, 108-127, 143-152
+core/findings/arrival_counts.py                                 21     12  42.86%   21-24, 33-50
+core/findings/enrichment/__init__.py                             5      5   0.00%   8-26
+core/findings/enrichment/errors.py                               6      6   0.00%   9-29
+core/findings/enrichment/parse.py                               21     21   0.00%   8-48
+core/findings/enrichment/prompt.py                              56     56   0.00%   6-132
+core/findings/enrichment/service.py                             96     96   0.00%   15-316
+core/findings/exclusions.py                                    121    121   0.00%   22-264
+core/findings/exclusions_router.py                              58     58   0.00%   11-147
+core/findings/overview.py                                      120     85  29.17%   72-79, 83-105, 109-185, 190-238, 242, 253-258, 265-281
+core/findings/source_evidence.py                               198    157  20.71%   63-66, 94-97, 101-106, 115-132, 138-139, 159-253, 264-344, 360-371, 376-392
+core/findings/source_link.py                                    67     55  17.91%   16-27, 37-38, 43-55, 59-65, 77-97
+core/frontmatter.py                                             22      7  68.18%   28-29, 41, 44-45, 47, 49
+core/ingestion/ack.py                                           14     14   0.00%   8-34
+core/ingestion/dedup.py                                        170    170   0.00%   20-272
+core/ingestion/ingestion_jobs.py                               116    116   0.00%   1-182
+core/ingestion/ingestion_service.py                            646    646   0.00%   12-1208
+core/ingestion/kafka_config.py                                  37     20  45.95%   34-53
+core/ingestion/kafka_consumer_service.py                       137    137   0.00%   19-249
+core/ingestion/kafka_router.py                                  79     79   0.00%   14-172
+core/ingestion/siem_ingestion_service.py                        82     82   0.00%   7-255
+core/integrations/_base/aad_token.py                            35     35   0.00%   3-80
+core/integrations/_base/config.py                               25     15  40.00%   31-44, 60, 65, 70
+core/integrations/_base/config_gap.py                           17     17   0.00%   7-46
+core/integrations/_base/descriptor.py                           67     13  80.60%   26-28, 32-35, 65, 72-74, 146-147
+core/integrations/_base/ids.py                                  11     11   0.00%   3-22
+core/integrations/_base/proxy.py                                12     12   0.00%   9-37
+core/integrations/_base/search_params.py                        14     14   0.00%   7-38
+core/integrations/_base/tls.py                                  12     12   0.00%   9-34
+core/integrations/_base/tool_result.py                          21     21   0.00%   8-40
+core/integrations/alienvault_otx/descriptor.py                   2      0 100.00%
+core/integrations/alienvault_otx/tool.py                        69     69   0.00%   1-165
+core/integrations/anyrun/descriptor.py                           2      0 100.00%
+core/integrations/anyrun/tool.py                                57     57   0.00%   1-119
+core/integrations/atomic_red_team/descriptor.py                  5      0 100.00%
+core/integrations/atomic_red_team/tool.py                       72     72   0.00%   14-214
+core/integrations/aws_security_hub/adapter.py                   12     12   0.00%   3-31
+core/integrations/aws_security_hub/descriptor.py                 2      0 100.00%
+core/integrations/aws_security_hub/ingestion.py                 81     81   0.00%   7-213
+core/integrations/azure_ad/descriptor.py                         2      0 100.00%
+core/integrations/azure_ad/tool.py                              76     76   0.00%   1-177
+core/integrations/azure_sentinel/adapter.py                     12     12   0.00%   3-31
+core/integrations/azure_sentinel/descriptor.py                   2      0 100.00%
+core/integrations/azure_sentinel/ingestion.py                   74     74   0.00%   7-232
+core/integrations/cape_sandbox/descriptor.py                     2      0 100.00%
+core/integrations/cape_sandbox/tool.py                         153    153   0.00%   12-391
+core/integrations/carbon_black/descriptor.py                     2      0 100.00%
+core/integrations/carbon_black/tool.py                          67     67   0.00%   1-164
+core/integrations/cloudflare/cloudflare_webhooks_router.py      47     47   0.00%   17-126
+core/integrations/cloudflare/descriptor.py                       2      0 100.00%
+core/integrations/cloudflare/ingestion.py                       56     56   0.00%   13-145
+core/integrations/cloudflare/tool.py                           117    117   0.00%   11-452
+core/integrations/credential_check.py                          174    174   0.00%   14-381
+core/integrations/crowdstrike/adapter.py                        71     71   0.00%   3-175
+core/integrations/crowdstrike/client.py                        103    103   0.00%   3-209
+core/integrations/crowdstrike/descriptor.py                      2      0 100.00%
+core/integrations/custom_integration_service.py                154    154   0.00%   3-640
+core/integrations/darktrace/darktrace_webhook_router.py         62     62   0.00%   19-173
+core/integrations/darktrace/ingestion.py                       125    125   0.00%   14-252
+core/integrations/elastic/adapter.py                            14     14   0.00%   3-40
+core/integrations/elastic/client.py                            133    133   0.00%   3-321
+core/integrations/elastic/descriptor.py                          3      0 100.00%
+core/integrations/elastic/ingestion.py                         168    168   0.00%   10-432
+core/integrations/elastic/tool.py                              104    104   0.00%   7-302
+core/integrations/extension/session_service.py                  67     67   0.00%   8-152
+core/integrations/extension/trust.py                            33     25  24.24%   24-30, 35-42, 49-58
+core/integrations/hybrid_analysis/descriptor.py                  2      0 100.00%
+core/integrations/hybrid_analysis/tool.py                       55     55   0.00%   1-113
+core/integrations/integration_bridge_service.py                 42     29  30.95%   30-31, 43-48, 58-95
+core/integrations/integration_secrets.py                        75     31  58.67%   238-246, 257, 275-289, 299-302, 318-321, 337-344
+core/integrations/ip_geolocation/descriptor.py                   2      0 100.00%
+core/integrations/ip_geolocation/tool.py                        81     81   0.00%   1-166
+core/integrations/jira/descriptor.py                             2      0 100.00%
+core/integrations/joe_sandbox/descriptor.py                      2      0 100.00%
+core/integrations/mcp/child_env.py                              26     16  38.46%   46-63, 79-87
+core/integrations/mcp/client.py                                383    383   0.00%   3-789
+core/integrations/mcp/in_process.py                             45     45   0.00%   19-134
+core/integrations/mcp/packaged.py                              120     69  42.50%   41-42, 51, 56, 84-85, 87-88, 93, 97, 101-102, 107-122, 131-155, 160-171, 177-186
+core/integrations/mcp/registry.py                              134    112  16.42%   24-25, 35-38, 42, 46-47, 56-83, 87, 90-108, 112, 123-133, 138-141, 154-159, 169-195, 206-210, 220-228, 233-236, 253-282, 294-299
+core/integrations/mcp/runner.py                                 86     86   0.00%   9-160
+core/integrations/mcp/service.py                               176    130  26.14%   54, 56-59, 76-86, 110-129, 135-139, 143-148, 173-175, 183-189, 206-218, 222, 226-227, 242-266, 271, 278-281, 288-387, 395-412, 421
+core/integrations/mcp/surface.py                                32     18  43.75%   46-61, 69-71, 83-87, 92
+core/integrations/mcp/verify_catalog.py                         28     28   0.00%   6-51
+core/integrations/microsoft_defender/adapter.py                 12     12   0.00%   3-31
+core/integrations/microsoft_defender/descriptor.py               2      0 100.00%
+core/integrations/microsoft_defender/ingestion.py              113    113   0.00%   7-261
+core/integrations/microsoft_defender/tool.py                    72     72   0.00%   1-164
+core/integrations/microsoft_teams/descriptor.py                  2      0 100.00%
+core/integrations/microsoft_teams/tool.py                       50     50   0.00%   1-121
+core/integrations/misp/descriptor.py                             2      0 100.00%
+core/integrations/misp/tool.py                                  63     63   0.00%   1-153
+core/integrations/okta/descriptor.py                             2      0 100.00%
+core/integrations/opensearch/adapter.py                         13     13   0.00%   3-37
+core/integrations/opensearch/client.py                          98     98   0.00%   12-260
+core/integrations/opensearch/descriptor.py                       3      0 100.00%
+core/integrations/opensearch/ingestion.py                      151    151   0.00%   15-322
+core/integrations/opensearch/tool.py                            98     98   0.00%   7-294
+core/integrations/pagerduty/descriptor.py                        2      0 100.00%
+core/integrations/palo_alto/descriptor.py                        2      0 100.00%
+core/integrations/palo_alto/tool.py                             53     53   0.00%   1-142
+core/integrations/sentinelone/descriptor.py                      2      0 100.00%
+core/integrations/shodan/descriptor.py                           2      0 100.00%
+core/integrations/slack/descriptor.py                            2      0 100.00%
+core/integrations/slack/tool.py                                 53     53   0.00%   1-127
+core/integrations/splunk/adapter.py                             86     86   0.00%   3-202
+core/integrations/splunk/client.py                             150    150   0.00%   3-397
+core/integrations/splunk/descriptor.py                           3      0 100.00%
+core/integrations/splunk/tool.py                               189    189   0.00%   1-454
+core/integrations/url_analysis/descriptor.py                     2      0 100.00%
+core/integrations/url_analysis/tool.py                          55     55   0.00%   1-123
+core/integrations/virustotal/descriptor.py                       2      0 100.00%
+core/integrations/vstrike/client.py                            438    438   0.00%   14-893
+core/integrations/vstrike/descriptor.py                          2      0 100.00%
+core/integrations/vstrike/schemas.py                            53     53   0.00%   11-125
+core/integrations/vstrike/tool.py                              152    152   0.00%   22-429
+core/intent.py                                                 106     71  33.02%   146-147, 151-158, 167-188, 193-199, 209-215, 219-232, 248-273, 277
+core/llm/bifrost/admin.py                                      592    592   0.00%   34-1434
+core/llm/bifrost/auth.py                                         5      1  80.00%   24
+core/llm/bifrost/costs.py                                       26     26   0.00%   20-103
+core/llm/bifrost/mirror.py                                     165    165   0.00%   24-380
+core/llm/chat_layers.py                                         58     35  39.66%   93-100, 115-117, 122, 140, 150-151, 166-168, 179-186, 211-229, 234, 255-272
+core/llm/cost/budget.py                                         83     83   0.00%   19-190
+core/llm/cost/calls.py                                          34     18  47.06%   24, 43-71, 97
+core/llm/cost/pricing_router.py                                 62     62   0.00%   10-152
+core/llm/defaults.py                                            26     17  34.62%   34-35, 40-44, 68-70, 83-89
+core/llm/gateway/gateway.py                                     69     69   0.00%   9-175
+core/llm/gateway_retry.py                                       76     76   0.00%   11-143
+core/llm/harness/claude.py                                     161    161   0.00%   3-477
+core/llm/outage.py                                              18     18   0.00%   7-41
+core/llm/providers/base_url.py                                  27     27   0.00%   8-53
+core/llm/providers/clients.py                                   15     15   0.00%   21-67
+core/llm/providers/discovery.py                                246    196  20.33%   69, 87-93, 96, 99-102, 109-110, 116, 127-141, 151-156, 184-242, 268-314, 329-336, 393-394, 398, 414-417, 432-491, 514-573
+core/llm/providers/provider_service.py                          56     56   0.00%   9-179
+core/llm/providers/recovery.py                                  90     90   0.00%   7-155
+core/llm/providers/registry.py                                 314    229  27.07%   49-73, 93, 132-148, 188-203, 215-220, 224-230, 237-241, 251-254, 258, 281-299, 310-358, 392, 437-439, 489-496, 505-506, 510, 522-525, 530, 553-587, 611-612, 618-619, 628, 639-640, 651-652, 672-673, 693-713, 729-740, 745-749, 757-759, 769-784, 795-885, 897-899, 906-922
+core/llm/router/format.py                                       88     79  10.23%   39-57, 66-81, 86-116, 127-168, 180-198
+core/llm/router/router.py                                      262    221  15.65%   31-33, 53, 57, 69-95, 99-117, 130-174, 180-191, 201-219, 233-251, 264, 297-310, 341-424, 443-492, 509-525, 535, 555-583, 587-623, 646-681
+core/llm/security.py                                            74     40  45.95%   112, 116, 125-136, 141-147, 165, 169-172, 196-218, 235, 247-248
+core/llm/system_prompt.py                                       24     24   0.00%   13-79
+core/llm/target.py                                              94     94   0.00%   7-191
+core/llm/tool_schemas.py                                        14      0 100.00%
+core/memory/case_distil.py                                     143    143   0.00%   30-546
+core/memory/distil.py                                          246    246   0.00%   26-917
+core/memory/entity_keys.py                                      95     95   0.00%   14-242
+core/memory/hunt_claim.py                                       74     74   0.00%   8-155
+core/memory/hunt_coverage.py                                    47     47   0.00%   18-131
+core/memory/learning_episodes.py                               225    225   0.00%   27-469
+core/memory/prior_hunts.py                                      72     72   0.00%   21-222
+core/memory/recall.py                                          145    145   0.00%   37-547
+core/memory/recall_contract.py                                  62      3  95.16%   278, 305, 318
+core/memory/source_tier.py                                      49     16  67.35%   262-293
+core/memory/tlds.py                                              5      5   0.00%   8-205
+core/platform/autostart_config.py                               53     53   0.00%   20-110
+core/platform/demo_data_service.py                             145    145   0.00%   3-308
+core/platform/email_service.py                                  58     58   0.00%   17-120
+core/platform/log_redaction.py                                  18     18   0.00%   3-32
+core/platform/medic_last_seen.py                               189    189   0.00%   17-355
+core/platform/medic_status.py                                   47     47   0.00%   14-91
+core/platform/monitoring.py                                     84     84   0.00%   11-197
+core/platform/ollama_supervisor.py                              98     98   0.00%   20-242
+core/platform/process_health.py                                 58     58   0.00%   13-116
+core/platform/runtime_config.py                                 74     74   0.00%   22-140
+core/platform/service_contract.py                               35     35   0.00%   11-60
+core/platform/service_manager.py                               144    144   0.00%   22-422
+core/platform/url_safety.py                                     76     58  23.68%   54-63, 72-98, 124-182
+core/rate_limit.py                                              35     35   0.00%   1-49
+core/redis_client.py                                            15     10  33.33%   26-37
+core/reporting/ai_decisions_router.py                           80     80   0.00%   8-214
+core/reporting/ai_insights_service.py                          101    101   0.00%   11-332
+core/reporting/analytics_service.py                            135    135   0.00%   7-641
+core/response/approval_service.py                              368    271  26.36%   47-48, 53-59, 73, 84-94, 169, 197, 216-217, 231-232, 271-289, 315-387, 391-398, 409-432, 444-456, 465-498, 508-547, 555-575, 583-597, 601-602, 625-628, 632, 636-639, 648-660, 667-691, 695-699, 710-728, 749-784, 794-830, 835
+core/response/autonomous_response_service.py                   143    143   0.00%   3-419
+core/response/checkpoints.py                                    46     46   0.00%   4-122
+core/response/config.py                                         54     31  42.59%   30-33, 47-54, 103-120, 135-148
+core/routing.py                                                 45     20  55.56%   102-134, 141, 151-152
+core/secrets.py                                                 10      2  80.00%   31, 35
+core/secrets_manager.py                                        415    250  39.76%   70-71, 76, 112-114, 119-122, 157-169, 175, 182-200, 205-216, 240-259, 264-282, 287-305, 310-327, 332-334, 375-379, 383-395, 398-405, 432-433, 439, 448-472, 476-488, 492, 495, 499-526, 529-536, 577, 585-588, 598, 601, 653-670, 682-692, 696-697, 763-824, 861, 863, 871-873, 876-880, 900, 905
+core/skills/skill_eval.py                                       41     41   0.00%   11-118
+core/skills/skill_library.py                                   431    316  26.68%   78, 80, 89, 91, 94, 100, 112, 115-116, 118, 122, 127, 135, 151-152, 156-158, 160-166, 177, 192, 196, 201-204, 209-211, 216-220, 225-230, 234, 242-256, 266-280, 284, 288, 298-320, 325-329, 334-348, 352-366, 375-377, 385-392, 398-408, 432-481, 486-500, 509-537, 542-559, 568-574, 589-639, 644-662, 671-679, 692-705, 710-718, 722-731
+core/skills/skill_usage.py                                      21     21   0.00%   9-62
+core/storage/case_repository.py                                234    164  29.91%   61-65, 70-71, 85-135, 140-143, 158, 170, 179, 200, 211, 222, 235-237, 249-270, 278, 334, 340-342, 357, 362-365, 390-433, 453-456, 467-472, 480-481, 488-493, 497-509, 533-562, 595-731, 748-796
+core/storage/config_service.py                                 160    116  27.50%   43-51, 64, 83-91, 99-101, 125-161, 182-192, 220-267, 283-301, 314-321, 328-332, 354, 375-376, 393-404, 412-422, 435-441, 461-476, 495
+core/storage/connection.py                                     536    381  28.92%   104-108, 115, 118-128, 154-188, 210-223, 231-238, 247-260, 291-292, 305-311, 333-341, 355-360, 373-380, 389-410, 419, 455-463, 496-521, 530-579, 588-634, 641-658, 668-678, 694-735, 744-764, 776, 793-801, 805-815, 824-830, 835, 862-866, 878, 915-918, 927, 965-1048, 1060-1063, 1074-1108, 1119-1125, 1130-1139, 1149-1170, 1183-1188, 1197-1206, 1219-1251, 1271-1279
+core/storage/database_data_service.py                          296    254  14.19%   23-28, 33-37, 42-59, 67-81, 84-105, 115-124, 134-142, 145, 148, 151-159, 178-198, 208-216, 228-240, 259-288, 291-296, 305-314, 323-334, 337-358, 361-369, 374-386, 389-398, 406-417, 420-429, 440-468, 471-479, 482-490, 501-523, 535-544
+core/storage/db_proxy.py                                       104     67  35.58%   82-99, 112, 146-153, 171-209, 215-221, 232-266
+core/storage/ip_address.py                                      21     15  28.57%   37-45, 49-51, 57-59
+core/storage/ip_exclusion_repository.py                         41     26  36.59%   37, 50, 64, 69-79, 87-116, 120-123, 127, 135
+core/storage/models/__init__.py                                 13      0 100.00%
+core/storage/models/ai.py                                      125      0 100.00%
+core/storage/models/auth.py                                     80      7  91.25%   256-261, 265
+core/storage/models/base.py                                     17      7  58.82%   36-48
+core/storage/models/case.py                                     25      0 100.00%
+core/storage/models/case_entities.py                           247      0 100.00%
+core/storage/models/config.py                                  103      0 100.00%
+core/storage/models/episodic.py                                 95      0 100.00%
+core/storage/models/exclusion.py                                20      0 100.00%
+core/storage/models/finding.py                                  41      1  97.56%   99
+core/storage/models/medic.py                                    15      0 100.00%
+core/storage/models/skill.py                                    13      0 100.00%
+core/storage/models/workflow.py                                169      0 100.00%
+core/storage/reference_seed.py                                 100     41  59.00%   50-59, 95-99, 109-114, 129-156
+core/storage/s3_service.py                                      79     79   0.00%   3-176
+core/storage/schemas/__init__.py                                 9      0 100.00%
+core/storage/schemas/ai.py                                     120      5  95.83%   82, 127-129, 134
+core/storage/schemas/auth.py                                    23      0 100.00%
+core/storage/schemas/base.py                                    27      6  77.78%   20, 24, 28, 37, 77, 82
+core/storage/schemas/case.py                                    37     12  67.57%   24-36
+core/storage/schemas/case_api.py                               124    124   0.00%   9-214
+core/storage/schemas/case_entities.py                          231      0 100.00%
+core/storage/schemas/config.py                                  83      0 100.00%
+core/storage/schemas/finding.py                                 36     11  69.44%   12-15, 41-44, 48-50
+core/storage/schemas/workflow.py                               141      1  99.29%   60
+core/storage/service.py                                        464    384  17.24%   46, 58-61, 66-73, 77-79, 111-115, 132-147, 164, 172-179, 184, 201-227, 233-265, 273, 301-321, 332-394, 407-461, 473-478, 491-508, 549-591, 611-638, 653-667, 689-725, 739-776, 795-813, 826-834, 844-856, 867-888, 911-948, 962-970, 994-1008, 1016-1018, 1036-1057, 1070-1078, 1092-1106, 1120-1134, 1169-1196, 1221-1246, 1261-1304
+core/storage/shared_ioc_repository.py                           91     91   0.00%   7-227
+core/storage/unit_of_work.py                                    17     11  35.29%   54-67
+core/telemetry.py                                              232    180  22.41%   40, 52, 55, 64, 69, 72, 76, 79, 82, 85, 92, 95, 102, 105, 112, 115, 118, 121, 124, 129, 139-223, 242-255, 260-267, 272-279, 287-296, 304-311, 320, 372-400, 412-421, 433-450, 464-472, 498-523, 535-558
+core/telemetry_sanitizer.py                                     64     44  31.25%   29-31, 122-130, 134-152, 159, 162-186, 189, 192
+core/threat_intel/attack_router.py                              39     39   0.00%   3-105
+core/threat_intel/mitre_lookup.py                               58     58   0.00%   13-175
+core/threat_intel/occurrence_rollup.py                          71     71   0.00%   7-136
+core/threat_intel/threat_feed_service.py                       261    261   0.00%   10-547
+core/time.py                                                     4      1  75.00%   17
+core/upgrade/__main__.py                                         2      2   0.00%   1-3
+core/upgrade/adopt.py                                          141     95  32.62%   103, 114-119, 127-130, 141-152, 156-172, 177-184, 188, 192, 200-240, 246-262, 266-274, 286-289, 295-305, 310-328, 333-338
+core/upgrade/command.py                                        235    175  25.53%   83-85, 89, 95-109, 113, 120-125, 130-135, 140-148, 153-166, 179-267, 277-284, 291-312, 320-341, 352-371, 385-457, 461-464, 468-481
+core/upgrade/revision.py                                        21     21   0.00%   7-46
+core/upgrade/schema.py                                          40     29  27.50%   33-38, 44, 48-204, 209
+core/version.py                                                  8      2  75.00%   21-22
+core/webhook_receiver.py                                        39     39   0.00%   3-118
+core/webhook_rejections.py                                      48     48   0.00%   12-95
+core/workflows/catalog.py                                       72     72   0.00%   16-194
+core/workflows/custom_workflow_service.py                      108     83  23.15%   28-29, 34, 44-52, 57-59, 70-90, 113-141, 147-148, 152-159, 175-208, 212-220
+core/workflows/enablement.py                                    25     14  44.00%   23-27, 31, 39-48, 58
+core/workflows/handoff_cases.py                                 16     16   0.00%   10-52
+core/workflows/hunt_preflight.py                               142    118  16.90%   38-40, 52-58, 64-74, 106-107, 117-143, 152-160, 164-174, 182-202, 206-226, 236-248, 254-274, 289-305
+core/workflows/hypothesis_subjects.py                            8      5  37.50%   33-42
+core/workflows/playbook_resolver.py                            207    147  28.99%   52-59, 63-88, 102-104, 163-188, 194, 198, 208-224, 233-239, 243, 251-254, 260-272, 276-295, 304-327, 333-334, 340-344, 356, 368-427, 488-494, 507-509, 522-568, 581-619, 652-670, 676, 693
+core/workflows/playbooks_router.py                              38     38   0.00%   4-90
+core/workflows/routing.py                                       16      9  43.75%   25-32, 36
+core/workflows/run_bridge_router.py                            395    395   0.00%   4-1039
+core/workflows/run_cancel.py                                    62     62   0.00%   9-126
+core/workflows/run_resume.py                                    28     28   0.00%   4-64
+core/workflows/workflow_ai_generator.py                        100    100   0.00%   9-245
+core/workflows/workflow_run_service.py                         222    190  14.41%   31-37, 42, 47-49, 76-98, 116-133, 141-155, 163-174, 194-232, 256-293, 307-319, 323-330, 334-344, 353-363, 392-438, 442-454
+core/workflows/workflows_router.py                             339    339   0.00%   3-833
+core/workflows/workflows_service.py                            362    248  31.49%   44, 48-49, 55-59, 76-85, 96-99, 105, 111-112, 121, 178-182, 188-189, 199-212, 220-222, 263, 267-268, 274-279, 283-288, 295-296, 300, 304-307, 311-341, 346-350, 359-377, 393-426, 462-463, 467, 471, 488-489, 501-503, 507-512, 519-523, 529, 537-542, 548-551, 581-754, 766-843
+services/api/discovery.py                                       73     73   0.00%   19-174
+services/api/errors.py                                          65     65   0.00%   15-148
+services/api/main.py                                           463    463   0.00%   7-1063
+services/api/mcp_surface.py                                     87     87   0.00%   18-241
+services/api/middleware/auth.py                                 15     15   0.00%   10-56
+services/api/middleware/auth_rate_key.py                        78     78   0.00%   11-111
+services/api/middleware/client_address.py                       64     64   0.00%   8-88
+services/api/middleware/csrf.py                                 61     61   0.00%   37-224
+services/api/middleware/rate_limit.py                           20     20   0.00%   4-46
+services/api/middleware/security_headers.py                     66     66   0.00%   14-166
+services/api/routers/agents.py                                  39     39   0.00%   3-97
+services/api/routers/ai_config.py                              131    131   0.00%   11-284
+services/api/routers/analytics.py                               40     40   0.00%   11-153
+services/api/routers/audit.py                                   67     67   0.00%   11-173
+services/api/routers/audit_feed.py                              37     37   0.00%   7-86
+services/api/routers/auth.py                                   456    456   0.00%   7-1316
+services/api/routers/bifrost_config.py                         308    308   0.00%   36-724
+services/api/routers/budgets.py                                 37     37   0.00%   17-121
+services/api/routers/cases.py                                  301    301   0.00%   3-790
+services/api/routers/claude.py                                 234    234   0.00%   3-562
+services/api/routers/config.py                                 679    679   0.00%   3-1829
+services/api/routers/conversations.py                           45     45   0.00%   13-118
+services/api/routers/custom_agents.py                          186    186   0.00%   7-351
+services/api/routers/custom_integrations.py                     50     50   0.00%   9-141
+services/api/routers/detection_rules.py                         92     92   0.00%   3-263
+services/api/routers/extensions.py                              20     20   0.00%   8-56
+services/api/routers/federation.py                              89     89   0.00%   9-208
+services/api/routers/findings.py                                87     87   0.00%   10-201
+services/api/routers/ingestion.py                              211    211   0.00%   12-469
+services/api/routers/jira_export.py                             97     97   0.00%   7-237
+services/api/routers/llm_providers.py                          168    168   0.00%   8-317
+services/api/routers/local_services.py                          99     99   0.00%   14-243
+services/api/routers/mcp.py                                    219    219   0.00%   9-528
+services/api/routers/orchestrator.py                           257    257   0.00%   8-651
+services/api/routers/overview.py                                14     14   0.00%   3-29
+services/api/routers/processes.py                                9      9   0.00%   11-35
+services/api/routers/reasoning.py                               63     63   0.00%   3-214
+services/api/routers/skills.py                                 156    156   0.00%   9-315
+services/api/routers/storage_status.py                          97     97   0.00%   7-290
+services/api/routers/timeline.py                                54     54   0.00%   3-163
+services/api/routers/triage.py                                  10     10   0.00%   3-35
+services/api/routers/users.py                                  241    241   0.00%   7-634
+services/api/routers/vstrike.py                                120    120   0.00%   13-299
+services/api/triage_read.py                                    182    182   0.00%   9-471
+services/daemon/__init__.py                                     10      7  30.00%   11-19
+services/daemon/config.py                                      160     78  51.25%   118-246, 249-250
+services/daemon/intent.py                                      213    213   0.00%   14-425
+services/daemon/kafka_ingestor.py                               81     81   0.00%   12-141
+services/daemon/main.py                                        150    150   0.00%   3-255
+services/daemon/metrics.py                                     125    125   0.00%   11-254
+services/daemon/orchestrator.py                               1135   1135   0.00%   12-2529
+services/daemon/plan_generator.py                               59     59   0.00%   3-125
+services/daemon/poller.py                                      446    446   0.00%   18-939
+services/daemon/probes.py                                       83     83   0.00%   14-246
+services/daemon/processor.py                                   529    529   0.00%   3-1048
+services/daemon/responder.py                                   192    192   0.00%   3-398
+services/daemon/sandbox_poller.py                              183    183   0.00%   14-317
+services/daemon/sandbox_submitter.py                           186    186   0.00%   20-324
+services/daemon/scheduler.py                                   227    227   0.00%   3-495
+services/daemon/shared_intel.py                                 44     44   0.00%   8-107
+services/daemon/threat_feed_poller.py                          167    167   0.00%   11-349
+services/daemon/vendor_errors.py                                54     54   0.00%   8-103
+services/daemon/workdir.py                                      95     95   0.00%   3-131
+services/mcp_runner/catalog.py                                  81     81   0.00%   14-142
+services/mcp_runner/main.py                                    113    113   0.00%   12-202
+services/mcp_runner/supervisor.py                              210    210   0.00%   10-335
+services/medic/__main__.py                                       5      5   0.00%   1-9
+services/medic/api/decisions.py                                169    169   0.00%   8-258
+services/medic/api/history.py                                   78     78   0.00%   10-125
+services/medic/api/ready.py                                     34     34   0.00%   10-59
+services/medic/api/server.py                                   231    231   0.00%   16-386
+services/medic/api/status.py                                    49     49   0.00%   8-150
+services/medic/app/cli.py                                      253    253   0.00%   3-528
+services/medic/app/config.py                                   123    123   0.00%   3-229
+services/medic/app/gap.py                                       42     42   0.00%   10-74
+services/medic/app/heartbeat.py                                 67     67   0.00%   8-147
+services/medic/app/policy_probe.py                              34     34   0.00%   12-63
+services/medic/app/watchdog.py                                  48     48   0.00%   8-88
+services/medic/app/wiring.py                                   103    103   0.00%   11-195
+services/medic/engine/__init__.py                                3      3   0.00%   7-15
+services/medic/engine/core.py                                  365    365   0.00%   15-575
+services/medic/engine/evaluate.py                              233    233   0.00%   8-346
+services/medic/engine/history.py                                80     80   0.00%   8-133
+services/medic/engine/loader.py                                 56     56   0.00%   7-92
+services/medic/engine/suppress.py                               62     62   0.00%   13-119
+services/medic/engine/upgrade.py                                64     64   0.00%   13-99
+services/medic/redact/__init__.py                                3      3   0.00%   8-20
+services/medic/redact/choke.py                                  92     92   0.00%   8-142
+services/medic/redact/rules.py                                 406    406   0.00%   33-609
+services/medic/redact/secret_names.py                            1      1   0.00%   7
+services/medic/router/__init__.py                               65     65   0.00%   13-148
+services/medic/sensors/__init__.py                               6      6   0.00%   3-17
+services/medic/sensors/base.py                                  98     98   0.00%   9-202
+services/medic/sensors/bus.py                                   40     40   0.00%   11-74
+services/medic/sensors/containers.py                           214    214   0.00%   12-335
+services/medic/sensors/gateway.py                              213    213   0.00%   20-376
+services/medic/sensors/http_ready.py                            71     71   0.00%   27-142
+services/medic/sensors/pipeline.py                              66     66   0.00%   9-131
+services/medic/sensors/scheduler.py                            192    192   0.00%   22-366
+services/medic/sensors/sink.py                                  13     13   0.00%   3-25
+services/medic/store/__init__.py                                 3      3   0.00%   3-18
+services/medic/store/__main__.py                                22     22   0.00%   7-34
+services/medic/store/files.py                                   76     76   0.00%   9-147
+services/medic/store/writer.py                                 291    291   0.00%   13-515
+services/medic_dockerproxy/__main__.py                           3      3   0.00%   1-5
+services/medic_dockerproxy/cli.py                               72     72   0.00%   3-104
+services/medic_dockerproxy/logs.py                              24     24   0.00%   7-45
+services/medic_dockerproxy/policy.py                           103    103   0.00%   9-181
+services/medic_dockerproxy/project.py                           32     32   0.00%   10-88
+services/medic_dockerproxy/server.py                           170    170   0.00%   10-261
+services/medic_gateway/__main__.py                               3      3   0.00%   1-5
+services/medic_gateway/cli.py                                   90     90   0.00%   3-137
+services/medic_gateway/logs.py                                  57     57   0.00%   8-89
+services/medic_gateway/policy.py                                94     94   0.00%   8-198
+services/medic_gateway/server.py                               209    209   0.00%   9-303
+services/medic_gateway/session.py                              130    130   0.00%   9-182
+services/worker/__init__.py                                      1      1   0.00%   6
+services/worker/__main__.py                                      8      8   0.00%   1-15
+services/worker/jobs.py                                        119    119   0.00%   4-240
+-------------------------------------------------------------------------------------------
+TOTAL                                                        48374  43170  10.76%
+
+74 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 260 passed, 6 skipped, 2 warnings in 359.59s (0:05:59) ============

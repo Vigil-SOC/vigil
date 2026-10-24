@@ -1,0 +1,29 @@
+E       assert [('ip', "198.51.100.1']")] == [('ip', '198....98.51.100.2')]
+E         
+E         At index 0 diff: ('ip', "198.51.100.1']") != ('ip', '198.51.100.1')
+E         Right contains one more item: ('ip', '198.51.100.2')
+E         Use -v to get more diff
+E       assert [('domain', "...l.example/x")] == [('domain', '...l.example/x')]
+E         
+E         At index 0 diff: ('domain', "evil.example' AND url:value = 'http://evil.example/x") != ('domain', 'evil.example')
+E         Right contains one more item: ('url', 'http://evil.example/x')
+E         Use -v to get more diff
+E       assert [('url', "http://a/it\\'s")] == [('url', "http://a/it's")]
+E         
+E         At index 0 diff: ('url', "http://a/it\\'s") != ('url', "http://a/it's")
+E         Use -v to get more diff
+E       AssertionError: assert [] == [('ip', '1.2.3.4')]
+E         
+E         Right contains one more item: ('ip', '1.2.3.4')
+E         Use -v to get more diff
+E       assert ["ip:198.51.100.1']"] == ['ip:198.51.1...198.51.100.2']
+E         
+E         At index 0 diff: "ip:198.51.100.1']" != 'ip:198.51.100.1'
+E         Right contains one more item: 'ip:198.51.100.2'
+E         Use -v to get more diff
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_parse_stix_indicator_reads_every_equality_comparison[[ipv4-addr:value = '198.51.100.1'] OR [ipv4-addr:value = '198.51.100.2']-expected0]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_parse_stix_indicator_reads_every_equality_comparison[[domain-name:value = 'evil.example' AND url:value = 'http://evil.example/x']-expected1]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_parse_stix_indicator_reads_every_equality_comparison[[url:value = 'http://a/it\\'s']-expected4]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_parse_stix_indicator_reads_every_equality_comparison[[url:value MATCHES 'k = ' AND ipv4-addr:value = '1.2.3.4']-expected6]
+FAILED tests/unit/integrations/test_threat_report_parse.py::test_stix_observation_or_mints_clean_keys
+============ 5 failed, 3 passed, 27 deselected in 161.09s (0:02:41) ============
