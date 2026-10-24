@@ -282,14 +282,7 @@ export interface paths {
          */
         get: operations["get_api_ai_decisions"];
         put?: never;
-        /**
-         * Create Ai Decision
-         * @description Log an AI decision for tracking and feedback.
-         *
-         *     This endpoint should be called by AI agents whenever they make a decision
-         *     that could benefit from human review and feedback.
-         */
-        post: operations["post_api_ai_decisions"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -333,26 +326,6 @@ export interface paths {
          *     Provides metrics on AI accuracy, agreement rates, and time saved.
          */
         get: operations["get_api_ai_decisions_stats"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ai/decisions/{decision_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Ai Decision
-         * @description Get a specific AI decision by ID.
-         */
-        get: operations["get_api_ai_decisions_decision_id"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1614,7 +1587,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_cases_metrics_summary"];
         put?: never;
@@ -2693,10 +2667,7 @@ export interface paths {
         };
         /**
          * Get General Config
-         * @description Get general application settings.
-         *
-         *     Returns:
-         *         General configuration
+         * @description Get general application settings; 503 when the database read fails.
          */
         get: operations["get_api_config_general"];
         put?: never;
@@ -2834,9 +2805,7 @@ export interface paths {
         put?: never;
         /**
          * Set Orchestrator Config
-         * @description Set orchestrator configuration. Persists settings AND syncs the
-         *     runtime enabled flag used by GET /api/orchestrator/status (which
-         *     NavigationRail uses to show/hide the Auto Ops tab).
+         * @description Set orchestrator configuration.
          *
          *     A ``profiles`` field on the body is ignored. The stored object stays the
          *     flat keys; no profile name is written.
@@ -3033,10 +3002,7 @@ export interface paths {
         };
         /**
          * Get Theme Config
-         * @description Get theme configuration.
-         *
-         *     Returns:
-         *         Theme configuration
+         * @description Get theme configuration; 503 when the database read fails.
          */
         get: operations["get_api_config_theme"];
         put?: never;
@@ -3093,7 +3059,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Conversation
-         * @description Hard-delete a conversation (messages cascade).
+         * @description Hide the conversation and drop its messages. Ledger rows stay.
          */
         delete: operations["delete_api_conversations_conversation_id"];
         options?: never;
@@ -4565,7 +4531,7 @@ export interface paths {
         put?: never;
         /**
          * Kill Investigation
-         * @description Kill a specific running investigation.
+         * @description Fail one live investigation; a finished or unknown one is left as it is.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_kill"];
         delete?: never;
@@ -4717,9 +4683,8 @@ export interface paths {
          * Get Processes
          * @description State of the agent layer and the SOC daemon.
          *
-         *     ``agent_layer`` and ``daemon`` are each ``running``, ``unhealthy``,
-         *     ``not_running`` or ``unknown``; ``agent_layer`` is ``no_token`` when this
-         *     server has no AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         *     ``agent_layer`` is ``no_token`` when this server has no
+         *     AGENT_INTERNAL_TOKEN. Up to five seconds old.
          */
         get: operations["get_api_processes"];
         put?: never;
@@ -5983,7 +5948,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_v1_cases_metrics_summary"];
         put?: never;
@@ -7519,8 +7485,9 @@ export interface components {
             /**
              * Status
              * @default open
+             * @enum {string}
              */
-            status: string;
+            status: "new" | "open" | "investigating" | "closed";
             /** Title */
             title: string;
         };
@@ -8236,7 +8203,7 @@ export interface components {
             /** Priority */
             priority?: string | null;
             /** Status */
-            status?: string | null;
+            status?: ("new" | "open" | "investigating" | "closed") | null;
             /** Title */
             title?: string | null;
         };
@@ -8465,64 +8432,6 @@ export interface components {
             type: string;
         };
         /**
-         * CreateAIDecisionRequest
-         * @description Request model for creating an AI decision log.
-         */
-        CreateAIDecisionRequest: {
-            /**
-             * Agent Id
-             * @description ID of the agent making the decision
-             */
-            agent_id: string;
-            /**
-             * Case Id
-             * @description Associated case ID
-             */
-            case_id?: string | null;
-            /**
-             * Confidence Score
-             * @description AI's confidence (0-1)
-             */
-            confidence_score: number;
-            /**
-             * Decision Id
-             * @description Unique decision identifier
-             */
-            decision_id: string;
-            /**
-             * Decision Metadata
-             * @description Additional metadata
-             */
-            decision_metadata?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Decision Type
-             * @description Type of decision (e.g., 'triage', 'escalate', 'isolate')
-             */
-            decision_type: string;
-            /**
-             * Finding Id
-             * @description Associated finding ID
-             */
-            finding_id?: string | null;
-            /**
-             * Reasoning
-             * @description AI's reasoning for the decision
-             */
-            reasoning: string;
-            /**
-             * Recommended Action
-             * @description Recommended action
-             */
-            recommended_action: string;
-            /**
-             * Workflow Id
-             * @description Workflow ID
-             */
-            workflow_id?: string | null;
-        };
-        /**
          * CreateUserRequest
          * @description Create user request.
          */
@@ -8649,8 +8558,6 @@ export interface components {
         };
         /** CustomWorkflowCreate */
         CustomWorkflowCreate: {
-            /** Created By */
-            created_by?: string | null;
             /** Description */
             description: string;
             /** Name */
@@ -9158,11 +9065,6 @@ export interface components {
          */
         GeneralConfig: {
             /**
-             * Auto Start Sync
-             * @default false
-             */
-            auto_start_sync: boolean;
-            /**
              * Enable Keyring
              * @default false
              */
@@ -9172,11 +9074,6 @@ export interface components {
              * @default true
              */
             show_notifications: boolean;
-            /**
-             * Theme
-             * @default dark
-             */
-            theme: string;
         };
         /**
          * GenerateAgentRequest
@@ -9773,18 +9670,34 @@ export interface components {
             case_id?: string | null;
             /** Checkpoint Class */
             checkpoint_class?: string | null;
-            /** Checkpoint Id */
+            /**
+             * Checkpoint Id
+             * @description The run's own checkpoint this item answers, so a page reading the run can tell it was answered.
+             */
             checkpoint_id?: string | null;
-            /** Created At */
+            /**
+             * Created At
+             * @description '' when nothing recorded when it started waiting.
+             */
             created_at: string;
-            /** Hypotheses */
+            /**
+             * Hypotheses
+             * @description A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.
+             */
             hypotheses?: components["schemas"]["NeedsYouHypothesis"][];
-            /** Kind */
-            kind: string;
+            /**
+             * Kind
+             * @description parked: a hunt stopped at a limit, answered with Keep going on its case; its source_id is the run id.
+             * @enum {string}
+             */
+            kind: "approval" | "checkpoint" | "parked";
             /** Reason */
             reason: string;
-            /** Reversibility */
-            reversibility: string;
+            /**
+             * Reversibility
+             * @enum {string}
+             */
+            reversibility: "reversible" | "irreversible";
             /** Run Id */
             run_id?: string | null;
             /** Source Id */
@@ -9979,7 +9892,7 @@ export interface components {
         };
         /**
          * PendingActionResponse
-         * @description Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+         * @description Frozen shape of an approval action.
          *
          *     Value types are permissive where the underlying dataclass carries open JSON
          *     (evidence, parameters, execution_result); the key set is the promise.
@@ -10127,6 +10040,19 @@ export interface components {
             count: number;
             /** Priority */
             priority: string;
+        };
+        /** ProcessStates */
+        ProcessStates: {
+            /**
+             * Agent Layer
+             * @enum {string}
+             */
+            agent_layer: "running" | "unhealthy" | "not_running" | "unknown" | "no_token";
+            /**
+             * Daemon
+             * @enum {string}
+             */
+            daemon: "running" | "unhealthy" | "not_running" | "unknown";
         };
         /**
          * ProfileUpdateRequest
@@ -10503,6 +10429,28 @@ export interface components {
         ServerEnabledRequest: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** SetupStep */
+        SetupStep: {
+            /** Done */
+            done: boolean;
+            /** Href */
+            href: string;
+            /** Id */
+            id: string;
+            /** State Line */
+            state_line: string;
+            /** Title */
+            title: string;
+        };
+        /** SetupStepsResponse */
+        SetupStepsResponse: {
+            /** Alerts Exist */
+            alerts_exist: number;
+            /** Demo Enabled */
+            demo_enabled: boolean;
+            /** Steps */
+            steps: components["schemas"]["SetupStep"][];
         };
         /** SkillCaseResult */
         SkillCaseResult: {
@@ -11290,8 +11238,6 @@ export interface components {
              * @default false
              */
             approval_required: boolean;
-            /** Conditions */
-            conditions?: unknown | null;
             /**
              * Expected Output
              * @default
@@ -11301,8 +11247,6 @@ export interface components {
             name: string;
             /** Order */
             order?: number | null;
-            /** Parallel Group */
-            parallel_group?: string | null;
             /** Phase Id */
             phase_id?: string | null;
             /**
@@ -11312,11 +11256,6 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
-            /**
-             * Timeout Seconds
-             * @default 300
-             */
-            timeout_seconds: number | null;
             /** Tools */
             tools?: string[];
         };
@@ -11327,8 +11266,6 @@ export interface components {
         WorkflowRunCancelRequest: {
             /** Reason */
             reason: string;
-            /** Rejected By */
-            rejected_by?: string | null;
         };
         /**
          * WorkflowRunResumeRequest
@@ -12029,41 +11966,6 @@ export interface operations {
             };
         };
     };
-    post_api_ai_decisions: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateAIDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "get_api_ai_decisions_pending-feedback": {
         parameters: {
             query?: {
@@ -12120,39 +12022,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIDecisionStatsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_ai_decisions_decision_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                decision_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIDecisionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -16712,7 +16581,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SetupStepsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -19638,9 +19507,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ProcessStates"];
                 };
             };
             /** @description Validation Error */

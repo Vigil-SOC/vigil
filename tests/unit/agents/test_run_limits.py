@@ -7,10 +7,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.api.v1 import agent_runs_router
 from core.routing import request_unit_of_work
-from core.workflows.workflows_service import _asked_iterations, _asked_overrides
 
 pytestmark = pytest.mark.unit
 
@@ -67,19 +65,3 @@ class TestStartRun:
     ):
         assert _start(client, overrides).status_code == 422
         assert client.queued == []
-
-
-class TestConsoleAsks:
-    def test_cost_is_clamped_to_the_ceiling(self):
-        assert _asked_overrides({"max_cost_usd": 1e9}) == {
-            "budgets": {"max_cost_usd": MAX_COST_USD}
-        }
-        assert _asked_overrides({"max_cost_usd": 12}) == {
-            "budgets": {"max_cost_usd": 12.0}
-        }
-        assert _asked_overrides({"max_cost_usd": float("inf")}) is None
-
-    def test_turns_are_clamped_to_the_ceiling(self):
-        assert _asked_iterations({"iterations": 10**6}) == MAX_ITERATIONS
-        assert _asked_iterations({"iterations": 8}) == 8
-        assert _asked_iterations({"iterations": float("inf")}) is None

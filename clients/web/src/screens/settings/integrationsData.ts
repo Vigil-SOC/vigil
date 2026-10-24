@@ -7,6 +7,9 @@ export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'splunk-selfhosted': 'splunk',
 }))
 
+const INTEGRATION_TO_SERVER = new Map([...SERVER_TO_INTEGRATION].map(([server, id]) => [id, server]))
+export const serverForIntegration = (id: string) => INTEGRATION_TO_SERVER.get(id) ?? id
+
 export function getIntegrationForServer(serverName: string): IntegrationMetadata | undefined {
   // Both servers share descriptor id `splunk`. The official card is configured
   // by SPLUNK_MCP_URL; the name fallback would hand it the REST form.

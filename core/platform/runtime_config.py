@@ -67,7 +67,7 @@ def _fetch_db_config() -> Optional[Dict[str, Any]]:
     global _db_failing
     try:
         svc = get_config_service()
-        config = svc.get_system_config(_CONFIG_KEY) or {}
+        config = svc.read_system_config(_CONFIG_KEY) or {}
     except Exception as exc:  # noqa: BLE001
         if not _db_failing:
             _db_failing = True

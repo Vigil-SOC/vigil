@@ -6,6 +6,7 @@ Defines all tools available to Claude via function calling
 # The recall tool's signature is declared with the rest of the recall contract
 # (#729) rather than transcribed here: a schema that drifts from the handler's
 # arguments fails as "no history", which reads as an entity nobody has looked at.
+from core.cases.case_status import CASE_STATUSES
 from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL
 
@@ -316,7 +317,7 @@ DEEPTEMPO_FINDING_TOOLS = [
             "properties": {
                 "status": {
                     "type": "string",
-                    "enum": ["open", "in_progress", "closed"],
+                    "enum": list(CASE_STATUSES),
                     "description": "Filter by case status",
                 },
                 "severity": {
@@ -379,6 +380,7 @@ DEEPTEMPO_FINDING_TOOLS = [
                 },
                 "status": {
                     "type": "string",
+                    "enum": list(CASE_STATUSES),
                     "description": "Initial status",
                     "default": "new",
                 },
@@ -423,7 +425,7 @@ DEEPTEMPO_FINDING_TOOLS = [
                 },
                 "status": {
                     "type": "string",
-                    "enum": ["open", "investigating", "resolved", "closed"],
+                    "enum": list(CASE_STATUSES),
                 },
                 "priority": {
                     "type": "string",

@@ -72,9 +72,9 @@ describe("a person who started a run stays bound to it", () => {
   it("journals the principal and hands it to the harness", async () => {
     const runId = randomUUID();
     const seen: (string | undefined)[] = [];
-    const build: HarnessFactory = (kind, spec, state, memory, seed, principal) => {
+    const build: HarnessFactory = (spec, state, memory, seed, principal) => {
       seen.push(principal);
-      return scriptedHarness(CONCLUDE)(kind, spec, state, memory, seed);
+      return scriptedHarness(CONCLUDE)(spec, state, memory, seed);
     };
     const state = new InProcessState();
 

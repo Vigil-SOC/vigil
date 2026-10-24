@@ -35,12 +35,6 @@ interface AlertSource {
   count: number
 }
 
-interface ResponseTimePoint {
-  period: string
-  avgTime: number
-  target: number
-}
-
 interface AffectedEntity {
   entity: string
   count: number
@@ -73,7 +67,6 @@ export interface AnalyticsData {
   timeSeriesData: TimeSeriesPoint[]
   severityDistribution: SeverityBucket[]
   topSources: AlertSource[]
-  responseTimeData: ResponseTimePoint[]
   affectedEntities: AffectedEntity[]
   attackHeatmap: HeatmapCell[]
   mitreTechniques: MitreTechnique[]
