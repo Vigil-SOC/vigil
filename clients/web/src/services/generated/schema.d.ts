@@ -1556,7 +1556,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_cases_metrics_summary"];
         put?: never;
@@ -2776,9 +2777,7 @@ export interface paths {
         put?: never;
         /**
          * Set Orchestrator Config
-         * @description Set orchestrator configuration. Persists settings AND syncs the
-         *     runtime enabled flag used by GET /api/orchestrator/status (which
-         *     NavigationRail uses to show/hide the Auto Ops tab).
+         * @description Set orchestrator configuration.
          *
          *     A ``profiles`` field on the body is ignored. The stored object stays the
          *     flat keys; no profile name is written.
@@ -4659,9 +4658,8 @@ export interface paths {
          * Get Processes
          * @description State of the agent layer and the SOC daemon.
          *
-         *     ``agent_layer`` and ``daemon`` are each ``running``, ``unhealthy``,
-         *     ``not_running`` or ``unknown``; ``agent_layer`` is ``no_token`` when this
-         *     server has no AGENT_INTERNAL_TOKEN. Up to five seconds old.
+         *     ``agent_layer`` is ``no_token`` when this server has no
+         *     AGENT_INTERNAL_TOKEN. Up to five seconds old.
          */
         get: operations["get_api_processes"];
         put?: never;
@@ -5925,7 +5923,8 @@ export interface paths {
          *         end_date: End date filter
          *
          *     Returns:
-         *         Summary metrics including total cases, open cases, etc.
+         *         Case totals; open means any status other than ``closed``, and
+         *         ``critical_cases`` counts open critical cases only.
          */
         get: operations["get_api_v1_cases_metrics_summary"];
         put?: never;
@@ -9041,11 +9040,6 @@ export interface components {
          */
         GeneralConfig: {
             /**
-             * Auto Start Sync
-             * @default false
-             */
-            auto_start_sync: boolean;
-            /**
              * Enable Keyring
              * @default false
              */
@@ -9055,11 +9049,6 @@ export interface components {
              * @default true
              */
             show_notifications: boolean;
-            /**
-             * Theme
-             * @default dark
-             */
-            theme: string;
         };
         /**
          * GenerateAgentRequest
@@ -10026,6 +10015,19 @@ export interface components {
             count: number;
             /** Priority */
             priority: string;
+        };
+        /** ProcessStates */
+        ProcessStates: {
+            /**
+             * Agent Layer
+             * @enum {string}
+             */
+            agent_layer: "running" | "unhealthy" | "not_running" | "unknown" | "no_token";
+            /**
+             * Daemon
+             * @enum {string}
+             */
+            daemon: "running" | "unhealthy" | "not_running" | "unknown";
         };
         /**
          * ProfileUpdateRequest
@@ -11181,8 +11183,6 @@ export interface components {
              * @default false
              */
             approval_required: boolean;
-            /** Conditions */
-            conditions?: unknown | null;
             /**
              * Expected Output
              * @default
@@ -11192,8 +11192,6 @@ export interface components {
             name: string;
             /** Order */
             order?: number | null;
-            /** Parallel Group */
-            parallel_group?: string | null;
             /** Phase Id */
             phase_id?: string | null;
             /**
@@ -11203,11 +11201,6 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
-            /**
-             * Timeout Seconds
-             * @default 300
-             */
-            timeout_seconds: number | null;
             /** Tools */
             tools?: string[];
         };
@@ -19422,9 +19415,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ProcessStates"];
                 };
             };
             /** @description Validation Error */
