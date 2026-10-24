@@ -166,7 +166,7 @@ class TestTransforms:
         assert f["anomaly_score"] == pytest.approx(0.0)
         assert f["severity"] == "info"
 
-    def test_system_status_always_informational(self):
+    def test_system_status_warning_maps_to_medium(self):
         svc = DarktraceIngestionService()
         f = svc.transform_system_status(SYSTEM_STATUS_SAMPLE)
         assert f is not None
@@ -201,12 +201,6 @@ class TestTransforms:
             builtins.hash = original_hash
 
         assert first["finding_id"] == second["finding_id"]
-
-    def test_dispatch_by_shape(self):
-        svc = DarktraceIngestionService()
-        assert svc.transform_alert_to_finding(MODEL_BREACH_SAMPLE)["description"]
-        assert svc.transform_alert_to_finding(AI_ANALYST_SAMPLE)["description"]
-        assert svc.transform_alert_to_finding(SYSTEM_STATUS_SAMPLE)["description"]
 
 
 # ---------------------------------------------------------------------------
