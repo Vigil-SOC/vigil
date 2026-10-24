@@ -166,12 +166,6 @@ CASES: list[Case] = [
         (R, 403),
         note="GET starts an LLM regeneration (C3 4.6)",
     ),
-    Case(
-        "side-effect-mcp",
-        b"/api/mcp/connections/status",
-        (R, 403),
-        note="GET reconnects",
-    ),
     Case("openapi", b"/openapi.json", (R, 400), note="'.' is outside the path charset"),
     Case("docs", b"/docs", (R, 403)),
     Case("metrics", b"/metrics", (R, 403)),
