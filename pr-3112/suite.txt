@@ -1,0 +1,8 @@
+
+ Test Files  23 passed (23)
+      Tests  229 passed (229)
+   Start at  17:06:26
+   Duration  42.45s (transform 20.59s, setup 34.12s, import 36.09s, tests 103.98s, environment 78.79s)
+
+tsc=0
+eslint=0
