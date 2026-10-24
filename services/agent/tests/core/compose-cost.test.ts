@@ -81,7 +81,7 @@ async function run(runId: string, costs: readonly (number | null)[]): Promise<Te
   const mirror = recordingMirror();
   for (const cost of costs) await spend(state, runId, cost);
 
-  const report = await runCompose(answering()("compose", spec, state), { run_id: runId, spec, mirror });
+  const report = await runCompose(answering()(spec, state), { run_id: runId, spec, mirror });
   expect(report.status).toBe("completed");
   expect(mirror.terminals).toHaveLength(1);
   return mirror.terminals[0] as TerminalResult;
@@ -118,11 +118,11 @@ describe("a phase tool this deployment lacks", () => {
   it("journals a blind spot at open, once across a resume, and still runs the phase", async () => {
     const state = new InProcessState<ComposeKinds>();
     const spec = withMissing();
-    const first = await runCompose(answering()("compose", spec, state), { run_id: "run-gap", spec });
+    const first = await runCompose(answering()(spec, state), { run_id: "run-gap", spec });
     expect(first.status).toBe("completed");
     expect(await gaps(state)).toEqual([{ capability: "okta_get_user", reason: "Report: no tool in this deployment answers okta_get_user", phase_id: "only" }]);
 
-    await runCompose(answering()("compose", spec, state), { run_id: "run-gap", spec });
+    await runCompose(answering()(spec, state), { run_id: "run-gap", spec });
     expect(await gaps(state)).toHaveLength(1);
     expect(composeProjection("run-gap", await state.read("run-gap"))).toMatchObject({ run_kind: "compose", unbound: [{ capability: "okta_get_user" }] });
   });
@@ -141,7 +141,7 @@ describe("a phase's tool call", () => {
     const harness = scriptedHarness([
       { calls: [{ tool: "lookup", args: "{}" }] },
       ...Array.from({ length: 6 }, () => ({ emit: { summary: "done", handoff: "nothing follows" } })),
-    ])("compose", spec, new InProcessState<ComposeKinds>());
+    ])(spec, new InProcessState<ComposeKinds>());
     harness.dispatch = {
       invoke: async (_tool, _args, _signal, agentId) => {
         credited.push(agentId);

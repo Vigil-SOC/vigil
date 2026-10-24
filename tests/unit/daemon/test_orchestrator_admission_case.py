@@ -266,7 +266,7 @@ async def test_schedule_row_is_caseless():
 
 
 @pytest.mark.asyncio
-async def test_detection_plan_never_says_case_pending(tmp_path):
+async def test_detection_brief_names_the_minted_case(tmp_path):
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig(dry_run=True)
     orch.workdir = WorkdirManager(str(tmp_path))
@@ -285,11 +285,10 @@ async def test_detection_plan_never_says_case_pending(tmp_path):
     )
 
     record = orch._save_investigation.call_args[0][0]
-    plan = orch.workdir.read_file(record["investigation_id"], "plan.md")
+    brief = orch.workdir.read_file(record["investigation_id"], "context.md")
     mint = orch._save_investigation.call_args.kwargs["mint_case"]
-    assert "case_id: pending" not in plan
     assert record["case_id"].startswith("case-")
-    assert f"case_id: {record['case_id']}" in plan
+    assert f"case_id: {record['case_id']}" in brief
     assert mint.case_id == record["case_id"]
 
 

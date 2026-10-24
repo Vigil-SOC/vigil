@@ -292,7 +292,9 @@ def get_breached_cases():
 
 @router.get("/summary", response_model=CaseMetricsSummaryResponse)
 def get_summary(
-    start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
+    session: UnitOfWorkSession,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ):
     """
     Get summary metrics for cases.
@@ -302,16 +304,35 @@ def get_summary(
         end_date: End date filter
 
     Returns:
-        Summary metrics including total cases, open cases, etc.
+        Case totals; open means any status other than ``closed``, and
+        ``critical_cases`` counts open critical cases only.
     """
-    metrics = metrics_service.get_dashboard_metrics(start_date, end_date)
+    rows = (
+        session.query(Case.status, Case.priority, func.count())
+        .filter(and_(*_created_window(start_date, end_date)))
+        .group_by(Case.status, Case.priority)
+        .all()
+    )
+
+    status_breakdown: Dict[str, int] = {}
+    priority_breakdown: Dict[str, int] = {}
+    open_cases = critical_cases = 0
+    for status, priority, count in rows:
+        status_breakdown[status] = status_breakdown.get(status, 0) + count
+        priority_breakdown[priority] = priority_breakdown.get(priority, 0) + count
+        if status != CLOSED:
+            open_cases += count
+            if priority == "critical":
+                critical_cases += count
+
+    total_cases = sum(status_breakdown.values())
     return {
-        "total_cases": metrics.get("total_cases", 0),
-        "open_cases": metrics.get("open_cases_count", 0),
-        "resolved_cases": metrics.get("resolved_cases_count", 0),
-        "critical_cases": metrics.get("priority_breakdown", {}).get("critical", 0),
-        "status_breakdown": metrics.get("status_breakdown", {}),
-        "priority_breakdown": metrics.get("priority_breakdown", {}),
+        "total_cases": total_cases,
+        "open_cases": open_cases,
+        "resolved_cases": total_cases - open_cases,
+        "critical_cases": critical_cases,
+        "status_breakdown": status_breakdown,
+        "priority_breakdown": priority_breakdown,
     }
 
 
