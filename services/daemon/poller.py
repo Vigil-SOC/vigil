@@ -103,6 +103,11 @@ class PollState:
     last_poll_time: Optional[datetime] = None
 
     def lookback_minutes(self, interval_seconds: int) -> int:
+        # After a successful poll, look back to that timestamp (rounded up one
+        # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
+        # Cap at 60 minutes: an uncapped window can exceed the ~110s job deadline,
+        # fail, and then retry the same window forever. First run keeps the
+        # fixed interval window.
         if self.last_poll_time is None:
             return max(interval_seconds // 60 + 1, 5)
         elapsed = int((utcnow() - self.last_poll_time).total_seconds() // 60) + 1

@@ -192,7 +192,7 @@ async def test_a_store_that_keeps_failing_is_dropped_and_splunk_requeues(
 
 @pytest.mark.asyncio
 async def test_crowdstrike_and_elastic_requeue_inside_their_lookback(monkeypatch):
-    """Both re-read max(interval // 60 + 1, 5) minutes, so an unmarked id returns."""
+    """Both re-read their lookback before the first success, so an unmarked id returns."""
     poller = _poller(monkeypatch)
     processor = _processor(monkeypatch)
     ingest = _Ingest(_down() + _down())
