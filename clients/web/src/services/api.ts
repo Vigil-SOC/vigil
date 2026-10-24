@@ -387,9 +387,9 @@ export interface MetricsWindow {
 export const caseMetricsApi = {
   getSummary: (params: MetricsWindow) =>
     api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary', { params }),
-  getMTTD: (params: MetricsWindow & { priority?: string }) =>
+  getMTTD: (params: MetricsWindow) =>
     api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
-  getMTTR: (params: MetricsWindow & { priority?: string }) =>
+  getMTTR: (params: MetricsWindow) =>
     api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
   getByPriority: (params: MetricsWindow) =>
     api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority', { params }),
