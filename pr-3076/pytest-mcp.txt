@@ -1,0 +1,2 @@
+0.11s call     unit/api/test_integration_test_endpoint.py::test_failed_connect_stamps_failure
+======================= 117 passed, 1 warning in 34.90s ========================
