@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from core.ingestion.dedup import RedisDedupSet
-from core.ingestion.kafka_config import KafkaConfig
+from core.ingestion.kafka_config import KafkaConfig, apply_kafka_settings
 from core.ingestion.kafka_consumer_service import KafkaConsumerService, idle_stats
 
 logger = logging.getLogger(__name__)
@@ -56,18 +56,7 @@ class KafkaIngestor:
                 logger.info("Kafka config sync from DB recovered")
             if not db_cfg or not isinstance(db_cfg, dict):
                 return
-            if "enabled" in db_cfg:
-                self.config.enabled = bool(db_cfg["enabled"])
-            if "bootstrap_servers" in db_cfg:
-                self.config.bootstrap_servers = str(db_cfg["bootstrap_servers"])
-            if "consumer_group" in db_cfg:
-                self.config.consumer_group = str(db_cfg["consumer_group"])
-            if "topics" in db_cfg and isinstance(db_cfg["topics"], list):
-                self.config.topics = [str(t) for t in db_cfg["topics"]]
-            if "auto_offset_reset" in db_cfg:
-                self.config.auto_offset_reset = str(db_cfg["auto_offset_reset"])
-            if "security_protocol" in db_cfg:
-                self.config.security_protocol = str(db_cfg["security_protocol"])
+            apply_kafka_settings(self.config, db_cfg)
         except Exception as e:
             if not self._config_sync_failing:
                 self._config_sync_failing = True

@@ -62,7 +62,7 @@ async def test_splunk_federation_adapter_does_not_block_the_loop():
     svc.search = _blocking(SearchResult([]))
 
     with patch.object(adapter, "_get_service", return_value=svc):
-        _, ticks = await _tick_while(adapter.fetch(since=None, cursor={}, max_items=10))
+        _, ticks = await _tick_while(adapter.fetch(cursor={}, max_items=10))
 
     assert ticks >= MIN_TICKS, (
         f"loop served only {ticks} ticks during a {BLOCK_SECONDS}s Splunk "
@@ -104,7 +104,7 @@ async def test_crowdstrike_federation_adapter_does_not_block_the_loop():
     svc.get_detections = _blocking([])
 
     with patch.object(adapter, "_get_service", return_value=svc):
-        _, ticks = await _tick_while(adapter.fetch(since=None, cursor={}, max_items=10))
+        _, ticks = await _tick_while(adapter.fetch(cursor={}, max_items=10))
 
     assert ticks >= MIN_TICKS, (
         f"loop served only {ticks} ticks during a {BLOCK_SECONDS}s "

@@ -166,6 +166,24 @@ class TestTransforms:
         assert f["anomaly_score"] == pytest.approx(0.0)
         assert f["severity"] == "info"
 
+    @pytest.mark.parametrize(
+        "group_score,severity",
+        [(0.5, "info"), (1, "info"), (2, "info"), (50, "medium"), (100, "critical")],
+    )
+    def test_ai_analyst_group_score_is_0_100(self, group_score, severity):
+        svc = DarktraceIngestionService()
+        f = svc.transform_ai_analyst({"uuid": "gs", "groupScore": group_score})
+        assert f["anomaly_score"] == pytest.approx(group_score / 100)
+        assert f["severity"] == severity
+
+    @pytest.mark.parametrize(
+        "score,anomaly", [(0.8, 0.8), (80, 0.8), (None, 0.5), ("junk", 0.5)]
+    )
+    def test_ai_analyst_score_fallback_guesses_scale(self, score, anomaly):
+        svc = DarktraceIngestionService()
+        f = svc.transform_ai_analyst({"uuid": "sc", "score": score})
+        assert f["anomaly_score"] == pytest.approx(anomaly)
+
     def test_system_status_always_informational(self):
         svc = DarktraceIngestionService()
         f = svc.transform_system_status(SYSTEM_STATUS_SAMPLE)
