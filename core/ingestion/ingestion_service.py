@@ -466,10 +466,12 @@ class IngestionService:
             for finding in findings:
                 batch.append(finding)
                 if len(batch) >= batch_size:
-                    self._ingest_finding_batch(batch)
-                    batch = []
+                    full, batch = batch, []
+                    self._ingest_finding_batch(full)
         finally:
-            self._ingest_finding_batch(batch)
+            # Swap before flushing so a batch that raised is not sent again.
+            pending, batch = batch, []
+            self._ingest_finding_batch(pending)
 
     def ingest_case(self, case_data: Dict[str, Any]) -> bool:
         """
