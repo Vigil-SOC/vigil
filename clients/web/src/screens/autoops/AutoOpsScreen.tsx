@@ -5,6 +5,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost, fmtCost } from '../../shared/cost'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
 import { StatusBadge, PrioBadge } from './statusBadge'
+import { canKill, canRestart } from './investigationStatus'
 import InvestigationDetail from './InvestigationDetail'
 
 interface KpiDef {
@@ -233,8 +234,6 @@ function InvestigationRow({
   onWake: (id: string) => void
   onKill: (id: string) => void
 }) {
-  const canWake = ['failed', 'completed'].includes(inv.status)
-  const canKill = ['executing', 'assigned'].includes(inv.status)
   return (
     <tr className="clickable" onClick={() => onSelect(inv.investigation_id)}>
       <td><span className="id-cell">{inv.investigation_id}</span></td>
@@ -258,12 +257,12 @@ function InvestigationRow({
           <button title="View details" onClick={(e) => { e.stopPropagation(); onSelect(inv.investigation_id) }}>
             <Icon name="eye" />
           </button>
-          {canWake && (
+          {canRestart(inv.status) && (
             <button title="Restart" disabled={busy === `wake:${inv.investigation_id}`} onClick={(e) => { e.stopPropagation(); onWake(inv.investigation_id) }}>
               <Icon name="play" />
             </button>
           )}
-          {canKill && (
+          {canKill(inv.status) && (
             <button title="Kill" disabled={busy === `kill:${inv.investigation_id}`} onClick={(e) => { e.stopPropagation(); onKill(inv.investigation_id) }}>
               <Icon name="trash" />
             </button>

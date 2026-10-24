@@ -15,7 +15,7 @@ import { GatewayExhausted } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
 import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
-import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
+import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
 import {
   LEASE_TTL_MS,
@@ -117,29 +117,6 @@ function answersFor(): Answers {
 function announceFor(): Announce {
   const url = process.env["VIGIL_RUNS_URL"];
   return url === undefined || url === "" ? noAnnounce : httpAnnounce({ url, token: internalToken() });
-}
-
-// Where a handoff goes the moment it is journaled: the mirror's own channel, so a
-// case reaches IR when the hunt escalates rather than when it eventually stops.
-// Off unless a deployment says where to mirror to, same as the terminal it precedes.
-// Answers whether it landed, so the loop can ask again for one that did not.
-function handoffFor(): (runId: string, handoff: TerminalHandoff) => Promise<boolean> {
-  const mirror = mirrorFor();
-  return (runId, handoff) => mirror.handoff(runId, handoff);
-}
-
-// Where the alerts a hunt's evidence cites go: the case the hunt was started on links
-// them. Same channel and same fail-open answer as the handoff.
-function findingsFor(): (runId: string, findingIds: readonly string[]) => Promise<boolean> {
-  const mirror = mirrorFor();
-  return (runId, findingIds) => mirror.findings(runId, findingIds);
-}
-
-// How far a hunt has got, for the case list. Fail-open: a push that did not land is
-// overwritten by the next iteration's.
-function progressFor(): (runId: string, iteration: number, max_cost_usd: number) => Promise<void> {
-  const mirror = mirrorFor();
-  return async (runId, iteration, max_cost_usd) => void (await mirror.progress(runId, { iteration, max_cost_usd }));
 }
 
 // What the console was last told of each open run, so a sweep that finds a hunt
@@ -250,13 +227,26 @@ async function drive(
   }
   if (entry.workflow === "hunt") {
     const harness = build(spec, as<HuntKinds>(state), undefined, seed);
-    // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
-    // so its case must not wait on a terminal that may be far off or never come.
-    const onHandoff = kind === "hunt" ? handoffFor() : undefined;
+    const mirror = mirrorFor();
+    // Only a forward hunt files its handoffs and findings early: it escalates and
+    // keeps hunting, so its case must not wait on a terminal that may be far off
+    // or never come.
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
-    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, ...named, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, onProgress: progressFor(), signal });
+    const done = await runHunt(harness, {
+      run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, ...named,
+      announce: announceFor(),
+      ...(kind === "hunt"
+        ? {
+            onHandoff: (runId: string, handoff) => mirror.handoff(runId, handoff),
+            onFindings: (runId: string, findingIds) => mirror.findings(runId, findingIds),
+          }
+        : {}),
+      onCost,
+      onProgress: async (runId, iteration, max_cost_usd) => void (await mirror.progress(runId, { iteration, max_cost_usd })),
+      signal,
+    });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {
@@ -385,14 +375,14 @@ async function stopBecauseItCannotSucceed(
     // abandon() does not report this error, so every kind, compose included, hears
     // budget_exhausted once. The spec-error path leaves compose to abandon().
     await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason, summary: "" });
-    await reap(leases, job.run_id);
+    await leases.finish(job.run_id);
     return true;
   }
 
   if (!(error instanceof SpecError)) return false;
   // SpecError is not only about specs: a lead that emits no decision throws one, often
   // because a checkpoint is open. A run waiting on a person must never be killed.
-  if (await waitingOnSomeone(state, job.run_id)) return false;
+  if (parkedFor(await state.read(job.run_id)) !== null) return false;
 
   const reason = `its spec cannot be built: ${error.message}`;
   await state.append(job.run_id, [
@@ -403,7 +393,7 @@ async function stopBecauseItCannotSucceed(
   if (job.run_kind !== "compose") {
     await mirrorFor().terminal(job.run_id, { outcome: "failed", reason, summary: "" });
   }
-  await reap(leases, job.run_id);
+  await leases.finish(job.run_id);
   return true;
 }
 
@@ -450,7 +440,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
       });
     }
     told.delete(job.run_id);
-    await reap(leases, job.run_id);
+    await leases.finish(job.run_id);
     return;
   }
   // A hunt out of turns or budget has stopped, so its row says it is waiting and
@@ -502,7 +492,7 @@ async function abandonIfParkedOut(state: State, leases: Leases, job: RunJob, spe
   // This path returns before settle, so nobody reported it: the console showed the
   // run paused forever and its question stayed in the approvals queue for good.
   await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
-  await reap(leases, job.run_id);
+  await leases.finish(job.run_id);
   return true;
 }
 
@@ -533,14 +523,8 @@ async function abandonIfStalled(state: State, leases: Leases, job: RunJob): Prom
     { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "abandoned", reason } },
   ]);
   await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
-  await reap(leases, job.run_id);
+  await leases.finish(job.run_id);
   return true;
-}
-
-// Whether anything is waiting on a person. Read fresh, since the callers reach here
-// from a catch holding events that may predate the checkpoint.
-async function waitingOnSomeone(state: State, runId: string): Promise<boolean> {
-  return parkedFor(await state.read(runId)) !== null;
 }
 
 // How long the oldest unanswered checkpoint has been waiting, or null when none
@@ -556,22 +540,6 @@ function parkedFor(events: readonly AgentEvent<Record<never, never>>[]): number 
   const raised = open.map((one) => Date.parse(one.ts)).filter((at) => Number.isFinite(at));
   return raised.length === 0 ? null : Date.now() - Math.min(...raised);
 }
-
-// What a finished run leaves behind, which is less than the word suggests. Remote
-// dispatch is request and response with a timeout, so no far side holds work of
-// ours; dispatch events are journaled after their outcome rather than before it;
-// and the approval mirror ADR 0003 describes is not written by this layer yet. So
-// the lease row is the only thing to drop.
-//
-// Not the run's queued directives. Deleting them would take away the record of an
-// instruction that never reached the run, which #634 is supposed to surface, and
-// journaling them first would mean appending after a terminal -- a property worth
-// less than the tidiness. agent_directives has no retention and neither does
-// agent_events: one reaper for both is its own job, as the ADR already says.
-async function reap(leases: Leases, runId: string): Promise<void> {
-  await leases.finish(runId);
-}
-
 
 // A run whose claim has lapsed, put back on the queue. Two cases reach here and
 // neither needs telling apart: a worker died holding the run, or a parked run's

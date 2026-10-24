@@ -226,6 +226,47 @@ describe("who may call it", () => {
   });
 });
 
+describe("a /chat/stream body that is not a chat request", () => {
+  const turns = [{ role: "user", content: "hi" }];
+  for (const [name, body] of [
+    ["null", null],
+    ["an empty object", {}],
+    ["a list", [asked()]],
+    ["no run_id", { turns, system_prompt: "", config: CONFIG }],
+    ["an empty run_id", asked({ run_id: "" })],
+    ["no turns", { run_id: RUN, system_prompt: "", config: CONFIG }],
+    ["turns that are a string", { ...asked(), turns: "nope" }],
+    ["a turn with an unknown role", { ...asked(), turns: [{ role: "system", content: "hi" }] }],
+    ["a turn with no content", { ...asked(), turns: [{ role: "user" }] }],
+    ["no system_prompt", { run_id: RUN, turns, config: CONFIG }],
+    ["a config that is not text", { ...asked(), config: 42 }],
+    ["a principal that is not text", { ...asked(), principal: { sub: "alice" } }],
+    ["an unknown origin", { ...asked(), origin: "cron" }],
+  ] as const) {
+    it(`is refused with 400 before any stream opens: ${name}`, async () => {
+      await listen([{ content: "ok" }]);
+      const res = await post(body);
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).toBe("application/json");
+      expect(await state.read(RUN)).toEqual([]);
+    });
+  }
+
+  it("still streams the request the API sends, every optional field set", async () => {
+    await listen([{ content: "ok" }]);
+    const res = await post({
+      ...asked(),
+      parent_run_id: HUNT,
+      principal: "a.signed.jwt",
+      actor: "agent:chat",
+      origin: "person",
+      agent_id: "malware-analyst",
+    });
+    expect(res.status).toBe(200);
+    expect(framesIn(await res.text())).toEqual([{ type: "text", content: "ok" }]);
+  });
+});
+
 describe("replaying what the hunt lead was shown", () => {
   // The route is the live test: the recorded hunt goes in through the store, the
   // report comes back over HTTP, and it says what recall-replay.test.ts says.

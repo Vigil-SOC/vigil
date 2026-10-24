@@ -37,6 +37,7 @@ IN_FLIGHT_INVESTIGATION_STATUSES = (
     "executing",
     "waiting_approval",
 )
+FINISHED_INVESTIGATION_STATUSES = ("completed", "failed")
 # A run with no ``Investigation`` row (``/hunt``) has three live-ish words of its
 # own. The case reads them as a running run ``executing`` and a held one ``paused``.
 RUN_LIVE_STATE = {"running": "executing", "paused": "paused"}
