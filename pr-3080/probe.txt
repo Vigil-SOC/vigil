@@ -1,0 +1,10 @@
+create: {
+  "error": "boom"
+}
+list: {
+  "error": "boom"
+}
+bad type: {
+  "error": "'nope' is not a valid ActionType"
+}
+has __version__: False
