@@ -27,18 +27,13 @@ import type { IntegrationMetadata } from '../../config/integrationSchema'
 export type Phase = 'loading' | 'ready' | 'error'
 
 export interface GeneralConfig {
-  auto_start_sync: boolean
   show_notifications: boolean
   enable_keyring: boolean
-  /** preserved round-trip (setGeneral requires it) — not edited in the UI */
-  theme: string
 }
 
 const DEFAULT_GENERAL: GeneralConfig = {
-  auto_start_sync: false,
   show_notifications: false,
   enable_keyring: false,
-  theme: 'dark',
 }
 
 export function useGeneralSettings() {
@@ -58,10 +53,8 @@ export function useGeneralSettings() {
         if (cancelled) return
         const d = (res.data || {}) as Partial<GeneralConfig>
         setConfig({
-          auto_start_sync: Boolean(d.auto_start_sync),
           show_notifications: Boolean(d.show_notifications),
           enable_keyring: Boolean(d.enable_keyring),
-          theme: d.theme || 'dark',
         })
         setPhase('ready')
       })

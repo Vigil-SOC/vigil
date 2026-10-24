@@ -555,9 +555,7 @@ export const configApi = {
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
-    auto_start_sync: boolean
     show_notifications: boolean
-    theme: string
     enable_keyring: boolean
   }) => api.post('/config/general', data),
   

@@ -9071,11 +9071,6 @@ export interface components {
          */
         GeneralConfig: {
             /**
-             * Auto Start Sync
-             * @default false
-             */
-            auto_start_sync: boolean;
-            /**
              * Enable Keyring
              * @default false
              */
@@ -9085,11 +9080,6 @@ export interface components {
              * @default true
              */
             show_notifications: boolean;
-            /**
-             * Theme
-             * @default dark
-             */
-            theme: string;
         };
         /**
          * GenerateAgentRequest
