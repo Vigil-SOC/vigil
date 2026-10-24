@@ -235,7 +235,9 @@ describe('Integrations: Connected table', () => {
       data: { statuses: [{ name: 'github', status: 'running', enabled: true }] },
     } as never)
     renderSection()
-    await screen.findByRole('tab', { name: /Connected/ })
+    // The tab is labelled "Connected" while the table is still loading, and
+    // "Connected 1" only once Github is in it.
+    await screen.findByRole('tab', { name: 'Connected 1' })
     expect(row('Github').getByText('—')).toHaveAttribute('title', 'Never tested')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
