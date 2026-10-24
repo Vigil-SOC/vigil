@@ -44,6 +44,12 @@ function open(props: Partial<React.ComponentProps<typeof IntegrationWizard>> = {
 describe('IntegrationWizard drawer', () => {
   beforeEach(() => test.mockReset())
 
+  it('closes on Escape', () => {
+    const { onClose } = open()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('empty: an integration with no fields has nothing to ask for and no secret copy', () => {
     open({ integration: bare, existingConfig: {}, secretsSet: {} })
     expect(screen.queryByLabelText('Domain')).toBeNull()
