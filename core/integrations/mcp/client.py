@@ -271,7 +271,6 @@ class MCPClient:
         # Servers held back because the install has not set them up (rules not
         # fetched), keyed to the reason. Retried once that clears.
         self.last_setup_required: Dict[str, str] = {}
-        self._last_retry_at: Dict[str, float] = {}
 
     async def connect_to_server(
         self,
@@ -533,6 +532,12 @@ class MCPClient:
         Returns a dict ``{server_name: connected_bool}`` recording what
         we actually tried this call — the common case is an empty dict.
         """
+        # Defensive init — mirrors connect_to_server's compat shim.
+        if not hasattr(self, "_last_retry_at"):
+            self._last_retry_at: Dict[str, float] = {}
+        if not hasattr(self, "last_missing_credentials"):
+            return {}
+
         import time
 
         now = time.monotonic()
@@ -544,7 +549,7 @@ class MCPClient:
             name
             for name, missing in list(self.last_missing_credentials.items())
             if missing
-        ] + list(self.last_setup_required)
+        ] + list(getattr(self, "last_setup_required", {}))
         for server_name in candidates:
             server = self.mcp_service.servers.get(server_name)
             if server is None:
