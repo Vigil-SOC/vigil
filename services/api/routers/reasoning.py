@@ -214,38 +214,3 @@ def get_interaction(session_id: str, interaction_id: str):
         if row is None:
             raise HTTPException(status_code=404, detail="Interaction not found")
         return LLMInteractionLogSchema.dump(row)
-
-
-@router.get("/investigation/{investigation_id}/interactions")
-def list_investigation_interactions(
-    investigation_id: str,
-    limit: int = Query(500, ge=1, le=2000),
-    offset: int = Query(0, ge=0),
-):
-    """List interactions for an investigation (orchestrator detail view)."""
-    db_manager = get_db_manager()
-    with db_manager.session_scope() as session:
-        stmt = (
-            select(LLMInteractionLog)
-            .where(LLMInteractionLog.investigation_id == investigation_id)
-            .order_by(LLMInteractionLog.created_at.asc())
-            .limit(limit)
-            .offset(offset)
-        )
-        rows = session.execute(stmt).scalars().all()
-        total = (
-            session.execute(
-                select(func.count(LLMInteractionLog.id)).where(
-                    LLMInteractionLog.investigation_id == investigation_id
-                )
-            ).scalar()
-            or 0
-        )
-
-        return {
-            "investigation_id": investigation_id,
-            "total": int(total),
-            "limit": limit,
-            "offset": offset,
-            "interactions": LLMInteractionLogSchema.dump_many(rows),
-        }

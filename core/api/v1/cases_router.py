@@ -14,6 +14,7 @@ Request schemas for the contract routes are defined here (they are part of the
 contract); the console router does not use them.
 """
 
+import logging
 from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -39,6 +40,7 @@ from core.cases.linked_entities import (
 )
 from core.deps import provide_workflows
 from core.findings.source_link import resolve_source_link
+from core.integrations.elastic.ingestion import ElasticIngestion
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
@@ -68,6 +70,8 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.workflows.workflows_service import WorkflowsService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 router.dependencies.append(permission_gate("cases.read"))
 
@@ -83,61 +87,38 @@ ROUTER_META = RouterMeta(
 data_service = DatabaseDataService()
 
 
-def _get_ingestion_service(source: str):
-    """Return the ingestion service for a given data source, or None."""
-    if source == "elastic":
-        try:
-            from core.integrations.elastic.ingestion import ElasticIngestion
-
-            return ElasticIngestion()
-        except Exception:
-            return None
-    # Future: add splunk, crowdstrike, etc.
-    return None
-
-
 async def _sync_upstream_status(case_id: str, new_status: str) -> None:
-    """Best-effort sync of case status to the upstream SIEM."""
-    import logging
-
-    _logger = logging.getLogger(__name__)
     try:
-        case = data_service.get_case(case_id)
-        if not case:
-            return
-        # Only sync findings that came from a SIEM with upstream support
-        finding_ids = case.get("finding_ids", [])
-        for fid in finding_ids:
-            finding = data_service.get_finding(fid)
-            if not finding:
-                continue
-            source = finding.get("data_source", "")
-            alert_id = (finding.get("metadata") or {}).get(f"{source}_alert_id") or (
-                finding.get("metadata") or {}
-            ).get("elastic_alert_id")
-            if not alert_id:
-                continue
-            # Lazy-load the right ingestion service
-            svc = _get_ingestion_service(source)
-            if svc is None:
-                continue
-            try:
-                await svc.update_upstream_alert_status(alert_id, new_status)
-                _logger.info(
-                    f"Synced status '{new_status}' to {source} alert {alert_id}"
-                )
-            except NotImplementedError:
-                pass
-            except Exception as exc:
-                _logger.warning(
-                    f"Failed to sync status to {source} alert {alert_id}: {exc}"
-                )
+        findings = data_service.get_findings_by_case(case_id)
     except Exception as exc:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            f"Upstream status sync error for case {case_id}: {exc}"
-        )
+        logger.warning("Upstream status sync error for case %s: %s", case_id, exc)
+        return
+    alert_ids = [
+        alert_id
+        for finding in findings
+        if (alert_id := (finding.get("metadata") or {}).get("elastic_alert_id"))
+    ]
+    if not alert_ids:
+        return
+    try:
+        svc = ElasticIngestion()
+    except Exception as exc:
+        logger.warning("Upstream status sync error for case %s: %s", case_id, exc)
+        return
+    for alert_id in alert_ids:
+        try:
+            synced = await svc.update_upstream_alert_status(alert_id, new_status)
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync status to elastic alert %s: %s", alert_id, exc
+            )
+            continue
+        if synced:
+            logger.info("Synced status '%s' to elastic alert %s", new_status, alert_id)
+        else:
+            logger.warning(
+                "Elastic did not accept status '%s' for alert %s", new_status, alert_id
+            )
 
 
 class CaseCreate(BaseModel):

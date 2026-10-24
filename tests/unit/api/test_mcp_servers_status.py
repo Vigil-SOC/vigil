@@ -1,7 +1,7 @@
 """GET /api/mcp/servers/status reports MCPClient session state, not the catalog."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -42,7 +42,6 @@ def test_status_route_reads_the_stubbed_client(client):
         },
         get_last_error=lambda name: {"virustotal": "connection refused"}.get(name),
         get_missing_credentials=lambda name: {"virustotal": ["VT_API_KEY"]}.get(name),
-        retry_dormant_if_ready=AsyncMock(),
         was_dialled=lambda name: True,
         held_for_setup=lambda name: False,
     )
@@ -66,7 +65,6 @@ def test_status_route_reads_the_stubbed_client(client):
         "status": "disconnected",
         "enabled": False,
     }
-    stub.retry_dormant_if_ready.assert_not_called()
 
 
 def test_status_route_reports_disconnected_when_the_client_is_missing(client):

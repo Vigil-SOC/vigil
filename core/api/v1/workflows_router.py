@@ -6,8 +6,7 @@ do". Everything else on the unversioned router in
 ``core/workflows/workflows_router.py`` is console/authoring/control:
 
 * custom-workflow CRUD and AI generation (authoring UI),
-* ``reload`` (a dev button),
-* ``execute`` / ``resume`` / ``cancel`` / ``narrate`` / ``delete`` and the
+* ``execute`` / ``cancel`` / ``narrate`` / ``delete`` and the
   workflow-run reads — these operate on *workflow runs*, which are the console
   history view of an execution. The frozen **run** contract is the agent run
   (``/api/agent-runs``), the engine record; a hunt is both an agent run and a
@@ -67,16 +66,6 @@ router = APIRouter()
 router.dependencies.append(permission_gate("automation.read"))
 
 ROUTER_META = RouterMeta(
-    # Additive, NOT legacy-mounted. The catalog read is GET /{workflow_id}, and
-    # the console router keeps sibling literals under /api/workflows (notably
-    # GET /workflows/custom, which looks like a {workflow_id}). A parameterised
-    # route and a literal are only order-safe inside ONE router; mounting this
-    # router's /{workflow_id} at /api/workflows as well would put them in two
-    # routers and make first-match depend on mount order — exactly what
-    # test_no_cross_router_path_shadowing forbids. So the frozen catalog lives
-    # only at /api/v1/workflows here, and the console's own GET /workflows and
-    # GET /workflows/{id} read the same catalog functions, staying in-router
-    # with /workflows/custom.
     prefix="/api/v1/workflows",
     tags=["workflows"],
     auth=Auth.REQUIRED,

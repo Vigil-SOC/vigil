@@ -1,7 +1,7 @@
-/* The trace and custody loads are best-effort: a failure leaves that section
-   empty rather than failing the whole detail view. */
+/* The custody load is best-effort: a failure leaves the Reasoning and Custody
+   tabs empty rather than failing the whole detail view. */
 import { useCallback, useEffect, useState } from 'react'
-import { orchestratorApi, reasoningApi } from '../../services/api'
+import { orchestratorApi } from '../../services/api'
 import type { Phase } from '../cases/useCases'
 
 interface ProposedAction {
@@ -36,6 +36,29 @@ export interface InvestigationDetailData {
   [k: string]: unknown
 }
 
+export interface Interaction {
+  interaction_id?: string
+  created_at?: string
+  model?: string
+  stop_reason?: string
+  has_thinking?: boolean
+  thinking_content?: string
+  response_content?: string
+  tool_calls?: { name?: string; input?: unknown }[]
+  tool_results?: { tool_use_id?: string; is_error?: boolean; content?: unknown }[]
+  input_tokens?: number
+  output_tokens?: number
+  cost_usd?: number
+  duration_ms?: number
+}
+
+export interface Coc {
+  investigation?: { created_at?: string; workflow_id?: string; trigger_type?: string; priority?: string }
+  logs?: { timestamp?: string; event_type?: string; details?: Record<string, unknown>; tokens_used?: number }[]
+  llm_interactions?: Interaction[]
+  otel_trace_id?: string
+}
+
 interface ApiErr {
   response?: { data?: { detail?: string } }
   message?: string
@@ -43,8 +66,7 @@ interface ApiErr {
 
 export function useInvestigationDetail(id: string | null) {
   const [detail, setDetail] = useState<InvestigationDetailData | null>(null)
-  const [reasoning, setReasoning] = useState<Record<string, unknown>[]>([])
-  const [coc, setCoc] = useState<Record<string, unknown> | null>(null)
+  const [coc, setCoc] = useState<Coc | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [bump, setBump] = useState(0)
@@ -53,14 +75,12 @@ export function useInvestigationDetail(id: string | null) {
   useEffect(() => {
     if (!id) {
       setDetail(null)
-      setReasoning([])
       setCoc(null)
       return
     }
     let cancelled = false
     setPhase('loading')
     setError(null)
-    setReasoning([])
     setCoc(null)
     ;(async () => {
       try {
@@ -76,12 +96,6 @@ export function useInvestigationDetail(id: string | null) {
         return
       }
       try {
-        const trace = await reasoningApi.listInvestigationInteractions(id, { limit: 500 })
-        if (!cancelled) setReasoning((trace?.interactions as Record<string, unknown>[]) || [])
-      } catch {
-        if (!cancelled) setReasoning([])
-      }
-      try {
         const c = await orchestratorApi.getChainOfCustody(id)
         if (!cancelled) setCoc(c.data)
       } catch {
@@ -93,5 +107,5 @@ export function useInvestigationDetail(id: string | null) {
     }
   }, [id, bump])
 
-  return { detail, reasoning, coc, phase, error, reload }
+  return { detail, coc, phase, error, reload }
 }

@@ -53,6 +53,15 @@ def _validate_integration_id(integration_id: str) -> str:
     return integration_id
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 class CustomIntegrationService:
     """Service for AI-powered custom integration generation."""
 
@@ -531,18 +540,18 @@ Only generate the JSON response when you have enough information to create a com
             )
 
         all_metadata = self._load_metadata()
+        _write_atomic(server_file, server_code)
+
+        init_file = self.custom_integrations_dir / "__init__.py"
+        if not init_file.exists():
+            init_file.write_text('"""Custom integrations directory."""\n')
+
         all_metadata[integration_id] = {
             **metadata,
             "created_at": datetime.now().isoformat(),
             "is_custom": True,
         }
         self._save_metadata(all_metadata)
-
-        server_file.write_text(server_code)
-
-        init_file = self.custom_integrations_dir / "__init__.py"
-        if not init_file.exists():
-            init_file.write_text('"""Custom integrations directory."""\n')
 
         logger.info(f"Saved custom integration '{integration_id}'")
 
@@ -559,12 +568,7 @@ Only generate the JSON response when you have enough information to create a com
         Returns:
             List of custom integration metadata
         """
-        try:
-            all_metadata = self._load_metadata()
-            return list(all_metadata.values())
-        except Exception as e:
-            logger.error(f"Error listing custom integrations: {e}")
-            return []
+        return list(self._load_metadata().values())
 
     async def delete_integration(self, integration_id: str) -> Dict[str, Any]:
         """Delete a custom integration."""
@@ -629,19 +633,8 @@ Only generate the JSON response when you have enough information to create a com
         """Load custom integrations metadata."""
         if not self.metadata_file.exists():
             return {}
-
-        try:
-            with open(self.metadata_file, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading metadata: {e}")
-            return {}
+        return json.loads(self.metadata_file.read_text())
 
     def _save_metadata(self, metadata: Dict[str, Any]) -> None:
         """Save custom integrations metadata."""
-        try:
-            with open(self.metadata_file, "w") as f:
-                json.dump(metadata, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving metadata: {e}")
-            raise
+        _write_atomic(self.metadata_file, json.dumps(metadata, indent=2))

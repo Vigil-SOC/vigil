@@ -7,7 +7,7 @@ import {
   stripOrchestratorProfiles,
   type OrchestratorConfig,
 } from '../settings/useSettings'
-import { errorText } from './errorText'
+import { errorText } from '../../shared/errorText'
 
 interface WorkflowRow {
   id: string

@@ -96,8 +96,7 @@ async def test_the_server_is_not_spawned_until_set_up(home):
         assert "not set up" in result["content"][0]["text"]
 
         _fetch_sigma(home)
-        with patch.object(client, "_RETRY_MIN_INTERVAL_S", 0):
-            await client.retry_dormant_if_ready()
+        await client.call_tool(SD, "search", {})
         spawn.assert_awaited()
 
 
@@ -116,7 +115,6 @@ def _stub(connected=None, dialled=(), held=()):
         get_missing_credentials=lambda name: None,
         was_dialled=lambda name: name in dialled,
         held_for_setup=lambda name: name in held,
-        retry_dormant_if_ready=AsyncMock(),
     )
 
 
@@ -281,19 +279,6 @@ async def test_saved_splunk_config_lets_the_server_connect(stored, spawn):
 
     spawn.assert_awaited_once()
     assert not client.get_missing_credentials(SPLUNK_SH)
-
-
-@pytest.mark.asyncio
-async def test_retry_connects_selfhosted_splunk_once_saved(stored, spawn):
-    client = _descriptor_client(SPLUNK_SH)
-    await client.connect_to_server(SPLUNK_SH)
-
-    with patch.object(client, "_RETRY_MIN_INTERVAL_S", 0):
-        assert await client.retry_dormant_if_ready() == {}
-        spawn.assert_not_called()
-        stored["splunk"] = SPLUNK_SAVED
-        assert set(await client.retry_dormant_if_ready()) == {SPLUNK_SH}
-    spawn.assert_awaited_once()
 
 
 @pytest.mark.asyncio

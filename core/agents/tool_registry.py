@@ -22,6 +22,7 @@ from core.cases.case_status import (
 )
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
+from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import (
     CALL_INTEGRATION_TOOL,
     FIND_INTEGRATION_TOOLS,
@@ -34,12 +35,6 @@ if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
 
 logger = logging.getLogger(__name__)
-
-try:
-    from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-except ImportError as exc:
-    logger.warning("Backend tool schemas unavailable: %s", exc)
-    BACKEND_TOOLS: Tuple[Dict[str, Any], ...] = ()
 
 # The integration tools are chat's alone (#1959), so they are not in ALL_TOOLS.
 # call_integration_tool is unwrapped by tools_router into the call it stands for.
@@ -113,10 +108,6 @@ def _compact(finding: Args, state: Optional[str] = None) -> Args:
 TOP_IPS = 10
 
 
-# Listing and searching differ only in the search filter and the default sort,
-# so one page query serves both rather than two that drift apart. The counts
-# cover every match, not the page, and come before it so a capped result keeps
-# them (#2312).
 def _compact_page(data: Any, findings: list) -> list:
     from core.findings.alert_outcomes import stored_finding_states
 
@@ -134,39 +125,6 @@ def _bad_state(state: Optional[str]) -> Optional[Args]:
     if state is None or state in FINDING_STATES:
         return None
     return {"error": f"state must be one of {', '.join(FINDING_STATES)}"}
-
-
-def _page(data: Any, args: Args, *, search: bool) -> Args:
-    filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
-    if (bad := _bad_state(filters["state"])) is not None:
-        return bad
-    if search:
-        filters["search_query"] = args.get("query", "")
-    limit = args.get("limit", 20)
-    offset = args.get("offset", 0)
-    counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
-    total = counts.pop("total")
-    findings = data.get_findings(
-        limit=limit,
-        offset=offset,
-        sort_by=args.get("sort_by", "anomaly_score" if search else "timestamp"),
-        sort_order=args.get("sort_order", "desc"),
-        **filters,
-    )
-    page = {
-        "total": total,
-        **counts,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(data, findings),
-    }
-    return {"query": filters["search_query"], **page} if search else page
-
-
-def _findings_stats(data: Any) -> Args:
-    summary = data.get_findings_summary()
-    return {"total_findings": summary.pop("total"), **summary}
 
 
 def _data():
@@ -220,12 +178,39 @@ def list_findings(
     }
 
 
+# The counts cover every match, not the page, and come before it so a capped
+# result keeps them (#2312).
 def search_findings(**args: Any) -> Args:
-    return _page(_data(), args, search=True)
+    filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
+    if (bad := _bad_state(filters["state"])) is not None:
+        return bad
+    filters["search_query"] = args.get("query", "")
+    limit = args.get("limit", 20)
+    offset = args.get("offset", 0)
+    data = _data()
+    counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
+    total = counts.pop("total")
+    findings = data.get_findings(
+        limit=limit,
+        offset=offset,
+        sort_by=args.get("sort_by", "anomaly_score"),
+        sort_order=args.get("sort_order", "desc"),
+        **filters,
+    )
+    return {
+        "query": filters["search_query"],
+        "total": total,
+        **counts,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total,
+        "findings": _compact_page(data, findings),
+    }
 
 
 def get_findings_stats(**_args: Any) -> Args:
-    return _findings_stats(_data())
+    summary = _data().get_findings_summary()
+    return {"total_findings": summary.pop("total"), **summary}
 
 
 def get_finding(*, finding_id: str) -> Any:
@@ -801,10 +786,7 @@ async def execute_backend_tool(
     if tool_name in _SECURITY_TOOLS:
         from core.detections.tools import get_security_detection_tools
 
-        handler = getattr(get_security_detection_tools(), tool_name, None)
-        if handler is None:
-            return {"error": f"Unknown tool: {tool_name}"}, True
-        return await handler(**args), True
+        return await getattr(get_security_detection_tools(), tool_name)(**args), True
 
     if tool_name in _INTEL_TOOLS:
         return _INTEL_TOOLS[tool_name](args), True

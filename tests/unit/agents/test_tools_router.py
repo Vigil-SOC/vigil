@@ -470,7 +470,7 @@ def closes(monkeypatch):
         yield object()
 
     monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
-    monkeypatch.setattr(vigil, "_service_session", _session)
+    monkeypatch.setattr(vigil, "service_session", _session)
     monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
     # nestor is allowed to close. The test is about whose name is recorded;

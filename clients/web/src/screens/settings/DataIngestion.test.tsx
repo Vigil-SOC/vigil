@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { DemoDataClear, StreamsCard, UploadCard } from './DataIngestion'
 import { configApi, ingestionApi, kafkaApi } from '../../services/api'
 
@@ -244,6 +244,25 @@ describe('streams and buckets', () => {
     renderPanel()
 
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
+  })
+
+  it('keeps an unsaved Kafka edit across the 5s status poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const persisted = { enabled: true, bootstrap_servers: 'old:9092', topics: ['t1'] }
+    vi.mocked(kafkaApi.getConfig).mockResolvedValue({ data: persisted } as never)
+    vi.mocked(kafkaApi.getStatus).mockResolvedValue({ data: { daemon_reachable: true, config: persisted } } as never)
+    try {
+      renderPanel()
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit Kafka' }))
+      fireEvent.change(await screen.findByDisplayValue('old:9092'), { target: { value: 'new:9093' } })
+      const polls = vi.mocked(kafkaApi.getStatus).mock.calls.length
+      await act(() => vi.advanceTimersByTimeAsync(5100))
+
+      expect(vi.mocked(kafkaApi.getStatus).mock.calls.length).toBeGreaterThan(polls)
+      expect(screen.getByDisplayValue('new:9093')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('opens the S3 form in place, with its save confirm, and closes it again', async () => {
