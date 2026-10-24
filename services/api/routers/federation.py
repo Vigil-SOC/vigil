@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from core.auth.permissions import permission_gate
 from core.federation import registry as fed_registry
 from core.federation import store as fed_store
+from core.federation.contract import FederationAdapter
 from core.federation.lag import source_collection_lag
 from core.federation.runner import request_poll_now
 from core.routing import Auth, RouterMeta
@@ -70,7 +71,7 @@ class FederationSourcePatch(BaseModel):
 
 
 def _enrich_with_adapter(
-    row: Dict[str, Any], adapter: fed_registry.FederationAdapter
+    row: Dict[str, Any], adapter: FederationAdapter
 ) -> Dict[str, Any]:
     """Merge live adapter state (is_configured, default_interval) into a row dict."""
     try:

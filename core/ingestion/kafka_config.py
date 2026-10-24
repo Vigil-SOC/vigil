@@ -48,3 +48,27 @@ class KafkaConfig:
             sasl_password=get_secret("KAFKA_SASL_PASSWORD") or None,
             ssl_ca_location=settings.kafka_ssl_ca_location or None,
         )
+
+
+def apply_kafka_settings(config: KafkaConfig, saved: dict) -> None:
+    """Overlay the ``kafka.settings`` row that PUT /api/kafka/config saves."""
+    if "enabled" in saved:
+        config.enabled = bool(saved["enabled"])
+    if "bootstrap_servers" in saved:
+        config.bootstrap_servers = str(saved["bootstrap_servers"])
+    if "consumer_group" in saved:
+        config.consumer_group = str(saved["consumer_group"])
+    if "topics" in saved and isinstance(saved["topics"], list):
+        config.topics = [str(t) for t in saved["topics"]]
+    if "auto_offset_reset" in saved:
+        config.auto_offset_reset = str(saved["auto_offset_reset"])
+    if "security_protocol" in saved:
+        config.security_protocol = str(saved["security_protocol"])
+    if "sasl_mechanism" in saved:
+        config.sasl_mechanism = saved["sasl_mechanism"] or None
+    if "sasl_username" in saved:
+        config.sasl_username = saved["sasl_username"] or None
+    if "max_poll_records" in saved:
+        config.max_poll_records = int(saved["max_poll_records"])
+    if "session_timeout_ms" in saved:
+        config.session_timeout_ms = int(saved["session_timeout_ms"])
