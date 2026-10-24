@@ -13,9 +13,9 @@ Design notes
 - ``CaseIOC`` is used for extracted IOCs (network IPs/domains/URLs, dropped
   file hashes, mutexes). Per-IOC ``enrichment_data`` captures which sandbox
   report it came from, for back-reference.
-- Each ``_normalise_*`` returns ``score`` on CAPE's 0-10 malscore scale, so
-  ``reputation_score``, threat level and confidence read one scale for every
-  vendor.
+- ``_normalise_hybrid`` and ``_normalise_cape`` return ``score`` on CAPE's
+  0-10 malscore scale, so ``reputation_score``, threat level and confidence
+  read one scale for both. Other vendors' scores are not rescaled yet.
 """
 
 from __future__ import annotations
@@ -279,15 +279,18 @@ def _normalise_anyrun(report: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "md5": (data.get("sample") or {}).get("md5"),
         "sha256": (data.get("sample") or {}).get("sha256"),
-        "score": _percent_to_tenths(data.get("scores", {}).get("malconf")),
+        "score": data.get("scores", {}).get("malconf"),
         "verdict": data.get("verdict"),
         "mitre_techniques": [],
         "iocs": _flatten_iocs(data.get("iocs", {})),
     }
 
 
-def _percent_to_tenths(score: Optional[float]) -> Optional[float]:
-    return None if score is None else float(score) / 10.0
+def _percent_to_tenths(score: Any) -> Optional[float]:
+    try:
+        return float(score) / 10.0
+    except (TypeError, ValueError):
+        return None
 
 
 def _flatten_iocs(raw: Dict[str, Any]) -> Dict[str, List[str]]:

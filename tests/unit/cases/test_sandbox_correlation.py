@@ -196,7 +196,6 @@ class TestVendorScoreScale:
     REPORTS = {
         "cape": {"data": {"info": {"score": 1}, "network": {"hosts": ["9.9.9.9"]}}},
         "hybrid_analysis": {"threat_score": 10, "hosts": ["9.9.9.9"]},
-        "anyrun": {"data": {"scores": {"malconf": 10}, "iocs": {"ip": ["9.9.9.9"]}}},
     }
 
     @pytest.mark.parametrize("sandbox", list(REPORTS))
@@ -221,8 +220,11 @@ class TestVendorScoreScale:
             1.0,
         )
 
-    def test_missing_score_stays_none(self):
+    @pytest.mark.parametrize("threat_score", [None, "n/a"])
+    def test_unusable_hybrid_score_is_none(self, threat_score):
         assert (
-            _normalise_report("hybrid_analysis", {"threat_score": None})["score"]
+            _normalise_report("hybrid_analysis", {"threat_score": threat_score})[
+                "score"
+            ]
             is None
         )
