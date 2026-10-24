@@ -1,0 +1,5 @@
+MCP surface: ON at /vigil/mcp. Vigil's own tools are reachable from the network.
+MCP surface: no credentials exist, so every request to /vigil/mcp will be refused. Mint one before a caller can use it.
+POST /vigil/mcp 401
+POST /vigil/mcp/ 401
+POST /mcp 403

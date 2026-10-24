@@ -1,0 +1,7 @@
+E       AssertionError: assert '/mcp' == '/vigil/mcp'
+E         
+E         - /vigil/mcp
+E         + /mcp
+ERROR    core.storage.connection:connection.py:799 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+E           TypeError: announce() takes 2 positional arguments but 3 were given
+======================= 2 failed, 18 deselected in 1.16s =======================
