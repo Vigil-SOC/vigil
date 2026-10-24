@@ -41,12 +41,12 @@ export function useCaseMetrics(days: number) {
     const dateParams = { start_date: start.toISOString(), end_date: end.toISOString() }
 
     Promise.all([
-      caseMetricsApi.getSummary(),
+      caseMetricsApi.getSummary(dateParams),
       caseMetricsApi.getMTTD(dateParams),
       caseMetricsApi.getMTTR(dateParams),
-      caseMetricsApi.getByPriority(),
-      caseMetricsApi.getByStatus(),
-      caseMetricsApi.getAnalystPerformance(),
+      caseMetricsApi.getByPriority(dateParams),
+      caseMetricsApi.getByStatus(dateParams),
+      caseMetricsApi.getAnalystPerformance(dateParams),
     ])
       .then(([sRes, mttdRes, mttrRes, priRes, statRes, anaRes]) => {
         if (cancelled) return

@@ -379,15 +379,24 @@ export const slaPoliciesApi = {
   
 }
 
+export interface MetricsWindow {
+  start_date: string
+  end_date: string
+}
+
 export const caseMetricsApi = {
-  getSummary: () => api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary'),
-  getMTTD: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
+  getSummary: (params: MetricsWindow) =>
+    api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary', { params }),
+  getMTTD: (params: MetricsWindow & { priority?: string }) =>
     api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
-  getMTTR: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
+  getMTTR: (params: MetricsWindow & { priority?: string }) =>
     api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
-  getByPriority: () => api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority'),
-  getByStatus: () => api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status'),
-  getAnalystPerformance: () => api.get('/cases/metrics/analyst-performance'),
+  getByPriority: (params: MetricsWindow) =>
+    api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority', { params }),
+  getByStatus: (params: MetricsWindow) =>
+    api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status', { params }),
+  getAnalystPerformance: (params: MetricsWindow) =>
+    api.get('/cases/metrics/analyst-performance', { params }),
 }
 
 export const caseSearchApi = {
