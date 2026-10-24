@@ -291,10 +291,14 @@ def missing_permission(user_id: str, permission: str, session=None) -> Optional[
     """
     if session is not None:
         return _missing(user_id, permission, session)
+    # A database this process cannot open is the same as the revision being
+    # absent. Unit tests point Postgres at an unreachable host.
+    from sqlalchemy.exc import SQLAlchemyError
+
     try:
         with unit_of_work() as owned:
             return _missing(user_id, permission, owned)
-    except RuntimeError:
+    except (RuntimeError, SQLAlchemyError):
         return _missing(user_id, permission, None)
 
 
