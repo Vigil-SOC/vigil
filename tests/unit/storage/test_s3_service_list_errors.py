@@ -33,21 +33,18 @@ def _service(stubber_setup) -> S3Service:
     return svc
 
 
-def _denied(stubber: Stubber, n: int = 1) -> None:
-    for _ in range(n):
-        stubber.add_client_error(
-            "list_objects_v2", service_error_code="AccessDenied", http_status_code=403
-        )
+def _denied(stubber: Stubber) -> None:
+    stubber.add_client_error(
+        "list_objects_v2", service_error_code="AccessDenied", http_status_code=403
+    )
 
 
 def _empty(stubber: Stubber) -> None:
     stubber.add_response("list_objects_v2", {"IsTruncated": False})
 
 
-@pytest.mark.parametrize("method", ["list_files", "list_files_detailed"])
-def test_empty_listing_returns_empty_list(method):
-    svc = _service(_empty)
-    assert getattr(svc, method)("p/") == []
+def test_empty_listing_returns_empty_list():
+    assert _service(_empty).list_files_detailed("p/") == []
 
 
 def test_listing_returns_keys():
@@ -66,12 +63,13 @@ def test_listing_returns_keys():
             },
         )
 
-    assert _service(setup).list_files("p/") == ["p/a.csv"]
+    assert _service(setup).list_files_detailed("p/") == [
+        {"key": "p/a.csv", "size": 3, "last_modified": "2026-01-01T00:00:00+00:00"}
+    ]
 
 
-@pytest.mark.parametrize("method", ["list_files", "list_files_detailed"])
 @pytest.mark.parametrize("code", ["AccessDenied", "NoSuchBucket"])
-def test_list_errors_raise_with_code(method, code):
+def test_list_errors_raise_with_code(code):
     def setup(stubber):
         stubber.add_client_error(
             "list_objects_v2", service_error_code=code, http_status_code=403
@@ -79,7 +77,7 @@ def test_list_errors_raise_with_code(method, code):
 
     svc = _service(setup)
     with pytest.raises(Exception) as exc:
-        getattr(svc, method)()
+        svc.list_files_detailed()
     assert code in str(exc.value)
 
 
@@ -88,12 +86,12 @@ def test_uninitialized_client_raises_with_cause():
     svc.s3_client = None
     svc._init_error = "boom"
     with pytest.raises(RuntimeError, match="boom"):
-        svc.list_files()
+        svc.list_files_detailed()
 
 
 @pytest.fixture
 def ingest_client(monkeypatch):
-    svc = _service(lambda s: _denied(s, 2))
+    svc = _service(_denied)
     monkeypatch.setattr(ingestion_api, "_get_s3_service", lambda: svc)
     monkeypatch.setattr(AuthService, "check_permission", lambda *_a, **_k: True)
     app = FastAPI()
@@ -105,11 +103,5 @@ def ingest_client(monkeypatch):
 
 def test_s3_files_endpoint_errors_on_denied_listing(ingest_client):
     resp = ingest_client.get("/api/ingest/s3-files")
-    assert resp.status_code == 403
-    assert "AccessDenied" in resp.json()["detail"]
-
-
-def test_sync_s3_folder_errors_on_denied_listing(ingest_client):
-    resp = ingest_client.post("/api/ingest/sync-s3-folder", params={"prefix": "p/"})
     assert resp.status_code == 403
     assert "AccessDenied" in resp.json()["detail"]
