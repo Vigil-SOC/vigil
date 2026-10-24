@@ -365,6 +365,19 @@ class TestRejectionLogging:
         assert "reason=missing_signature" in msgs[1]
         assert "bad" * 20 not in "".join(msgs)
 
+    @pytest.mark.parametrize("sig", [b"\xe9", b"sha256=\xe9abc"])
+    def test_non_ascii_signature_is_counted_401(self, app, sig):
+        c = TestClient(app, raise_server_exceptions=False)
+        r = c.post(
+            "/api/webhooks/darktrace/model-breach",
+            content=b"{}",
+            headers={"Content-Type": "application/json", "X-Darktrace-Signature": sig},
+        )
+        assert r.status_code == 401
+        assert wr.rejection_counts("darktrace/") == {
+            "darktrace/model-breach": {"bad_signature": 1}
+        }
+
     def test_no_secret_logged(self, monkeypatch, caplog):
         monkeypatch.delenv("DARKTRACE_WEBHOOK_SECRET", raising=False)
         app = FastAPI()

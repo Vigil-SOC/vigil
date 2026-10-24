@@ -274,3 +274,22 @@ def test_cloudy_rejections_are_logged_counted_and_distinguished(
         "bad_signature": 100,
         "disabled": 1,
     }
+
+
+def test_cloudy_non_ascii_signature_is_counted_401(gated_app, monkeypatch):
+    from core import webhook_rejections as wr
+
+    wr._counts.clear()
+    app, mod = gated_app
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: True)
+    monkeypatch.setattr(mod, "_get_secret", lambda: "s3cret")
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.post(
+        "/api/webhooks/cloudflare/cloudy",
+        content=b"{}",
+        headers={"Content-Type": "application/json", "X-Cloudflare-Signature": b"\xe9"},
+    )
+    assert r.status_code == 401
+    assert wr.rejection_counts("cloudflare/") == {
+        "cloudflare/cloudy": {"bad_signature": 1}
+    }
