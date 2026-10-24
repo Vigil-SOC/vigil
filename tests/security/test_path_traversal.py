@@ -69,7 +69,7 @@ def test_server_path_stays_in_base(tmp_path):
     assert (
         svc._server_path_for("custom-misp") == base.resolve() / "custom-misp_server.py"
     )
-    with pytest.raises(InvalidIntegrationIdError):
+    with pytest.raises(InvalidIntegrationIdError, match="escapes"):
         svc._server_path_for("evil")
 
 
