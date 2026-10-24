@@ -1,0 +1,4 @@
+0.14s call     unit/federation/test_crowdstrike_adapter.py::test_more_than_100_ids_are_all_summarised_across_id_pages_and_chunks
+0.12s call     security/test_route_permissions.py::test_a_write_route_without_a_permission_guard_is_on_the_reviewed_list
+0.10s setup    unit/federation/test_crowdstrike_adapter.py::test_query_returning_none_raises
+================== 169 passed, 1 warning in 64.90s (0:01:04) ===================

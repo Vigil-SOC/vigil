@@ -1,0 +1,18 @@
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 362 passed, 6 skipped, 2 warnings in 184.02s (0:03:04) ============
+tests/medic_compose/probe.py
+tests/medic_compose/test_compose_live.py
+tests/medic_compose/test_enable_live.py
+tests/security/test_route_permissions.py
+tests/security/__pycache__/test_route_permissions.cpython-312-pytest-9.1.1.pyc
+tests/unit/api/test_config_audit_actor.py
+tests/unit/api/__pycache__/test_config_audit_actor.cpython-312-pytest-9.1.1.pyc
+tests/unit/federation/test_federation.py
+/home/gray/Deeptempo/vigil/venv/bin/python: No module named ruff
+All done! ✨ 🍰 ✨
+2 files would be left unchanged.
+
+[exited with code 0]
