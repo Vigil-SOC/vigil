@@ -11,6 +11,10 @@ describe('errorText', () => {
     expect(errorText(undefined, 'FB')).toBe('FB')
   })
 
+  it('falls back when the message is not a string', () => {
+    expect(errorText({ message: 42 }, 'FB')).toBe('FB')
+  })
+
   it('skips a blank detail rather than showing an empty line', () => {
     expect(errorText({ response: { data: { detail: '   ' } } }, 'FB')).toBe('FB')
   })
