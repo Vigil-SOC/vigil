@@ -1,0 +1,8 @@
+0.01s setup    unit/integrations/test_cloudflare_integration.py::test_cloudy_non_ascii_signature_is_counted_401
+
+(4 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestRejectionLogging::test_non_ascii_signature_is_counted_401[\xe9]
+FAILED tests/unit/integrations/test_darktrace_webhook.py::TestRejectionLogging::test_non_ascii_signature_is_counted_401[sha256=\xe9abc]
+FAILED tests/unit/integrations/test_cloudflare_integration.py::test_cloudy_non_ascii_signature_is_counted_401
+====================== 3 failed, 33 deselected in 33.63s =======================
