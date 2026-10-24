@@ -148,8 +148,6 @@ GATED_ROUTES = [
     ),
     ("POST", "/api/ingest/upload", None, "findings.write"),
     ("POST", "/api/ingest/ingest-string", None, "findings.write"),
-    ("POST", "/api/ingest/sync-s3-folder", None, "findings.write"),
-    ("POST", "/api/ingest/sync-s3-folder", None, "cases.write"),
     ("POST", "/api/ingest/s3-file", {"key": "a.csv"}, "findings.write"),
 ]
 

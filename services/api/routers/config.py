@@ -27,6 +27,7 @@ from core.deps import (
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.credential_check import check_credentials
+from core.integrations.darktrace.darktrace_webhook_router import darktrace_enabled
 from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
@@ -1727,7 +1728,7 @@ def get_darktrace_config():
     try:
         config_service = get_config_service()
         value = config_service.get_system_config(DARKTRACE_SETTINGS_KEY) or {}
-        merged = {**DARKTRACE_DEFAULTS, **value}
+        merged = {**DARKTRACE_DEFAULTS, **value, "enabled": darktrace_enabled()}
         secret = get_secret("DARKTRACE_WEBHOOK_SECRET") or ""
         return {**merged, "configured": bool(secret)}
     except Exception as e:

@@ -8,7 +8,7 @@ from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 logger = logging.getLogger(__name__)
 
-# Errors list_files / list_files_detailed can raise; callers catch these.
+# Errors list_files_detailed can raise; callers catch these.
 S3_LIST_ERRORS = (BotoCoreError, ClientError, RuntimeError)
 
 
@@ -76,56 +76,6 @@ class S3Service:
         if not self.s3_client:
             raise RuntimeError(f"S3 client not initialized: {self._init_error}")
         return self.s3_client
-
-    def test_connection(self) -> tuple[bool, str]:
-        """
-        Test S3 connection.
-
-        Returns:
-            Tuple of (success, message)
-        """
-        if not self.s3_client:
-            return False, "S3 client not initialized"
-
-        try:
-            # Try to list bucket contents (head_bucket is lighter but list_objects_v2 gives better error)
-            self.s3_client.head_bucket(Bucket=self.bucket_name)
-            return True, f"Successfully connected to bucket: {self.bucket_name}"
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "Unknown")
-            if error_code == "404":
-                return False, f"Bucket '{self.bucket_name}' not found"
-            elif error_code == "403":
-                return (
-                    False,
-                    f"Access denied to bucket '{self.bucket_name}'. Check your credentials and permissions.",
-                )
-            else:
-                return False, f"Error connecting to S3: {error_code} - {str(e)}"
-        except NoCredentialsError:
-            return False, "AWS credentials not found. Please configure credentials."
-        except Exception as e:
-            return False, f"Unexpected error: {str(e)}"
-
-    def list_files(self, prefix: str = "") -> List[str]:
-        """
-        List files in the bucket with optional prefix.
-
-        Args:
-            prefix: Prefix to filter files (e.g., "findings/" or "data/")
-
-        Returns:
-            List of file keys (empty only if the listing succeeded and found nothing)
-
-        Raises:
-            S3_LIST_ERRORS: if the listing fails (e.g. AccessDenied, NoSuchBucket)
-        """
-        paginator = self._require_client().get_paginator("list_objects_v2")
-        files = []
-        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-            for obj in page.get("Contents", []):
-                files.append(obj["Key"])
-        return files
 
     def list_files_detailed(self, prefix: str = "") -> List[Dict[str, Any]]:
         """

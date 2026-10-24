@@ -47,14 +47,9 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 
-# Importing findings is findings.write. A folder sync can also import cases
-# from JSON, so it needs cases.write as well. Upload, string, and single-file
+# Importing findings is findings.write. Upload, string, and single-file
 # routes ask for cases.write only when the payload can create cases.
 _FINDINGS_WRITE = [permission_gate("findings.write")]
-_FINDINGS_AND_CASES = [
-    permission_gate("findings.write"),
-    permission_gate("cases.write"),
-]
 
 MAX_UPLOAD_SIZE_BYTES = get_settings().max_upload_size_mb * 1024 * 1024
 
@@ -234,80 +229,6 @@ async def ingest_from_string(
     )
     success, message = summarize_stats(stats)
     return IngestionStats(**stats, success=success, message=message)
-
-
-@router.post(
-    "/sync-s3-folder", response_model=IngestionStats, dependencies=_FINDINGS_AND_CASES
-)
-def sync_s3_folder(prefix: Optional[str] = Query(None)):
-    """
-    Discover and ingest all supported files from an S3 prefix.
-
-    Scans the given prefix (or the configured parquet_prefix) and auto-detects
-    file types by extension:
-      .parquet -> supported parquet ingestion
-      .csv     -> CSV finding ingestion
-      .json    -> JSON finding/case ingestion
-      .jsonl / .ndjson -> JSON-Lines finding ingestion
-
-    Unsupported file types are skipped.
-
-    Args:
-        prefix: S3 key prefix (folder) to scan. Overrides the configured
-                parquet_prefix if provided.
-
-    Returns:
-        Ingestion statistics
-    """
-    s3 = _get_s3_service()
-    if s3 is None:
-        raise HTTPException(
-            status_code=400,
-            detail="S3 is not configured. Please configure S3 in Settings first.",
-        )
-
-    if prefix is None:
-        from core.storage.config_service import get_config_service
-
-        config_service = get_config_service()
-        s3_config = config_service.get_integration_config("s3") or {}
-        prefix = s3_config.get("parquet_prefix", "")
-
-    logger.info(f"Starting S3 folder sync with prefix='{prefix}'")
-
-    ingestion_service = IngestionService()
-    try:
-        stats = ingestion_service.ingest_s3_folder(s3_service=s3, prefix=prefix)
-    except S3_LIST_ERRORS as e:
-        raise _s3_list_http_error(e) from e
-
-    success, summary = summarize_stats(stats)
-
-    prefix = []
-    fp = stats.get("files_processed", 0)
-    fs = stats.get("files_skipped", 0)
-    if fp > 0:
-        prefix.append(f"Processed {fp} file(s)")
-    if fs > 0:
-        prefix.append(f"Skipped {fs} unsupported file(s)")
-
-    if not prefix and summary == "No data imported":
-        message = "No supported files found or no data imported"
-    else:
-        message = ". ".join(prefix + [summary])
-
-    return IngestionStats(
-        findings_total=stats.get("findings_total", 0),
-        findings_imported=stats.get("findings_imported", 0),
-        findings_skipped=stats.get("findings_skipped", 0),
-        findings_errors=stats.get("findings_errors", 0),
-        cases_total=stats.get("cases_total", 0),
-        cases_imported=stats.get("cases_imported", 0),
-        cases_skipped=stats.get("cases_skipped", 0),
-        cases_errors=stats.get("cases_errors", 0),
-        success=success,
-        message=message,
-    )
 
 
 def _s3_list_http_error(exc: Exception) -> HTTPException:
