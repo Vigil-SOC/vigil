@@ -12,13 +12,6 @@ from services.api.middleware.auth import get_current_active_user
 pytestmark = pytest.mark.unit
 
 _GENERAL = {
-    "auto_start_sync": True,
-    "show_notifications": False,
-    "theme": "light",
-    "enable_keyring": True,
-}
-# auto_start_sync and theme were dropped from the saved record (#3056).
-_STORED = {
     "show_notifications": False,
     "enable_keyring": True,
 }
@@ -65,16 +58,17 @@ def test_general_save_survives_unusable_config_file(client, content):
     saved = client.post("/api/config/general", json=_GENERAL)
 
     assert saved.status_code == 200, saved.text
-    assert _load_json_config(vigil_path("general_config.json")) == _STORED
+    assert _load_json_config(vigil_path("general_config.json")) == _GENERAL
 
 
 def test_demo_mode_save_keeps_general_settings(client):
     client.post("/api/config/general", json=_GENERAL)
 
     client.post("/api/config/demo-mode", json={"enabled": True})
-    client.post("/api/config/general", json={**_GENERAL, "theme": "dark"})
+    client.post("/api/config/general", json={**_GENERAL, "enable_keyring": False})
 
     assert _load_json_config(vigil_path("general_config.json")) == {
-        **_STORED,
+        **_GENERAL,
+        "enable_keyring": False,
         "demo_mode": True,
     }

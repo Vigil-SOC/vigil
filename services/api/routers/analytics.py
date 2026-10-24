@@ -26,7 +26,6 @@ from core.reporting.analytics_service import (
     get_attack_time_heatmap,
     get_cost_breakdown,
     get_mitre_technique_distribution,
-    get_response_time_trend,
     get_severity_distribution,
     get_time_series_data,
     get_top_alert_sources,
@@ -82,11 +81,6 @@ async def get_analytics(
     # Get top sources
     top_sources = await get_top_alert_sources(db, start_time, end_time)
 
-    # Get response time trend
-    response_time_data = await get_response_time_trend(
-        db, start_time, end_time, time_range
-    )
-
     # Get affected entities/devices
     affected_entities = await get_affected_entities(db, start_time, end_time)
 
@@ -104,7 +98,6 @@ async def get_analytics(
         "timeSeriesData": time_series,
         "severityDistribution": severity_dist,
         "topSources": top_sources,
-        "responseTimeData": response_time_data,
         "affectedEntities": affected_entities,
         "attackHeatmap": attack_heatmap,
         "mitreTechniques": mitre_techniques,
