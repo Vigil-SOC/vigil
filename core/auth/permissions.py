@@ -292,14 +292,19 @@ def missing_permission(user_id: str, permission: str, session=None) -> Optional[
     if session is not None:
         return _missing(user_id, permission, session)
     # A database this process cannot open is the same as the revision being
-    # absent. Unit tests point Postgres at an unreachable host.
+    # absent. Unit tests point Postgres at an unreachable host. Only the open
+    # falls back: an error once the database is open is raised, so a transient
+    # failure cannot read the revision as absent and open the split gates.
+    from contextlib import ExitStack
+
     from sqlalchemy.exc import SQLAlchemyError
 
-    try:
-        with unit_of_work() as owned:
-            return _missing(user_id, permission, owned)
-    except (RuntimeError, SQLAlchemyError):
-        return _missing(user_id, permission, None)
+    with ExitStack() as stack:
+        try:
+            owned = stack.enter_context(unit_of_work())
+        except (RuntimeError, SQLAlchemyError):
+            return _missing(user_id, permission, None)
+        return _missing(user_id, permission, owned)
 
 
 def deny_unless(user_id: str, permission: str, session=None) -> None:

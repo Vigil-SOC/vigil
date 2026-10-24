@@ -157,6 +157,12 @@ describe('OverviewScreen', () => {
     expect(screen.getByText(/Nothing is connected yet, so each part below shows where to connect/)).toBeInTheDocument()
   })
 
+  it('names the read a role lacks, and the parts it hides', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [], outcomes: [], missing: ['findings.read'] }) } as never)
+    renderScreen()
+    expect(await screen.findByText(/Not shown: your role lacks findings\.read\./)).toBeInTheDocument()
+  })
+
   it('with data: its own heading and legend, a source node per arrival, no connect copy', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [] }) } as never)
     renderScreen()

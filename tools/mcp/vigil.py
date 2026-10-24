@@ -1124,6 +1124,7 @@ def link_related_cases(
 
 
 @mcp.tool()
+@requires("cases.assign")
 @requires("cases.write")
 def escalate_case(
     case_id: str,

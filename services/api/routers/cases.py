@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from core.agents.projections import read_events
 from core.auth.auth_service import AuthService
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
@@ -663,6 +663,8 @@ async def escalate_case(
     current_user: User = Depends(get_current_user),
 ):
     """Escalate case. Who escalated it is the signed-in user."""
+    # Escalation hands the case to escalated_to, which is an owner change.
+    deny_unless(current_user.user_id, "cases.assign")
     workflow_service = CaseWorkflowService()
     success = workflow_service.escalate_case(
         case_id,

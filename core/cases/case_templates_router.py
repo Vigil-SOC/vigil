@@ -2,12 +2,14 @@
 
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from core.auth.permissions import permission_gate
+from core.auth.current_user import get_current_user
+from core.auth.permissions import deny_unless, permission_gate
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
 from core.storage.schemas import CaseSchema, CaseTemplateSchema
 
 router = APIRouter()
@@ -168,7 +170,11 @@ async def delete_template(template_id: str):
 
 
 @router.post("/{template_id}/create-case", dependencies=_CASES_WRITE)
-async def create_case_from_template(template_id: str, data: CaseFromTemplate):
+async def create_case_from_template(
+    template_id: str,
+    data: CaseFromTemplate,
+    current_user: User = Depends(get_current_user),
+):
     """
     Create a new case from a template.
 
@@ -179,6 +185,8 @@ async def create_case_from_template(template_id: str, data: CaseFromTemplate):
     Returns:
         Created case
     """
+    if data.assignee:
+        deny_unless(current_user.user_id, "cases.assign")
     case = workflow_service.create_case_from_template(
         template_id=template_id,
         title=data.title,

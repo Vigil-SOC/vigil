@@ -45,7 +45,7 @@ from core.workflows.workflows_service import WorkflowsService
 router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
-# Enabling, reloading, or saving a workflow changes what every run can do.
+# Enabling or saving a workflow changes what every run can do.
 _SETTINGS_WRITE = [permission_gate("automation.write")]
 _CHAT = [permission_gate("ai_chat.use")]
 router.dependencies.append(permission_gate("automation.read"))

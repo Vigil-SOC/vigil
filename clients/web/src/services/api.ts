@@ -1346,6 +1346,8 @@ export interface OverviewPayload {
   agents: OverviewAgent[]
   feed: OverviewFeedItem[]
   feed_limit: number
+  // Set when the role lacks a read: that part is empty and this names it.
+  missing?: string[]
 }
 
 export const overviewApi = {
