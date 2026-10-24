@@ -203,10 +203,11 @@ class TestVendorScoreScale:
     def test_low_vendor_score_yields_low_ioc(self, sandbox, monkeypatch):
         session = MagicMock()
         session.query.return_value.filter.return_value.first.return_value = None
+        session.scalars.return_value = ["case-1"]
         monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
 
         result = SandboxCorrelationService().attach_report(
-            "case-1", sandbox, "task-1", self.REPORTS[sandbox]
+            "finding-1", sandbox, "task-1", self.REPORTS[sandbox]
         )
 
         assert "error" not in result
