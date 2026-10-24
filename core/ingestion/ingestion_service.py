@@ -554,8 +554,23 @@ class IngestionService:
                 self._ingest_json_streaming(file_path)
             except ijson.JSONError:
                 # ijson rejects NaN and Infinity, which json.load accepts.
+                # Ingest only the items the stream did not reach.
                 with open(file_path, "r", encoding="utf-8") as f:
-                    self._ingest_json_rest(json.load(f))
+                    data = json.load(f)
+                findings, cases = [], []
+                if isinstance(data, dict):
+                    findings = data.get("findings", [])
+                    cases = data.get("cases", [])
+                elif isinstance(data, list) and data:
+                    if self._is_case_array(data[0]):
+                        cases = data
+                    else:
+                        findings = data
+                self._ingest_findings_batched(findings[self.stats["findings_total"] :])
+                for case in cases[self.stats["cases_total"] :]:
+                    self.ingest_case(case)
+                self.stats["findings_total"] = len(findings)
+                self.stats["cases_total"] = len(cases)
         except Exception as e:
             self._file_failed("JSON", e)
 
@@ -575,7 +590,7 @@ class IngestionService:
         """Stream-parse a JSON file item by item to avoid loading it all into memory.
 
         On a parse error, findings_total and cases_total count exactly the items
-        already ingested, so _ingest_json_rest can resume after them."""
+        already ingested, so the json.load retry can resume after them."""
         with open(file_path, "rb") as f:
             peek = f.read(1)
             f.seek(0)
@@ -604,26 +619,6 @@ class IngestionService:
                     self._ingest_findings_batched(
                         self._counted(items, "findings_total")
                     )
-
-    def _ingest_json_rest(self, data: Any) -> None:
-        """Ingest the items of a fully loaded JSON document the stream did not reach."""
-        findings = []
-        cases = []
-
-        if isinstance(data, dict):
-            findings = data.get("findings", [])
-            cases = data.get("cases", [])
-        elif isinstance(data, list) and data:
-            if self._is_case_array(data[0]):
-                cases = data
-            else:
-                findings = data
-
-        self._ingest_findings_batched(findings[self.stats["findings_total"] :])
-        for case in cases[self.stats["cases_total"] :]:
-            self.ingest_case(case)
-        self.stats["findings_total"] = len(findings)
-        self.stats["cases_total"] = len(cases)
 
     def ingest_jsonl_file(
         self, file_path: Union[str, Path], data_type: str = "finding"
