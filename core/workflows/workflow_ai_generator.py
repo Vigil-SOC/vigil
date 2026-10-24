@@ -126,7 +126,6 @@ class WorkflowAIGenerator:
                     "tools": ["tool_name_1", "tool_name_2"],
                     "steps": ["Step 1", "Step 2"],
                     "expected_output": "Description of phase output",
-                    "timeout_seconds": 300,
                     "approval_required": False,
                 }
             ],
@@ -241,10 +240,7 @@ class WorkflowAIGenerator:
             phase["order"] = idx
             phase.setdefault("tools", [])
             phase.setdefault("steps", [])
-            phase.setdefault("timeout_seconds", 300)
             phase.setdefault("approval_required", False)
-            phase.setdefault("conditions", None)
-            phase.setdefault("parallel_group", None)
 
         return {
             "name": draft.get("name", "Untitled Workflow"),
