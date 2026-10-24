@@ -5,7 +5,7 @@ The daemon's enrichment step (``daemon/processor.py``) records
 sandbox — the payload is nested one level inside the column. Those
 tasks take minutes to complete — so a separate poller checks them on a
 cadence, pulls the report when ready, and writes it back to the finding
-plus (if the finding is tied to a case) the case as evidence + IOCs.
+plus every case linked to the finding as evidence + IOCs.
 
 All HTTP is wrapped with ``asyncio.to_thread`` so the scheduler loop stays
 async. DB writes go through the same pattern.
@@ -164,12 +164,11 @@ class SandboxPoller:
                     stats["completed"] += 1
                     updated = True
 
-                    case_id = finding.get("case_id")
-                    if case_id and self._correlation:
+                    if self._correlation:
                         try:
                             await asyncio.to_thread(
                                 self._correlation.attach_report,
-                                case_id,
+                                finding.get("finding_id"),
                                 sandbox_name,
                                 str(task_id),
                                 report,

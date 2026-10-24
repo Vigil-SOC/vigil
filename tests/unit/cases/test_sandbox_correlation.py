@@ -145,6 +145,9 @@ class TestAttachReportAtomicity:
     @pytest.fixture
     def session(self, monkeypatch):
         mock_session = MagicMock()
+        mock_session.execute.return_value.scalars.return_value.all.return_value = [
+            "case-1"
+        ]
         # No pre-existing IOC rows, so each one takes the insert path.
         mock_session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: mock_session)
@@ -152,7 +155,7 @@ class TestAttachReportAtomicity:
 
     def _attach(self):
         return SandboxCorrelationService().attach_report(
-            case_id="case-1",
+            finding_id="finding-1",
             sandbox_name="cape",
             task_id="task-1",
             report=self.REPORT,
