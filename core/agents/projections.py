@@ -130,19 +130,12 @@ async def write_narrative(run_id: str) -> Dict[str, Any]:
     return response.json()
 
 
-async def read_replay(
-    run_id: str, decision_id: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
-    """Rebuild what each decision of hunt ``run_id`` was shown, from its ledger.
-
-    None is serve's 404: nothing hunt-like to replay, or an unknown decision.
-    Anything else that is not a report raises, because an operator clicked
-    Replay and is owed the reason, unlike the polled projection reads.
-    """
+async def _ask(
+    run_id: str, view: str, params: Optional[Dict[str, Any]] = None
+) -> Optional[Any]:
     import httpx
 
-    url = agent_route(f"/runs/{run_id}/replay")
-    params = {"decision_id": decision_id} if decision_id else None
+    url = agent_route(f"/runs/{run_id}/{view}")
     try:
         async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
             response = await client.get(url, headers=_headers(), params=params)
@@ -157,27 +150,26 @@ async def read_replay(
     return response.json()
 
 
+async def read_replay(
+    run_id: str, decision_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Rebuild what each decision of hunt ``run_id`` was shown, from its ledger.
+
+    None is serve's 404: nothing hunt-like to replay, or an unknown decision.
+    Anything else that is not a report raises, because an operator clicked
+    Replay and is owed the reason, unlike the polled projection reads.
+    """
+    params = {"decision_id": decision_id} if decision_id else None
+    return await _ask(run_id, "replay", params)
+
+
 async def read_call(run_id: str, ref: str) -> Optional[Dict[str, Any]]:
     """One call of ``run_id`` as journaled: the query it sent and what came back.
 
     None is serve's 404, an unknown run or ref. Anything else raises, because an
     operator opened the call to check a record against it.
     """
-    import httpx
-
-    url = agent_route(f"/runs/{run_id}/calls/{ref}")
-    try:
-        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
-            response = await client.get(url, headers=_headers())
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
-
-    if response.status_code == 404:
-        return None
-    if response.status_code != 200:
-        detail = response.text[:400]
-        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
-    return response.json()
+    return await _ask(run_id, f"calls/{ref}")
 
 
 async def read_events(run_id: str) -> Optional[List[Dict[str, Any]]]:
@@ -187,21 +179,9 @@ async def read_events(run_id: str) -> Optional[List[Dict[str, Any]]]:
     because an operator opened Record and is owed the reason. Snapshots stay
     off: a decision snapshot is the digest, and this read does not show it.
     """
-    import httpx
-
-    url = agent_route(f"/runs/{run_id}/events")
-    try:
-        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
-            response = await client.get(url, headers=_headers())
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
-
-    if response.status_code == 404:
+    body = await _ask(run_id, "events")
+    if body is None:
         return None
-    if response.status_code != 200:
-        detail = response.text[:400]
-        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
-    body = response.json()
     events = body.get("events") if isinstance(body, dict) else None
     if not isinstance(events, list):
         raise RuntimeError("the agent layer returned no event list")
@@ -215,21 +195,7 @@ async def read_verify(run_id: str) -> Optional[Dict[str, Any]]:
     an operator clicked Verify and is owed the reason. Python does not hash
     the chain.
     """
-    import httpx
-
-    url = agent_route(f"/runs/{run_id}/verify")
-    try:
-        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
-            response = await client.get(url, headers=_headers())
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
-
-    if response.status_code == 404:
-        return None
-    if response.status_code != 200:
-        detail = response.text[:400]
-        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
-    return response.json()
+    return await _ask(run_id, "verify")
 
 
 THREAT_HUNT_WORKFLOW_ID = "threat-hunt"

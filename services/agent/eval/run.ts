@@ -221,8 +221,7 @@ async function runCase(engine: Engine, one: EvalCase, config: string, grader: Gr
   const runId = randomUUID();
   const calls: { tool: string; args: string }[] = [];
   const build = (...args: unknown[]) => {
-    const [kind, spec, held, , seed, principal] = args;
-    const harness = engine.harnessFor(kind, spec, held, engine.nullMemory, seed, principal);
+    const harness = engine.harnessFor(...args);
     return { ...harness, memory: engine.nullMemory, dispatch: estateDispatch(one, harness.dispatch, calls), ...(flags.dry ? { provider: dryProvider } : {}) };
   };
   const job = {

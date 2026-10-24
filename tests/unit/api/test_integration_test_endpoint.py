@@ -591,6 +591,9 @@ async def test_skip_enabled_check_sets_last_error():
         def is_server_enabled(self, name: str) -> bool:
             return False
 
+        def setup_required(self, name: str) -> None:
+            return None
+
     client = MCPClient(_Disabled())
     with patch("core.integrations.mcp.client.MCP_AVAILABLE", True), patch(
         "core.integrations.mcp.client.get_secret", return_value=None
@@ -624,6 +627,9 @@ async def test_persistent_connect_failure_is_recorded():
 
         def is_server_enabled(self, name: str) -> bool:
             return True
+
+        def setup_required(self, name: str) -> None:
+            return None
 
     client = MCPClient(_Enabled())
 

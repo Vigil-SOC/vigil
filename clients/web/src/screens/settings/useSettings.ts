@@ -22,22 +22,18 @@ import api, {
 } from '../../services/api'
 import { loadCustomIntegrations } from '../../config/integrations'
 import type { LastTest } from './integrationHealth'
+import type { IntegrationMetadata } from '../../config/integrationSchema'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
 export interface GeneralConfig {
-  auto_start_sync: boolean
   show_notifications: boolean
   enable_keyring: boolean
-  /** preserved round-trip (setGeneral requires it) — not edited in the UI */
-  theme: string
 }
 
 const DEFAULT_GENERAL: GeneralConfig = {
-  auto_start_sync: false,
   show_notifications: false,
   enable_keyring: false,
-  theme: 'dark',
 }
 
 export function useGeneralSettings() {
@@ -57,10 +53,8 @@ export function useGeneralSettings() {
         if (cancelled) return
         const d = (res.data || {}) as Partial<GeneralConfig>
         setConfig({
-          auto_start_sync: Boolean(d.auto_start_sync),
           show_notifications: Boolean(d.show_notifications),
           enable_keyring: Boolean(d.enable_keyring),
-          theme: d.theme || 'dark',
         })
         setPhase('ready')
       })
@@ -940,6 +934,7 @@ export function useIntegrationsConfig() {
     secrets_set: {},
     last_test: {},
   })
+  const [custom, setCustom] = useState<IntegrationMetadata[] | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -949,8 +944,9 @@ export function useIntegrationsConfig() {
     setPhase('loading')
     // custom-integration metadata first, so getAllIntegrations() is complete
     loadCustomIntegrations()
-      .catch(() => {})
-      .finally(() => {
+      .then((list) => {
+        if (cancelled) return
+        setCustom(list)
         configApi
           .getIntegrations()
           .then((res) => {
@@ -1014,7 +1010,9 @@ export function useIntegrationsConfig() {
     [config],
   )
 
-  return { config, phase, reload, saveIntegration, setIntegrationEnabled }
+  const reloadCustom = () => loadCustomIntegrations().then(setCustom)
+
+  return { config, custom, reloadCustom, phase, reload, saveIntegration, setIntegrationEnabled }
 }
 
 export interface S3Config {
