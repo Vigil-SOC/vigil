@@ -1,9 +1,8 @@
-"""fetch_taxii_collection against a real local TAXII 2.1 HTTP server.
+"""A failed TAXII fetch must raise, so the poller keeps its watermark (#1278).
 
-A failed fetch must raise, so the poller keeps its watermark (#1278). An empty
-envelope is a real answer and still returns []. A missing taxii2-client wheel
-raises too: it is in requirements.txt, so its absence is a broken deploy and
-must not read as an empty feed.
+An empty envelope is a real answer and still returns []. A missing
+taxii2-client wheel raises too: it is in requirements.txt, so its absence is a
+broken deploy and must not read as an empty feed.
 """
 
 import builtins
@@ -38,8 +37,6 @@ def _indicator(n, ip):
 
 
 class _Taxii:
-    """One API root holding collection ``col-1``, whose objects are ``pages``."""
-
     def __init__(self, pages, status=200):
         self.pages = pages
         self.status = status
