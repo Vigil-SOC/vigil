@@ -1,0 +1,5 @@
+E       assert [] == [('case-1', '... confirmed'})]
+E         
+E         Right contains one more item: ('case-1', 'task_update', "Task 'Analyze' note added", {'task_id': 5, 'notes': 'ransomware variant confirmed'})
+E         Use -v to get more diff
+==================== 1 failed, 1 passed, 1 warning in 2.31s ====================

@@ -1,0 +1,4 @@
+0.04s call     unit/api/test_mcp_end_to_end.py::test_a_demoted_credential_cannot_close_through_the_surface
+0.04s setup    unit/cases/test_mcp_update_case_task_notes.py::test_notes_without_status_are_recorded
+0.04s teardown unit/api/test_mcp_end_to_end.py::test_a_case_closed_through_the_surface_records_the_credentials_owner
+======================== 34 passed, 1 warning in 9.98s =========================
