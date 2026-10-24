@@ -1,0 +1,12 @@
+$ kill -TERM 1371701   (daemon branch)
+exit=0
+23:26:06.527 INFO __main__ | SOC Daemon fully operational
+23:26:11.944 INFO __main__ | Shutdown signal received
+23:26:11.944 INFO services.daemon.kafka_ingestor | Kafka ingestor stopped
+23:26:11.952 INFO __main__ | Shutting down daemon components...
+23:26:12.025 INFO services.daemon.orchestrator | Orchestrator shutdown complete
+23:26:12.044 INFO services.daemon.processor | Finding processor stopped
+23:26:12.045 INFO services.daemon.responder | Autonomous responder stopped
+23:26:12.048 INFO services.daemon.metrics | Health and Prometheus servers stopped
+23:26:12.069 INFO services.daemon.scheduler | Task scheduler stopped
+23:26:12.069 INFO __main__ | SOC Daemon shutdown complete

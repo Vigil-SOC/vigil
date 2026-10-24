@@ -1,0 +1,8 @@
+$ kill -TERM 1375245   (daemon base)
+exit=0
+23:26:25.415 INFO __main__ | SOC Daemon fully operational
+23:26:29.141 INFO __main__ | Shutdown signal received
+23:26:29.141 INFO __main__ | Shutting down daemon components...
+23:26:29.142 INFO services.daemon.metrics | Health and Prometheus servers stopped
+23:26:29.143 INFO services.daemon.poller | Polling tasks cancelled
+23:26:29.143 INFO __main__ | SOC Daemon shutdown complete

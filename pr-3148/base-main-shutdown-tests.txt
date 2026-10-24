@@ -1,0 +1,25 @@
+E       assert [] == [True]
+E         
+E         Right contains one more item: True
+E         Use -v to get more diff
+E       AttributeError: <module 'services.daemon.main' from '/home/gray/Deeptempo/deslop-factory/telemetry/workspaces/5e47c033-66b8-429b-851f-11f4682b2070/services/daemon/main.py'> has no attribute 'SHUTDOWN_GRACE_SECONDS'
+E       assert [] == [1]
+E         
+E         Right contains one more item: 1
+E         Use -v to get more diff
+E       assert [] == [1]
+E         
+E         Right contains one more item: 1
+E         Use -v to get more diff
+E       assert [] == [True]
+E         
+E         Right contains one more item: True
+E         Use -v to get more diff
+ERROR    core.storage.connection:connection.py:798 Database transaction failed: (psycopg2.OperationalError) could not translate host name "postgres-blocked-in-unit-tests.invalid" to address: Name or service not known
+ERROR    core.storage.config_service:exceptions.py:77 ConfigService.list_integrations failed
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_component_cleanup_after_shutdown_event_runs
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_component_past_grace_is_cancelled
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_orchestrator_abandons_in_flight_on_sigterm
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_kafka_ingestor_stops_consumer_on_sigterm
+FAILED tests/unit/daemon/test_shutdown_grace.py::test_scheduler_cancels_rates_refresher_on_sigterm
+============================== 5 failed in 9.94s ===============================
