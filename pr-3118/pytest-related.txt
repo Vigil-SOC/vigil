@@ -1,0 +1,37 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/c8550611-d49f-4cd2-843b-4928fcda5870/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 198 items
+
+tests/unit/storage/test_s3_service_list_errors.py ......                 [  3%]
+tests/security/test_route_permissions.py ............................... [ 18%]
+.................................                                        [ 35%]
+tests/unit/ingestion/test_dedup.py .........                             [ 39%]
+tests/unit/ingestion/test_dedup_batch.py ..........                      [ 44%]
+tests/unit/ingestion/test_ingest_case_notes.py ..                        [ 45%]
+tests/unit/ingestion/test_ingestion_common_keys.py .......               [ 49%]
+tests/unit/ingestion/test_ingestion_finding_ids.py ...............       [ 57%]
+tests/unit/ingestion/test_ingestion_jobs.py ..................           [ 66%]
+tests/unit/ingestion/test_ingestion_nullable_fields.py ................  [ 74%]
+tests/unit/ingestion/test_ingestion_upload_api.py ............           [ 80%]
+tests/unit/ingestion/test_json_fractional_values_db.py ...               [ 81%]
+tests/unit/ingestion/test_kafka_consumer.py ........                     [ 85%]
+tests/unit/ingestion/test_reupload_external_id.py ....                   [ 87%]
+tests/unit/api/test_context_path.py .......................              [ 99%]
+tests/unit/_ratchets/test_no_logger_fstrings.py .                        [100%]
+
+============================= slowest 10 durations =============================
+6.64s call     unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+2.03s call     unit/storage/test_s3_service_list_errors.py::test_uninitialized_client_raises_with_cause
+1.89s setup    unit/ingestion/test_json_fractional_values_db.py::test_findings_with_fractional_jsonb_values_are_stored[dict]
+1.71s call     unit/api/test_context_path.py::test_mount_routers_prefixes_api_routes
+1.10s call     unit/api/test_context_path.py::test_mount_routers_empty_prefix_keeps_root_api_paths
+0.56s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/config/postgresql-body0-settings.write]
+0.55s call     unit/storage/test_s3_service_list_errors.py::test_empty_listing_returns_empty_list
+0.55s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/v1/cases-body12-cases.write]
+0.42s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/orchestrator/enable-None-settings.write]
+0.18s call     security/test_route_permissions.py::test_a_route_refuses_a_user_who_lacks_its_permission[POST-/api/workflows/runs/r-1/cancel-body27-ai_decisions.approve]
+====================== 198 passed, 241 warnings in 30.90s ======================
