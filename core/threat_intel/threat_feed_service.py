@@ -36,8 +36,6 @@ _STIX_TO_VIGIL_TYPE: Dict[str, str] = {
 }
 
 
-# A comparison, or else any other string literal so a quoted operand such as
-# ``'a = b'`` is consumed whole and never read as a comparison.
 _STIX_COMPARISON = re.compile(
     r"(?P<path>[\w-]+:[\w-]+(?:\.(?:[\w-]+|'[^']*')|\[(?:\d+|\*)\])*)"
     r"\s*(?P<op>[!<>]?=)\s*'(?P<value>(?:[^'\\]|\\.)*)'"
@@ -101,12 +99,7 @@ def parse_stix_indicator(
 
 
 def _extract_observables(pattern: str) -> Iterable[Tuple[str, str]]:
-    """(vigil_type, value) for each ``path = 'value'`` comparison in a STIX 2.1 pattern.
-
-    Every equality comparison counts, whether ANDed, ORed, or in separate
-    observation expressions. Other operators, ``NOT =``, and paths outside
-    ``_STIX_TO_VIGIL_TYPE`` yield nothing.
-    """
+    """(vigil_type, value) for each ``path = 'value'`` comparison in a STIX 2.1 pattern."""
     for m in _STIX_COMPARISON.finditer(pattern):
         if m["op"] != "=" or not m["value"]:
             continue
