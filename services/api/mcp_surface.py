@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 
 def surface_address() -> str:
     """Where the surface is served, with the install's context path."""
-    from core.config import get_settings
+    from core.auth.auth_cookies import context_path_prefix
 
-    return get_settings().vigil_context_path.rstrip("/") + "/mcp"
+    return context_path_prefix() + "/mcp"
 
 
 # The credential a developer gets for free, and only with the bypass on.
