@@ -1,0 +1,4 @@
+proposal keys: ['ip:203.0.113.7', 'domain:evil.example']
+offer result: {'inserted': 1, 'keys': 2, 'skipped_recent': 0}
+subjects: {'Activity from the reported indicators ip:203.0.113.7, domain:evil.example is present in the environment': ['ip:203.0.113.7', 'domain:evil.example']}
+OK: no duplicate key reached the intake row

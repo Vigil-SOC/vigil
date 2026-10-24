@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8e4af760-b58a-44d6-a653-d1f702d66ffd/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 64 items
+
+tests/unit/daemon/test_threat_feed_poller.py ..............              [ 21%]
+tests/unit/daemon/test_threat_feed_intel_dedup_db.py ...........         [ 39%]
+tests/unit/workflows/test_workflow_enablement.py ....................... [ 75%]
+.......                                                                  [ 85%]
+tests/unit/integrations/test_feed_hunt_proposals.py .........            [100%]
+
+============================= slowest 10 durations =============================
+1.95s setup    unit/daemon/test_threat_feed_intel_dedup_db.py::test_a_queued_intel_row_speaks_for_its_keys
+0.46s call     unit/workflows/test_workflow_enablement.py::test_execute_refuses_a_disabled_workflow_before_a_run_row
+0.17s teardown unit/integrations/test_feed_hunt_proposals.py::test_schema_and_threat_intel_agent_name_the_tool
+0.15s call     unit/workflows/test_workflow_enablement.py::test_the_fallback_refuses_to_turn_off_and_says_why
+0.14s call     unit/daemon/test_threat_feed_poller.py::test_a_poll_of_uncovered_keys_is_one_row_naming_all_of_them
+0.14s call     unit/workflows/test_workflow_enablement.py::test_the_execute_route_refuses_what_the_ceilings_refuse[body2]
+0.14s call     unit/workflows/test_workflow_enablement.py::test_the_execute_route_refuses_what_the_ceilings_refuse[body0]
+0.14s setup    unit/workflows/test_workflow_enablement.py::test_the_execute_route_refuses_what_the_ceilings_refuse[body2]
+0.13s call     unit/workflows/test_workflow_enablement.py::test_the_execute_route_refuses_what_the_ceilings_refuse[body1]
+0.13s setup    unit/workflows/test_workflow_enablement.py::test_the_execute_route_refuses_what_the_ceilings_refuse[body3]
+======================== 64 passed, 1 warning in 11.86s ========================

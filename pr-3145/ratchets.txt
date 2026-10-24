@@ -1,0 +1,79 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/gray/Deeptempo/deslop-factory/telemetry/workspaces/8e4af760-b58a-44d6-a653-d1f702d66ffd/tests
+configfile: pytest.ini
+plugins: mock-3.15.1, respx-0.23.1, anyio-4.14.2, cov-7.1.0, asyncio-1.4.0, Faker-40.43.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 266 items
+
+tests/unit/_ratchets/test_app_db_password_split.py .....s                [  2%]
+tests/unit/_ratchets/test_bifrost_management_auth.py ....                [  3%]
+tests/unit/_ratchets/test_bifrost_no_content_logging.py .                [  4%]
+tests/unit/_ratchets/test_builtin_definitions_name_capabilities.py ....  [  5%]
+tests/unit/_ratchets/test_checkpoints_agree.py .........                 [  9%]
+tests/unit/_ratchets/test_compose_backup_service.py ....                 [ 10%]
+tests/unit/_ratchets/test_compose_bifrost_healthcheck.py ..              [ 11%]
+tests/unit/_ratchets/test_compose_daemon_agent.py ....                   [ 12%]
+tests/unit/_ratchets/test_compose_daemon_profile.py .........            [ 16%]
+tests/unit/_ratchets/test_compose_db_seed.py ..                          [ 16%]
+tests/unit/_ratchets/test_compose_llm_worker_healthcheck.py ...          [ 18%]
+tests/unit/_ratchets/test_compose_one_builder_per_image.py .......       [ 20%]
+tests/unit/_ratchets/test_compose_state_volumes.py ...                   [ 21%]
+tests/unit/_ratchets/test_config_audit_actor.py ....                     [ 23%]
+tests/unit/_ratchets/test_database_url_split.py .....                    [ 25%]
+tests/unit/_ratchets/test_dependabot_directories.py .............        [ 30%]
+tests/unit/_ratchets/test_desktop_compose_agent_layer.py .........       [ 33%]
+tests/unit/_ratchets/test_desktop_version_tracks_release.py ......       [ 35%]
+tests/unit/_ratchets/test_dockerfile_node_major.py .                     [ 36%]
+tests/unit/_ratchets/test_dockerfile_version_not_clobbered.py ......     [ 38%]
+tests/unit/_ratchets/test_helm_db_init_sql_files.py ....                 [ 39%]
+tests/unit/_ratchets/test_helm_env_names_are_read.py ........            [ 42%]
+tests/unit/_ratchets/test_helm_environment_label.py ..                   [ 43%]
+tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py sss [ 44%]
+.                                                                        [ 45%]
+tests/unit/_ratchets/test_helm_postgres_password_not_published.py .      [ 45%]
+tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py ss           [ 46%]
+tests/unit/_ratchets/test_hunt_capabilities_agree.py ................    [ 52%]
+tests/unit/_ratchets/test_init_sql_model_indexes.py ..                   [ 53%]
+tests/unit/_ratchets/test_integration_registries.py .........            [ 56%]
+tests/unit/_ratchets/test_logs_rotate_before_truncate.py .               [ 56%]
+tests/unit/_ratchets/test_mcp_runtime_pins.py .......................... [ 66%]
+...                                                                      [ 67%]
+tests/unit/_ratchets/test_mcp_tool_schemas.py ..                         [ 68%]
+tests/unit/_ratchets/test_no_ambient_state.py ...                        [ 69%]
+tests/unit/_ratchets/test_no_blocking_in_async_routes.py ........        [ 72%]
+tests/unit/_ratchets/test_no_claude_agent_sdk.py ....                    [ 74%]
+tests/unit/_ratchets/test_no_datetime_utcnow.py ..                       [ 74%]
+tests/unit/_ratchets/test_no_exception_text_in_responses.py .            [ 75%]
+tests/unit/_ratchets/test_no_import_time_db_connection.py .              [ 75%]
+tests/unit/_ratchets/test_no_logger_fstrings.py .                        [ 75%]
+tests/unit/_ratchets/test_no_metadata_kwarg.py ...                       [ 77%]
+tests/unit/_ratchets/test_no_tls_verify_disabled.py ...                  [ 78%]
+tests/unit/_ratchets/test_one_egress.py ...                              [ 79%]
+tests/unit/_ratchets/test_one_loop_gate.py .....                         [ 81%]
+tests/unit/_ratchets/test_pr_d_mechanical.py ....                        [ 82%]
+tests/unit/_ratchets/test_recall_contract_agrees.py .................... [ 90%]
+.........                                                                [ 93%]
+tests/unit/_ratchets/test_redis_noeviction.py ...                        [ 94%]
+tests/unit/_ratchets/test_run_kinds_agree.py ....                        [ 96%]
+tests/unit/_ratchets/test_seed_insert_columns.py ...                     [ 97%]
+tests/unit/_ratchets/test_settings_env_example.py ...                    [ 98%]
+tests/unit/_ratchets/test_shutdown_all_destructive_flag.py ..            [ 99%]
+tests/unit/_ratchets/test_support_secret_names.py ..                     [100%]
+
+============================= slowest 10 durations =============================
+15.82s call     unit/_ratchets/test_config_audit_actor.py::test_no_placeholder_or_anonymous_config_actor
+14.80s call     unit/_ratchets/test_no_import_time_db_connection.py::test_importing_every_router_opens_no_database_connection
+13.56s call     unit/_ratchets/test_one_egress.py::test_no_provider_client_is_built_outside_the_sanctioned_sites
+11.74s call     unit/_ratchets/test_one_egress.py::test_no_provider_host_is_dialled_directly
+9.10s call     unit/_ratchets/test_no_datetime_utcnow.py::test_no_datetime_utcnow
+9.02s call     unit/_ratchets/test_no_ambient_state.py::test_no_lazy_singleton_accessors
+8.83s call     unit/_ratchets/test_one_loop_gate.py::test_fails_on_a_planted_loop[\nasync def investigate(client, messages, tools):\n    while True:\n        response = await client.chat.completions.create(model="m", messages=messages)\n        if not response.choices[0].message.tool_calls:\n            return response\n        messages.append(response.choices[0].message)\n]
+8.78s call     unit/_ratchets/test_one_loop_gate.py::test_the_tree_is_clean
+8.76s call     unit/_ratchets/test_one_loop_gate.py::test_fails_on_a_planted_loop[\nasync def investigate(client, messages, tools):\n    for _ in range(10):\n        response = await client.messages.create(model="m", messages=messages, tools=tools)\n        calls = [b for b in response.content if b.type == "tool_use"]\n        if not calls:\n            return response\n        messages.append({"role": "assistant", "content": response.content})\n]
+8.40s call     unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 260 passed, 6 skipped, 2 warnings in 203.45s (0:03:23) ============
