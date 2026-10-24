@@ -283,7 +283,7 @@ def test_one_callers_session_is_not_another_callers(client_on_a_domain):
 # --- Reachable at the address we advertise -----------------------------------
 #
 # A mount at /mcp compiles to ^/mcp/(?P<path>.*)$, so the bare spelling -- the
-# one MOUNT_PATH, the docstring, the README and env.example all give, and the
+# one surface_address(), the docstring, the README and env.example all give, and the
 # one anyone configuring a client will paste -- does not match it. What answers
 # instead depends on whether the SPA catch-all is registered, and that depends
 # on whether clients/web/build/index.html exists:
@@ -351,3 +351,56 @@ def test_a_closed_surface_is_still_the_one_answering(
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Not Found"}
+
+
+# --- Under a context path ------------------------------------------------------
+
+
+@pytest.fixture
+def under_vigil(monkeypatch):
+    from core.config import get_settings
+
+    monkeypatch.setenv("VIGIL_CONTEXT_PATH", "/vigil/")
+    get_settings.cache_clear()
+    yield
+    monkeypatch.delenv("VIGIL_CONTEXT_PATH")
+    get_settings.cache_clear()
+
+
+def test_settings_reports_the_address_the_surface_answers_at(under_vigil):
+    import asyncio
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.api.mcp_surface import McpSurfaceGate, serve_at
+    from services.api.routers.mcp import get_surface
+
+    app = FastAPI()
+    serve_at(app, McpSurfaceGate())
+
+    class _User:
+        user_id = "u1"
+
+    with patch("core.auth.mcp_credential_service.list_for_user", return_value=[]):
+        reported = asyncio.run(get_surface(current_user=_User()))["path"]
+
+    assert reported == "/vigil/mcp"
+    with patch("services.api.mcp_surface.is_enabled", return_value=True):
+        with TestClient(app) as c:
+            assert c.post(reported, json={}).status_code == 401
+            assert c.post("/mcp", json={}).status_code == 404
+
+
+def test_the_boot_log_names_the_address_it_is_given(caplog):
+    import logging
+
+    from services.api.mcp_surface import announce
+
+    caplog.set_level(logging.INFO)
+    with patch("core.config.get_settings") as settings:
+        settings.return_value.dev_mode = False
+        announce(True, 0, "/vigil/mcp")
+
+    assert "ON at /vigil/mcp." in caplog.text
+    assert "every request to /vigil/mcp will be refused" in caplog.text
