@@ -270,8 +270,8 @@ def refresh_from_client(registry: MCPRegistry) -> int:
 
     Unlike ``populate_from_cache`` (a boot warm-start that prefers the on-disk
     tool cache), this reads the running client's ``tools_cache`` and current
-    connection status so a server connected *after* startup — e.g. a dormant
-    retry came online, or ``call_tool`` created a session — becomes usable on
+    connection status so a server connected *after* startup — e.g. a reload
+    or ``call_tool`` created a session — becomes usable on
     the next turn without a restart. Cheap and idempotent; call it wherever a
     turn assembles its tool list.
 
