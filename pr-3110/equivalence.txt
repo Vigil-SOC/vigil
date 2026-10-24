@@ -1,0 +1,7 @@
+Database health check failed: Database not initialized. Call initialize() first.
+Database unavailable
+5 SIEM subclasses: method equals base-branch normalize_severity over 19 inputs
+darktrace system_status severity matches base branch for 7 statuses
+darktrace is SIEM subclass: False
+ingestion_service: IngestionService True
+leftover attrs: []

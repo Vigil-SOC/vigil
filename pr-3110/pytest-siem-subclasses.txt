@@ -1,0 +1,3 @@
+0.54s call     unit/integrations/test_blocking_offload.py::test_defender_fetch_alerts_does_not_block_the_loop
+0.28s call     unit/integrations/test_blocking_offload.py::test_splunk_mcp_tool_does_not_block_the_loop[splunk_nl_search-args3-search]
+================== 186 passed, 1 warning in 149.00s (0:02:28) ==================
