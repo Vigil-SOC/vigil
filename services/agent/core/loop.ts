@@ -95,6 +95,9 @@ export interface TurnConfig {
   // Lets this turn run against a ledger that already holds a terminal. Only for a turn
   // that describes a run rather than continues one -- never one that can reach a tool.
   after_terminal?: boolean;
+  // The model's text reaches the caller as it is written (TurnRequest.live). Only a
+  // conversation asks: every other run keeps the buffered call and its retries.
+  live?: boolean;
   signal?: AbortSignal;
 }
 

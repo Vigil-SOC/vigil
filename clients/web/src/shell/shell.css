@@ -329,6 +329,72 @@
   }
 }
 
+/* An answer still being written (#3037), in the dock and the case composer alike. Each settled
+   block is its own .md, so the space .md puts between paragraphs and list items is put back. */
+.answer-streaming > .sb + .sb {
+  margin-top: 8px;
+}
+
+.answer-streaming > .sb.joined {
+  margin-top: 3px;
+}
+
+/* The caret ends the text: inline after a paragraph or the last list item, on its own line after a box. */
+.answer-streaming > .sb:last-child > .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.answer-streaming > .sb:last-child > .md > :is(ul, ol):last-child > li:last-child::after,
+.answer-streaming > .sb:last-child > .md:has(> :is(pre, table, blockquote, hr):last-child)::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.18em;
+  background: var(--ac);
+  animation: vg-caret 1s steps(1) infinite;
+}
+
+.answer-streaming > .sb:last-child > .md:has(> :is(pre, table, blockquote, hr):last-child)::after {
+  display: block;
+  margin: 4px 0 0;
+}
+
+@keyframes vg-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-streaming .md::after,
+  .answer-streaming .md *::after {
+    animation: none !important;
+  }
+}
+
+/* Shown once the reader scrolls up mid-answer, between the transcript and the composer. */
+.chat-jump {
+  align-self: center;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 6px 0 2px;
+  padding: 0 12px;
+  border: 1px solid var(--ln2);
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-jump:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
 /* composer */
 .chat .chat-foot {
   padding: 10px 14px 12px;

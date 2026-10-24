@@ -161,6 +161,8 @@ export interface AgentOptions {
   principal?: string;
   // What started the run, in the clear. The token is not decoded here.
   origin?: RunPayload["origin"];
+  // The agent's own turns stream their text as it is written. Its children never do.
+  live?: boolean;
   signal?: AbortSignal;
 }
 
@@ -637,6 +639,7 @@ function turnFor(
     ...(plugin.min_results === undefined || options.conversation !== undefined ? {} : { persist: { min_results: plugin.min_results } }),
     // Numbered only when the answer can cite them.
     ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
+    ...(options.live === true ? { live: true } : {}),
     ...(signal === undefined ? {} : { signal }),
   };
 }

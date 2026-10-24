@@ -68,6 +68,8 @@ export async function* runChat(harness: Harness, options: ChatOptions): AsyncGen
     ...(options.origin === undefined ? {} : { origin: options.origin }),
     conversation,
     ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
+    // Ask Vigil shows the answer as the model writes it.
+    live: true,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   // Delegated rather than pumped, so a reader's return() reaches the kernel's finally.

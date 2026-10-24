@@ -8,6 +8,7 @@ import {
 import { format } from 'date-fns'
 import { Markdown, type MarkdownCite } from '../shared/Markdown'
 import { citePattern, type Citation } from './citations'
+import { showableTail, splitStreaming } from './streamingText'
 import { ThreadGrip } from './ThreadGrip'
 import { useThreadHeight } from './useThreadHeight'
 import { Icon } from '../shared/icons'
@@ -243,6 +244,34 @@ function AnswerText({ text, citations, onCite }: { text: string; citations?: rea
   return <div className="body"><Markdown cite={cite}>{text}</Markdown></div>
 }
 
+/** An answer still being written: settled blocks parse once, only the open tail re-renders, and no chip shows until it is done. */
+function StreamingAnswer({ text }: { text: string }) {
+  const { blocks, tail, joined } = splitStreaming(text)
+  const shown = showableTail(tail)
+  return (
+    <div className="body answer-streaming">
+      {blocks.map((block, i) => (
+        <div key={i} className={block.joined ? 'sb joined' : 'sb'}><Markdown>{block.text}</Markdown></div>
+      ))}
+      {shown.trim() && <div className={joined ? 'sb joined' : 'sb'}><Markdown>{shown}</Markdown></div>}
+    </div>
+  )
+}
+
+/** An answer as a screen reader should read it: the words, not the markdown around them. */
+function spoken(text: string): string {
+  return text
+    .replace(/```[^\n]*\n?/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s*\|?[\s:|-]*-[\s:|-]*$/gm, '')
+    .replace(/[#*`_>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** How close to the bottom still counts as reading the latest, in px. */
+const FOLLOW_SLACK = 48
+
 function VigilMessage({
   text,
   citations,
@@ -345,6 +374,13 @@ export default function Chat({
   const [traceItems, setTraceItems] = useState<TraceItem[]>([])
   const [traceSelected, setTraceSelected] = useState<TraceDetail | null>(null)
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
+  // false once the reader scrolls up mid-answer; "Jump to latest" turns it back on
+  const followRef = useRef(true)
+  // where the last follow left scrollTop: below it, the reader moved before their scroll event arrived
+  const wroteRef = useRef(0)
+  const [behind, setBehind] = useState(false)
+  // the finished answer, read out once by screen readers
+  const [announced, setAnnounced] = useState('')
 
   const sessionRef = useRef<string>(newSessionId())
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -364,6 +400,8 @@ export default function Chat({
   const pendingSend = useRef<string | null>(null)
   if (lockedCaseId) caseIdRef.current = lockedCaseId
   const putMessages = (next: ChatMsg[]) => {
+    followRef.current = true
+    wroteRef.current = 0
     messagesRef.current = next
     setMessages(next)
   }
@@ -462,10 +500,35 @@ export default function Chat({
     }
   }
 
+  // streamText changes at most once a frame, so this writes once a frame; the read is on scroll
   useEffect(() => {
     const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el || !followRef.current) return
+    if (el.scrollTop < wroteRef.current - 1 && el.scrollTop < el.scrollHeight - el.clientHeight - 1) {
+      followRef.current = false
+      setBehind(true)
+      return
+    }
+    el.scrollTop = el.scrollHeight
+    wroteRef.current = el.scrollTop
   }, [messages, streamText, loading])
+
+  const onBodyScroll = () => {
+    const el = bodyRef.current
+    if (!el) return
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK
+    followRef.current = near
+    setBehind(!near)
+  }
+
+  const jumpToLatest = () => {
+    followRef.current = true
+    setBehind(false)
+    const el = bodyRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    wroteRef.current = el.scrollTop
+  }
 
   useEffect(() => {
     const ta = taRef.current
@@ -547,6 +610,7 @@ export default function Chat({
     setLoading(true)
     setStreamText('')
     setIsProcessingTools(false)
+    setAnnounced('')
 
     const ac = new AbortController()
     abortRef.current = ac
@@ -556,6 +620,7 @@ export default function Chat({
     let accepted = false
     // false until the API itself answered: only then is "is the backend running?" a fair question
     let reached = false
+    let frame = 0
     try {
       const payload: {
         messages: { role: string; content: string }[]
@@ -585,6 +650,11 @@ export default function Chat({
       const decoder = new TextDecoder()
       let curText = ''
       let buf = ''
+      // deltas collect in curText and reach the screen at most once per animation frame
+      const flush = () => {
+        frame = 0
+        if (gen === turnGen.current) setStreamText(curText)
+      }
       if (reader) {
         for (;;) {
           const { done, value } = await reader.read()
@@ -614,7 +684,7 @@ export default function Chat({
             } else if (ev.type === 'text') {
               setIsProcessingTools(false)
               curText += ev.content || ''
-              setStreamText(curText)
+              if (!frame) frame = requestAnimationFrame(flush)
             }
           }
         }
@@ -626,6 +696,7 @@ export default function Chat({
           messagesRef.current = next
           return next
         })
+        if (curText) setAnnounced(`Vigil answered: ${spoken(curText)}`)
       }
       // gated inside notificationService by the setting + browser permission
       if (currentKeyRef.current && curText) {
@@ -655,6 +726,8 @@ export default function Chat({
         })
       }
     } finally {
+      // a frame still pending would put back text the turn has already settled
+      cancelAnimationFrame(frame)
       if (gen === turnGen.current) {
         if (accepted) {
           const latest = caseIdRef.current
@@ -942,7 +1015,7 @@ export default function Chat({
   const retryOf = !loading && lastMsg?.role === 'error' && prevMsg?.role === 'user' ? prevMsg.text : undefined
 
   const transcript = (
-    <div className="chat-body" ref={bodyRef} style={pinned && thread.height !== null ? { height: thread.height, maxHeight: 'none' } : undefined}>
+    <div className="chat-body" ref={bodyRef} onScroll={onBodyScroll} style={pinned && thread.height !== null ? { height: thread.height, maxHeight: 'none' } : undefined}>
       {firstShown > 0 && (
         <button type="button" className="composer-earlier" onClick={() => setEarlierHidden(false)}>
           Show {firstShown} earlier message{firstShown === 1 ? '' : 's'}
@@ -992,11 +1065,24 @@ export default function Chat({
                 …
               </span>
             </div>
-            {streamText && <AnswerText text={streamText} citations={citations} onCite={onCite} />}
+            {streamText && <StreamingAnswer text={streamText} />}
           </div>
         </div>
       )}
     </div>
+  )
+
+  // below the transcript rather than over it, so it covers nothing (DESIGN.md §7)
+  const latest = (
+    <>
+      {loading && behind && (
+        <button type="button" className="chat-jump" onClick={jumpToLatest}>
+          <Icon name="arrowDn" size={13} />
+          Jump to latest
+        </button>
+      )}
+      <div className="sr-only" aria-live="polite">{announced}</div>
+    </>
   )
 
   const mentionOpen = !lockedCaseId && mentionHits
@@ -1222,6 +1308,7 @@ export default function Chat({
           </button>
         )}
         {threadOpen && transcript}
+        {latest}
         <div className="composer-box">
           <div className="composer-modes" role="group" aria-label="Composer mode">
             <button type="button" className="on" aria-pressed="true">Ask</button>
@@ -1283,6 +1370,7 @@ export default function Chat({
             </div>
           ) : null}
           {transcript}
+          {latest}
           {foot}
         </>
       )}

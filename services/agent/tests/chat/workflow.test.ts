@@ -18,6 +18,10 @@ import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from ".
 import type { CallPayload } from "../../contracts/events.js";
 import { conversationHistory } from "../../core/agent.js";
 import { huntNotes } from "../../plugins/hunt/recall.js";
+import type OpenAI from "openai";
+import { Limiter } from "../../core/limiter.js";
+import type { Provider } from "../../core/provider.js";
+import { openAiSurface } from "../../core/wire.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -331,5 +335,68 @@ describe("a later question the request has no room for", () => {
     expect(report.status).toBe("failed");
     expect(report.reason).toMatch(/more than Ask can read at once/);
     expect(seen.flatMap(chatEvents)).toContainEqual({ error: report.reason });
+  });
+});
+
+// The real surface under the chat run, fed scripted chunks (#3037).
+describe("a chat answer as the model writes it", () => {
+  type Chunk = OpenAI.Chat.ChatCompletionChunk;
+  const chunk = (choices: unknown[], usage?: unknown): Chunk =>
+    ({ id: "c", created: 1, model: "m", object: "chat.completion.chunk", choices, ...(usage === undefined ? {} : { usage }) }) as unknown as Chunk;
+  const text = (content: string) => chunk([{ index: 0, delta: { content }, finish_reason: null }]);
+  const call = (id: string, name: string, args: string) =>
+    chunk([{ index: 0, delta: { tool_calls: [{ index: 0, type: "function", id, function: { name, arguments: args } }] }, finish_reason: null }]);
+  const usage = chunk([], { prompt_tokens: 40, completion_tokens: 12, total_tokens: 52 });
+
+  function surfaceOf(replies: (() => AsyncGenerator<Chunk>)[]): { provider: Provider; calls: () => number } {
+    let calls = 0;
+    const create = async () => {
+      const reply = replies[calls];
+      calls += 1;
+      if (reply === undefined) throw new Error("the script ran out");
+      return { [Symbol.asyncIterator]: reply };
+    };
+    const client = { chat: { completions: { create } } } as unknown as OpenAI;
+    return { provider: openAiSurface(client, "openai/gpt-4o", new Limiter({ rpm: 10_000, tpm: 10_000_000 }, 4, 3), "openai"), calls: () => calls };
+  }
+
+  it("hands the reader the text it already had and one error, never the text again", async () => {
+    const { provider, calls } = surfaceOf([
+      async function* () {
+        yield text("Nothing odd ");
+        throw Object.assign(new Error("upstream reset"), { status: 502 });
+      },
+    ]);
+    const { seen, report } = await converse({ ...harnessOf([]), provider });
+
+    expect(report.status).toBe("failed");
+    expect(seen.flatMap(chatEvents)).toEqual([{ type: "text", content: "Nothing odd " }, { error: report.reason }]);
+    expect(calls()).toBe(1);
+  });
+
+  it("journals the same frames, spend and calls as the buffered call would", async () => {
+    const replies = () => [
+      async function* () {
+        yield text("Checking. ");
+        yield call("call-1", "findings", "{}");
+        yield usage;
+      },
+      async function* () {
+        yield text("One finding ");
+        yield text("on that host.");
+        yield usage;
+      },
+    ];
+    const ledger = async (live: boolean) => {
+      const { provider } = surfaceOf(replies());
+      const buffered: Provider = { model: provider.model, provider_type: provider.provider_type, sampling: provider.sampling, stream: (request) => provider.stream({ ...request, live }) };
+      const state = new InProcessState();
+      const { report } = await converse({ ...harnessOf([], state), provider: buffered });
+      expect(report.answer).toBe("One finding on that host.");
+      const events = await state.read(RUN);
+      return events.map(({ kind, payload }) => ({ kind, payload: JSON.parse(JSON.stringify(payload, (key, value) => (/(_at|_ms|^at|^ts)$/.test(key) ? undefined : value))) }));
+    };
+
+    expect(await ledger(true)).toEqual(await ledger(false));
   });
 });

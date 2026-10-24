@@ -532,6 +532,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private async *burn(request: Omit<TurnRequest, "signal">, tail: string | null): AsyncGenerator<StreamEvent<T>, Omit<Turn, "tokens">> {
     yield { type: "frame", frame: this.frame(request, tail) };
     const signal = this.cfg.signal ? { signal: this.cfg.signal } : {};
+    const live = this.cfg.live === true ? { live: true } : {};
     const tool_calls: ToolCall[] = [];
     let content = "";
     let billed = false;
@@ -550,7 +551,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     };
 
     try {
-      for await (const event of this.harness.provider.stream({ ...request, ...signal })) {
+      for await (const event of this.harness.provider.stream({ ...request, ...live, ...signal })) {
         if (event.type === "tool_call") tool_calls.push(event.call);
         else if (event.type === "text_delta") {
           content += event.text;

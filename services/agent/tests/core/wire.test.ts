@@ -4,7 +4,7 @@ import { Limiter } from "../../core/limiter.js";
 import { costOf } from "../../core/prices.js";
 import { EMIT_TOOL, ModelSilent, OutputCapReached, openAiSurface, resetEmitMode, resetOutputCap, setSilentPauses } from "../../core/wire.js";
 import { ZERO_TOKENS, type TokenCounts } from "../../contracts/budget.js";
-import { ProviderError, type Message, type Provider, type ToolCall, type Turn, type TurnRequest } from "../../core/provider.js";
+import { PartialAnswer, ProviderError, type Message, type Provider, type ToolCall, type Turn, type TurnRequest } from "../../core/provider.js";
 
 type Body = OpenAI.Chat.ChatCompletionCreateParams;
 
@@ -686,6 +686,103 @@ describe("the wire streams", () => {
     const surface = surfaceOf(async () => ({ async *[Symbol.asyncIterator]() {} }));
 
     await expect(turn(surface, { messages: [], tools: [] })).rejects.toThrow(/without sending anything/);
+  });
+});
+
+// Ask Vigil's run sets `live`; every other run keeps the buffered call and its retries (#3037).
+describe("a live call", () => {
+  const chunk = (delta: Record<string, unknown>): Chunk =>
+    ({ id: "c", created: 1, model: "m", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }] }) as unknown as Chunk;
+  const retrying = () => new Limiter({ rpm: 10_000, tpm: 10_000_000 }, 4, 3);
+  const surfaceWith = (create: () => Promise<AsyncIterable<Chunk>>) =>
+    openAiSurface({ chat: { completions: { create } } } as unknown as OpenAI, "openai/gpt-4o", retrying(), "openai");
+
+  it("hands each piece of text out before the call has finished", async () => {
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const surface = surfaceWith(async () => ({
+      async *[Symbol.asyncIterator]() {
+        yield chunk({ content: "first " });
+        await held;
+        yield chunk({ content: "second" });
+      },
+    }));
+
+    const events = surface.stream({ messages: [], tools: [], live: true })[Symbol.asyncIterator]();
+    expect((await events.next()).value).toEqual({ type: "text_delta", text: "first " });
+    release();
+    const rest: unknown[] = [];
+    for (let next = await events.next(); next.done !== true; next = await events.next()) rest.push(next.value);
+    expect(rest[0]).toEqual({ type: "text_delta", text: "second" });
+    expect(rest.at(-1)).toMatchObject({ type: "usage" });
+  });
+
+  it("is not retried once text has gone out: the reader gets that text once, then the failure", async () => {
+    let calls = 0;
+    const surface = surfaceWith(async () => {
+      calls += 1;
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield chunk({ content: "half an ans" });
+          throw Object.assign(new Error("upstream reset"), { status: 502 });
+        },
+      };
+    });
+
+    const texts: string[] = [];
+    const failure = await (async () => {
+      for await (const event of surface.stream({ messages: [], tools: [], live: true })) if (event.type === "text_delta") texts.push(event.text);
+    })().catch((error: unknown) => error);
+    expect(texts).toEqual(["half an ans"]);
+    expect(failure).toBeInstanceOf(PartialAnswer);
+    expect((failure as ProviderError).tokens.output).toBeGreaterThan(0);
+    expect(calls).toBe(1);
+  });
+
+  it("is retried as before when it fails before saying anything", async () => {
+    let calls = 0;
+    const surface = surfaceWith(async () => {
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error("busy"), { status: 503 });
+      return completion({ role: "assistant", content: "answered" });
+    });
+
+    const texts: string[] = [];
+    for await (const event of surface.stream({ messages: [], tools: [], live: true })) if (event.type === "text_delta") texts.push(event.text);
+    expect(texts.join("")).toBe("answered");
+    expect(calls).toBe(2);
+  });
+
+  it("buffered, still retries a call that dies mid-stream", async () => {
+    let calls = 0;
+    const surface = surfaceWith(async () => {
+      calls += 1;
+      if (calls > 1) return completion({ role: "assistant", content: "answered" });
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield chunk({ content: "half an ans" });
+          throw Object.assign(new Error("upstream reset"), { status: 502 });
+        },
+      };
+    });
+
+    expect((await turn(surface, { messages: [], tools: [] })).content).toBe("answered");
+    expect(calls).toBe(2);
+  });
+
+  it("says the same as a buffered call: text, then usage, then tool calls", async () => {
+    const reply = () =>
+      completion({ role: "assistant", content: "looking it up", tool_calls: [{ id: "call-1", type: "function", function: { name: "findings", arguments: '{"host":"h"}' } }] });
+    const live = await turn(surfaceOf(async () => reply()), { messages: [], tools: [], live: true });
+    const buffered = await turn(surfaceOf(async () => reply()), { messages: [], tools: [] });
+    expect(live).toEqual(buffered);
+  });
+
+  it("stays buffered for an emission even when live", async () => {
+    const surface = surfaceOf(async () => completion({ role: "assistant", content: '{"verb":"go"}' }));
+    const deltas: string[] = [];
+    for await (const event of surface.stream({ messages: [], tools: [], emit: SCHEMA, live: true })) if (event.type === "text_delta") deltas.push(event.text);
+    expect(deltas).toEqual(['{"verb":"go"}']);
   });
 });
 
