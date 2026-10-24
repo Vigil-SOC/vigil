@@ -9,6 +9,9 @@ services/daemon/config.py re-exports it for DaemonConfig.
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from core.config import get_settings
+from core.secrets import get_secret
+
 
 @dataclass
 class KafkaConfig:
@@ -27,3 +30,21 @@ class KafkaConfig:
     sasl_username: Optional[str] = None
     sasl_password: Optional[str] = None
     ssl_ca_location: Optional[str] = None
+
+    @classmethod
+    def from_env(cls) -> "KafkaConfig":
+        settings = get_settings()
+        return cls(
+            enabled=settings.kafka_enabled,
+            bootstrap_servers=settings.kafka_bootstrap_servers,
+            consumer_group=settings.kafka_consumer_group,
+            topics=list(settings.kafka_topics),
+            auto_offset_reset=settings.kafka_auto_offset_reset,
+            max_poll_records=settings.kafka_max_poll_records,
+            session_timeout_ms=settings.kafka_session_timeout_ms,
+            security_protocol=settings.kafka_security_protocol,
+            sasl_mechanism=settings.kafka_sasl_mechanism or None,
+            sasl_username=get_secret("KAFKA_SASL_USERNAME") or None,
+            sasl_password=get_secret("KAFKA_SASL_PASSWORD") or None,
+            ssl_ca_location=settings.kafka_ssl_ca_location or None,
+        )
