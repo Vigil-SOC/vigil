@@ -91,7 +91,7 @@ PROTECTED_ROUTES = [
             "server_code": "print('x')",
         },
     ),
-    ("GET", "/api/mcp/servers/enabled", None),
+    ("GET", "/api/mcp/servers/status", None),
     ("PUT", "/api/mcp/servers/vigil/enabled", {"enabled": False}),
     ("GET", "/api/mcp/surface", None),
     ("PUT", "/api/mcp/surface", {"enabled": True}),
@@ -293,7 +293,7 @@ def test_an_mcp_credential_does_not_authenticate_the_api(app):
     from core.auth.mcp_credential_service import TOKEN_PREFIX
 
     response = app.get(
-        "/api/mcp/servers/enabled",
+        "/api/mcp/servers/status",
         headers={"Authorization": f"Bearer {TOKEN_PREFIX}whatever-it-holds"},
     )
 
@@ -306,11 +306,11 @@ def test_the_api_says_why_rather_than_calling_it_invalid(app):
     from core.auth.mcp_credential_service import TOKEN_PREFIX
 
     as_credential = app.get(
-        "/api/mcp/servers/enabled",
+        "/api/mcp/servers/status",
         headers={"Authorization": f"Bearer {TOKEN_PREFIX}whatever-it-holds"},
     )
     as_bad_session = app.get(
-        "/api/mcp/servers/enabled",
+        "/api/mcp/servers/status",
         headers={"Authorization": "Bearer not.a.jwt"},
     )
 
