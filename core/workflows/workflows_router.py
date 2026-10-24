@@ -45,7 +45,6 @@ from core.workflows.workflows_service import WorkflowsService
 router = APIRouter()
 
 _DECIDE = [permission_gate("ai_decisions.approve")]
-# Enabling, reloading, or saving a workflow changes what every run can do.
 _SETTINGS_WRITE = [permission_gate("settings.write")]
 
 ROUTER_META = RouterMeta(
@@ -113,10 +112,7 @@ class WorkflowPhaseSchema(BaseModel):
     tools: List[str] = Field(default_factory=list)
     steps: List[str] = Field(default_factory=list)
     expected_output: Optional[str] = ""
-    timeout_seconds: Optional[int] = 300
     approval_required: bool = False
-    conditions: Optional[Any] = None  # reserved for branching
-    parallel_group: Optional[str] = None  # reserved for parallel paths
 
 
 class CustomWorkflowCreate(BaseModel):
@@ -140,12 +136,6 @@ class WorkflowGenerateRequest(BaseModel):
     description: str
 
 
-class WorkflowRunResumeRequest(BaseModel):
-    """Optional payload when manually resuming a paused run."""
-
-    approved_by: Optional[str] = None
-
-
 class WorkflowRunCancelRequest(BaseModel):
     """Payload when cancelling a paused / running run from the UI."""
 
@@ -157,12 +147,6 @@ class WorkflowRunCancelRequest(BaseModel):
 # -----------------------------------------------------------------------------
 
 
-# The catalog reads are the frozen contract, served at /api/v1/workflows by
-# core/api/v1/workflows_router.py. These two routes keep the pre-version
-# /api/workflows paths working by reading the same core.workflows.catalog
-# functions. They must stay in THIS router so first-match order with
-# /workflows/custom (which looks like a {workflow_id}) is decided by decorator
-# order, not cross-router mount order.
 @router.get("/workflows")
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """List all available workflows."""
@@ -196,37 +180,9 @@ async def set_enabled(
     return {"id": workflow_id, "enabled": body.enabled}
 
 
-# Static routes MUST come before parameterized {workflow_id} routes
-@router.post("/workflows/reload", dependencies=_SETTINGS_WRITE)
-async def reload_workflows(service: WorkflowsService = Depends(provide_workflows)):
-    """
-    Force reload all file-based workflows from disk.
-
-    Does not affect database-backed custom workflows.
-    """
-    service.reload()
-    workflows = service.list_workflows()
-
-    return {
-        "success": True,
-        "message": f"Reloaded workflows (total={len(workflows)})",
-        "count": len(workflows),
-    }
-
-
 # -----------------------------------------------------------------------------
 # Custom workflow CRUD (database-backed)
 # -----------------------------------------------------------------------------
-
-
-@router.get("/workflows/custom")
-async def list_custom_workflows(
-    active_only: bool = True,
-    service: CustomWorkflowService = Depends(provide_custom_workflows),
-):
-    """List database-backed custom workflows."""
-    rows = service.list(active_only=active_only)
-    return {"workflows": rows, "count": len(rows)}
 
 
 @router.post("/workflows/custom", status_code=201, dependencies=_SETTINGS_WRITE)
@@ -241,21 +197,6 @@ async def create_custom_workflow(
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/workflows/custom/{workflow_id}")
-async def get_custom_workflow(
-    workflow_id: str,
-    service: CustomWorkflowService = Depends(provide_custom_workflows),
-):
-    """Fetch a single custom workflow."""
-    wf = service.get(workflow_id)
-    if not wf:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Custom workflow not found: {workflow_id}",
-        )
-    return wf
 
 
 @router.put("/workflows/custom/{workflow_id}", dependencies=_SETTINGS_WRITE)
@@ -383,8 +324,7 @@ async def propose_feed_hunts(limit: int = 200):
 
 
 # -----------------------------------------------------------------------------
-# Parameterized discovery/execution routes (keep at bottom so specific paths
-# like /workflows/custom and /workflows/reload match first)
+# Parameterized discovery/execution routes
 # -----------------------------------------------------------------------------
 
 
@@ -393,11 +333,7 @@ async def get_workflow(
     workflow_id: str,
     service: WorkflowsService = Depends(provide_workflows),
 ):
-    """Get one workflow.
-
-    Defined after /workflows/custom so decorator order resolves the {workflow_id}
-    vs /custom ambiguity within this router.
-    """
+    """Get one workflow."""
     workflow = catalog.detail(service, workflow_id)
     if workflow is None:
         raise HTTPException(
@@ -659,61 +595,6 @@ async def get_workflow_run(
     else:
         row["projection"] = folded
     return row
-
-
-@router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)
-async def resume_workflow_run(
-    run_id: str,
-    request: WorkflowRunResumeRequest,
-    run_service: WorkflowRunService = Depends(provide_workflow_runs),
-    approval_service: ApprovalService = Depends(provide_approvals),
-    workflows: WorkflowsService = Depends(provide_workflows),
-    current_user: User = Depends(get_current_user),
-):
-    """Resume a paused workflow run (#128).
-
-    Looks up the run's pending approval action, approves it, and
-    re-enters the phase loop. If there is no pending approval action
-    linked to the run, returns 409.
-    """
-    from core.response.approval_service import ActionStatus
-    from core.workflows.run_resume import resume_run
-
-    run = run_service.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-    if run.get("status") != "paused":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run {run_id} is not paused (status={run.get('status')})",
-        )
-
-    approved_by = current_user.username
-    pending = approval_service.list_actions(
-        status=ActionStatus.PENDING, workflow_run_id=run_id
-    )
-    if not pending:
-        raise HTTPException(
-            status_code=409, detail=f"Run {run_id} has no pending approval"
-        )
-    if len(pending) > 1:
-        # Resume names no action, so with several pending it would pick one unseen.
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run {run_id} has {len(pending)} pending approvals; "
-            "decide each through /approvals/{action_id}",
-        )
-
-    try:
-        approval_service.approve_action(
-            pending[0].action_id,
-            approved_by=approved_by,
-            approved_by_principal_id=getattr(current_user, "principal_id", None)
-            or getattr(current_user, "user_id", None),
-        )
-    except AlreadyDecided as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    return await resume_run(run_id, pending[0].action_id, approved_by)
 
 
 @router.post("/workflows/runs/{run_id}/cancel", dependencies=_DECIDE)

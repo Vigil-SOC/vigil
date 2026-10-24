@@ -380,13 +380,13 @@ export const slaPoliciesApi = {
 }
 
 export const caseMetricsApi = {
-  getSummary: () => api.get('/cases/metrics/summary'),
+  getSummary: () => api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary'),
   getMTTD: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttd', { params }),
+    api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
   getMTTR: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
-    api.get('/cases/metrics/mttr', { params }),
-  getByPriority: () => api.get('/cases/metrics/by-priority'),
-  getByStatus: () => api.get('/cases/metrics/by-status'),
+    api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
+  getByPriority: () => api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority'),
+  getByStatus: () => api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status'),
   getAnalystPerformance: () => api.get('/cases/metrics/analyst-performance'),
 }
 
@@ -509,7 +509,7 @@ export interface AgentSummary {
 /** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
-  getProcesses: () => api.get<{ agent_layer?: string; daemon?: string }>('/processes'),
+  getProcesses: () => api.get<Schema<'ProcessStates'>>('/processes'),
   getRoutability: () =>
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
@@ -555,9 +555,7 @@ export const configApi = {
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
-    auto_start_sync: boolean
     show_notifications: boolean
-    theme: string
     enable_keyring: boolean
   }) => api.post('/config/general', data),
   
@@ -645,6 +643,15 @@ export const extensionsApi = {
     api.get<{ token: string | null; expires_in: number | null; user: string }>(
       `/integrations/${integrationId}/session-token`,
     ),
+}
+
+export const customIntegrationsApi = {
+  generate: (data: Schema<'CustomIntegrationRequest'>) =>
+    api.post('/custom-integrations/generate', data, { timeout: LLM_TIMEOUT }),
+  save: (data: Schema<'SaveIntegrationRequest'>) =>
+    api.post('/custom-integrations/save', data),
+  validate: (integrationId: string) =>
+    api.post(`/custom-integrations/${integrationId}/validate`),
 }
 
 export interface LLMProvider {
@@ -875,10 +882,7 @@ interface WorkflowPhase {
   tools: string[]
   steps: string[]
   expected_output?: string
-  timeout_seconds?: number
   approval_required?: boolean
-  conditions?: any
-  parallel_group?: string | null
 }
 
 /** What POST /workflows/generate returns: a definition that is not saved anywhere. */
@@ -1001,9 +1005,6 @@ export const workflowApi = {
   steer: (runId: string, kind: string, text = '', fields?: Record<string, unknown>) =>
     api.post(`/agent-runs/${runId}/directives`, { kind, text, ...(fields && { fields }) }),
 
-  listCustom: (activeOnly: boolean = true) =>
-    api.get('/workflows/custom', { params: { active_only: activeOnly } }),
-  getCustom: (id: string) => api.get(`/workflows/custom/${id}`),
   createCustom: (data: {
     name: string
     description: string
@@ -1202,11 +1203,6 @@ export const reasoningApi = {
   getInteraction: (sessionId: string, interactionId: string) =>
     api
       .get(`/reasoning/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`)
-      .then(r => r.data),
-
-  listInvestigationInteractions: (investigationId: string, params?: { limit?: number; offset?: number }) =>
-    api
-      .get(`/reasoning/investigation/${encodeURIComponent(investigationId)}/interactions`, { params })
       .then(r => r.data),
 }
 

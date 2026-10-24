@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
-from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
 from core.storage.models import (
@@ -49,21 +48,15 @@ _cached_orchestrator = None
 
 
 def _get_orchestrator():
-    """Get a cached orchestrator instance for DB-only queries from the API layer."""
     global _cached_orchestrator
-    if _cached_orchestrator is not None:
-        return _cached_orchestrator
     try:
-        from services.daemon.config import OrchestratorConfig
+        from services.daemon.config import DaemonConfig
         from services.daemon.orchestrator import Orchestrator
 
-        # The daemon's fallback when Settings holds no hourly cap; must match it.
-        config = OrchestratorConfig(
-            max_total_hourly_cost=get_settings().orchestrator_max_hourly_cost
-        )
-        orch = Orchestrator(config)
-        _cached_orchestrator = orch
-        return orch
+        config = DaemonConfig.from_env().orchestrator
+        if _cached_orchestrator is None or _cached_orchestrator.config != config:
+            _cached_orchestrator = Orchestrator(config)
+        return _cached_orchestrator
     except Exception as e:
         logger.debug(f"Orchestrator init: {e}")
         return None
@@ -102,17 +95,16 @@ def get_orchestrator_status():
         cost_summary = orch.get_cost_summary()
         stats = orch.stats
 
-    # Enabled is persisted inside the single `orchestrator.settings` key.
-    # See core/storage/config_service and services/api/routers/config.py.
     enabled = False
+    max_agents = 3
     try:
-        from core.storage.config_service import get_config_service
-
         settings = get_config_service().get_system_config("orchestrator.settings")
         if isinstance(settings, dict):
             enabled = bool(settings.get("enabled", False))
+            max_agents = int(settings.get("max_concurrent_agents", 3))
     except Exception:
-        enabled = orch.enabled if orch else False
+        if orch:
+            max_agents = orch.config.max_concurrent_agents
 
     active = [i for i in investigations if i.get("status") in ("assigned", "executing")]
     completed = [i for i in investigations if i.get("status") == "completed"]
@@ -125,17 +117,6 @@ def get_orchestrator_status():
 
     with get_db_manager().session_scope() as session:
         queued = session.query(IntakeTrigger).filter_by(state="queued").count()
-
-    max_agents = 3
-    try:
-        from core.storage.config_service import get_config_service
-
-        orch_cfg = get_config_service().get_system_config("orchestrator.settings")
-        if orch_cfg and isinstance(orch_cfg, dict):
-            max_agents = int(orch_cfg.get("max_concurrent_agents", 3))
-    except Exception:
-        if orch:
-            max_agents = orch.config.max_concurrent_agents
 
     return {
         "enabled": enabled,
@@ -184,9 +165,6 @@ def enable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
     """Enable the orchestrator at runtime."""
-    orch = _get_orchestrator()
-    if orch:
-        orch.enable()
     _persist_orchestrator_enabled(True, str(current_user.user_id))
     return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
 
@@ -196,9 +174,6 @@ def disable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
     """Gracefully disable the orchestrator. Running agents finish their current step."""
-    orch = _get_orchestrator()
-    if orch:
-        orch.disable()
     _persist_orchestrator_enabled(False, str(current_user.user_id))
     return {
         "success": True,
@@ -250,29 +225,26 @@ async def purge_investigations(
     Triggered from the Settings → Auto Investigate "Clear All
     Investigations" button.
     """
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=503, detail="Orchestrator not available")
-        # The purge cascades to investigation_logs; config_audit_log is not
-        # touched by it, so this row records who did it.
-        await asyncio.to_thread(
-            get_config_service(user_id=str(current_user.user_id)).record_audit,
-            config_type="orchestrator",
-            config_key="investigations",
-            action="purge",
-            old_value=None,
-            new_value=None,
-            change_reason="All investigations purged via API",
-        )
-        result = await orch.purge_all_investigations()
-        return {
-            "success": True,
-            "deleted": result.get("deleted", 0),
-            "message": f"Purged {result.get('deleted', 0)} investigations",
-        }
-    except HTTPException:
-        raise
+    orch = _get_orchestrator()
+    if not orch:
+        raise HTTPException(status_code=503, detail="Orchestrator not available")
+    # The purge cascades to investigation_logs; config_audit_log is not
+    # touched by it, so this row records who did it.
+    await asyncio.to_thread(
+        get_config_service(user_id=str(current_user.user_id)).record_audit,
+        config_type="orchestrator",
+        config_key="investigations",
+        action="purge",
+        old_value=None,
+        new_value=None,
+        change_reason="All investigations purged via API",
+    )
+    result = await orch.purge_all_investigations()
+    return {
+        "success": True,
+        "deleted": result.get("deleted", 0),
+        "message": f"Purged {result.get('deleted', 0)} investigations",
+    }
 
 
 # ---- Investigations ----
@@ -295,57 +267,47 @@ def list_investigations(status: Optional[str] = Query(None)):
 @router.get("/investigations/{investigation_id}")
 def get_investigation(investigation_id: str):
     """Get detailed information about a specific investigation."""
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=404, detail="Orchestrator not available")
+    orch = _get_orchestrator()
+    if not orch:
+        raise HTTPException(status_code=404, detail="Orchestrator not available")
 
-        inv = orch.get_investigation(investigation_id)
-        if not inv:
-            raise HTTPException(
-                status_code=404, detail=f"Investigation not found: {investigation_id}"
-            )
+    inv = orch.get_investigation(investigation_id)
+    if not inv:
+        raise HTTPException(
+            status_code=404, detail=f"Investigation not found: {investigation_id}"
+        )
 
-        files = orch.workdir.list_files(investigation_id)
-        log = orch.workdir.get_log(investigation_id, tail=20)
-        state = orch.workdir.read_state(investigation_id)
-        disk_usage = orch.workdir.get_disk_usage(investigation_id)
+    files = orch.workdir.list_files(investigation_id)
+    log = orch.workdir.get_log(investigation_id, tail=20)
 
-        return {
-            **inv,
-            "files": files,
-            "recent_log": log,
-            "state": state,
-            "disk_usage_bytes": disk_usage,
-        }
-    except HTTPException:
-        raise
+    return {
+        **inv,
+        "files": files,
+        "recent_log": log,
+    }
 
 
 @router.get("/investigations/{investigation_id}/files/{filename:path}")
 def get_investigation_file(investigation_id: str, filename: str):
     """Read a file from an investigation's working directory."""
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=404, detail="Orchestrator not available")
+    orch = _get_orchestrator()
+    if not orch:
+        raise HTTPException(status_code=404, detail="Orchestrator not available")
 
-        content = orch.workdir.read_file(investigation_id, filename)
-        if not content and not orch.workdir.exists(investigation_id):
-            raise HTTPException(
-                status_code=404, detail=f"Investigation not found: {investigation_id}"
-            )
+    content = orch.workdir.read_file(investigation_id, filename)
+    if not content and not orch.workdir.exists(investigation_id):
+        raise HTTPException(
+            status_code=404, detail=f"Investigation not found: {investigation_id}"
+        )
 
-        is_json = filename.endswith(".json") or filename.endswith(".jsonl")
+    is_json = filename.endswith(".json") or filename.endswith(".jsonl")
 
-        return {
-            "filename": filename,
-            "investigation_id": investigation_id,
-            "content": content,
-            "content_type": "application/json" if is_json else "text/plain",
-        }
-    except HTTPException:
-        raise
+    return {
+        "filename": filename,
+        "investigation_id": investigation_id,
+        "content": content,
+        "content_type": "application/json" if is_json else "text/plain",
+    }
 
 
 def _person(user: User) -> Dict[str, str]:
@@ -370,51 +332,48 @@ def wake_investigation(investigation_id: str, user: User = Depends(get_current_u
     once finished, so the same investigation cannot run twice. The failure stays
     on record; the restart is a fresh Human Ask over the same workflow and findings.
     """
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=404, detail="Orchestrator not available")
+    orch = _get_orchestrator()
+    if not orch:
+        raise HTTPException(status_code=404, detail="Orchestrator not available")
 
-        inv = orch.get_investigation(investigation_id)
-        if not inv:
-            raise HTTPException(
-                status_code=404, detail=f"Investigation not found: {investigation_id}"
-            )
-
-        if inv.get("status") not in FINISHED_INVESTIGATION_STATUSES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot restart investigation in status '{inv.get('status')}'",
-            )
-
-        from services.daemon.orchestrator import insert_intake_trigger
-
-        case_id = inv.get("case_id")
-        insert_intake_trigger(
-            kind="human_ask",
-            priority=inv.get("priority") or "medium",
-            payload={
-                "workflow_id": inv["workflow_id"],
-                "case_id": case_id,
-                "finding_ids": inv.get("trigger_ids") or [],
-                "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
-                or None,
-                **_person(user),
-            },
+    inv = orch.get_investigation(investigation_id)
+    if not inv:
+        raise HTTPException(
+            status_code=404, detail=f"Investigation not found: {investigation_id}"
         )
 
-        return {
-            "success": True,
+    if inv.get("status") not in FINISHED_INVESTIGATION_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot restart investigation in status '{inv.get('status')}'",
+        )
+
+    from services.daemon.orchestrator import insert_intake_trigger
+
+    case_id = inv.get("case_id")
+    insert_intake_trigger(
+        kind="human_ask",
+        priority=inv.get("priority") or "medium",
+        payload={
+            "workflow_id": inv["workflow_id"],
             "case_id": case_id,
-            "message": (
-                f"New investigation queued on case {case_id}; "
-                f"{investigation_id} stays on record"
-                if case_id
-                else f"New investigation queued; {investigation_id} stays on record"
-            ),
-        }
-    except HTTPException:
-        raise
+            "finding_ids": inv.get("trigger_ids") or [],
+            "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
+            or None,
+            **_person(user),
+        },
+    )
+
+    return {
+        "success": True,
+        "case_id": case_id,
+        "message": (
+            f"New investigation queued on case {case_id}; "
+            f"{investigation_id} stays on record"
+            if case_id
+            else f"New investigation queued; {investigation_id} stays on record"
+        ),
+    }
 
 
 @router.post("/investigations/{investigation_id}/kill", dependencies=_KILL)
@@ -578,35 +537,15 @@ def scan_existing_findings(request: ScanFindingsRequest):
     }
 
 
-# ---- Cost ----
-
-
-@router.get("/cost")
-def get_cost_summary():
-    """Get cost breakdown across all investigations."""
-    orch = _get_orchestrator()
-    if not orch:
-        return {"total_cost_usd": 0, "active_cost_usd": 0}
-    return orch.get_cost_summary()
-
-
 # ---- Chain of Custody ----
 
 # Workdir files to include in the chain-of-custody package.
-#
-# `hypotheses.txt`, not `.json`: WorkdirManager scaffolds an empty `hypotheses.json`
-# and nothing ever writes it, so the export carried a truthy "[]" while the claims
-# the run was opened to test sat unread in the file beside it. An audit document
-# that says "no hypotheses" is worse than one that says nothing.
 _COC_WORKDIR_FILES = [
     "state.json",
     "context.md",
-    "iocs.json",
-    "timeline.json",
     "hypotheses.txt",
     "hypothesis_subjects.json",
     "recall_keys.json",
-    "review.md",
 ]
 
 
@@ -700,23 +639,17 @@ def get_chain_of_custody(investigation_id: str):
     Includes investigation metadata, chronological InvestigationLog rows,
     LLM interaction traces, workdir files, and OTEL trace correlation.
     """
-    try:
-        return _assemble_chain_of_custody(investigation_id)
-    except HTTPException:
-        raise
+    return _assemble_chain_of_custody(investigation_id)
 
 
 @router.get("/investigations/{investigation_id}/export")
 def export_investigation(investigation_id: str):
     """Export the complete chain-of-custody package as a downloadable JSON file."""
-    try:
-        payload = _assemble_chain_of_custody(investigation_id)
-        data = json.dumps(payload, indent=2, default=str).encode("utf-8")
-        filename = f"inv-{investigation_id}-chain-of-custody.json"
-        return StreamingResponse(
-            io.BytesIO(data),
-            media_type="application/json",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-    except HTTPException:
-        raise
+    payload = _assemble_chain_of_custody(investigation_id)
+    data = json.dumps(payload, indent=2, default=str).encode("utf-8")
+    filename = f"inv-{investigation_id}-chain-of-custody.json"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
