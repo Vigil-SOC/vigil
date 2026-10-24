@@ -5,7 +5,7 @@ request-scoped ``Session``; nothing here commits — the unit of work owns that.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func
