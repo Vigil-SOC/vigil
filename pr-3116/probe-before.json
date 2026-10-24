@@ -1,0 +1,296 @@
+{
+ "ing-live/defaults": [
+  {
+   "connected": false,
+   "consumer_group": "vigil-soc",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 7,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": []
+  },
+  true
+ ],
+ "ing-live/set": [
+  {
+   "connected": false,
+   "consumer_group": "g2",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 7,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": [
+    "alerts",
+    "b"
+   ]
+  },
+  true
+ ],
+ "ing/defaults": {
+  "connected": false,
+  "consumer_group": "vigil-soc",
+  "decode_errors": 0,
+  "duplicates_skipped": 0,
+  "last_error": null,
+  "last_error_at": null,
+  "last_message_at": null,
+  "messages_consumed": 0,
+  "messages_enqueued": 0,
+  "missing_id_errors": 0,
+  "topics": [
+   "later"
+  ]
+ },
+ "ing/set": {
+  "connected": false,
+  "consumer_group": "g2",
+  "decode_errors": 0,
+  "duplicates_skipped": 0,
+  "last_error": null,
+  "last_error_at": null,
+  "last_message_at": null,
+  "messages_consumed": 0,
+  "messages_enqueued": 0,
+  "missing_id_errors": 0,
+  "topics": [
+   "alerts",
+   "b",
+   "later"
+  ]
+ },
+ "router/badtypes": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": null,
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": "x,y"
+  },
+  "daemon_reachable": false,
+  "enabled": false,
+  "stats": {
+   "connected": false,
+   "consumer_group": null,
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 0,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": "x,y"
+  }
+ },
+ "router/daemon": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": "vigil-soc",
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": []
+  },
+  "daemon_reachable": true,
+  "enabled": false,
+  "stats": {
+   "connected": true,
+   "messages_consumed": 3
+  }
+ },
+ "router/empty": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": "vigil-soc",
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": []
+  },
+  "daemon_reachable": false,
+  "enabled": false,
+  "stats": {
+   "connected": false,
+   "consumer_group": "vigil-soc",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 0,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": []
+  }
+ },
+ "router/none": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": "vigil-soc",
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": []
+  },
+  "daemon_reachable": false,
+  "enabled": false,
+  "stats": {
+   "connected": false,
+   "consumer_group": "vigil-soc",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 0,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": []
+  }
+ },
+ "router/notdict": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": "vigil-soc",
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": []
+  },
+  "daemon_reachable": false,
+  "enabled": false,
+  "stats": {
+   "connected": false,
+   "consumer_group": "vigil-soc",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 0,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": []
+  }
+ },
+ "router/raises": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": "vigil-soc",
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": []
+  },
+  "daemon_reachable": false,
+  "enabled": false,
+  "stats": {
+   "connected": false,
+   "consumer_group": "vigil-soc",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 0,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": []
+  }
+ },
+ "router/set": {
+  "config": {
+   "auto_offset_reset": "latest",
+   "bootstrap_servers": "localhost:9092",
+   "consumer_group": "dbg",
+   "enabled": false,
+   "max_poll_records": 500,
+   "sasl_mechanism": null,
+   "sasl_username": null,
+   "security_protocol": "PLAINTEXT",
+   "session_timeout_ms": 30000,
+   "topics": [
+    "db"
+   ]
+  },
+  "daemon_reachable": false,
+  "enabled": false,
+  "stats": {
+   "connected": false,
+   "consumer_group": "dbg",
+   "decode_errors": 0,
+   "duplicates_skipped": 0,
+   "last_error": null,
+   "last_error_at": null,
+   "last_message_at": null,
+   "messages_consumed": 0,
+   "messages_enqueued": 0,
+   "missing_id_errors": 0,
+   "topics": [
+    "db"
+   ]
+  }
+ },
+ "svc/defaults": {
+  "connected": false,
+  "consumer_group": "vigil-soc",
+  "decode_errors": 0,
+  "duplicates_skipped": 0,
+  "last_error": null,
+  "last_error_at": null,
+  "last_message_at": null,
+  "messages_consumed": 7,
+  "messages_enqueued": 0,
+  "missing_id_errors": 0,
+  "topics": []
+ },
+ "svc/set": {
+  "connected": false,
+  "consumer_group": "g2",
+  "decode_errors": 0,
+  "duplicates_skipped": 0,
+  "last_error": null,
+  "last_error_at": null,
+  "last_message_at": null,
+  "messages_consumed": 7,
+  "messages_enqueued": 0,
+  "missing_id_errors": 0,
+  "topics": [
+   "alerts",
+   "b"
+  ]
+ }
+}

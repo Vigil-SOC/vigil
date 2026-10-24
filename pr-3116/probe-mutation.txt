@@ -1,0 +1,9 @@
+mutation: idle_stats uses list(topics); diff base vs mutated:
+95c95,99
+<    "topics": "x,y"
+---
+>    "topics": [
+>     "x",
+>     ",",
+>     "y"
+>    ]
