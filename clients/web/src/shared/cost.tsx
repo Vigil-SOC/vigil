@@ -25,21 +25,18 @@ type CostView =
 
 interface CostInput {
   usd: number | null | undefined
-  /** Upper bound of an estimate band; renders as `$low–$high`. */
-  high?: number | null
   source?: PricingSource | null
   digits?: number
 }
 
 const dollars = (n: number, digits: number) => `$${n.toFixed(digits)}`
 
-export function describeCost({ usd, high, source, digits = 2 }: CostInput): CostView {
+export function describeCost({ usd, source, digits = 2 }: CostInput): CostView {
   if (source === 'unknown' || typeof usd !== 'number' || !Number.isFinite(usd)) {
     return { kind: 'not-priced', text: NOT_PRICED, hint: NOT_PRICED_HINT }
   }
   if (source === 'zero') return { kind: 'not-billed', text: NOT_BILLED, hint: NOT_BILLED_HINT }
-  const text = typeof high === 'number' && Number.isFinite(high) ? `${dollars(usd, digits)}–${dollars(high, digits)}` : dollars(usd, digits)
-  return { kind: 'amount', text, source: source ?? undefined }
+  return { kind: 'amount', text: dollars(usd, digits), source: source ?? undefined }
 }
 
 /** Plain-text form for template strings and KPI values. */
@@ -48,8 +45,6 @@ export function fmtCost(usd: CostInput['usd'], source?: CostInput['source'], dig
 }
 
 interface CostProps extends CostInput {
-  /** Prefix for an estimate, e.g. "~". Dropped when there is no figure to approximate. */
-  approx?: boolean
   className?: string
   /** Extra tooltip text; a not-priced / not-billed label prepends its own hint. */
   title?: string
@@ -57,15 +52,11 @@ interface CostProps extends CostInput {
 
 /** Renders the rule as an element. Provenance is conveyed by text (and a title
  *  carrying the route to resolving it), never by colour alone. */
-export function Cost({ approx, className, title, ...input }: CostProps) {
+export function Cost({ className, title, ...input }: CostProps) {
   const v = describeCost(input)
   switch (v.kind) {
     case 'amount':
-      return (
-        <span className={className} title={title}>
-          {approx ? '~' : ''}{v.text}
-        </span>
-      )
+      return <span className={className} title={title}>{v.text}</span>
     case 'not-priced':
     case 'not-billed':
       return <span className={className} title={title ? `${v.hint} ${title}` : v.hint} data-cost={v.kind}>{v.text}</span>
