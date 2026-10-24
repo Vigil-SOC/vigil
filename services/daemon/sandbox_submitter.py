@@ -48,7 +48,6 @@ class SandboxSettings:
     auto_submit: bool
     max_file_size_mb: int
     allowed_types: List[str]
-    timeout_seconds: int
     joe_enabled: bool
     cape_enabled: bool
     hybrid_enabled: bool
@@ -62,7 +61,6 @@ class SandboxSettings:
             auto_submit=settings.sandbox_auto_submit,
             max_file_size_mb=settings.sandbox_max_file_size_mb,
             allowed_types=[t.strip().lower() for t in allowed.split(",") if t.strip()],
-            timeout_seconds=settings.sandbox_analysis_timeout,
             joe_enabled=settings.joe_sandbox_enabled,
             cape_enabled=settings.cape_sandbox_enabled,
             hybrid_enabled=settings.hybrid_analysis_enabled,
@@ -187,8 +185,6 @@ class SandboxSubmitter:
             return dict(_RATE_LIMITED)
         headers = {"Authorization": f"Token {api_key}"} if api_key else {}
         hash_type = self._hash_type(hash_val)
-        if not hash_type:
-            return {"status": "skipped", "reason": "unknown_hash_format"}
         try:
             resp = await asyncio.to_thread(
                 httpx.get,

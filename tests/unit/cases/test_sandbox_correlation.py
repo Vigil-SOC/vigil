@@ -125,7 +125,7 @@ class TestDispatch:
                 "signatures": [],
             }
         }
-        out = _normalise_report("cape-sandbox", report)
+        out = _normalise_report("cape", report)
         assert out["verdict"] == "malicious"
 
 
