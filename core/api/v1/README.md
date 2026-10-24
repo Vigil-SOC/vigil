@@ -83,8 +83,7 @@ under the same prefix makes resolution depend on mount order, which
 `test_no_cross_router_path_shadowing` forbids. So the v1 router is **not**
 legacy-mounted — it serves only `/api/v1/<resource>` and is the source of
 truth — and the console keeps its old routes as thin **delegators** that call
-the v1 functions, staying in-router with the literal siblings. (workflows: the
-catalog `GET /{workflow_id}` would otherwise shadow `GET /workflows/custom`.)
+the v1 functions, staying in-router with the literal siblings.
 
 ## The per-resource recipe
 
