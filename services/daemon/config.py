@@ -60,9 +60,6 @@ class SchedulerConfig:
     threat_hunt_interval: int = 86400  # Daily (24 hours)
     probes_enabled: bool = True  # known-answer probes (#923)
     probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
-    report_generation_enabled: bool = True
-    report_interval: int = 604800  # Weekly (7 days)
-    cleanup_enabled: bool = True
     cleanup_interval: int = 86400  # Daily
     cleanup_retention_days: int = 90
     approval_expiry_days: int = 7
