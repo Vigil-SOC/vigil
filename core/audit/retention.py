@@ -19,7 +19,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 
 from core.audit import trail
-from core.auth import mcp_credential_service, sign_ins
+from core.auth import mcp_credential_service, principals, sign_ins
 from core.config import get_settings
 
 MIN_DAYS = 365
@@ -367,7 +367,9 @@ def _managers(session, *, active_only: bool) -> set[str]:
     """Principals whose role holds ``audit.manage``.
 
     ``active_only`` is the last-manager guard. A disabled account still holds
-    the permission, so erasing it waits seven days like any other holder.
+    the permission, so erasing it waits seven days like any other holder. A
+    service account can hold the role but never exercises it (``_PERSON_ONLY``
+    in ``auth_service``), so it does not count as a manager either.
     """
     if not _table(session, "users"):
         return set()
@@ -378,9 +380,10 @@ def _managers(session, *, active_only: bool) -> set[str]:
             JOIN public.principals p ON p.principal_id = u.principal_id
             JOIN public.roles r ON r.role_id = u.role_id
             WHERE p.deleted_at IS NULL
+              AND p.kind = :person
               {active}
               AND (r.permissions -> 'audit.manage') = 'true'::jsonb
-            """)).scalars()
+            """), {"person": principals.PERSON}).scalars()
     return set(rows)
 
 

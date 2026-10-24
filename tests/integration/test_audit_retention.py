@@ -495,3 +495,33 @@ def test_restore_reapplies_an_id_that_was_only_in_the_outside_file(
     assert retention.read_ids(tmp_path / retention.LIST_NAME) == [mia]
     with unit_of_work() as session:
         assert trail.verify(session).ok
+
+
+def test_a_service_account_with_the_role_is_not_a_manager(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("VIGIL_UPGRADE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    # The role grants audit.manage to a service account too, but it can never use it.
+    fay = _user("fay", "role-admin")
+    with unit_of_work() as session:
+        svc = User(
+            user_id=f"user-{uuid.uuid4().hex[:12]}",
+            username="svc-audit",
+            email="svc-audit@example.com",
+            password_hash=AuthService.hash_password(PASSWORD),
+            full_name="svc-audit",
+            role_id="role-admin",
+            is_active=True,
+            is_verified=False,
+            mfa_enabled=False,
+            service_account=True,
+        )
+        principals.add_for_user(session, svc)
+        session.add(svc)
+        session.flush()
+        svc_pid = svc.principal_id
+    _activate(fay, svc_pid)
+    with unit_of_work() as session:
+        with pytest.raises(retention.RetentionError, match="last audit manager"):
+            retention.erase(session, "svc-audit", fay, "leaving", NOW)
+    feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
+    assert _label(db, fay)[0] == "fay"

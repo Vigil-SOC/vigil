@@ -362,6 +362,7 @@ function RetentionCard({ notify }: SectionProps) {
 
   const apply = (next: AuditRetention) => {
     setPolicy(next)
+    setLoadFailed(false)
     setStatus('')
   }
 
@@ -415,7 +416,7 @@ function RetentionCard({ notify }: SectionProps) {
         <h3>Retention</h3>
         <InfoTip
           label="About retention"
-          text="At least 365 days, in force 7 days after it is set. Erasing someone who can manage the trail waits the same 7 days and needs a reason. Personal details are cleared; the trail itself still verifies."
+          text="At least 365 days, in force 7 days after it is set. Erasing someone who can manage the trail waits the same 7 days and needs a reason. The principal’s label and trail details are blanked, and their sign-in and credentials end; the trail itself still verifies."
         />
       </div>
       <div className="audit-retain">

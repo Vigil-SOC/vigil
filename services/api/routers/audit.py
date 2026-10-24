@@ -5,7 +5,8 @@ One filter, from ``core.audit.trail``. List, export, and range verify need
 ``audit.read``, and anyone else needs ``audit.forward``. A missing sign-in is
 refused before that check. ``audit.forward`` and ``audit.manage`` stay a
 person's own act inside ``check_permission``, including in dev mode. A poll
-adds no trail row.
+adds no trail row. Retention reads need ``audit.read``; setting the period and
+erasing a principal need ``audit.manage`` as a person (#2769).
 """
 
 from __future__ import annotations
@@ -223,7 +224,7 @@ def put_retention(
     session: UnitOfWorkSession,
     user: User = Depends(_MANAGE),
 ):
-    """Set the retention period. At least 365 days, in force seven days later."""
+    """Set the retention period. At least 365 and at most 36500 days, in force seven days later."""
     return _retention(
         lambda: retention.set_period(
             session,
