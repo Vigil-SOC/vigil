@@ -1,0 +1,41 @@
+# L-1.h: core/llm/target.py:53-70 swaps or force-sends a model the provider can't serve
+# (WARNING; the swap logs once per provider-model pair per process). Read from soc-daemon
+# only: triage resolves configured assignments there, while the backend's chat route
+# passes the request's own model in (services/api/routers/claude.py:302-329), so any
+# logged-in user could trigger the backend's line. L-1.i: the llm-worker can't find the
+# provider and quietly uses ClaudeService (jobs.py:134-137, per call). Trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.model-substituted
+title: Vigil is sending LLM calls to a different model or provider than the one assigned
+revision: 1
+fault: {class: llm, mode: L-1, causes: [L-1.h, L-1.i]}
+lane: 2
+detection: event
+signals:
+  provider_missing:
+    log:
+      signal: log_llm_worker
+      logger: {eq: services.worker.jobs}
+      level: [WARNING]
+      template: {eq: 'Provider %s not found; falling back to ClaudeService'}
+  daemon_swap:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: core.llm.target}
+      level: [WARNING]
+      template: {prefix: 'Provider %s cannot serve '}
+when:
+  any:
+    - {fn: count, signal: provider_missing, window: 1h, op: ">=", value: 1}
+    - {fn: count, signal: daemon_swap, window: 1h, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: Vigil substituted a model or provider for the one assigned, because the assigned one can't serve the call or no longer exists.
+  fix: >-
+    Open Settings, AI Config and check each assignment (chat_default, triage and
+    the others) points at an active provider and a model that provider serves.
+    Re-activate or reassign any provider that was deleted or deactivated. Vigil
+    logs a substitution once per process, so this alert clears after an hour even
+    if nothing changed: check the assignments either way.

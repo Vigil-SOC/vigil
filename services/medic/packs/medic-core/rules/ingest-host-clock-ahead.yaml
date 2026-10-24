@@ -1,0 +1,26 @@
+# I-3.g · alerts newer than the host clock cap the federation cursor; with a host
+# clock behind, alerts in the gap are skipped. Repeats once per affected batch.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.host-clock-ahead
+title: Source alerts are timestamped ahead of the Vigil host clock
+revision: 1
+fault: {class: ingest, mode: I-3, causes: [I-3.g]}
+lane: 2
+detection: event
+signals:
+  ahead:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: core.federation.adapters._base}
+      level: [WARNING]
+      template: {eq: "Federation %s: newest alert time %s is ahead of this host's clock (window end %s); capping the cursor there"}
+when: {fn: count, signal: ahead, window: 1h, op: ">=", value: 3}
+for: 2m
+keep_firing_for: 30m
+advice:
+  summary: Alerts keep arriving dated in the future by this host's clock, so Vigil may skip some of them.
+  fix: >-
+    Check that the Vigil host's clock is right and synchronised (enable NTP or
+    chrony). If the clock is right, the source is sending alerts dated in the
+    future: check the time settings on the source.

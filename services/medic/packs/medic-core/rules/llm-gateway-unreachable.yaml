@@ -1,0 +1,43 @@
+# L-4.a / L-4.c: the backend can't reach Bifrost (core/llm/bifrost/mirror.py:268-275, #1689;
+# the mirror reconcile runs on every catalogue refresh, services/api/main.py:313-326).
+# Set: entry ERROR or reminder. Clear: the recovery line (the mirror logger has one
+# outage key, so no message match) or a backend start ("Starting Vigil SOC Backend",
+# the first line of _startup, logged before the first reconcile).
+# The backend runs 2 uvicorn workers on one log stream, so one process's start line can
+# briefly clear another's outage; each re-reports on its next failure, so it heals.
+# All #1689 latches need INFO lines: a site that raises the log level above INFO never
+# logs the clear, and its latches stay set.
+# Lane 2: B5 says lane 1 for bundled Bifrost, but log lines alone can't route there.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.gateway-unreachable
+title: The backend can't reach the LLM gateway (Bifrost)
+revision: 1
+fault: {class: llm, mode: L-4, causes: [L-4.a, L-4.c]}
+lane: 2
+detection: event
+signals:
+  down:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.bifrost.mirror}
+      level: [ERROR]
+      template: {re2: '^(Mirror reconcile skipped — Bifrost unreachable: %s|%s \(still failing, %d failures\))$'}
+  up:
+    log:
+      signal: log_backend
+      logger: {re2: '^(core\.llm\.bifrost\.mirror|services\.api\.main)$'}
+      level: [INFO]
+      template: {re2: '^(%s; recovered after %d failures|Starting Vigil SOC Backend)$'}
+when: {fn: latch, set: down, clear: up}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: The backend can't reach Bifrost, the LLM gateway, so LLM calls and provider changes fail.
+  fix: >-
+    Check that Bifrost is running and that BIFROST_URL resolves from the backend
+    (Compose: the bifrost container; host-native: http://localhost:8080; Helm: the
+    gateway URL you configured). If Bifrost is up, check its own log for errors
+    reaching the model provider (network egress, proxy, or for Ollama the
+    OLLAMA_URL and, on Linux Compose, host.docker.internal mapped to the host
+    gateway).
