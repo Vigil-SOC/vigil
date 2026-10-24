@@ -11,6 +11,7 @@ from core.agents import tool_registry
 from core.auth.permissions import permission_refusal
 from core.cases.agent_closure import service_session
 from core.cases.case_status import CaseStatus
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
@@ -1295,22 +1296,6 @@ def close_case(
 
 
 # --- Approval queue -------------------------------------------------------
-#
-# These five tools were a second server, `approval`, speaking the low-level
-# Server API over its own stdio pipe. They ask the same process for the same
-# database as everything above, so they are tools on this server now. Names,
-# arguments and JSON shape are unchanged: a caller that spoke to `approval`
-# sees the same answers here.
-
-
-def get_approval_svc():
-    from core.response.approval_service import (
-        ActionStatus,
-        ActionType,
-        ApprovalService,
-    )
-
-    return ApprovalService(), ActionType, ActionStatus
 
 
 @mcp.tool()
@@ -1328,21 +1313,13 @@ def create_approval_action(
     ``action_type`` is one of isolate_host, block_ip, block_domain,
     quarantine_file, disable_user, custom.
 
-    ``evidence`` is optional here as it always was in practice: the old
-    server declared it required in the schema and then accepted a call
-    without it, so requiring it now would refuse calls that used to work.
-
     The caller's ``confidence`` is its own claim, so it never releases the
     action: the row waits in the queue for a person.
     """
     if not 0.0 <= confidence <= 1.0:
         return jdump({"error": "confidence must be between 0 and 1"})
     try:
-        svc, ActionType, ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
+        svc = ApprovalService()
         action = svc.create_action(
             action_type=ActionType(action_type),
             title=title,
@@ -1376,11 +1353,7 @@ def list_approval_actions(
     ``status`` is one of pending, approved, rejected, executed, failed.
     """
     try:
-        svc, ActionType, ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
+        svc = ApprovalService()
         actions = svc.list_actions(
             status=ActionStatus(status) if status else None,
             action_type=ActionType(action_type) if action_type else None,
@@ -1426,7 +1399,3 @@ def reject_action(
 ) -> str:
     """Reject a pending action. The actor is the caller, not an argument."""
     return _call(tool_registry.reject_action, action_id=action_id, reason=reason)
-
-
-if __name__ == "__main__":
-    mcp.run()
