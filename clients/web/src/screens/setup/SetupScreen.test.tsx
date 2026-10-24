@@ -400,7 +400,7 @@ describe('SetupScreen', () => {
           'CrowdStrike Falcon',
           'SentinelOne',
           'VMware Carbon Black',
-          'Microsoft Defender for Endpoint',
+          'Microsoft Defender',
           'LogLM',
           'Splunk',
           'Upload a file',
@@ -600,6 +600,19 @@ describe('SetupScreen', () => {
         expect(await screen.findByRole('switch', { name: 'Collect alerts' })).toBeChecked()
         expect(screen.getByRole('button', { name: 'Test' })).toBeEnabled()
         expect(screen.getByLabelText('Interval (s)')).toBeInTheDocument()
+      })
+
+      it('show for OpenSearch', async () => {
+        vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ source_id: 'opensearch' })]))
+        await openStep(SERVERS)
+        fireEvent.click(screen.getByRole('button', { name: 'More sources' }))
+        fireEvent.change(screen.getByLabelText('Search data sources'), { target: { value: 'opensearch' } })
+        fireEvent.click(screen.getByRole('button', { name: /OpenSearch/ }))
+        await screen.findByText('Connect OpenSearch')
+        fireEvent.change(screen.getByLabelText(/^OpenSearch URL/), { target: { value: 'https://os.example:9200' } })
+        testConnection()
+        await screen.findByText('Connected to OpenSearch')
+        expect(await screen.findByRole('switch', { name: 'Collect alerts' })).toBeInTheDocument()
       })
 
       it('stay while Test again runs', async () => {

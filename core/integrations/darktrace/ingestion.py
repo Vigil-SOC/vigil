@@ -55,16 +55,14 @@ def _parse_dt_time(value: Any) -> datetime:
         return datetime.now(timezone.utc)
 
 
-def _score_to_anomaly(score: Any) -> float:
-    """Darktrace breach scores are 0-1 floats. Clamp safely."""
+def _score_to_anomaly(score: Any, full_scale: Optional[float] = None) -> float:
     try:
         s = float(score)
     except (TypeError, ValueError):
         return 0.5
-    # Some older payloads ship 0-100 integers
-    if s > 1.0:
-        s = s / 100.0
-    return max(0.0, min(1.0, s))
+    if full_scale is None:
+        full_scale = 100.0 if s > 1.0 else 1.0
+    return max(0.0, min(1.0, s / full_scale))
 
 
 def _score_to_severity(score: float) -> str:
@@ -164,13 +162,11 @@ class DarktraceIngestionService:
         ts = _parse_dt_time(
             alert.get("createdAt") or alert.get("start") or alert.get("time")
         )
-        # AI Analyst exposes a 0-100 "groupScore" (event criticality).
-        # Use explicit None checks so a legitimate zero (minimum criticality)
-        # is preserved instead of falling through to the 0.5 default.
         gs = alert.get("groupScore")
-        sc = alert.get("score")
-        raw_score = gs if gs is not None else (sc if sc is not None else 0.5)
-        score = _score_to_anomaly(raw_score)
+        if gs is not None:
+            score = _score_to_anomaly(gs, full_scale=100.0)
+        else:
+            score = _score_to_anomaly(alert.get("score"))
 
         entity_context: Dict[str, Any] = {}
         breach_devices = (

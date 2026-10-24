@@ -85,7 +85,6 @@ class SIEMIngestionAdapter:
     async def fetch(
         self,
         *,
-        since: Optional[datetime],
         cursor: Dict[str, Any],
         max_items: int,
     ) -> FetchResult:
@@ -101,7 +100,7 @@ class SIEMIngestionAdapter:
         window_end = now - self._settle_delay if self._settle_delay else None
         horizon = window_end or now
 
-        start_time = parse_cursor_since(cursor) or since
+        start_time = parse_cursor_since(cursor)
         if start_time is None:
             # First run: small window so we don't backfill on enable.
             start_time = horizon - timedelta(minutes=1)
