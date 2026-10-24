@@ -70,17 +70,17 @@ def test_a_session_token_does_not_open_the_mcp_surface(client):
 
 
 def test_the_caller_is_bound_for_the_length_of_the_call():
-    """What `caller()` reads, so a tool records who called rather than a claim."""
+    """What `actor()` reads, so a tool records who called rather than a claim."""
+    from core.cases.agent_closure import actor
     from core.integrations.mcp.surface import acting_as, current_caller
-    from tools.mcp.vigil import caller
 
     assert current_caller() is None
-    assert caller() == "agent"
+    assert actor() == "agent"
 
     with acting_as("nestor"):
-        assert caller() == "nestor"
+        assert actor() == "nestor"
 
-    assert caller() == "agent"
+    assert actor() == "agent"
 
 
 # --- The development credential ---------------------------------------------
@@ -283,7 +283,7 @@ def test_one_callers_session_is_not_another_callers(client_on_a_domain):
 # --- Reachable at the address we advertise -----------------------------------
 #
 # A mount at /mcp compiles to ^/mcp/(?P<path>.*)$, so the bare spelling -- the
-# one MOUNT_PATH, the docstring, the README and env.example all give, and the
+# one surface_address(), the docstring, the README and env.example all give, and the
 # one anyone configuring a client will paste -- does not match it. What answers
 # instead depends on whether the SPA catch-all is registered, and that depends
 # on whether clients/web/build/index.html exists:
@@ -351,3 +351,38 @@ def test_a_closed_surface_is_still_the_one_answering(
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Not Found"}
+
+
+@pytest.fixture
+def under_vigil(monkeypatch):
+    from core.config import get_settings
+
+    monkeypatch.setenv("VIGIL_CONTEXT_PATH", "/vigil/")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_settings_reports_the_address_the_surface_answers_at(under_vigil):
+    import asyncio
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.api.mcp_surface import McpSurfaceGate, serve_at
+    from services.api.routers.mcp import get_surface
+
+    app = FastAPI()
+    serve_at(app, McpSurfaceGate())
+
+    class _User:
+        user_id = "u1"
+
+    with patch("core.auth.mcp_credential_service.list_for_user", return_value=[]):
+        reported = asyncio.run(get_surface(current_user=_User()))["path"]
+
+    assert reported == "/vigil/mcp"
+    with patch("services.api.mcp_surface.is_enabled", return_value=True):
+        with TestClient(app) as c:
+            assert c.post(reported, json={}).status_code == 401
+            assert c.post("/mcp", json={}).status_code == 404

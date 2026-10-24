@@ -10,12 +10,9 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.attribution import current_claims
+from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
-from core.auth.permissions import (
-    APPROVE_PERMISSION,
-    permission_refusal,
-    username_has_permission,
-)
+from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
     CASE_STATUSES,
@@ -25,6 +22,7 @@ from core.cases.case_status import (
 )
 from core.cases.linked_entities import finding_entity_summary
 from core.integrations.mcp.surface import current_caller
+from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
@@ -33,12 +31,6 @@ if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
 
 logger = logging.getLogger(__name__)
-
-try:
-    from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-except ImportError as exc:
-    logger.warning("Backend tool schemas unavailable: %s", exc)
-    BACKEND_TOOLS: Tuple[Dict[str, Any], ...] = ()
 
 # The integration tools are chat's alone (#1959), so they are not in ALL_TOOLS.
 # call_integration_tool is unwrapped by tools_router into the call it stands for.
@@ -70,10 +62,6 @@ def _compact(finding: Args, state: Optional[str] = None) -> Args:
 TOP_IPS = 10
 
 
-# Listing and searching differ only in the search filter and the default sort,
-# so one page query serves both rather than two that drift apart. The counts
-# cover every match, not the page, and come before it so a capped result keeps
-# them (#2312).
 def _compact_page(data: Any, findings: list) -> list:
     from core.findings.alert_outcomes import stored_finding_states
 
@@ -91,39 +79,6 @@ def _bad_state(state: Optional[str]) -> Optional[Args]:
     if state is None or state in FINDING_STATES:
         return None
     return {"error": f"state must be one of {', '.join(FINDING_STATES)}"}
-
-
-def _page(data: Any, args: Args, *, search: bool) -> Args:
-    filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
-    if (bad := _bad_state(filters["state"])) is not None:
-        return bad
-    if search:
-        filters["search_query"] = args.get("query", "")
-    limit = args.get("limit", 20)
-    offset = args.get("offset", 0)
-    counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
-    total = counts.pop("total")
-    findings = data.get_findings(
-        limit=limit,
-        offset=offset,
-        sort_by=args.get("sort_by", "anomaly_score" if search else "timestamp"),
-        sort_order=args.get("sort_order", "desc"),
-        **filters,
-    )
-    page = {
-        "total": total,
-        **counts,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-        "findings": _compact_page(data, findings),
-    }
-    return {"query": filters["search_query"], **page} if search else page
-
-
-def _findings_stats(data: Any) -> Args:
-    summary = data.get_findings_summary()
-    return {"total_findings": summary.pop("total"), **summary}
 
 
 def _data():
@@ -177,12 +132,39 @@ def list_findings(
     }
 
 
+# The counts cover every match, not the page, and come before it so a capped
+# result keeps them (#2312).
 def search_findings(**args: Any) -> Args:
-    return _page(_data(), args, search=True)
+    filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
+    if (bad := _bad_state(filters["state"])) is not None:
+        return bad
+    filters["search_query"] = args.get("query", "")
+    limit = args.get("limit", 20)
+    offset = args.get("offset", 0)
+    data = _data()
+    counts = data.get_findings_summary(**filters, top_ips=TOP_IPS)
+    total = counts.pop("total")
+    findings = data.get_findings(
+        limit=limit,
+        offset=offset,
+        sort_by=args.get("sort_by", "anomaly_score"),
+        sort_order=args.get("sort_order", "desc"),
+        **filters,
+    )
+    return {
+        "query": filters["search_query"],
+        "total": total,
+        **counts,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total,
+        "findings": _compact_page(data, findings),
+    }
 
 
 def get_findings_stats(**_args: Any) -> Args:
-    return _findings_stats(_data())
+    summary = _data().get_findings_summary()
+    return {"total_findings": summary.pop("total"), **summary}
 
 
 def get_finding(*, finding_id: str) -> Any:
@@ -353,30 +335,19 @@ def update_case(
     return {"success": True, "case_id": case_id}
 
 
-# Missing case or empty records must still be a result: an error here parks the
-# lead before it can start. Empty sections are the answer, not refused.
 def _case_records(args: Args) -> Args:
-    from core.cases.case_records_service import list_escalations, list_tasks
+    from core.cases.case_records_service import list_escalations, tasks_on_case
     from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
-    try:
-        tasks = CaseTaskSchema.dump_many(list_tasks(case_id))
-    except Exception:
-        logger.exception("Listing tasks for case %s failed; reporting none", case_id)
-        tasks = []
-    try:
-        with unit_of_work() as session:
-            escalations = CaseEscalationSchema.dump_many(
+    with unit_of_work() as session:
+        return {
+            "tasks": CaseTaskSchema.dump_many(tasks_on_case(session, case_id)),
+            "escalations": CaseEscalationSchema.dump_many(
                 list_escalations(session, case_id)
-            )
-    except Exception:
-        logger.exception(
-            "Listing escalations for case %s failed; reporting none", case_id
-        )
-        escalations = []
-    return {"tasks": tasks, "escalations": escalations}
+            ),
+        }
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
@@ -456,7 +427,9 @@ def _step(value: Any, name: str) -> Optional[int]:
     try:
         return int(value)
     except (TypeError, ValueError):
-        raise TypeError(f"replay_hunt {name} must be a whole step number") from None
+        raise MCPFailure(
+            "invalid_args", f"replay_hunt {name} must be a whole step number"
+        ) from None
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -529,7 +502,9 @@ async def replay_hunt(
     to_step: Any = None,
 ) -> Any:
     if not run_id:
-        raise TypeError("replay_hunt is missing a required argument: run_id")
+        raise MCPFailure(
+            "invalid_args", "replay_hunt is missing a required argument: run_id"
+        )
     first, last = _step(from_step, "from_step"), _step(to_step, "to_step")
     only = _step(step, "step")
     if only is not None:
@@ -567,7 +542,9 @@ def _indicator_lookup(args: Args) -> Any:
 
     values = args.get("values") or ([args["value"]] if args.get("value") else [])
     if not values:
-        raise TypeError("lookup_indicators is missing a required argument: values")
+        raise MCPFailure(
+            "invalid_args", "lookup_indicators is missing a required argument: values"
+        )
 
     indicator_type = args.get("indicator_type", "ip")
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
@@ -624,7 +601,7 @@ def _check_hunt_coverage(args: Args) -> Any:
             techniques=args.get("techniques") or (),
         )
     except ValueError as exc:
-        return {"error": str(exc)}
+        raise MCPFailure("invalid_args", str(exc)) from None
 
 
 # Learning episodes (#906): a window over Distil markers, and a JSONL export of a
@@ -658,18 +635,6 @@ def get_approval_action(*, action_id: str) -> Args:
     return _decided(_approvals().get_action(action_id), "read")
 
 
-# Chat and /mcp reach approvals without passing the HTTP routes, so the right is
-# checked here against the bound person. No principal (a hunt) holds none to
-# check; rejecting then only keeps a row held, and approving is refused above.
-def _without_approval_right() -> Optional[Args]:
-    caller = current_caller()
-    if caller is None or username_has_permission(caller, APPROVE_PERMISSION):
-        return None
-    return {
-        "error": f"{caller} may not decide approvals: {APPROVE_PERMISSION} required"
-    }
-
-
 # The actor is the caller, not an argument. A model that names one is choosing
 # what the record will say. A hunt reaches this with nobody bound; approving
 # would stamp "agent" and release a row the requirement already held.
@@ -679,7 +644,7 @@ def approve_action(*, action_id: str) -> Args:
 
     if current_caller() is None:
         return {"error": "Action cannot be approved: no principal is bound"}
-    if refusal := _without_approval_right():
+    if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
@@ -696,7 +661,7 @@ def reject_action(*, action_id: str, reason: str) -> Args:
     from core.cases.agent_closure import actor
     from core.response.approval_service import AlreadyDecided
 
-    if refusal := _without_approval_right():
+    if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
     claims = current_claims()
     principal = None if claims is None else (claims.person_id or claims.agent_id)
@@ -766,10 +731,7 @@ async def execute_backend_tool(
     if tool_name in _SECURITY_TOOLS:
         from core.detections.tools import get_security_detection_tools
 
-        handler = getattr(get_security_detection_tools(), tool_name, None)
-        if handler is None:
-            return {"error": f"Unknown tool: {tool_name}"}, True
-        return await handler(**args), True
+        return await getattr(get_security_detection_tools(), tool_name)(**args), True
 
     if tool_name in _INTEL_TOOLS:
         return _INTEL_TOOLS[tool_name](args), True

@@ -13,7 +13,7 @@ import {
   type InvestigationProfileValues,
   type OrchestratorConfig,
 } from '../settings/useSettings'
-import { errorText } from './errorText'
+import { errorText } from '../../shared/errorText'
 
 function fmtRuntime(seconds: number): string {
   if (seconds < 60) return `${seconds} s`

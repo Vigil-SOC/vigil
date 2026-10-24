@@ -3,7 +3,6 @@
 interface Meta {
   fg: string
   bg: string
-  label?: string
 }
 
 const STATUS_META: Record<string, Meta> = {
@@ -14,7 +13,6 @@ const STATUS_META: Record<string, Meta> = {
   paused: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
   completed: { fg: 'var(--ok)', bg: 'var(--ok-dim)' },
   failed: { fg: 'var(--crit)', bg: 'var(--crit-dim)' },
-  sleeping: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
 }
 
 const PRIO_META: Record<string, Meta> = {
@@ -29,7 +27,7 @@ const FALLBACK: Meta = { fg: 'var(--tx-3)', bg: 'var(--bg-2)' }
 
 export function StatusBadge({ status }: { status: string }) {
   const meta = STATUS_META[status] || FALLBACK
-  const text = (meta.label || status).replace(/_/g, ' ')
+  const text = status.replace(/_/g, ' ')
   return (
     <span className="status" style={{ background: meta.bg, color: meta.fg }}>
       {text}

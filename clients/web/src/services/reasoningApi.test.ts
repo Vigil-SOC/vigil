@@ -48,9 +48,4 @@ describe('reasoningApi (GH #79)', () => {
     const res = await reasoningApi.getInteraction('sess with space', 'int/slash')
     expect(res.__url).toBe('/reasoning/sess%20with%20space/interactions/int%2Fslash')
   })
-
-  it('listInvestigationInteractions hits investigation path', async () => {
-    const res = await reasoningApi.listInvestigationInteractions('inv-9')
-    expect(res.__url).toBe('/reasoning/investigation/inv-9/interactions')
-  })
 })

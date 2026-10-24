@@ -11,8 +11,7 @@ import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import { errorDetail } from './caseFormat'
-
-type Phase = 'loading' | 'ready' | 'error'
+import type { Phase } from './useCases'
 
 function fmtDT(s?: string): string {
   return utcDayClock(s) ?? '—'
@@ -66,43 +65,23 @@ export function SectionCard({
   title,
   count,
   action,
-  wide,
-  bare,
   children,
 }: {
   title: string
   count?: ReactNode
   action?: ReactNode
-  wide?: boolean
-  /** Side-panel look: a plain titled block, no card chrome. */
-  bare?: boolean
   children: ReactNode
 }) {
-  if (bare) {
-    return (
-      <section className="side-sec">
-        <div className="side-sec-head">
-          <h3>{title}</h3>
-          {count != null && <span>{count}</span>}
-          <span className="grow" />
-          {action}
-        </div>
-        {children}
-      </section>
-    )
-  }
   return (
-    <div
-      className={`bg-panel border border-line rounded-lg shadow-panel overflow-hidden${wide ? ' span-2' : ''}`}
-    >
-      <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft">
-        <h3 className="text-[14.5px]">{title}</h3>
-        {count != null && <span className="text-xs text-tx-3">{count}</span>}
-        <span className="flex-1" />
+    <section className="side-sec">
+      <div className="side-sec-head">
+        <h3>{title}</h3>
+        {count != null && <span>{count}</span>}
+        <span className="grow" />
         {action}
       </div>
       {children}
-    </div>
+    </section>
   )
 }
 
@@ -155,7 +134,6 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
 
   return (
     <SectionCard
-      bare
       title={title}
       count={phase === 'ready' ? `${items.length} item${items.length === 1 ? '' : 's'}` : undefined}
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
@@ -203,7 +181,7 @@ type CaseTask = Schema<'CaseTaskSchema'>
 export function useTasks(caseId: string) {
   return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
 }
-export function TasksView({ caseId, resource: { data, phase, error, reload }, bare }: { caseId: string; resource: Resource<CaseTask[]>; bare?: boolean }) {
+export function TasksView({ caseId, resource: { data, phase, error, reload } }: { caseId: string; resource: Resource<CaseTask[]> }) {
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ title: '', priority: 'medium', assignee: '', due_date: '' })
   const [writeError, setWriteError] = useState<string | null>(null)
@@ -252,18 +230,17 @@ export function TasksView({ caseId, resource: { data, phase, error, reload }, ba
 
   return (
     <SectionCard
-      bare={bare}
       title="Tasks"
       count={phase === 'ready' ? `${done}/${tasks.length} done` : undefined}
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
-      <div className={bare ? 'pt-2' : 'px-[18px] pt-3'}>
+      <div className="pt-2">
         <div className="h-1.5 bg-bg-3 rounded-full overflow-hidden">
           <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
       {adding && (
-        <div className={`${bare ? 'py-2' : 'px-[18px] py-3'} grid grid-cols-2 gap-2.5`}>
+        <div className="py-2 grid grid-cols-2 gap-2.5">
           <input className={`${inputCls} col-span-2`} placeholder="Task title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           <select className={inputCls} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
             {['critical', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
@@ -273,7 +250,7 @@ export function TasksView({ caseId, resource: { data, phase, error, reload }, ba
           <button className="btn primary" onClick={submit}>Add task</button>
         </div>
       )}
-      <div className={`${bare ? 'pt-2' : 'p-[18px] pt-3'} flex flex-col gap-2.5`}>
+      <div className="pt-2 flex flex-col gap-2.5">
         {writeError && <p role="alert" className="text-crit">{writeError}</p>}
         {phase === 'loading' && <MiniLoading icon="note" title="Loading tasks…" />}
         {phase === 'error' && <p className="muted">Couldn’t load tasks: {error}</p>}
@@ -379,7 +356,7 @@ export function useComments(caseId: string) {
 }
 /** Comments shown for a case, replies included. */
 export const commentCount = (data: Comment[] | null) => flatten(data || []).length
-export function CommentsView({ caseId, resource: { data, phase, error, reload }, bare }: { caseId: string; resource: Resource<Comment[]>; bare?: boolean }) {
+export function CommentsView({ caseId, resource: { data, phase, error, reload } }: { caseId: string; resource: Resource<Comment[]> }) {
   const [text, setText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -406,8 +383,8 @@ export function CommentsView({ caseId, resource: { data, phase, error, reload },
   }
 
   return (
-    <SectionCard bare={bare} title="Comments" count={phase === 'ready' ? `${total}` : undefined} wide>
-      <div className={`${bare ? 'pt-2' : 'p-[18px]'} flex flex-col gap-4`}>
+    <SectionCard title="Comments" count={phase === 'ready' ? `${total}` : undefined}>
+      <div className="pt-2 flex flex-col gap-4">
         {phase === 'loading' && <MiniLoading icon="note" title="Loading comments…" />}
         {phase === 'error' && <p className="muted">Couldn’t load comments: {error}</p>}
         {phase === 'ready' && total === 0 && <MiniEmpty icon="note" title="No comments yet" body="Use comments to capture analyst notes, handoffs, and review decisions." />}
@@ -427,7 +404,7 @@ export function CommentsView({ caseId, resource: { data, phase, error, reload },
               <button className="text-accent-2 hover:underline" onClick={() => setReplyTo(null)}>cancel</button>
             </div>
           )}
-          <div className={`flex gap-2.5 ${bare ? 'flex-col items-stretch' : 'items-end'}`}>
+          <div className="flex gap-2.5 flex-col items-stretch">
             <textarea
               className={`${inputCls} resize-none`}
               rows={2}
@@ -483,7 +460,6 @@ export function IOCsCard({ caseId }: { caseId: string }) {
 
   return (
     <SectionCard
-      bare
       title="Indicators of Compromise"
       count={phase === 'ready' ? `${iocs.length}` : undefined}
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}

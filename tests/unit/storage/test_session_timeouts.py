@@ -100,18 +100,15 @@ def test_negative_is_treated_as_disabled(monkeypatch):
 
 
 def test_pgoptions_is_carried_after_the_timeouts(monkeypatch):
-    """An explicit ``options`` replaces libpq's PGOPTIONS fallback, which is how
-    an eval selects a memory snapshot -- so the engine has to carry it through,
-    last, so that an operator's own -c still wins."""
     kwargs = _engine_kwargs(
         monkeypatch,
         DB_STATEMENT_TIMEOUT_MS="0",
         DB_IDLE_IN_TRANSACTION_TIMEOUT_MS="1000",
-        PGOPTIONS="-c search_path=episodic_snap_x,public",
+        PGOPTIONS="-c search_path=ops,public",
     )
     assert kwargs["connect_args"]["options"] == (
         "-c idle_in_transaction_session_timeout=1000"
-        " -c search_path=episodic_snap_x,public"
+        " -c search_path=ops,public"
     )
 
 
@@ -120,7 +117,7 @@ def test_pgoptions_alone_is_left_to_libpq(monkeypatch):
         monkeypatch,
         DB_STATEMENT_TIMEOUT_MS="0",
         DB_IDLE_IN_TRANSACTION_TIMEOUT_MS="0",
-        PGOPTIONS="-c search_path=episodic_snap_x,public",
+        PGOPTIONS="-c search_path=ops,public",
     )
     assert "options" not in kwargs["connect_args"]
 

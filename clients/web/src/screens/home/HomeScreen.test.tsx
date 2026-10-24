@@ -107,7 +107,8 @@ describe('Home command chips', () => {
     expect(fillCommand).toHaveBeenCalledWith('/hunt ')
     fireEvent.click(screen.getByRole('button', { name: '/investigate' }))
     expect(fillCommand).toHaveBeenLastCalledWith('/investigate ')
-    expect(screen.getByText('·')).toBeInTheDocument()
+    // The chips paint before the pickup share resolves, so the dot is not there yet.
+    expect(await screen.findByText('·')).toBeInTheDocument()
     expect(screen.getByText(/50% of alerts picked up automatically today/)).toBeInTheDocument()
     expect(homeCss).toMatch(/\.home-chips \{[^}]*flex-wrap: wrap/)
     expect(homeCss).toMatch(/\.home-chip \{[^}]*white-space: nowrap/)

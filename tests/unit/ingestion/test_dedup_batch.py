@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from core.federation.registry import FetchResult
+from core.federation.contract import FetchResult
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.kafka_config import KafkaConfig
@@ -243,7 +243,7 @@ class _Adapter:
     def is_configured(self) -> bool:
         return True
 
-    async def fetch(self, *, since, cursor, max_items):
+    async def fetch(self, *, cursor, max_items):
         return FetchResult(findings=list(self.findings), cursor={})
 
 
@@ -267,7 +267,6 @@ def test_federation_tick_batches_and_skips_in_batch_repeat(stub_redis, monkeypat
         await dedup.mark_many(["ext-0"])
         redis = stub_redis[0]
         redis.round_trips = 0
-        runner._adapters[adapter.name] = adapter
         runner._dedup[adapter.name] = dedup
         await runner._do_one_tick(adapter, {"max_items": 10})
         keys = [queue.get_nowait()["dedup_key"] for _ in range(queue.qsize())]

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/trace-labels/v1",
+  "title": "Medic trace labels v1",
+  "description": "labels.json beside a trace's manifest: the ground truth for replay and the evaluation scorer (#2035). The fault-injection harness writes the same file for live runs. A control trace has every fault field null, only a baseline window, no injection and nothing in fires. Cross-field checks are in contracts/trace_check.py.",
+  "type": "object",
+  "required": ["fault", "windows", "expected"],
+  "additionalProperties": false,
+  "properties": {
+    "fault": {
+      "type": "object",
+      "required": ["mode", "cause", "class", "lane_expected"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"description": "rule.schema.json fault.mode", "type": ["string", "null"], "pattern": "^[ILP]-[0-9]{1,2}$"},
+        "cause": {"description": "One of rule.schema.json fault.causes", "type": ["string", "null"], "pattern": "^[ILP]-[0-9]{1,2}(\\.[a-z])?$"},
+        "class": {"enum": ["ingest", "llm", "pipeline", null]},
+        "lane_expected": {"description": "The lane the scorer's lane-accuracy metric expects.", "enum": [1, 2, 3, null]}
+      },
+      "oneOf": [
+        {"properties": {"mode": {"type": "string"}, "cause": {"type": "string"}, "class": {"type": "string"}, "lane_expected": {"type": "integer"}}},
+        {"properties": {"mode": {"type": "null"}, "cause": {"type": "null"}, "class": {"type": "null"}, "lane_expected": {"type": "null"}}}
+      ]
+    },
+    "windows": {
+      "type": "object",
+      "required": ["baseline"],
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {"$ref": "#/$defs/window"},
+        "fault": {"$ref": "#/$defs/window"},
+        "recovery": {"$ref": "#/$defs/window"}
+      }
+    },
+    "injection": {"$ref": "#/$defs/action"},
+    "recovery_action": {"$ref": "#/$defs/action"},
+    "expected": {
+      "description": "Per window: what must fire, what may, and how fast.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {"$ref": "#/$defs/expectation"},
+        "fault": {"$ref": "#/$defs/expectation"},
+        "recovery": {"$ref": "#/$defs/expectation"}
+      }
+    }
+  },
+  "$defs": {
+    "ts": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"},
+    "window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {"start": {"$ref": "#/$defs/ts"}, "end": {"$ref": "#/$defs/ts"}}
+    },
+    "action": {
+      "type": "object",
+      "required": ["at", "actions"],
+      "additionalProperties": false,
+      "properties": {
+        "at": {"$ref": "#/$defs/ts"},
+        "actions": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 500}}
+      }
+    },
+    "mode_ids": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[ILP]-[0-9]{1,2}$"}},
+    "expectation": {
+      "type": "object",
+      "required": ["fires", "may_fire", "detect_within_s", "clear_within_s"],
+      "additionalProperties": false,
+      "properties": {
+        "fires": {"description": "Fault mode ids (a rule's fault.mode) that must fire in this window.", "$ref": "#/$defs/mode_ids"},
+        "may_fire": {"description": "Fault mode ids that may fire without counting as a false positive.", "$ref": "#/$defs/mode_ids"},
+        "detect_within_s": {"description": "Seconds from the window's start; no longer than the window.", "type": ["integer", "null"], "minimum": 0},
+        "clear_within_s": {"description": "Seconds from the window's start; no longer than the window.", "type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}

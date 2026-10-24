@@ -1,16 +1,16 @@
 import functools
 import json
 import logging
-from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Iterator, Literal, Optional
+from typing import Literal, Optional
 
 from mcp.server.mcpserver import MCPServer
 
 from core.agents import tool_registry
 from core.auth.permissions import permission_refusal
-from core.cases.agent_closure import service_session
+from core.cases.agent_closure import actor, service_session
 from core.cases.case_status import CaseStatus
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
     CaseCommentSchema,
@@ -21,9 +21,6 @@ from core.storage.schemas.case_entities import (
     CaseTaskSchema,
 )
 from core.time import utcnow
-
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 mcp = MCPServer("vigil")
@@ -62,27 +59,6 @@ class _JsonEncoder(json.JSONEncoder):
         if isinstance(obj, datetime):
             return obj.isoformat() + "Z"
         return super().default(obj)
-
-
-# Who this server acts as when it writes a name into a record.
-#
-# Every tool that used to take the actor as an argument asks this instead -- a
-# caller that supplies its own name is not identifying itself, it is choosing
-# what the record will say, and a record of who did something is worth nothing
-# if the doer wrote it.
-#
-# Every door binds the person it authenticated: the /mcp surface from the
-# caller's credential, chat from the signed-in session through the principal
-# token /internal/tools/invoke verifies. A call with no person behind it -- a
-# hunt -- binds nothing, and the record says an agent did it.
-CALLER_UNAUTHENTICATED = "agent"
-
-
-def caller() -> str:
-    """The identity this server writes into a record it makes."""
-    from core.integrations.mcp.surface import current_caller
-
-    return current_caller() or CALLER_UNAUTHENTICATED
 
 
 def jdump(obj, indent=2):
@@ -269,17 +245,6 @@ def create_case(
         assignee=assignee,
         tags=tags,
     )
-
-
-@contextmanager
-def _service_session() -> Iterator["Session"]:
-    """A session of this tool's own, committed if the work returns.
-
-    The commit itself is ``service_session``. This wrapper only keeps the
-    call sites in this file pointed at that one definition.
-    """
-    with service_session() as session:
-        yield session
 
 
 @mcp.tool()
@@ -663,10 +628,10 @@ def add_case_comment(
     try:
         from core.cases.case_collaboration_service import CaseCollaborationService
 
-        with _service_session() as session:
+        with service_session() as session:
             comment = CaseCollaborationService().add_comment(
                 case_id=case_id,
-                author=caller(),
+                author=actor(),
                 content=content,
                 parent_comment_id=parent_comment_id,
                 session=session,
@@ -696,7 +661,7 @@ def get_case_comments(case_id: str) -> str:
     try:
         from core.cases.case_collaboration_service import CaseCollaborationService
 
-        with _service_session() as session:
+        with service_session() as session:
             comments = CaseCollaborationService().get_case_comments(
                 case_id=case_id, session=session
             )
@@ -745,12 +710,12 @@ def add_case_evidence(
     try:
         from core.cases.case_evidence_service import CaseEvidenceService
 
-        with _service_session() as session:
+        with service_session() as session:
             evidence = CaseEvidenceService().add_evidence(
                 case_id=case_id,
                 evidence_type=evidence_type,
                 name=name,
-                collected_by=caller(),
+                collected_by=actor(),
                 description=description,
                 file_path=file_path,
                 source=source,
@@ -810,7 +775,7 @@ def add_case_ioc(
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
-        with _service_session() as session:
+        with service_session() as session:
             ioc = CaseIOCService().add_ioc(
                 case_id=case_id,
                 ioc_type=ioc_type,
@@ -867,7 +832,7 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
 
         # One transaction for the batch. Calling the single-IOC tool in a loop
         # opened a transaction per indicator, so a batch could half-land.
-        with _service_session() as session:
+        with service_session() as session:
             for ioc_data in iocs:
                 try:
                     ioc = service.add_ioc(
@@ -911,7 +876,7 @@ def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
-        with _service_session() as session:
+        with service_session() as session:
             iocs = CaseIOCService().get_case_iocs(
                 case_id=case_id, ioc_type=ioc_type, session=session
             )
@@ -959,7 +924,7 @@ def add_case_task(
 
         from core.cases import case_records_service
 
-        with _service_session() as session:
+        with service_session() as session:
             task = case_records_service.add_task(
                 session,
                 case_id,
@@ -997,7 +962,7 @@ def update_case_task(
     notes: Optional[str] = None,
 ) -> str:
     """
-    Update a task status.
+    Update a task's status or assignee, or add a note to it.
 
     Args:
         task_id: The task ID
@@ -1008,6 +973,7 @@ def update_case_task(
     Examples:
         - update_case_task(5, status="in_progress")
         - update_case_task(5, status="completed", notes="Malware analysis complete - ransomware variant")
+        - update_case_task(5, notes="Sample sent to sandbox")
     """
     try:
         from core.cases import case_records_service
@@ -1016,7 +982,7 @@ def update_case_task(
         if status == "completed":
             updates["completed_at"] = utcnow()
 
-        with _service_session() as session:
+        with service_session() as session:
             task = case_records_service.update_task(session, task_id, updates)
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
@@ -1026,11 +992,15 @@ def update_case_task(
 
         # Activity is its own transaction, after the update has committed, so a
         # failure to record it cannot roll the update back.
-        if status:
+        if status or notes:
             add_case_activity(
                 case_id,
                 "task_update",
-                f"Task '{title}' status changed to {status}",
+                (
+                    f"Task '{title}' status changed to {status}"
+                    if status
+                    else f"Task '{title}' note added"
+                ),
                 (
                     {"task_id": task_id, "notes": notes}
                     if notes
@@ -1095,13 +1065,13 @@ def link_related_cases(
     try:
         from core.cases import case_records_service
 
-        with _service_session() as session:
+        with service_session() as session:
             relationship = case_records_service.add_relationship(
                 session,
                 case_id,
                 related_case_id=related_case_id,
                 relationship_type=relationship_type,
-                created_by=caller(),
+                created_by=actor(),
                 notes=notes,
             )
             payload = CaseRelationshipSchema.dump(relationship)
@@ -1155,10 +1125,10 @@ def escalate_case(
         from core.cases import case_records_service
         from core.cases.case_workflow_service import CaseWorkflowService
 
-        with _service_session() as session:
+        with service_session() as session:
             escalated = CaseWorkflowService().escalate_case(
                 case_id=case_id,
-                escalated_from=caller(),
+                escalated_from=actor(),
                 escalated_to=escalated_to,
                 reason=reason,
                 urgency_level=urgency_level,
@@ -1245,7 +1215,7 @@ def close_case(
                 }
             )
 
-        with _service_session() as session:
+        with service_session() as session:
             # Through the service rather than writing the rows here. This tool
             # had its own copy of the close, so the SLA clock, the IOC index and
             # anything added to a close later were the service's alone -- and a
@@ -1255,7 +1225,7 @@ def close_case(
                 session,
                 case_id,
                 closure_category=category,
-                closed_by=caller(),
+                closed_by=actor(),
                 # A credential here is one a program holds, so this is a
                 # program acting with someone's standing rather than that
                 # person closing it. Episodic memory reads this as Trust, and
@@ -1280,7 +1250,7 @@ def close_case(
             case_id,
             "case_closed",
             f"Case closed as {category.value}",
-            {"closure_category": category.value, "closed_by": caller()},
+            {"closure_category": category.value, "closed_by": actor()},
         )
 
         return jdump(
@@ -1295,22 +1265,6 @@ def close_case(
 
 
 # --- Approval queue -------------------------------------------------------
-#
-# These five tools were a second server, `approval`, speaking the low-level
-# Server API over its own stdio pipe. They ask the same process for the same
-# database as everything above, so they are tools on this server now. Names,
-# arguments and JSON shape are unchanged: a caller that spoke to `approval`
-# sees the same answers here.
-
-
-def get_approval_svc():
-    from core.response.approval_service import (
-        ActionStatus,
-        ActionType,
-        ApprovalService,
-    )
-
-    return ApprovalService(), ActionType, ActionStatus
 
 
 @mcp.tool()
@@ -1328,21 +1282,13 @@ def create_approval_action(
     ``action_type`` is one of isolate_host, block_ip, block_domain,
     quarantine_file, disable_user, custom.
 
-    ``evidence`` is optional here as it always was in practice: the old
-    server declared it required in the schema and then accepted a call
-    without it, so requiring it now would refuse calls that used to work.
-
     The caller's ``confidence`` is its own claim, so it never releases the
     action: the row waits in the queue for a person.
     """
     if not 0.0 <= confidence <= 1.0:
         return jdump({"error": "confidence must be between 0 and 1"})
     try:
-        svc, ActionType, ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
+        svc = ApprovalService()
         action = svc.create_action(
             action_type=ActionType(action_type),
             title=title,
@@ -1351,7 +1297,7 @@ def create_approval_action(
             confidence=confidence,
             reason=reason,
             evidence=evidence or [],
-            created_by=caller(),
+            created_by=actor(),
             human_only=True,
         )
         return jdump(
@@ -1376,11 +1322,7 @@ def list_approval_actions(
     ``status`` is one of pending, approved, rejected, executed, failed.
     """
     try:
-        svc, ActionType, ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
+        svc = ApprovalService()
         actions = svc.list_actions(
             status=ActionStatus(status) if status else None,
             action_type=ActionType(action_type) if action_type else None,
@@ -1426,7 +1368,3 @@ def reject_action(
 ) -> str:
     """Reject a pending action. The actor is the caller, not an argument."""
     return _call(tool_registry.reject_action, action_id=action_id, reason=reason)
-
-
-if __name__ == "__main__":
-    mcp.run()

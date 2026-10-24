@@ -11,6 +11,7 @@ import pytest
 
 from core.agents import tool_registry
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
+from core.auth import permissions
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.integrations.mcp import in_process
@@ -207,7 +208,7 @@ async def test_approve_action_refuses_when_no_principal_is_bound(monkeypatch):
 @pytest.mark.asyncio
 async def test_approve_action_names_the_bound_principal(monkeypatch):
     called = _approval_spy(monkeypatch)
-    monkeypatch.setattr(tool_registry, "username_has_permission", lambda *_: True)
+    monkeypatch.setattr(permissions, "username_has_permission", lambda *_: True)
 
     with acting_as("analyst"):
         _result, handled = await execute_backend_tool(
@@ -287,7 +288,7 @@ async def test_technique_rollup_reads_the_sql_rollup(monkeypatch):
     ],
 )
 async def test_a_principal_without_the_approval_right_cannot_decide(
-    monkeypatch, tool, args
+    monkeypatch, caplog, tool, args
 ):
     called = _approval_spy(monkeypatch)
     asked = []
@@ -296,7 +297,7 @@ async def test_a_principal_without_the_approval_right_cannot_decide(
         asked.append((username, permission))
         return False
 
-    monkeypatch.setattr(tool_registry, "username_has_permission", _holds)
+    monkeypatch.setattr(permissions, "username_has_permission", _holds)
 
     with acting_as("vera_viewer"):
         result, handled = await execute_backend_tool(tool, args)
@@ -305,3 +306,4 @@ async def test_a_principal_without_the_approval_right_cannot_decide(
     assert "ai_decisions.approve required" in result["error"]
     assert asked == [("vera_viewer", "ai_decisions.approve")]
     assert called == []
+    assert "vera_viewer refused: ai_decisions.approve required" in caplog.text
