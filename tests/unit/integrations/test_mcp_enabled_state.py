@@ -15,7 +15,9 @@ from services.api.routers import mcp as mcp_api
 
 pytestmark = [
     pytest.mark.unit,
-    pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes"),
+    pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file modes"
+    ),
 ]
 
 
