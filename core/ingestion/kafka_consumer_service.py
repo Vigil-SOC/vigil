@@ -33,6 +33,22 @@ logger = logging.getLogger(__name__)
 _RETRY_BACKOFF_SECONDS = 2
 
 
+def idle_stats(topics: list[str], consumer_group: str) -> Dict[str, Any]:
+    return {
+        "connected": False,
+        "messages_consumed": 0,
+        "messages_enqueued": 0,
+        "duplicates_skipped": 0,
+        "decode_errors": 0,
+        "missing_id_errors": 0,
+        "last_message_at": None,
+        "last_error": None,
+        "last_error_at": None,
+        "topics": topics,
+        "consumer_group": consumer_group,
+    }
+
+
 class KafkaConsumerService:
     """Async Kafka consumer that feeds findings into the daemon pipeline."""
 
@@ -48,19 +64,7 @@ class KafkaConsumerService:
         self._consumer = None
         self._running = False
 
-        self.stats: Dict[str, Any] = {
-            "connected": False,
-            "messages_consumed": 0,
-            "messages_enqueued": 0,
-            "duplicates_skipped": 0,
-            "decode_errors": 0,
-            "missing_id_errors": 0,
-            "last_message_at": None,
-            "last_error": None,
-            "last_error_at": None,
-            "topics": list(config.topics),
-            "consumer_group": config.consumer_group,
-        }
+        self.stats = idle_stats(list(config.topics), config.consumer_group)
 
     async def _build_consumer(self):
         """Instantiate an ``AIOKafkaConsumer`` from our config."""
