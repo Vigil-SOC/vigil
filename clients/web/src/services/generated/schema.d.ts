@@ -6277,11 +6277,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Custom Workflows
-         * @description List database-backed custom workflows.
-         */
-        get: operations["get_api_workflows_custom"];
+        get?: never;
         put?: never;
         /**
          * Create Custom Workflow
@@ -6301,11 +6297,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get Custom Workflow
-         * @description Fetch a single custom workflow.
-         */
-        get: operations["get_api_workflows_custom_workflow_id"];
+        get?: never;
         /**
          * Update Custom Workflow
          * @description Update an existing custom workflow. Increments version only when its definition changes.
@@ -6338,28 +6330,6 @@ export interface paths {
          *     Does NOT save. Frontend can tweak the draft and POST to /workflows/custom.
          */
         post: operations["post_api_workflows_generate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/workflows/reload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reload Workflows
-         * @description Force reload all file-based workflows from disk.
-         *
-         *     Does not affect database-backed custom workflows.
-         */
-        post: operations["post_api_workflows_reload"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6494,30 +6464,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workflows/runs/{run_id}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Resume Workflow Run
-         * @description Resume a paused workflow run (#128).
-         *
-         *     Looks up the run's pending approval action, approves it, and
-         *     re-enters the phase loop. If there is no pending approval action
-         *     linked to the run, returns 409.
-         */
-        post: operations["post_api_workflows_runs_run_id_resume"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/workflows/runs/{run_id}/verify": {
         parameters: {
             query?: never;
@@ -6621,9 +6567,6 @@ export interface paths {
         /**
          * Get Workflow
          * @description Get one workflow.
-         *
-         *     Defined after /workflows/custom so decorator order resolves the {workflow_id}
-         *     vs /custom ambiguity within this router.
          */
         get: operations["get_api_workflows_workflow_id"];
         put?: never;
@@ -11129,14 +11072,6 @@ export interface components {
         WorkflowRunCancelRequest: {
             /** Reason */
             reason: string;
-        };
-        /**
-         * WorkflowRunResumeRequest
-         * @description Optional payload when manually resuming a paused run.
-         */
-        WorkflowRunResumeRequest: {
-            /** Approved By */
-            approved_by?: string | null;
         };
         /** _SecretsMigrateRequest */
         _SecretsMigrateRequest: {
@@ -22139,39 +22074,6 @@ export interface operations {
             };
         };
     };
-    get_api_workflows_custom: {
-        parameters: {
-            query?: {
-                active_only?: boolean;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_workflows_custom: {
         parameters: {
             query?: never;
@@ -22189,39 +22091,6 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_workflows_custom_workflow_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                workflow_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22324,37 +22193,6 @@ export interface operations {
                 "application/json": components["schemas"]["WorkflowGenerateRequest"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_workflows_reload: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -22563,43 +22401,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_workflows_runs_run_id_resume: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkflowRunResumeRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
