@@ -44,8 +44,6 @@ def _get_settings() -> Dict[str, Any]:
         return {}
 
 
-# Off unless explicitly enabled. The Settings UI toggle in system_config wins;
-# env is the fallback for deployments that never saved it.
 def darktrace_enabled() -> bool:
     enabled = _get_settings().get("enabled")
     if isinstance(enabled, bool):
