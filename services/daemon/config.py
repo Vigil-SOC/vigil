@@ -3,7 +3,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from core.config import get_settings
-from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
+from core.ingestion.kafka_config import (  # KafkaConfig re-exported for DaemonConfig
+    KafkaConfig,
+    apply_kafka_settings,
+)
 from core.intent import INTENT_FIELDS
 from core.response.config import ResponseConfig  # re-exported for DaemonConfig
 from core.secrets import get_secret
@@ -236,28 +239,7 @@ class DaemonConfig:
             config_service = get_config_service()
             kafka_db = config_service.get_system_config("kafka.settings")
             if kafka_db and isinstance(kafka_db, dict):
-                if "enabled" in kafka_db:
-                    config.kafka.enabled = bool(kafka_db["enabled"])
-                if "bootstrap_servers" in kafka_db:
-                    config.kafka.bootstrap_servers = str(kafka_db["bootstrap_servers"])
-                if "consumer_group" in kafka_db:
-                    config.kafka.consumer_group = str(kafka_db["consumer_group"])
-                if "topics" in kafka_db and isinstance(kafka_db["topics"], list):
-                    config.kafka.topics = [str(t) for t in kafka_db["topics"]]
-                if "auto_offset_reset" in kafka_db:
-                    config.kafka.auto_offset_reset = str(kafka_db["auto_offset_reset"])
-                if "security_protocol" in kafka_db:
-                    config.kafka.security_protocol = str(kafka_db["security_protocol"])
-                if "sasl_mechanism" in kafka_db:
-                    config.kafka.sasl_mechanism = kafka_db["sasl_mechanism"] or None
-                if "sasl_username" in kafka_db:
-                    config.kafka.sasl_username = kafka_db["sasl_username"] or None
-                if "max_poll_records" in kafka_db:
-                    config.kafka.max_poll_records = int(kafka_db["max_poll_records"])
-                if "session_timeout_ms" in kafka_db:
-                    config.kafka.session_timeout_ms = int(
-                        kafka_db["session_timeout_ms"]
-                    )
+                apply_kafka_settings(config.kafka, kafka_db)
                 logger.debug("Kafka config overridden from database settings")
         except Exception as e:
             logger.debug(
