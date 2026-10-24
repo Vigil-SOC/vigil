@@ -1,0 +1,206 @@
+{
+  "manifest-not-json": {
+    "codes": [
+      "T-MANIFEST"
+    ],
+    "why": "manifest.json isn't JSON"
+  },
+  "manifest-extra-field": {
+    "codes": [
+      "T-MANIFEST-SCHEMA"
+    ],
+    "why": "the manifest is closed"
+  },
+  "labels-dup-key": {
+    "codes": [
+      "T-LABELS"
+    ],
+    "why": "labels.json has a duplicate key"
+  },
+  "labels-mode-pattern": {
+    "codes": [
+      "T-LABELS-SCHEMA"
+    ],
+    "why": "fault.mode must look like a rule's fault.mode"
+  },
+  "labels-half-null-fault": {
+    "codes": [
+      "T-LABELS-SCHEMA"
+    ],
+    "why": "fault fields are all set or all null"
+  },
+  "trace-id-not-dir": {
+    "codes": [
+      "T-TRACE-ID"
+    ],
+    "why": "trace_id differs from the directory"
+  },
+  "file-path-mismatch": {
+    "codes": [
+      "T-FILE-PATH"
+    ],
+    "why": "a source's file must be named after its sensor"
+  },
+  "sensor-listed-twice": {
+    "codes": [
+      "T-SENSOR-DUP"
+    ],
+    "why": "each sensor is listed once"
+  },
+  "file-missing": {
+    "codes": [
+      "T-FILE-MISSING"
+    ],
+    "why": "a listed file doesn't exist"
+  },
+  "file-hash": {
+    "codes": [
+      "T-FILE-HASH"
+    ],
+    "why": "a file changed after capture"
+  },
+  "file-lines": {
+    "codes": [
+      "T-FILE-LINES"
+    ],
+    "why": "the manifest's line count is wrong"
+  },
+  "file-unlisted": {
+    "codes": [
+      "T-FILE-UNLISTED"
+    ],
+    "why": "a file the manifest doesn't list"
+  },
+  "line-not-json": {
+    "codes": [
+      "T-LINE-JSON"
+    ],
+    "why": "a line doesn't parse"
+  },
+  "line-extra-field": {
+    "codes": [
+      "T-LINE-SCHEMA"
+    ],
+    "why": "a line is closed"
+  },
+  "seq-repeats": {
+    "codes": [
+      "T-SEQ"
+    ],
+    "why": "seq strictly increases within a file"
+  },
+  "arrived-backwards": {
+    "codes": [
+      "T-ARRIVED-ORDER"
+    ],
+    "why": "arrived never goes backwards"
+  },
+  "arrived-after-capture": {
+    "codes": [
+      "T-ARRIVED-SPAN"
+    ],
+    "why": "arrived lies within capture"
+  },
+  "line-sensor-mismatch": {
+    "codes": [
+      "T-LINE-SENSOR"
+    ],
+    "why": "a file holds only its own sensor's observations"
+  },
+  "arrived-impossible-date": {
+    "codes": [
+      "T-LINE-SCHEMA"
+    ],
+    "why": "arrived matches the pattern but isn't a date"
+  },
+  "observation-invalid": {
+    "codes": [
+      "T-OBSERVATION"
+    ],
+    "why": "the observation fails observation.schema.json"
+  },
+  "capture-not-after-start": {
+    "codes": [
+      "T-CAPTURE"
+    ],
+    "why": "ended_at must be after started_at"
+  },
+  "fault-id-not-cause": {
+    "codes": [
+      "T-LABEL-ID"
+    ],
+    "why": "a fault trace's id begins with its cause"
+  },
+  "control-id": {
+    "codes": [
+      "T-LABEL-ID"
+    ],
+    "why": "a control trace's id begins with control"
+  },
+  "windows-gap": {
+    "codes": [
+      "T-WINDOWS"
+    ],
+    "why": "windows are contiguous"
+  },
+  "window-inverted": {
+    "codes": [
+      "T-WINDOWS"
+    ],
+    "why": "each window ends after it starts"
+  },
+  "windows-outside-capture": {
+    "codes": [
+      "T-WINDOW-SPAN"
+    ],
+    "why": "windows lie inside capture"
+  },
+  "control-with-injection": {
+    "codes": [
+      "T-CONTROL"
+    ],
+    "why": "a control trace has no injection"
+  },
+  "control-fires": {
+    "codes": [
+      "T-CONTROL"
+    ],
+    "why": "a control trace expects nothing to fire"
+  },
+  "control-fault-window": {
+    "codes": [
+      "T-CONTROL"
+    ],
+    "why": "a control trace has only a baseline"
+  },
+  "fault-without-injection": {
+    "codes": [
+      "T-FAULT-SHAPE"
+    ],
+    "why": "a fault trace records its injection"
+  },
+  "fires-without-mode": {
+    "codes": [
+      "T-FIRES-MODE"
+    ],
+    "why": "a fault trace's fault window fires its mode"
+  },
+  "fires-and-may-fire": {
+    "codes": [
+      "T-FIRES-OVERLAP"
+    ],
+    "why": "a mode can't be both required and allowed"
+  },
+  "detect-longer-than-fault": {
+    "codes": [
+      "T-DETECT-WITHIN"
+    ],
+    "why": "detect_within_s fits the fault window"
+  },
+  "clear-longer-than-recovery": {
+    "codes": [
+      "T-CLEAR-WITHIN"
+    ],
+    "why": "clear_within_s fits the recovery window"
+  }
+}

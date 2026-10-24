@@ -23,6 +23,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from core.auth.permissions import permission_gate
 from core.cases.case_metrics_service import CaseMetricsService
 from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseClosureInfo
 from core.storage.schemas import CaseMetricsSchema
@@ -48,8 +49,6 @@ _BETA = {"openapi_extra": {"x-vigil-beta": True}}
 # deployment. The definitions are the ones ``CaseMetricsService`` uses to fill
 # ``case_metrics``, so the two agree wherever both exist.
 
-_CLOSED_STATUSES = ("resolved", "closed")
-
 # A first-activity timestamp is only cast when it looks like an ISO-8601 date
 # and time and Postgres accepts it as a ``timestamp`` (``pg_input_is_valid``,
 # PG16+, which every shipped Postgres is), so one malformed entry -- "Feb 30",
@@ -62,21 +61,15 @@ _ISO_DATETIME = (
 
 
 def _closed_at() -> ColumnElement:
-    """When a resolved or closed case was closed.
+    """When a closed case was closed.
 
     ``case_closure_info.closed_at`` is stamped by ``close_case``, which every
     close path goes through, and it does not move when the case is edited
-    afterwards. A ``resolved`` case has no closure row (and a reopened one may
-    keep a stale one), so those fall back to ``cases.updated_at`` -- the source
-    ``CaseMetricsService`` uses for ``time_to_resolve``.
+    afterwards. A case closed before closure rows existed falls back to
+    ``cases.updated_at``, the source ``CaseMetricsService`` uses for
+    ``time_to_resolve``.
     """
-    return sql_case(
-        (
-            Case.status == "closed",
-            func.coalesce(CaseClosureInfo.closed_at, Case.updated_at),
-        ),
-        else_=Case.updated_at,
-    )
+    return func.coalesce(CaseClosureInfo.closed_at, Case.updated_at)
 
 
 def _first_activity_at() -> ColumnElement:
@@ -203,7 +196,7 @@ def get_mttr(
     day = func.to_char(Case.created_at, "YYYY-MM-DD")
 
     filters = _created_window(start_date, end_date)
-    filters.append(Case.status.in_(_CLOSED_STATUSES))
+    filters.append(Case.status == CLOSED)
     if priority:
         filters.append(Case.priority == priority)
 
@@ -299,7 +292,9 @@ def get_breached_cases():
 
 @router.get("/summary", response_model=CaseMetricsSummaryResponse)
 def get_summary(
-    start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
+    session: UnitOfWorkSession,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ):
     """
     Get summary metrics for cases.
@@ -309,16 +304,35 @@ def get_summary(
         end_date: End date filter
 
     Returns:
-        Summary metrics including total cases, open cases, etc.
+        Case totals; open means any status other than ``closed``, and
+        ``critical_cases`` counts open critical cases only.
     """
-    metrics = metrics_service.get_dashboard_metrics(start_date, end_date)
+    rows = (
+        session.query(Case.status, Case.priority, func.count())
+        .filter(and_(*_created_window(start_date, end_date)))
+        .group_by(Case.status, Case.priority)
+        .all()
+    )
+
+    status_breakdown: Dict[str, int] = {}
+    priority_breakdown: Dict[str, int] = {}
+    open_cases = critical_cases = 0
+    for status, priority, count in rows:
+        status_breakdown[status] = status_breakdown.get(status, 0) + count
+        priority_breakdown[priority] = priority_breakdown.get(priority, 0) + count
+        if status != CLOSED:
+            open_cases += count
+            if priority == "critical":
+                critical_cases += count
+
+    total_cases = sum(status_breakdown.values())
     return {
-        "total_cases": metrics.get("total_cases", 0),
-        "open_cases": metrics.get("open_cases_count", 0),
-        "resolved_cases": metrics.get("resolved_cases_count", 0),
-        "critical_cases": metrics.get("priority_breakdown", {}).get("critical", 0),
-        "status_breakdown": metrics.get("status_breakdown", {}),
-        "priority_breakdown": metrics.get("priority_breakdown", {}),
+        "total_cases": total_cases,
+        "open_cases": open_cases,
+        "resolved_cases": total_cases - open_cases,
+        "critical_cases": critical_cases,
+        "status_breakdown": status_breakdown,
+        "priority_breakdown": priority_breakdown,
     }
 
 
@@ -399,7 +413,7 @@ def get_by_priority(
         session.query(
             priority,
             func.count(),
-            func.count(sql_case((Case.status.in_(_CLOSED_STATUSES), 1))),
+            func.count(sql_case((Case.status == CLOSED, 1))),
         )
         .filter(and_(*_created_window(start_date, end_date)))
         .group_by(priority)
@@ -468,7 +482,7 @@ def get_all_analyst_performance(
         Performance metrics for all analysts
     """
     analyst = func.coalesce(func.nullif(Case.assignee, ""), "unassigned")
-    is_closed = Case.status.in_(_CLOSED_STATUSES)
+    is_closed = Case.status == CLOSED
     resolve = sql_case((is_closed, _seconds_since_created(_closed_at())))
 
     rows = (

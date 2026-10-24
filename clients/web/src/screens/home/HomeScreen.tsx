@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
-import { briefText } from '../../shared/brief'
 import { LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
@@ -14,20 +14,6 @@ import './home.css'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
-
-type SetupStep = {
-  id: string
-  title: string
-  state_line: string
-  done: boolean
-  href: string
-}
-
-type SetupSteps = {
-  steps: SetupStep[]
-  alerts_exist: number
-  demo_enabled: boolean
-}
 
 const STEP_ACTION: Record<string, string> = {
   connect_tools: 'Set up',
@@ -42,13 +28,13 @@ const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval',
 type Pickup = { share: number; launched: number; today: number }
 
 const SETUP_TIP = {
-  source: 'Setup steps (B8)',
+  source: 'Setup steps',
   calculation: 'Fixed order; done steps and steps hidden with Not now are left out',
   limit: 'None',
 }
 
 const NEEDS_TIP = {
-  source: 'Pending approvals and checkpoints (B1)',
+  source: 'Pending approvals, checkpoints and hunts stopped at a limit',
   calculation: 'Oldest first, top four shown',
 }
 
@@ -60,14 +46,8 @@ function headline(count: number): string {
   return `${count} decisions wait on you. Everything else is running.`
 }
 
-/** Naive timestamps from the API are UTC. `Date.parse` would read them as local. */
-export function parseCreatedAt(createdAt: string): number {
-  const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(createdAt)
-  return Date.parse(hasZone ? createdAt : `${createdAt}Z`)
-}
-
 function waited(createdAt: string): string {
-  const then = parseCreatedAt(createdAt)
+  const then = Date.parse(createdAt)
   if (Number.isNaN(then)) return ''
   const minutes = Math.max(0, Math.floor((Date.now() - then) / 60_000))
   if (minutes < 1) return 'Waited under a minute'
@@ -86,8 +66,16 @@ function errorText(error: unknown, fallback: string): string {
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
 
+function briefText(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length <= 60) return flat
+  const head = flat.slice(0, 61)
+  const cut = head.includes(' ') ? head.slice(0, head.lastIndexOf(' ')) : flat.slice(0, 60)
+  return `${cut.replace(/[\s.,;:—-]+$/, '')}…`
+}
+
 /**
- * The ask as verb and object (PRD HM-P4). A hypothesis approval names the explanation it starts
+ * The ask as verb and object. A hypothesis approval names the explanation it starts
  * testing, shortened, with every one it tests in full on hover; the benign one is what they are
  * tested against, not what is approved. Anything else reads as served.
  */
@@ -124,7 +112,7 @@ function DecisionCard({
     <article className="home-card">
       <div className="home-card-top">
         <span className="home-waited">{waited(item.created_at)}</span>
-        <span className="home-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
+        <span className="home-kind">{KIND_LABEL[item.kind]}</span>
       </div>
       <h3 title={ask.full}>{ask.text}</h3>
       {meta && (
@@ -188,12 +176,12 @@ function DecisionCard({
 
 export default function HomeScreen({ openCase, startTour, fillCommand, onCommandHost }: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
-  const [count, setCount] = useState<number | null>(null)
+  const [loaded, setLoaded] = useState(false)
   const [share, setShare] = useState<Pickup | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
-  const [setup, setSetup] = useState<SetupSteps | null>(null)
+  const [setup, setSetup] = useState<Schema<'SetupStepsResponse'> | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
   const [hidden, setHidden] = useState<string[]>(() => readSetupHidden())
   const [demoMessage, setDemoMessage] = useState<string | null>(null)
@@ -223,7 +211,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       return
     }
     setItems(needsResult.data.items)
-    setCount(needsResult.data.count)
+    setLoaded(true)
     setError(null)
   }, [])
 
@@ -293,8 +281,6 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
     void run(item.source_id, () => approvalsApi.approve(item.source_id), `Approved: ${item.title}`)
   }
 
-  const reject = fused.reject
-
   const run = async (id: string, act: () => Promise<unknown>, doneText: string) => {
     if (busyRef.current) return
     busyRef.current = id
@@ -313,7 +299,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
 
   // cards whose fuse is running stay out of the list and the count, so a poll can't bring them back
   const shown = items.filter((it) => !pending.includes(it.source_id))
-  const shownCount = count === null ? null : Math.max(0, count - (items.length - shown.length))
+  const shownCount = loaded ? shown.length : null
   const visible = showAll ? shown : shown.slice(0, VISIBLE)
   const rest = shown.slice(visible.length)
   const moreWaiting = rest.length
@@ -512,7 +498,6 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
           </div>
             </>
           )}
-          {/* The headline already says "Board clear." (HM-P1); this says what that means. */}
           {boardClear && (
             <div className="home-clear">
               <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>
@@ -526,7 +511,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
                   item={item}
                   busy={busy !== null}
                   onApprove={approve}
-                  onReject={reject}
+                  onReject={fused.reject}
                   onOpenCase={openCase}
                 />
               ))}

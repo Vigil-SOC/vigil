@@ -106,19 +106,13 @@ export default function GeneralSection({ notify }: SectionProps) {
     <>
       <SettingsCard
         title="General"
-        desc="Startup and notification preferences."
+        desc="Notification and secret storage preferences."
         actions={
           <button className="btn primary" onClick={handleSave} disabled={saving}>
             <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
           </button>
         }
       >
-        <ToggleRow
-          label="Auto-sync on start"
-          hint="Pull from configured sources when the app launches."
-          checked={config.auto_start_sync}
-          onChange={(v) => setConfig({ ...config, auto_start_sync: v })}
-        />
         <ToggleRow
           label="Desktop notifications"
           hint="Browser notifications for new findings and case updates."
