@@ -604,7 +604,6 @@ class IngestionService:
             self._ingest_json_data(json.load(f))
 
     def _ingest_json_data(self, data: Any) -> None:
-        """Ingest parsed JSON: a {findings, cases} dict or a top-level findings/cases array."""
         findings = []
         cases = []
 
@@ -646,7 +645,6 @@ class IngestionService:
         return self.stats
 
     def _ingest_jsonl_lines(self, lines: Iterable[str], data_type: str) -> None:
-        """Ingest one finding or case per JSON line, counting bad lines as errors."""
         finding_batch = []
         for line_num, line in enumerate(lines, 1):
             line = line.strip()
@@ -695,7 +693,6 @@ class IngestionService:
         return self.stats
 
     def _ingest_csv_rows(self, text: Iterable[str], data_type: str) -> None:
-        """Ingest each CSV row as a finding or case, counting failing rows as errors."""
         finding_batch = []
         for row_num, row in enumerate(csv.DictReader(text), 1):
             try:

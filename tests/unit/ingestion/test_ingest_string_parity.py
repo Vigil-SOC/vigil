@@ -1,14 +1,8 @@
 """POST /ingest-string parses JSON, JSONL and CSV like the file ingesters."""
 
-import sys
-from pathlib import Path
-
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(REPO))
-
-from core.ingestion.ingestion_service import IngestionService  # noqa: E402
+from core.ingestion.ingestion_service import IngestionService
 
 pytestmark = pytest.mark.unit
 
@@ -95,22 +89,15 @@ def test_string_matches_file(name, tmp_path):
     assert outcome[1] or outcome[2]
 
 
-def test_single_finding_object_imports_from_string():
+@pytest.mark.parametrize(
+    "body,data_type,findings,cases",
+    [
+        ('{"finding_id":"x-1","title":"t"}', "finding", ["x-1"], []),
+        ('{"case_id":"cx-1"}', "case", [], ["cx-1"]),
+        ('{"case_id":"cx-1"}', "finding", [], []),
+    ],
+)
+def test_single_object_from_string(body, data_type, findings, cases):
     svc = _svc()
-    stats = svc.ingest_from_string('{"finding_id":"x-1","title":"t"}', "json")
-    assert stats["findings_imported"] == 1
-    assert [r["finding_id"] for r in svc.db_service.batch] == ["x-1"]
-
-
-def test_single_case_object_imports_from_string():
-    svc = _svc()
-    stats = svc.ingest_from_string('{"case_id":"cx-1"}', "json", "case")
-    assert stats["cases_imported"] == 1
-    assert svc.db_service.cases == ["cx-1"]
-
-
-def test_single_case_object_with_finding_type_imports_nothing():
-    svc = _svc()
-    stats = svc.ingest_from_string('{"case_id":"cx-1"}', "json", "finding")
-    assert stats["cases_total"] == 0
-    assert svc.db_service.cases == []
+    stats = svc.ingest_from_string(body, "json", data_type)
+    assert _outcome(svc, stats)[1:] == (findings, cases)
