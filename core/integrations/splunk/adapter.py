@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from typing import Any, Dict, Optional
 
 from core.config import is_integration_enabled
@@ -81,7 +81,6 @@ class SplunkAdapter:
     async def fetch(
         self,
         *,
-        since: Optional[datetime],
         cursor: Dict[str, Any],
         max_items: int,
     ) -> FetchResult:
@@ -93,7 +92,7 @@ class SplunkAdapter:
         now = utcnow()
         # Use cursor's last_poll_at when available; otherwise "now" sentinel
         # (no cold-start backfill — federation MVP design).
-        last = parse_cursor_since(cursor) or since
+        last = parse_cursor_since(cursor)
         if last is not None:
             # Absolute epoch seconds: a relative "-Nm" is rounded up to the
             # minute, which widens the window behind a mid-minute cursor and

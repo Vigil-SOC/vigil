@@ -45,8 +45,6 @@ def test_api_requests_carry_the_password_and_inference_does_not(monkeypatch) -> 
         path = request.url.path
         if path.endswith("/quota"):
             body = {"is_active": True}
-        elif path.endswith("/histogram/cost"):
-            body = {"buckets": []}
         elif path.endswith("/models/details"):
             body = {"models": []}
         elif path == "/v1/models":
@@ -61,7 +59,6 @@ def test_api_requests_carry_the_password_and_inference_does_not(monkeypatch) -> 
     asyncio.run(admin.fetch_catalogue_models("openai"))
     asyncio.run(admin.bifrost_custom_providers())
     asyncio.run(admin.list_gateway_models("openai"))
-    assert costs.histogram_cost() == {"buckets": []}
     assert costs.get_vk_quota("vk-test") == {"is_active": True}
     assert asyncio.run(mirror._get("providers")) == {"providers": [], "keys": []}
 
@@ -77,7 +74,6 @@ def test_api_requests_carry_the_password_and_inference_does_not(monkeypatch) -> 
     assert {r.url.path for r in api} >= {
         "/api/models/details",
         "/api/providers",
-        "/api/logs/histogram/cost",
         "/api/governance/virtual-keys/quota",
     }
     assert api and all(r.headers.get("authorization") == expected for r in api)

@@ -251,10 +251,9 @@ def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
     args: Dict[str, Any] = {"connect_timeout": 5}
     options = _session_timeout_options(config)
     if options:
-        # An explicit ``options`` replaces libpq's PGOPTIONS fallback, which is
-        # how an eval process selects a memory snapshot (core/memory/snapshot.py).
-        # Carry it through, after ours: the last -c for a setting wins, so an
-        # operator's PGOPTIONS still overrides these defaults.
+        # An explicit ``options`` replaces libpq's PGOPTIONS fallback. Carry it
+        # through, after ours: the last -c for a setting wins, so an operator's
+        # PGOPTIONS still overrides these defaults.
         env_options = os.environ.get("PGOPTIONS", "")  # noqa: ENV001 - libpq var
         env_options = env_options.strip()
         args["options"] = f"{options} {env_options}" if env_options else options

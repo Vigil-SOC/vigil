@@ -10,13 +10,10 @@ This module exposes analytics data including:
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Query
 
-from core.llm.cost.pricing_router import GATEWAY, priced_as
-from core.llm.providers.registry import get_registry
 from core.reporting.ai_insights_service import AIInsightsService
 from core.reporting.analytics_service import (
     calculate_metrics,
@@ -150,153 +147,7 @@ async def get_cost_analytics(
 ) -> Dict[str, Any]:
     """Return LLM cost + token breakdown for the given window.
 
-    Groups `LLMInteractionLog` rows by agent, model, and investigation.
-    Cache hit rate is cached-input / total-input across the window; it
-    should read 0 until prompt caching ships in GH #84 PR-C — this
-    endpoint is the baseline dashboard that will surface the jump.
-
-    The ``time_series`` block is sourced from Bifrost's
-    ``/api/logs/histogram/cost`` (#185), giving us authoritative cost
-    actuals against current pricing. If Bifrost is unavailable the
-    block is omitted but the local aggregations still return — the UI
-    degrades gracefully from "actuals + trend" to "actuals only".
+    Totals and a per-model grouping of `LLMInteractionLog` rows. Cache hit
+    rate is cached-input / total-input across the window.
     """
     return await get_cost_breakdown(db, time_range)
-
-
-# ---------------------------------------------------------------------------
-# Pre-call cost estimation (#184 Phase 2)
-# ---------------------------------------------------------------------------
-
-
-class EstimateCostRequest(BaseModel):
-    """Body for POST /analytics/estimate-cost.
-
-    Mirrors the shape of an LLM call so the same payload a caller is
-    about to send can be passed straight in for an estimate. ``messages``
-    matches Anthropic / OpenAI message format — list of role+content
-    dicts; multimodal blocks are tolerated but token-counted as text-only
-    in the heuristic path.
-    """
-
-    provider_type: Optional[str] = Field(
-        default=None,
-        description=(
-            "Advisory only — the endpoint resolves the real provider from "
-            "model_id (registry, then a namespaced id or the configured "
-            "default) and treats this value as final only when neither matches."
-        ),
-    )
-    model_id: str
-    messages: List[Dict[str, Any]] = Field(default_factory=list)
-    system_prompt: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    max_tokens: int = Field(default=4096, ge=1, le=200_000)
-
-
-@router.post("/analytics/estimate-cost")
-async def estimate_cost_endpoint(payload: EstimateCostRequest) -> Dict[str, Any]:
-    """Return a USD low/high band for a hypothetical LLM call.
-
-    The chat composer and daemon planner call this before submitting a
-    real request so they can show the user a cost preview or gate the
-    call against a budget. ``low_usd`` assumes zero output tokens (e.g.
-    an immediate tool_use stop); ``high_usd`` assumes the call writes
-    out ``max_tokens`` of output. Real-world cost lands in between, and
-    is typically much closer to ``low_usd`` for cache-friendly workloads.
-    """
-    from core.llm.cost.estimator import estimate_cost
-
-    # The composer always sends a placeholder provider_type (the bare model id
-    # it picked routes to the active default on the send path), so resolve the
-    # real provider from configuration: the model registry first, then
-    # priced_as, which reads a namespaced id or the configured default.
-    provider_type: Optional[str] = None
-    model_id = payload.model_id
-    try:
-        for m in await get_registry().list_available_models():
-            if m.model_id == model_id:
-                provider_type = m.provider_type
-                break
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("estimate-cost: registry lookup failed: %s", exc)
-    if provider_type is None:
-        provider_type, model_id = priced_as(payload.provider_type or GATEWAY, model_id)
-
-    estimate = await estimate_cost(
-        provider_type=provider_type,
-        model_id=model_id,
-        messages=payload.messages,
-        system_prompt=payload.system_prompt,
-        tools=payload.tools,
-        max_tokens=payload.max_tokens,
-    )
-    return estimate.to_dict()
-
-
-# ---------------------------------------------------------------------------
-# Recalculate cost — admin operation that fixes pricing rot (#185)
-# ---------------------------------------------------------------------------
-
-
-class RecalculateCostRequest(BaseModel):
-    """Body for POST /analytics/recalculate-cost.
-
-    Optional filters scope which Bifrost log rows get re-costed. The
-    common case (no filters) only touches rows where Bifrost recorded
-    ``missing_cost`` — i.e. calls that happened before pricing data
-    was available. After a known repricing event, scope by model or
-    time window to reprice only the affected rows.
-    """
-
-    providers: Optional[List[str]] = None
-    models: Optional[List[str]] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    missing_cost_only: Optional[bool] = True
-    limit: int = Field(default=200, ge=1, le=1000)
-
-
-@router.post("/analytics/recalculate-cost")
-async def recalculate_cost_endpoint(
-    payload: Optional[RecalculateCostRequest] = None,
-) -> Dict[str, Any]:
-    """Trigger Bifrost's batch cost-recompute against current pricing.
-
-    Admin operation. When Anthropic or OpenAI publishes new pricing,
-    Bifrost's catalog updates automatically — but historical log rows
-    keep the cost they were billed at the time. This endpoint asks
-    Bifrost to re-cost a batch of rows so the time-series and
-    histograms reflect the new pricing without a redeploy.
-
-    NOTE: this is a *cumulative* operation. Bifrost caps each call at
-    1000 rows; the response's ``remaining`` field tells the caller how
-    many rows still need processing. The UI button loops until
-    ``remaining == 0`` (or fails fast on a 5xx).
-    """
-    from core.llm.bifrost.costs import recalculate_cost
-
-    p = payload or RecalculateCostRequest()
-    filters: Dict[str, Any] = {}
-    if p.providers:
-        filters["providers"] = p.providers
-    if p.models:
-        filters["models"] = p.models
-    if p.start_time:
-        filters["start_time"] = p.start_time
-    if p.end_time:
-        filters["end_time"] = p.end_time
-    if p.missing_cost_only is not None:
-        filters["missing_cost_only"] = p.missing_cost_only
-
-    result = recalculate_cost(filters=filters or None, limit=p.limit)
-    if result is None:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Bifrost recalculate-cost call failed — check that Bifrost "
-                "is reachable and the logging plugin is enabled with a "
-                "persistence backend (see https://vigilsoc.org/docs/bifrost/)."
-            ),
-        )
-    return result

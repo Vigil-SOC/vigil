@@ -113,7 +113,7 @@ class _Adapter:
     def is_configured(self) -> bool:
         return True
 
-    async def fetch(self, *, since, cursor, max_items) -> FetchResult:
+    async def fetch(self, *, cursor, max_items) -> FetchResult:
         self.cursors_seen.append(cursor)
         findings = [
             {"finding_id": f"f-{i}", "external_id": i, "severity": "high"}

@@ -379,15 +379,24 @@ export const slaPoliciesApi = {
   
 }
 
+export interface MetricsWindow {
+  start_date: string
+  end_date: string
+}
+
 export const caseMetricsApi = {
-  getSummary: () => api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary'),
-  getMTTD: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
+  getSummary: (params: MetricsWindow) =>
+    api.get<Schema<'CaseMetricsSummaryResponse'>>('/cases/metrics/summary', { params }),
+  getMTTD: (params: MetricsWindow) =>
     api.get<Schema<'MttdResponse'>>('/cases/metrics/mttd', { params }),
-  getMTTR: (params?: { start_date?: string; end_date?: string; priority?: string }) =>
+  getMTTR: (params: MetricsWindow) =>
     api.get<Schema<'MttrResponse'>>('/cases/metrics/mttr', { params }),
-  getByPriority: () => api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority'),
-  getByStatus: () => api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status'),
-  getAnalystPerformance: () => api.get('/cases/metrics/analyst-performance'),
+  getByPriority: (params: MetricsWindow) =>
+    api.get<Schema<'ByPriorityResponse'>>('/cases/metrics/by-priority', { params }),
+  getByStatus: (params: MetricsWindow) =>
+    api.get<Schema<'ByStatusResponse'>>('/cases/metrics/by-status', { params }),
+  getAnalystPerformance: (params: MetricsWindow) =>
+    api.get('/cases/metrics/analyst-performance', { params }),
 }
 
 export const caseSearchApi = {
@@ -1005,9 +1014,6 @@ export const workflowApi = {
   steer: (runId: string, kind: string, text = '', fields?: Record<string, unknown>) =>
     api.post(`/agent-runs/${runId}/directives`, { kind, text, ...(fields && { fields }) }),
 
-  listCustom: (activeOnly: boolean = true) =>
-    api.get('/workflows/custom', { params: { active_only: activeOnly } }),
-  getCustom: (id: string) => api.get(`/workflows/custom/${id}`),
   createCustom: (data: {
     name: string
     description: string
@@ -1225,11 +1231,6 @@ export const reasoningApi = {
   getInteraction: (sessionId: string, interactionId: string) =>
     api
       .get(`/reasoning/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`)
-      .then(r => r.data),
-
-  listInvestigationInteractions: (investigationId: string, params?: { limit?: number; offset?: number }) =>
-    api
-      .get(`/reasoning/investigation/${encodeURIComponent(investigationId)}/interactions`, { params })
       .then(r => r.data),
 }
 

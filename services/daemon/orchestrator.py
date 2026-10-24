@@ -700,14 +700,6 @@ class Orchestrator:
     def enabled(self) -> bool:
         return self._enabled
 
-    def enable(self):
-        self._enabled = True
-        logger.info("Orchestrator ENABLED")
-
-    def disable(self):
-        self._enabled = False
-        logger.info("Orchestrator DISABLED (graceful)")
-
     async def kill(self):
         """Emergency stop: cancel all running agents immediately."""
         self._enabled = False

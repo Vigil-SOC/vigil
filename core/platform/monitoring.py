@@ -12,11 +12,13 @@ import hmac
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import sentry_sdk
 from fastapi import HTTPException, Request
 from fastapi.responses import Response
+from opentelemetry.sdk.trace import SpanProcessor
+from opentelemetry.trace import StatusCode
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from prometheus_client.core import GaugeMetricFamily
 from sentry_sdk.integrations.fastapi import FastApiIntegration
@@ -29,67 +31,31 @@ from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# OTEL ↔ Sentry bridge
-# ---------------------------------------------------------------------------
+class SentrySpanProcessor(SpanProcessor):
+    """Forwards OTEL ERROR spans to Sentry as breadcrumbs and tags the Sentry scope with the OTEL trace_id."""
 
-try:
-    from opentelemetry.sdk.trace import SpanProcessor
-    from opentelemetry.trace import StatusCode
-
-    class SentrySpanProcessor(SpanProcessor):
-        """
-        Forwards OTEL ERROR spans to Sentry as breadcrumbs and attaches the
-        OTEL trace_id to the Sentry scope for cross-system correlation.
-
-        Registered in core/telemetry.py when SENTRY_DSN is present.
-        Does NOT create Sentry transactions — Sentry tracing is disabled
-        when OTEL is active to prevent double-tracing.
-        """
-
-        def on_start(self, span: Any, parent_context: Any = None) -> None:
-            try:
-                ctx = span.get_span_context()
-                if ctx and ctx.is_valid:
-                    sentry_sdk.set_tag("otel.trace_id", format(ctx.trace_id, "032x"))
-            except Exception:
-                pass
-
-        def on_end(self, span: Any) -> None:
-            try:
-                if span.status.status_code != StatusCode.ERROR:
-                    return
-                sentry_sdk.add_breadcrumb(
-                    message=span.name,
-                    category="otel.span",
-                    level="error",
-                    data={
-                        "span_id": format(span.get_span_context().span_id, "016x"),
-                    },
-                )
-            except Exception:
-                pass
-
-        def on_shutdown(self) -> None:
+    def on_start(self, span: Any, parent_context: Any = None) -> None:
+        try:
+            ctx = span.get_span_context()
+            if ctx and ctx.is_valid:
+                sentry_sdk.set_tag("otel.trace_id", format(ctx.trace_id, "032x"))
+        except Exception:
             pass
 
-        def force_flush(self, timeout_millis: int = 30_000) -> bool:
-            return True
-
-except ImportError:
-    # OTEL SDK not installed — provide a stub so the import never fails
-    class SentrySpanProcessor:  # type: ignore[no-redef]
-        def on_start(self, span: Any, parent_context: Any = None) -> None:
+    def on_end(self, span: Any) -> None:
+        try:
+            if span.status.status_code != StatusCode.ERROR:
+                return
+            sentry_sdk.add_breadcrumb(
+                message=span.name,
+                category="otel.span",
+                level="error",
+                data={
+                    "span_id": format(span.get_span_context().span_id, "016x"),
+                },
+            )
+        except Exception:
             pass
-
-        def on_end(self, span: Any) -> None:
-            pass
-
-        def on_shutdown(self) -> None:
-            pass
-
-        def force_flush(self, timeout_millis: int = 30_000) -> bool:
-            return True
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +115,7 @@ def before_send_filter(event, hint):
     """Filter events before sending to Sentry."""
 
     # Don't send health check errors
-    if event.get("request", {}).get("url", "").endswith("/health"):
+    if event.get("request", {}).get("url", "").endswith(("/health", "/health/ready")):
         return None
 
     # Don't send test errors
@@ -157,19 +123,6 @@ def before_send_filter(event, hint):
         return None
 
     return event
-
-
-def add_breadcrumb(
-    message: str,
-    category: str = "default",
-    level: str = "info",
-    data: Optional[dict] = None,
-) -> None:
-    """Add a breadcrumb for debugging."""
-
-    sentry_sdk.add_breadcrumb(
-        message=message, category=category, level=level, data=data or {}
-    )
 
 
 def metrics_token() -> str:

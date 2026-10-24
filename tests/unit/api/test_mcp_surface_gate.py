@@ -70,17 +70,17 @@ def test_a_session_token_does_not_open_the_mcp_surface(client):
 
 
 def test_the_caller_is_bound_for_the_length_of_the_call():
-    """What `caller()` reads, so a tool records who called rather than a claim."""
+    """What `actor()` reads, so a tool records who called rather than a claim."""
+    from core.cases.agent_closure import actor
     from core.integrations.mcp.surface import acting_as, current_caller
-    from tools.mcp.vigil import caller
 
     assert current_caller() is None
-    assert caller() == "agent"
+    assert actor() == "agent"
 
     with acting_as("nestor"):
-        assert caller() == "nestor"
+        assert actor() == "nestor"
 
-    assert caller() == "agent"
+    assert actor() == "agent"
 
 
 # --- The development credential ---------------------------------------------
