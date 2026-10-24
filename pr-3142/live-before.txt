@@ -1,0 +1,6 @@
+Cloudforce One poll failed for col-1: Server.__init__() got an unexpected keyword argument 'headers'
+intel intake producer unavailable: JWT_SECRET_KEY is required when DEV_MODE=false. Set it in the environment or .env before starting the backend.
+collections: {'col-1': {'error': "Server.__init__() got an unexpected keyword argument 'headers'"}}
+totals: {'seen': 0, 'inserted': 0, 'updated': 0, 'skipped': 0, 'errors': 1}
+auth seen by server: set()
+threat_indicators rows: []

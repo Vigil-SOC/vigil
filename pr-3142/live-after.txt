@@ -1,0 +1,5 @@
+intel intake producer unavailable: JWT_SECRET_KEY is required when DEV_MODE=false. Set it in the environment or .env before starting the backend.
+collections: {'col-1': {'seen': 2, 'inserted': 2, 'updated': 0, 'skipped': 0}}
+totals: {'seen': 2, 'inserted': 2, 'updated': 0, 'skipped': 0, 'errors': 0}
+auth seen by server: {'Bearer tok'}
+threat_indicators rows: ['198.51.100.1', '198.51.100.2']

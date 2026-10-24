@@ -1,0 +1,7 @@
+========================= 5 failed, 1 passed in 4.14s ==========================
+E       TypeError: Server.__init__() got an unexpected keyword argument 'headers'
+FAILED tests/unit/threat_intel/test_fetch_taxii.py::test_bearer_token_is_sent_and_every_page_is_read_with_the_same_filter
+FAILED tests/unit/threat_intel/test_fetch_taxii.py::test_empty_envelope_returns_nothing_and_since_is_added_after
+FAILED tests/unit/threat_intel/test_fetch_taxii.py::test_malformed_objects_are_one_aggregated_warning
+FAILED tests/unit/threat_intel/test_fetch_taxii.py::test_missing_collection_raises
+FAILED tests/unit/threat_intel/test_fetch_taxii.py::test_server_failure_raises
