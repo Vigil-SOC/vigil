@@ -1,17 +1,10 @@
-"""A status edit that closes or reopens a case, recorded the same way as the console.
-
-Episodic memory reads closure rows as verdicts. An agent that only wrote
-``cases.status`` left no row, so the verdict was re-derived from ``updated_at``,
-which moves on every later edit.
-"""
+"""Who an agent tool call acts as, and the session it writes in."""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Iterator
 
-from core.cases.case_workflow_service import CaseWorkflowService
-from core.cases.closure import ClosedByKind, ClosureCategory
 from core.integrations.mcp.surface import current_caller
 from core.storage.connection import get_db_session
 
@@ -19,6 +12,12 @@ from core.storage.connection import get_db_session
 CALLER_UNAUTHENTICATED = "agent"
 
 
+# Who this server acts as when it writes a name into a record.
+#
+# A caller that supplies its own name is not identifying itself, it is choosing
+# what the record will say, so the name comes from the credential the door
+# bound: the /mcp surface, or chat through the principal token
+# /internal/tools/invoke verifies. A call with no person behind it binds nothing.
 def actor() -> str:
     """Who this call writes into a record. Never an argument the model supplied."""
     return current_caller() or CALLER_UNAUTHENTICATED
@@ -37,27 +36,3 @@ def service_session() -> Iterator:
         session.commit()
     finally:
         session.close()
-
-
-def record_agent_close(case_id: str) -> None:
-    """Record that an agent closed this case and stated no category.
-
-    ``unspecified`` is not a determination. An agent that has one calls
-    ``close_case`` and says which. This does not overwrite a determination
-    already on record. ``closed_by_kind`` is ``agent`` even over HTTP: a
-    credential here is one a program holds.
-    """
-    with service_session() as session:
-        CaseWorkflowService().close_case(
-            session,
-            case_id,
-            closure_category=ClosureCategory.UNSPECIFIED,
-            closed_by=actor(),
-            closed_by_kind=ClosedByKind.AGENT,
-        )
-
-
-def record_reopen(case_id: str) -> None:
-    """Retract the category a close recorded. The write-up stays."""
-    with service_session() as session:
-        CaseWorkflowService().reopen_case(session, case_id)

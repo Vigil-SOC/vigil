@@ -17,26 +17,16 @@ Signature header: ``X-Cloudflare-Signature`` (hex HMAC-SHA256 of raw body).
 from __future__ import annotations
 
 import asyncio
-import hmac
-import json
 import logging
-from hashlib import sha256
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, Request, status
 
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
-from core.webhook_rejections import (
-    BAD_SIGNATURE,
-    DISABLED,
-    MISSING_SIGNATURE,
-    NO_SECRET,
-    SECRET_LOOKUP_FAILED,
-    record_rejection,
-    rejection_counts,
-)
+from core.webhook_receiver import ingest, read_signed_json, reject
+from core.webhook_rejections import DISABLED, rejection_counts
 
 logger = logging.getLogger(__name__)
 
@@ -87,108 +77,11 @@ def _get_max_body_bytes() -> int:
     return max(1, get_settings().cloudy_webhook_max_body_kb) * 1024
 
 
-def _verify_signature(raw_body: bytes, provided: str, secret: str) -> bool:
-    expected = hmac.new(secret.encode("utf-8"), raw_body, sha256).hexdigest()
-    clean = provided.split("=", 1)[-1].strip()
-    return hmac.compare_digest(expected, clean)
-
-
-def _reject(
-    request: Request,
-    reason: str,
-    status_code: int,
-    detail: str,
-    exc: Optional[BaseException] = None,
-) -> HTTPException:
-    record_rejection(
-        ENDPOINT, reason, request.client.host if request.client else None, exc=exc
-    )
-    return HTTPException(status_code=status_code, detail=detail)
-
-
-def _require_enabled(request: Request) -> None:
-    if not cloudy_ingestion_enabled():
-        raise _reject(
-            request,
-            DISABLED,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Cloudy ingestion is disabled. Set CLOUDY_INGESTION_ENABLED=true to enable.",
-        )
-
-
-async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
-    # Fetch the secret once per request: a second lookup would double-count.
-    try:
-        secret = _get_secret()
-    except Exception as exc:  # noqa: BLE001
-        raise _reject(
-            request,
-            SECRET_LOOKUP_FAILED,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Cloudy webhook secret lookup failed",
-            exc,
-        )
-    if not secret:
-        raise _reject(
-            request,
-            NO_SECRET,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Cloudy webhook receiver not configured (CLOUDY_WEBHOOK_SECRET missing)",
-        )
-    raw = await request.body()
-    if len(raw) > _get_max_body_bytes():
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Body exceeds {_get_max_body_bytes()} bytes",
-        )
-    if not signature or not _verify_signature(raw, signature, secret):
-        raise _reject(
-            request,
-            BAD_SIGNATURE if signature else MISSING_SIGNATURE,
-            status.HTTP_401_UNAUTHORIZED,
-            "Invalid or missing X-Cloudflare-Signature",
-        )
-    return raw
-
-
-def _parse_json(raw: bytes) -> Dict[str, Any]:
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid JSON body",
-        )
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Webhook payload must be a JSON object",
-        )
-    return payload
-
-
 def _ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
     from core.integrations.cloudflare.ingestion import CloudyIngestionService
 
     service = CloudyIngestionService()
-    finding = service.transform_event(payload)
-    if finding is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Unable to transform Cloudy event payload",
-        )
-    ok = service.ingestion_service.ingest_finding(finding)
-    if not ok:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Finding was not persisted",
-        )
-    logger.info(
-        "Cloudy event ingested: finding_id=%s data_source=%s",
-        finding.get("finding_id"),
-        finding.get("data_source"),
-    )
-    return {"accepted": True, "finding_id": finding["finding_id"]}
+    return ingest(service, service.transform_event(payload), "Cloudy event")
 
 
 @router.get("/cloudy/health")
@@ -212,7 +105,22 @@ async def cloudy_event(
     request: Request,
     x_cloudflare_signature: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    _require_enabled(request)
-    raw = await _read_and_verify(request, x_cloudflare_signature)
-    payload = _parse_json(raw)
+    if not cloudy_ingestion_enabled():
+        raise reject(
+            request,
+            ENDPOINT,
+            DISABLED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Cloudy ingestion is disabled. Set CLOUDY_INGESTION_ENABLED=true to enable.",
+        )
+    payload = await read_signed_json(
+        request,
+        x_cloudflare_signature,
+        endpoint=ENDPOINT,
+        vendor="Cloudy",
+        header="X-Cloudflare-Signature",
+        secret_name="CLOUDY_WEBHOOK_SECRET",
+        get_secret=_get_secret,
+        get_max_body_bytes=_get_max_body_bytes,
+    )
     return await asyncio.to_thread(_ingest, payload)

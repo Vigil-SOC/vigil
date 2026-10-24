@@ -789,6 +789,8 @@ describe('CommandBar', () => {
         await openHunt(input, 'credential access')
         pick(pdf())
         await screen.findByText('advisory.pdf')
+        // The name shows while the file is still being read, and Run stays disabled until it is ready.
+        await screen.findByText('3 pages')
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         expect(await screen.findByText('Workflow threat-hunt is disabled')).toBeInTheDocument()
         expect(deleteCase).toHaveBeenCalledWith('case-new')
@@ -802,6 +804,8 @@ describe('CommandBar', () => {
         await openHunt(input, 'credential access')
         pick(pdf())
         await screen.findByText('advisory.pdf')
+        // The name shows while the file is still being read, and Run stays disabled until it is ready.
+        await screen.findByText('3 pages')
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
         expect(await screen.findByText(/could not be kept on the case: The document could not be kept on the case/)).toBeInTheDocument()
         expect(onOpenCase).toHaveBeenCalledWith('case-new')

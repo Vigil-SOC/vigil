@@ -129,8 +129,6 @@ async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
       another worker). Not down;
     * ``disconnected`` otherwise. With no MCP client every server is: the
       catalog has no session state of its own.
-
-    Dormant reconnect stays on ``GET /connections/status``.
     """
     from core.integrations.mcp.registry import eager_connect_enabled
 
@@ -170,17 +168,6 @@ async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
                 row["error"] = err
         statuses.append(row)
     return {"statuses": statuses}
-
-
-@router.get("/servers/enabled")
-async def get_enabled_states():
-    """
-    Get enabled/disabled state for all MCP servers.
-
-    Returns:
-        Dictionary of server_name -> enabled boolean
-    """
-    return {"enabled": mcp_service.get_all_enabled_states()}
 
 
 @router.put("/servers/{server_name}/enabled")
@@ -285,49 +272,6 @@ async def set_server_enabled(
         "missing_credentials": missing_credentials,
         "setup": setup,
         "message": f"Server {server_name} {'enabled' if request.enabled else 'disabled'}",
-    }
-
-
-@router.get("/connections/status")
-async def get_connections_status(mcp_client=Depends(provide_mcp_client)):
-    """
-    Get persistent connection status for all MCP servers.
-
-    Returns:
-        Connection status for each server
-    """
-    if not mcp_client:
-        return {"error": "MCP client not available", "connections": {}}
-
-    # Auto-heal: if a previously-dormant server's required env vars have
-    # since resolved (user saved the credential via the integration
-    # wizard, or set it in the shell), retry the connect here so the
-    # next poll reflects the new state. Rate-limited per-server inside
-    # retry_dormant_if_ready to avoid connect storms.
-    try:
-        await mcp_client.retry_dormant_if_ready()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Dormant-retry sweep skipped: %s", exc)
-
-    status = mcp_client.get_connection_status()
-    connections_list: List[Dict] = []
-    for name, connected in status.items():
-        entry: Dict = {"name": name, "connected": connected}
-        if not connected:
-            # Surface dormant-due-to-missing-creds so the UI can show the
-            # "Not Configured" chip without a second roundtrip.
-            missing = mcp_client.get_missing_credentials(name)
-            if missing:
-                entry["missing_credentials"] = missing
-            err = mcp_client.get_last_error(name)
-            if err:
-                entry["error"] = err
-        connections_list.append(entry)
-
-    return {
-        "connections": connections_list,
-        "total": len(status),
-        "connected": sum(1 for connected in status.values() if connected),
     }
 
 
@@ -480,12 +424,12 @@ async def get_surface(current_user: User = Depends(get_current_active_user)):
     """Whether Vigil's own tools are reachable, and whether anything can reach them."""
     from core.auth.mcp_credential_service import list_for_user
     from core.integrations.mcp.surface import is_enabled
-    from services.api.mcp_surface import MOUNT_PATH
+    from services.api.mcp_surface import surface_address
 
     credentials = list_for_user(current_user.user_id)
     return {
         "enabled": is_enabled(),
-        "path": MOUNT_PATH,
+        "path": surface_address(),
         "credentials": [c.to_dict() for c in credentials],
     }
 

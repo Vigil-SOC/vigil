@@ -27,6 +27,7 @@ import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
 import { usePendingApprovals } from '../screens/decisions/useDecisions'
 import type { ConsoleScreenGoOptions, ConsoleScreenProps, SettingsSectionKey } from '../shared/types'
+import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
 import MetricsScreen from '../screens/metrics/MetricsScreen'
@@ -49,7 +50,6 @@ import {
   type FederationRead,
   type HealthRead,
   type McpRead,
-  type ProcessesRead,
   type RoutabilityRead,
   type StatusFold,
 } from './statusLine'
@@ -154,7 +154,7 @@ function SocConsoleInner() {
   const [health, setHealth] = useState<HealthRead | null>(null)
   const bypassed = authBypassed(health)
   // Home's setup steps; null when unread or failed, so no chip and no menu count
-  const [setupSteps, setSetupSteps] = useState<{ id: string; done: boolean }[] | null>(null)
+  const [setupSteps, setSetupSteps] = useState<Schema<'SetupStep'>[] | null>(null)
   const [setupHidden, setSetupHidden] = useState<string[]>(() => readSetupHidden())
   const moreRef = useRef<HTMLDivElement>(null)
   const [viewportWidth, setViewportWidth] = useState(() =>
@@ -382,7 +382,7 @@ function SocConsoleInner() {
         canReadRoutability
           ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
           : Promise.resolve(null),
-        settled(consoleApi.getProcesses().then((res) => res.data as ProcessesRead)),
+        settled(consoleApi.getProcesses().then((res) => res.data)),
       ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
         if (!live) return

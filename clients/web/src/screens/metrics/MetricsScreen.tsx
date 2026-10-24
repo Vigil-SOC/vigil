@@ -26,8 +26,9 @@ const STATUS_COLOR: Record<string, string> = {
   unknown: 'var(--tx-faint)',
 }
 
-function formatDuration(hours: number): string {
-  if (!hours || hours <= 0) return '0m'
+function formatDuration(hours: number | null): string {
+  if (hours === null) return '—'
+  if (hours <= 0) return '0m'
   if (hours < 1) return `${Math.round(hours * 60)}m`
   if (hours < 24) return `${hours.toFixed(1)}h`
   return `${(hours / 24).toFixed(1)}d`
@@ -41,7 +42,6 @@ function successRate(resolved: number, assigned: number): number {
 export default function MetricsScreen() {
   const [days, setDays] = useState(30)
   const { data, phase, error, reload } = useCaseMetrics(days)
-  const hasCases = data ? data.totalCases > 0 || data.byPriority.some((p) => p.count > 0) || data.byStatus.some((s) => s.count > 0) : false
 
   return (
     <>
@@ -56,12 +56,11 @@ export default function MetricsScreen() {
         </div>
         <div className="flex-1" />
         <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="btn primary"><Icon name="download" /> Export report</button>
       </div>
 
       {phase === 'loading' && <EmptyState loading icon="bars" title="Loading case metrics…" />}
       {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load case metrics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
-      {phase === 'ready' && data && (hasCases ? (
+      {phase === 'ready' && data && (data.totalCases > 0 ? (
         <MetricsBody data={data} />
       ) : (
         <EmptyState
@@ -76,14 +75,6 @@ export default function MetricsScreen() {
 
 function MetricsBody({ data }: { data: CaseMetricsData }) {
   const { totalCases, openCases, criticalCases, mttdHours, mttrHours, mttdByPriority, mttrByPriority, byPriority, byStatus, analysts } = data
-
-  if (totalCases === 0) {
-    return (
-      <div className="text-sm text-tx-3 py-20 text-center">
-        No case metrics yet. Metrics populate after findings are uploaded and cases are created.
-      </div>
-    )
-  }
 
   const priorityRows = byPriority.map((p) => ({
     label: (PRIORITY_LABELS.find(([k]) => k === p.priority)?.[1]) || p.priority,
@@ -114,7 +105,7 @@ function MetricsBody({ data }: { data: CaseMetricsData }) {
         <Kpi label="MTTD" note="mean time to detect">
           <span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{formatDuration(mttdHours)}</span>
         </Kpi>
-        <Kpi label="MTTR" note="mean time to respond">
+        <Kpi label="MTTR" note="mean time to resolve">
           <span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{formatDuration(mttrHours)}</span>
         </Kpi>
       </div>

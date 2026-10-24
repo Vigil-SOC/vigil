@@ -11,6 +11,7 @@ import pytest
 
 from core.agents import tool_registry
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
+from core.auth import permissions
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.integrations.mcp import in_process
@@ -123,6 +124,32 @@ async def test_closing_a_case_through_the_backend_records_a_closure(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, args", [("create_case", {"title": "t"}), ("update_case", {"case_id": "c1"})]
+)
+@pytest.mark.parametrize("status", ["resolved", "Closed", ""])
+async def test_a_status_outside_the_vocabulary_is_refused(
+    monkeypatch, tool, args, status
+):
+    class _Cases:
+        def get_case(self, case_id):
+            return {"case_id": case_id, "status": "open", "notes": []}
+
+        def create_case(self, **kwargs):
+            raise AssertionError("refused status was stored")
+
+        def update_case(self, case_id, **updates):
+            raise AssertionError("refused status was stored")
+
+    monkeypatch.setattr(tool_registry, "_data", lambda: _Cases())
+
+    result, handled = await execute_backend_tool(tool, {**args, "status": status})
+
+    assert handled is True
+    assert "Unknown case status" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_a_note_is_stored_where_the_timeline_reads_it(monkeypatch):
     captured = {}
 
@@ -181,7 +208,7 @@ async def test_approve_action_refuses_when_no_principal_is_bound(monkeypatch):
 @pytest.mark.asyncio
 async def test_approve_action_names_the_bound_principal(monkeypatch):
     called = _approval_spy(monkeypatch)
-    monkeypatch.setattr(tool_registry, "username_has_permission", lambda *_: True)
+    monkeypatch.setattr(permissions, "username_has_permission", lambda *_: True)
 
     with acting_as("analyst"):
         _result, handled = await execute_backend_tool(
@@ -261,7 +288,7 @@ async def test_technique_rollup_reads_the_sql_rollup(monkeypatch):
     ],
 )
 async def test_a_principal_without_the_approval_right_cannot_decide(
-    monkeypatch, tool, args
+    monkeypatch, caplog, tool, args
 ):
     called = _approval_spy(monkeypatch)
     asked = []
@@ -270,7 +297,7 @@ async def test_a_principal_without_the_approval_right_cannot_decide(
         asked.append((username, permission))
         return False
 
-    monkeypatch.setattr(tool_registry, "username_has_permission", _holds)
+    monkeypatch.setattr(permissions, "username_has_permission", _holds)
 
     with acting_as("vera_viewer"):
         result, handled = await execute_backend_tool(tool, args)
@@ -279,3 +306,4 @@ async def test_a_principal_without_the_approval_right_cannot_decide(
     assert "ai_decisions.approve required" in result["error"]
     assert asked == [("vera_viewer", "ai_decisions.approve")]
     assert called == []
+    assert "vera_viewer refused: ai_decisions.approve required" in caplog.text

@@ -165,7 +165,7 @@ def test_a_case_closed_through_the_surface_records_the_credentials_owner(
         yield object()
 
     monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
-    monkeypatch.setattr(vigil, "_service_session", _session)
+    monkeypatch.setattr(vigil, "service_session", _session)
     monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
 
     headers = {
@@ -234,7 +234,7 @@ def test_a_demoted_credential_cannot_close_through_the_surface(
         yield object()
 
     monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
-    monkeypatch.setattr(vigil, "_service_session", _own_session)
+    monkeypatch.setattr(vigil, "service_session", _own_session)
     monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
 
     headers = {

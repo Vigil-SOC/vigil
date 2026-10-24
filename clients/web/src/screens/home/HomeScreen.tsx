@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -9,24 +10,11 @@ import { LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { HOME_SETUP_ID, hideSetupStep, openSetupSteps, readSetupHidden } from './setupHidden'
+import { errorText } from '../../shared/errorText'
 import './home.css'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
-
-type SetupStep = {
-  id: string
-  title: string
-  state_line: string
-  done: boolean
-  href: string
-}
-
-type SetupSteps = {
-  steps: SetupStep[]
-  alerts_exist: number
-  demo_enabled: boolean
-}
 
 const STEP_ACTION: Record<string, string> = {
   connect_tools: 'Set up',
@@ -68,13 +56,6 @@ function waited(createdAt: string): string {
   const hours = Math.floor(minutes / 60)
   const rem = minutes % 60
   return rem ? `Waited ${hours}h ${rem}m` : `Waited ${hours}h`
-}
-
-function errorText(error: unknown, fallback: string): string {
-  const data = (error as { response?: { data?: { detail?: unknown } } })?.response?.data
-  if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
-  const message = (error as { message?: string })?.message
-  return message && message.trim() ? message : fallback
 }
 
 const decisionFailText = (err: unknown) => errorText(err, 'Could not update that decision')
@@ -125,7 +106,7 @@ function DecisionCard({
     <article className="home-card">
       <div className="home-card-top">
         <span className="home-waited">{waited(item.created_at)}</span>
-        <span className="home-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
+        <span className="home-kind">{KIND_LABEL[item.kind]}</span>
       </div>
       <h3 title={ask.full}>{ask.text}</h3>
       {meta && (
@@ -194,7 +175,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
-  const [setup, setSetup] = useState<SetupSteps | null>(null)
+  const [setup, setSetup] = useState<Schema<'SetupStepsResponse'> | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
   const [hidden, setHidden] = useState<string[]>(() => readSetupHidden())
   const [demoMessage, setDemoMessage] = useState<string | null>(null)

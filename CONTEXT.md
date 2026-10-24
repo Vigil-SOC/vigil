@@ -160,18 +160,6 @@ Case -- and both poll rather than being told, so a lost signal is a late write
 and not a missing one.
 _Avoid_: ETL, sync, ingest (those move data; this concludes about it)
 
-**Memory Snapshot** (`memory`):
-A frozen copy of **Episodic Memory**, held as a Postgres schema and named by
-date. An eval process reads one by putting it on its `search_path`, so the same
-hunts can be scored twice without the corpus moving underneath them -- the
-**Distil** polls, so live memory grows between two runs and the score moves with
-it. An empty one is the control the measurement rests on. Kept and never
-overwritten: an old one read by new code measures the code, a new one measures
-the system. Covers the exact-join tier only -- narrative search's corpus lives
-outside Postgres, so a snapshot freezes half of what a run can recall.
-_Avoid_: backup, restore, fixture, baseline, as-of (an as-of filter is what this
-replaces; the empty one is a **control**, and _baseline_ belongs to **Golden**)
-
 **Closure Category** (`cases`):
 What closing a **Case** determined: `resolved`, `false_positive`, `duplicate`,
 `unable_to_resolve`, or `unspecified` for a close that stated none. All but
@@ -215,7 +203,6 @@ presented in is a fold, so ranking may change without invalidating a historical
 Ledger. The parameters are copied in rather than referenced, because a **RunSpec**
 records the arch by name and not by version.
 _Avoid_: recall log (that is the audit table, which is Python's), snapshot
-(unqualified -- a **Memory Snapshot** is the frozen corpus, not this record)
 
 **Unavailable Read**:
 The **Recall Event** a run journals when the read could not be served at all --
@@ -296,11 +283,11 @@ _Avoid_: config dir, state dir, `.vigil`, "where secrets live", VIGIL_HOME.
 **Mirror** vs **Original** (State Directory contents):
 A **Mirror** is a State Directory file the DB is authoritative for — the router
 reads "database first" and writes the file only "for backward compatibility"
-(`theme_config.json`, `s3_config.json`, `integrations_config.json`,
-`general_config.json`). Losing one costs nothing. An **Original** has no DB home,
-so losing the file loses the data: the secrets store, `mcp_server_enabled.json`,
-`detection_sources.json`, `custom_integrations/`. Only Originals constrain where
-the State Directory can live.
+(`s3_config.json`, `integrations_config.json`). Losing one costs nothing. An
+**Original** has no DB home, so losing the file loses the data: the secrets
+store, `mcp_server_enabled.json`, `detection_sources.json`,
+`custom_integrations/`, `general_config.json` (its `demo_mode` key has no DB
+row). Only Originals constrain where the State Directory can live.
 
 ### Versioned API surface
 
