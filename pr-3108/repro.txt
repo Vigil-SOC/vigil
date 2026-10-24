@@ -1,0 +1,3 @@
+[0;31mError: .env file not found[0m
+Please create .env file with Splunk HEC configuration
+rc=1
