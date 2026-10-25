@@ -92,11 +92,8 @@ bullmq==2.15.0
 # Kafka ingestion (optional; only used when KAFKA_ENABLED=true)
 aiokafka>=0.14.0
 
-# STIX/TAXII threat-intel feed ingestion (optional; only used when the
-# Cloudforce One integration is enabled). Imports are lazy in
-# services/threat_feed_service.py so missing wheels do not break startup.
+# TAXII threat-intel feed ingestion for the Cloudforce One integration.
 taxii2-client>=2.3.0
-stix2>=3.0.2
 
 # Builds the PDF fixture in tests/unit/documents/test_documents.py.
 reportlab>=5.0.1
