@@ -1,3 +1,2 @@
-FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_low_vendor_score_yields_low_ioc[cape]
-FAILED tests/unit/cases/test_sandbox_correlation.py::TestVendorScoreScale::test_low_vendor_score_yields_low_ioc[hybrid_analysis]
-======================== 2 failed, 18 passed in 44.76s =========================
+d6bc4c45 Share one CAPE report IOC extractor between the CAPE MCP tool and case correlation (#3143)
+============================= 21 passed in 36.99s ==============================
