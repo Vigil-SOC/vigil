@@ -7,6 +7,16 @@ from services.daemon import main as daemon_main
 from services.daemon.main import SOCDaemon
 
 
+class _Metrics:
+    """Stand-in for the health server ``run`` always starts."""
+
+    def register_task(self, name, task):
+        return None
+
+    async def run(self, shutdown_event):
+        await shutdown_event.wait()
+
+
 def _daemon(**components):
     daemon = SOCDaemon.__new__(SOCDaemon)
     daemon.config = SimpleNamespace(orchestrator=SimpleNamespace(enabled=False))
@@ -22,6 +32,8 @@ def _daemon(**components):
         "metrics_server",
     ):
         setattr(daemon, f"_{name}", components.get(name))
+    if daemon._metrics_server is None:
+        daemon._metrics_server = _Metrics()
     daemon._setup_signal_handlers = lambda: None
 
     async def _no_init():
