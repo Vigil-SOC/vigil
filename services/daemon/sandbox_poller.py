@@ -5,7 +5,7 @@ The daemon's enrichment step (``daemon/processor.py``) records
 sandbox — the payload is nested one level inside the column. Those
 tasks take minutes to complete — so a separate poller checks them on a
 cadence, pulls the report when ready, and writes it back to the finding
-plus (if the finding is tied to a case) the case as evidence + IOCs.
+plus every case linked to the finding as evidence + IOCs.
 
 All HTTP is wrapped with ``asyncio.to_thread`` so the scheduler loop stays
 async. DB writes go through the same pattern.
@@ -77,30 +77,18 @@ class SandboxPoller:
     async def run_once(self) -> Dict[str, int]:
         """Scan recent findings, advance any pending sandbox submissions."""
         self._init_services()
+        stats = dict.fromkeys(
+            ("checked", "completed", "expired", "failed", "errors"), 0
+        )
         if not self._data_service:
-            return {
-                "checked": 0,
-                "completed": 0,
-                "expired": 0,
-                "failed": 0,
-                "errors": 0,
-            }
+            return stats
 
         try:
             findings = await asyncio.to_thread(self._data_service.get_findings)
-        except TypeError:
-            findings = self._data_service.get_findings()
         except Exception as e:
             logger.error(f"Failed to list findings for sandbox poll: {e}")
-            return {
-                "checked": 0,
-                "completed": 0,
-                "expired": 0,
-                "failed": 0,
-                "errors": 1,
-            }
-
-        stats = {"checked": 0, "completed": 0, "expired": 0, "failed": 0, "errors": 0}
+            stats["errors"] = 1
+            return stats
 
         for finding in findings or []:
             # processor.py nests its enrichment payload under the ai_enrichment
@@ -154,6 +142,22 @@ class SandboxPoller:
                     if not report:
                         continue
 
+                    if self._correlation:
+                        try:
+                            await asyncio.to_thread(
+                                self._correlation.attach_report,
+                                finding["finding_id"],
+                                sandbox_name,
+                                str(task_id),
+                                report,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Correlation failed for %s/%s", sandbox_name, task_id
+                            )
+                            stats["errors"] += 1
+                            continue
+
                     reports[report_key] = {
                         "sandbox": sandbox_name,
                         "task_id": task_id,
@@ -163,21 +167,6 @@ class SandboxPoller:
                     sub["status"] = "reported"
                     stats["completed"] += 1
                     updated = True
-
-                    case_id = finding.get("case_id")
-                    if case_id and self._correlation:
-                        try:
-                            await asyncio.to_thread(
-                                self._correlation.attach_report,
-                                case_id,
-                                sandbox_name,
-                                str(task_id),
-                                report,
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Correlation failed for {sandbox_name}/{task_id}: {e}"
-                            )
 
             if updated:
                 enrichment["sandbox_submissions"] = pending
@@ -203,16 +192,13 @@ class SandboxPoller:
     async def _fetch_report(
         self, sandbox_name: str, task_id: str
     ) -> Optional[Dict[str, Any]]:
-        name = sandbox_name.lower()
-        if name in ("cape", "cape-sandbox", "cape_sandbox"):
-            return await self._fetch_cape(task_id)
-        if name in ("hybrid_analysis", "hybrid-analysis", "hybrid"):
-            return await self._fetch_hybrid(task_id)
-        if name in ("anyrun", "any.run"):
-            return await self._fetch_anyrun(task_id)
-        if name in ("joe", "joe_sandbox", "joe-sandbox"):
-            return await self._fetch_joe(task_id)
-        return None
+        fetch = {
+            "cape": self._fetch_cape,
+            "hybrid_analysis": self._fetch_hybrid,
+            "anyrun": self._fetch_anyrun,
+            "joe_sandbox": self._fetch_joe,
+        }.get(sandbox_name)
+        return await fetch(task_id) if fetch else None
 
     async def _fetch_cape(self, task_id: str) -> Optional[Dict[str, Any]]:
         base = get_settings().cape_sandbox_url.rstrip("/")

@@ -70,8 +70,15 @@ def test_sample_findings_import_with_every_field_kept(service):
         assert row["mitre_predictions"] == {t: 1.0 for t in src["mitre_techniques"]}
 
 
-def test_id_keyed_top_level_array_is_recognised_without_streaming(service):
-    service._ingest_json_full(FIXTURE)
+def test_id_keyed_top_level_array_with_nan_is_recognised_on_the_json_retry(
+    service, tmp_path
+):
+    rows = json.loads(FIXTURE.read_text())
+    rows[0]["anomaly_score"] = float("nan")
+    path = tmp_path / "nan.json"
+    path.write_text(json.dumps(rows))
+
+    service.ingest_json_file(path)
 
     assert len(service.db_service.batch) == 5
 

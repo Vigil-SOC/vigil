@@ -11,14 +11,17 @@ Handles ingestion of findings and cases from various formats:
 
 import csv
 import hashlib
+import itertools
 import json
 import logging
 import math
-import tempfile
+import re
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
+
+import ijson
 
 from core.findings.source_evidence import (
     normalize_finding_source_evidence,
@@ -97,6 +100,25 @@ def _optional_float(value: Any) -> Optional[float]:
 
 def _blank(value: Any) -> bool:
     return value is None or value == "" or value == {}
+
+
+_NEWLINE = re.compile(rb"\r\n?")
+_LINE = re.compile(rb"[^\n]*\n|[^\n]+")
+
+
+def _utf8_lines(path: Path):
+    """Yield each line as text, decoded as UTF-8, with universal newlines.
+
+    A text-mode read fills an 8KiB chunk and raises UnicodeDecodeError for a
+    bad byte before it yields any line from that chunk, so a short file drops
+    every row that was already well formed. Decoding one line at a time keeps
+    those rows. UTF-8 never uses the bytes ``\\r`` or ``\\n`` inside a
+    character, so splitting on them first is safe.
+    """
+    with open(path, "rb") as raw:
+        for chunk in raw:
+            for line in _LINE.findall(_NEWLINE.sub(b"\n", chunk)):
+                yield line.decode("utf-8")
 
 
 def _json_object(value: Any) -> Any:
@@ -225,6 +247,13 @@ class IngestionService:
     def _record_error(self, message: str) -> None:
         if self.first_error is None:
             self.first_error = message
+
+    def _file_failed(
+        self, kind: str, exc: Exception, data_type: str = "finding"
+    ) -> None:
+        logger.error("Error ingesting %s file: %s", kind, exc)
+        self._record_error(f"Could not read the {kind} file: {exc}")
+        self.stats[f"{data_type}s_errors"] += 1
 
     def _identity_fallback(
         self, row: Dict[str, Any], columns: tuple, missing_column: str
@@ -452,13 +481,16 @@ class IngestionService:
     def _ingest_findings_batched(self, findings, batch_size: int = 1000) -> None:
         """Feed an iterable of finding dicts through _ingest_finding_batch in chunks."""
         batch = []
-        for finding in findings:
-            batch.append(finding)
-            if len(batch) >= batch_size:
-                self._ingest_finding_batch(batch)
-                batch = []
-        if batch:
-            self._ingest_finding_batch(batch)
+        try:
+            for finding in findings:
+                batch.append(finding)
+                if len(batch) >= batch_size:
+                    full, batch = batch, []
+                    self._ingest_finding_batch(full)
+        finally:
+            # Swap before flushing so a batch that raised is not sent again.
+            pending, batch = batch, []
+            self._ingest_finding_batch(pending)
 
     def ingest_case(self, case_data: Dict[str, Any]) -> bool:
         """
@@ -530,8 +562,7 @@ class IngestionService:
             return False
 
     def ingest_json_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
-        """Ingest a JSON file: {findings, cases} dict or a top-level findings/cases array.
-        Streams via ijson when available, else falls back to json.load."""
+        """Ingest a JSON file: {findings, cases} dict or a top-level findings/cases array."""
         self.reset_stats()
         file_path = Path(file_path)
 
@@ -540,68 +571,78 @@ class IngestionService:
             return self.stats
 
         try:
-            import ijson
-
-            self._ingest_json_streaming(file_path, ijson)
-        except ImportError:
-            logger.info("ijson not available, falling back to full json.load")
-            self._ingest_json_full(file_path)
-        except Exception as e:
-            logger.warning(
-                f"Streaming JSON parse failed, falling back to json.load: {e}"
-            )
             try:
-                self._ingest_json_full(file_path)
-            except Exception as e2:
-                logger.error(f"Error ingesting JSON file: {e2}")
+                self._ingest_json_streaming(file_path)
+            except ijson.JSONError:
+                # ijson rejects NaN and Infinity, which json.load accepts.
+                # Ingest only the items the stream did not reach.
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                findings, cases = [], []
+                if isinstance(data, dict):
+                    findings = data.get("findings", [])
+                    cases = data.get("cases", [])
+                elif isinstance(data, list) and data:
+                    if self._is_case_array(data[0]):
+                        cases = data
+                    else:
+                        findings = data
+                self._ingest_findings_batched(findings[self.stats["findings_total"] :])
+                for case in cases[self.stats["cases_total"] :]:
+                    self.ingest_case(case)
+                self.stats["findings_total"] = len(findings)
+                self.stats["cases_total"] = len(cases)
+        except Exception as e:
+            # A case file that fails after its cases were read is a case error.
+            # A failure before any case was counted stays a finding error.
+            data_type = "case" if self.stats["cases_total"] else "finding"
+            self._file_failed("JSON", e, data_type)
 
         logger.info(f"JSON ingestion complete: {self.stats}")
         return self.stats
 
-    def _ingest_json_streaming(self, file_path: Path, ijson) -> None:
-        """Stream-parse a JSON file item by item to avoid loading it all into memory."""
+    @staticmethod
+    def _is_case_array(first_item: Dict[str, Any]) -> bool:
+        return "finding_id" not in first_item and "case_id" in first_item
+
+    def _counted(self, items, total_key: str):
+        for item in items:
+            self.stats[total_key] += 1
+            yield item
+
+    def _ingest_json_streaming(self, file_path: Path) -> None:
+        """Stream-parse a JSON file item by item to avoid loading it all into memory.
+
+        On a parse error, findings_total and cases_total count exactly the items
+        already ingested, so the json.load retry can resume after them."""
         with open(file_path, "rb") as f:
             peek = f.read(1)
             f.seek(0)
 
             if peek == b"{":
-
-                def _findings():
-                    for item in ijson.items(f, "findings.item", use_float=True):
-                        self.stats["findings_total"] += 1
-                        yield item
-
-                self._ingest_findings_batched(_findings())
+                self._ingest_findings_batched(
+                    self._counted(
+                        ijson.items(f, "findings.item", use_float=True),
+                        "findings_total",
+                    )
+                )
                 f.seek(0)
-                for item in ijson.items(f, "cases.item", use_float=True):
-                    self.stats["cases_total"] += 1
+                cases = ijson.items(f, "cases.item", use_float=True)
+                for item in self._counted(cases, "cases_total"):
                     self.ingest_case(item)
             elif peek == b"[":
-                first_key = None
-                finding_batch = []
-                for item in ijson.items(f, "item", use_float=True):
-                    if first_key is None:
-                        first_key = (
-                            "finding"
-                            if "finding_id" in item
-                            else "case" if "case_id" in item else "finding"
-                        )
-                    if first_key == "finding":
-                        self.stats["findings_total"] += 1
-                        finding_batch.append(item)
-                        if len(finding_batch) >= 1000:
-                            self._ingest_finding_batch(finding_batch)
-                            finding_batch = []
-                    else:
-                        self.stats["cases_total"] += 1
+                items = ijson.items(f, "item", use_float=True)
+                first = next(items, None)
+                if first is None:
+                    return
+                items = itertools.chain([first], items)
+                if self._is_case_array(first):
+                    for item in self._counted(items, "cases_total"):
                         self.ingest_case(item)
-                if finding_batch:
-                    self._ingest_finding_batch(finding_batch)
-
-    def _ingest_json_full(self, file_path: Path) -> None:
-        """Fallback: load entire JSON file into memory."""
-        with open(file_path, "r") as f:
-            self._ingest_json_data(json.load(f))
+                else:
+                    self._ingest_findings_batched(
+                        self._counted(items, "findings_total")
+                    )
 
     def _ingest_json_data(self, data: Any, data_type: str = "finding") -> None:
         findings = []
@@ -637,41 +678,44 @@ class IngestionService:
             return self.stats
 
         try:
-            with open(file_path, "r") as f:
-                self._ingest_jsonl_lines(f, data_type)
-            logger.info(f"JSONL ingestion complete: {self.stats}")
+            self._ingest_jsonl_lines(_utf8_lines(file_path), data_type)
         except Exception as e:
-            logger.error(f"Error ingesting JSONL file: {e}")
+            self._file_failed("JSONL", e, data_type)
+
+        logger.info(f"JSONL ingestion complete: {self.stats}")
         return self.stats
 
     def _ingest_jsonl_lines(self, lines: Iterable[str], data_type: str) -> None:
         finding_batch = []
-        for line_num, line in enumerate(lines, 1):
-            line = line.strip()
-            if not line:
-                continue
+        try:
+            for line_num, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line:
+                    continue
 
-            try:
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
 
-                if data_type == "finding":
-                    self.stats["findings_total"] += 1
-                    finding_batch.append(data)
-                    if len(finding_batch) >= 1000:
-                        self._ingest_finding_batch(finding_batch)
-                        finding_batch = []
-                elif data_type == "case":
-                    self.stats["cases_total"] += 1
-                    self.ingest_case(data)
+                    if data_type == "finding":
+                        self.stats["findings_total"] += 1
+                        finding_batch.append(data)
+                        if len(finding_batch) >= 1000:
+                            full, finding_batch = finding_batch, []
+                            self._ingest_finding_batch(full)
+                    elif data_type == "case":
+                        self.stats["cases_total"] += 1
+                        self.ingest_case(data)
 
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON on line {line_num}: {e}")
-                if data_type == "finding":
-                    self.stats["findings_errors"] += 1
-                else:
-                    self.stats["cases_errors"] += 1
-        if finding_batch:
-            self._ingest_finding_batch(finding_batch)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON on line {line_num}: {e}")
+                    if data_type == "finding":
+                        self.stats["findings_errors"] += 1
+                    else:
+                        self.stats["cases_errors"] += 1
+        finally:
+            # Keep the rows read before a bad byte; swap so none is sent twice.
+            pending, finding_batch = finding_batch, []
+            self._ingest_finding_batch(pending)
 
     def ingest_csv_file(
         self, file_path: Union[str, Path], data_type: str = "finding"
@@ -685,36 +729,39 @@ class IngestionService:
             return self.stats
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                self._ingest_csv_rows(f, data_type)
-            logger.info(f"CSV ingestion complete: {self.stats}")
+            self._ingest_csv_rows(_utf8_lines(file_path), data_type)
         except Exception as e:
-            logger.error(f"Error ingesting CSV file: {e}")
+            self._file_failed("CSV", e, data_type)
+
+        logger.info(f"CSV ingestion complete: {self.stats}")
         return self.stats
 
     def _ingest_csv_rows(self, text: Iterable[str], data_type: str) -> None:
         finding_batch = []
-        for row_num, row in enumerate(csv.DictReader(text), 1):
-            try:
-                if data_type == "finding":
-                    self.stats["findings_total"] += 1
-                    finding_batch.append(self._csv_row_to_finding(row))
-                    if len(finding_batch) >= 1000:
-                        self._ingest_finding_batch(finding_batch)
-                        finding_batch = []
-                elif data_type == "case":
-                    self.stats["cases_total"] += 1
-                    case_data = self._csv_row_to_case(row)
-                    self.ingest_case(case_data)
+        try:
+            for row_num, row in enumerate(csv.DictReader(text), 1):
+                try:
+                    if data_type == "finding":
+                        self.stats["findings_total"] += 1
+                        finding_batch.append(self._csv_row_to_finding(row))
+                        if len(finding_batch) >= 1000:
+                            full, finding_batch = finding_batch, []
+                            self._ingest_finding_batch(full)
+                    elif data_type == "case":
+                        self.stats["cases_total"] += 1
+                        case_data = self._csv_row_to_case(row)
+                        self.ingest_case(case_data)
 
-            except Exception as e:
-                logger.error(f"Error processing CSV row {row_num}: {e}")
-                if data_type == "finding":
-                    self.stats["findings_errors"] += 1
-                else:
-                    self.stats["cases_errors"] += 1
-        if finding_batch:
-            self._ingest_finding_batch(finding_batch)
+                except Exception as e:
+                    logger.error(f"Error processing CSV row {row_num}: {e}")
+                    if data_type == "finding":
+                        self.stats["findings_errors"] += 1
+                    else:
+                        self.stats["cases_errors"] += 1
+        finally:
+            # Keep the rows read before a bad byte; swap so none is sent twice.
+            pending, finding_batch = finding_batch, []
+            self._ingest_finding_batch(pending)
 
     def _is_tempo_csv(self, row: Dict[str, str]) -> bool:
         """Detect Tempo alert CSV format by checking for characteristic columns."""
@@ -955,17 +1002,11 @@ class IngestionService:
                         self.stats["findings_errors"] += 1
                 self._ingest_finding_batch(finding_batch)
 
-            logger.info(f"Parquet ingestion complete: {self.stats}")
-            return self.stats
-
-        except ImportError:
-            logger.error(
-                "pyarrow is required for parquet ingestion: pip install pyarrow"
-            )
-            return self.stats
         except Exception as e:
-            logger.error(f"Error ingesting parquet file: {e}")
-            return self.stats
+            self._file_failed("Parquet", e)
+
+        logger.info(f"Parquet ingestion complete: {self.stats}")
+        return self.stats
 
     def _parquet_row_to_finding(
         self, row: Dict[str, Any], data_source: str = "flow"
@@ -1089,82 +1130,6 @@ class IngestionService:
             "cluster_id": None,
             "severity": row.get("severity") or None,
         }
-
-    # Extension -> (ingestion method name, temp file suffix, file mode for write)
-    _S3_FORMAT_MAP = {
-        ".parquet": "parquet",
-        ".csv": "csv",
-        ".json": "json",
-        ".jsonl": "jsonl",
-        ".ndjson": "jsonl",
-    }
-
-    def ingest_s3_folder(
-        self, s3_service, prefix: str = "", data_source: str = "flow"
-    ) -> Dict[str, Any]:
-        """Discover and ingest all supported files from an S3 prefix, routed by extension."""
-        self.reset_stats()
-        files_processed = 0
-        files_skipped = 0
-
-        all_keys = s3_service.list_files(prefix=prefix)
-        if not all_keys:
-            logger.warning(f"No files found under S3 prefix '{prefix}'")
-            return {**self.stats, "files_processed": 0, "files_skipped": 0}
-
-        logger.info(f"Found {len(all_keys)} file(s) under S3 prefix '{prefix}'")
-
-        for key in all_keys:
-            ext = self._s3_key_extension(key)
-            fmt = self._S3_FORMAT_MAP.get(ext)
-
-            if fmt is None:
-                logger.debug(f"Skipping unsupported file type '{ext}': {key}")
-                files_skipped += 1
-                continue
-
-            logger.info(
-                f"Downloading s3://{s3_service.bucket_name}/{key} (format: {fmt})"
-            )
-            content = s3_service.get_file(key)
-            if content is None:
-                logger.error(f"Failed to download {key} from S3")
-                self.stats["findings_errors"] += 1
-                continue
-
-            tmp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                    tmp.write(content)
-                    tmp_path = Path(tmp.name)
-
-                file_stats = self._ingest_file_by_format(tmp_path, fmt, data_source)
-
-                for key in self.stats:
-                    self.stats[key] += file_stats.get(key, 0)
-                files_processed += 1
-
-            except Exception as e:
-                logger.error(f"Error processing S3 file {key}: {e}")
-                self.stats["findings_errors"] += 1
-            finally:
-                if tmp_path and tmp_path.exists():
-                    tmp_path.unlink()
-
-        logger.info(
-            f"S3 folder ingestion complete: {files_processed} processed, "
-            f"{files_skipped} skipped, stats={self.stats}"
-        )
-        return {
-            **self.stats,
-            "files_processed": files_processed,
-            "files_skipped": files_skipped,
-        }
-
-    @staticmethod
-    def _s3_key_extension(key: str) -> str:
-        """Extract the lowercase file extension from an S3 key."""
-        return Path(key).suffix.lower()
 
     def _ingest_file_by_format(
         self,

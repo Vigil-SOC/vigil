@@ -71,8 +71,6 @@ class SchedulerConfig:
 @dataclass
 class MetricsConfig:
     enabled: bool = True
-    port: int = 9091
-    path: str = "/metrics"
 
 
 @dataclass
@@ -168,7 +166,6 @@ class DaemonConfig:
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
 
         config.metrics.enabled = settings.daemon_metrics_enabled
-        config.metrics.port = settings.daemon_health_port
 
         config.orchestrator.enabled = settings.orchestrator_enabled
         config.orchestrator.loop_interval = settings.orchestrator_loop_interval
@@ -187,18 +184,7 @@ class DaemonConfig:
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
 
-        config.kafka.enabled = settings.kafka_enabled  # SystemConfig may override below
-        config.kafka.bootstrap_servers = settings.kafka_bootstrap_servers
-        config.kafka.consumer_group = settings.kafka_consumer_group
-        config.kafka.topics = list(settings.kafka_topics)
-        config.kafka.auto_offset_reset = settings.kafka_auto_offset_reset
-        config.kafka.max_poll_records = settings.kafka_max_poll_records
-        config.kafka.session_timeout_ms = settings.kafka_session_timeout_ms
-        config.kafka.security_protocol = settings.kafka_security_protocol
-        config.kafka.sasl_mechanism = settings.kafka_sasl_mechanism or None
-        config.kafka.sasl_username = get_secret("KAFKA_SASL_USERNAME") or None
-        config.kafka.sasl_password = get_secret("KAFKA_SASL_PASSWORD") or None
-        config.kafka.ssl_ca_location = settings.kafka_ssl_ca_location or None
+        config.kafka = KafkaConfig.from_env()
 
         # Override with DB-persisted settings (set via Settings UI)
         try:
