@@ -250,12 +250,14 @@ class CaseIOCService:
                 # Map IOC type to STIX type
                 stix_type = self._map_ioc_to_stix_type(ioc.ioc_type)
 
+                # STIX string literals escape backslash and single quote.
+                literal = str(ioc.value).replace("\\", "\\\\").replace("'", "\\'")
                 stix_obj = {
                     "type": "indicator",
                     "id": f"indicator--{ioc.ioc_id}",
                     "created": ioc.created_at.isoformat() + "Z",
                     "modified": ioc.updated_at.isoformat() + "Z",
-                    "pattern": f"[{stix_type}:value = '{ioc.value}']",
+                    "pattern": f"[{stix_type}:value = '{literal}']",
                     "pattern_type": "stix",
                     "valid_from": (
                         (ioc.first_seen.isoformat() + "Z")

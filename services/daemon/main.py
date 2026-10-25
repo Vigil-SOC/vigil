@@ -139,8 +139,7 @@ class SOCDaemon:
             approvals=approvals,
         )
 
-        if self.config.metrics.enabled:
-            self._metrics_server = MetricsServer(self.config.metrics)
+        self._metrics_server = MetricsServer(self.config.metrics)
 
         # Connect components via queues
         self._poller.set_output_queue(self._processor.input_queue)
@@ -149,13 +148,12 @@ class SOCDaemon:
         self._scheduler.set_processor_queue(self._processor.input_queue)
 
         # Wire up metrics server with component references
-        if self._metrics_server:
-            self._metrics_server.poller = self._poller
-            self._metrics_server.kafka_ingestor = self._kafka_ingestor
-            self._metrics_server.processor = self._processor
-            self._metrics_server.responder = self._responder
-            self._metrics_server.scheduler = self._scheduler
-            self._metrics_server.orchestrator = self._orchestrator
+        self._metrics_server.poller = self._poller
+        self._metrics_server.kafka_ingestor = self._kafka_ingestor
+        self._metrics_server.processor = self._processor
+        self._metrics_server.responder = self._responder
+        self._metrics_server.scheduler = self._scheduler
+        self._metrics_server.orchestrator = self._orchestrator
 
         logger.info("All components initialized")
 
@@ -178,7 +176,7 @@ class SOCDaemon:
         def start(name: str, component, label: str):
             task = asyncio.create_task(component.run(self._shutdown_event), name=name)
             task.add_done_callback(lambda t: self._on_task_done(name, t))
-            if self._metrics_server and component is not self._metrics_server:
+            if component is not self._metrics_server:
                 self._metrics_server.register_task(name, task)
             tasks.append(task)
             logger.info("%s started", label)
@@ -203,13 +201,7 @@ class SOCDaemon:
             if not self.config.orchestrator.enabled:
                 logger.info("Autonomous orchestrator is disabled")
 
-        if self._metrics_server:
-            start("metrics", self._metrics_server, "Metrics server")
-            logger.info(
-                "Health :%d, prometheus :%d",
-                self._metrics_server.health_port,
-                self._metrics_server.metrics_port,
-            )
+        start("metrics", self._metrics_server, "Metrics server")
 
         logger.info("SOC Daemon fully operational")
 
