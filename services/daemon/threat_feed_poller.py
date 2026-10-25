@@ -1,7 +1,7 @@
 """Periodic poller for STIX/TAXII threat feeds (Cloudforce One et al).
 
-Registered as a scheduled task by `daemon/scheduler.py` when the
-`cloudforce_one` integration is enabled. No-op when disabled.
+Always registered as a scheduled task by `daemon/scheduler.py`; each run is a
+no-op while the `cloudforce_one` integration is disabled.
 
 After the upsert loop it offers the poll's uncovered indicators to the Intake
 as one case-less `kind="schedule"` row carrying every key (#1009). It does not
@@ -71,12 +71,13 @@ class ThreatFeedPoller:
     def poll_interval_seconds() -> int:
         """Effective poll interval. Honors integration config and env override."""
 
-        raw = get_integration_config("cloudforce_one").get("poll_interval_seconds")
-        if raw is None:
-            raw = get_settings().threat_feed_poll_interval
         try:
+            raw = get_integration_config("cloudforce_one").get("poll_interval_seconds")
+            if raw is None:
+                raw = get_settings().threat_feed_poll_interval
             return max(60, int(raw))
-        except (TypeError, ValueError):
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Threat feed poll interval unreadable, using 900s: %s", e)
             return 900
 
     async def run_once(self) -> Dict[str, Any]:
