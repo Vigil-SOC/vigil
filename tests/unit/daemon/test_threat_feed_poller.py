@@ -367,8 +367,8 @@ async def test_enabling_cloudforce_one_after_the_scheduler_starts_polls(monkeypa
     from services.daemon.scheduler import TaskScheduler
 
     enabled = {"cloudforce_one": False}
-    monkeypatch.setattr("core.config.is_integration_enabled", enabled.get)
-    monkeypatch.setattr("core.config.get_integration_config", lambda _id: {})
+    monkeypatch.setattr(poller, "is_integration_enabled", enabled.get)
+    monkeypatch.setattr(poller, "get_integration_config", lambda _id: {})
     monkeypatch.setattr(poller, "_last_skip_signature", None)
     scheduler = TaskScheduler(SchedulerConfig())
     enabled["cloudforce_one"] = True
