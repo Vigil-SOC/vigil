@@ -164,6 +164,18 @@ class TestAttachReportAtomicity:
             report=self.REPORT,
         )
 
+    def test_null_behavior_still_writes_evidence(self, session):
+        result = SandboxCorrelationService().attach_report(
+            finding_id="finding-1",
+            sandbox_name="cape",
+            task_id="task-1",
+            report={"data": {**self.REPORT["data"], "behavior": None}},
+        )
+
+        assert "error" not in result
+        assert result["iocs_added"] == 2
+        session.commit.assert_called_once()
+
     def test_commits_once_when_every_step_succeeds(self, session):
         result = self._attach()
 
@@ -271,10 +283,11 @@ class TestVendorScoreScale:
         session.query.return_value.filter.return_value.first.return_value = None
         monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
 
-        SandboxCorrelationService().attach_report(
+        result = SandboxCorrelationService().attach_report(
             "finding-1", sandbox, "task-1", self.REPORTS[sandbox]
         )
 
+        assert "error" not in result
         (ioc,) = [
             c.args[0]
             for c in session.add.call_args_list
