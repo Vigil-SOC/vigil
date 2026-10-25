@@ -71,12 +71,13 @@ class ThreatFeedPoller:
     def poll_interval_seconds() -> int:
         """Effective poll interval. Honors integration config and env override."""
 
-        raw = get_integration_config("cloudforce_one").get("poll_interval_seconds")
-        if raw is None:
-            raw = get_settings().threat_feed_poll_interval
         try:
+            raw = get_integration_config("cloudforce_one").get("poll_interval_seconds")
+            if raw is None:
+                raw = get_settings().threat_feed_poll_interval
             return max(60, int(raw))
-        except (TypeError, ValueError):
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Threat feed poll interval unreadable, using 900s: %s", e)
             return 900
 
     async def run_once(self) -> Dict[str, Any]:
