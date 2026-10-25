@@ -1423,32 +1423,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/metrics/calculate/{case_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Calculate Case Metrics
-         * @description Calculate/update metrics for a case.
-         *
-         *     Args:
-         *         case_id: Case ID
-         *
-         *     Returns:
-         *         Calculated metrics
-         */
-        post: operations["post_api_cases_metrics_calculate_case_id"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/metrics/mttd": {
         parameters: {
             query?: never;
@@ -5657,32 +5631,6 @@ export interface paths {
         get: operations["get_api_v1_cases_metrics_by-status"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/cases/metrics/calculate/{case_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Calculate Case Metrics
-         * @description Calculate/update metrics for a case.
-         *
-         *     Args:
-         *         case_id: Case ID
-         *
-         *     Returns:
-         *         Calculated metrics
-         */
-        post: operations["post_api_v1_cases_metrics_calculate_case_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13425,39 +13373,6 @@ export interface operations {
             };
         };
     };
-    post_api_cases_metrics_calculate_case_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_cases_metrics_mttd: {
         parameters: {
             query?: {
@@ -20963,39 +20878,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ByStatusResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_v1_cases_metrics_calculate_case_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

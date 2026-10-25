@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.config import get_settings
+from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.kafka_consumer_service import idle_stats
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
@@ -71,7 +73,8 @@ class KafkaConfigBody(BaseModel):
 
 
 def _default_config() -> Dict[str, Any]:
-    return KafkaConfigBody().model_dump()
+    env = asdict(KafkaConfig.from_env())
+    return {name: env[name] for name in KafkaConfigBody.model_fields}
 
 
 # ---------------------------------------------------------------------------

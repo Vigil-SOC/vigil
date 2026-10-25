@@ -1,19 +1,19 @@
 """Case metrics — versioned contract surface (``/api/v1/cases/metrics``).
 
 Reporting numbers about cases (MTTR, MTTD, breach counts, breakdowns). Six are
-frozen; two are marked beta via ``openapi_extra`` and are excluded from the
-contract snapshot — their shape may change while the feature matures. Beta
+frozen; one is marked beta via ``openapi_extra`` and is excluded from the
+contract snapshot — its shape may change while the feature matures. Beta
 still ships and returns data; it is a "do not rely on this yet" label, not a
 hidden route.
 
 Frozen: by-priority, by-status, breached, mttr, mttd, summary.
-Beta:   analyst-performance, calculate/{id} (a recompute action, not a read).
+Beta:   analyst-performance.
 """
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy import Float, and_
 from sqlalchemy import case as sql_case
@@ -21,12 +21,10 @@ from sqlalchemy import cast, func, literal_column, select, true
 from sqlalchemy.sql.elements import ColumnElement
 
 from core.auth.permissions import permission_gate
-from core.cases.case_metrics_service import CaseMetricsService
 from core.cases.case_sla_service import CaseSLAService
 from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseClosureInfo
-from core.storage.schemas import CaseMetricsSchema
 
 router = APIRouter()
 router.dependencies.append(permission_gate("cases.read"))
@@ -47,8 +45,7 @@ _BETA = {"openapi_extra": {"x-vigil-beta": True}}
 # MTTR, MTTD and per-analyst resolution time are computed in SQL from columns
 # every case path writes, not read from ``case_metrics``: nothing populates that
 # table in normal operation (#1435), so reading it reported 0 for every
-# deployment. The definitions are the ones ``CaseMetricsService`` uses to fill
-# ``case_metrics``, so the two agree wherever both exist.
+# deployment.
 
 # A first-activity timestamp is only cast when it looks like an ISO-8601 date
 # and time and Postgres accepts it as a ``timestamp`` (``pg_input_is_valid``,
@@ -67,8 +64,7 @@ def _closed_at() -> ColumnElement:
     ``case_closure_info.closed_at`` is stamped by ``close_case``, which every
     close path goes through, and it does not move when the case is edited
     afterwards. A case closed before closure rows existed falls back to
-    ``cases.updated_at``, the source ``CaseMetricsService`` uses for
-    ``time_to_resolve``.
+    ``cases.updated_at``.
     """
     return func.coalesce(CaseClosureInfo.closed_at, Case.updated_at)
 
@@ -171,9 +167,6 @@ class ByStatusResponse(BaseModel):
     status_breakdown: List[StatusBreakdownRow] = Field(default_factory=list)
 
 
-metrics_service = CaseMetricsService()
-
-
 @router.get("/mttr", response_model=MttrResponse)
 def get_mttr(
     session: UnitOfWorkSession,
@@ -257,25 +250,6 @@ def get_mttr(
         "trend_data": trend_data,
         "total_cases": total_cases,
     }
-
-
-@router.post(
-    "/calculate/{case_id}", dependencies=[permission_gate("cases.write")], **_BETA
-)
-def calculate_case_metrics(case_id: str):
-    """
-    Calculate/update metrics for a case.
-
-    Args:
-        case_id: Case ID
-
-    Returns:
-        Calculated metrics
-    """
-    metrics = metrics_service.calculate_case_metrics(case_id)
-    if not metrics:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return CaseMetricsSchema.dump(metrics)
 
 
 @router.get("/breached", response_model=BreachedCasesResponse)

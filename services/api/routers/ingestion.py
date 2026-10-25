@@ -381,7 +381,7 @@ def ingest_s3_file(
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
 
-    success, message = summarize_stats(stats)
+    success, message = summarize_stats(stats, ingestion_service.first_error)
 
     return IngestionStats(
         findings_total=stats.get("findings_total", 0),
