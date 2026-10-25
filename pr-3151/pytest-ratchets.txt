@@ -1,0 +1,8 @@
+6.02s call     unit/_ratchets/test_no_blocking_in_async_routes.py::test_no_blocking_calls_in_async_routes
+5.90s call     unit/_ratchets/test_no_import_time_db_connection.py::test_importing_every_router_opens_no_database_connection
+5.39s call     unit/_ratchets/test_no_logger_fstrings.py::test_fstring_log_calls_do_not_grow
+=========================== short test summary info ============================
+SKIPPED [1] tests/unit/_ratchets/test_app_db_password_split.py:129: needs helm
+SKIPPED [3] tests/unit/_ratchets/test_helm_networkpolicy_no_cluster_wide_peer.py:29: helm not installed
+SKIPPED [2] tests/unit/_ratchets/test_helm_state_dir_refuses_secrets.py:27: helm not installed
+============ 265 passed, 6 skipped, 2 warnings in 184.77s (0:03:04) ============

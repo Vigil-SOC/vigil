@@ -1,0 +1,7 @@
+JWT_SECRET_KEY not set; using deterministic DEV_MODE fallback. Tokens issued in dev are not portable to production.
+init sig (self, config: 'DaemonConfig')
+has stop False
+pkg has SOCDaemon False
+pkg has DaemonConfig False
+patch via package path ok
+record ok, has results: False

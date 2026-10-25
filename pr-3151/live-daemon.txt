@@ -1,0 +1,23 @@
+$ python services/daemon/main.py  (DEV_MODE=true, DATABASE_URL=throwaway POSTGRES_*, DAEMON_HEALTH_PORT=39191)
+$ curl -s localhost:39191/health
+{"status": "healthy", ... "components": {"poller": "running", "kafka": "running", "processor": "running", "responder": "running", "scheduler": "running", "orchestrator": "disabled"}}
+$ kill -TERM $P; wait $P
+exit=0
+--- __main__ log lines ---
+SOC Daemon initialized
+Starting SOC Daemon...
+Initializing daemon components...
+All components initialized
+Data poller started
+Kafka ingestor started
+Finding processor started
+Autonomous responder started
+Task scheduler started
+Autonomous orchestrator started
+Autonomous orchestrator is disabled
+Metrics server started
+Health :39191, prometheus :39190
+SOC Daemon fully operational
+Shutdown signal received
+Shutting down daemon components...
+SOC Daemon shutdown complete

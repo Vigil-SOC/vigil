@@ -1,0 +1,15 @@
+75 empty files skipped.
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+============================= slowest 10 durations =============================
+0.53s setup    unit/daemon/test_orchestrator_hourly_cost_db.py::test_intake_pauses_when_the_hour_reaches_the_cap
+0.32s call     unit/daemon/test_daemon.py::TestTriageTimeout::test_raised_timeout_triages_on_first_attempt
+0.30s call     unit/test_startup_config_validation.py::test_worker_entrypoint_reports_labeled_configuration_error
+0.23s call     unit/test_startup_config_validation.py::test_api_startup_reports_labeled_configuration_error
+0.23s call     unit/test_startup_config_validation.py::test_daemon_entrypoint_reports_labeled_configuration_error
+0.15s call     unit/daemon/test_webhook_rejections.py::test_rejections_logged_once_per_window_and_counted
+0.11s call     unit/daemon/test_daemon.py::TestTriageTimeout::test_short_timeout_times_out_naming_the_knob
+0.09s call     unit/daemon/test_store_failure_retry.py::test_webhook_does_not_redeliver
+0.08s call     unit/daemon/test_legacy_splunk_poll.py::test_failed_poll_increments_errors_and_leaves_last_poll_time
+0.07s call     unit/daemon/test_ack_before_advance.py::test_a_full_queue_blocks_the_federation_producer
+======================= 412 passed, 1 warning in 43.37s ========================
