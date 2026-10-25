@@ -7,7 +7,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 # Add the repo root to sys.path (this file is services/daemon/main.py).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -23,11 +23,7 @@ logger = logging.getLogger(__name__)
 class SOCDaemon:
     """Main daemon orchestrator for autonomous SOC operations."""
 
-    def __init__(self, config: Optional[DaemonConfig] = None):
-        if config is None:
-            from services.daemon.config import DaemonConfig
-
-            config = DaemonConfig.from_env()
+    def __init__(self, config: DaemonConfig):
         self.config = config
         self.config.setup_logging()
 
@@ -47,7 +43,6 @@ class SOCDaemon:
         except Exception as _tel_err:
             logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
 
-        self._running = False
         self._shutdown_event = asyncio.Event()
 
         # Components (lazy loaded)
@@ -58,7 +53,6 @@ class SOCDaemon:
         self._scheduler = None
         self._orchestrator = None
         self._metrics_server = None
-        self._mcp_client = None
 
         logger.info("SOC Daemon initialized")
 
@@ -117,8 +111,7 @@ class SOCDaemon:
         )
         # The daemon owns its own copies: it is a separate process from the API, so
         # nothing on the API's app.state is reachable from here.
-        self._mcp_client = build_mcp_client()
-        set_process_mcp_client(self._mcp_client)
+        set_process_mcp_client(build_mcp_client())
         approvals = ApprovalService(config=self.config.response)
 
         self._responder = AutonomousResponder(
@@ -158,7 +151,6 @@ class SOCDaemon:
     async def run(self):
         """Run the daemon."""
         logger.info("Starting SOC Daemon...")
-        self._running = True
 
         try:
             self._setup_signal_handlers()
@@ -221,8 +213,6 @@ class SOCDaemon:
         # Wait for tasks to complete
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        self._running = False
-
         # Flush and shut down OTEL providers
         try:
             from core.telemetry import shutdown_telemetry
@@ -232,10 +222,6 @@ class SOCDaemon:
             logger.warning("Telemetry shutdown error (non-fatal): %s", e)
 
         logger.info("SOC Daemon shutdown complete")
-
-    async def stop(self):
-        """Stop the daemon gracefully."""
-        self._shutdown_event.set()
 
 
 def main():

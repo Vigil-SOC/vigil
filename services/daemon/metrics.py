@@ -10,7 +10,6 @@ collector — so the OTEL instruments appear there when the flag is on.
 
 import asyncio
 import logging
-from collections import defaultdict
 from typing import Any, Dict, Optional
 
 from aiohttp import web
@@ -46,8 +45,6 @@ class ProbeMetrics:
         self._results_counter = None
         self._time_to_verdict_hist = None
         self._instruments_ready = False
-        # In-memory shadow, keyed (probe, outcome).
-        self.results: Dict[tuple, int] = defaultdict(int)
 
     def _ensure_instruments(self):
         if self._instruments_ready:
@@ -70,7 +67,6 @@ class ProbeMetrics:
 
     def record(self, probe: str, outcome: str, time_to_verdict_s: Optional[float]):
         """Count one score; the histogram only sees hit/miss (a verdict exists)."""
-        self.results[(probe, outcome)] += 1
         self._ensure_instruments()
         try:
             if self._results_counter is not None:
