@@ -1,12 +1,20 @@
 """The catalog revision decides which permission name a gate checks."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import sessionmaker
 
-from core.auth.permissions import enforced_permission, missing_permission
+from core.auth.permissions import (
+    catalog_revision_applied,
+    enforced_permission,
+    missing_permission,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -107,3 +115,55 @@ def test_missing_permission_reports_the_parent_before_the_revision(monkeypatch):
     )
 
     assert missing_permission("analyst", "detections.write", object()) == "settings.write"
+
+
+def test_a_store_that_is_not_postgres_is_not_the_catalog_revision():
+    session = sessionmaker(bind=create_engine("sqlite://"))()
+    try:
+        assert catalog_revision_applied(session) is False
+    finally:
+        session.close()
+
+
+def test_an_unopenable_database_keeps_todays_gates(monkeypatch):
+    class _Closed:
+        def connection(self):
+            raise OperationalError("SELECT 1", {}, Exception("down"))
+
+    @contextmanager
+    def _down(_session=None):
+        yield _Closed()
+
+    monkeypatch.setattr("core.auth.permissions.unit_of_work", _down)
+
+    def _holds_settings_write(_user_id, permission, session=None):
+        return permission == "settings.write"
+
+    monkeypatch.setattr(
+        "core.auth.permissions.AuthService.check_permission",
+        staticmethod(_holds_settings_write),
+    )
+
+    assert missing_permission("analyst", "detections.write") is None
+    assert missing_permission("analyst", "cases.write") == "cases.write"
+
+
+def test_a_read_error_after_the_database_is_open_raises(monkeypatch):
+    class _Open:
+        def connection(self):
+            return self
+
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def execute(self, *_args, **_kwargs):
+            raise OperationalError("SELECT", {}, Exception("boom"))
+
+    @contextmanager
+    def _up(_session=None):
+        yield _Open()
+
+    monkeypatch.setattr("core.auth.permissions.unit_of_work", _up)
+
+    with pytest.raises(OperationalError):
+        missing_permission("analyst", "detections.write")
