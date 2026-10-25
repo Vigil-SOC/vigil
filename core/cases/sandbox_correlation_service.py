@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.integrations.cape_sandbox.report import extract_iocs
 from core.storage.models import CaseEvidence, CaseIOC, case_findings
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -200,36 +201,6 @@ def _normalise_cape(report: Dict[str, Any]) -> Dict[str, Any]:
     malscore = info.get("score")
     signatures = analysis.get("signatures") or []
 
-    iocs: Dict[str, List[str]] = {
-        "ip": [],
-        "domain": [],
-        "url": [],
-        "hash": [],
-        "mutex": [],
-    }
-    network = analysis.get("network") or {}
-    for host in network.get("hosts", []) or []:
-        ip = host.get("ip") if isinstance(host, dict) else host
-        if ip:
-            iocs["ip"].append(ip)
-    for dns in network.get("dns", []) or []:
-        req = dns.get("request") if isinstance(dns, dict) else None
-        if req:
-            iocs["domain"].append(req)
-    for http in network.get("http", []) or []:
-        u = http.get("uri") if isinstance(http, dict) else None
-        if u:
-            iocs["url"].append(u)
-    for dropped in analysis.get("dropped", []) or []:
-        if isinstance(dropped, dict):
-            sha = dropped.get("sha256") or dropped.get("sha1") or dropped.get("md5")
-            if sha:
-                iocs["hash"].append(sha)
-    for mx in (analysis.get("behavior", {}).get("summary", {}) or {}).get(
-        "mutexes", []
-    ) or []:
-        iocs["mutex"].append(mx)
-
     mitre = []
     for sig in signatures:
         for tech in sig.get("ttp", []) or []:
@@ -242,7 +213,7 @@ def _normalise_cape(report: Dict[str, Any]) -> Dict[str, Any]:
         "score": malscore,
         "verdict": _cape_verdict(malscore),
         "mitre_techniques": sorted(set(mitre)),
-        "iocs": iocs,
+        "iocs": extract_iocs(analysis),
     }
 
 
