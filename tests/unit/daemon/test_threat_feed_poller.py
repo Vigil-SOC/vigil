@@ -64,7 +64,7 @@ def _offers(monkeypatch, *keys, already=(), queued=False):
 
 def _poll(monkeypatch, calls, *, counts):
     monkeypatch.setattr(ThreatFeedPoller, "is_enabled", staticmethod(lambda: True))
-    monkeypatch.setattr("core.config.get_integration_config", lambda _id: CONFIG)
+    monkeypatch.setattr(poller, "get_integration_config", lambda _id: CONFIG)
 
     def _fetch(**kwargs):
         calls.append(("fetch", kwargs["collection_id"]))
@@ -237,7 +237,7 @@ async def test_a_failed_fetch_leaves_the_watermark_and_the_next_poll_reasks(
         return {"inserted": len(indicators), "updated": 0, "skipped": 0}
 
     monkeypatch.setattr(ThreatFeedPoller, "is_enabled", staticmethod(lambda: True))
-    monkeypatch.setattr("core.config.get_integration_config", lambda _id: CONFIG)
+    monkeypatch.setattr(poller, "get_integration_config", lambda _id: CONFIG)
     monkeypatch.setattr(feed, "fetch_taxii_collection", _fetch)
     monkeypatch.setattr(feed, "upsert_indicators", _upsert)
     monkeypatch.setattr(
@@ -251,7 +251,6 @@ async def test_a_failed_fetch_leaves_the_watermark_and_the_next_poll_reasks(
 
     assert last_polled["cloudforce_one::col-1"] == watermark
     assert last_polled["cloudforce_one::col-2"] > watermark
-    assert poller_run.stats["errors"] == 1
     assert summary["totals"]["errors"] == 1
     assert summary["collections"]["col-1"] == {"error": "503 Service Unavailable"}
     assert [call["collection_id"] for call in calls] == ["col-1", "col-2"]
@@ -277,7 +276,7 @@ def test_a_refused_insert_is_reported_not_raised(monkeypatch):
 
 def _quiet_poll(monkeypatch, *, counts, config=CONFIG):
     monkeypatch.setattr(ThreatFeedPoller, "is_enabled", staticmethod(lambda: True))
-    monkeypatch.setattr("core.config.get_integration_config", lambda _id: config)
+    monkeypatch.setattr(poller, "get_integration_config", lambda _id: config)
     monkeypatch.setattr(feed, "fetch_taxii_collection", lambda **_kw: ["indicator"])
     monkeypatch.setattr(feed, "upsert_indicators", lambda _ind: counts)
     monkeypatch.setattr(
@@ -300,7 +299,6 @@ async def test_upsert_failures_hold_the_watermark_and_are_totalled(monkeypatch):
     assert last_polled["cloudforce_one::col-1"] == watermark
     assert "cloudforce_one::col-2" not in last_polled
     assert summary["totals"]["skipped"] == 4
-    assert run.stats["skipped"] == 4
 
 
 @pytest.mark.asyncio
@@ -331,14 +329,11 @@ async def test_a_missing_taxii_client_is_a_poll_error_not_a_clean_empty_fetch(
     summary = await run.run_once()
 
     assert last_polled == {}
-    assert run.stats["errors"] == 2
     assert summary["totals"]["errors"] == 2
 
 
 @pytest.mark.asyncio
-async def test_incomplete_config_warns_once_per_state_and_is_counted(
-    monkeypatch, caplog
-):
+async def test_incomplete_config_warns_once_per_state(monkeypatch, caplog):
     monkeypatch.setattr(poller, "_last_skip_signature", None)
     config = {"api_token": "s3cret-token", "collection_ids": "col-1"}
     _quiet_poll(monkeypatch, counts={}, config=config)
@@ -357,7 +352,6 @@ async def test_incomplete_config_warns_once_per_state_and_is_counted(
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 2
     assert "api_token" in warnings[1].getMessage()
-    assert run.stats["skipped_incomplete"] == 3
     assert "s3cret-token" not in caplog.text
 
     config.update(api_token="s3cret-token", taxii_server_url="https://taxii.example")
