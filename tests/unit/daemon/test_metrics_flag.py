@@ -89,7 +89,11 @@ async def test_health_served_and_prometheus_follows_flag(metrics_enabled):
                 health = await _status(
                     session, f"http://127.0.0.1:{health_port}/health"
                 )
-                if health is not None:
+                metrics_up = not metrics_enabled or (
+                    await _status(session, f"http://127.0.0.1:{metrics_port}/metrics")
+                    is not None
+                )
+                if health is not None and metrics_up:
                     break
                 await asyncio.sleep(0.02)
             status = await _status(session, f"http://127.0.0.1:{health_port}/status")
