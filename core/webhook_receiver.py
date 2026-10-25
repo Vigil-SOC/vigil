@@ -70,9 +70,11 @@ async def read_signed_json(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Body exceeds {max_body_bytes} bytes",
         )
-    expected = hmac.new(secret.encode("utf-8"), raw, sha256).hexdigest()
+    expected = hmac.new(secret.encode("utf-8"), raw, sha256).hexdigest().encode()
+    # Bytes, because compare_digest raises TypeError on a non-ASCII str, and
+    # Starlette decodes header bytes as latin-1.
     if not signature or not hmac.compare_digest(
-        expected, signature.split("=", 1)[-1].strip()
+        expected, signature.split("=", 1)[-1].strip().encode("latin-1")
     ):
         raise reject(
             request,

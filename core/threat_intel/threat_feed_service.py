@@ -1,10 +1,8 @@
 """STIX/TAXII threat-feed ingestion (Cloudforce One et al).
 
-The poller in `daemon/threat_feed_poller.py` calls into this module on its
-configured interval. Imports of `taxii2-client` / `stix2` are deferred so a
-missing wheel does not break daemon startup and degrades to a logged no-op.
-A TAXII fetch that fails raises, so the poller leaves that collection's
-watermark where it is.
+The poller in `services/daemon/threat_feed_poller.py` calls into this module
+on its configured interval. A TAXII fetch that fails raises, so the poller
+leaves that collection's watermark where it is.
 """
 
 from __future__ import annotations
@@ -15,6 +13,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import requests.auth
 
 from core.memory.entity_keys import entity_key, text_entity_keys
 from core.memory.recall_contract import ENTITY_KEY_TYPES
@@ -262,6 +262,15 @@ def _confidence_to_level(confidence: Optional[Any]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
+class _BearerAuth(requests.auth.AuthBase):
+    def __init__(self, token: str):
+        self.token = token
+
+    def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
+        r.headers["Authorization"] = f"Bearer {self.token}"
+        return r
+
+
 def fetch_taxii_collection(
     server_url: str,
     collection_id: str,
@@ -279,8 +288,7 @@ def fetch_taxii_collection(
     """
     from taxii2client.v21 import Server  # type: ignore[import-untyped]
 
-    headers = {"Authorization": f"Bearer {api_token}"}
-    server = Server(server_url, headers=headers)
+    server = Server(server_url, auth=_BearerAuth(api_token))
     collection = None
     for api_root in server.api_roots:
         for c in api_root.collections:
@@ -296,17 +304,16 @@ def fetch_taxii_collection(
     params: Dict[str, Any] = {}
     if since:
         params["added_after"] = since.isoformat() + "Z"
-    envelope = collection.get_objects(**params) if params else collection.get_objects()
+    envelope = collection.get_objects(**params)
+    objects: List[Any] = list(envelope.get("objects") or [])
+    while envelope.get("more"):
+        envelope = collection.get_objects(next=envelope["next"], **params)
+        objects.extend(envelope.get("objects") or [])
 
-    objects = (
-        envelope.get("objects")
-        if isinstance(envelope, dict)
-        else getattr(envelope, "objects", [])
-    )
     out: List[NormalizedIndicator] = []
     malformed = 0
     first_error: Optional[Exception] = None
-    for obj in objects or []:
+    for obj in objects:
         try:
             out.extend(
                 parse_stix_indicator(obj, source=source, collection_id=collection_id)
@@ -321,7 +328,7 @@ def fetch_taxii_collection(
             "Collection %s: %d malformed of %d STIX objects skipped (first: %s)",
             collection_id,
             malformed,
-            len(objects or []),
+            len(objects),
             first_error,
         )
     return out

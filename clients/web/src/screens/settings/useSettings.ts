@@ -1215,7 +1215,7 @@ export function useDarktrace() {
     const payload = next.webhook_secret
       ? { ...base, webhook_secret: next.webhook_secret }
       : base
-    return configApi.setDarktrace(payload).then(() => setConfig((prev) => ({ ...prev, webhook_secret: '', configured: true })))
+    return configApi.setDarktrace(payload).then(() => setConfig((prev) => ({ ...prev, webhook_secret: '', configured: prev.configured || Boolean(next.webhook_secret) })))
   }, [])
 
   return { config, setConfig, phase, reload, save }
