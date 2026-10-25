@@ -216,7 +216,6 @@ class TestVendorScoreScale:
         session = MagicMock()
         session.scalars.return_value = ["case-1"]
         session.query.return_value.filter.return_value.first.return_value = None
-        session.scalars.return_value = ["case-1"]
         monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
 
         result = SandboxCorrelationService().attach_report(
