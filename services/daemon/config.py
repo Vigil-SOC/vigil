@@ -71,8 +71,6 @@ class SchedulerConfig:
 @dataclass
 class MetricsConfig:
     enabled: bool = True
-    port: int = 9091
-    path: str = "/metrics"
 
 
 @dataclass
@@ -168,7 +166,6 @@ class DaemonConfig:
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
 
         config.metrics.enabled = settings.daemon_metrics_enabled
-        config.metrics.port = settings.daemon_health_port
 
         config.orchestrator.enabled = settings.orchestrator_enabled
         config.orchestrator.loop_interval = settings.orchestrator_loop_interval
