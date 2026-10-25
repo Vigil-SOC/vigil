@@ -157,8 +157,7 @@ class TaskScheduler:
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
         self._init_services()
-        # The Claude service prices its calls from this process's own copy of
-        # the gateway's rates.
+        # Pricing reads this process's own copy of the gateway's rates.
         await refresh_gateway_rates()
         rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
