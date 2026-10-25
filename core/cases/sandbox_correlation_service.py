@@ -37,17 +37,12 @@ logger = logging.getLogger(__name__)
 class SandboxCorrelationService:
     """Attach a sandbox report to a finding's cases as evidence + IOCs."""
 
-    def __init__(self) -> None:
-        pass
-
     def attach_report(
         self,
         finding_id: str,
         sandbox_name: str,
         task_id: str,
         report: Dict[str, Any],
-        collected_by: str = "sandbox-poller",
-        session: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows per linked case.
 
@@ -57,7 +52,7 @@ class SandboxCorrelationService:
         # the handler below swallows the exception and would otherwise let a
         # half-written report commit.
         try:
-            with unit_of_work(session) as session:
+            with unit_of_work() as session:
                 case_ids = session.scalars(
                     select(case_findings.c.case_id).where(
                         case_findings.c.finding_id == finding_id
@@ -77,13 +72,13 @@ class SandboxCorrelationService:
                         file_hash_md5=normalised.get("md5"),
                         file_hash_sha256=normalised.get("sha256"),
                         source=sandbox_name,
-                        collected_by=collected_by,
+                        collected_by="sandbox-poller",
                         collected_at=utcnow(),
                         chain_of_custody=[
                             {
                                 "timestamp": utcnow().isoformat(),
                                 "action": "collected",
-                                "user": collected_by,
+                                "user": "sandbox-poller",
                                 "notes": f"Retrieved from {sandbox_name} task {task_id}",
                             }
                         ],
@@ -188,16 +183,14 @@ class SandboxCorrelationService:
 
 def _normalise_report(sandbox_name: str, report: Dict[str, Any]) -> Dict[str, Any]:
     """Pick a common subset of fields across sandbox vendors."""
-    sandbox = sandbox_name.lower()
-    if sandbox in ("cape", "cape_sandbox", "cape-sandbox"):
-        return _normalise_cape(report)
-    if sandbox in ("joe", "joe_sandbox", "joe-sandbox"):
-        return _normalise_joe(report)
-    if sandbox in ("hybrid", "hybrid_analysis", "hybrid-analysis"):
-        return _normalise_hybrid(report)
-    if sandbox in ("anyrun", "any.run"):
-        return _normalise_anyrun(report)
-    # Unknown — best effort
+    normalise = {
+        "cape": _normalise_cape,
+        "joe_sandbox": _normalise_joe,
+        "hybrid_analysis": _normalise_hybrid,
+        "anyrun": _normalise_anyrun,
+    }.get(sandbox_name)
+    if normalise:
+        return normalise(report)
     return {"iocs": {}, "mitre_techniques": [], "verdict": None, "score": None}
 
 

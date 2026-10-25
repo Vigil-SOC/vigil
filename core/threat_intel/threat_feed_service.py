@@ -1,10 +1,8 @@
 """STIX/TAXII threat-feed ingestion (Cloudforce One et al).
 
-The poller in `daemon/threat_feed_poller.py` calls into this module on its
-configured interval. Imports of `taxii2-client` / `stix2` are deferred so a
-missing wheel does not break daemon startup and degrades to a logged no-op.
-A TAXII fetch that fails raises, so the poller leaves that collection's
-watermark where it is.
+The poller in `services/daemon/threat_feed_poller.py` calls into this module
+on its configured interval. A TAXII fetch that fails raises, so the poller
+leaves that collection's watermark where it is.
 """
 
 from __future__ import annotations
