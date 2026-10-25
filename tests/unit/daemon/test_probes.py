@@ -232,7 +232,9 @@ class TestScoring:
         data = _Data(rows=[_probe_row(self.travel)])
         with patch("services.daemon.probes.probe_metrics", fresh):
             assert score_probes(data) == 1
-        assert fresh.results[(self.travel["name"], "silent")] == 1
+        assert data.updates[0][1]["entity_context"]["probe"]["score"]["outcome"] == (
+            "silent"
+        )
         assert fresh._results_counter is not None  # the no-op instrument
 
     def test_scores_when_the_meter_itself_fails(self):
@@ -245,7 +247,9 @@ class TestScoring:
             patch("services.daemon.probes.probe_metrics", fresh),
         ):
             assert score_probes(data) == 1
-        assert fresh.results[(self.travel["name"], "silent")] == 1
+        assert data.updates[0][1]["entity_context"]["probe"]["score"]["outcome"] == (
+            "silent"
+        )
 
     def test_a_malformed_row_does_not_stop_the_others(self):
         bad = _probe_row(self.beacon, triage="not-a-dict")
