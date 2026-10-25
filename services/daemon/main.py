@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Under the daemon StatefulSet's terminationGracePeriodSeconds (60), leaving
+# room for the telemetry flush after the components stop.
+SHUTDOWN_GRACE_SECONDS = 45
+
 
 class SOCDaemon:
     """Main daemon orchestrator for autonomous SOC operations."""
@@ -162,7 +166,7 @@ class SOCDaemon:
         tasks = []
 
         def start(name: str, component, label: str):
-            task = asyncio.create_task(component.run(self._shutdown_event))
+            task = asyncio.create_task(component.run(self._shutdown_event), name=name)
             task.add_done_callback(lambda t: self._on_task_done(name, t))
             if component is not self._metrics_server:
                 self._metrics_server.register_task(name, task)
@@ -198,11 +202,14 @@ class SOCDaemon:
 
         logger.info("Shutting down daemon components...")
 
-        # Cancel all tasks
-        for task in tasks:
+        _, pending = await asyncio.wait(tasks, timeout=SHUTDOWN_GRACE_SECONDS)
+        for task in pending:
+            logger.warning(
+                "Component task '%s' did not stop within %ds, cancelling",
+                task.get_name(),
+                SHUTDOWN_GRACE_SECONDS,
+            )
             task.cancel()
-
-        # Wait for tasks to complete
         await asyncio.gather(*tasks, return_exceptions=True)
 
         # Flush and shut down OTEL providers
