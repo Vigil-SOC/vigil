@@ -211,15 +211,18 @@ def catalog_revision_applied(session) -> bool:
 
     The same walk as ``trail_ready``: the table, then each stamped revision's
     ancestors. A database that cannot be opened is handled by the caller as
-    not yet upgraded. A read error once it is open raises, so a transient
-    failure cannot read the revision as absent and open the split gates. Not a
-    setting, and not a call to ``trail_ready``.
+    not yet upgraded, and so is one that is not Postgres (a SQLite test
+    database has no migration chain). A read error once it is open raises, so
+    a transient failure cannot read the revision as absent and open the split
+    gates. Not a setting, and not a call to ``trail_ready``.
     """
     from alembic.util import CommandError
     from sqlalchemy import text
 
     from core.upgrade.command import script_directory
 
+    if session.get_bind().dialect.name != "postgresql":
+        return False
     present = session.execute(
         text("SELECT to_regclass('public.alembic_version')")
     ).scalar()
@@ -297,6 +300,9 @@ def missing_permission(user_id: str, permission: str, session=None) -> Optional[
     with ExitStack() as stack:
         try:
             owned = stack.enter_context(unit_of_work())
+            # A session connects on first use: connect here, so a host that
+            # cannot be reached falls back and a later read error raises.
+            owned.connection()
         except (RuntimeError, SQLAlchemyError):
             return _missing(user_id, permission, None)
         return _missing(user_id, permission, owned)
