@@ -69,6 +69,17 @@ def test_stix_observation_or_mints_clean_keys():
     ]
 
 
+def test_stix_escaped_quote_and_backslash_round_trip():
+    # What case_ioc_service.export_iocs_stix writes for http://x/it's\d
+    obj = {
+        "type": "indicator",
+        "pattern": "[url:value = 'http://x/it\\'s\\\\d']",
+    }
+    assert parse_report(json.dumps([obj]))["entity_keys"] == [
+        "url:http://x/it's\\d",
+    ]
+
+
 def test_plain_text_defanged_ip_and_technique():
     out = parse_report(
         "C2 at 1[.]2[.]3[.]4 and evil[.]com via hxxp://evil[.]com/x, "
