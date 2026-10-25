@@ -100,7 +100,6 @@ async def test_submitter_401_is_an_error_not_unknown_and_429_skips(monkeypatch):
         auto_submit=True,
         max_file_size_mb=10,
         allowed_types=["exe"],
-        timeout_seconds=300,
         joe_enabled=False,
         cape_enabled=False,
         hybrid_enabled=True,

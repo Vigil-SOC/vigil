@@ -1,10 +1,8 @@
 """STIX/TAXII threat-feed ingestion (Cloudforce One et al).
 
-The poller in `daemon/threat_feed_poller.py` calls into this module on its
-configured interval. Imports of `taxii2-client` / `stix2` are deferred so a
-missing wheel does not break daemon startup and degrades to a logged no-op.
-A TAXII fetch that fails raises, so the poller leaves that collection's
-watermark where it is.
+The poller in `services/daemon/threat_feed_poller.py` calls into this module
+on its configured interval. A TAXII fetch that fails raises, so the poller
+leaves that collection's watermark where it is.
 """
 
 from __future__ import annotations
@@ -36,6 +34,16 @@ _STIX_TO_VIGIL_TYPE: Dict[str, str] = {
     "file:hashes.'SHA-256'": "hash_sha256",
     "email-addr:value": "email",
 }
+
+
+_STIX_TOKEN = re.compile(
+    r"'(?P<value>(?:[^'\\]|\\.)*)(?P<closed>'?)"
+    r"|[\w-]+(?::[\w-]+(?:\.(?:[\w-]+|'[\w-]+'))*)?"
+    r"|[!<>]?="
+    r"|\S",
+    re.S,
+)
+_STIX_ESCAPE = re.compile(r"\\(.)", re.S)
 
 
 @dataclass
@@ -93,33 +101,16 @@ def parse_stix_indicator(
 
 
 def _extract_observables(pattern: str) -> Iterable[Tuple[str, str]]:
-    """Best-effort extraction of (vigil_type, value) pairs from a STIX 2.1 pattern.
-
-    Handles the common shapes Cloudforce One emits: simple equality
-    (``[ipv4-addr:value = '1.2.3.4']``) and OR'd lists. Anything more exotic
-    is logged at debug and skipped — we are explicitly OK with feed-side
-    quirks producing fewer indicators rather than crashing.
-    """
-    # Strip the brackets and split on " OR " (STIX 2.1 logical operator).
-    body = pattern.strip()
-    if body.startswith("["):
-        body = body[1:]
-    if body.endswith("]"):
-        body = body[:-1]
-
-    for clause in [c.strip() for c in body.split(" OR ")]:
-        if "=" not in clause:
+    """(vigil_type, value) for each ``path = 'value'`` comparison in a STIX 2.1 pattern."""
+    tokens = list(_STIX_TOKEN.finditer(pattern))
+    for path, op, literal in zip(tokens, tokens[1:], tokens[2:]):
+        if op[0] != "=" or not literal["closed"] or not literal["value"]:
             continue
-        key, _, raw_value = clause.partition("=")
-        key = key.strip()
-        value = raw_value.strip().strip("'").strip('"')
-        if not value:
-            continue
-        vigil_type = _STIX_TO_VIGIL_TYPE.get(key)
+        vigil_type = _STIX_TO_VIGIL_TYPE.get(path[0])
         if not vigil_type:
-            logger.debug("Skipping unrecognized STIX pattern key: %s", key)
+            logger.debug("Skipping unrecognized STIX pattern key: %s", path[0])
             continue
-        yield vigil_type, value
+        yield vigil_type, _STIX_ESCAPE.sub(r"\1", literal["value"])
 
 
 # ---------------------------------------------------------------------------
