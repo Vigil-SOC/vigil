@@ -244,11 +244,13 @@ class TestAttachReportIdempotency:
     def test_same_task_twice_adds_one_evidence_row(self, db):
         svc = SandboxCorrelationService()
         first = svc.attach_report("f-1", "cape", "t1", self.REPORT)
+        iocs_after_first = db().query(CaseIOC).count()
         second = svc.attach_report("f-1", "cape", "t1", self.REPORT)
 
         assert [e.evidence_id for e in self._evidence(db)] == first["evidence_ids"]
         assert second["evidence_ids"] == first["evidence_ids"]
         assert first["iocs_added"] == 2 and second["iocs_added"] == 0
+        assert db().query(CaseIOC).count() == iocs_after_first == 2
 
     def test_other_task_sandbox_or_case_adds_its_own_row(self, db):
         svc = SandboxCorrelationService()
