@@ -887,6 +887,250 @@ jobs:
           pytest tests/unit/ -m external_service -v --no-cov
 
   # ============================================================================
+  # Helm Install Schema — does a fresh chart install end with every ORM table?
+  # ============================================================================
+  # The jobs above run create_all() as the database owner, so they cannot see
+  # what a Helm install does. There the post-install Job is the only schema
+  # writer: helm_upgrade.py install runs python -m core.upgrade as the owner,
+  # then sets vigil_app's password. The backend starts as vigil_app and only
+  # checks that the database is at its head. This job renders that Job and runs
+  # the same upgrade from this checkout against the chart's Postgres.
+  test-helm-install-schema:
+    name: Helm Install Schema
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # As the chart's own Postgres runs: its image, database and user, which
+        # the image makes the superuser, as it does in the StatefulSet.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: deeptempo_soc
+          POSTGRES_USER: deeptempo
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_PASSWORD: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Render the install Job
+        run: |
+          # The Job uses none of the subcharts, and all are off by default, so a
+          # copy of the chart without them renders without fetching them.
+          cp -R infra/helm/vigil "$RUNNER_TEMP/chart"
+          rm -rf "$RUNNER_TEMP/chart/charts" "$RUNNER_TEMP/chart/medic-tests"
+          rm -f "$RUNNER_TEMP/chart/Chart.lock"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          chart = Path(os.environ["RUNNER_TEMP"]) / "chart" / "Chart.yaml"
+          meta = yaml.safe_load(chart.read_text())
+          meta.pop("dependencies", None)
+          chart.write_text(yaml.safe_dump(meta))
+          Path(os.environ["RUNNER_TEMP"], "app-version").write_text(
+              str(meta["appVersion"]).strip() + "\n"
+          )
+          PY
+          # --set splits on commas, so the reason has none.
+          helm template ci "$RUNNER_TEMP/chart" \
+            --set secrets.postgresPassword=test \
+            --set secrets.vigilAppPassword=vigil-app-test \
+            --set upgrade.acknowledgeVersion="$(tr -d '[:space:]' < "$RUNNER_TEMP/app-version")" \
+            --set upgrade.acknowledgeReason=CI-fresh-install \
+            --show-only templates/upgrade.yaml > "$RUNNER_TEMP/upgrade.yaml"
+
+      - name: Run the install hook as the chart user
+        # The rendered command is `python /opt/vigil-upgrade/helm_upgrade.py
+        # install` in the backend image. That image is this checkout, so the
+        # runner executes the same script against the chart's Postgres.
+        env:
+          POSTGRES_USER: deeptempo
+          POSTGRES_APP_PASSWORD: vigil-app-test
+          VIGIL_UPGRADE_ACK_REASON: CI-fresh-install
+          VIGIL_UPGRADE_DIR: ${{ runner.temp }}/vigil-upgrade
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          export VIGIL_UPGRADE_ACK_VERSION="$version"
+          export VIGIL_CHART_APP_VERSION="$version"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          version = Path("VERSION").read_text().strip()
+          docs = [
+              d
+              for d in yaml.safe_load_all(
+                  Path(os.environ["RUNNER_TEMP"], "upgrade.yaml").read_text()
+              )
+              if d
+          ]
+          jobs = [
+              d
+              for d in docs
+              if d.get("kind") == "Job" and d["metadata"]["name"].endswith("-install")
+          ]
+          if len(jobs) != 1:
+              print(f"::error::expected one install Job, found {len(jobs)}")
+              raise SystemExit(1)
+          job = jobs[0]
+          notes = job["metadata"]["annotations"]
+          if notes.get("helm.sh/hook") != "post-install":
+              print(f"::error::install Job hook is {notes.get('helm.sh/hook')!r}")
+              raise SystemExit(1)
+          container = job["spec"]["template"]["spec"]["containers"][0]
+          if container["command"] != [
+              "python",
+              "/opt/vigil-upgrade/helm_upgrade.py",
+              "install",
+          ]:
+              print(f"::error::install command is {container['command']!r}")
+              raise SystemExit(1)
+          env = {item["name"]: item for item in container["env"]}
+          if env["POSTGRES_USER"].get("value") != "deeptempo":
+              print("::error::install Job does not log in as the database owner")
+              raise SystemExit(1)
+          for key in ("POSTGRES_PASSWORD", "POSTGRES_APP_PASSWORD"):
+              if "secretKeyRef" not in env[key].get("valueFrom", {}):
+                  print(f"::error::install Job has no secret for {key}")
+                  raise SystemExit(1)
+          if env["VIGIL_CHART_APP_VERSION"].get("value") != version:
+              print(
+                  "::error::chart appVersion "
+                  f"{env['VIGIL_CHART_APP_VERSION'].get('value')!r} is not VERSION {version}"
+              )
+              raise SystemExit(1)
+          if env["VIGIL_UPGRADE_ACK_VERSION"].get("value") != version:
+              print("::error::install acknowledgement is not this release")
+              raise SystemExit(1)
+          if not str(env["VIGIL_UPGRADE_ACK_REASON"].get("value", "")).strip():
+              print("::error::install acknowledgement reason is empty")
+              raise SystemExit(1)
+          PY
+          mkdir -p "$VIGIL_UPGRADE_DIR"
+          python infra/helm/vigil/files/upgrade/helm_upgrade.py install
+
+      - name: Initialize schema as vigil_app
+        id: init-schema
+        # What the backend does on a Helm install: log in as vigil_app and
+        # require this image's head. create_tables is the grant check — the
+        # upgrade already built the tables, and vigil_app holds no CREATE on
+        # the owner's. A missing table fails here.
+        env:
+          POSTGRES_USER: vigil_app
+          POSTGRES_PASSWORD: vigil-app-test
+          DB_STRICT_SCHEMA: "true"
+        run: |
+          python - <<'PY'
+          from core.storage.connection import (
+              check_schema_drift,
+              get_db_manager,
+              init_database,
+              seed_reference_tables,
+          )
+
+          manager = get_db_manager()
+          manager.initialize()
+          manager.create_tables()
+          seed_reference_tables(manager)
+          check_schema_drift(manager, provisioned=True)
+          init_database()
+          PY
+
+      - name: Every ORM table exists
+        # Also after a failed create_all, to name the tables it left out.
+        if: ${{ !cancelled() && steps.init-schema.outcome != 'skipped' }}
+        env:
+          POSTGRES_USER: vigil_app
+          POSTGRES_PASSWORD: vigil-app-test
+        run: |
+          python - <<'PY'
+          from sqlalchemy import inspect
+
+          from core.storage.connection import get_db_manager
+          from core.storage.models import Base
+
+          manager = get_db_manager()
+          manager.initialize()
+          expected = set(Base.metadata.tables)
+          missing = sorted(expected - set(inspect(manager.engine).get_table_names()))
+          print(f"{len(expected) - len(missing)} of {len(expected)} ORM tables exist")
+          if missing:
+              print(f"::error::Missing after a Helm install: {', '.join(missing)}")
+              raise SystemExit(1)
+          PY
+
+      - name: Default rows are seeded
+        # seed_reference_tables fills the default SLA policies and case templates
+        # into empty tables (#1246), and logs rather than fails when it cannot,
+        # so only a count shows an install left without them. The
+        # expected count is one row per INSERT the backend's seeder finds, so a
+        # multi-row VALUES default would need this to count rows instead.
+        env:
+          POSTGRES_USER: vigil_app
+          POSTGRES_PASSWORD: vigil-app-test
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+
+          from core.storage.connection import get_db_manager
+          from core.storage.reference_seed import SEED_FILE, find_seed_file, inserts_by_table
+
+          path = find_seed_file()
+          if path is None:
+              print(f"::error::{SEED_FILE} not found; the backend seeds nothing without it")
+              raise SystemExit(1)
+          expected = {t: len(s) for t, s in inserts_by_table(path.read_text()).items()}
+          if not expected:
+              print(f"::error::No INSERT found in {SEED_FILE}; this check needs updating")
+              raise SystemExit(1)
+
+          manager = get_db_manager()
+          manager.initialize()
+          short = []
+          with manager.engine.connect() as conn:
+              quote = conn.dialect.identifier_preparer.quote
+              for table, want in sorted(expected.items()):
+                  got = conn.execute(text(f"SELECT count(*) FROM {quote(table)}")).scalar()
+                  print(f"{table}: {got} of {want} default rows")
+                  if got != want:
+                      short.append(f"{table} has {got}, expected {want}")
+          if short:
+              print(f"::error::Default rows after a Helm install: {'; '.join(short)}")
+              raise SystemExit(1)
+          PY
+
+  # ============================================================================
   # Security Scanning
   # ============================================================================
   security-scan-python:
