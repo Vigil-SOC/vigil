@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Medic on a live kind cluster: C3 §7 checks 3, 14 (refuse variant) and 15, the
 # S2-6 volume test, and the /readyz fault → chained, redacted incident.
+# backend mode also runs checks 7 and 11, with a negative control.
 #
 #   e2e.sh calico    # enforces NetworkPolicy: Medic must run (the full suite)
 #   e2e.sh kindnet   # kind's default CNI, which enforces it too since kind
@@ -10,7 +11,9 @@
 #   e2e.sh backend   # Calico + the REAL backend (in-chart Postgres and Redis):
 #                    # the backend reads Medic Running through the gateway with
 #                    # the chart's key Secret, and Down <= 270 s after Medic
-#                    # stops (V2-8). Local only: needs the backend image.
+#                    # stops (V2-8). Then checks 7 and 11 from inside Medic, and
+#                    # a negative control from the backend to Postgres and Redis.
+#                    # Local only: needs the backend image.
 # calico also runs the REJECT leg: Calico set to reject denied traffic, and
 # Medic must still read the policy as enforced (S7-2).
 #
@@ -48,13 +51,14 @@ cleanup() { [[ ${KEEP:-0} == 1 ]] || kind delete cluster --name "$CLUSTER" >/dev
 trap cleanup EXIT
 
 # In-pod TCP connect: prints connected | timeout | refused | <error>.
+# $4 is the workload (default medic). The negative control passes backend.
 CONNECT='import socket,sys
 try:
     socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=float(sys.argv[3])).close(); print("connected")
 except TimeoutError: print("timeout")
 except ConnectionRefusedError: print("refused")
 except OSError as e: print(type(e).__name__)'
-reach() { $K -n "$NS" exec "deploy/$FN-medic" -- python -c "$CONNECT" "$1" "$2" "${3:-4}"; }
+reach() { $K -n "$NS" exec "deploy/$FN-${4:-medic}" -- python -c "$CONNECT" "$1" "$2" "${3:-4}"; }
 
 # --- cluster -------------------------------------------------------------------
 say "kind cluster $CLUSTER ($MODE)"
@@ -183,7 +187,7 @@ ok "check 15: lookup filled medic.kubeApi.cidrs = $api_cidrs"
 pod_exit() { $K -n "$NS" get pods -l app.kubernetes.io/component=medic \
   -o jsonpath='{.items[0].status.containerStatuses[0].lastState.terminated.exitCode}'; }
 
-# --- kindnet: refuse to start (A3-3, check 14 refuse variant) --------------------
+# --- nopolicy: refuse to start (A3-3, check 14 refuse variant) -------------------
 if [[ $MODE == nopolicy ]]; then
   say "Medic must refuse to start: nothing enforces NetworkPolicy here"
   for _ in $(seq 60); do [[ -n $(pod_exit) ]] && break; sleep 3; done
@@ -255,6 +259,98 @@ print(current_status().value)'
   for _ in $(seq 60); do got=$(status || true); [[ $got == running ]] && break; sleep 5; done
   [[ $got == running ]] || fail "after a restart the backend reads '${got:-nothing}'"
   ok "Medic back: running"
+
+  # Checks 7 and 11 run only here: calico mode has no Postgres or Redis, and its
+  # backend is a stub. Bifrost is not a target: the chart ships no Bifrost
+  # object, only BIFROST_URL, so a probe to it would fail DNS and prove nothing.
+  say "check 7: no route from Medic to Postgres, Redis, the backend, or the internet"
+  pg_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=postgres -o jsonpath='{.items[0].status.podIP}')
+  rd_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=redis -o jsonpath='{.items[0].status.podIP}')
+  be_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=backend -o jsonpath='{.items[0].status.podIP}')
+  [[ -n $pg_ip && -n $rd_ip && -n $be_ip ]] \
+    || fail "check 7: missing pod IP (postgres=${pg_ip:-none} redis=${rd_ip:-none} backend=${be_ip:-none})"
+  # Default Calico drops, so this is usually timeout. Reject (calico mode's
+  # Felix patch, not applied here) reads refused. Anything else is a miss.
+  blocked() { # host port label
+    local got
+    got=$(reach "$1" "$2") || got="exec failed"
+    [[ $got == timeout || $got == refused ]] \
+      || fail "$3: $1:$2 → $got, expected timeout or refused"
+    ok "$3: $1:$2 → $got"
+  }
+  blocked "$FN-postgres" 5432 "check 7 postgres Service"
+  blocked "$pg_ip" 5432 "check 7 postgres pod"
+  blocked "$FN-redis" 6379 "check 7 redis Service"
+  blocked "$rd_ip" 6379 "check 7 redis pod"
+  blocked "$FN-backend" 6987 "check 7 backend Service"
+  blocked "$be_ip" 6987 "check 7 backend pod"
+  blocked 1.1.1.1 443 "check 7 internet"
+  ok "check 11: a direct connect to the backend's 6987 is not connected"
+
+  say "negative control: the backend can reach Postgres and Redis"
+  # Same CONNECT snippet, from the backend: the chart's policies allow it.
+  control() { # host port
+    local got
+    got=$(reach "$1" "$2" 4 backend) || got="exec failed"
+    [[ $got == connected ]] \
+      || fail "negative control: backend → $1:$2 is '$got', expected connected"
+    ok "negative control: backend → $1:$2 → connected"
+  }
+  control "$FN-postgres" 5432
+  control "$pg_ip" 5432
+  control "$FN-redis" 6379
+  control "$rd_ip" 6379
+
+  say "check 11: reset-confirm refused at the gateway; inbound 8470 closed"
+  # Raw bytes, stdlib only, as probe.py's get() sends them. The Medic image
+  # has no HTTP library. /api/auth is never on the outbound list: 403 forbidden_path.
+  POST='import json,socket,sys
+host, port, path, body = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+req = (f"POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n"
+       f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n{body}")
+s = socket.create_connection((host, port), timeout=10)
+s.settimeout(10)
+s.sendall(req.encode("latin-1"))
+data = b""
+while len(data) < 65536:
+    try:
+        chunk = s.recv(65536)
+    except TimeoutError:
+        break
+    if not chunk:
+        break
+    data += chunk
+    head, sep, rest = data.partition(b"\r\n\r\n")
+    if not sep:
+        continue
+    lengths = [int(line.split(b":", 1)[1].strip()) for line in head.split(b"\r\n")
+               if line.lower().startswith(b"content-length:")]
+    if lengths and len(rest) >= lengths[0]:
+        break
+head, _, rest = data.partition(b"\r\n\r\n")
+lengths = [int(line.split(b":", 1)[1].strip()) for line in head.split(b"\r\n")
+           if line.lower().startswith(b"content-length:")]
+if lengths:
+    rest = rest[:lengths[0]]
+parts = head.split(b"\r\n", 1)[0].split()
+status = int(parts[1]) if len(parts) > 1 else 0
+try:
+    code = json.loads(rest.decode() or "{}").get("code", "")
+except ValueError:
+    code = ""
+print(f"{status} {code}".rstrip())'
+  got=$($K -n "$NS" exec "deploy/$FN-medic" -- python -c "$POST" \
+    "$FN-medic-gateway" 8471 /api/auth/password-reset/confirm \
+    '{"token":"x","new_password":"Aa1!aaaaaaaa"}') \
+    || fail "check 11: could not POST through the gateway"
+  [[ $got == "403 forbidden_path" ]] \
+    || fail "check 11: gateway returned '$got', expected 403 forbidden_path"
+  ok "check 11: POST /api/auth/password-reset/confirm via gateway :8471 → $got"
+  gw_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=medic-gateway -o jsonpath='{.items[0].status.podIP}')
+  [[ -n $gw_ip ]] || fail "check 11: no gateway pod IP"
+  blocked "$FN-medic-gateway" 8470 "check 11 gateway inbound Service"
+  blocked "$gw_ip" 8470 "check 11 gateway inbound pod"
+
   say "PASS: $PASS checks ($MODE)"
   exit 0
 fi
