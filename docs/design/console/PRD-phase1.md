@@ -226,7 +226,7 @@ Where each deferred item goes, so phase 1 leaves the right seams.
 | Pulse, Fleet Wall, Coverage pages | B2, B3 aggregates | phase-2 pages |
 | Tool permissions | none | per-tool class policy |
 | Custom and role-gated commands, blast count, fleet-wide directions | SH-P5 fixed set | commands registry, typed-action preview |
-| Multi-user: Team, invites, View as, watchers, Assign to me | none | roles and personas |
+| Multi-user: Team, invites, View as, watchers, Assign to me | none | roles (rbac); personas (console) |
 | Hold with reason and duration, bulk actions on Cases | none | hold model |
 | Live push | polling | event fan-out |
 | Retention, feedback destination | none | Settings phase 2 |
@@ -245,7 +245,7 @@ Decided here so nothing is left for the groomer or a human to settle. Each one i
 | D6 | **Vendor logos come from the design package's `assets/logos/` and `assets/sources/`, shipped into `clients/web/src/assets/vendors/`, and the integration catalog gets a `logo` field per entry.** Where the package has no logo for a vendor, the row shows a neutral category icon with the vendor's name until a logo lands. CrowdStrike is in that state on day one and is not a phase gate; adding a logo is a one-file PR. | `config/integrations.ts` has no icon field today and `src/assets` holds only the Vigil logo, so the field and the asset folder are needed for any vendor logo, not just this one. |
 | D7 | **Settings sections with no board** (Services, System, General, Developer) become one "System" tab at the end of Settings under the new tokens and shell. Appearance is removed; the theme switch lives in the profile menu; the accent and base swatches are dropped in favour of the design's two themes. | Keeps four working screens without redesign work; the design's token model has no per-install accent. |
 | D8 | **Current screens with no phase-1 page** (Analytics, Case metrics, AutoOps, AI decisions, Health) stay reachable under the "More" menu with tokens only. Phase 2 retires them into Pulse, Fleet Wall and Coverage. | Removing them would drop working function; redesigning them is phase-2 work by another name. |
-| D9 | **Roles stay as they are** (Viewer, Analyst, Senior Analyst, Manager, Admin) and no phase-1 screen depends on role beyond today's permission gate. Personas and the three-role model arrive with multi-user in phase 2. | "No multi-user" in the team's scope; today's roles table and permission JSON are untouched. |
+| D9 | **Roles: rbac's five built-in roles plus custom roles.** Personas and View as are presentation only, and arrive with the console's multi-user phase, outside rbac. No phase-1 screen depends on role beyond the permission check. | "No multi-user" in the team's scope; custom roles are rows in the existing roles table (#2917). |
 | D10 | **Minimum width 1440 px, fluid above, as the boards specify.** Below 1440 px the console scrolls horizontally rather than reflowing. | The boards are drawn at 1440 and the design package states the root minimum; supporting narrower widths would be design work the package does not contain. |
 
 ## 17. Suggested epics

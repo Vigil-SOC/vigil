@@ -230,7 +230,9 @@ def test_manager_cannot_promote_a_lesser_account_to_admin(db):
             users.UpdateUserRequest(role_id="role-admin"),
         )
     assert exc.value.status_code == 403
-    assert "more privileges" in exc.value.detail
+    # The refusal names what the manager lacks.
+    assert "you don't hold" in exc.value.detail
+    assert "users.delete" in exc.value.detail
     assert _reload(session, "view").role_id == "role-viewer"
 
 

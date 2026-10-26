@@ -359,7 +359,7 @@ export function AgentDrawer({
               ) : (
                 <>
                   <div className="vg-side-field">
-                    <label htmlFor="vg-a-role" className="vg-side-label">Role</label>
+                    <label htmlFor="vg-a-role" className="vg-side-label">Specialty</label>
                     <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
                   </div>
                   <div className="vg-side-field">

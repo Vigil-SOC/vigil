@@ -31,7 +31,7 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 # A person's own act (decision 9). Never held by a service account, token, or agent.
-_PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
+PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
 
 
 def _is_person(user_id: str, session: Optional[Session]) -> bool:
@@ -715,7 +715,7 @@ class AuthService:
         # audit.forward and audit.manage are a person's own act. Dev mode grants
         # every role permission, and this still refuses a non-person, including
         # a dev user with no principal row.
-        if permission in _PERSON_ONLY and not _is_person(user_id, session):
+        if permission in PERSON_ONLY and not _is_person(user_id, session):
             return False
 
         # DEV MODE: Grant all permissions
