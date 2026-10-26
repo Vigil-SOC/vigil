@@ -6,8 +6,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
+from core.cases.assignee import resolve_assignee
 from core.cases.case_workflow_service import CaseWorkflowService
-from core.routing import Auth, RouterMeta
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.schemas import CaseSchema, CaseTemplateSchema
 
 router = APIRouter()
@@ -167,7 +168,9 @@ async def delete_template(template_id: str):
 
 
 @router.post("/{template_id}/create-case", dependencies=_CASES_WRITE)
-async def create_case_from_template(template_id: str, data: CaseFromTemplate):
+async def create_case_from_template(
+    template_id: str, data: CaseFromTemplate, session: UnitOfWorkSession
+):
     """
     Create a new case from a template.
 
@@ -178,11 +181,14 @@ async def create_case_from_template(template_id: str, data: CaseFromTemplate):
     Returns:
         Created case
     """
+    # Before the call: it swallows errors, so a refusal inside would read as
+    # "Failed to create case from template".
+    assignee = resolve_assignee(session, data.assignee)
     case = workflow_service.create_case_from_template(
         template_id=template_id,
         title=data.title,
         description=data.description,
-        assignee=data.assignee,
+        assignee=assignee,
         finding_ids=data.finding_ids,
         override_priority=data.override_priority,
     )

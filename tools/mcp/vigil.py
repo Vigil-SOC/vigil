@@ -9,6 +9,7 @@ from mcp.server.mcpserver import MCPServer
 from core.agents import tool_registry
 from core.auth.permissions import permission_refusal
 from core.cases.agent_closure import actor, service_session
+from core.cases.assignee import resolve_assignee, resolve_escalation_target
 from core.cases.case_status import CaseStatus
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.storage.schemas.case_entities import (
@@ -930,7 +931,7 @@ def add_case_task(
                 case_id,
                 title=title,
                 description=description,
-                assignee=assignee,
+                assignee=resolve_assignee(session, assignee),
                 priority=priority,
                 due_date=(
                     datetime.fromisoformat(due_date.replace("Z", "+00:00"))
@@ -978,7 +979,7 @@ def update_case_task(
     try:
         from core.cases import case_records_service
 
-        updates = {"status": status, "assignee": assignee}
+        updates = {"status": status}
         if status == "completed":
             updates["completed_at"] = utcnow()
 
@@ -986,6 +987,12 @@ def update_case_task(
             task = case_records_service.update_task(session, task_id, updates)
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
+            if assignee is not None:
+                # Blank unassigns. A refusal raises before the commit.
+                task.assignee = resolve_assignee(
+                    session, assignee, current=task.assignee
+                )
+                session.flush()
             payload = CaseTaskSchema.dump(task)
             case_id = task.case_id
             title = task.title
@@ -1126,6 +1133,8 @@ def escalate_case(
         from core.cases.case_workflow_service import CaseWorkflowService
 
         with service_session() as session:
+            # Before the call: it swallows errors into a bare False.
+            escalated_to = resolve_escalation_target(session, escalated_to)
             escalated = CaseWorkflowService().escalate_case(
                 case_id=case_id,
                 escalated_from=actor(),

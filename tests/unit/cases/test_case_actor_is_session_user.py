@@ -29,6 +29,7 @@ from core.storage.models import (
 )
 from services.api import main as backend_main
 from services.api.middleware import auth as auth_module
+from tests.unit.cases.people import people
 
 pytestmark = pytest.mark.unit
 
@@ -145,7 +146,8 @@ def alice(monkeypatch):
     app = backend_main.app
     app.dependency_overrides[auth_module.get_current_user] = lambda: user
     app.dependency_overrides[auth_module.get_current_active_user] = lambda: user
-    app.dependency_overrides[request_unit_of_work] = lambda: None
+    # Escalation resolves its target against the users table.
+    app.dependency_overrides[request_unit_of_work] = people
     try:
         yield TestClient(app), recorded
     finally:
@@ -270,6 +272,21 @@ def test_an_escalation_without_escalated_from_is_accepted(alice):
 
     assert resp.status_code == 200, resp.text
     assert recorded["escalation"] == "alice"
+
+
+@pytest.mark.parametrize("target", ["no-such-person", "bob", "medic-bot", " "])
+def test_an_escalation_to_someone_who_is_not_an_active_person_is_refused(alice, target):
+    client, recorded = alice
+    resp = client.post(
+        "/api/cases/c-1/escalate",
+        json={"escalated_to": target, "reason": "needs a lead"},
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"] == (
+        "Assignee must be the username or email of an active person."
+    )
+    assert "escalation" not in recorded
 
 
 def test_an_edit_names_alice_and_stays_on_the_case(alice):
