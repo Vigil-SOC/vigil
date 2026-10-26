@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -109,6 +110,19 @@ class Finding(Base):
             "idx_finding_description",
             "description",
             postgresql_ops={"description": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_finding_finding_id_trgm",
+            "finding_id",
+            postgresql_ops={"finding_id": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
+        # matched as entity_context::text by the command bar and findings search
+        Index(
+            "idx_finding_entity_context_trgm",
+            literal_column("(entity_context::text)"),
+            postgresql_ops={"(entity_context::text)": "gin_trgm_ops"},
             postgresql_using="gin",
         ),
         Index(

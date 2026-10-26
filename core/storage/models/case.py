@@ -97,4 +97,16 @@ class Case(Base):
         Index("idx_case_assignee", "assignee"),
         Index("idx_case_created_at", "created_at"),
         Index("idx_case_updated_at", "updated_at"),
+        Index(
+            "idx_case_title_trgm",
+            "title",
+            postgresql_ops={"title": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_case_description_trgm",
+            "description",
+            postgresql_ops={"description": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
