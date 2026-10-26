@@ -211,6 +211,12 @@ class CaseComment(Base):
         Index("idx_case_comment_author", "author"),
         Index("idx_case_comment_parent_id", "parent_comment_id"),
         Index("idx_case_comment_created_at", "created_at"),
+        Index(
+            "idx_case_comment_content_trgm",
+            "content",
+            postgresql_ops={"content": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -312,6 +318,18 @@ class CaseEvidence(Base):
         Index("idx_case_evidence_type", "evidence_type"),
         Index("idx_case_evidence_collected_by", "collected_by"),
         Index("idx_case_evidence_collected_at", "collected_at"),
+        Index(
+            "idx_case_evidence_name_trgm",
+            "name",
+            postgresql_ops={"name": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_case_evidence_description_trgm",
+            "description",
+            postgresql_ops={"description": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -382,6 +400,12 @@ class CaseIOC(Base):
         Index("idx_case_ioc_value", "value"),
         Index("idx_case_ioc_threat_level", "threat_level"),
         Index("idx_case_ioc_is_active", "is_active"),
+        Index(
+            "idx_case_ioc_value_trgm",
+            "value",
+            postgresql_ops={"value": "gin_trgm_ops"},
+            postgresql_using="gin",
+        ),
     )
 
 

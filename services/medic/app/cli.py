@@ -42,6 +42,7 @@ from services.medic.sensors.containers import docker_containers
 from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
+from services.medic.sensors.kube import kube_pods
 from services.medic.store import StoreError, open_writer
 
 log = logging.getLogger("services.medic")
@@ -200,11 +201,13 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
     serve = config.agent_serve_addr(env, shape)
     if serve is not None:
         sensors.append(agent_serve_ready(host=serve[0], port=serve[1]))
-    # Helm and host-native don't run this sensor (pods are a separate read).
+    # Compose reads containers through the proxy. Helm reads pods from the API.
     if shape == "compose":
         proxy = config.dockerproxy_addr(env, shape)
         if proxy is not None:
             sensors.append(docker_containers(host=proxy[0], port=proxy[1]))
+    if shape == "helm":
+        sensors.append(kube_pods())
     gateway = gateway_address(env, shape)
     if gateway is not None:
         sensors.append(gateway_session(host=gateway[0], port=gateway[1]))

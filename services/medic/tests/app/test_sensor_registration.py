@@ -47,6 +47,10 @@ def _proxy(env: dict[str, str], shape: str) -> list:
     ]
 
 
+def _kube(env: dict[str, str], shape: str) -> list:
+    return [sensor for sensor in sensors_for(env, shape) if sensor.id == "kube.pods"]
+
+
 def test_compose_reads_the_worker_and_serve() -> None:
     assert _urls({}, "compose") == {
         "http_ready.agent_worker": "http://agent-worker:6990/readyz",
@@ -89,6 +93,20 @@ def test_the_variable_sets_the_proxy_address() -> None:
 def test_container_state_is_compose_only(shape: str) -> None:
     # Set or not, Helm and host-native do not register this sensor.
     assert _proxy(_env(shape, **{PROXY_VAR: "127.0.0.1:18472"}), shape) == []
+
+
+@pytest.mark.parametrize("shape", ["compose", "start_sh"])
+def test_pod_state_is_helm_only(shape: str) -> None:
+    assert _kube(_env(shape), shape) == []
+
+
+def test_helm_reads_pod_state_without_a_token_mount() -> None:
+    # No url, so _urls skips it. Registration must not open the service-account
+    # files: a missing mount is a failed collect(), not a refused start.
+    (sensor,) = _kube(_env("helm"), "helm")
+    assert sensor.covers == ("pods", "version")
+    assert sensor.interval_s == 30
+    assert getattr(sensor, "url", None) is None
 
 
 @pytest.mark.parametrize(

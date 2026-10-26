@@ -33,7 +33,7 @@ vi.mock('../contexts/AuthContext', () => ({
 
 vi.mock('../services/api', () => ({
   casesApi: {
-    getById: (id: string) => getCase(id),
+    getById: (id: string, signal?: AbortSignal) => getCase(id, signal),
     getAll: () => Promise.resolve({
       data: {
         cases: [
@@ -54,8 +54,8 @@ vi.mock('../services/api', () => ({
     getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
   },
   findingsApi: {
-    getById: (id: string) => getFinding(id),
-    getAll: (params: unknown) => findFindings(params),
+    getById: (id: string, signal?: AbortSignal) => getFinding(id, signal),
+    getAll: (params: unknown, signal?: AbortSignal) => findFindings(params, signal),
   },
   configApi: {
     getIntegrations: () => getIntegrations(),
@@ -137,6 +137,10 @@ function Shell() {
 
 beforeEach(() => {
   localStorage.clear()
+  apiGet.mockClear()
+  getCase.mockClear()
+  getFinding.mockClear()
+  findFindings.mockClear()
   execute.mockClear()
   execute.mockResolvedValue({ data: {} })
   createCase.mockClear()
@@ -303,10 +307,10 @@ describe('CommandBar', () => {
       'Real-time SOC performance analytics',
       'Opens chat with your question',
     ])
-    expect(getCase).toHaveBeenCalledWith('case')
-    expect(getFinding).toHaveBeenCalledWith('case')
-    expect(apiGet).toHaveBeenCalledWith('/cases/search/full-text', { params: { query: 'case' } })
-    expect(apiGet).toHaveBeenCalledWith('/cases/search/by-ioc', { params: { ioc_value: 'case' } })
+    expect(getCase).toHaveBeenCalledWith('case', expect.any(AbortSignal))
+    expect(getFinding).toHaveBeenCalledWith('case', expect.any(AbortSignal))
+    expect(apiGet).toHaveBeenCalledWith('/cases/search/full-text', { params: { query: 'case', limit: 5 }, signal: expect.any(AbortSignal) })
+    expect(apiGet).toHaveBeenCalledWith('/cases/search/by-ioc', { params: { ioc_value: 'case' }, signal: expect.any(AbortSignal) })
 
     fireEvent.click(screen.getByRole('option', { name: /Loader in mail/ }))
     expect(onOpenCase).toHaveBeenCalledWith('case-2')
@@ -317,6 +321,26 @@ describe('CommandBar', () => {
     fireEvent.change(input, { target: { value: 'other' } })
     expect(screen.queryByRole('option', { name: /Exact case/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /Loader in mail/ })).not.toBeInTheDocument()
+  })
+
+  it('runs only the exact-id lookups below three characters', async () => {
+    renderBar()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'ws' } })
+    await waitFor(() => expect(getCase).toHaveBeenCalledWith('ws', expect.any(AbortSignal)))
+    expect(getFinding).toHaveBeenCalledWith('ws', expect.any(AbortSignal))
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(findFindings).not.toHaveBeenCalled()
+  })
+
+  it('aborts the previous round when the query changes', async () => {
+    renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: 'ws-04' } })
+    await waitFor(() => expect(getCase).toHaveBeenCalledTimes(1))
+    const first = getCase.mock.calls[0][1] as AbortSignal
+    expect(first.aborted).toBe(false)
+    fireEvent.change(input, { target: { value: 'ws-042' } })
+    expect(first.aborted).toBe(true)
   })
 
   it('shows recents and the five live commands when the query is empty', () => {
@@ -403,7 +427,7 @@ describe('CommandBar', () => {
     findFindings.mockResolvedValueOnce({ data: { findings: [{ finding_id: 'f-7', title: 'Beacon from host', data_source: 'zeek', severity: 'high' }] } })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'FIN-WS-114' } })
     const caseRow = await screen.findByRole('option', { name: /Finance hunt/ })
-    expect(findFindings).toHaveBeenCalledWith({ search: 'FIN-WS-114', limit: 5 })
+    expect(findFindings).toHaveBeenCalledWith({ search: 'FIN-WS-114', limit: 5 }, expect.any(AbortSignal))
     expect(caseRow.querySelector('.vg-command-desc')).toHaveTextContent('high · open · Matched an alert')
     expect(sections().slice(0, 2)).toEqual(['Cases', 'Alerts'])
     expect(screen.getByRole('option', { name: /Beacon from host/ })).toHaveTextContent('zeek · high')
