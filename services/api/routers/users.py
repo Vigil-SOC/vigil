@@ -377,23 +377,20 @@ def _apply_user_update(
     _require_privileges_cover_target(current_user, user, session, action="update")
 
     # Every check before any write: a disable commits ahead of the rest.
-    if request.email is not None:
+    if request.email is not None and request.email.casefold() != user.email.casefold():
         if _is_service_account(user):
             # A reachable address is the first step to a password reset.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="A service account's email can't be changed",
             )
-        existing = (
-            session.query(User)
-            .filter(User.email == request.email, User.user_id != user_id)
-            .first()
+        # Reset mail goes to the address on the account. The holder changes
+        # it from PUT /api/auth/me, which asks for their current password.
+        # Same rule for the holder: this route does not ask.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Change the email address from the signed-in account's own profile",
         )
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already in use",
-            )
 
     if request.role_id is not None:
         role = session.query(Role).filter(Role.role_id == request.role_id).first()
@@ -423,13 +420,6 @@ def _apply_user_update(
         if request.full_name != user.full_name:
             changed.append("full_name")
         user.full_name = request.full_name
-
-    if request.email is not None:
-        if request.email != user.email:
-            changed.append("email")
-        user.email = request.email
-        user.is_verified = False
-        stale_reason = "Email changed"
 
     if changed:
         entries.append(

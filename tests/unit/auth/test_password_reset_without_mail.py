@@ -37,9 +37,13 @@ ADMIN = SimpleNamespace(
 )
 
 
-def _session(user):
+def _session(*users):
     session = MagicMock()
-    session.query.return_value.filter.return_value.first.return_value = user
+    found = [user for user in users if user is not None]
+    session.query.return_value.filter.return_value.all.return_value = found
+    session.query.return_value.filter.return_value.first.return_value = (
+        found[0] if len(found) == 1 else None
+    )
     return session
 
 
@@ -140,3 +144,20 @@ def test_link_carries_a_token_for_that_user(capsys):
 def test_unknown_or_inactive_user_is_refused(user, capsys):
     assert script.issue_link(_session(user), "admin", "http://x") == 1
     assert "http" not in capsys.readouterr().out
+
+
+def test_ambiguous_identifier_issues_no_link(capsys):
+    other = SimpleNamespace(
+        **{
+            **vars(ADMIN),
+            "user_id": "u-other",
+            "username": "other",
+            "email": "admin",
+        }
+    )
+    assert script.issue_link(_session(ADMIN, other), "admin", "http://x") == 1
+    captured = capsys.readouterr()
+    assert "http" not in captured.out
+    assert "more than one account" in captured.err
+    assert "admin <admin@example.com>" in captured.err
+    assert "other <admin>" in captured.err
