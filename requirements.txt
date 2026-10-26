@@ -74,7 +74,7 @@ slowapi>=0.1.10
 itsdangerous>=2.2.0
 
 # Testing Dependencies
-pytest>=8.0.0
+pytest>=9.1.1
 pytest-asyncio>=0.23.0
 pytest-cov>=7.1.0
 pytest-mock>=3.12.0
