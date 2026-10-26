@@ -316,7 +316,7 @@ export function Select({
   const onMenuKey = useRef<(e: KeyboardEvent) => void>(() => undefined)
   onMenuKey.current = (e) => {
     const last = shown.length - 1
-    let next: number | null = null
+    let next: number
     if (e.key === 'ArrowDown') next = Math.min(active + 1, last)
     else if (e.key === 'ArrowUp') next = Math.max(active - 1, 0)
     // in the filter input, Home/End move the caret
