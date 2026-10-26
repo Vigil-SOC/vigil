@@ -14,13 +14,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from core import redis_client
 from core.llm.gateway import gateway
 
 pytestmark = pytest.mark.unit
 
 
-def settings_for(monkeypatch, url: str):
-    monkeypatch.setattr(gateway, "get_settings", lambda: SimpleNamespace(redis_url=url))
+def settings_for(monkeypatch, url: str, password: str | None = None):
+    monkeypatch.setattr(
+        redis_client,
+        "get_settings",
+        lambda: SimpleNamespace(redis_url=url, redis_password=password),
+    )
     return gateway.redis_settings()
 
 
