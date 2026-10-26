@@ -180,7 +180,7 @@ def _raises(current: bool, requested: Optional[bool]) -> bool:
 def update_ceiling(
     *,
     user_id: str,
-    service_account: bool,
+    caller_is_service: bool,
     act_reversible: Optional[bool] = None,
     act_irreversible: Optional[bool] = None,
     four_eyes: Optional[bool] = None,
@@ -198,7 +198,7 @@ def update_ceiling(
     wants_act_on = act_reversible is True or act_irreversible is True
     if locked and wants_act_on:
         raise CeilingRefusal(409, "The environment wins; Act was not saved.")
-    if service_account:
+    if caller_is_service:
         if four_eyes is not None and four_eyes != current.four_eyes:
             raise CeilingRefusal(403, "A service account cannot switch four-eyes")
         if _raises(current.act_reversible, act_reversible) or _raises(
@@ -239,12 +239,12 @@ def stop_ceiling(user_id: str) -> Ceiling:
     return updated
 
 
-def resume_ceiling(*, user_id: str, service_account: bool) -> Ceiling:
+def resume_ceiling(*, user_id: str, caller_is_service: bool) -> Ceiling:
     """Clear ``stopped``. Act flags already lowered during the stop stay off.
 
     Executes nothing. A service account cannot resume.
     """
-    if service_account:
+    if caller_is_service:
         raise CeilingRefusal(403, "A service account cannot resume")
     current = read_ceiling()
     if not current.stopped:

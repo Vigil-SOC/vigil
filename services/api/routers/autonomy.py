@@ -96,7 +96,7 @@ def put_ceiling(
     try:
         update_ceiling(
             user_id=str(current_user.user_id),
-            service_account=_is_service_account(current_user),
+            caller_is_service=_is_service_account(current_user),
             act_reversible=body.act_reversible,
             act_irreversible=body.act_irreversible,
             four_eyes=body.four_eyes,
@@ -127,7 +127,7 @@ def post_resume(
     try:
         resume_ceiling(
             user_id=str(current_user.user_id),
-            service_account=_is_service_account(current_user),
+            caller_is_service=_is_service_account(current_user),
         )
         return _view()
     except CeilingRefusal as exc:

@@ -1681,7 +1681,7 @@ def set_force_manual_approval(
     try:
         stored = update_ceiling(
             user_id=str(current_user.user_id),
-            service_account=_is_service_account(current_user),
+            caller_is_service=_is_service_account(current_user),
             act_reversible=not config.enabled,
             locked=_environment_wins(),
         )

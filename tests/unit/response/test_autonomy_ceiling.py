@@ -99,7 +99,7 @@ def test_a_locked_environment_does_not_store_an_act_flag(store):
     with pytest.raises(CeilingRefusal) as exc:
         update_ceiling(
             user_id="u",
-            service_account=False,
+            caller_is_service=False,
             act_reversible=True,
             locked=True,
         )
@@ -112,7 +112,7 @@ def test_service_account_can_lower_and_cannot_raise_resume_or_switch(store):
 
     lowered = update_ceiling(
         user_id="sa",
-        service_account=True,
+        caller_is_service=True,
         act_reversible=False,
         locked=False,
     )
@@ -122,7 +122,7 @@ def test_service_account_can_lower_and_cannot_raise_resume_or_switch(store):
     with pytest.raises(CeilingRefusal) as raised:
         update_ceiling(
             user_id="sa",
-            service_account=True,
+            caller_is_service=True,
             act_reversible=True,
             locked=False,
         )
@@ -131,7 +131,7 @@ def test_service_account_can_lower_and_cannot_raise_resume_or_switch(store):
     with pytest.raises(CeilingRefusal) as eyes:
         update_ceiling(
             user_id="sa",
-            service_account=True,
+            caller_is_service=True,
             four_eyes=True,
             locked=False,
         )
@@ -139,7 +139,7 @@ def test_service_account_can_lower_and_cannot_raise_resume_or_switch(store):
 
     store.rows[CEILING_KEY] = {**_OFF, "stopped": True, "act_reversible": True}
     with pytest.raises(CeilingRefusal) as resumed:
-        resume_ceiling(user_id="sa", service_account=True)
+        resume_ceiling(user_id="sa", caller_is_service=True)
     assert resumed.value.status_code == 403
     assert store.rows[CEILING_KEY]["stopped"] is True
     assert store.rows[CEILING_KEY]["act_reversible"] is True
@@ -158,11 +158,11 @@ def test_stop_then_lower_then_resume_keeps_the_lower(store):
 
     update_ceiling(
         user_id="u",
-        service_account=False,
+        caller_is_service=False,
         act_irreversible=False,
         locked=False,
     )
-    restored = resume_ceiling(user_id="u", service_account=False)
+    restored = resume_ceiling(user_id="u", caller_is_service=False)
     assert restored.stopped is False
     assert restored.act_reversible is True
     assert restored.act_irreversible is False
