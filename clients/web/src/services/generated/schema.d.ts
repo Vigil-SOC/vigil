@@ -840,7 +840,7 @@ export interface paths {
         get: operations["get_api_audit_retention"];
         /**
          * Put Retention
-         * @description Set the retention period. At least 365 days, in force seven days later.
+         * @description Set the retention period. At least 365 and at most 36500 days, in force seven days later.
          */
         put: operations["put_api_audit_retention"];
         post?: never;

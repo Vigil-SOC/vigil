@@ -374,7 +374,8 @@ def _managers(session, *, active_only: bool) -> set[str]:
     if not _table(session, "users"):
         return set()
     active = "AND u.is_active" if active_only else ""
-    rows = session.execute(text(f"""
+    rows = session.execute(
+        text(f"""
             SELECT u.principal_id
             FROM public.users u
             JOIN public.principals p ON p.principal_id = u.principal_id
@@ -383,7 +384,9 @@ def _managers(session, *, active_only: bool) -> set[str]:
               AND p.kind = :person
               {active}
               AND (r.permissions -> 'audit.manage') = 'true'::jsonb
-            """), {"person": principals.PERSON}).scalars()
+            """),
+        {"person": principals.PERSON},
+    ).scalars()
     return set(rows)
 
 
