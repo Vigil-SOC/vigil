@@ -889,15 +889,12 @@ jobs:
   # ============================================================================
   # Helm Install Schema — does a fresh chart install end with every ORM table?
   # ============================================================================
-  # The jobs above run init_database() as the database owner before any init
-  # SQL, so they cannot see what a Helm install does. There the db-init Job
-  # applies dbInit.sqlFiles as the chart user first, and the backend then runs
-  # create_all as vigil_app, which holds no REFERENCES on the chart user's
-  # tables. A new ORM table with a foreign key to one of them must therefore be
-  # created by a listed SQL file; if it is not, create_all fails, and since it is
-  # one transaction every table it was creating goes with it. 0.6.0 shipped that
-  # way: mcp_credentials was left out, and 29 of 52 tables with it. This job
-  # provisions in that order, as those roles, from the chart's own Job.
+  # The jobs above run create_all() as the database owner, so they cannot see
+  # what a Helm install does. There the post-install Job is the only schema
+  # writer: helm_upgrade.py install runs python -m core.upgrade as the owner,
+  # then sets vigil_app's password. The backend starts as vigil_app and only
+  # checks that the database is at its head. This job renders that Job and runs
+  # the same upgrade from this checkout against the chart's Postgres.
   test-helm-install-schema:
     name: Helm Install Schema
     if: github.repository == 'Vigil-SOC/vigil'
@@ -942,74 +939,113 @@ jobs:
         with:
           version: v3.15.2
 
-      - name: Render the db-init Job
+      - name: Render the install Job
         run: |
           # The Job uses none of the subcharts, and all are off by default, so a
           # copy of the chart without them renders without fetching them.
           cp -R infra/helm/vigil "$RUNNER_TEMP/chart"
-          yq -i 'del(.dependencies)' "$RUNNER_TEMP/chart/Chart.yaml"
-          helm template ci "$RUNNER_TEMP/chart" \
-            --set secrets.postgresPassword=test-password \
-            --set secrets.vigilAppPassword=test-app-password \
-            --show-only templates/db-init-job.yaml > "$RUNNER_TEMP/db-init-job.yaml"
-
-      - name: Run the db-init Job as the chart user
-        env:
-          # The service answers to its id on the job network, as the chart's
-          # Postgres Service answers to its name in the cluster.
-          NETWORK: ${{ job.services.postgres.network }}
-        run: |
-          # The Job's image and command, run as its pod runs them: uid 70, a
-          # read-only root filesystem, and the chart's SQL bundle at /sql.
-          job="$RUNNER_TEMP/db-init-job.yaml"
-          container='.spec.template.spec.containers[] | select(.name == "db-init")'
-          readarray -d '' command < <(yq -0 "$container | .command[]" "$job")
-          docker run --rm --network "$NETWORK" --user 70:70 --read-only \
-            -v "$PWD/infra/helm/vigil/files/database-init:/sql:ro" \
-            -e PGHOST=postgres -e PGPORT=5432 -e PGDATABASE="$POSTGRES_DB" \
-            -e PGUSER=deeptempo -e PGPASSWORD="$POSTGRES_PASSWORD" \
-            -e POSTGRES_APP_PASSWORD=vigil-app-test \
-            "$(yq "$container | .image" "$job")" "${command[@]}"
-
-      - name: Create the tables the chart SQL does not, as vigil_app
-        # create_all builds the tables the init files never had. It does not
-        # add a column to a table the chart already built, so
-        # users.principal_id waits for the upgrade. The stamp is what a 0.8
-        # start wrote. init_database() no longer writes it, and it refuses a
-        # database with tables and no alembic_version. Adoption accepts only
-        # that stamp.
-        env:
-          POSTGRES_USER: vigil_app
-          POSTGRES_PASSWORD: vigil-app-test
-        run: |
+          rm -rf "$RUNNER_TEMP/chart/charts" "$RUNNER_TEMP/chart/medic-tests"
+          rm -f "$RUNNER_TEMP/chart/Chart.lock"
           python - <<'PY'
-          from core.storage.connection import _stamp_schema_version, get_db_manager
+          import os
+          from pathlib import Path
 
-          manager = get_db_manager()
-          manager.initialize()
-          manager.create_tables()
-          _stamp_schema_version(manager.engine)
+          import yaml
+
+          chart = Path(os.environ["RUNNER_TEMP"]) / "chart" / "Chart.yaml"
+          meta = yaml.safe_load(chart.read_text())
+          meta.pop("dependencies", None)
+          chart.write_text(yaml.safe_dump(meta))
+          Path(os.environ["RUNNER_TEMP"], "app-version").write_text(
+              str(meta["appVersion"]).strip() + "\n"
+          )
           PY
+          # --set splits on commas, so the reason has none.
+          helm template ci "$RUNNER_TEMP/chart" \
+            --set secrets.postgresPassword=test \
+            --set secrets.vigilAppPassword=vigil-app-test \
+            --set upgrade.acknowledgeVersion="$(tr -d '[:space:]' < "$RUNNER_TEMP/app-version")" \
+            --set upgrade.acknowledgeReason=CI-fresh-install \
+            --show-only templates/upgrade.yaml > "$RUNNER_TEMP/upgrade.yaml"
 
-      - name: Apply schema revisions as the chart user
-        # Adopts the install and applies every revision after the baseline,
-        # including users.principal_id (#2739). CI has no restore point.
+      - name: Run the install hook as the chart user
+        # The rendered command is `python /opt/vigil-upgrade/helm_upgrade.py
+        # install` in the backend image. That image is this checkout, so the
+        # runner executes the same script against the chart's Postgres.
         env:
           POSTGRES_USER: deeptempo
-          VIGIL_UPGRADE_ACK_REASON: "CI: fresh install, nothing to restore"
+          POSTGRES_APP_PASSWORD: vigil-app-test
+          VIGIL_UPGRADE_ACK_REASON: CI-fresh-install
+          VIGIL_UPGRADE_DIR: ${{ runner.temp }}/vigil-upgrade
         run: |
-          VIGIL_UPGRADE_ACK_VERSION="$(cat VERSION)" python -m core.upgrade
+          version="$(tr -d '[:space:]' < VERSION)"
+          export VIGIL_UPGRADE_ACK_VERSION="$version"
+          export VIGIL_CHART_APP_VERSION="$version"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          version = Path("VERSION").read_text().strip()
+          docs = [
+              d
+              for d in yaml.safe_load_all(
+                  Path(os.environ["RUNNER_TEMP"], "upgrade.yaml").read_text()
+              )
+              if d
+          ]
+          jobs = [
+              d
+              for d in docs
+              if d.get("kind") == "Job" and d["metadata"]["name"].endswith("-install")
+          ]
+          if len(jobs) != 1:
+              print(f"::error::expected one install Job, found {len(jobs)}")
+              raise SystemExit(1)
+          job = jobs[0]
+          notes = job["metadata"]["annotations"]
+          if notes.get("helm.sh/hook") != "post-install":
+              print(f"::error::install Job hook is {notes.get('helm.sh/hook')!r}")
+              raise SystemExit(1)
+          container = job["spec"]["template"]["spec"]["containers"][0]
+          if container["command"] != [
+              "python",
+              "/opt/vigil-upgrade/helm_upgrade.py",
+              "install",
+          ]:
+              print(f"::error::install command is {container['command']!r}")
+              raise SystemExit(1)
+          env = {item["name"]: item for item in container["env"]}
+          if env["POSTGRES_USER"].get("value") != "deeptempo":
+              print("::error::install Job does not log in as the database owner")
+              raise SystemExit(1)
+          for key in ("POSTGRES_PASSWORD", "POSTGRES_APP_PASSWORD"):
+              if "secretKeyRef" not in env[key].get("valueFrom", {}):
+                  print(f"::error::install Job has no secret for {key}")
+                  raise SystemExit(1)
+          if env["VIGIL_CHART_APP_VERSION"].get("value") != version:
+              print(
+                  "::error::chart appVersion "
+                  f"{env['VIGIL_CHART_APP_VERSION'].get('value')!r} is not VERSION {version}"
+              )
+              raise SystemExit(1)
+          if env["VIGIL_UPGRADE_ACK_VERSION"].get("value") != version:
+              print("::error::install acknowledgement is not this release")
+              raise SystemExit(1)
+          if not str(env["VIGIL_UPGRADE_ACK_REASON"].get("value", "")).strip():
+              print("::error::install acknowledgement reason is empty")
+              raise SystemExit(1)
+          PY
+          mkdir -p "$VIGIL_UPGRADE_DIR"
+          python infra/helm/vigil/files/upgrade/helm_upgrade.py install
 
       - name: Initialize schema as vigil_app
         id: init-schema
-        # Strict for the reason the jobs above are (#562). The chart still
-        # applies its SQL as the owner; tables that SQL does not create have
-        # to be buildable as vigil_app. Startup no longer does that
-        # (python -m core.upgrade does, and #2739 puts the chart on it). This
-        # step keeps the grant check: create_tables as vigil_app, then the
-        # drift check under DB_STRICT_SCHEMA. About half the ORM tables come
-        # from init SQL, as on a real install, so a table whose SQL disagrees
-        # with its model is drift.
+        # What the backend does on a Helm install: log in as vigil_app and
+        # require this image's head. create_tables is the grant check — the
+        # upgrade already built the tables, and vigil_app holds no CREATE on
+        # the owner's. A missing table fails here.
         env:
           POSTGRES_USER: vigil_app
           POSTGRES_PASSWORD: vigil-app-test
@@ -1019,13 +1055,16 @@ jobs:
           from core.storage.connection import (
               check_schema_drift,
               get_db_manager,
+              init_database,
               seed_reference_tables,
           )
+
           manager = get_db_manager()
           manager.initialize()
           manager.create_tables()
           seed_reference_tables(manager)
           check_schema_drift(manager, provisioned=True)
+          init_database()
           PY
 
       - name: Every ORM table exists

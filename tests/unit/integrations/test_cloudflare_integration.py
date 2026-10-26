@@ -140,6 +140,41 @@ def test_parse_stix_indicator_handles_or_pattern():
     assert all(i.indicator_type == "domain" for i in out)
 
 
+@pytest.mark.parametrize(
+    "pattern, expected",
+    [
+        (
+            "[ipv4-addr:value = '198.51.100.1'] OR [ipv4-addr:value = '198.51.100.2']",
+            [("ip", "198.51.100.1"), ("ip", "198.51.100.2")],
+        ),
+        (
+            "[domain-name:value = 'evil.example' AND url:value = 'http://evil.example/x']",
+            [("domain", "evil.example"), ("url", "http://evil.example/x")],
+        ),
+        ("[file:hashes.'SHA-256' = 'abc']", [("hash_sha256", "abc")]),
+        ("[url:value = 'http://a/?a=b']", [("url", "http://a/?a=b")]),
+        (r"[url:value = 'http://a/it\'s']", [("url", "http://a/it's")]),
+        (
+            "[ipv4-addr:value != '1.2.3.4' AND ipv4-addr:value <= '1.2.3.5'"
+            " AND ipv4-addr:value NOT = '1.2.3.6']",
+            [],
+        ),
+        (
+            "[url:value MATCHES 'k = ' AND ipv4-addr:value = '1.2.3.4']",
+            [("ip", "1.2.3.4")],
+        ),
+        (r"[ipv4-addr:value = '1.2.3.4\']", []),
+    ],
+)
+def test_parse_stix_indicator_reads_every_equality_comparison(pattern, expected):
+    from core.threat_intel.threat_feed_service import parse_stix_indicator
+
+    out = parse_stix_indicator(
+        {"type": "indicator", "pattern": pattern}, source="t", collection_id=None
+    )
+    assert [(i.indicator_type, i.indicator_value) for i in out] == expected
+
+
 def test_parse_stix_indicator_skips_non_indicator():
     from core.threat_intel.threat_feed_service import parse_stix_indicator
 
@@ -204,7 +239,7 @@ def test_cloudy_health_reports_disabled_state(gated_app, monkeypatch):
     assert body["receiver"] == "cloudflare-cloudy"
 
 
-def _signed_post(client, body: bytes, secret: str, sig: str | None = None):
+def _signed_post(client, body: bytes, secret: str, sig: str | bytes | None = None):
     import hashlib
     import hmac
 
@@ -273,4 +308,130 @@ def test_cloudy_rejections_are_logged_counted_and_distinguished(
         "missing_signature": 1,
         "bad_signature": 100,
         "disabled": 1,
+    }
+
+
+class _FakeFindingsDB:
+    """Mirrors the findings columns the Cloudy transform writes."""
+
+    def __init__(self):
+        self.rows = {}
+
+    def get_finding(self, finding_id):
+        return self.rows.get(finding_id)
+
+    def get_finding_by_external_id(self, data_source, external_id):
+        return any(
+            row["data_source"] == data_source and row["external_id"] == external_id
+            for row in self.rows.values()
+        )
+
+    def create_finding(self, **row):
+        if len(row["finding_id"]) > 50 or len(row["external_id"] or "") > 255:
+            raise ValueError("value too long for type character varying")
+        if not all(isinstance(row[c], str) for c in ("title", "description")):
+            raise ValueError("can't adapt type 'dict'")
+        if row["finding_id"] in self.rows:
+            raise ValueError("duplicate key value violates unique constraint")
+        self.rows[row["finding_id"]] = row
+        return row
+
+
+@pytest.fixture()
+def cloudy_client(gated_app, monkeypatch):
+    from core.ingestion.ingestion_service import IngestionService
+
+    app, mod = gated_app
+    db = _FakeFindingsDB()
+    real_init = IngestionService.__init__
+
+    def init(self):
+        real_init(self)
+        self.db_service = db
+        self.use_database = True
+
+    monkeypatch.setattr(IngestionService, "__init__", init)
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: True)
+    monkeypatch.setattr(mod, "_get_secret", lambda: "s3cret")
+    client = TestClient(app, raise_server_exceptions=False)
+    return (
+        lambda payload: _signed_post(client, json.dumps(payload).encode(), "s3cret"),
+        db,
+    )
+
+
+def test_cloudy_retry_without_id_creates_one_finding(cloudy_client):
+    post, db = cloudy_client
+    payload = {
+        "summary": "bot attack on login",
+        "event": {"action": "block", "client_ip": "1.2.3.4"},
+        "timestamp": "2026-10-01T00:00:00Z",
+    }
+    first, retry = post(payload), post(payload)
+    assert first.status_code == retry.status_code == 202
+    assert first.json()["finding_id"] == retry.json()["finding_id"]
+    assert len(db.rows) == 1
+    assert post({**payload, "summary": "another attack"}).status_code == 202
+    assert len(db.rows) == 2
+
+
+def test_cloudy_long_event_id_is_stored_as_external_id(cloudy_client):
+    post, db = cloudy_client
+    payload = {"event_id": "x" * 64, "summary": "s"}
+    first, retry = post(payload), post(payload)
+    assert first.status_code == retry.status_code == 202
+    (row,) = db.rows.values()
+    assert row["external_id"] == payload["event_id"]
+    assert len(row["finding_id"]) <= 50
+
+
+def test_cloudy_payload_is_persisted_as_source_evidence(cloudy_client):
+    post, db = cloudy_client
+    payload = {
+        "event_id": "e1",
+        "summary": "s",
+        "event": {"action": "log", "rule_id": "R9"},
+    }
+    assert post(payload).status_code == 202
+    (row,) = db.rows.values()
+    assert row["entity_context"]["source_evidence"]["records"] == [payload]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"summary": "s", "anomaly_score": "high"},
+        {"event": "a string event"},
+        {"summary": {"text": "s"}},
+        {"summary": "s", "event": {"action": 3}},
+        {"summary": "s", "title": {"text": "t"}},
+        {"event_id": "x" * 256, "summary": "s"},
+    ],
+)
+def test_cloudy_malformed_payload_is_422(cloudy_client, payload):
+    post, db = cloudy_client
+    resp = post(payload)
+    assert resp.status_code == 422
+    assert "Unable to transform" in resp.json()["detail"]
+    assert db.rows == {}
+
+
+def test_cloudy_null_anomaly_score_takes_default(cloudy_client):
+    post, db = cloudy_client
+    assert post({"summary": "s", "anomaly_score": None}).status_code == 202
+    (row,) = db.rows.values()
+    assert row["anomaly_score"] == 0.5
+
+
+def test_cloudy_non_ascii_signature_is_counted_401(gated_app, monkeypatch):
+    from core import webhook_rejections as wr
+
+    wr._counts.clear()
+    app, mod = gated_app
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: True)
+    monkeypatch.setattr(mod, "_get_secret", lambda: "s3cret")
+    client = TestClient(app, raise_server_exceptions=False)
+    assert _signed_post(client, b"{}", "s3cret", sig=b"\xe9").status_code == 401
+    assert wr.rejection_counts("cloudflare/") == {
+        "cloudflare/cloudy": {"bad_signature": 1}
     }

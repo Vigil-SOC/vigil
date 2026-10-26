@@ -2,7 +2,7 @@
 #    uv pip compile requirements.txt --universal --python-version 3.12 -o requirements.lock
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.14.3
+aiohttp==3.14.5
     # via -r requirements.txt
 aiokafka==0.14.0
     # via -r requirements.txt
@@ -16,8 +16,6 @@ annotated-types==0.8.0
     # via pydantic
 anthropic==1.0.0
     # via -r requirements.txt
-antlr4-python3-runtime==4.13.2
-    # via stix2-patterns
 anyio==4.14.2
     # via
     #   anthropic
@@ -338,9 +336,7 @@ python-multipart==0.0.32
     #   -r requirements.txt
     #   mcp
 pytz==2026.3.post1
-    # via
-    #   stix2
-    #   taxii2-client
+    # via taxii2-client
 pywin32==312 ; sys_platform == 'win32'
     # via mcp
 pyyaml==6.0.3
@@ -356,14 +352,13 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-reportlab==5.0.1
+reportlab==5.1.0
     # via -r requirements.txt
 requests==2.34.2
     # via
     #   -r requirements.txt
     #   opentelemetry-exporter-http-transport
     #   opentelemetry-exporter-otlp-proto-http
-    #   stix2
     #   taxii2-client
 respx==0.23.1
     # via -r requirements.txt
@@ -377,8 +372,6 @@ semver==2.13.0
     # via bullmq
 sentry-sdk==2.72.0
     # via -r requirements.txt
-simplejson==4.1.1
-    # via stix2
 six==1.17.0
     # via
     #   python-dateutil
@@ -404,10 +397,6 @@ starlette==1.6.0
     #   fastapi
     #   mcp
     #   sse-starlette
-stix2==3.0.2
-    # via -r requirements.txt
-stix2-patterns==2.1.2
-    # via stix2
 taxii2-client==2.3.0
     # via -r requirements.txt
 truststore==0.10.4 ; sys_platform != 'emscripten'
@@ -473,7 +462,7 @@ wrapt==2.3.0
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-redis
     #   opentelemetry-instrumentation-sqlalchemy
-yarl==1.24.5
+yarl==1.25.1
     # via aiohttp
 zxcvbn==4.5.0
     # via -r requirements.txt

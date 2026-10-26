@@ -24,7 +24,7 @@ FROM node:22-slim AS mcp-node
 RUN npm install -g npm@10.9.9 && npm cache clean --force
 WORKDIR /opt/vigil/mcp/npm
 COPY infra/docker/mcp-packages/package.json infra/docker/mcp-packages/package-lock.json \
-     infra/docker/mcp-packages/.npmrc ./
+     infra/docker/mcp-packages/.npmrc infra/docker/mcp-packages/postinstall.mjs ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,7 @@ def full_batch_cursor(
     now: datetime,
     source: str,
     count: int,
+    step: timedelta = CURSOR_STEP,
 ) -> Optional[Dict[str, Any]]:
     """Cursor after a batch that filled ``max_items`` (#1233).
 
@@ -72,6 +73,10 @@ def full_batch_cursor(
     tick re-reads that boundary item (start filters are inclusive) and dedup
     absorbs it. Returns ``None`` when no item had a readable time; the caller
     then falls back to its drained cursor.
+
+    ``step`` is how far a batch stuck at or before ``start`` moves the cursor:
+    the finest bound the source filters at (Splunk event searches select whole
+    seconds, #2909).
     """
     newest = max((t for t in times if t is not None), default=None)
     if newest is None:
@@ -97,7 +102,10 @@ def full_batch_cursor(
     if newest <= start:
         # Every item in a full batch sits at or before the tick's start. Step
         # just past that instant so the next tick cannot fetch the same page
-        # forever; items at the instant beyond this batch are skipped.
+        # forever; items at the instant beyond this batch are skipped. Capped at
+        # now so a coarse step never runs ahead of the clock, but never back
+        # behind start + CURSOR_STEP.
+        stepped = min(start + step, max(now, start + CURSOR_STEP))
         logger.warning(
             "Federation %s: batch filled max_items=%d with newest alert time "
             "%s not past the tick start %s; stepping the cursor to %s. Alerts "
@@ -106,9 +114,9 @@ def full_batch_cursor(
             count,
             newest.isoformat(),
             start.isoformat(),
-            (start + CURSOR_STEP).isoformat(),
+            stepped.isoformat(),
         )
-        newest = start + CURSOR_STEP
+        newest = stepped
 
     return cursor_at(newest)
 

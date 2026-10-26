@@ -6,18 +6,17 @@ System Status) into Vigil finding dictionaries and hands them to the shared
 ``IngestionService``.
 
 Darktrace pushes alerts via outbound webhooks (SaaS tenants have no syslog
-option over the public internet), so this service does not poll. The
-``fetch_alerts`` abstract method from ``SIEMIngestionService`` is implemented
-as a no-op to satisfy the interface.
+option over the public internet), so this service does not poll.
 """
 
 import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.ingestion.ingestion_service import IngestionService
+from core.ingestion.siem_ingestion_service import normalize_severity
 
 logger = logging.getLogger(__name__)
 
@@ -103,37 +102,12 @@ def _extract_mitre(tags_or_tactics: Any) -> Dict[str, float]:
     return out
 
 
-class DarktraceIngestionService(SIEMIngestionService):
+class DarktraceIngestionService:
     """Transform and ingest Darktrace webhook payloads."""
 
     def __init__(self, console_url: Optional[str] = None):
-        super().__init__()
-        self.siem_name = "Darktrace"
+        self.ingestion_service = IngestionService()
         self.console_url = (console_url or "").rstrip("/")
-
-    async def fetch_alerts(
-        self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Darktrace is push-only in this integration; no polling."""
-        return []
-
-    # Required by the abstract base. For webhook ingress we dispatch by type
-    # via ``transform_model_breach`` / ``transform_ai_analyst`` /
-    # ``transform_system_status`` — this default delegates by payload shape.
-    def transform_alert_to_finding(
-        self, alert: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        if "pbid" in alert or "model" in alert:
-            return self.transform_model_breach(alert)
-        if "uuid" in alert and ("title" in alert or "aianalyst" in str(alert).lower()):
-            return self.transform_ai_analyst(alert)
-        if "systemStatus" in alert or "status" in alert:
-            return self.transform_system_status(alert)
-        logger.warning("Unrecognized Darktrace payload shape; skipping")
-        return None
 
     def transform_model_breach(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform a Darktrace Model Breach Alert."""
@@ -247,7 +221,7 @@ class DarktraceIngestionService(SIEMIngestionService):
         # System status is informational/operational — keep score low
         score = 0.2
         status_level = str(alert.get("status") or alert.get("level") or "info").lower()
-        severity = self.normalize_severity(status_level)
+        severity = normalize_severity(status_level)
 
         return {
             "finding_id": _finding_id("dt-sys", str(key), ts),

@@ -127,10 +127,12 @@ COPY --chown=vigil:vigil scripts/reset_password.py ./scripts/reset_password.py
 # Built SPA — served by FastAPI StaticFiles (or nginx sidecar)
 COPY --from=web-builder --chown=vigil:vigil /build/web/build ./clients/web/build/
 
-# Writable dirs the app needs at runtime
+# Writable dirs the app needs at runtime. Debian 13's useradd -m makes the home
+# 0700; start.sh's backup one-shots run as the host uid and must traverse it.
 RUN mkdir -p /app/data/investigations /home/vigil/.vigil /home/vigil/security-detections \
         /var/lib/vigil-upgrade \
-    && chown -R vigil:vigil /app/data /home/vigil /var/lib/vigil-upgrade
+    && chown -R vigil:vigil /app/data /home/vigil /var/lib/vigil-upgrade \
+    && chmod 0755 /home/vigil
 
 # core/version.py reads VERSION from disk. The COPY above already ships the repo
 # version; only an explicit --build-arg overrides it (an empty default keeps a

@@ -50,7 +50,7 @@ describe('agent drawer', () => {
     const create = screen.getByRole('button', { name: 'Create agent' })
     expect(create).toBeDisabled()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Fresh' } })
-    fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'hunter' } })
+    fireEvent.change(screen.getByLabelText('Specialty'), { target: { value: 'hunter' } })
     fireEvent.click(create)
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
     expect(agentsApi.createCustom).toHaveBeenCalledWith(expect.objectContaining({
@@ -157,7 +157,7 @@ describe('agent drawer', () => {
     open({ agentId: null, describe: true })
     fireEvent.change(screen.getByLabelText('Describe the agent'), { target: { value: 'IAM triage' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }))
-    await waitFor(() => expect(screen.getByLabelText('Role')).toHaveValue('cloud triager'))
+    await waitFor(() => expect(screen.getByLabelText('Specialty')).toHaveValue('cloud triager'))
     expect(agentsApi.generateCustom).toHaveBeenCalledWith({ description: 'IAM triage', current_draft: null, feedback: undefined })
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }))
     await waitFor(() => expect(agentsApi.createCustom).toHaveBeenCalledWith(expect.objectContaining({ icon: 'C', color: '#abcdef', max_tokens: 8192 })))
@@ -170,7 +170,7 @@ describe('agent drawer', () => {
     await screen.findByText('search_logs')
     fireEvent.change(screen.getByLabelText(/Describe a change/), { target: { value: 'be more careful with finance hosts' } })
     fireEvent.click(screen.getByRole('button', { name: 'Draft change' }))
-    await waitFor(() => expect(screen.getByLabelText('Role')).toHaveValue('careful investigator'))
+    await waitFor(() => expect(screen.getByLabelText('Specialty')).toHaveValue('careful investigator'))
     expect(agentsApi.generateCustom).toHaveBeenCalledWith(expect.objectContaining({
       description: 'Hunts things', feedback: 'be more careful with finance hosts', current_draft: expect.objectContaining({ role: 'investigator', icon: 'M' }),
     }))
@@ -189,7 +189,7 @@ describe('agent drawer', () => {
       open({ agentId: 'triage', builtIn: true })
       expect(await screen.findByLabelText('Prompt')).toHaveValue('You triage.')
       expect(screen.getByText('Built in. Saving creates your own editable copy; the original stays available.')).toBeInTheDocument()
-      expect(screen.queryByLabelText('Role')).toBeNull()
+      expect(screen.queryByLabelText('Specialty')).toBeNull()
       expect(agentsApi.getCustom).not.toHaveBeenCalled()
       expect(agentsApi.forkAgent).not.toHaveBeenCalled()
     })

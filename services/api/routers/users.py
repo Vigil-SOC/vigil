@@ -6,22 +6,35 @@ Handles user CRUD operations, role assignment, and user administration.
 
 import asyncio
 import logging
+import re
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from core.auth import current_user as current_user_module
 from core.auth import mcp_credential_service, principals, sign_ins, trail_events
-from core.auth.auth_service import AuthService
+from core.auth.auth_service import PERSON_ONLY, AuthService
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
+from core.auth.permissions import (
+    CATALOG,
+    KNOWN_PERMISSIONS,
+    PLATFORM_EQUIVALENT,
+    PRESETS,
+    builtin_diff,
+)
+from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
 from core.auth.session_cutoff import stamp_session_cutoff
 from core.auth.token_blacklist import revoke_all_for_user
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
 from core.storage.unit_of_work import unit_of_work
+from core.upgrade.adopt import LEGACY_ROLE_IDS
 from services.api.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -55,9 +68,25 @@ class UpdateUserRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
-# A service account (Medic's gateway, D2-17) is exempt from lockout, which is
-# safe only while it can read no more than a Viewer.
-SERVICE_ACCOUNT_ROLE_ID = "role-viewer"
+class CreateRoleRequest(BaseModel):
+    """Create a custom role. ``copy_from`` is a preset key or a role id."""
+
+    name: str
+    description: str = ""
+    permissions: Optional[dict[str, bool]] = None
+    copy_from: Optional[str] = None
+
+
+class UpdateRoleRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permissions: Optional[dict[str, bool]] = None
+
+
+ROLES_MANAGE = "roles.manage"
+BUILTIN_ROLE_REFUSED = (
+    "Built-in roles can't be changed. Copy it to create a custom role."
+)
 
 
 def _is_service_account(user: User) -> bool:
@@ -68,12 +97,55 @@ def _is_service_account(user: User) -> bool:
         return False
 
 
-def _refuse_service_account_role(user: User, role_id: str) -> None:
-    if _is_service_account(user) and role_id != SERVICE_ACCOUNT_ROLE_ID:
+def _is_medic(user: User) -> bool:
+    return _is_service_account(user) and bool(
+        re.fullmatch(MEDIC_USERNAME_PATTERN, user.username or "")
+    )
+
+
+def _refuse_medic_reassignment(user: User) -> None:
+    # Medic's gateway stays Viewer, an outside observer (#2851).
+    if _is_medic(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="A service account can only hold the Viewer role",
+            detail="This account is managed by Medic and stays Viewer",
         )
+
+
+def _principal_kind(user: User, session: Session) -> Optional[str]:
+    return (
+        session.query(Principal.kind)
+        .filter(Principal.principal_id == user.principal_id)
+        .scalar()
+    )
+
+
+def _is_person_account(user: User, session: Session) -> bool:
+    return not _is_service_account(user) and (
+        _principal_kind(user, session) == principals.PERSON
+    )
+
+
+def _acts_as_person(user: User, session: Session) -> bool:
+    """A person's own session. A service account's is not; DEV_MODE's dev user is."""
+    if _is_service_account(user):
+        return False
+    kind = _principal_kind(user, session)
+    return kind == principals.PERSON if kind else current_user_module.DEV_MODE
+
+
+def _granted(permissions: Optional[dict]) -> set[str]:
+    return {key for key, value in (permissions or {}).items() if value}
+
+
+def _uncovered(current_user: User, permissions: Optional[dict], session) -> list[str]:
+    held = AuthService.get_user_permissions(current_user.user_id, session)
+    # A key the registry doesn't know has no effect, so it needs no cover.
+    return sorted(
+        key
+        for key in _granted(permissions) & KNOWN_PERMISSIONS
+        if not held.get(key, False)
+    )
 
 
 def _can_assign_role(current_user: User, target_role: Role, session: Session) -> bool:
@@ -84,11 +156,75 @@ def _can_assign_role(current_user: User, target_role: Role, session: Session) ->
     account being edited: its current role is a privilege the caller must
     already hold before they may change or delete that account.
     """
-    current_perms = AuthService.get_user_permissions(current_user.user_id, session)
-    for perm, granted in (target_role.permissions or {}).items():
-        if granted and not current_perms.get(perm, False):
-            return False
-    return True
+    return not _uncovered(current_user, target_role.permissions, session)
+
+
+def _refuse_uncovered(
+    current_user: User, permissions: Optional[dict], session: Session, what: str
+) -> None:
+    missing = _uncovered(current_user, permissions, session)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{what}: you don't hold {', '.join(missing)}",
+        )
+
+
+def _refuse_machine_widening(
+    current_user: User, session: Session, before: Optional[dict], after: dict
+) -> None:
+    """Widening anyone's access is a person's own act; a machine may narrow."""
+    if _granted(after) - _granted(before) and not _acts_as_person(
+        current_user, session
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Widening access needs a person's own sign-in; "
+            "a service account may only narrow it",
+        )
+
+
+def _refuse_audit_read_to_machine(current_user: User, session: Session) -> None:
+    if not AuthService.check_permission(current_user.user_id, "audit.forward", session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: audit.forward required "
+            "to give audit.read to a service account",
+        )
+
+
+def _role_managers(
+    session: Session,
+    roles: Optional[dict[str, Optional[dict]]] = None,
+    users: Optional[dict[str, tuple[str, bool]]] = None,
+) -> int:
+    """Active people who can manage roles, with ``roles`` ({id: permissions})
+    and ``users`` ({id: (role_id, is_active)}) applied as if saved."""
+    held = {role.role_id: role.permissions for role in session.query(Role)}
+    held.update(roles or {})
+    people = (
+        _not_deleted(session.query(User.user_id, User.role_id, User.is_active))
+        .filter(Principal.kind == principals.PERSON)
+        .all()
+    )
+    count = 0
+    for user_id, role_id, active in people:
+        role_id, active = (users or {}).get(user_id, (role_id, active))
+        if active and (held.get(role_id) or {}).get(ROLES_MANAGE):
+            count += 1
+    return count
+
+
+def _refuse_lockout(current_user: User, session: Session, **change) -> None:
+    """A person may not leave nobody able to manage roles. A machine's
+    narrowing is containment and stands; the roles list then says so."""
+    if not _acts_as_person(current_user, session):
+        return
+    if _role_managers(session) and not _role_managers(session, **change):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"This would leave no active person holding {ROLES_MANAGE}",
+        )
 
 
 def _require_privileges_cover_target(
@@ -158,6 +294,27 @@ def _live_user(session: Session, user_id: str) -> User:
     return user
 
 
+def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
+    """Each account, with what kind of principal it is and which of its
+    role's permissions have no effect for it."""
+    held = {role.role_id: role.permissions for role in session.query(Role)}
+    dumped = []
+    for user in users:
+        entry = UserSchema.dump(user)
+        machine = _is_service_account(user)
+        entry["principal_kind"] = (
+            principals.SERVICE_ACCOUNT if machine else principals.PERSON
+        )
+        entry["managed_by_medic"] = _is_medic(user)
+        # Stored on the role. AuthService.check_permission refuses them for a
+        # non-person, so for this account they do nothing.
+        entry["no_effect"] = (
+            sorted(PERSON_ONLY & _granted(held.get(user.role_id))) if machine else []
+        )
+        dumped.append(entry)
+    return dumped
+
+
 @router.get("/")
 def list_users(
     skip: int = Query(0, ge=0),
@@ -220,7 +377,7 @@ def list_users(
             "total": total,
             "skip": skip,
             "limit": limit,
-            "users": UserSchema.dump_many(users),
+            "users": _dump_accounts(session, users),
         }
 
     except Exception as e:
@@ -258,7 +415,7 @@ def get_user(
                 )
 
     user = _live_user(session, user_id)
-    user_dict = UserSchema.dump(user)
+    user_dict = _dump_accounts(session, [user])[0]
 
     # Add role information
     role = session.query(Role).filter(Role.role_id == user.role_id).first()
@@ -320,11 +477,11 @@ def _create_user(request: CreateUserRequest, current_user: User, session: Sessio
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
         )
 
-    if not _can_assign_role(current_user, role, session):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot assign a role with more privileges than your own",
-        )
+    _refuse_uncovered(
+        current_user, role.permissions, session, "Cannot assign this role"
+    )
+    # An account that holds a role is a widening.
+    _refuse_machine_widening(current_user, session, None, role.permissions)
 
     # Create user
     user = AuthService.create_user(
@@ -377,36 +534,57 @@ def _apply_user_update(
     _require_privileges_cover_target(current_user, user, session, action="update")
 
     # Every check before any write: a disable commits ahead of the rest.
-    if request.email is not None:
+    if request.email is not None and request.email.casefold() != user.email.casefold():
         if _is_service_account(user):
             # A reachable address is the first step to a password reset.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="A service account's email can't be changed",
             )
-        existing = (
-            session.query(User)
-            .filter(User.email == request.email, User.user_id != user_id)
-            .first()
+        # Reset mail goes to the address on the account. The holder changes
+        # it from PUT /api/auth/me, which asks for their current password.
+        # Same rule for the holder: this route does not ask.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Change the email address from the signed-in account's own profile",
         )
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already in use",
-            )
 
+    permission_change = None
     if request.role_id is not None:
         role = session.query(Role).filter(Role.role_id == request.role_id).first()
         if not role:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
             )
-        if not _can_assign_role(current_user, role, session):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot assign a role with more privileges than your own",
+        _refuse_uncovered(
+            current_user, role.permissions, session, "Cannot assign this role"
+        )
+        if role.role_id != user.role_id:
+            _refuse_medic_reassignment(user)
+            previous = session.query(Role).filter(Role.role_id == user.role_id).first()
+            before = previous.permissions if previous else {}
+            _refuse_machine_widening(current_user, session, before, role.permissions)
+            if "audit.read" in _granted(role.permissions) - _granted(
+                before
+            ) and not _is_person_account(user, session):
+                _refuse_audit_read_to_machine(current_user, session)
+            permission_change = (
+                sorted(_granted(before)),
+                sorted(_granted(role.permissions)),
             )
-        _refuse_service_account_role(user, request.role_id)
+
+    role_id = request.role_id if request.role_id is not None else user.role_id
+    is_active = request.is_active if request.is_active is not None else user.is_active
+    if is_active and not user.is_active:
+        # Re-enabling restores the account's whole role: a widening.
+        current = session.query(Role).filter(Role.role_id == role_id).first()
+        _refuse_machine_widening(
+            current_user, session, None, current.permissions if current else {}
+        )
+    if (role_id, is_active) != (user.role_id, user.is_active):
+        _refuse_lockout(
+            current_user, session, users={user.user_id: (role_id, is_active)}
+        )
 
     actor, principal = current_user.principal_id, user.principal_id
     # A safety action: committed on its own and recorded, or held to record
@@ -424,13 +602,6 @@ def _apply_user_update(
             changed.append("full_name")
         user.full_name = request.full_name
 
-    if request.email is not None:
-        if request.email != user.email:
-            changed.append("email")
-        user.email = request.email
-        user.is_verified = False
-        stale_reason = "Email changed"
-
     if changed:
         entries.append(
             (
@@ -447,7 +618,12 @@ def _apply_user_update(
                 (
                     "user.role_changed",
                     None,
-                    {"role_id": request.role_id, "previous_role_id": user.role_id},
+                    {
+                        "role_id": request.role_id,
+                        "previous_role_id": user.role_id,
+                        "permissions_before": permission_change[0],
+                        "permissions_after": permission_change[1],
+                    },
                 )
             )
         user.role_id = request.role_id
@@ -539,6 +715,7 @@ def _delete_user(session: Session, current_user: User, user_id: str) -> User:
 
     user = _live_user(session, user_id)
     _require_privileges_cover_target(current_user, user, session, action="delete")
+    _refuse_lockout(current_user, session, users={user.user_id: (user.role_id, False)})
 
     actor = current_user.principal_id
     principals.mark_deleted(session, user.principal_id)
@@ -626,8 +803,17 @@ def list_roles(
                 detail="Permission denied: users.read required",
             )
     try:
-        roles = session.query(Role).all()
-        return {"roles": RoleSchema.dump_many(roles)}
+        holders = dict(
+            session.query(User.role_id, func.count()).group_by(User.role_id).all()
+        )
+        roles = session.query(Role).order_by(Role.created_at, Role.role_id).all()
+        return {
+            "roles": [_role_entry(r, holders.get(r.role_id, 0)) for r in roles],
+            "presets": [{"key": key, **preset} for key, preset in PRESETS.items()],
+            "permissions": sorted(KNOWN_PERMISSIONS),
+            "platform_equivalent": sorted(PLATFORM_EQUIVALENT),
+            "nobody_can_manage_roles": _role_managers(session) == 0,
+        }
 
     except Exception as e:
         logger.error(f"List roles error: {e}")
@@ -635,3 +821,188 @@ def list_roles(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list roles",
         )
+
+
+def _role_entry(role: Role, holders: int) -> dict:
+    entry = RoleSchema.dump(role)
+    if role.role_id in CATALOG["builtins"]:
+        # Edited in this install's database: kept, and shown with the diff.
+        diff = builtin_diff(role.role_id, role.permissions)
+        entry.update(kind="builtin", modified=bool(diff), diff=diff)
+    else:
+        entry["kind"] = "legacy" if role.role_id in LEGACY_ROLE_IDS else "custom"
+    entry["unrecognised"] = sorted(set(role.permissions or {}) - KNOWN_PERMISSIONS)
+    entry["holders"] = holders
+    return entry
+
+
+def _require_permission(current_user: User, permission: str, session) -> None:
+    if not AuthService.check_permission(current_user.user_id, permission, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied: {permission} required",
+        )
+
+
+def _known(permissions: dict) -> dict:
+    unknown = sorted(set(permissions) - KNOWN_PERMISSIONS)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown permission: {', '.join(unknown)}",
+        )
+    return dict(permissions)
+
+
+def _role_name(session: Session, name: str, role_id: Optional[str] = None) -> str:
+    name = name.strip()
+    if not name or len(name) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A role name is 1 to 100 characters",
+        )
+    # Unique across built-ins too, case aside.
+    query = session.query(Role).filter(func.lower(Role.name) == name.lower())
+    if role_id:
+        query = query.filter(Role.role_id != role_id)
+    if query.first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A role named {name} already exists",
+        )
+    return name
+
+
+def _editable_role(session: Session, role_id: str) -> Role:
+    role = session.get(Role, role_id)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Role not found"
+        )
+    if role.role_id in CATALOG["builtins"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=BUILTIN_ROLE_REFUSED
+        )
+    return role
+
+
+def _record_role(
+    session: Session, action: str, current_user: User, role: Role, before, after
+) -> None:
+    trail_events.record(
+        session,
+        action,
+        actor=current_user.principal_id,
+        role_id=role.role_id,
+        permissions_before=sorted(_granted(before)),
+        permissions_after=sorted(_granted(after)),
+    )
+
+
+@router.post("/roles", status_code=status.HTTP_201_CREATED)
+def create_role(
+    request: CreateRoleRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Create a custom role, from scratch or as a copy of a preset or role."""
+    with _denials(current_user, "role.create"):
+        _require_permission(current_user, ROLES_MANAGE, session)
+        permissions = request.permissions
+        if request.copy_from:
+            preset = PRESETS.get(request.copy_from)
+            source = session.get(Role, request.copy_from) if preset is None else None
+            if preset is None and source is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No preset or role to copy",
+                )
+            copied = preset["permissions"] if preset else source.permissions
+            if permissions is None:
+                # A legacy role's unrecognised keys have no effect; not copied.
+                permissions = {
+                    k: v for k, v in (copied or {}).items() if k in KNOWN_PERMISSIONS
+                }
+        permissions = _known(permissions or {})
+        name = _role_name(session, request.name)
+        _refuse_uncovered(current_user, permissions, session, "Cannot create this role")
+        _refuse_machine_widening(current_user, session, None, permissions)
+        role = Role(
+            role_id=f"role-custom-{uuid.uuid4().hex[:12]}",
+            name=name,
+            description=request.description.strip(),
+            permissions=permissions,
+            is_system_role=False,
+        )
+        session.add(role)
+        session.flush()
+        _record_role(session, "role.created", current_user, role, {}, permissions)
+    logger.info("Role %s created by %s", role.role_id, current_user.username)
+    return _role_entry(role, 0)
+
+
+@router.put("/roles/{role_id}")
+def update_role(
+    role_id: str,
+    request: UpdateRoleRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Edit a custom role. The editor holds everything it grants, before and after."""
+    with _denials(current_user, "role.update"):
+        _require_permission(current_user, ROLES_MANAGE, session)
+        role = _editable_role(session, role_id)
+        before = dict(role.permissions or {})
+        after = (
+            _known(request.permissions) if request.permissions is not None else before
+        )
+        involved = {key: True for key in _granted(before) | _granted(after)}
+        _refuse_uncovered(current_user, involved, session, "Cannot edit this role")
+        _refuse_machine_widening(current_user, session, before, after)
+        machine_holds = (
+            _not_deleted(session.query(User))
+            .filter(User.role_id == role.role_id, Principal.kind != principals.PERSON)
+            .first()
+        )
+        if "audit.read" in _granted(after) - _granted(before) and machine_holds:
+            _refuse_audit_read_to_machine(current_user, session)
+        _refuse_lockout(current_user, session, roles={role.role_id: after})
+        if request.name is not None:
+            role.name = _role_name(session, request.name, role.role_id)
+        if request.description is not None:
+            role.description = request.description.strip()
+        role.permissions = after
+        session.flush()
+        _record_role(session, "role.updated", current_user, role, before, after)
+        holders = session.query(User).filter(User.role_id == role.role_id).count()
+    logger.info("Role %s updated by %s", role.role_id, current_user.username)
+    return _role_entry(role, holders)
+
+
+@router.delete("/roles/{role_id}")
+def delete_role(
+    role_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Delete a custom role nobody holds."""
+    with _denials(current_user, "role.delete"):
+        _require_permission(current_user, ROLES_MANAGE, session)
+        role = _editable_role(session, role_id)
+        _refuse_uncovered(
+            current_user, role.permissions, session, "Cannot delete this role"
+        )
+        # Deleted accounts keep their row, and their role with it.
+        holders = session.query(User).filter(User.role_id == role.role_id).count()
+        if holders:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"{holders} account{'s' if holders != 1 else ''} "
+                "still hold this role. Move them to another role first.",
+            )
+        before = dict(role.permissions or {})
+        session.delete(role)
+        session.flush()
+        _record_role(session, "role.deleted", current_user, role, before, {})
+    logger.info("Role %s deleted by %s", role_id, current_user.username)
+    return {"message": "Role deleted"}

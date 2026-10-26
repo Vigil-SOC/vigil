@@ -46,7 +46,7 @@ class AgentAIGenerator:
 
         from core.llm.harness.claude import ClaudeService
 
-        claude = ClaudeService()
+        claude = await ClaudeService.acreate()
         if not claude.has_api_key():
             return {
                 "success": False,
@@ -59,7 +59,7 @@ class AgentAIGenerator:
         user_prompt = self._build_user_prompt(description, current_draft, feedback)
 
         try:
-            raw = claude.chat(
+            raw = await claude.achat(
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,

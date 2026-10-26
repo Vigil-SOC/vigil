@@ -45,6 +45,11 @@ SECRET = "unit-test-secret"
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def enabled_in_settings(monkeypatch):
+    monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": True})
+
+
 @pytest.fixture()
 def app(monkeypatch):
     monkeypatch.setenv("DARKTRACE_WEBHOOK_SECRET", SECRET)
@@ -184,7 +189,7 @@ class TestTransforms:
         f = svc.transform_ai_analyst({"uuid": "sc", "score": score})
         assert f["anomaly_score"] == pytest.approx(anomaly)
 
-    def test_system_status_always_informational(self):
+    def test_system_status_warning_maps_to_medium(self):
         svc = DarktraceIngestionService()
         f = svc.transform_system_status(SYSTEM_STATUS_SAMPLE)
         assert f is not None
@@ -219,12 +224,6 @@ class TestTransforms:
             builtins.hash = original_hash
 
         assert first["finding_id"] == second["finding_id"]
-
-    def test_dispatch_by_shape(self):
-        svc = DarktraceIngestionService()
-        assert svc.transform_alert_to_finding(MODEL_BREACH_SAMPLE)["description"]
-        assert svc.transform_alert_to_finding(AI_ANALYST_SAMPLE)["description"]
-        assert svc.transform_alert_to_finding(SYSTEM_STATUS_SAMPLE)["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +357,53 @@ class TestMisconfiguration:
         assert r.status_code == 503
 
 
+class TestEnableGate:
+    @pytest.fixture()
+    def env_enabled(self, monkeypatch):
+        from core.config import get_settings
+
+        def set_env(value):
+            if value is None:
+                monkeypatch.delenv("DARKTRACE_ENABLED", raising=False)
+            else:
+                monkeypatch.setenv("DARKTRACE_ENABLED", value)
+            get_settings.cache_clear()
+
+        yield set_env
+        get_settings.cache_clear()
+
+    @pytest.mark.parametrize(
+        "stored,env,expected",
+        [
+            ({"enabled": True}, None, True),
+            ({"enabled": False}, "true", False),
+            ({}, "true", True),
+            ({}, None, False),
+        ],
+    )
+    def test_ui_toggle_wins_over_env(
+        self, monkeypatch, env_enabled, stored, env, expected
+    ):
+        monkeypatch.setattr(_mod, "_get_settings", lambda: stored)
+        env_enabled(env)
+        assert _mod.ROUTER_META.is_enabled is expected
+
+    @pytest.mark.parametrize("path", ["model-breach", "ai-analyst", "system-status"])
+    def test_toggle_off_rejects_signed_push_with_env_on(
+        self, client, monkeypatch, env_enabled, path
+    ):
+        wr._counts.clear()
+        monkeypatch.setattr(_mod, "_get_settings", lambda: {"enabled": False})
+        env_enabled("true")
+        with patch("darktrace_webhook_under_test.DarktraceIngestionService") as svc:
+            r = _post(client, f"/api/webhooks/darktrace/{path}", MODEL_BREACH_SAMPLE)
+        assert r.status_code == 503
+        svc.assert_not_called()
+        assert wr.rejection_counts("darktrace/") == {
+            f"darktrace/{path}": {wr.DISABLED: 1}
+        }
+
+
 class TestRejectionLogging:
     """Rejections leave a WARNING and a count; a lookup failure is not "not configured"."""
 
@@ -382,6 +428,19 @@ class TestRejectionLogging:
         )
         assert "reason=missing_signature" in msgs[1]
         assert "bad" * 20 not in "".join(msgs)
+
+    @pytest.mark.parametrize("sig", [b"\xe9", b"sha256=\xe9abc"])
+    def test_non_ascii_signature_is_counted_401(self, app, sig):
+        c = TestClient(app, raise_server_exceptions=False)
+        r = c.post(
+            "/api/webhooks/darktrace/model-breach",
+            content=b"{}",
+            headers={"Content-Type": "application/json", "X-Darktrace-Signature": sig},
+        )
+        assert r.status_code == 401
+        assert wr.rejection_counts("darktrace/") == {
+            "darktrace/model-breach": {"bad_signature": 1}
+        }
 
     def test_no_secret_logged(self, monkeypatch, caplog):
         monkeypatch.delenv("DARKTRACE_WEBHOOK_SECRET", raising=False)

@@ -37,6 +37,8 @@ def _render(tmp_path: Path, *sets: str) -> dict[str, dict]:
     for s in (
         "networkPolicies.enabled=true",
         "secrets.postgresPassword=test-password,secrets.vigilAppPassword=test-app-password",
+        # The upgrade Jobs' policy needs the API address, which template can't look up.
+        "medic.kubeApi.cidrs[0]=10.0.0.1/32",
         *sets,
     ):
         args += ["--set", s]

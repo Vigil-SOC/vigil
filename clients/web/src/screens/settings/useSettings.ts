@@ -254,6 +254,10 @@ export interface User {
   mfa_enabled: boolean
   last_login: string | null
   login_count: number
+  principal_kind: 'person' | 'service_account'
+  managed_by_medic: boolean
+  /** person-only keys the role holds; stored, no effect for a non-person */
+  no_effect: string[]
 }
 
 export interface Role {
@@ -262,6 +266,39 @@ export interface Role {
   description: string
   permissions: Record<string, boolean>
   is_system_role: boolean
+  kind: 'builtin' | 'custom' | 'legacy'
+  /** built-in edited in this install's database; diff is per key */
+  modified?: boolean
+  diff?: Record<string, { catalog: boolean | null; role: boolean | null }>
+  unrecognised: string[]
+  holders: number
+}
+
+export interface RolePreset {
+  key: string
+  name: string
+  description: string
+  permissions: Record<string, boolean>
+}
+
+export interface RolesMeta {
+  presets: RolePreset[]
+  permissions: string[]
+  platform_equivalent: string[]
+  nobody_can_manage_roles: boolean
+}
+
+export interface RolePayload {
+  name: string
+  description: string
+  permissions: Record<string, boolean>
+}
+
+const EMPTY_ROLES_META: RolesMeta = {
+  presets: [],
+  permissions: [],
+  platform_equivalent: [],
+  nobody_can_manage_roles: false,
 }
 
 export interface UserPayload {
@@ -275,6 +312,7 @@ export interface UserPayload {
 export function useUsers() {
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
+  const [rolesMeta, setRolesMeta] = useState<RolesMeta>(EMPTY_ROLES_META)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -292,6 +330,13 @@ export function useUsers() {
         if (!Array.isArray(u) || !Array.isArray(r)) throw new Error('Invalid users/roles data')
         setUsers(u)
         setRoles(r)
+        const d = rolesRes.data
+        setRolesMeta({
+          presets: d.presets ?? [],
+          permissions: d.permissions ?? [],
+          platform_equivalent: d.platform_equivalent ?? [],
+          nobody_can_manage_roles: !!d.nobody_can_manage_roles,
+        })
         setPhase('ready')
       })
       .catch((e) => {
@@ -318,7 +363,34 @@ export function useUsers() {
     [reload],
   )
 
-  return { users, roles, phase, error, reload, createUser, updateUser, deleteUser }
+  const createRole = useCallback(
+    (payload: RolePayload) => api.post('/users/roles', payload).then(() => reload()),
+    [reload],
+  )
+  const updateRole = useCallback(
+    (roleId: string, payload: RolePayload) =>
+      api.put(`/users/roles/${roleId}`, payload).then(() => reload()),
+    [reload],
+  )
+  const deleteRole = useCallback(
+    (roleId: string) => api.delete(`/users/roles/${roleId}`).then(() => reload()),
+    [reload],
+  )
+
+  return {
+    users,
+    roles,
+    rolesMeta,
+    phase,
+    error,
+    reload,
+    createUser,
+    updateUser,
+    deleteUser,
+    createRole,
+    updateRole,
+    deleteRole,
+  }
 }
 
 export interface OrchestratorConfig {
@@ -1215,7 +1287,7 @@ export function useDarktrace() {
     const payload = next.webhook_secret
       ? { ...base, webhook_secret: next.webhook_secret }
       : base
-    return configApi.setDarktrace(payload).then(() => setConfig((prev) => ({ ...prev, webhook_secret: '', configured: true })))
+    return configApi.setDarktrace(payload).then(() => setConfig((prev) => ({ ...prev, webhook_secret: '', configured: prev.configured || Boolean(next.webhook_secret) })))
   }, [])
 
   return { config, setConfig, phase, reload, save }

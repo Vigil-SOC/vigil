@@ -17,7 +17,7 @@ httpx>=0.28.1
 requests>=2.34.2
 urllib3>=2.8.0
 boto3>=1.43.77
-aiohttp>=3.9.0
+aiohttp>=3.14.5
 
 # Core declared transitive deps
 pydantic>=2.0.0
@@ -66,7 +66,7 @@ uv>=0.13.1
 # Authentication
 bcrypt>=5.0.0
 pyjwt>=2.13.0
-pyotp>=2.9.0
+pyotp>=2.10.0
 cryptography>=50.0.2
 slowapi>=0.1.10
 # Signed URL-safe tokens for password reset (also a Starlette transitive
@@ -74,7 +74,7 @@ slowapi>=0.1.10
 itsdangerous>=2.2.0
 
 # Testing Dependencies
-pytest>=8.0.0
+pytest>=9.1.1
 pytest-asyncio>=0.23.0
 pytest-cov>=7.1.0
 pytest-mock>=3.12.0
@@ -92,14 +92,11 @@ bullmq==2.15.0
 # Kafka ingestion (optional; only used when KAFKA_ENABLED=true)
 aiokafka>=0.14.0
 
-# STIX/TAXII threat-intel feed ingestion (optional; only used when the
-# Cloudforce One integration is enabled). Imports are lazy in
-# services/threat_feed_service.py so missing wheels do not break startup.
+# TAXII threat-intel feed ingestion for the Cloudforce One integration.
 taxii2-client>=2.3.0
-stix2>=3.0.2
 
 # Builds the PDF fixture in tests/unit/documents/test_documents.py.
-reportlab>=5.0.1
+reportlab>=5.1.0
 # Transitive via reportlab. 12.3.0 has fixable criticals CVE-2026-112393 and
 # CVE-2026-112900; the image scan fails closed on those.
 pillow>=13.0.0
@@ -110,7 +107,7 @@ prometheus-client>=0.19.0
 
 # OpenTelemetry
 opentelemetry-api>=1.45.1
-opentelemetry-sdk>=1.25.0
+opentelemetry-sdk>=1.45.1
 opentelemetry-exporter-otlp-proto-grpc>=1.44.0
 opentelemetry-exporter-otlp-proto-http>=1.45.1
 opentelemetry-exporter-prometheus>=0.46b0

@@ -172,6 +172,41 @@ def test_manager_cannot_change_an_admin(db, payload):
     assert (admin.role_id, admin.is_active, admin.email, admin.full_name) == before
 
 
+def test_manager_cannot_retarget_another_users_email(db):
+    session, people = db
+    viewer = people["viewer"]
+    before = viewer.email
+
+    with pytest.raises(HTTPException) as exc:
+        users._apply_user_update(
+            session,
+            people["manager"],
+            viewer.user_id,
+            users.UpdateUserRequest(email="manager-owned@example.com"),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == (
+        "Change the email address from the signed-in account's own profile"
+    )
+    assert _reload(session, viewer.user_id).email == before
+
+
+def test_resubmitting_the_same_email_does_not_sign_them_out(db):
+    session, people = db
+    viewer = people["viewer"]
+    updated, reason, _ = users._apply_user_update(
+        session,
+        people["manager"],
+        viewer.user_id,
+        users.UpdateUserRequest(email=viewer.email.upper(), full_name="Renamed"),
+    )
+    assert updated.email == viewer.email
+    assert updated.full_name == "Renamed"
+    assert updated.is_verified is True
+    assert reason is None
+
+
 def test_manager_can_update_a_lesser_account(db):
     session, people = db
     updated, reason, _ = users._apply_user_update(
@@ -195,7 +230,9 @@ def test_manager_cannot_promote_a_lesser_account_to_admin(db):
             users.UpdateUserRequest(role_id="role-admin"),
         )
     assert exc.value.status_code == 403
-    assert "more privileges" in exc.value.detail
+    # The refusal names what the manager lacks.
+    assert "you don't hold" in exc.value.detail
+    assert "users.delete" in exc.value.detail
     assert _reload(session, "view").role_id == "role-viewer"
 
 

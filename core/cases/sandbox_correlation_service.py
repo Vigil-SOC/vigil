@@ -13,49 +13,64 @@ Design notes
 - ``CaseIOC`` is used for extracted IOCs (network IPs/domains/URLs, dropped
   file hashes, mutexes). Per-IOC ``enrichment_data`` captures which sandbox
   report it came from, for back-reference.
-- ``reputation_score`` is derived heuristically from the sandbox verdict
-  score where present.
+- ``_normalise_hybrid`` and ``_normalise_cape`` return ``score`` on CAPE's
+  0-10 malscore scale, so ``reputation_score``, threat level and confidence
+  read one scale for both. Other vendors' scores are not rescaled yet.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.storage.models import CaseEvidence, CaseIOC
+from core.integrations.cape_sandbox.report import extract_iocs
+from core.storage.models import CaseEvidence, CaseIOC, case_findings
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
-logger = logging.getLogger(__name__)
-
 
 class SandboxCorrelationService:
-    """Attach a sandbox report to a case as evidence + IOCs."""
-
-    def __init__(self) -> None:
-        pass
+    """Attach a sandbox report to a finding's cases as evidence + IOCs."""
 
     def attach_report(
         self,
-        case_id: str,
+        finding_id: str,
         sandbox_name: str,
         task_id: str,
         report: Dict[str, Any],
-        collected_by: str = "sandbox-poller",
-        session: Optional[Session] = None,
     ) -> Dict[str, Any]:
-        """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows.
+        """Insert one ``CaseEvidence`` row + N ``CaseIOC`` rows per linked case.
 
+        A report already attached for (case, sandbox, task) is not inserted
+        again. Raises on any DB failure, after rolling the whole report back.
         Returns a small summary dict for caller logging.
         """
-        # The unit of work must see any failure, so it sits inside the try —
-        # the handler below swallows the exception and would otherwise let a
-        # half-written report commit.
-        try:
-            with unit_of_work(session) as session:
-                normalised = _normalise_report(sandbox_name, report)
+        with unit_of_work() as session:
+            case_ids = session.scalars(
+                select(case_findings.c.case_id).where(
+                    case_findings.c.finding_id == finding_id
+                )
+            )
+            normalised = _normalise_report(sandbox_name, report)
+            evidence_ids = []
+            iocs_added = 0
+            for case_id in case_ids:
+                existing = (
+                    session.query(CaseEvidence)
+                    .filter(
+                        CaseEvidence.case_id == case_id,
+                        CaseEvidence.evidence_type == "sandbox_report",
+                        CaseEvidence.source == sandbox_name,
+                        CaseEvidence.analysis_results["task_id"].as_string() == task_id,
+                    )
+                    .first()
+                )
+                if existing:
+                    evidence_ids.append(existing.evidence_id)
+                    continue
+
                 evidence = CaseEvidence(
                     case_id=case_id,
                     evidence_type="sandbox_report",
@@ -66,13 +81,13 @@ class SandboxCorrelationService:
                     file_hash_md5=normalised.get("md5"),
                     file_hash_sha256=normalised.get("sha256"),
                     source=sandbox_name,
-                    collected_by=collected_by,
+                    collected_by="sandbox-poller",
                     collected_at=utcnow(),
                     chain_of_custody=[
                         {
                             "timestamp": utcnow().isoformat(),
                             "action": "collected",
-                            "user": collected_by,
+                            "user": "sandbox-poller",
                             "notes": f"Retrieved from {sandbox_name} task {task_id}",
                         }
                     ],
@@ -88,8 +103,8 @@ class SandboxCorrelationService:
                 )
                 session.add(evidence)
                 session.flush()
+                evidence_ids.append(evidence.evidence_id)
 
-                iocs_added = 0
                 for ioc_type, value in _iter_iocs(normalised.get("iocs", {})):
                     if self._upsert_ioc(
                         session=session,
@@ -102,14 +117,11 @@ class SandboxCorrelationService:
                     ):
                         iocs_added += 1
 
-                return {
-                    "evidence_id": evidence.evidence_id,
-                    "iocs_added": iocs_added,
-                    "verdict": normalised.get("verdict"),
-                }
-        except Exception as e:
-            logger.exception("Failed to correlate sandbox report")
-            return {"error": str(e)}
+            return {
+                "evidence_ids": evidence_ids,
+                "iocs_added": iocs_added,
+                "verdict": normalised.get("verdict"),
+            }
 
     # ---------- internals ----------
 
@@ -177,16 +189,14 @@ class SandboxCorrelationService:
 
 def _normalise_report(sandbox_name: str, report: Dict[str, Any]) -> Dict[str, Any]:
     """Pick a common subset of fields across sandbox vendors."""
-    sandbox = sandbox_name.lower()
-    if sandbox in ("cape", "cape_sandbox", "cape-sandbox"):
-        return _normalise_cape(report)
-    if sandbox in ("joe", "joe_sandbox", "joe-sandbox"):
-        return _normalise_joe(report)
-    if sandbox in ("hybrid", "hybrid_analysis", "hybrid-analysis"):
-        return _normalise_hybrid(report)
-    if sandbox in ("anyrun", "any.run"):
-        return _normalise_anyrun(report)
-    # Unknown — best effort
+    normalise = {
+        "cape": _normalise_cape,
+        "joe_sandbox": _normalise_joe,
+        "hybrid_analysis": _normalise_hybrid,
+        "anyrun": _normalise_anyrun,
+    }.get(sandbox_name)
+    if normalise:
+        return normalise(report)
     return {"iocs": {}, "mitre_techniques": [], "verdict": None, "score": None}
 
 
@@ -196,36 +206,6 @@ def _normalise_cape(report: Dict[str, Any]) -> Dict[str, Any]:
     info = analysis.get("info") or {}
     malscore = info.get("score")
     signatures = analysis.get("signatures") or []
-
-    iocs: Dict[str, List[str]] = {
-        "ip": [],
-        "domain": [],
-        "url": [],
-        "hash": [],
-        "mutex": [],
-    }
-    network = analysis.get("network") or {}
-    for host in network.get("hosts", []) or []:
-        ip = host.get("ip") if isinstance(host, dict) else host
-        if ip:
-            iocs["ip"].append(ip)
-    for dns in network.get("dns", []) or []:
-        req = dns.get("request") if isinstance(dns, dict) else None
-        if req:
-            iocs["domain"].append(req)
-    for http in network.get("http", []) or []:
-        u = http.get("uri") if isinstance(http, dict) else None
-        if u:
-            iocs["url"].append(u)
-    for dropped in analysis.get("dropped", []) or []:
-        if isinstance(dropped, dict):
-            sha = dropped.get("sha256") or dropped.get("sha1") or dropped.get("md5")
-            if sha:
-                iocs["hash"].append(sha)
-    for mx in (analysis.get("behavior", {}).get("summary", {}) or {}).get(
-        "mutexes", []
-    ) or []:
-        iocs["mutex"].append(mx)
 
     mitre = []
     for sig in signatures:
@@ -239,7 +219,7 @@ def _normalise_cape(report: Dict[str, Any]) -> Dict[str, Any]:
         "score": malscore,
         "verdict": _cape_verdict(malscore),
         "mitre_techniques": sorted(set(mitre)),
-        "iocs": iocs,
+        "iocs": extract_iocs(analysis),
     }
 
 
@@ -261,7 +241,7 @@ def _normalise_hybrid(report: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "md5": report.get("md5"),
         "sha256": report.get("sha256"),
-        "score": report.get("threat_score"),
+        "score": _percent_to_tenths(report.get("threat_score")),
         "verdict": report.get("verdict"),
         "mitre_techniques": report.get("mitre_attcks", []) or [],
         "iocs": _flatten_iocs(
@@ -283,6 +263,13 @@ def _normalise_anyrun(report: Dict[str, Any]) -> Dict[str, Any]:
         "mitre_techniques": [],
         "iocs": _flatten_iocs(data.get("iocs", {})),
     }
+
+
+def _percent_to_tenths(score: Any) -> Optional[float]:
+    try:
+        return float(score) / 10.0
+    except (TypeError, ValueError):
+        return None
 
 
 def _flatten_iocs(raw: Dict[str, Any]) -> Dict[str, List[str]]:

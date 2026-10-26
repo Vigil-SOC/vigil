@@ -1,7 +1,7 @@
 """Periodic poller for STIX/TAXII threat feeds (Cloudforce One et al).
 
-Registered as a scheduled task by `daemon/scheduler.py` when the
-`cloudforce_one` integration is enabled. No-op when disabled.
+Always registered as a scheduled task by `daemon/scheduler.py`; each run is a
+no-op while the `cloudforce_one` integration is disabled.
 
 After the upsert loop it offers the poll's uncovered indicators to the Intake
 as one case-less `kind="schedule"` row carrying every key (#1009). It does not
@@ -14,10 +14,17 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, NamedTuple, Optional, Set
 
-from core.config import get_settings
+from sqlalchemy import and_, or_
+
+from core.config import get_integration_config, get_settings, is_integration_enabled
+from core.memory.hunt_coverage import build_proposal
+from core.storage.connection import get_db_manager
+from core.storage.models import IntakeTrigger
+from core.threat_intel import threat_feed_service as feed
 from core.time import utcnow
 from core.workflows.enablement import is_enabled
 from core.workflows.routing import SCHEDULED_WORKFLOW
+from services.daemon import orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -56,23 +63,8 @@ _last_skip_signature: Optional[tuple] = None
 class ThreatFeedPoller:
     """Pull STIX 2.1 indicators from configured TAXII collections."""
 
-    def __init__(self) -> None:
-        self.stats = {
-            "runs": 0,
-            "indicators_seen": 0,
-            "inserted": 0,
-            "updated": 0,
-            "skipped": 0,
-            "skipped_incomplete": 0,
-            "errors": 0,
-        }
-
     @staticmethod
     def is_enabled() -> bool:
-        try:
-            from core.config import is_integration_enabled
-        except Exception:  # noqa: BLE001
-            return False
         return is_integration_enabled("cloudforce_one")
 
     @staticmethod
@@ -80,18 +72,12 @@ class ThreatFeedPoller:
         """Effective poll interval. Honors integration config and env override."""
 
         try:
-            from core.config import get_integration_config
-
-            cfg = get_integration_config("cloudforce_one") or {}
-            raw = cfg.get("poll_interval_seconds")
-        except Exception:  # noqa: BLE001
-            raw = None
-
-        if raw is None:
-            raw = get_settings().threat_feed_poll_interval
-        try:
+            raw = get_integration_config("cloudforce_one").get("poll_interval_seconds")
+            if raw is None:
+                raw = get_settings().threat_feed_poll_interval
             return max(60, int(raw))
-        except (TypeError, ValueError):
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Threat feed poll interval unreadable, using 900s: %s", e)
             return 900
 
     async def run_once(self) -> Dict[str, Any]:
@@ -101,14 +87,7 @@ class ThreatFeedPoller:
             logger.debug("Cloudforce One integration disabled; skipping poll")
             return {"skipped": "integration_disabled"}
 
-        try:
-            from core.config import get_integration_config
-            from core.threat_intel import threat_feed_service as feed
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Threat feed dependencies unavailable: %s", e)
-            return {"error": str(e)}
-
-        cfg = get_integration_config("cloudforce_one") or {}
+        cfg = get_integration_config("cloudforce_one")
         api_token = cfg.get("api_token")
         server_url = cfg.get("taxii_server_url")
         collection_ids_raw = cfg.get("collection_ids") or ""
@@ -174,13 +153,6 @@ class ThreatFeedPoller:
                 errors += 1
                 per_collection[cid] = {"error": str(e)}
 
-        self.stats["runs"] += 1
-        self.stats["indicators_seen"] += total_seen
-        self.stats["inserted"] += total_inserted
-        self.stats["updated"] += total_updated
-        self.stats["skipped"] += total_skipped
-        self.stats["errors"] += errors
-
         summary = {
             "source": "cloudforce_one",
             "collections": per_collection,
@@ -202,9 +174,8 @@ class ThreatFeedPoller:
         return summary
 
     def _note_skipped_config(self, missing: tuple) -> None:
-        """Count a poll skipped for config; warn once per distinct missing set."""
+        """Warn once per distinct missing set when a poll skips for config."""
         global _last_skip_signature
-        self.stats["skipped_incomplete"] += 1
         if missing == _last_skip_signature:
             logger.debug(
                 "Cloudforce One still missing %s; skipping", ", ".join(missing)
@@ -228,16 +199,6 @@ class ThreatFeedPoller:
         queued at a time, and keys a launched intel row named are skipped for
         `INTEL_RECHECK_AFTER` after its launch.
         """
-        try:
-            from core.memory.hunt_coverage import build_proposal
-            from core.threat_intel.threat_feed_service import (
-                propose_hunts_from_recent_indicators,
-            )
-            from services.daemon.orchestrator import insert_intake_trigger
-        except Exception as e:  # noqa: BLE001
-            logger.warning("intel intake producer unavailable: %s", e)
-            return {"error": str(e)}
-
         if not is_enabled(SCHEDULED_WORKFLOW):
             return {"inserted": 0, "skipped": "workflow_disabled"}
 
@@ -248,7 +209,7 @@ class ThreatFeedPoller:
             return {"inserted": 0, "skipped": "intel_row_queued"}
 
         try:
-            result = propose_hunts_from_recent_indicators()
+            result = feed.propose_hunts_from_recent_indicators()
         except Exception as e:  # noqa: BLE001
             logger.warning("feed hunt proposals failed: %s", e)
             return {"error": str(e)}
@@ -256,9 +217,7 @@ class ThreatFeedPoller:
         keys: List[str] = []
         skipped = 0
         for proposal in result.get("proposals") or []:
-            key = proposal.get("entity_key")
-            if not key or key in keys:
-                continue
+            key = proposal["entity_key"]
             if key in intake.spoken_for:
                 skipped += 1
                 continue
@@ -273,7 +232,7 @@ class ThreatFeedPoller:
         # to be the same string.
         body = build_proposal(keys, [])
         try:
-            insert_intake_trigger(
+            orchestrator.insert_intake_trigger(
                 kind="schedule",
                 priority="low",
                 payload={
@@ -308,14 +267,6 @@ def _intel_intake_state() -> _IntelIntake:
     insert is the guarded step, and holding every poll because the intake would
     not read would stop intel reaching the queue at all.
     """
-    try:
-        from sqlalchemy import and_, or_
-
-        from core.storage.connection import get_db_manager
-        from core.storage.models import IntakeTrigger
-    except Exception as e:  # noqa: BLE001
-        logger.debug("intake read unavailable for intel dedup: %s", e)
-        return _IntelIntake(False, set())
     try:
         with get_db_manager().session_scope() as session:
             rows = (

@@ -8,7 +8,7 @@ It runs `scripts/medic/enable-compose.sh --secrets-only` for real, builds the
 three Medic images and hands the secret files to their users as the full run
 does, then brings up the real Compose files plus the Medic overlay plus
 `compose.test.yml` under its own project (`medic-s6`, or
-VIGIL_MEDIC_COMPOSE_PROJECT). Backend, agents, daemon, Redis, Postgres and
+VIGIL_MEDIC_COMPOSE_PROJECT_S6). Backend, agents, daemon, Redis, Postgres and
 Bifrost are stubs on their real networks and ports; the Medic services are the
 real images. Every probe runs from inside the Medic container. The project is
 torn down at the end, and nothing outside it is touched.
@@ -36,10 +36,11 @@ from tests.medic_compose.compose import (
     MEDIC_PRIVATE_MEMBERS,
     clean_env,
     compose_cmd,
+    compose_project,
 )
 
 HERE = Path(__file__).resolve().parent
-PROJECT = os.environ.get("VIGIL_MEDIC_COMPOSE_PROJECT", "medic-s6")
+PROJECT_ENV = "VIGIL_MEDIC_COMPOSE_PROJECT_S6"
 SERVICES = (
     "medic",
     "medic-gateway",
@@ -67,6 +68,8 @@ pytestmark = [
 
 class Stack:
     def __init__(self, home: Path) -> None:
+        # Before any docker or enable-compose.sh call this suite makes.
+        self.project = compose_project(PROJECT_ENV, "medic-s6")
         self.canary = "S6CANARY" + secrets.token_hex(8)
         self.token = "S6TOKEN" + secrets.token_hex(8)
         self.secrets_dir = home / "medic-secrets"
@@ -74,7 +77,7 @@ class Stack:
             home,
             # enable-compose.sh's full run drives compose itself (V1): if this
             # suite ever runs it, it acts on this project, not a developer's.
-            COMPOSE_PROJECT_NAME=PROJECT,
+            COMPOSE_PROJECT_NAME=self.project,
             VIGIL_MEDIC_COMPOSE_OVERRIDE=str(HERE / "compose.test.yml"),
             VIGIL_MEDIC_SECRETS_DIR=str(self.secrets_dir),
             MEDIC_S6_STUB_DIR=str(HERE),
@@ -89,7 +92,7 @@ class Stack:
         self.base = [
             *compose_cmd("medic", "daemon", files=(HERE / "compose.test.yml",)),
             "-p",
-            PROJECT,
+            self.project,
         ]
 
     def compose(self, *args: str, check: bool = True, timeout: float = 900):
@@ -212,7 +215,7 @@ def probe(healthy):
         cfg["Gateway"]
         for net in MEDIC_NETWORKS
         for cfg in json.loads(
-            s.docker("network", "inspect", f"{PROJECT}_{net}").stdout
+            s.docker("network", "inspect", f"{s.project}_{net}").stdout
         )[0]["IPAM"]["Config"]
         if cfg.get("Gateway")
     ]
@@ -274,7 +277,7 @@ def test_medic_healthy_within_two_minutes(healthy) -> None:
 )
 def test_medic_networks_are_internal_and_hold_the_members(healthy, net, expected):
     s = healthy
-    info = json.loads(s.docker("network", "inspect", f"{PROJECT}_{net}").stdout)[0]
+    info = json.loads(s.docker("network", "inspect", f"{s.project}_{net}").stdout)[0]
     assert info["Internal"] is True
     members = {
         json.loads(s.docker("inspect", cid).stdout)[0]["Config"]["Labels"][
