@@ -1,16 +1,16 @@
 """Metrics collection for daemon operations.
 
 MetricsServer runs two listeners: health JSON (/health, /status) on
-DAEMON_HEALTH_PORT (default 9091), and Prometheus text on
-DAEMON_METRICS_PORT (default 9090) at /metrics. The Prometheus listener
-renders prometheus_client's default REGISTRY, which is where the OTEL
-PrometheusMetricReader from core/telemetry.init_telemetry() registers its
-collector — so the OTEL instruments appear there when the flag is on.
+DAEMON_HEALTH_PORT (default 9091), and, when DAEMON_METRICS_ENABLED,
+Prometheus text on DAEMON_METRICS_PORT (default 9090) at /metrics. The
+Prometheus listener renders prometheus_client's default REGISTRY, which is
+where the OTEL PrometheusMetricReader from core/telemetry.init_telemetry()
+registers its collector — so the OTEL instruments appear there when the
+flag is on.
 """
 
 import asyncio
 import logging
-from collections import defaultdict
 from typing import Any, Dict, Optional
 
 from aiohttp import web
@@ -46,8 +46,6 @@ class ProbeMetrics:
         self._results_counter = None
         self._time_to_verdict_hist = None
         self._instruments_ready = False
-        # In-memory shadow, keyed (probe, outcome).
-        self.results: Dict[tuple, int] = defaultdict(int)
 
     def _ensure_instruments(self):
         if self._instruments_ready:
@@ -70,7 +68,6 @@ class ProbeMetrics:
 
     def record(self, probe: str, outcome: str, time_to_verdict_s: Optional[float]):
         """Count one score; the histogram only sees hit/miss (a verdict exists)."""
-        self.results[(probe, outcome)] += 1
         self._ensure_instruments()
         try:
             if self._results_counter is not None:
@@ -95,8 +92,8 @@ class MetricsServer:
 
     /health and /status (JSON) on DAEMON_HEALTH_PORT (default 9091);
     /metrics (Prometheus text, default registry) on DAEMON_METRICS_PORT
-    (default 9090). Kept on separate ports so the scrape target and the
-    probe target stay distinct.
+    (default 9090) when ``config.enabled``. Kept on separate ports so the
+    scrape target and the probe target stay distinct.
     """
 
     def __init__(self, config: MetricsConfig):
@@ -140,20 +137,20 @@ class MetricsServer:
         return DAEMON_METRICS_PORT
 
     async def run(self, shutdown_event: asyncio.Event):
-        """Run the health and Prometheus HTTP servers until shutdown."""
+        """Run the health server, and Prometheus when enabled, until shutdown."""
         health_app = web.Application()
         health_app.router.add_get("/health", self._handle_health)
         health_app.router.add_get("/status", self._handle_status)
+        listeners = [(health_app, self.health_port, "Health")]
 
-        metrics_app = web.Application()
-        metrics_app.router.add_get("/metrics", self._handle_metrics)
+        if self.config.enabled:
+            metrics_app = web.Application()
+            metrics_app.router.add_get("/metrics", self._handle_metrics)
+            listeners.append((metrics_app, self.metrics_port, "Prometheus"))
 
         runners = []
         try:
-            for app, port, label in (
-                (health_app, self.health_port, "Health"),
-                (metrics_app, self.metrics_port, "Prometheus"),
-            ):
+            for app, port, label in listeners:
                 runner = web.AppRunner(app)
                 await runner.setup()
                 runners.append(runner)

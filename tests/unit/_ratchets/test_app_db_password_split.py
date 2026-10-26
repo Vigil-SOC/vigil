@@ -161,7 +161,7 @@ def test_helm_splits_the_owner_password_from_app_workloads(tmp_path: Path) -> No
     assert app_secret_name != owner_secret_name
 
     app_refs: set[tuple[str, str]] = set()
-    owner_refs: set[tuple[str, str]] = set()
+    owner_holders: set[str] = set()
     for doc in docs:
         pod = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
         for container in pod.get("containers") or []:
@@ -169,14 +169,18 @@ def test_helm_splits_the_owner_password_from_app_workloads(tmp_path: Path) -> No
                 ref = (entry.get("valueFrom") or {}).get("secretKeyRef") or {}
                 if entry["name"] == "POSTGRES_PASSWORD":
                     app_refs.add((ref.get("name", ""), ref.get("key", "")))
-                if entry["name"] in ("PGPASSWORD", "POSTGRES_PASSWORD") and ref.get(
-                    "name"
-                ) == owner_secret_name:
-                    owner_refs.add((entry["name"], ref.get("key", "")))
+                if ref.get("name") == owner_secret_name:
+                    owner_holders.add(doc["metadata"]["name"])
     assert (app_secret_name, "POSTGRES_APP_PASSWORD") in app_refs
     assert all(key == "POSTGRES_APP_PASSWORD" for _, key in app_refs if _ == app_secret_name)
     assert (owner_secret_name, "POSTGRES_PASSWORD") in app_refs
-    assert ("PGPASSWORD", "POSTGRES_PASSWORD") in owner_refs
+    # The database server and the schema upgrade Jobs; no app workload.
+    assert owner_holders == {
+        "release-vigil-postgres",
+        "release-vigil-upgrade-check",
+        "release-vigil-upgrade-apply",
+        "release-vigil-upgrade-install",
+    }
     assert owner_secret_name not in {
         name for name, _key in app_refs if _key == "POSTGRES_APP_PASSWORD"
     }

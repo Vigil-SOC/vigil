@@ -1,9 +1,8 @@
 """The gateway's own Viewer login and refresh (SP1 §1, decisions 2 and 3).
 
 Medic never holds this credential. A failed login is reported through the state
-(`GET /_gw/status`), never hammered: Vigil locks an account after 5 bad passwords
-for 15 minutes, its counter only resets on success (D2-17), and it allows 5
-logins a minute per IP.
+(`GET /_gw/status`), never hammered. The gateway uses a service account, which
+is not locked, and the session still stops after BAD_PASSWORD_STOP 401s.
 """
 
 from __future__ import annotations

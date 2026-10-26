@@ -663,6 +663,28 @@ export function runConcurrency(): number {
   return Number.isInteger(asked) && asked > 0 ? asked : DEFAULT_RUN_CONCURRENCY;
 }
 
+// Finished jobs kept in Redis. Unset, BullMQ keeps every one, and a parked run
+// finishes a job every sweep, so the shipped 512 MB noeviction Redis fills and
+// refuses writes. Nothing reads finished jobs back -- the run record is the
+// ledger. Set on the worker rather than on each enqueue: BullMQ falls back to the
+// worker's when a job carries none, which covers core/agents/queue.py and
+// sweepOnce alike. Ages are seconds; both bounds apply, enforced as later jobs finish.
+export const RUN_RETENTION = {
+  removeOnComplete: { age: 3_600, count: 1_000 },
+  removeOnFail: { age: 604_800 },
+} as const;
+
+// Empties the completed set, which RUN_RETENTION never touches: it applies as a
+// job finishes, so it neither reaches jobs finished before it nor runs at all on a
+// Redis already at maxmemory, where the finishing script is refused. Completed only
+// -- waiting, delayed, active and failed jobs are work or evidence.
+// A limit of 0 is unbounded; BullMQ deletes in batches of 10000.
+async function drainCompleted(queue: Queue<RunJob>): Promise<number> {
+  const removed = (await queue.clean(0, 0, "completed")).length;
+  if (removed > 0) log.info("drained completed jobs", { removed });
+  return removed;
+}
+
 export interface Running {
   worker: Worker<RunJob>;
   ledger: LedgerRepository;
@@ -696,6 +718,9 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
     connection,
     concurrency: runConcurrency(),
     lockDuration: LEASE_TTL_MS * 10,
+    // Held back until drainCompleted below has run.
+    autorun: false,
+    ...RUN_RETENTION,
   });
 
   worker.on("failed", logFailure);
@@ -711,6 +736,10 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // the claim is one conditional UPDATE, so only the sweeper that wins a row
   // enqueues it.
   const producer = new Queue<RunJob>(RUN_QUEUE, { connection });
+  void drainCompleted(producer)
+    .catch((error: unknown) => log.warn("completed-job drain failed", errorFields(error)))
+    .then(() => worker.run())
+    .catch((error: unknown) => log.error("worker error", errorFields(error)));
   const sweeping = setInterval(() => {
     void sweepOnce(leases, producer).catch((error: unknown) => {
       // A sweep that could not read the table tries again next tick. Throwing here

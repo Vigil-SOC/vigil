@@ -359,3 +359,19 @@ async def test_incomplete_config_warns_once_per_state(monkeypatch, caplog):
     config.pop("taxii_server_url")
     await run.run_once()
     assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_enabling_cloudforce_one_after_the_scheduler_starts_polls(monkeypatch):
+    from services.daemon.config import SchedulerConfig
+    from services.daemon.scheduler import TaskScheduler
+
+    enabled = {"cloudforce_one": False}
+    monkeypatch.setattr(poller, "is_integration_enabled", enabled.get)
+    monkeypatch.setattr(poller, "get_integration_config", lambda _id: {})
+    monkeypatch.setattr(poller, "_last_skip_signature", None)
+    scheduler = TaskScheduler(SchedulerConfig())
+    enabled["cloudforce_one"] = True
+
+    task = next(t for t in scheduler._tasks if t.name == "threat_feed_poll")
+    assert await task.func() == {"skipped": "incomplete_config"}

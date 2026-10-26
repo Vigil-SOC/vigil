@@ -246,9 +246,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "llm-worker") | nindent 14 }}
-        - podSelector:
-            matchLabels:
-              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "db-init") | nindent 14 }}
+        {{- /* The upgrade Jobs get their own policy, a hook: templates/upgrade.yaml. */}}
         {{- /* Both: serve's readiness probe is a query, so omitting it here does
                not degrade the Deployment, it stops it rolling out. */}}
         {{- if .Values.agentWorker.enabled }}

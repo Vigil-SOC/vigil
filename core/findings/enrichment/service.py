@@ -62,7 +62,7 @@ def _default_data_service() -> Any:
     return _data_service
 
 
-def _resolve_provider(component: str) -> Tuple[Any, str, Any]:
+async def _resolve_provider(component: str) -> Tuple[Any, str, Any]:
     """Resolve ``component`` to ``(provider_spec, model_id, claude_service)``.
 
     ``claude_service`` is None for every non-Anthropic provider — only the
@@ -92,7 +92,7 @@ def _resolve_provider(component: str) -> Tuple[Any, str, Any]:
     if provider.provider_type == "anthropic":
         from core.llm.harness.claude import ClaudeService
 
-        claude_service = ClaudeService()
+        claude_service = await ClaudeService.acreate()
         if not claude_service.has_api_key():
             raise NoProviderConfigured(
                 f"Anthropic provider '{provider_id}' has no resolvable API key"
@@ -117,19 +117,15 @@ async def _dispatch(
 
     The two paths are asymmetric — see the module docstring. Preserved as-is.
     """
-    loop = asyncio.get_running_loop()
     if provider.provider_type == "anthropic":
         # No retry here: the cloud path has never had one. A spent key on the
         # Anthropic passthrough is a raw SDK 402; translate turns only that
         # into BudgetExceeded. Do not wrap this call in through_gateway.
         try:
-            return await loop.run_in_executor(
-                None,
-                lambda: claude_service.chat(
-                    message=prompt,
-                    model=model_id,
-                    max_tokens=ANTHROPIC_MAX_TOKENS,
-                ),
+            return await claude_service.achat(
+                message=prompt,
+                model=model_id,
+                max_tokens=ANTHROPIC_MAX_TOKENS,
             )
         except Exception as error:
             translated = translate(error)
@@ -280,7 +276,7 @@ async def enrich(
 
     # Resolve before shaping input, so an unconfigured provider still reports
     # NoProviderConfigured rather than whatever a malformed finding raises.
-    provider, model_id, claude_service = _resolve_provider(component)
+    provider, model_id, claude_service = await _resolve_provider(component)
 
     summary = summarize_finding(finding, finding_id=finding_id)
     prompt = build_prompt(summary)

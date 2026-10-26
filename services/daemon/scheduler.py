@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
@@ -14,6 +14,7 @@ from core.workflows.enablement import is_enabled
 from core.workflows.routing import SCHEDULED_WORKFLOW
 from services.daemon.config import SchedulerConfig
 from services.daemon.probes import inject_probes, score_probes
+from services.daemon.threat_feed_poller import ThreatFeedPoller
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,6 @@ class ScheduledTask:
     func: Callable
     interval: int  # seconds
     last_run: Optional[datetime] = None
-    enabled: bool = True
 
 
 class TaskScheduler:
@@ -72,7 +72,6 @@ class TaskScheduler:
 
         # Services (lazy loaded)
         self._data_service = None
-        self._claude_service = None
 
         # Stats
         self.stats = {
@@ -80,7 +79,6 @@ class TaskScheduler:
             "threat_hunts": 0,
             "probes_injected": 0,
             "probes_scored": 0,
-            "reports_generated": 0,
             "cleanups_run": 0,
             "errors": 0,
         }
@@ -96,29 +94,16 @@ class TaskScheduler:
                 name="threat_hunt",
                 func=self._run_threat_hunt,
                 interval=self.config.threat_hunt_interval,
-                enabled=True,
             )
         )
 
-        if self.config.report_generation_enabled:
-            self._tasks.append(
-                ScheduledTask(
-                    name="weekly_report",
-                    func=self._generate_report,
-                    interval=self.config.report_interval,
-                    enabled=True,
-                )
+        self._tasks.append(
+            ScheduledTask(
+                name="cleanup",
+                func=self._run_cleanup,
+                interval=self.config.cleanup_interval,
             )
-
-        if self.config.cleanup_enabled:
-            self._tasks.append(
-                ScheduledTask(
-                    name="cleanup",
-                    func=self._run_cleanup,
-                    interval=self.config.cleanup_interval,
-                    enabled=True,
-                )
-            )
+        )
 
         # Hourly tick; the day-scoped finding_id makes the injection once a day.
         if self.config.probes_enabled:
@@ -127,19 +112,8 @@ class TaskScheduler:
                     name="probe_sweep",
                     func=self._run_probe_sweep,
                     interval=self.config.probe_interval,
-                    enabled=True,
                 )
             )
-
-        # Health check task (every 5 minutes)
-        self._tasks.append(
-            ScheduledTask(
-                name="health_check",
-                func=self._run_health_check,
-                interval=300,
-                enabled=True,
-            )
-        )
 
         # Sandbox poller — only runs when auto-submit is enabled
         if _sandbox_poll_enabled():
@@ -148,25 +122,16 @@ class TaskScheduler:
                     name="sandbox_poll",
                     func=self._run_sandbox_poll,
                     interval=_sandbox_poll_interval(),
-                    enabled=True,
                 )
             )
 
-        # Threat-feed poller — only runs when the Cloudforce One integration is enabled.
-        try:
-            from services.daemon.threat_feed_poller import ThreatFeedPoller
-
-            if ThreatFeedPoller.is_enabled():
-                self._tasks.append(
-                    ScheduledTask(
-                        name="threat_feed_poll",
-                        func=self._run_threat_feed_poll,
-                        interval=ThreatFeedPoller.poll_interval_seconds(),
-                        enabled=True,
-                    )
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Threat feed poller unavailable: {e}")
+        self._tasks.append(
+            ScheduledTask(
+                name="threat_feed_poll",
+                func=self._run_threat_feed_poll,
+                interval=ThreatFeedPoller.poll_interval_seconds(),
+            )
+        )
 
     def set_processor_queue(self, queue: asyncio.Queue):
         """Set the processor's input queue that probe sweeps inject onto."""
@@ -182,20 +147,11 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"Failed to initialize database service: {e}")
 
-        try:
-            from core.llm.harness.claude import ClaudeService
-
-            self._claude_service = ClaudeService()
-            logger.info("Claude service initialized for scheduler")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Claude service: {e}")
-
     async def run(self, shutdown_event: asyncio.Event):
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
         self._init_services()
-        # The Claude service prices its calls from this process's own copy of
-        # the gateway's rates.
+        # Pricing reads this process's own copy of the gateway's rates.
         await refresh_gateway_rates()
         rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
@@ -209,9 +165,6 @@ class TaskScheduler:
             now = utcnow()
 
             for task in self._tasks:
-                if not task.enabled:
-                    continue
-
                 # Check if task should run
                 should_run = (
                     task.last_run is None
@@ -294,65 +247,6 @@ class TaskScheduler:
             "and has not been explained"
         )
 
-    async def _generate_report(self):
-        """Generate periodic summary report."""
-        logger.info("Generating scheduled report...")
-        self.stats["reports_generated"] += 1
-
-        if not self._data_service:
-            logger.warning("Data service not available for report generation")
-            return
-
-        # Gather data for report
-        findings = self._data_service.get_findings()
-        cases = self._data_service.get_cases()
-
-        # Calculate time range (last week)
-        now = utcnow()
-        week_ago = now - timedelta(days=7)
-
-        # Filter to recent findings
-        recent_findings = [
-            f for f in findings if self._parse_timestamp(f.get("timestamp")) >= week_ago
-        ]
-
-        # Build report
-        report = {
-            "generated_at": now.isoformat(),
-            "period_start": week_ago.isoformat(),
-            "period_end": now.isoformat(),
-            "summary": {
-                "total_findings": len(recent_findings),
-                "total_cases": len(cases),
-                "critical_findings": len(
-                    [f for f in recent_findings if f.get("severity") == "critical"]
-                ),
-                "high_findings": len(
-                    [f for f in recent_findings if f.get("severity") == "high"]
-                ),
-            },
-            "top_techniques": self._get_top_techniques(recent_findings, 5),
-            "data_sources": self._get_data_source_breakdown(recent_findings),
-        }
-
-        logger.info(f"Report generated: {report['summary']}")
-
-        # Could send report via email/Slack here
-        return report
-
-    def _parse_timestamp(self, ts: Any) -> datetime:
-        """Parse timestamp to datetime."""
-        if isinstance(ts, datetime):
-            return ts
-        if isinstance(ts, str):
-            try:
-                return datetime.fromisoformat(
-                    ts.replace("Z", "+00:00").replace("+00:00", "")
-                )
-            except ValueError:
-                pass
-        return datetime.min
-
     def _get_top_techniques(self, findings: List[Dict], limit: int) -> List[Dict]:
         """Get top MITRE techniques from findings."""
         technique_counts = {}
@@ -365,14 +259,6 @@ class TaskScheduler:
             :limit
         ]
         return [{"technique": t, "count": c} for t, c in sorted_techniques]
-
-    def _get_data_source_breakdown(self, findings: List[Dict]) -> Dict[str, int]:
-        """Get finding counts by data source."""
-        source_counts = {}
-        for finding in findings:
-            source = finding.get("data_source", "unknown")
-            source_counts[source] = source_counts.get(source, 0) + 1
-        return source_counts
 
     async def _run_cleanup(self):
         """Clean up old data."""
@@ -447,49 +333,4 @@ class TaskScheduler:
 
     async def _run_threat_feed_poll(self):
         """Pull Cloudforce One STIX/TAXII indicators into threat_indicators."""
-        try:
-            from services.daemon.threat_feed_poller import ThreatFeedPoller
-        except Exception as e:
-            logger.warning(f"Threat feed poller unavailable: {e}")
-            return
-        if not ThreatFeedPoller.is_enabled():
-            return
-        poller = ThreatFeedPoller()
-        return await poller.run_once()
-
-    async def _run_health_check(self):
-        """Run system health check."""
-        logger.info("Running health check...")
-
-        health = {
-            "timestamp": utcnow().isoformat(),
-            "status": "healthy",
-            "components": {},
-        }
-
-        if not self._data_service:
-            health["components"]["database"] = {"status": "unavailable"}
-        elif get_db_manager().health_check():
-            findings = self._data_service.get_findings()
-            health["components"]["database"] = {
-                "status": "healthy",
-                "findings_count": len(findings),
-            }
-        else:
-            health["components"]["database"] = {"status": "error"}
-            health["status"] = "degraded"
-
-        # Presence only — constructing the service is what would have failed.
-        health["components"]["claude"] = {
-            "status": "healthy" if self._claude_service else "unavailable"
-        }
-
-        db_status = health["components"]["database"]["status"]
-        if db_status == "error":
-            level = logging.ERROR
-        elif health["status"] != "healthy":
-            level = logging.WARNING
-        else:
-            level = logging.INFO
-        logger.log(level, f"Health check: {health['status']}")
-        return health
+        return await ThreatFeedPoller().run_once()

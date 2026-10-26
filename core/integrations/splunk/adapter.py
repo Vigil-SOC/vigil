@@ -149,6 +149,9 @@ class SplunkAdapter:
             now=now,
             source=self.name,
             count=len(events),
+            # Splunk selects earliest_time at whole seconds, so a stuck batch
+            # must step a full second to leave it (#2909).
+            step=timedelta(seconds=1),
         )
         return FetchResult(findings=findings, cursor=cursor_out or fresh_cursor())
 

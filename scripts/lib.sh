@@ -608,6 +608,46 @@ wait_for_url() {
     return 1
 }
 
+# --- Wait for the daemon-mode backend to serve health ---
+# /api/health only answers once the lifespan has connected every enabled MCP
+# server, so a healthy start can take minutes (#2910). Polls URL while PID is
+# alive, saying so every 15s; fails as soon as PID exits, or after TIMEOUT.
+wait_for_backend() {
+    # Wall clock, not a loop count: curl can block 2s on a socket uvicorn accepted.
+    local url="$1" pid="$2" timeout="${3:-300}" start=$SECONDS next=15
+    while [ $((SECONDS - start)) -lt "$timeout" ]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "Backend exited during startup." >&2
+            return 1
+        fi
+        curl -sf --max-time 2 "$url" >/dev/null 2>&1 && return 0
+        if [ $((SECONDS - start)) -ge $next ]; then
+            echo "Backend startup still in progress ($((SECONDS - start))s, connecting MCP servers)..."
+            next=$((next + 15))
+        fi
+        sleep 1
+    done
+    echo "Backend did not serve health within ${timeout}s." >&2
+    return 1
+}
+
+# Stop a backend that failed wait_for_backend, so the next ./start.sh -d is not
+# refused with "Backend already running". PIDFILE holds the --reload reloader;
+# its child holds the port, hence the pkill (as in shutdown_all.sh).
+abort_backend_start() {
+    local pidfile="$1" log="$2" match="${3:-uvicorn services.api.main:app}" i=0
+    [ -f "$pidfile" ] && kill "$(cat "$pidfile")" 2>/dev/null || true
+    pkill -f "$match" 2>/dev/null || true
+    while pgrep -f "$match" >/dev/null 2>&1 && [ $i -lt 10 ]; do
+        sleep 1; i=$((i + 1))
+    done
+    pkill -9 -f "$match" 2>/dev/null || true
+    rm -f "$pidfile"
+    echo "Backend failed to start and was stopped; the SOC daemon, LLM worker and agent layer were not started. See $log:" >&2
+    tail -n 20 "$log" >&2 2>/dev/null || true
+    return 0
+}
+
 # --- Wait for a background process to log that it is ready ---
 # Succeeds once LOG contains LINE while PID is still alive; fails as soon as PID
 # exits, or after TIMEOUT seconds. On failure prints NAME and the log's tail.

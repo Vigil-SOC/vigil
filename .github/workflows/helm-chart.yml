@@ -27,15 +27,6 @@ jobs:
         with:
           version: v3.15.2
 
-      - name: Verify db-init SQL copies are in sync
-        run: |
-          # The chart bundles a copy of infra/database/init/*.sql under
-          # infra/helm/vigil/files/database-init/ because Helm can only read files
-          # inside the chart directory. Drift here means the chart would
-          # ship a different schema than the docker-compose stack.
-          diff -r infra/database/init infra/helm/vigil/files/database-init \
-            --exclude=README.md
-
       - name: Fetch chart dependencies
         run: |
           helm repo add bitnami https://charts.bitnami.com/bitnami

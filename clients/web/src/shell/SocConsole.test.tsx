@@ -1504,8 +1504,9 @@ describe('SocConsole', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
       expect(await screen.findByRole('dialog', { name: ATTENTION_TITLE })).toBeInTheDocument()
+      // The ring follows a frame after the dialog, once Home's section is mounted.
+      await waitFor(() => expect(document.querySelector('.console-tour-ring')).toHaveAttribute('data-stop', 'attention'))
       const attention = document.querySelector('.console-tour-ring')
-      expect(attention).toHaveAttribute('data-stop', 'attention')
       expect(attention).toHaveStyle({ top: '194px', left: '18px' })
       expect(screen.getByRole('dialog', { name: ATTENTION_TITLE })).toHaveTextContent('Approve or reject here, or open the case.')
       expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 2 of 3')

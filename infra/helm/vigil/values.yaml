@@ -433,75 +433,52 @@ redis:
         size: 5Gi
 
 # -----------------------------------------------------------------------------
-# Database init Job
+# Schema upgrade (docs/upgrading.md)
 # -----------------------------------------------------------------------------
-# Runs the SQL files under infra/database/init/ in an explicit order to avoid the
-# 003_* filename collision. Uses helm hooks to run on install + upgrade.
-dbInit:
+# `python -m core.upgrade` from the backend image, as the database owner, is the
+# only schema writer; app pods only check that the database is at their head.
+#   helm install: a post-install Job takes the empty database to head. App pods
+#     fail their check until it finishes, then become Ready. Do not install with
+#     --wait (or as an Argo CD/Flux release that waits for health first): Helm
+#     waits for Ready before it runs post-install hooks.
+#   helm upgrade: a pre-upgrade Job runs `--check`. If it refuses, Helm stops
+#     before applying anything and the previous release keeps serving. Then a
+#     second Job scales every Deployment and StatefulSet of the release except
+#     Postgres and Redis to 0 (pausing KEDA), waits for the pods to go, ends
+#     leftover vigil_app sessions and upgrades. The release is down from there
+#     until Helm has rolled out the new pods: plan a maintenance window. Source
+#     events are not queued meanwhile. Set --timeout to cover it (default 5m).
+#     If the upgrade fails before a revision ran, the recorded scales come back
+#     and the previous release serves again. If it fails after, workloads stay
+#     at 0: restore your own database backup and run `helm rollback`.
+# Helm takes no Vigil backup. The acknowledgement below stands in for the
+# restore point, so both values are required on install and on every upgrade.
+upgrade:
+  # false renders none of this: run `python -m core.upgrade` as the owner
+  # yourself before app pods can start.
   enabled: true
-  image:
-    # Uses the same image as Postgres so psql is available.
-    repository: postgres
-    tag: "16-alpine"
-    pullPolicy: IfNotPresent
-  # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
-  # Update this list when new init SQL lands, in filename order (the order
-  # compose applies them); tests/unit/_ratchets/test_helm_db_init_sql_files.py
-  # fails until you do. Every file here must apply cleanly in one transaction:
-  # the Job fails on any error. The ratchet names the few files left out.
-  sqlFiles:
-    - 01_init_schema.sql
-    - 04_config_tables.sql
-    - 06_auth_tables.sql
-    - 07_custom_agents.sql
-    - 07_skills.sql
-    - 08_custom_workflows.sql
-    - 09_llm_providers.sql
-    - 10_ai_model_configs.sql
-    - 11_custom_agent_component_category.sql
-    - 12_workflow_runs.sql
-    - 13_approval_actions.sql
-    - 14_threat_indicators.sql
-    - 15_federation.sql
-    - 16_llm_budgets.sql
-    - 17_loglm_setup.sql
-    - 18_agent_decision_ids.sql
-    - 19_agent_ledger.sql
-    - 20_agent_directives.sql
-    - 21_agent_run_leases.sql
-    - 22_workflow_run_deleted.sql
-    - 23_drop_finding_embedding.sql
-    - 24_finding_mitre_predictions.sql
-    - 25_nullable_finding_score_timestamp.sql
-    - 26_episodic_memory.sql
-    - 27_episodic_read_log.sql
-    - 29_episodic_distil_failures.sql
-    - 30_approval_action_reversibility.sql
-    - 30_vigil_app_role.sql
-    - 31_agent_ledger_hash_chain.sql
-    - 32_drop_attack_layers.sql
-    - 33_episodic_verdict_techniques.sql
-    - 34_drop_skills.sql
-    - 34_mcp_credentials.sql
-    - 35_ip_exclusions.sql
-    - 36_workflow_runs_triggered_by_index.sql
-    - 37_workflow_runs_outcome.sql
-    - 38_custom_agent_fallback_model.sql
-    - 40_drop_custom_workflow_graph_layout.sql
-    - 40_skill_reads.sql
-    - 41_workflow_runs_progress.sql
-    - 42_drop_finding_status.sql
-    - 43_users_service_account.sql
-    - 44_medic_last_seen.sql
-    - 45_medic_permissions.sql
-    - 46_users_tokens_valid_after.sql
+  # This release's version (the chart appVersion; the backend image must be the
+  # same version). A value left over from an earlier upgrade refuses, as does an
+  # empty one.
+  acknowledgeVersion: ""
+  # Why you are upgrading without a Vigil restore point, e.g. "nightly RDS
+  # snapshot 2026-10-22". Recorded in history.jsonl. Required.
+  acknowledgeReason: ""
+  # How long the stop waits for the release's pods to go before it gives up and
+  # restores the scales it recorded.
+  stopTimeoutSeconds: 600
+  # history.jsonl, at /var/lib/vigil-upgrade in the upgrade Jobs only. Created
+  # once and kept: `helm uninstall` does not delete it.
+  persistence:
+    size: 1Gi
+    storageClassName: ""   # empty → the cluster default
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 100m
+      memory: 256Mi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 1Gi
 
 # -----------------------------------------------------------------------------
 # Ingress
@@ -646,7 +623,7 @@ secrets:
   anthropicApiKey: ""
 
   # Owner password (postgresql.auth.username). Materialized as POSTGRES_PASSWORD
-  # for the database server and the db-init Job only. App pods do not receive it.
+  # for the database server and the upgrade Jobs only. App pods do not receive it.
   # Required unless existingSecret or externalSecret is set. Generate with:
   #   openssl rand -hex 24
   postgresPassword: ""
@@ -1051,7 +1028,7 @@ medic:
   # agentWorker.enabled: the egress policy allows only the chart's agent worker.
   agentWorkerAddr: ""
   # The Kubernetes API server's address(es), as CIDRs, for Medic's egress policy
-  # (TCP `ports` only). Filled at install by looking up the `kubernetes`
+  # and, with networkPolicies.enabled, the upgrade Jobs' (TCP `ports` only). Filled at install by looking up the `kubernetes`
   # endpoints; set by hand where lookup can't run (`helm template`, Argo CD,
   # Flux), e.g. from `kubectl get endpointslice kubernetes -n default`.
   kubeApi:
