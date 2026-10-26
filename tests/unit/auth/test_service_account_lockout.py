@@ -42,6 +42,7 @@ def wrong_password(monkeypatch):
 def _attempt(monkeypatch, user, times: int) -> None:
     """``times`` failed logins against one shared user row."""
     session = MagicMock()
+    session.query.return_value.filter.return_value.all.return_value = [user]
     session.query.return_value.filter.return_value.first.return_value = user
     monkeypatch.setattr(uow_module, "get_db_session", lambda: session)
     for _ in range(times):
@@ -92,6 +93,7 @@ def test_a_lock_already_on_a_service_account_does_not_refuse_it(monkeypatch):
     user = _user(service_account=True)
     user.locked_until = utcnow() + timedelta(minutes=10)
     session = MagicMock()
+    session.query.return_value.filter.return_value.all.return_value = [user]
     session.query.return_value.filter.return_value.first.return_value = user
 
     assert AuthService.authenticate_user(user.username, "right", session) is user
@@ -105,6 +107,7 @@ def test_a_lock_on_a_normal_account_still_refuses_the_right_password(monkeypatch
     user = _user(service_account=False)
     user.locked_until = utcnow() + timedelta(minutes=10)
     session = MagicMock()
+    session.query.return_value.filter.return_value.all.return_value = [user]
     session.query.return_value.filter.return_value.first.return_value = user
 
     with pytest.raises(AccountLockedError):

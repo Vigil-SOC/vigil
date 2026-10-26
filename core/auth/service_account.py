@@ -40,6 +40,7 @@ from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
 from core.auth import principals
 from core.auth.auth_service import AuthService
+from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.storage.connection import get_db_manager
 from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
@@ -102,14 +103,24 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         if not session.query(Role).filter(Role.role_id == VIEWER_ROLE_ID).first():
             raise NotReady(f"role {VIEWER_ROLE_ID} is not seeded yet")
 
+        email = _email(username)
+        # The address is a sign-in name. Another account's username may
+        # already be that string; the email column's unique key would not mind.
+        claim_sign_in_names(session, username, email)
         user = session.query(User).filter(User.username == username).first()
         now = utcnow()
         if user is None:
+            if identifier_in_use(session, username) or identifier_in_use(
+                session, email
+            ):
+                raise ServiceAccountError(
+                    f"{username} collides with an existing sign-in name"
+                )
             outcome = "created"
             user = User(
                 user_id=f"user-{uuid.uuid4().hex[:12]}",
                 username=username,
-                email=_email(username),
+                email=email,
                 password_hash=AuthService.hash_password(password),
                 full_name="Medic gateway (service account)",
                 role_id=VIEWER_ROLE_ID,
@@ -146,7 +157,11 @@ def ensure(username: str, password: str) -> tuple[str, int]:
             user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None
-            user.email = _email(username)
+            if identifier_in_use(session, email, except_user_id=user.user_id):
+                raise ServiceAccountError(
+                    f"{username} collides with an existing sign-in name"
+                )
+            user.email = email
             user.mfa_enabled = False
             user.mfa_secret = None
             user.mfa_recovery_codes = []

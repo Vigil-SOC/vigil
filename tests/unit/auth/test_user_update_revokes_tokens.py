@@ -1,10 +1,15 @@
-"""Changing a user's email or role through PUT /api/users/{id} signs them out."""
+"""Changing a user's role through PUT /api/users/{id} signs them out.
+
+Email is not changed on this route. The account holder does that from
+PUT /api/auth/me, which requires their current password.
+"""
 
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from services.api.routers import users
 
@@ -66,6 +71,26 @@ def test_same_role_does_not():
 def test_name_change_does_not():
     _, reason, _ = _apply(_user(), full_name="B")
     assert reason is None
+
+
+def test_same_email_does_not_make_tokens_stale():
+    user = _user()
+    _, reason, _ = _apply(user, email="a@example.com")
+    assert reason is None
+    assert user.email == "a@example.com"
+    assert user.is_verified is True
+
+
+def test_email_change_is_refused():
+    user = _user()
+    with pytest.raises(HTTPException) as exc:
+        _apply(user, email="other@example.com")
+    assert exc.value.status_code == 403
+    assert exc.value.detail == (
+        "Change the email address from the signed-in account's own profile"
+    )
+    assert user.email == "a@example.com"
+    assert user.is_verified is True
 
 
 def test_update_user_revokes_on_role_change():
