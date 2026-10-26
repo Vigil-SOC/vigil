@@ -18,7 +18,7 @@ search_service = CaseSearchService()
 
 
 @router.get("/full-text")
-async def full_text_search(
+def full_text_search(
     query: str,
     search_comments: bool = True,
     search_evidence: bool = True,
@@ -43,7 +43,7 @@ async def full_text_search(
 
 
 @router.get("/by-ioc")
-async def search_by_ioc(ioc_value: str, ioc_type: Optional[str] = None):
+def search_by_ioc(ioc_value: str, ioc_type: Optional[str] = None):
     """
     Find cases containing a specific IOC.
 
