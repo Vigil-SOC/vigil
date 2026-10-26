@@ -87,6 +87,8 @@ def set_period(
         raise RetentionError(f"retention is at most {MAX_DAYS} days")
     if isinstance(days, bool) or not isinstance(days, int) or days < MIN_DAYS:
         raise RetentionError(f"retention is at least {MIN_DAYS} days")
+    # The leader holds the feed row, then the trail lock, then this row.
+    _lock_feed(session)
     stored = _load(session, lock=True)
     entry = trail.append(
         session,
@@ -198,8 +200,11 @@ def reapply(session, snapshot_ids: list[str]) -> None:
     if path is None:
         raise RetentionError("VIGIL_UPGRADE_DIR is unset")
     for pid in union:
-        _blank(session, pid)
+        _blank_label(session, pid)
         _revoke(session, pid)
+    trail._lock(session)
+    for pid in union:
+        _blank_beside(session, pid)
     _queue_rewrite(session, "".join(f"{pid}\n" for pid in union))
 
 
@@ -262,6 +267,8 @@ def _apply_erasures(session, now: datetime) -> None:
 
 
 def _defer(session, actor, principal_id, reason, now, updated_by) -> dict:
+    # Same order as a period save: the feed row, then this row, then the trail.
+    _lock_feed(session)
     stored = _load(session, lock=True)
     if any(item["principal_id"] == principal_id for item in stored["erasures"]):
         return _view(session, now)
@@ -291,17 +298,26 @@ def _announce(session, actor: str, principal_id: str, reason: str):
 
 
 def _perform(session, principal_id: str) -> None:
-    _blank(session, principal_id)
+    # The label and the account come first on an immediate erasure. The
+    # beside-columns wait until this transaction holds the trail lock: the
+    # leader takes that lock and then locks window rows, so updating those
+    # rows first deadlocks with the tick.
+    _blank_label(session, principal_id)
     _revoke(session, principal_id)
+    trail._lock(session)
+    _blank_beside(session, principal_id)
     _queue_append(session, [principal_id])
 
 
-def _blank(session, principal_id: str) -> None:
+def _blank_label(session, principal_id: str) -> None:
     if _table(session, "principals"):
         session.execute(
             text("UPDATE public.principals SET label = NULL WHERE principal_id = :id"),
             {"id": principal_id},
         )
+
+
+def _blank_beside(session, principal_id: str) -> None:
     if _table(session, "audit_trail"):
         session.execute(
             text(f"""
@@ -556,6 +572,16 @@ def _remember(session, seq: int) -> None:
     if seq not in current:
         current.append(seq)
         _write_announcements(session, current)
+
+
+def _lock_feed(session) -> None:
+    """The feed row, before the retention row and before the trail lock.
+
+    ``maintenance_and_send`` holds this row, then the trail lock, then the
+    retention row. A save that takes the retention row first and appends
+    (the insert takes the trail lock) deadlocks with that tick.
+    """
+    _announcements(session)
 
 
 def _announcements(session) -> list[int]:
