@@ -105,7 +105,7 @@ async def test_task_create_for_a_non_person_is_refused(tasks, sent):
 async def test_task_update_for_a_non_person_is_refused(tasks, sent):
     _, task = tasks
     with pytest.raises(AssigneeRefused):
-        await cases_routes.update_task(
+        cases_routes.update_task(
             "c-1", 5, cases_routes.TaskUpdate(assignee=sent), people()
         )
     assert task.assignee == "alice"
@@ -113,9 +113,7 @@ async def test_task_update_for_a_non_person_is_refused(tasks, sent):
 
 async def test_task_update_with_a_blank_assignee_clears_it(tasks):
     _, task = tasks
-    await cases_routes.update_task(
-        "c-1", 5, cases_routes.TaskUpdate(assignee=""), people()
-    )
+    cases_routes.update_task("c-1", 5, cases_routes.TaskUpdate(assignee=""), people())
     assert task.assignee is None
 
 

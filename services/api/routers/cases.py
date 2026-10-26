@@ -582,7 +582,7 @@ class TaskUpdate(BaseModel):
     dependencies=_CASES_WRITE,
     response_model=CaseTaskSchema,
 )
-async def update_task(
+def update_task(
     case_id: str, task_id: int, data: TaskUpdate, session: UnitOfWorkSession
 ):
     """Update task."""
