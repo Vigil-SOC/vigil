@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
+from core.auth.auth_service import _is_service_account
 from core.auth.permissions import permission_gate
 from core.config import (
     _load_json_config,
@@ -38,9 +39,13 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.approval_service import (
-    APPROVAL_CONFIG_KEY,
-    read_stored_force_manual_approval,
+from core.response.ceiling import (
+    CeilingRefusal,
+    CeilingWriteError,
+    effective_act_reversible,
+    environment_locks_act,
+    read_ceiling,
+    update_ceiling,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
@@ -65,8 +70,7 @@ from services.api.middleware.auth import (
     get_current_active_user,
     require_integrations_admin,
 )
-from services.daemon.config import DaemonConfig
-from services.daemon.intent import effective_daemon_config, intent_report
+from services.daemon.intent import intent_report
 
 router = APIRouter()
 
@@ -1549,9 +1553,9 @@ def get_intent_report() -> IntentReportResponse:
 class AutonomyConfig(BaseModel):
     """The two flags the console chip folds into Assist or Act.
 
-    Not stored. ``force_manual_approval`` is the env flag OR the
-    ``approval.force_manual_approval`` row. ``auto_response_enabled`` is
-    ``Settings.daemon_auto_response``.
+    Assist is ``force_manual_approval or not auto_response_enabled``, and that
+    is true exactly when effective ``act_reversible`` is off. ``auto_response_enabled``
+    stays true so the chip's single bit is ``force_manual_approval``.
     """
 
     auto_response_enabled: bool
@@ -1561,10 +1565,15 @@ class AutonomyConfig(BaseModel):
 @router.get("/autonomy", response_model=AutonomyConfig)
 def get_autonomy_config() -> AutonomyConfig:
     """Effective response autonomy for the console chip."""
-    effective = effective_daemon_config(DaemonConfig.from_env())
+    try:
+        stored = read_ceiling()
+    except Exception:  # noqa: BLE001
+        # Unreadable is Assist, the same fail-closed the chip had before.
+        return AutonomyConfig(auto_response_enabled=True, force_manual_approval=True)
+    act = effective_act_reversible(stored, get_settings())
     return AutonomyConfig(
-        auto_response_enabled=effective.response.auto_response_enabled,
-        force_manual_approval=effective.response.force_manual_approval,
+        auto_response_enabled=True,
+        force_manual_approval=not act,
     )
 
 
@@ -1614,72 +1623,75 @@ def set_orchestrator_config(
 
 
 class ForceManualApprovalConfig(BaseModel):
-    """``approval.force_manual_approval``. Assist is true, Act is false."""
+    """Assist is true (``act_reversible`` off). Act is false (``act_reversible`` on)."""
 
     enabled: bool
 
 
 class ForceManualApprovalResponse(ForceManualApprovalConfig):
-    """The stored flag, plus whether daemon env overrides Act."""
+    """The stored Assist bit, plus whether daemon env locks the act flags off."""
 
     environment_wins: bool
 
 
 def _environment_wins() -> bool:
     """Force-approval, or auto-response turned off, beats a stored Act."""
-    settings = get_settings()
-    return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
+    return environment_locks_act(get_settings())
+
+
+def _assist_response(stored_act_reversible: bool) -> ForceManualApprovalResponse:
+    return ForceManualApprovalResponse(
+        enabled=not stored_act_reversible,
+        environment_wins=_environment_wins(),
+    )
 
 
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
 def get_force_manual_approval():
-    """Read ``approval.force_manual_approval`` without inserting a default row.
+    """Read the stored Assist/Act bit without inserting a default row.
 
     A failed read is an error, not Act: reporting the default would show
-    approvals as off while the stored flag may be forcing them on.
+    approvals as off while the stored ceiling may be forcing them on.
+    Missing row is Assist (both act flags off).
     """
     try:
-        enabled = read_stored_force_manual_approval()
+        stored = read_ceiling()
     except Exception as e:
         logger.error(f"Error getting force-manual approval: {e}")
         raise HTTPException(
             status_code=503, detail="Could not read the approval setting"
         ) from e
-    return ForceManualApprovalResponse(
-        enabled=enabled, environment_wins=_environment_wins()
-    )
+    return _assist_response(stored.act_reversible)
 
 
 @router.post(
     "/force-manual-approval",
-    dependencies=_SETTINGS_WRITE,
+    dependencies=[permission_gate("ai_autonomy.write")],
     response_model=ForceManualApprovalResponse,
 )
 def set_force_manual_approval(
     config: ForceManualApprovalConfig,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Persist Assist or Act. Act is refused while the environment wins, so it
-    is not stored for later. Assist may still be stored.
+    """Persist Assist or Act on ``act_reversible``.
+
+    Act is refused while the environment wins, so it is not stored for later.
+    Assist may still be stored. A service account may lower and may not raise.
     """
-    if not config.enabled and _environment_wins():
-        raise HTTPException(
-            status_code=409,
-            detail="The environment wins; Act was not saved.",
+    try:
+        stored = update_ceiling(
+            user_id=str(current_user.user_id),
+            caller_is_service=_is_service_account(current_user),
+            act_reversible=not config.enabled,
+            locked=_environment_wins(),
         )
-    config_service = _for_user(current_user)
-    success = config_service.set_system_config(
-        key=APPROVAL_CONFIG_KEY,
-        value={"enabled": config.enabled},
-        description="Force manual approval for all actions",
-        config_type="approval",
-        change_reason="Updated via Settings UI",
-    )
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save approval config")
-    return ForceManualApprovalResponse(
-        enabled=config.enabled, environment_wins=_environment_wins()
-    )
+    except CeilingRefusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except CeilingWriteError as exc:
+        raise HTTPException(
+            status_code=500, detail="Failed to save approval config"
+        ) from exc
+    return _assist_response(stored.act_reversible)
 
 
 # ---- Darktrace webhook receiver config ----

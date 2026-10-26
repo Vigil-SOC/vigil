@@ -51,21 +51,19 @@ class TestReversibilityGate:
         assert action.reversibility == Reversibility.IRREVERSIBLE.value
         assert action.reason == "test; reversibility=irreversible"
 
-    def test_reversible_high_confidence_still_auto_approves(self):
+    def test_reversible_high_confidence_stays_pending(self):
         svc = ApprovalService()
-        action = _create(svc, confidence=0.95, reversibility=Reversibility.REVERSIBLE)
-        assert action.status == ActionStatus.APPROVED.value
-        assert action.requires_approval is False
+        action = _create(svc, confidence=0.99, reversibility=Reversibility.REVERSIBLE)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.requires_approval is True
         assert action.reversibility == Reversibility.REVERSIBLE.value
-        threshold = svc.config.confidence_threshold
-        assert action.reason == (
-            f"test; response.confidence_threshold={threshold:.2f} met (0.95)"
-        )
+        assert action.reason == "test; reversibility=reversible"
 
     def test_forced_approval_records_the_force_switch(self):
         svc = ApprovalService()
         action = _create(svc, confidence=0.95)
-        assert action.requires_approval is False
+        assert action.requires_approval is True
+        assert action.status == ActionStatus.PENDING.value
         svc.force_manual_approval = True
         forced = svc.create_action(
             action_type=ActionType.ISOLATE_HOST,
@@ -136,14 +134,15 @@ class TestIsolationIdempotency:
             },
         )
 
-        assert first["status"] == "executed"
-        assert second["status"] == "executed"
+        assert first["status"] == "pending_approval"
+        assert second["status"] == "pending"
+        assert second.get("reused") is True
         assert first["action_id"] == second["action_id"]
-        assert executions == ["10.0.9.9"]
+        assert executions == []
         action = response.approval_service.get_action(first["action_id"])
         assert action is not None
         assert action.idempotency_key == "isolate_host:10.0.9.9"
-        assert action.status == ActionStatus.EXECUTED.value
+        assert action.status == ActionStatus.PENDING.value
 
     def test_rejected_isolate_is_not_executed_on_retry(self):
         response = AutonomousResponseService()
@@ -221,10 +220,10 @@ class TestIpLessIsolationKey:
             correlation_data={"indicators": [], "reasoning": []},
         )
 
-        assert first["status"] == "executed" and not first.get("reused")
-        assert second["status"] == "executed" and not second.get("reused")
+        assert first["status"] == "pending_approval" and not first.get("reused")
+        assert second["status"] == "pending_approval" and not second.get("reused")
         assert first["action_id"] != second["action_id"]
-        assert executions == ["host-a", "host-b"]
+        assert executions == []
 
     def test_same_hostname_with_no_ip_reuses_one_row(self):
         response = AutonomousResponseService()
@@ -256,8 +255,8 @@ class TestIpLessIsolationKey:
 
         assert first["action_id"] == second["action_id"]
         assert not first.get("reused")
-        assert second["status"] == "executed" and second.get("reused") is True
-        assert executions == ["host-c"]
+        assert second["status"] == "pending" and second.get("reused") is True
+        assert executions == []
         action = response.approval_service.get_action(first["action_id"])
         assert action is not None
         assert action.idempotency_key == "isolate_host:host:host-c"
@@ -266,35 +265,33 @@ class TestIpLessIsolationKey:
 class TestUnwiredIsolation:
     """#1276: the isolation stub must not record a containment that never ran."""
 
-    def test_auto_approved_isolation_is_recorded_failed(self):
+    def test_a_confidence_of_0_99_does_not_execute_isolation(self):
         response = AutonomousResponseService()
         response.approval_service.force_manual_approval = False
         result = response.create_isolation_action(
             ip_address="10.0.0.5",
             hostname="host-a",
-            confidence=0.95,
+            confidence=0.99,
             reason="test",
             evidence=["ev-1"],
             correlation_data={"indicators": [], "reasoning": []},
         )
-        assert result["status"] == ActionStatus.FAILED.value
-        assert result["result"]["success"] is False
-        assert result["result"]["error"] == "unsupported_action_type"
+        assert result["status"] == "pending_approval"
         action = response.approval_service.get_action(result["action_id"])
         assert action is not None
-        assert action.status == ActionStatus.FAILED.value
-        assert action.execution_result == {"error": "unsupported_action_type"}
+        assert action.status == ActionStatus.PENDING.value
+        assert action.execution_result is None
 
         retry = response.create_isolation_action(
             ip_address="10.0.0.5",
             hostname="host-a",
-            confidence=0.95,
+            confidence=0.99,
             reason="test",
             evidence=["ev-1"],
             correlation_data={"indicators": [], "reasoning": []},
         )
-        assert retry["action_id"] != result["action_id"]
-        assert retry["status"] == ActionStatus.FAILED.value
+        assert retry["action_id"] == result["action_id"]
+        assert retry["status"] == ActionStatus.PENDING.value
 
     def test_analyst_approved_isolation_is_recorded_failed(self):
         response = AutonomousResponseService()

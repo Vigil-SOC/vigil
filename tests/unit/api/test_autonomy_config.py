@@ -1,15 +1,16 @@
-"""GET /api/config/autonomy reads the effective daemon flags, not a stored tier."""
+"""GET /api/config/autonomy is Assist exactly when effective act_reversible is off."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from core.response.config import ResponseConfig
+from core.response.ceiling import CEILING_KEY
 from services.api.routers.config import (
     OrchestratorSettingsConfig,
     get_autonomy_config,
 )
-from services.daemon.config import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -19,51 +20,69 @@ class _Rows:
         self.row = row
 
     def read_system_config(self, key):
-        assert key == "approval.force_manual_approval"
+        assert key == CEILING_KEY
         return self.row
 
 
-def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
-    rows = _Rows({"enabled": True})
+def _settings(force: bool, auto: bool):
+    return SimpleNamespace(daemon_force_approval=force, daemon_auto_response=auto)
+
+
+def _ceiling(**flags):
+    base = {
+        "act_reversible": False,
+        "act_irreversible": False,
+        "stopped": False,
+        "four_eyes": False,
+    }
+    base.update(flags)
+    return base
+
+
+def test_chip_follows_effective_act_reversible(monkeypatch):
+    rows = _Rows(_ceiling(act_reversible=False))
     monkeypatch.setattr(
-        "core.response.approval_service.get_config_service", lambda: rows
-    )
-    base = DaemonConfig()
-    base.response = ResponseConfig(
-        auto_response_enabled=True, force_manual_approval=False
+        "core.storage.config_service.get_config_service", lambda **_k: rows
     )
     monkeypatch.setattr(
-        "services.api.routers.config.DaemonConfig.from_env", lambda: base
+        "services.api.routers.config.get_settings",
+        lambda: _settings(False, True),
     )
 
-    forced = get_autonomy_config()
-    assert forced.auto_response_enabled is True
-    assert forced.force_manual_approval is True
-    # the overlay returns a copy; the env value itself stays put
-    assert base.response.force_manual_approval is False
+    assist = get_autonomy_config()
+    assert assist.auto_response_enabled is True
+    assert assist.force_manual_approval is True
 
-    base.response = ResponseConfig(
-        auto_response_enabled=False, force_manual_approval=False
+    rows.row = _ceiling(act_reversible=True)
+    act = get_autonomy_config()
+    assert act.auto_response_enabled is True
+    assert act.force_manual_approval is False
+
+    rows.row = _ceiling(act_reversible=True, stopped=True)
+    stopped = get_autonomy_config()
+    assert stopped.force_manual_approval is True
+
+    monkeypatch.setattr(
+        "services.api.routers.config.get_settings",
+        lambda: _settings(True, True),
     )
-    rows.row = None
-    plain = get_autonomy_config()
-    assert plain.auto_response_enabled is False
-    assert plain.force_manual_approval is False
+    rows.row = _ceiling(act_reversible=True)
+    locked = get_autonomy_config()
+    assert locked.force_manual_approval is True
 
     assert "auto_response_enabled" not in OrchestratorSettingsConfig.model_fields
     assert "force_manual_approval" not in OrchestratorSettingsConfig.model_fields
+    assert "act_reversible" not in OrchestratorSettingsConfig.model_fields
 
 
-def test_disabled_db_row_does_not_force_manual(monkeypatch):
-    rows = _Rows({"enabled": False})
+def test_unreadable_ceiling_is_assist(monkeypatch):
+    class _Down:
+        def read_system_config(self, key):
+            raise RuntimeError("db down")
+
     monkeypatch.setattr(
-        "core.response.approval_service.get_config_service", lambda: rows
+        "core.storage.config_service.get_config_service", lambda **_k: _Down()
     )
-    base = DaemonConfig()
-    monkeypatch.setattr(
-        "services.api.routers.config.DaemonConfig.from_env", lambda: base
-    )
-
     result = get_autonomy_config()
     assert result.auto_response_enabled is True
-    assert result.force_manual_approval is False
+    assert result.force_manual_approval is True

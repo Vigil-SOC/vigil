@@ -34,9 +34,7 @@ def _config_service(rows):
 def test_fresh_checkout_lists_every_key_as_same(monkeypatch):
     _clear_intent_env(monkeypatch)
     svc = _config_service({})
-    with patch(
-        "core.storage.config_service.get_config_service", return_value=svc
-    ), patch("core.response.approval_service.get_config_service", return_value=svc):
+    with patch("core.storage.config_service.get_config_service", return_value=svc):
         report = get_intent_report()
     assert report.readable is True
     assert report.path.endswith("INTENT.md")
@@ -47,9 +45,7 @@ def test_fresh_checkout_lists_every_key_as_same(monkeypatch):
 def test_db_overlay_marks_investigate_enabled_from_the_console(monkeypatch):
     _clear_intent_env(monkeypatch)
     svc = _config_service({"orchestrator.settings": {"enabled": True}})
-    with patch(
-        "core.storage.config_service.get_config_service", return_value=svc
-    ), patch("core.response.approval_service.get_config_service", return_value=svc):
+    with patch("core.storage.config_service.get_config_service", return_value=svc):
         report = get_intent_report()
     row = next(item for item in report.rows if item.key == "investigate.enabled")
     # Applying declared false over effective true would turn investigations
@@ -67,9 +63,7 @@ def test_missing_manifest_is_readable_false(monkeypatch):
     monkeypatch.setenv("VIGIL_INTENT_PATH", "/nonexistent")
     get_settings.cache_clear()
     svc = _config_service({})
-    with patch(
-        "core.storage.config_service.get_config_service", return_value=svc
-    ), patch("core.response.approval_service.get_config_service", return_value=svc):
+    with patch("core.storage.config_service.get_config_service", return_value=svc):
         report = get_intent_report()
     assert report.readable is False
     assert report.rows == []
