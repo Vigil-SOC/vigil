@@ -10,6 +10,7 @@ earlier query ran empty.
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 from unittest.mock import patch
@@ -169,7 +170,8 @@ def _timed(n: int, when: datetime) -> Dict[str, Any]:
 
 class _WindowSplunk:
     """Honours an absolute epoch ``earliest_time``, ``sort 0 _time`` and
-    ``head N`` the way Splunk does, over a fixed set of events."""
+    ``head N`` the way Splunk does, over a fixed set of events. Like a Splunk
+    event search, it selects ``earliest_time`` at whole seconds (#2909)."""
 
     def __init__(self, events: List[Dict[str, Any]]):
         self.events = events
@@ -178,7 +180,7 @@ class _WindowSplunk:
     def search(self, *, query: str, earliest_time: str, max_count: int, **kw):
         self.earliest.append(earliest_time)
         assert "sort 0 _time" in query
-        floor = float(earliest_time)
+        floor = math.floor(float(earliest_time))
         hits = [
             e
             for e in self.events
@@ -226,16 +228,38 @@ def test_events_in_one_minute_still_progress_the_cursor():
     assert parse_cursor_since(cursor) > T0 + timedelta(seconds=7)
 
 
-def test_events_at_one_instant_step_the_cursor_forward(caplog):
-    adapter, _ = _window_adapter([_timed(i, T0) for i in range(1, 6)])
+def test_a_second_denser_than_max_items_is_left_on_the_next_fetch(caplog):
+    """Splunk filters earliest_time at whole seconds: a 1 ms step would re-read
+    the same page every tick until the second is crossed (#2909)."""
+    stuck = T0.replace(microsecond=0)
+    events = [_timed(i, stuck) for i in range(1, 6)]
+    events += [_timed(i, stuck + timedelta(seconds=1)) for i in (6, 7)]
+    adapter, svc = _window_adapter(events)
+    # Mid-second, as the lab cursor was.
+    start = stuck + timedelta(milliseconds=933)
 
     with caplog.at_level("WARNING"):
-        res = asyncio.run(
-            adapter.fetch(cursor={"last_poll_at": T0.isoformat()}, max_items=3)
+        first = asyncio.run(
+            adapter.fetch(cursor={"last_poll_at": start.isoformat()}, max_items=3)
         )
+    assert [f["external_id"] for f in first.findings] == ["e1", "e2", "e3"]
+    assert parse_cursor_since(first.cursor) == start + timedelta(seconds=1)
+    assert "beyond this batch are skipped" in caplog.text
 
-    assert parse_cursor_since(res.cursor) == T0 + timedelta(milliseconds=1)
-    assert "not past the tick start" in caplog.text
+    second = asyncio.run(adapter.fetch(cursor=first.cursor, max_items=3))
+    assert [f["external_id"] for f in second.findings] == ["e6", "e7"]
+
+
+def test_the_one_second_step_is_capped_at_now(monkeypatch):
+    stuck = T0.replace(microsecond=0)
+    now = stuck + timedelta(milliseconds=400)
+    monkeypatch.setattr("core.integrations.splunk.adapter.utcnow", lambda: now)
+    adapter, _ = _window_adapter([_timed(i, stuck) for i in range(1, 6)])
+
+    res = asyncio.run(
+        adapter.fetch(cursor={"last_poll_at": stuck.isoformat()}, max_items=3)
+    )
+    assert parse_cursor_since(res.cursor) == now
 
 
 def test_full_batch_with_unreadable_times_warns_and_moves_to_now(caplog):
