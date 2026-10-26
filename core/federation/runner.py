@@ -24,12 +24,12 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from core.config import DEFAULT_REDIS_URL, get_settings
 from core.federation import registry, store
 from core.federation.contract import FederationAdapter
 from core.federation.seed import seed_federation_sources
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
+from core.redis_client import open_async_redis, open_sync_redis, redact_logged_text
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -308,10 +308,7 @@ class FederationRunner:
     async def _consume_poll_now(self, source_id: str) -> bool:
         """Return True if the user clicked Poll Now since the last tick."""
         try:
-            import redis.asyncio as aioredis  # type: ignore
-
-            url = get_settings().redis_url or DEFAULT_REDIS_URL
-            r = aioredis.from_url(url, decode_responses=True)
+            r = open_async_redis()
             key = f"vigil:federation:trigger:{source_id}"
             try:
                 # GETDEL is atomic — flag is consumed on read.
@@ -331,11 +328,8 @@ def request_poll_now(source_id: str) -> bool:
     need its own event loop dance.
     """
     try:
-        import redis  # type: ignore
-
-        url = get_settings().redis_url or DEFAULT_REDIS_URL
         # The context manager closes the client's pool on every path.
-        with redis.from_url(url, decode_responses=True) as client:
+        with open_sync_redis() as client:
             client.set(
                 f"vigil:federation:trigger:{source_id}",
                 str(int(time.time())),
@@ -343,5 +337,7 @@ def request_poll_now(source_id: str) -> bool:
             )
         return True
     except Exception as e:
-        logger.warning("request_poll_now(%s) failed: %s", source_id, e)
+        logger.warning(
+            "request_poll_now(%s) failed: %s", source_id, redact_logged_text(str(e))
+        )
         return False

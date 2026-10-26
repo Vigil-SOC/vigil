@@ -18,6 +18,7 @@ from core.integrations._base.config_gap import (
     report_config_complete,
     report_config_gap,
 )
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.time import utcnow
 
@@ -187,7 +188,12 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         in title.
         """
         try:
-            finding_id = f"defender-{alert.get('id', uuid.uuid4().hex[:12])}"
+            # Alert ids run to 42 characters; "defender-" + id overflows
+            # findings.finding_id String(50). external_id stays the raw id:
+            # federation used to strip the prefix, and the portal link and
+            # the (data_source, external_id) dedup key both use that form.
+            alert_id = str(alert.get("id") or uuid.uuid4().hex[:12])
+            finding_id = fit_id("defender-", alert_id, FINDING_ID_MAX)
 
             src_ips: List[str] = []
             domains: List[str] = []
@@ -247,6 +253,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
 
             return {
                 "finding_id": finding_id,
+                "external_id": alert_id,
                 "data_source": "microsoft_defender",
                 "timestamp": alert.get("alertCreationTime", utcnow().isoformat()),
                 "severity": self.normalize_severity(alert.get("severity")),

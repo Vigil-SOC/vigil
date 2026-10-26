@@ -22,8 +22,7 @@ from core.audit import trail
 from core.auth.principals import SYSTEM_PRINCIPAL_ID, agent_principal_id
 from core.auth.tool_principal import Claims
 from core.llm.chat_layers import _READONLY_LEADS
-from core.response.approval_service import stored_force_manual_approval
-from core.response.config import ResponseConfig
+from core.response.ceiling import effective_act_reversible, read_ceiling
 
 logger = logging.getLogger(__name__)
 
@@ -95,10 +94,12 @@ def phase_actors(phases: Any) -> dict[str, str]:
 
 
 def autonomy_label() -> str:
-    """Assist when approval is forced or auto-response is off, otherwise Act."""
-    config = ResponseConfig.from_settings()
-    forced = config.force_manual_approval or stored_force_manual_approval()
-    return "Assist" if forced or not config.auto_response_enabled else "Act"
+    """Assist when effective act_reversible is off, otherwise Act."""
+    try:
+        stored = read_ceiling()
+    except Exception:  # noqa: BLE001
+        return "Assist"
+    return "Act" if effective_act_reversible(stored) else "Assist"
 
 
 def fingerprint(spec: Any) -> str:

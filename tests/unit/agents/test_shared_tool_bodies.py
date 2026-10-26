@@ -184,16 +184,23 @@ async def test_the_model_cannot_name_the_approver():
 def _approval_spy(monkeypatch):
     called = []
 
+    class _Action:
+        action_id = "act-1"
+        status = "pending"
+
     class _Approvals:
         def approve_action(self, action_id, approved_by, approved_by_principal_id=None):
             called.append((action_id, approved_by))
+
+        def get_action(self, action_id):
+            return _Action()
 
     monkeypatch.setattr(tool_registry, "_approvals", lambda: _Approvals())
     return called
 
 
 @pytest.mark.asyncio
-async def test_approve_action_refuses_when_no_principal_is_bound(monkeypatch):
+async def test_approve_action_leaves_a_row_pending_with_no_principal(monkeypatch):
     called = _approval_spy(monkeypatch)
 
     result, handled = await execute_backend_tool(
@@ -201,22 +208,26 @@ async def test_approve_action_refuses_when_no_principal_is_bound(monkeypatch):
     )
 
     assert handled is True
-    assert result == {"error": "Action cannot be approved: no principal is bound"}
+    assert result["status"] == "pending"
+    assert "Approvals" in result["message"]
     assert called == []
 
 
 @pytest.mark.asyncio
-async def test_approve_action_names_the_bound_principal(monkeypatch):
+async def test_approve_action_does_not_approve_for_a_bound_principal(monkeypatch):
     called = _approval_spy(monkeypatch)
     monkeypatch.setattr(permissions, "username_has_permission", lambda *_: True)
 
     with acting_as("analyst"):
-        _result, handled = await execute_backend_tool(
+        result, handled = await execute_backend_tool(
             "approve_action", {"action_id": "act-1"}
         )
 
     assert handled is True
-    assert called == [("act-1", "analyst")]
+    assert result["action_id"] == "act-1"
+    assert result["status"] == "pending"
+    assert "Approvals" in result["message"]
+    assert called == []
 
 
 @pytest.mark.asyncio

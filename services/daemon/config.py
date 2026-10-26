@@ -71,6 +71,19 @@ class MetricsConfig:
 
 
 @dataclass
+class CeilingConfig:
+    """Stored autonomy ceiling as the intent report reads it.
+
+    Effective act flags are forced off by the environment overlay. ``stopped``
+    is operational state and is not a declared knob.
+    """
+
+    act_reversible: bool = False
+    act_irreversible: bool = False
+    four_eyes: bool = False
+
+
+@dataclass
 class OrchestratorConfig:
     enabled: bool = False
     loop_interval: int = 60
@@ -95,6 +108,7 @@ class DaemonConfig:
     polling: PollingConfig = field(default_factory=PollingConfig)
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     response: ResponseConfig = field(default_factory=ResponseConfig)
+    ceiling: CeilingConfig = field(default_factory=CeilingConfig)
     escalation: EscalationConfig = field(default_factory=EscalationConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)

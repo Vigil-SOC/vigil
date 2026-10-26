@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.federation import runner as runner_mod
+from core import redis_client
 from core.federation.runner import FederationRunner, request_poll_now
 
 pytestmark = pytest.mark.unit
@@ -23,7 +23,9 @@ URL = "redis://fake:6379/0"
 @pytest.fixture(autouse=True)
 def _settings(monkeypatch):
     monkeypatch.setattr(
-        runner_mod, "get_settings", lambda: SimpleNamespace(redis_url=URL)
+        redis_client,
+        "get_settings",
+        lambda: SimpleNamespace(redis_url=URL, redis_password=None),
     )
 
 

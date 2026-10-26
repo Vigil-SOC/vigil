@@ -26,13 +26,20 @@ async def test_kill_persists_disabled_before_failing_in_flight_records():
             "_persist_orchestrator_enabled",
             side_effect=lambda *a: order.append(("persist", a)),
         ),
+        patch.object(
+            router,
+            "stop_ceiling",
+            side_effect=lambda user_id: order.append(("stop", user_id)),
+        ),
         patch.object(router, "_get_orchestrator", return_value=orch),
     ):
         result = await router.kill_orchestrator(current_user=USER)
 
     assert order[0] == ("persist", (False, "u-1", "Orchestrator killed via API"))
-    assert order[1] == "kill"
+    assert order[1] == ("stop", "u-1")
+    assert order[2] == "kill"
     assert result["enabled"] is False
+    assert result["stopped"] is True
 
 
 @pytest.mark.asyncio
@@ -45,6 +52,7 @@ async def test_kill_that_cannot_reach_the_daemon_is_an_error():
             "_persist_orchestrator_enabled",
             side_effect=RuntimeError("db at 10.0.0.5 down"),
         ),
+        patch.object(router, "stop_ceiling") as stop,
         patch.object(router, "_get_orchestrator", return_value=orch),
     ):
         with pytest.raises(HTTPException) as err:
@@ -53,3 +61,4 @@ async def test_kill_that_cannot_reach_the_daemon_is_an_error():
     assert err.value.status_code == 500
     assert "10.0.0.5" not in err.value.detail
     orch.kill.assert_not_awaited()
+    stop.assert_not_called()
