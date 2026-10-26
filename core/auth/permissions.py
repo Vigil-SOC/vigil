@@ -8,7 +8,10 @@
 
 from __future__ import annotations
 
+import functools
+import importlib.util
 import logging
+from pathlib import Path
 from typing import Callable, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -195,6 +198,67 @@ CATALOG = {
         },
     },
 }
+
+# Every key a role may hold: Admin holds them all.
+KNOWN_PERMISSIONS = frozenset(CATALOG["permissions"]) | frozenset(
+    CATALOG["builtins"]["role-admin"]
+)
+# Platform-equivalent: installing integration code runs code as Vigil. In no preset.
+PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
+
+
+def _without(base: dict, *keys: str) -> dict:
+    return {k: v for k, v in base.items() if k not in keys}
+
+
+# Decision 4 of #2851. "Start from…" choices: copying one writes an ordinary
+# custom role, so a later change here never reaches a copy.
+PRESETS = {
+    "soc-lead": {
+        "name": "SOC Lead",
+        "description": "Manager without platform powers.",
+        "permissions": _without(
+            CATALOG["builtins"]["role-manager"],
+            "platform.write",
+            "settings.write",
+            "integrations.install",
+        ),
+    },
+    "detection-engineer": {
+        "name": "Detection Engineer",
+        "description": "Analyst plus detections and automation.",
+        "permissions": {
+            **CATALOG["builtins"]["role-analyst"],
+            "detections.write": True,
+            "automation.write": True,
+        },
+    },
+    "auditor": {
+        "name": "Auditor",
+        "description": "Reads everything, including the audit trail. No writes.",
+        "permissions": {
+            k: True
+            for k in sorted(KNOWN_PERMISSIONS)
+            if k.endswith(".read") or k == "loglm.view"
+        },
+    },
+}
+
+
+@functools.cache
+def _catalog_diff() -> Callable[[dict, dict], dict]:
+    # The revision's own key diff; ``versions`` is not a package.
+    path = Path(__file__).parents[1] / "upgrade/versions/0008_permission_catalog.py"
+    spec = importlib.util.spec_from_file_location("permission_catalog_0008", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._diff
+
+
+def builtin_diff(role_id: str, permissions: dict) -> dict:
+    """How a built-in row differs from the catalog, per key. Empty when it doesn't."""
+    return _catalog_diff()(dict(permissions or {}), CATALOG["builtins"][role_id])
+
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 

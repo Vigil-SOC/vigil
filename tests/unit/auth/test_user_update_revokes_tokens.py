@@ -52,7 +52,9 @@ def _allow():
 
 
 def _apply(user, **req):
-    session = _session(user, SimpleNamespace(role_id=req.get("role_id")))
+    session = _session(
+        user, SimpleNamespace(role_id=req.get("role_id"), permissions={})
+    )
     return users._apply_user_update(
         session, _user(), user.user_id, users.UpdateUserRequest(**req)
     )
