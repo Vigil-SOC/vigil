@@ -54,7 +54,7 @@ class WorkflowAIGenerator:
 
         from core.llm.harness.claude import ClaudeService
 
-        claude = ClaudeService()
+        claude = await ClaudeService.acreate()
         if not claude.has_api_key():
             return {
                 "success": False,
@@ -67,7 +67,7 @@ class WorkflowAIGenerator:
         user_prompt = self._build_user_prompt(description)
 
         try:
-            raw = claude.chat(
+            raw = await claude.achat(
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,

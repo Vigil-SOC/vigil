@@ -114,7 +114,7 @@ class CustomIntegrationService:
             from core.llm.harness.claude import ClaudeService
 
             # Initialize Claude
-            claude = ClaudeService()
+            claude = await ClaudeService.acreate()
 
             # Check if Claude is configured
             if not claude.api_key or not claude.client:
@@ -136,7 +136,7 @@ class CustomIntegrationService:
                     conversation_history[:-1] if len(conversation_history) > 1 else None
                 )
 
-                response = claude.chat(
+                response = await claude.achat(
                     message=last_message,
                     context=context,
                     system_prompt=system_prompt,
@@ -148,7 +148,7 @@ class CustomIntegrationService:
                     documentation, integration_name, category
                 )
 
-                response = claude.chat(
+                response = await claude.achat(
                     message=prompt,
                     system_prompt=system_prompt,
                     model=DEFAULT_MODEL,

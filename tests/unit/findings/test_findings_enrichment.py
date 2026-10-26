@@ -89,7 +89,7 @@ def stub_provider(monkeypatch):
         "prompts": [],
     }
 
-    def fake_resolve(component):
+    async def fake_resolve(component):
         state["component"] = component
         return state["provider"], state["model_id"], None
 
@@ -479,6 +479,9 @@ class _FakeClaudeService:
         if isinstance(result, Exception):
             raise result
         return result
+
+    async def achat(self, **kwargs):
+        return self.chat(**kwargs)
 
 
 async def test_anthropic_dispatch_uses_claude_service_with_the_larger_cap():
