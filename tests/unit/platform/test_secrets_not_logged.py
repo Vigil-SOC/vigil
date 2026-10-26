@@ -155,3 +155,54 @@ class TestRedisUrlLogging:
         assert asyncio.run(dedup._get_redis()) is not None
         assert "redis-master:6379" in caplog.text
         assert PASSWORD not in caplog.text
+
+
+CANARY = "CANARY-r3dis/p@ss#1"
+DEAD_REDIS = "redis://127.0.0.1:1/0"  # refuses, so every failure branch runs
+
+
+class TestRedisPasswordCanary:
+    """REDIS_PASSWORD reaches every connecting path and none of them logs it."""
+
+    @pytest.fixture(autouse=True)
+    def _canary(self, monkeypatch, caplog):
+        from core.config import get_settings
+
+        monkeypatch.setenv("REDIS_URL", DEAD_REDIS)
+        monkeypatch.setenv("REDIS_PASSWORD", CANARY)
+        get_settings.cache_clear()
+        caplog.set_level(logging.DEBUG)
+        yield
+        from urllib.parse import quote
+
+        for leaked in (CANARY, quote(CANARY, safe="")):
+            assert leaked not in caplog.text
+
+    def test_dedup_connect(self, caplog):
+        dedup = RedisDedupSet("canary")
+        assert asyncio.run(dedup._get_redis()) is None
+        assert "in-memory fallback" in caplog.text
+
+    def test_gateway(self):
+        from arq import create_pool
+
+        from core.llm.gateway.gateway import redis_settings
+
+        settings = redis_settings()
+        assert settings.password == CANARY
+        settings.conn_retries = 0
+        with pytest.raises(Exception):
+            asyncio.run(create_pool(settings))
+
+    def test_rate_limiter_failure_branch(self, caplog):
+        from services.api.middleware import rate_limit
+
+        rate_limit._build_limiter()
+        assert "falling back to in-memory" in caplog.text
+
+    def test_federation_runner(self, caplog):
+        from core.federation.runner import FederationRunner, request_poll_now
+
+        assert request_poll_now("src-1") is False
+        assert asyncio.run(FederationRunner(None)._consume_poll_now("src-1")) is False
+        assert "request_poll_now(src-1) failed" in caplog.text

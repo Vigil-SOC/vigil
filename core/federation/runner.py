@@ -24,12 +24,12 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from core.config import DEFAULT_REDIS_URL, get_settings
 from core.federation import registry, store
 from core.federation.contract import FederationAdapter
 from core.federation.seed import seed_federation_sources
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
+from core.redis_client import effective_redis_url
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -310,8 +310,7 @@ class FederationRunner:
         try:
             import redis.asyncio as aioredis  # type: ignore
 
-            url = get_settings().redis_url or DEFAULT_REDIS_URL
-            r = aioredis.from_url(url, decode_responses=True)
+            r = aioredis.from_url(effective_redis_url(), decode_responses=True)
             key = f"vigil:federation:trigger:{source_id}"
             try:
                 # GETDEL is atomic — flag is consumed on read.
@@ -333,9 +332,8 @@ def request_poll_now(source_id: str) -> bool:
     try:
         import redis  # type: ignore
 
-        url = get_settings().redis_url or DEFAULT_REDIS_URL
         # The context manager closes the client's pool on every path.
-        with redis.from_url(url, decode_responses=True) as client:
+        with redis.from_url(effective_redis_url(), decode_responses=True) as client:
             client.set(
                 f"vigil:federation:trigger:{source_id}",
                 str(int(time.time())),

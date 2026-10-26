@@ -12,7 +12,7 @@ from weakref import WeakKeyDictionary
 
 from bullmq import Queue
 
-from core.config import get_settings
+from core.redis_client import effective_redis_url
 from core.telemetry import get_meter, inject_traceparent
 
 logger = logging.getLogger(__name__)
@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 RUN_QUEUE = "agent-runs"
 
 JOB_SCHEMA_VERSION = 1
-
-DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 RUN_KINDS = ("hunt", "root_cause", "adjudicate", "investigate", "compose", "chat")
 
@@ -41,10 +39,6 @@ RUN_KINDS = ("hunt", "root_cause", "adjudicate", "investigate", "compose", "chat
 # The consumer reads these off the job, so the Node worker honours what is set here.
 RUN_ATTEMPTS = 3
 RUN_BACKOFF = {"type": "exponential", "delay": 5000}
-
-
-def _redis_url() -> str:
-    return get_settings().redis_url or DEFAULT_REDIS_URL
 
 
 # The reason="start" arm of the RunJob union in the agent layer's job contract.
@@ -122,7 +116,7 @@ def _run_queue() -> Queue:
     loop = asyncio.get_running_loop()
     queue = _queues.get(loop)
     if queue is None:
-        queue = Queue(RUN_QUEUE, {"connection": _redis_url()})
+        queue = Queue(RUN_QUEUE, {"connection": effective_redis_url()})
         _queues[loop] = queue
     return queue
 

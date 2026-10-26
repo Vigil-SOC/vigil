@@ -10,17 +10,18 @@ containing ``@`` or ``/`` authenticated with its escapes still in it.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
+from core.config import get_settings
 from core.llm.gateway import gateway
 
 pytestmark = pytest.mark.unit
 
 
 def settings_for(monkeypatch, url: str):
-    monkeypatch.setattr(gateway, "get_settings", lambda: SimpleNamespace(redis_url=url))
+    monkeypatch.setenv("REDIS_URL", url)
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    get_settings.cache_clear()
     return gateway.redis_settings()
 
 
@@ -69,3 +70,10 @@ def test_the_slow_start_retries_are_kept(monkeypatch):
 def test_the_database_comes_from_the_path_or_the_query(monkeypatch):
     assert settings_for(monkeypatch, "redis://localhost:6379/4").database == 4
     assert settings_for(monkeypatch, "redis://localhost:6379?db=5").database == 5
+
+
+def test_redis_password_is_decoded_back_for_arq(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://:old@localhost:6379/0")
+    monkeypatch.setenv("REDIS_PASSWORD", "p@ss/w:rd#1")
+    get_settings.cache_clear()
+    assert gateway.redis_settings().password == "p@ss/w:rd#1"

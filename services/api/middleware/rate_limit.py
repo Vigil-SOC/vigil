@@ -5,7 +5,7 @@ import logging
 
 from slowapi import Limiter
 
-from core.config import get_settings
+from core.redis_client import effective_redis_url
 from services.api.middleware.client_address import client_host
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,8 @@ def _in_memory() -> Limiter:
 # slowapi connects lazily, so construction succeeding proves nothing: probe the
 # storage here or the first rate-limited request 500s instead of degrading.
 def _build_limiter() -> Limiter:
-    url = get_settings().redis_url
+    # No REDIS_URL means in-memory, even with REDIS_PASSWORD set.
+    url = effective_redis_url(default=None)
     if not url:
         return _in_memory()
     try:

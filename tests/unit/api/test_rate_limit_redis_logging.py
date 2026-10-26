@@ -14,12 +14,8 @@ class _FakeLimiter:
 
 
 def _build(monkeypatch, url, healthy):
-    monkeypatch.setattr(
-        rate_limit, "get_settings", lambda: SimpleNamespace(redis_url=url)
-    )
-    monkeypatch.setattr(
-        rate_limit, "Limiter", lambda **kw: _FakeLimiter(healthy, **kw)
-    )
+    monkeypatch.setenv("REDIS_URL", url)
+    monkeypatch.setattr(rate_limit, "Limiter", lambda **kw: _FakeLimiter(healthy, **kw))
     return rate_limit._build_limiter()
 
 

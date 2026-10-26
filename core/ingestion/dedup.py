@@ -24,8 +24,8 @@ import logging
 import time
 from typing import Iterable, Optional
 
-from core.config import DEFAULT_REDIS_URL, get_settings
 from core.platform.log_redaction import redact_url
+from core.redis_client import effective_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class RedisDedupSet:
     ):
         self.namespace = namespace
         self.key = f"vigil:dedup:{namespace}"
-        self.redis_url = redis_url or get_settings().redis_url or DEFAULT_REDIS_URL
+        self._url = effective_redis_url(redis_url)
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
 
@@ -71,13 +71,13 @@ class RedisDedupSet:
         try:
             import redis.asyncio as aioredis  # type: ignore
 
-            self._redis = aioredis.from_url(self.redis_url, decode_responses=True)
+            self._redis = aioredis.from_url(self._url, decode_responses=True)
             # Probe connection so we fail fast here rather than per-call
             await self._redis.ping()
             logger.info(
                 "RedisDedupSet[%s] connected to %s",
                 self.namespace,
-                redact_url(self.redis_url),
+                redact_url(self._url),
             )
             if self._in_fallback:
                 self._in_fallback = False

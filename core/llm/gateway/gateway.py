@@ -15,8 +15,8 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from arq.jobs import DeserializationError
 
-from core.config import DEFAULT_REDIS_URL, get_settings
 from core.llm.defaults import DEFAULT_MODEL
+from core.redis_client import effective_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,12 @@ QUEUE_NAME = "arq:llm"
 
 
 def redis_settings() -> RedisSettings:
-    """ARQ connection settings derived from ``redis_url``.
+    """ARQ connection settings derived from the effective Redis URL.
 
     Public: the llm-worker builds its WorkerSettings from the same values, so
     the queue it drains is the one the gateway enqueues onto.
     """
-    url = get_settings().redis_url or DEFAULT_REDIS_URL
+    url = effective_redis_url()
     # ARQ parses the DSN itself, and keeps what reading host/port/db/password off
     # the URL by hand drops: the scheme, so rediss:// sets ssl=True, and the
     # username. Dropping the scheme dials a managed Redis (Azure Cache,

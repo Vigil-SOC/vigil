@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, List, Literal, Optional
 
-from pydantic import ValidationError, field_validator
+from pydantic import SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -183,6 +183,8 @@ class Settings(BaseSettings):
     # Redis / queue. None means "no Redis configured" — the rate limiter falls back
     # to in-memory on None, so a default here would silently change its behavior.
     redis_url: Optional[str] = None
+    # Overrides any password in redis_url; read only through core/redis_client.py.
+    redis_password: Optional[SecretStr] = None
     llm_max_concurrent: int = 5
 
     # HTTP security
