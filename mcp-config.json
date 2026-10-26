@@ -29,9 +29,9 @@
 
     "loglm": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.1.49", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN}"],
+      "args": ["-y", "mcp-remote@0.15.2", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN}"],
       "env": {
-        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x.",
+        "_security_note": "mcp-remote pinned to exactly 0.15.2. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
         "LOGLM_MCP_URL": "${LOGLM_MCP_URL}"
       }
     },
@@ -59,19 +59,19 @@
 
     "azure-sentinel": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.1.49", "https://sentinelmcp.microsoft.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@0.15.2", "https://sentinelmcp.microsoft.com/v1/mcp"],
       "env": {
         "_setup_note": "Microsoft Sentinel MCP (GA Nov 2025). Requires: (1) Onboarding to Microsoft Sentinel data lake, (2) Microsoft Entra OAuth. See: https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-get-started",
-        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x."
+        "_security_note": "mcp-remote pinned to exactly 0.15.2. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it."
       }
     },
 
     "splunk": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.1.49", "${SPLUNK_MCP_URL}"],
+      "args": ["-y", "mcp-remote@0.15.2", "${SPLUNK_MCP_URL}"],
       "env": {
         "_setup_note": "Splunk Official MCP Server. Deploy via Azure Marketplace (Splunk-hosted) or self-managed. See: https://www.splunk.com/en_us/blog/artificial-intelligence/unlocking-ai-driven-operations-with-splunk-mcp-server-on-azure-marketplace.html",
-        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x.",
+        "_security_note": "mcp-remote pinned to exactly 0.15.2. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
         "SPLUNK_MCP_URL": "${SPLUNK_MCP_URL}"
       }
     },
@@ -124,10 +124,10 @@
 
     "jira": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.1.49", "https://mcp.atlassian.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@0.15.2", "https://mcp.atlassian.com/v1/mcp"],
       "env": {
         "_setup_note": "Atlassian Rovo MCP Server (official). Covers Jira + Confluence + Compass. Uses OAuth 2.1 via browser flow. See: https://github.com/atlassian/atlassian-mcp-server",
-        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x."
+        "_security_note": "mcp-remote pinned to exactly 0.15.2. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it."
       }
     },
 
@@ -160,7 +160,7 @@
     },
     "firecrawl": {
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp@3.30.3"],
+      "args": ["-y", "firecrawl-mcp@3.34.1"],
       "env": {
         "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }

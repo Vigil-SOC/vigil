@@ -35,10 +35,8 @@ from core.intent import (
     intent_file,
     read_intent,
 )
-from core.response.approval_service import (
-    Reversibility,
-    stored_force_manual_approval,
-)
+from core.response.approval_service import Reversibility
+from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -47,26 +45,37 @@ from core.response.config import (
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction, Finding
 from core.time import utcnow
-from services.daemon.config import DaemonConfig
+from services.daemon.config import CeilingConfig, DaemonConfig
 
 logger = logging.getLogger(__name__)
 
-FORCE_APPROVAL_PATH = "response.force_manual_approval"
 
+def _overlay_ceiling(config: DaemonConfig) -> DaemonConfig:
+    """Effective act flags from the ceiling row, forced off by the environment.
 
-def _overlay_force_manual_approval(
-    effective: Dict[str, object], sources: Dict[str, str]
-) -> None:
-    """The one DB overlay ``from_env()`` does not apply.
-
-    ``ApprovalService`` reads ``approval.force_manual_approval`` itself and the
-    env flag forces it on, so the effective value is env OR db.
+    A missing row is the seeded off state. A failed read stays off and does
+    not report a grant. The file still does not enforce.
     """
-    if not stored_force_manual_approval():
-        return
-    if not effective["respond.force_manual_approval"]:
-        effective["respond.force_manual_approval"] = True
-        sources[FORCE_APPROVAL_PATH] = "db"
+    sources = dict(config.sources)
+    loaded = try_read_stored_ceiling()
+    if loaded is None:
+        return dataclasses.replace(config, sources=sources)
+    stored, found = loaded
+    locked = environment_locks_act()
+    origin = "db" if found else "default"
+    sources["ceiling.act_reversible"] = (
+        "env" if locked and stored.act_reversible else origin
+    )
+    sources["ceiling.act_irreversible"] = (
+        "env" if locked and stored.act_irreversible else origin
+    )
+    sources["ceiling.four_eyes"] = origin
+    ceiling = CeilingConfig(
+        act_reversible=False if locked else stored.act_reversible,
+        act_irreversible=False if locked else stored.act_irreversible,
+        four_eyes=stored.four_eyes,
+    )
+    return dataclasses.replace(config, ceiling=ceiling, sources=sources)
 
 
 def intent_report(
@@ -82,11 +91,13 @@ def intent_report(
     declared = read_intent(path)
     if declared is None:
         return None
-    config = config or DaemonConfig.from_env()
-    effective = effective_values(config)
-    sources = dict(config.sources)
-    _overlay_force_manual_approval(effective, sources)
-    return diff_intent(declared, effective, sources, include_same=include_same)
+    config = _overlay_ceiling(config or DaemonConfig.from_env())
+    return diff_intent(
+        declared,
+        effective_values(config),
+        config.sources,
+        include_same=include_same,
+    )
 
 
 def report_intent(config: Optional[DaemonConfig] = None) -> None:
@@ -109,21 +120,11 @@ def report_intent(config: Optional[DaemonConfig] = None) -> None:
 
 
 def effective_daemon_config(config: DaemonConfig) -> DaemonConfig:
-    """Effective config with the live force-manual-approval OR applied.
+    """Effective config with the ceiling overlay applied.
 
-    Env already lives on ``config``. The DB row is the other input, read by
-    :func:`_overlay_force_manual_approval` rather than a second query.
+    Env already lives on ``config``. The ceiling row is the other input.
     """
-    values = effective_values(config)
-    _overlay_force_manual_approval(values, {})
-    if not values["respond.force_manual_approval"]:
-        return config
-    if config.response.force_manual_approval:
-        return config
-    return dataclasses.replace(
-        config,
-        response=dataclasses.replace(config.response, force_manual_approval=True),
-    )
+    return _overlay_ceiling(config)
 
 
 def declared_daemon_config(

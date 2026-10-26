@@ -29,15 +29,7 @@ def no_db():
         yield MagicMock()
 
     manager.session_scope = _scope
-    config_store = Mock()
-    config_store.read_system_config.return_value = {"enabled": False}
-    with (
-        patch("core.response.approval_service.get_db_manager", return_value=manager),
-        patch(
-            "core.response.approval_service.get_config_service",
-            return_value=config_store,
-        ),
-    ):
+    with patch("core.response.approval_service.get_db_manager", return_value=manager):
         yield
 
 
@@ -57,21 +49,20 @@ def _create(svc: ApprovalService, confidence: float, **kwargs):
 
 @pytest.mark.usefixtures("no_db")
 class TestConfidenceThresholds:
-    """The auto-approve line is ResponseConfig.confidence_threshold, nothing else (#916)."""
+    """A confidence never marks a row approved (#2918)."""
 
-    def test_default_threshold_auto_approves_at_ninety(self):
-        action = _create(ApprovalService(config=ResponseConfig()), confidence=0.90)
-        assert action.status == ActionStatus.APPROVED.value
-        assert action.requires_approval is False
+    def test_a_confidence_of_0_99_stays_pending(self):
+        action = _create(ApprovalService(config=ResponseConfig()), confidence=0.99)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.requires_approval is True
+        assert action.reason.endswith("reversibility=reversible")
 
     def test_default_threshold_holds_below_ninety(self):
-        # The deleted test-only should_auto_approve had a hardcoded >= 0.85
-        # branch that passed 0.87; the gate itself never did, and still does not.
         action = _create(ApprovalService(config=ResponseConfig()), confidence=0.87)
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
 
-    def test_raised_threshold_makes_ninety_wait_for_approval(self):
+    def test_raised_threshold_does_not_release_the_row(self):
         svc = ApprovalService(config=ResponseConfig(confidence_threshold=0.95))
         action = _create(svc, confidence=0.90, reversibility=Reversibility.REVERSIBLE)
         assert action.status == ActionStatus.PENDING.value
@@ -102,65 +93,27 @@ class TestConfidenceThresholds:
         )
         assert action.status == ActionStatus.PENDING.value
 
-    def test_stored_flag_change_reaches_a_running_service(self):
-        """Settings writes Assist/Act while the service is up; the next action reads it."""
-        stored = {"enabled": False}
+    def test_an_act_flag_does_not_approve(self):
+        """The ceiling can say act. A confidence of 0.99 still waits (#2931)."""
+        stored = {
+            "act_reversible": True,
+            "act_irreversible": True,
+            "stopped": False,
+            "four_eyes": False,
+        }
         store = Mock()
-        store.read_system_config.side_effect = lambda key: stored
+        store.read_system_config.return_value = stored
         with patch(
-            "core.response.approval_service.get_config_service", return_value=store
+            "core.storage.config_service.get_config_service", return_value=store
         ):
-            svc = ApprovalService(config=ResponseConfig())
-            assert _create(svc, confidence=0.99).status == ActionStatus.APPROVED.value
-            stored["enabled"] = True
-            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
-
-    def test_a_failed_read_requires_approval_and_writes_nothing(self):
-        reads = iter(
-            [{"enabled": True}, RuntimeError("pool timeout"), {"enabled": True}]
-        )
-
-        def read(key):
-            value = next(reads)
-            if isinstance(value, Exception):
-                raise value
-            return value
-
-        store = Mock()
-        store.read_system_config.side_effect = read
-        with patch(
-            "core.response.approval_service.get_config_service", return_value=store
-        ):
-            svc = ApprovalService(config=ResponseConfig())
-            for _ in range(3):
-                assert (
-                    _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
-                )
-        store.set_system_config.assert_not_called()
-
-    def test_a_failed_read_does_not_fall_back_to_act(self):
-        """The stored flag was Act on the previous read; an error still holds the action."""
-        reads = iter([{"enabled": False}, RuntimeError("db down")])
-
-        def read(key):
-            value = next(reads)
-            if isinstance(value, Exception):
-                raise value
-            return value
-
-        store = Mock()
-        store.read_system_config.side_effect = read
-        with patch(
-            "core.response.approval_service.get_config_service", return_value=store
-        ):
-            svc = ApprovalService(config=ResponseConfig())
-            assert _create(svc, confidence=0.99).status == ActionStatus.APPROVED.value
-            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+            action = _create(ApprovalService(config=ResponseConfig()), confidence=0.99)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.requires_approval is True
 
     def test_construction_never_reads_or_writes_the_flag(self):
         store = Mock()
         with patch(
-            "core.response.approval_service.get_config_service", return_value=store
+            "core.storage.config_service.get_config_service", return_value=store
         ):
             ApprovalService(config=ResponseConfig())
         store.assert_not_called()
@@ -170,11 +123,12 @@ class TestConfidenceThresholds:
         store = Mock()
         store.read_system_config.return_value = {"enabled": False}
         with patch(
-            "core.response.approval_service.get_config_service", return_value=store
+            "core.storage.config_service.get_config_service", return_value=store
         ):
             svc = ApprovalService(config=ResponseConfig())
             svc.set_force_manual_approval(True)
             assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+            assert svc.force_manual_approval is True
         store.set_system_config.assert_not_called()
 
 

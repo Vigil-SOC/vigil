@@ -1366,7 +1366,7 @@ def get_approval_action(action_id: str) -> str:
 
 @mcp.tool()
 def approve_action(action_id: str) -> str:
-    """Approve a pending action. The actor is the caller, not an argument."""
+    """Leave a pending action pending. Confirm it in Approvals."""
     return _call(tool_registry.approve_action, action_id=action_id)
 
 

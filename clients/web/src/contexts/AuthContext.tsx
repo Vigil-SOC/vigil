@@ -138,7 +138,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         error.response?.headers?.['x-mfa-required'] === 'true' ||
         error.response?.data?.detail === 'MFA code required';
       if (isMfaRequired) {
-        throw new Error('MFA_REQUIRED');
+        throw new Error('MFA_REQUIRED', { cause: error });
       }
       throw error;
     }

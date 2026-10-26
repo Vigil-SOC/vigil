@@ -6,7 +6,7 @@ session remembers ``add`` so a later ``list_actions`` sees the insert.
 
 import json
 from contextlib import contextmanager
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -39,15 +39,7 @@ def no_db():
         yield session
 
     manager.session_scope = _scope
-    config_store = Mock()
-    config_store.read_system_config.return_value = {"enabled": False}
-    with (
-        patch("core.response.approval_service.get_db_manager", return_value=manager),
-        patch(
-            "core.response.approval_service.get_config_service",
-            return_value=config_store,
-        ),
-    ):
+    with patch("core.response.approval_service.get_db_manager", return_value=manager):
         yield
 
 

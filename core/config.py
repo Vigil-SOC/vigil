@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, List, Literal, Optional
 
-from pydantic import ValidationError, field_validator
+from pydantic import SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -183,6 +183,9 @@ class Settings(BaseSettings):
     # Redis / queue. None means "no Redis configured" — the rate limiter falls back
     # to in-memory on None, so a default here would silently change its behavior.
     redis_url: Optional[str] = None
+    # Overrides any password in REDIS_URL. Empty is unset: a blank env var must
+    # not turn auth on. No default. SecretStr so repr does not spell the value.
+    redis_password: Optional[SecretStr] = None
     llm_max_concurrent: int = 5
 
     # HTTP security
@@ -382,6 +385,13 @@ class Settings(BaseSettings):
     def _split_csv(cls, v: Any) -> Any:
         if isinstance(v, str):
             return [p.strip() for p in v.split(",") if p.strip()]
+        return v
+
+    @field_validator("redis_password", mode="before")
+    @classmethod
+    def _blank_redis_password_is_unset(cls, v: Any) -> Any:
+        if v == "":
+            return None
         return v
 
     @field_validator(
