@@ -330,25 +330,27 @@ def _patch_resolution(monkeypatch, *, resolved, provider_spec):
     return registry
 
 
-def test_resolve_raises_no_provider_when_registry_resolves_nothing(monkeypatch):
+async def test_resolve_raises_no_provider_when_registry_resolves_nothing(monkeypatch):
     _patch_resolution(monkeypatch, resolved=None, provider_spec=None)
 
     with pytest.raises(NoProviderConfigured):
-        enrichment_service._resolve_provider("reporting")
+        await enrichment_service._resolve_provider("reporting")
 
 
-def test_resolve_raises_provider_unavailable_when_spec_is_missing(monkeypatch):
+async def test_resolve_raises_provider_unavailable_when_spec_is_missing(monkeypatch):
     _patch_resolution(
         monkeypatch, resolved=("ollama-x", "qwen3:8b"), provider_spec=None
     )
 
     with pytest.raises(ProviderUnavailable) as exc_info:
-        enrichment_service._resolve_provider("reporting")
+        await enrichment_service._resolve_provider("reporting")
 
     assert str(exc_info.value) == "Configured provider 'ollama-x' is unavailable"
 
 
-def test_resolve_skips_the_claude_service_for_non_anthropic_providers(monkeypatch):
+async def test_resolve_skips_the_claude_service_for_non_anthropic_providers(
+    monkeypatch,
+):
     class _Spec:
         provider_id = "ollama-default"
         provider_type = "ollama"
@@ -357,7 +359,7 @@ def test_resolve_skips_the_claude_service_for_non_anthropic_providers(monkeypatc
         monkeypatch, resolved=("ollama-default", "qwen3:8b"), provider_spec=_Spec()
     )
 
-    provider, model_id, claude_service = enrichment_service._resolve_provider(
+    provider, model_id, claude_service = await enrichment_service._resolve_provider(
         "reporting"
     )
 
@@ -366,7 +368,7 @@ def test_resolve_skips_the_claude_service_for_non_anthropic_providers(monkeypatc
     assert claude_service is None
 
 
-def test_resolve_raises_no_provider_when_anthropic_has_no_api_key(monkeypatch):
+async def test_resolve_raises_no_provider_when_anthropic_has_no_api_key(monkeypatch):
     class _Spec:
         provider_id = "anthropic-default"
         provider_type = "anthropic"
@@ -383,10 +385,14 @@ def test_resolve_raises_no_provider_when_anthropic_has_no_api_key(monkeypatch):
         def __init__(self, **kwargs):
             pass
 
+        @classmethod
+        async def acreate(cls, **kwargs):
+            return cls(**kwargs)
+
         def has_api_key(self):
             return False
 
     monkeypatch.setattr(claude_service_module, "ClaudeService", _NoKeyClaudeService)
 
     with pytest.raises(NoProviderConfigured):
-        enrichment_service._resolve_provider("reporting")
+        await enrichment_service._resolve_provider("reporting")

@@ -1,5 +1,6 @@
 """One-shot Anthropic completions. Tools and the loop live in the agent layer."""
 
+import asyncio
 import json
 import logging
 import time
@@ -46,6 +47,18 @@ class ClaudeService:
         self.api_key: Optional[str] = None
         self.provider_api_key_ref = provider_api_key_ref
         self._load_api_key()
+
+    @classmethod
+    async def acreate(cls, *args, **kwargs) -> "ClaudeService":
+        """Construct off the event loop: ``_load_api_key`` reads secrets and the DB."""
+        return await asyncio.to_thread(cls, *args, **kwargs)
+
+    async def achat(self, *args, **kwargs) -> Optional[str]:
+        """``chat`` off the event loop -- the SDK call and log write both block.
+
+        The one way to call this service from async code (#3180).
+        """
+        return await asyncio.to_thread(self.chat, *args, **kwargs)
 
     def _load_api_key(self) -> bool:
         """Load API key from secure storage.
