@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { auditApi, auditParams } from '../../services/api'
+import { auditApi, auditParams, type AuditRetention } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import AuditSection, { EMPTY_DRAFT, auditFilter, verifyLine } from './AuditSection'
 
@@ -28,6 +28,11 @@ vi.mock('../../services/api', async (orig) => {
 })
 
 const qs = (draft: Partial<typeof EMPTY_DRAFT>) => new URLSearchParams(auditParams(auditFilter({ ...EMPTY_DRAFT, ...draft }))).toString()
+
+/** The card only reads `.data`. The cast satisfies tsc, which includes this file in `npm run build`. */
+function retentionResponse(data: AuditRetention) {
+  return { data } as unknown as Awaited<ReturnType<typeof auditApi.retention>>
+}
 
 describe('audit filter query string', () => {
   it('leaves out empty params and trims the rest', () => {
@@ -83,35 +88,31 @@ describe('retention card', () => {
 
   it('keeps a saved announcement when the earlier load arrives late', async () => {
     vi.mocked(useAuth).mockReturnValue(manager as unknown as ReturnType<typeof useAuth>)
-    let resolveLoad: (value: { data: object }) => void = () => {}
+    let resolveLoad: (value: Awaited<ReturnType<typeof auditApi.retention>>) => void = () => {}
     vi.mocked(auditApi.retention).mockReturnValueOnce(new Promise((resolve) => {
       resolveLoad = resolve
-    }) as ReturnType<typeof auditApi.retention>)
-    vi.mocked(auditApi.saveRetention).mockResolvedValueOnce({
-      data: {
-        effective_days: null,
-        pending_days: 365,
-        pending_on: '2026-11-02T21:07:14Z',
-        unconfirmed: true,
-        erasure_unconfirmed: false,
-        erasures: [],
-      },
-    } as Awaited<ReturnType<typeof auditApi.saveRetention>>)
+    }))
+    vi.mocked(auditApi.saveRetention).mockResolvedValueOnce(retentionResponse({
+      effective_days: null,
+      pending_days: 365,
+      pending_on: '2026-11-02T21:07:14Z',
+      unconfirmed: true,
+      erasure_unconfirmed: false,
+      erasures: [],
+    }))
     render(<AuditSection notify={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('This announcement has not left the box.')).toBeTruthy()
     expect(screen.getByText(/365 days takes effect/)).toBeTruthy()
     await act(async () => {
-      resolveLoad({
-        data: {
-          effective_days: null,
-          pending_days: null,
-          pending_on: null,
-          unconfirmed: false,
-          erasure_unconfirmed: false,
-          erasures: [],
-        },
-      })
+      resolveLoad(retentionResponse({
+        effective_days: null,
+        pending_days: null,
+        pending_on: null,
+        unconfirmed: false,
+        erasure_unconfirmed: false,
+        erasures: [],
+      }))
     })
     expect(screen.getByText('This announcement has not left the box.')).toBeTruthy()
     expect(screen.getByText(/365 days takes effect/)).toBeTruthy()
@@ -124,16 +125,14 @@ describe('retention card', () => {
     vi.mocked(auditApi.retention).mockReturnValueOnce(new Promise((_, reject) => {
       rejectLoad = reject
     }) as ReturnType<typeof auditApi.retention>)
-    vi.mocked(auditApi.saveRetention).mockResolvedValueOnce({
-      data: {
-        effective_days: 365,
-        pending_days: null,
-        pending_on: null,
-        unconfirmed: false,
-        erasure_unconfirmed: false,
-        erasures: [],
-      },
-    } as Awaited<ReturnType<typeof auditApi.saveRetention>>)
+    vi.mocked(auditApi.saveRetention).mockResolvedValueOnce(retentionResponse({
+      effective_days: 365,
+      pending_days: null,
+      pending_on: null,
+      unconfirmed: false,
+      erasure_unconfirmed: false,
+      erasures: [],
+    }))
     render(<AuditSection notify={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('The trail is kept for 365 days.')).toBeTruthy()
