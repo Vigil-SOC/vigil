@@ -123,21 +123,31 @@ def test_reject_after_approve_is_409(client, resumed):
     assert _status(action_id) == "approved"
 
 
-@pytest.mark.parametrize("verb", ["approve", "reject"])
-def test_tool_path_reports_already_decided(monkeypatch, verb):
+def test_chat_approve_leaves_a_rejected_row_and_points_at_approvals(monkeypatch):
     from core.agents import tool_registry
 
-    monkeypatch.setattr(tool_registry, "current_caller", lambda: "analyst-b")
+    monkeypatch.setattr(
+        "core.auth.permissions.username_has_permission", lambda *_: True
+    )
+    action_id = _seed(status="rejected")
+
+    out = tool_registry.approve_action(action_id=action_id)
+
+    assert out["status"] == "rejected"
+    assert "Approvals" in out["message"]
+    assert _status(action_id) == "rejected"
+
+
+def test_tool_reject_reports_already_decided(monkeypatch):
+    from core.agents import tool_registry
+
     monkeypatch.setattr("core.cases.agent_closure.current_caller", lambda: "analyst-b")
     monkeypatch.setattr(
         "core.auth.permissions.username_has_permission", lambda *_: True
     )
     action_id = _seed(status="rejected")
 
-    if verb == "approve":
-        out = tool_registry.approve_action(action_id=action_id)
-    else:
-        out = tool_registry.reject_action(action_id=action_id, reason="again")
+    out = tool_registry.reject_action(action_id=action_id, reason="again")
 
     assert out == {"error": f"Action {action_id} is already rejected"}
     assert _status(action_id) == "rejected"

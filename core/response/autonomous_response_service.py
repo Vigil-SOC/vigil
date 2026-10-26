@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from core.agents.builtins import AgentId
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
+from core.response.ceiling import execution_held
 from core.response.config import ResponseConfig
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,10 @@ class AutonomousResponseService:
             List of execution results
         """
         try:
+            # Stop holds every approved row, including one a person released.
+            if execution_held():
+                return []
+
             # Get approved but not executed actions
             approved_actions = self.approval_service.list_actions(
                 status=ActionStatus.APPROVED

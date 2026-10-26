@@ -5,19 +5,25 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import pytest
+import redis
 import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from core.config import get_settings
+from core.federation.runner import FederationRunner, request_poll_now
 from core.ingestion.dedup import RedisDedupSet
+from core.llm.gateway.gateway import redis_settings
 from core.platform import email_service
 from core.platform.log_redaction import mask_email, redact_url
+from core.redis_client import redact_logged_text
 from core.routing import request_unit_of_work
-from services.api.middleware.rate_limit import limiter
+from services.api.middleware.rate_limit import _build_limiter, limiter
 from services.api.routers import auth
 
 pytestmark = pytest.mark.unit
@@ -157,65 +163,117 @@ class TestRedisUrlLogging:
         assert PASSWORD not in caplog.text
 
 
-CANARY = "CANARY-r3dis/p@ss#1"
-DEAD_REDIS = "redis://127.0.0.1:1/0"  # refuses, so every failure branch runs
+CANARY = "CANARY-p@ss/w:rd#1"
+CANARY_ENCODED = quote(CANARY, safe="")
 
 
-class TestRedisPasswordCanary:
-    """REDIS_PASSWORD reaches every connecting path and none of them logs it."""
+def _arm_canary(monkeypatch, url: str):
+    monkeypatch.setenv("REDIS_URL", url)
+    monkeypatch.setenv("REDIS_PASSWORD", CANARY)
+    get_settings.cache_clear()
 
-    @pytest.fixture(autouse=True)
-    def _canary(self, monkeypatch, caplog):
-        from core.config import get_settings
 
-        monkeypatch.setenv("REDIS_URL", DEAD_REDIS)
-        monkeypatch.setenv("REDIS_PASSWORD", CANARY)
-        get_settings.cache_clear()
+def _assert_canary_absent(text: str):
+    assert CANARY not in text
+    assert CANARY_ENCODED not in text
+
+
+class TestRedisPasswordNotLogged:
+    def test_dedup_connect_line_omits_the_password(self, monkeypatch, caplog):
+        seen = {}
+
+        class _Redis:
+            async def ping(self):
+                return True
+
+        def from_url(url, decode_responses=True):
+            seen["url"] = url
+            return _Redis()
+
+        monkeypatch.setattr(aioredis, "from_url", from_url)
+        _arm_canary(monkeypatch, f"redis://:{CANARY}@redis-master:6379/0")
         caplog.set_level(logging.DEBUG)
-        yield
-        from urllib.parse import quote
-
-        # caplog.text in teardown holds only teardown records.
-        logged = "\n".join(r.getMessage() for r in caplog.get_records("call"))
-        assert logged
-        for leaked in (CANARY, quote(CANARY, safe="")):
-            assert leaked not in logged
-
-    def test_dedup_connect(self, caplog):
         dedup = RedisDedupSet("canary")
-        assert asyncio.run(dedup._get_redis()) is None
+
+        assert asyncio.run(dedup._get_redis()) is not None
+        assert seen["url"] == f"redis://:{CANARY_ENCODED}@redis-master:6379/0"
+        assert "redis-master:6379" in caplog.text
+        _assert_canary_absent(caplog.text)
+
+    def test_dedup_fallback_scrubs_the_password(self, monkeypatch, caplog):
+        def from_url(url, decode_responses=True):
+            raise ConnectionError(f"auth failed for {CANARY} / {CANARY_ENCODED}")
+
+        monkeypatch.setattr(aioredis, "from_url", from_url)
+        _arm_canary(monkeypatch, "redis://redis-master:6379/0")
+        caplog.set_level(logging.DEBUG)
+
+        assert asyncio.run(RedisDedupSet("canary")._get_redis()) is None
         assert "in-memory fallback" in caplog.text
+        _assert_canary_absent(caplog.text)
 
-    def test_gateway(self):
-        from arq import create_pool
-
-        from core.llm.gateway.gateway import redis_settings
+    def test_gateway_redis_settings_does_not_log_the_password(
+        self, monkeypatch, caplog
+    ):
+        _arm_canary(monkeypatch, f"redis://:{CANARY}@redis-master:6379/0")
+        caplog.set_level(logging.DEBUG)
 
         settings = redis_settings()
+
+        assert settings.host == "redis-master"
         assert settings.password == CANARY
-        settings.conn_retries = 0
-        with pytest.raises(Exception):
-            asyncio.run(create_pool(settings))
+        _assert_canary_absent(caplog.text)
+        _assert_canary_absent(repr(settings))
 
-    def test_rate_limiter_failure_branch(self, caplog):
-        from services.api.middleware import rate_limit
+    def test_rate_limiter_failure_omits_the_password(self, monkeypatch, caplog):
+        _arm_canary(monkeypatch, "redis://127.0.0.1:1/0")
+        caplog.set_level(logging.DEBUG)
 
-        rate_limit._build_limiter()
+        built = _build_limiter()
+
+        assert built._storage_uri is None
         assert "falling back to in-memory" in caplog.text
+        _assert_canary_absent(caplog.text)
 
-    def test_rate_limiter_unknown_scheme(self, monkeypatch, caplog):
-        from core.config import get_settings
-        from services.api.middleware import rate_limit
+    def test_rate_limiter_scrubs_a_password_in_the_exception(self, monkeypatch, caplog):
+        _arm_canary(monkeypatch, "redis://redis-master:6379/0")
 
-        # redis-py takes unix://, limits refuses it and quotes the URI.
-        monkeypatch.setenv("REDIS_URL", "unix:///var/run/redis.sock")
-        get_settings.cache_clear()
-        rate_limit._build_limiter()
+        def boom(*_args, **_kwargs):
+            raise RuntimeError(f"storage {CANARY} {CANARY_ENCODED}")
+
+        monkeypatch.setattr(
+            "services.api.middleware.rate_limit.build_redis_limiter", boom
+        )
+        caplog.set_level(logging.DEBUG)
+
+        assert _build_limiter()._storage_uri is None
         assert "falling back to in-memory" in caplog.text
+        _assert_canary_absent(caplog.text)
 
-    def test_federation_runner(self, caplog):
-        from core.federation.runner import FederationRunner, request_poll_now
+    def test_federation_runner_omits_the_password(self, monkeypatch, caplog):
+        _arm_canary(monkeypatch, "redis://127.0.0.1:1/0")
+        caplog.set_level(logging.DEBUG)
 
-        assert request_poll_now("src-1") is False
-        assert asyncio.run(FederationRunner(None)._consume_poll_now("src-1")) is False
-        assert "request_poll_now(src-1) failed" in caplog.text
+        assert request_poll_now("src") is False
+        assert asyncio.run(FederationRunner(None)._consume_poll_now("src")) is False
+        _assert_canary_absent(caplog.text)
+
+    def test_federation_scrubs_a_password_in_the_exception(self, monkeypatch, caplog):
+        _arm_canary(monkeypatch, "redis://redis-master:6379/0")
+
+        def boom(*_args, **_kwargs):
+            raise ConnectionError(f"{CANARY} {CANARY_ENCODED}")
+
+        monkeypatch.setattr(redis, "from_url", boom)
+        caplog.set_level(logging.DEBUG)
+
+        assert request_poll_now("src") is False
+        assert "request_poll_now" in caplog.text
+        _assert_canary_absent(caplog.text)
+
+    def test_redact_logged_text_drops_both_forms(self, monkeypatch):
+        _arm_canary(monkeypatch, "redis://localhost:6379/0")
+        text = f"url had {CANARY} and {CANARY_ENCODED}"
+        cleaned = redact_logged_text(text)
+        _assert_canary_absent(cleaned)
+        assert "***" in cleaned

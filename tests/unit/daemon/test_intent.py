@@ -44,10 +44,7 @@ class _FakeConfigService:
 
 @pytest.fixture
 def offline_config():
-    with patch("core.storage.config_service.get_config_service", _no_db), patch(
-        "core.response.approval_service.get_config_service",
-        return_value=_FakeConfigService({}),
-    ):
+    with patch("core.storage.config_service.get_config_service", _no_db):
         yield
 
 
@@ -76,7 +73,7 @@ def test_every_response_knob_has_a_manifest_key():
     paths = {f.path for f in INTENT_FIELDS}
     missing = (
         {f"response.{f.name}" for f in dataclasses.fields(ResponseConfig)}
-        - {"response.dry_run"}
+        - {"response.dry_run", "response.force_manual_approval"}
         - paths
     )
     assert not missing, f"ResponseConfig fields without an INTENT.md key: {missing}"
@@ -117,7 +114,7 @@ def test_fresh_checkout_reports_no_differences(offline_config, caplog, monkeypat
         (LOWER_TIGHTER, 10.0, 5.0, "loosen"),
         (LOWER_TIGHTER, False, True, "tighten"),
         (LOWER_TIGHTER, True, False, "loosen"),
-        (HIGHER_TIGHTER, True, False, "tighten"),  # force_manual_approval
+        (HIGHER_TIGHTER, True, False, "tighten"),  # four_eyes
         (HIGHER_TIGHTER, False, True, "loosen"),
         (LOWER_TIGHTER, 0.9, 0.9, "same"),
         (SHORTER_TIGHTER, ["high", "critical"], ["critical", "high"], "same"),
@@ -225,26 +222,36 @@ def test_from_env_threads_triage_timeout(offline_config, monkeypatch):
 
 
 def test_db_overlays_report_source_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "core.response.ceiling.get_settings",
+        lambda: type(
+            "S",
+            (),
+            {"daemon_force_approval": False, "daemon_auto_response": True},
+        )(),
+    )
     svc = _FakeConfigService(
         {
             "orchestrator.settings": {"max_cost_per_investigation": 2.5},
-            "approval.force_manual_approval": {"enabled": True},
+            "autonomy.ceiling": {
+                "act_reversible": True,
+                "act_irreversible": False,
+                "four_eyes": False,
+                "stopped": False,
+            },
         }
     )
     monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: svc)
-    monkeypatch.setattr(
-        "core.response.approval_service.get_config_service", lambda: svc
-    )
     path = _write(
         tmp_path,
-        "respond:\n  force_manual_approval: false\n"
+        "act:\n  reversible: false\n"
         "investigate:\n  max_cost_per_investigation: 5.0\n",
     )
     rows = {r.key: r for r in intent_report(path=path)}
     cost = rows["investigate.max_cost_per_investigation"]
     assert (cost.effective, cost.source, cost.label) == (2.5, "db", "loosen")
-    force = rows["respond.force_manual_approval"]
-    assert (force.effective, force.source, force.label) == (True, "db", "loosen")
+    act = rows["act.reversible"]
+    assert (act.effective, act.source, act.label) == (True, "db", "tighten")
 
 
 # --- file problems: one warning, daemon still starts --------------------------

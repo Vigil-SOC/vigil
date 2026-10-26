@@ -28,13 +28,11 @@ import logging
 import os
 
 import pytest
-import redis
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from core import redis_client
-from core.config import DEFAULT_REDIS_URL, get_settings
 from core.storage.connection import DatabaseConfig, get_db_manager, stamp_schema_head
 from core.storage.models import Base, Role
 from services.api.middleware.rate_limit import limiter
@@ -80,9 +78,7 @@ def _unavailable_reason():
     except Exception as e:  # noqa: BLE001
         return f"requires a local PostgreSQL (docker compose up -d postgres): {e}"
     try:
-        redis.Redis.from_url(
-            get_settings().redis_url or DEFAULT_REDIS_URL, socket_connect_timeout=5
-        ).ping()
+        redis_client.open_sync_redis(socket_connect_timeout=5).ping()
     except Exception as e:  # noqa: BLE001
         return f"requires a local Redis (docker compose up -d redis): {e}"
     return None

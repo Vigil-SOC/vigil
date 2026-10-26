@@ -25,7 +25,7 @@ import time
 from typing import Iterable, Optional
 
 from core.platform.log_redaction import redact_url
-from core.redis_client import effective_redis_url
+from core.redis_client import effective_redis_url, open_async_redis, redact_logged_text
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,9 @@ class RedisDedupSet:
     ):
         self.namespace = namespace
         self.key = f"vigil:dedup:{namespace}"
-        self._url = effective_redis_url(redis_url)
+        # Explicit url is a test seam. Production callers leave it unset and
+        # take the effective URL, password included.
+        self._url = redis_url or effective_redis_url()
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
 
@@ -69,9 +71,7 @@ class RedisDedupSet:
         if self._redis is not None:
             return self._redis
         try:
-            import redis.asyncio as aioredis  # type: ignore
-
-            self._redis = aioredis.from_url(self._url, decode_responses=True)
+            self._redis = open_async_redis(self._url)
             # Probe connection so we fail fast here rather than per-call
             await self._redis.ping()
             logger.info(
@@ -99,7 +99,7 @@ class RedisDedupSet:
                 "RedisDedupSet[%s] Redis unavailable, using in-memory fallback"
                 " (%s); dedup state will not survive restarts or be shared",
                 self.namespace,
-                reason,
+                redact_logged_text(reason),
             )
             self._in_fallback = True
 
@@ -261,7 +261,11 @@ class RedisDedupSet:
         try:
             await r.delete(self.key)
         except Exception as e:
-            logger.debug("RedisDedupSet[%s] clear failed: %s", self.namespace, e)
+            logger.debug(
+                "RedisDedupSet[%s] clear failed: %s",
+                self.namespace,
+                redact_logged_text(str(e)),
+            )
 
     async def close(self) -> None:
         if self._redis is not None:

@@ -41,6 +41,10 @@ RUN_ATTEMPTS = 3
 RUN_BACKOFF = {"type": "exponential", "delay": 5000}
 
 
+def _redis_url() -> str:
+    return effective_redis_url()
+
+
 # The reason="start" arm of the RunJob union in the agent layer's job contract.
 def build_start_job(
     run_id: str,
@@ -116,7 +120,7 @@ def _run_queue() -> Queue:
     loop = asyncio.get_running_loop()
     queue = _queues.get(loop)
     if queue is None:
-        queue = Queue(RUN_QUEUE, {"connection": effective_redis_url()})
+        queue = Queue(RUN_QUEUE, {"connection": _redis_url()})
         _queues[loop] = queue
     return queue
 

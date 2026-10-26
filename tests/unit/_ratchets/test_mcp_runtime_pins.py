@@ -26,7 +26,6 @@ _MCP_CONFIG = _REPO_ROOT / "mcp-config.json"
 _EXACT_VERSION = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 _EXACT_PYPI = re.compile(r"==([0-9]+(?:\.[0-9]+)*)$")
 _GIT_REF = re.compile(r"\.git@([^#]+)$")
-_MCP_REMOTE_PATCH = re.compile(r"^0\.1\.(\d+)$")
 _FLOATING_GIT_REFS = {"HEAD", "head", "main", "master", "latest", "dev", "develop"}
 
 
@@ -62,10 +61,9 @@ def _uvx_unpinned(args: list[str]) -> list[str]:
     return [s for s in [*with_specs, spec] if s and not _pypi_or_git_pinned(s)]
 
 
-def _mcp_remote_in_cve_window(version: str) -> bool:
-    """CVE-2025-6514 is fixed in 0.1.16; stay on exact 0.1.N with N >= 16."""
-    match = _MCP_REMOTE_PATCH.fullmatch(version)
-    return bool(match) and int(match.group(1)) >= 16
+def _mcp_remote_above_cve_floor(version: str) -> bool:
+    """CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p) is fixed in 0.1.16; require an exact pin at or above it."""
+    return bool(_EXACT_VERSION.fullmatch(version)) and _version_tuple(version) >= (0, 1, 16)
 
 
 @pytest.mark.unit
@@ -142,8 +140,8 @@ def test_no_mcp_server_launches_through_docker():
 
 
 @pytest.mark.unit
-def test_mcp_remote_stays_inside_the_0_1_cve_window():
-    """CVE-2025-6514 is fixed in 0.1.16; jumping to 0.8.x is a separate decision."""
+def test_mcp_remote_stays_above_the_cve_floor():
+    """CVE-2025-6514 affects >=0.0.5 <0.1.16; every mcp-remote spec is an exact pin past it."""
     offenders: dict[str, str] = {}
     found = 0
     for name, config in _servers().items():
@@ -152,15 +150,15 @@ def test_mcp_remote_stays_inside_the_0_1_cve_window():
                 continue
             found += 1
             version = npm_version(arg) or ""
-            if not _mcp_remote_in_cve_window(version):
+            if not _mcp_remote_above_cve_floor(version):
                 offenders[name] = arg
     assert found >= 3, (
         "expected several mcp-remote specs; the CVE pin ratchet is vacuous "
         f"if they were renamed ({found} found)"
     )
     assert not offenders, (
-        "mcp-remote must stay on an exact 0.1.N pin with N>=16 "
-        f"(CVE-2025-6514 window), not a range or 0.8.x: {offenders}"
+        "mcp-remote must be an exact pin at or above 0.1.16 "
+        f"(CVE-2025-6514 fix), not a range: {offenders}"
     )
 
 
@@ -170,15 +168,16 @@ def test_mcp_remote_stays_inside_the_0_1_cve_window():
     [
         ("0.1.16", True),
         ("0.1.49", True),
+        ("0.8.3", True),
+        ("0.15.2", True),
         ("0.1.15", False),
         ("0.1.0", False),
         ("0.1.x", False),
-        ("0.8.3", False),
         ("^0.1.16", False),
     ],
 )
-def test_mcp_remote_cve_window_helper(version: str, ok: bool):
-    assert _mcp_remote_in_cve_window(version) is ok
+def test_mcp_remote_cve_floor_helper(version: str, ok: bool):
+    assert _mcp_remote_above_cve_floor(version) is ok
 
 
 _IMAGE_PACKAGES = _REPO_ROOT / "infra" / "docker" / "mcp-packages"

@@ -7,10 +7,12 @@ leaks a connection pool per call.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core import redis_client
 from core.federation.runner import FederationRunner, request_poll_now
 
 pytestmark = pytest.mark.unit
@@ -20,7 +22,11 @@ URL = "redis://fake:6379/0"
 
 @pytest.fixture(autouse=True)
 def _settings(monkeypatch):
-    monkeypatch.setenv("REDIS_URL", URL)
+    monkeypatch.setattr(
+        redis_client,
+        "get_settings",
+        lambda: SimpleNamespace(redis_url=URL, redis_password=None),
+    )
 
 
 def _sync_client(set_side_effect=None):
