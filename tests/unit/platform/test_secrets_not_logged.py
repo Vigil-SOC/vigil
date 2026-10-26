@@ -175,8 +175,11 @@ class TestRedisPasswordCanary:
         yield
         from urllib.parse import quote
 
+        # caplog.text in teardown holds only teardown records.
+        logged = "\n".join(r.getMessage() for r in caplog.get_records("call"))
+        assert logged
         for leaked in (CANARY, quote(CANARY, safe="")):
-            assert leaked not in caplog.text
+            assert leaked not in logged
 
     def test_dedup_connect(self, caplog):
         dedup = RedisDedupSet("canary")
@@ -197,6 +200,16 @@ class TestRedisPasswordCanary:
     def test_rate_limiter_failure_branch(self, caplog):
         from services.api.middleware import rate_limit
 
+        rate_limit._build_limiter()
+        assert "falling back to in-memory" in caplog.text
+
+    def test_rate_limiter_unknown_scheme(self, monkeypatch, caplog):
+        from core.config import get_settings
+        from services.api.middleware import rate_limit
+
+        # redis-py takes unix://, limits refuses it and quotes the URI.
+        monkeypatch.setenv("REDIS_URL", "unix:///var/run/redis.sock")
+        get_settings.cache_clear()
         rate_limit._build_limiter()
         assert "falling back to in-memory" in caplog.text
 

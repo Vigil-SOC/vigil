@@ -18,7 +18,7 @@ HELPER = ROOT / "core" / "redis_client.py"
 GATEWAY = ROOT / "core" / "llm" / "gateway" / "gateway.py"
 
 URL_TAKERS = {"from_url", "from_dsn"}  # first argument is the URL
-BANNED_CALLS = {"Redis", "create_pool"}
+BANNED_CALLS = {"Redis", "StrictRedis", "RedisCluster", "Sentinel", "create_pool"}
 BANNED_NAMES = {"RedisSettings", "ArqRedis"}
 
 
@@ -49,7 +49,14 @@ def _offences(path: Path, root: Path = ROOT):
         what = None
         if isinstance(node, ast.Call):
             name = _name(node.func)
-            if name in URL_TAKERS and node.args and not sourced(node.args[0]):
+            url_arg = (
+                node.args[0]
+                if node.args
+                else next(
+                    (kw.value for kw in node.keywords if kw.arg in ("url", "dsn")), None
+                )
+            )
+            if name in URL_TAKERS and url_arg is not None and not sourced(url_arg):
                 what = f"{name}( without effective_redis_url()"
             elif name in BANNED_CALLS:
                 what = f"{name}("
@@ -96,7 +103,8 @@ def test_the_ratchet_catches_a_hand_built_client(tmp_path):
         "import redis\n"
         "from core.config import get_settings\n"
         "c = redis.from_url(get_settings().redis_url)\n"
+        "d = redis.from_url(url='redis://x')\n"
         "q = Queue('x', {'connection': 'redis://localhost:6379/0'})\n"
     )
     hits = list(_offences(bad, tmp_path))
-    assert len(hits) == 3, hits
+    assert len(hits) == 4, hits

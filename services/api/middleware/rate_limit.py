@@ -5,6 +5,7 @@ import logging
 
 from slowapi import Limiter
 
+from core.platform.log_redaction import redact_url
 from core.redis_client import effective_redis_url
 from services.api.middleware.client_address import client_host
 
@@ -39,7 +40,8 @@ def _build_limiter() -> Limiter:
             "Rate limiter Redis storage unavailable (%s); falling back to in-memory."
             " The limiter stays in-memory until the process restarts (no re-probe),"
             " and limits are not shared across workers.",
-            exc,
+            # limits quotes the whole URI in some errors (unknown scheme).
+            str(exc).replace(url, redact_url(url)),
         )
         return _in_memory()
 
