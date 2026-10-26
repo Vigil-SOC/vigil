@@ -20,9 +20,9 @@ metadata:
   labels:
     {{- include "vigil.componentLabels" (dict "context" . "component" "agent-worker") | nindent 4 }}
 spec:
-  {{- if not .Values.agentWorker.autoscaling.enabled }}
-  replicas: {{ .Values.agentWorker.replicaCount }}
-  {{- end }}
+  # Always set, the autoscaler's minimum under one: the upgrade hook scales
+  # every workload to 0, and Helm only scales back what the manifest names.
+  replicas: {{ ternary .Values.agentWorker.autoscaling.minReplicas .Values.agentWorker.replicaCount .Values.agentWorker.autoscaling.enabled }}
   selector:
     matchLabels:
       {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-worker") | nindent 6 }}

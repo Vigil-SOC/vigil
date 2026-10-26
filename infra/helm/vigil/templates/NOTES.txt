@@ -4,9 +4,10 @@ Vigil SOC has been installed in namespace {{ .Release.Namespace }} as release "{
 
    kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -w
 
-2. The db-init Job runs once per install/upgrade. Check its status:
+2. The schema upgrade runs as Jobs on install and upgrade. App pods are not
+   Ready until it has finished. Check it:
 
-   kubectl get jobs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=db-init
+   kubectl get jobs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=upgrade
 
 3. Access the backend API:
 

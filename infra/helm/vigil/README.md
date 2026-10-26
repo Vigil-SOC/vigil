@@ -12,12 +12,12 @@ Two passwords, and they must differ.
 
 `secrets.postgresPassword` is the database owner (`postgresql.auth.username`,
 `deeptempo` by default). It is stored in its own Secret (`<release>-postgres`)
-and mounted only on the in-chart Postgres and the db-init Job. It is not in the
+and mounted only on the in-chart Postgres and the upgrade Jobs. It is not in the
 application Secret those pods load with `envFrom`.
 
 `secrets.vigilAppPassword` is the `vigil_app` role. The backend, daemon, workers
 and agents log in as that role and receive only this password, as
-`POSTGRES_PASSWORD`. The db-init Job sets it with `ALTER ROLE vigil_app` on
+`POSTGRES_PASSWORD`. The upgrade Jobs set it with `ALTER ROLE vigil_app` on
 install and upgrade.
 
 Neither has a default. Set both (`openssl rand -hex 24`). With
@@ -33,8 +33,43 @@ are equal.
 A database whose owner password is still that published default must be changed
 in Postgres first (`ALTER ROLE` for `postgresql.auth.username`). The chart does
 not change the owner password. Set `secrets.postgresPassword` to the new owner
-password and `secrets.vigilAppPassword` to a different value; db-init updates
-`vigil_app`.
+password and `secrets.vigilAppPassword` to a different value; the next upgrade
+updates `vigil_app`.
+
+## Schema upgrades
+
+`python -m core.upgrade` from the backend image, logged in as the owner, is the
+only thing that writes the schema. App pods only check that the database is at
+their image's revision. See [docs/upgrading.md](../../../docs/upgrading.md#helm).
+
+| Value | Default | |
+|---|---|---|
+| `upgrade.acknowledgeVersion` | `""` | Required on install and every upgrade: this release's version (`appVersion`). A value from an earlier upgrade refuses. |
+| `upgrade.acknowledgeReason` | `""` | Required: why there is no Vigil restore point. Helm takes no backup. |
+| `upgrade.stopTimeoutSeconds` | `600` | How long the upgrade waits for the release's pods to stop. |
+| `upgrade.persistence.*` | 1Gi, cluster default class | `history.jsonl`, mounted on the upgrade Jobs only. Kept after `helm uninstall`. |
+| `upgrade.resources` | 100m / 256Mi requests | |
+| `upgrade.enabled` | `true` | `false` renders no upgrade Jobs: run the command yourself. |
+
+- **Install.** A post-install Job takes the empty database to head. Do not use
+  `--wait`: Helm waits for Ready before running post-install hooks, and the app
+  pods are not Ready until the Job has run.
+- **Upgrade.** A pre-upgrade Job (weight -10) runs `--check`. When it refuses,
+  nothing is stopped and the previous release keeps serving. Then a second Job
+  (weight 0) scales every Deployment and StatefulSet of the release except
+  Postgres and Redis to 0, pauses KEDA, waits for the pods to go, ends leftover
+  `vigil_app` sessions (a non-superuser owner needs `pg_signal_backend` for
+  that), and upgrades. Only that Job mounts a token, for a
+  namespace Role that can scale and patch ScaledObjects. Nothing is
+  cluster-scoped. Give `--timeout` enough time for the whole window.
+- **Hook leftovers.** The upgrade ServiceAccount, Role, RoleBinding, ConfigMap,
+  NetworkPolicies and PVC are hooks, so `helm uninstall` leaves them. Delete
+  them with `kubectl delete sa,role,rolebinding,cm,networkpolicy,pvc -l
+  app.kubernetes.io/instance=<release>,app.kubernetes.io/component=upgrade`.
+- **Network policies.** With `networkPolicies.enabled`, the upgrade Jobs reach
+  the Kubernetes API through `medic.kubeApi.cidrs` and `medic.kubeApi.ports`,
+  as Medic does. Set the CIDRs where `lookup` can't run (`helm template`, Argo
+  CD, Flux).
 
 ## MCP runner
 

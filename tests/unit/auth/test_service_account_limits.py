@@ -3,8 +3,8 @@
 - No API sets ``users.service_account``: only ``core/auth/service_account.py``,
   which the enable flow runs inside the backend's environment. Otherwise any
   admin (or a stolen admin session) could exempt an account from lockout.
-- The users API won't give a service account any role but Viewer, so the
-  gateway's login can never read more than a Viewer does.
+- The users API won't reassign Medic's gateway account, so its login never
+  reads more than a Viewer does. Other service accounts may hold any role.
 """
 
 import ast
@@ -117,6 +117,7 @@ def admin(monkeypatch):
         users_router.AuthService, "check_permission", staticmethod(lambda *a, **k: True)
     )
     monkeypatch.setattr(users_router, "_can_assign_role", lambda *a, **k: True)
+    monkeypatch.setattr(users_router, "_uncovered", lambda *a, **k: [])
     current = MagicMock()
     current.username = "admin"
     return current
@@ -135,21 +136,7 @@ def _target(service_account: bool):
 
 
 @pytest.mark.parametrize("role_id", ["role-analyst", "role-manager", "role-admin"])
-def test_role_change_above_viewer_is_refused_for_a_service_account(admin, role_id):
-    user = _target(service_account=True)
-    session = _session_with(user, role_id)
-
-    request = users_router.UpdateUserRequest(role_id=role_id)
-
-    with pytest.raises(HTTPException) as exc:
-        users_router._apply_user_update(session, admin, "user-1", request)
-
-    assert exc.value.status_code == 403
-    assert user.role_id == "role-viewer"
-
-
-@pytest.mark.parametrize("role_id", ["role-analyst", "role-admin"])
-def test_update_to_a_role_above_viewer_is_refused_for_a_service_account(admin, role_id):
+def test_medic_account_is_not_reassigned(admin, role_id):
     user = _target(service_account=True)
     session = _session_with(user, role_id)
     request = users_router.UpdateUserRequest(role_id=role_id)

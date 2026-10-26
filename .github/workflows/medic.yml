@@ -24,6 +24,7 @@ on:
       - "infra/docker/docker-compose.yml"
       - "infra/docker/medic/**"
       - "tests/medic_compose/**"
+      - "tests/medic_eval/**"
   pull_request:
     paths:
       - "services/medic/**"
@@ -42,6 +43,7 @@ on:
       - "infra/docker/docker-compose.yml"
       - "infra/docker/medic/**"
       - "tests/medic_compose/**"
+      - "tests/medic_eval/**"
   workflow_dispatch:
 
 permissions:
@@ -393,3 +395,21 @@ jobs:
         run: |
           uv run --no-project --python 3.12 --with pytest --with pyyaml \
             python -m pytest --noconftest -o addopts= -p no:cacheprovider -rs tests/medic_compose/test_compose_live.py
+
+  # Outside sampler (C7-limits): CPU p95, peak RSS, RSS slope, store growth.
+  # Stdlib plus ps; no Docker. Same pytest invocation as tests/medic_compose.
+  medic-eval:
+    name: Medic outside sampler
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Sampler
+        run: |
+          uv run --no-project --python 3.12 --with pytest \
+            python -m pytest --noconftest -o addopts= -p no:cacheprovider -rs tests/medic_eval

@@ -46,6 +46,8 @@ def caller_session():
 
 
 def _wire(session, user):
+    found = [user] if user is not None else []
+    session.query.return_value.filter.return_value.all.return_value = found
     session.query.return_value.filter.return_value.first.return_value = user
 
 

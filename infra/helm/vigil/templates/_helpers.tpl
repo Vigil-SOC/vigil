@@ -137,10 +137,6 @@ read-only on the runner. Nothing when detectionRules.volume is unset.
 {{- printf "%s-redis" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "vigil.dbInit.fullname" -}}
-{{- printf "%s-db-init" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
-{{- end -}}
-
 {{- define "vigil.configmap.fullname" -}}
 {{- printf "%s-config" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -323,7 +319,7 @@ Postgres host/port/database resolution. Three modes:
 
 {{/*
 Name of the secret holding the database owner password. The database server
-and the db-init Job read it. App workloads do not. Bitnami emits its own
+and the upgrade Jobs read it. App workloads do not. Bitnami emits its own
 secret (<release>-postgresql) with key `password`.
 */}}
 {{- define "vigil.postgres.passwordSecret" -}}
@@ -366,7 +362,7 @@ secret (<release>-postgresql) with key `password`.
 {{/*
 vigil_app's password. App workloads receive this value as POSTGRES_PASSWORD.
 The owner password (vigil.postgres.passwordSecret) stays on the database
-server and the db-init Job. Same Secret as the chart's other keys, including
+server and the upgrade Jobs. Same Secret as the chart's other keys, including
 when the operator brings their own: that Secret must also hold this key.
 */}}
 {{- define "vigil.postgres.appPasswordSecret" -}}

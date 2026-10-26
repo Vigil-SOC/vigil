@@ -32,6 +32,7 @@ from core.auth.auth_service import (
     raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
+from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import (
     consume_reset_token,
     decode_reset_token,
@@ -826,12 +827,8 @@ def _apply_profile_update(
                     else "Current password is required to change the email address"
                 ),
             )
-        existing = (
-            session.query(User)
-            .filter(User.email == email, User.user_id != user.user_id)
-            .first()
-        )
-        if existing:
+        claim_sign_in_names(session, email)
+        if identifier_in_use(session, email, except_user_id=user.user_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already in use",

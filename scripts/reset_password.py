@@ -22,6 +22,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from core.auth.identity import matching_accounts  # noqa: E402
 from core.auth.password_reset import (  # noqa: E402
     default_base_url,
     generate_reset_token,
@@ -48,12 +49,19 @@ def list_users(session) -> int:
 
 
 def issue_link(session, who: str, base_url: str) -> int:
-    user = (
-        session.query(User).filter((User.username == who) | (User.email == who)).first()
-    )
-    if user is None:
+    matches = matching_accounts(session, who)
+    if not matches:
         print(f"No user with username or email {who!r}. Try --list.", file=sys.stderr)
         return 1
+    if len(matches) > 1:
+        print(
+            f"{who!r} matches more than one account. Rename one, then try again.",
+            file=sys.stderr,
+        )
+        for user in sorted(matches, key=lambda item: item.username):
+            print(f"  {user.username} <{user.email}>", file=sys.stderr)
+        return 1
+    user = matches[0]
     if not user.is_active:
         print(
             f"User {user.username!r} is inactive; reactivate it before resetting.",

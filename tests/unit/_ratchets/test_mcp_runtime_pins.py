@@ -184,6 +184,43 @@ def test_mcp_remote_cve_window_helper(version: str, ok: bool):
 _IMAGE_PACKAGES = _REPO_ROOT / "infra" / "docker" / "mcp-packages"
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def _lock_package_versions(name: str) -> set[str]:
+    lock = json.loads((_IMAGE_PACKAGES / "package-lock.json").read_text())
+    found: set[str] = set()
+    for path, meta in lock["packages"].items():
+        if path == f"node_modules/{name}" or path.endswith(f"/node_modules/{name}"):
+            found.add(meta["version"])
+    return found
+
+
+@pytest.mark.unit
+def test_mcp_image_lock_clears_zod_body_parser_and_undici_advisories():
+    """GHSA-mrhx-c7xc-m3w5, GHSA-27r3-jxmh-p828, GHSA-xjj6-f33q-929c."""
+    zod = _lock_package_versions("zod")
+    body = _lock_package_versions("body-parser")
+    undici = _lock_package_versions("undici")
+    assert zod and body and undici, "the advisory ratchet is vacuous without these packages"
+    assert all(_version_tuple(version) >= (4, 6, 6) for version in zod), zod
+    for version in body:
+        parts = _version_tuple(version)
+        if parts[0] == 1:
+            assert parts >= (1, 20, 9), version
+        else:
+            assert parts >= (2, 4, 0), version
+    for version in undici:
+        parts = _version_tuple(version)
+        if parts[0] == 6:
+            assert parts >= (6, 29, 1), version
+        elif parts[0] == 7:
+            assert parts >= (7, 30, 1), version
+        else:
+            assert parts >= (8, 12, 2), version
+
+
 def _config_pins() -> tuple[set[str], set[tuple[str, frozenset[str]]]]:
     """npx package specs and uvx (package, --with specs) pinned in mcp-config.json."""
     npx: set[str] = set()

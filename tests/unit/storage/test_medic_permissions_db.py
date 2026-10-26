@@ -3,7 +3,7 @@
 The default roles come from ``06_auth_tables.sql`` with ``ON CONFLICT DO
 NOTHING``, so a new permission there would never reach an existing install. Like
 ``loglm.view`` (``17_loglm_setup.sql``), the Medic grants are a later file,
-``45_medic_permissions.sql`` (Compose db-seed, Helm db-init). Compose's
+``45_medic_permissions.sql`` (Compose db-seed). Compose's
 db-seed re-runs every file on each ``up``, so a grant an operator has turned
 off must stay off. Each change runs in a transaction that is rolled back.
 """
@@ -24,17 +24,14 @@ from tests.security.test_medic_route_matrix import MEDIC_GRANTS
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 REPO = Path(__file__).resolve().parents[3]
-INIT_DIRS = (
-    REPO / "infra" / "database" / "init",
-    REPO / "infra" / "helm" / "vigil" / "files" / "database-init",
-)
-INIT_SQL = INIT_DIRS[0] / "45_medic_permissions.sql"
+INIT_DIR = REPO / "infra" / "database" / "init"
+INIT_SQL = INIT_DIR / "45_medic_permissions.sql"
 MEDIC = (MEDIC_READ_PERMISSION, MEDIC_ADMIN_PERMISSION)
 
 
 def _default_roles_sql() -> str:
     """The ``INSERT INTO roles`` of 06_auth_tables.sql, verbatim."""
-    source = (INIT_DIRS[0] / "06_auth_tables.sql").read_text(encoding="utf-8")
+    source = (INIT_DIR / "06_auth_tables.sql").read_text(encoding="utf-8")
     match = re.search(
         r"INSERT INTO roles .*?ON CONFLICT \(role_id\) DO NOTHING;", source, re.S
     )
@@ -61,11 +58,6 @@ def conn():
             yield connection
         finally:
             tx.rollback()
-
-
-def test_the_init_file_is_the_same_in_both_init_dirs():
-    texts = {(d / INIT_SQL.name).read_bytes() for d in INIT_DIRS}
-    assert len(texts) == 1
 
 
 def test_each_default_role_gets_its_medic_grants(conn):

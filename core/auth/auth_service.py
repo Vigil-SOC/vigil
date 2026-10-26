@@ -20,6 +20,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
 from core.auth import principals
+from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import get_settings
 from core.exceptions import default_on_error
 from core.secrets import get_secret
@@ -30,7 +31,7 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 # A person's own act (decision 9). Never held by a service account, token, or agent.
-_PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
+PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
 
 
 def _is_person(user_id: str, session: Optional[Session]) -> bool:
@@ -310,20 +311,22 @@ class AuthService:
         # failed attempt commit.
         try:
             with unit_of_work(session) as session:
-                # Try to find user by username or email
-                user = (
-                    session.query(User)
-                    .filter(
-                        (User.username == username_or_email)
-                        | (User.email == username_or_email)
-                    )
-                    .first()
-                )
-
-                if not user:
-                    logger.warning("Login attempt for unknown identifier")
-                    refusal["reason"] = "unknown"
+                matches = matching_accounts(session, username_or_email)
+                if len(matches) != 1:
+                    # Two rows share the string. Picking either one checks the
+                    # password against the wrong hash and writes the failure
+                    # against the wrong account. Neither account is named.
+                    if len(matches) > 1:
+                        logger.warning(
+                            "Login identifier matched more than one account: %s",
+                            ", ".join(sorted(user.username for user in matches)),
+                        )
+                        refusal["reason"] = "ambiguous"
+                    else:
+                        logger.warning("Login attempt for unknown identifier")
+                        refusal["reason"] = "unknown"
                     return None
+                user = matches[0]
                 refusal["principal"] = user.principal_id
 
                 if not user.is_active:
@@ -712,7 +715,7 @@ class AuthService:
         # audit.forward and audit.manage are a person's own act. Dev mode grants
         # every role permission, and this still refuses a non-person, including
         # a dev user with no principal row.
-        if permission in _PERSON_ONLY and not _is_person(user_id, session):
+        if permission in PERSON_ONLY and not _is_person(user_id, session):
             return False
 
         # DEV MODE: Grant all permissions
@@ -807,16 +810,12 @@ class AuthService:
             Created User object or None
         """
         with unit_of_work(session) as session:
-            import uuid
-
-            # Check if username or email already exists
-            existing = (
-                session.query(User)
-                .filter((User.username == username) | (User.email == email))
-                .first()
-            )
-
-            if existing:
+            # Either string is a sign-in name, so each has to be free as a
+            # username and as an email, not only in its own column.
+            claim_sign_in_names(session, username, email)
+            if identifier_in_use(session, username) or identifier_in_use(
+                session, email
+            ):
                 logger.warning(f"User already exists: {username} or {email}")
                 return None
 

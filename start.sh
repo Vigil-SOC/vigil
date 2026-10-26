@@ -272,6 +272,8 @@ start_agent_layer() {
 
 # Outlasts the worker's own Redis connect retries (core/llm/gateway/gateway.py).
 WORKER_READY_TIMEOUT=120
+# Health waits on the slowest MCP connect; a healthy start of 124s was reported (#2910).
+BACKEND_READY_TIMEOUT=300
 
 if [ "$DAEMON" -eq 0 ]; then
     # Foreground
@@ -338,12 +340,12 @@ else
     BACKEND_PID=$!
     echo $BACKEND_PID > logs/backend.pid
 
-    # Liveness check: bail if uvicorn died on startup or never serves health.
+    # Liveness check: bail (and stop uvicorn) if it dies on startup or never
+    # serves health. MCP connects make a healthy start take minutes (#2910).
     local_host="$BIND_HOST"; [ "$local_host" = "0.0.0.0" ] && local_host="127.0.0.1"
-    if ! wait_for_url "http://${local_host}:6987/api/health" 60 \
-        || ! kill -0 "$BACKEND_PID" 2>/dev/null; then
-        echo "Backend failed to start. See logs/backend.log:" >&2
-        tail -n 20 logs/backend.log >&2 2>/dev/null || true
+    if ! wait_for_backend "http://${local_host}:6987/api/health" "$BACKEND_PID" \
+            "$BACKEND_READY_TIMEOUT"; then
+        abort_backend_start logs/backend.pid logs/backend.log
         exit 1
     fi
 

@@ -77,30 +77,18 @@ class SandboxPoller:
     async def run_once(self) -> Dict[str, int]:
         """Scan recent findings, advance any pending sandbox submissions."""
         self._init_services()
+        stats = dict.fromkeys(
+            ("checked", "completed", "expired", "failed", "errors"), 0
+        )
         if not self._data_service:
-            return {
-                "checked": 0,
-                "completed": 0,
-                "expired": 0,
-                "failed": 0,
-                "errors": 0,
-            }
+            return stats
 
         try:
             findings = await asyncio.to_thread(self._data_service.get_findings)
-        except TypeError:
-            findings = self._data_service.get_findings()
         except Exception as e:
             logger.error(f"Failed to list findings for sandbox poll: {e}")
-            return {
-                "checked": 0,
-                "completed": 0,
-                "expired": 0,
-                "failed": 0,
-                "errors": 1,
-            }
-
-        stats = {"checked": 0, "completed": 0, "expired": 0, "failed": 0, "errors": 0}
+            stats["errors"] = 1
+            return stats
 
         for finding in findings or []:
             # processor.py nests its enrichment payload under the ai_enrichment
@@ -154,16 +142,6 @@ class SandboxPoller:
                     if not report:
                         continue
 
-                    reports[report_key] = {
-                        "sandbox": sandbox_name,
-                        "task_id": task_id,
-                        "fetched_at": utcnow().isoformat(),
-                        "report": report,
-                    }
-                    sub["status"] = "reported"
-                    stats["completed"] += 1
-                    updated = True
-
                     if self._correlation:
                         try:
                             await asyncio.to_thread(
@@ -173,10 +151,22 @@ class SandboxPoller:
                                 str(task_id),
                                 report,
                             )
-                        except Exception as e:
-                            logger.error(
-                                f"Correlation failed for {sandbox_name}/{task_id}: {e}"
+                        except Exception:
+                            logger.exception(
+                                "Correlation failed for %s/%s", sandbox_name, task_id
                             )
+                            stats["errors"] += 1
+                            continue
+
+                    reports[report_key] = {
+                        "sandbox": sandbox_name,
+                        "task_id": task_id,
+                        "fetched_at": utcnow().isoformat(),
+                        "report": report,
+                    }
+                    sub["status"] = "reported"
+                    stats["completed"] += 1
+                    updated = True
 
             if updated:
                 enrichment["sandbox_submissions"] = pending
@@ -202,16 +192,13 @@ class SandboxPoller:
     async def _fetch_report(
         self, sandbox_name: str, task_id: str
     ) -> Optional[Dict[str, Any]]:
-        name = sandbox_name.lower()
-        if name in ("cape", "cape-sandbox", "cape_sandbox"):
-            return await self._fetch_cape(task_id)
-        if name in ("hybrid_analysis", "hybrid-analysis", "hybrid"):
-            return await self._fetch_hybrid(task_id)
-        if name in ("anyrun", "any.run"):
-            return await self._fetch_anyrun(task_id)
-        if name in ("joe", "joe_sandbox", "joe-sandbox"):
-            return await self._fetch_joe(task_id)
-        return None
+        fetch = {
+            "cape": self._fetch_cape,
+            "hybrid_analysis": self._fetch_hybrid,
+            "anyrun": self._fetch_anyrun,
+            "joe_sandbox": self._fetch_joe,
+        }.get(sandbox_name)
+        return await fetch(task_id) if fetch else None
 
     async def _fetch_cape(self, task_id: str) -> Optional[Dict[str, Any]]:
         base = get_settings().cape_sandbox_url.rstrip("/")

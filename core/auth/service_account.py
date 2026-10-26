@@ -9,15 +9,16 @@ The password comes on stdin, never argv or env: ``docker exec`` and ``kubectl
 exec`` record the full command line. The account is a Viewer with
 ``service_account = true``, so failed logins never lock it (a lock would let
 anyone who learns the name blind Medic; see ``AuthService._record_failed_attempt``)
-and the users API won't give it another role. The name is random so it can't be
+and the users API won't give it another role. Other service accounts may hold
+any role; Medic's stays Viewer. To recover from a lockout on roles, see
+``core.auth.recover_admin``. The name is random so it can't be
 guessed; the password is the gateway's alone.
 
 ``ensure`` is idempotent: same password → unchanged, new password → rotated
 (failure count and any lock cleared). Every run also puts back what a stolen
 gateway session could change through ``/api/auth/me``: the email (a reset
-address) and MFA (which would lock the gateway out). Any other active service
-account is
-retired, so a re-minted name leaves no stale login behind. It refuses an
+address) and MFA (which would lock the gateway out). Any other active Medic
+service account is retired, so a re-minted name leaves no stale login behind. It refuses an
 existing account that is not a Viewer service account. Nothing it prints or logs
 holds the password.
 
@@ -40,6 +41,7 @@ from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
 from core.auth import principals
 from core.auth.auth_service import AuthService
+from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.storage.connection import get_db_manager
 from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
@@ -102,14 +104,24 @@ def ensure(username: str, password: str) -> tuple[str, int]:
         if not session.query(Role).filter(Role.role_id == VIEWER_ROLE_ID).first():
             raise NotReady(f"role {VIEWER_ROLE_ID} is not seeded yet")
 
+        email = _email(username)
+        # The address is a sign-in name. Another account's username may
+        # already be that string; the email column's unique key would not mind.
+        claim_sign_in_names(session, username, email)
         user = session.query(User).filter(User.username == username).first()
         now = utcnow()
         if user is None:
+            if identifier_in_use(session, username) or identifier_in_use(
+                session, email
+            ):
+                raise ServiceAccountError(
+                    f"{username} collides with an existing sign-in name"
+                )
             outcome = "created"
             user = User(
                 user_id=f"user-{uuid.uuid4().hex[:12]}",
                 username=username,
-                email=_email(username),
+                email=email,
                 password_hash=AuthService.hash_password(password),
                 full_name="Medic gateway (service account)",
                 role_id=VIEWER_ROLE_ID,
@@ -132,7 +144,7 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 )
             if user.role_id != VIEWER_ROLE_ID:
                 raise ServiceAccountError(
-                    f"{username} holds {user.role_id}; a service account is Viewer only"
+                    f"{username} holds {user.role_id}; Medic's account is Viewer only"
                 )
             if AuthService.verify_password(password, user.password_hash):
                 outcome = "unchanged"
@@ -146,14 +158,20 @@ def ensure(username: str, password: str) -> tuple[str, int]:
             user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None
-            user.email = _email(username)
+            if identifier_in_use(session, email, except_user_id=user.user_id):
+                raise ServiceAccountError(
+                    f"{username} collides with an existing sign-in name"
+                )
+            user.email = email
             user.mfa_enabled = False
             user.mfa_secret = None
             user.mfa_recovery_codes = []
 
         retired = 0
+        # Other Medic accounts only: another service account is not Medic's.
         others = session.query(User).filter(
             User.service_account.is_(True),
+            User.username.like("medic-%"),
             User.username != username,
             User.is_active.is_(True),
         )

@@ -5267,6 +5267,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Role
+         * @description Create a custom role, from scratch or as a copy of a preset or role.
+         */
+        post: operations["post_api_users_roles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/roles/list": {
         parameters: {
             query?: never;
@@ -5289,6 +5309,30 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/roles/{role_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Role
+         * @description Edit a custom role. The editor holds everything it grants, before and after.
+         */
+        put: operations["put_api_users_roles_role_id"];
+        post?: never;
+        /**
+         * Delete Role
+         * @description Delete a custom role nobody holds.
+         */
+        delete: operations["delete_api_users_roles_role_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8177,6 +8221,25 @@ export interface components {
             type: string;
         };
         /**
+         * CreateRoleRequest
+         * @description Create a custom role. ``copy_from`` is a preset key or a role id.
+         */
+        CreateRoleRequest: {
+            /** Copy From */
+            copy_from?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            /** Permissions */
+            permissions?: {
+                [key: string]: boolean;
+            } | null;
+        };
+        /**
          * CreateUserRequest
          * @description Create user request.
          */
@@ -10621,6 +10684,17 @@ export interface components {
             case_id?: string | null;
             /** Title */
             title?: string | null;
+        };
+        /** UpdateRoleRequest */
+        UpdateRoleRequest: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Permissions */
+            permissions?: {
+                [key: string]: boolean;
+            } | null;
         };
         /**
          * UpdateUserRequest
@@ -20355,6 +20429,41 @@ export interface operations {
             };
         };
     };
+    post_api_users_roles: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_users_roles_list: {
         parameters: {
             query?: never;
@@ -20362,6 +20471,76 @@ export interface operations {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_users_roles_role_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_users_roles_role_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                role_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

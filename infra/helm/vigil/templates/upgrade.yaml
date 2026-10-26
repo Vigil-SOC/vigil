@@ -1,0 +1,317 @@
+{{- if .Values.upgrade.enabled }}
+{{- /*
+The schema writer on Helm (docs/upgrading.md): `python -m core.upgrade` from the
+backend image, as the database owner. Services only check alembic_version.
+
+  pre-upgrade  -10  --check, after the acknowledgement. Never scales: no token.
+  pre-upgrade    0  files/upgrade/helm_upgrade.py apply: stop the release, upgrade.
+  post-install   0  helm_upgrade.py install: an empty database to head.
+
+A failed pre-upgrade hook stops Helm before any manifest is applied, so the
+previous release keeps serving. Everything the Jobs need is a hook at -20, so
+it exists before them on the first upgrade from a chart that had none of it.
+
+Identity copies Medic's (templates/medic.yaml): its own ServiceAccount and a
+namespace Role, nothing cluster-scoped. Labels copy Medic's too, never
+vigil.selectorLabels: the chart's -deny-all policy selects that pair and
+allows all egress (_medic.tpl, "the label trap").
+*/}}
+{{- $up := dict "context" . "component" "upgrade" }}
+{{- $fn := printf "%s-upgrade" (include "vigil.medic.base" .) }}
+{{- $hook := dict "helm.sh/hook" "pre-install,pre-upgrade" "helm.sh/hook-weight" "-20" "helm.sh/hook-delete-policy" "before-hook-creation" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    {{- toYaml $hook | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    {{- toYaml $hook | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # No HPA rule: the API rejects maxReplicas 0, and an HPA does not act on a
+  # target scaled to 0, so the scale-down pauses it.
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    {{- toYaml $hook | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fn }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fn }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    {{- toYaml $hook | nindent 4 }}
+data:
+  helm_upgrade.py: |-
+    {{- .Files.Get "files/upgrade/helm_upgrade.py" | nindent 4 }}
+---
+{{- /* history.jsonl must outlive every upgrade. Re-applying a hook PVC fails
+       the next upgrade and before-hook-creation would delete it, so it is
+       created only when absent, and Helm never deletes it. */}}
+{{- if not (lookup "v1" "PersistentVolumeClaim" .Release.Namespace $fn) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.upgrade.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.upgrade.persistence.size }}
+---
+{{- end }}
+{{- if .Values.networkPolicies.enabled }}
+{{- $sel := include "vigil.medic.selectorLabels" $up }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    {{- toYaml $hook | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $sel | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    # Postgres. An external database's address is not known here: its port only.
+    {{- if .Values.postgresql.bitnami.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.postgres.port" . }}
+    {{- else if .Values.postgresql.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "postgres") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.postgres.port" . }}
+    {{- else }}
+    - ports:
+        - protocol: TCP
+          port: {{ include "vigil.postgres.port" . }}
+    {{- end }}
+    # The Kubernetes API, by endpoint address, as Medic reaches it.
+    - to:
+        {{- range (include "vigil.medic.kubeApiCidrs" . | fromJsonArray) }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        {{- range .Values.medic.kubeApi.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- include "vigil.medic.dnsEgress" . | nindent 4 }}
+---
+{{- if and .Values.postgresql.enabled (not .Values.postgresql.bitnami.enabled) }}
+{{- /* A hook beside the chart's Postgres policy rather than a peer in it: on the
+       first upgrade from an older chart, that policy is still the old one. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fn }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    {{- toYaml $hook | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "postgres") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $sel | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.service.port }}
+---
+{{- end }}
+{{- end }}
+{{- range $job := list
+      (dict "name" "check" "hook" "pre-upgrade" "weight" "-10" "token" false)
+      (dict "name" "apply" "hook" "pre-upgrade" "weight" "0" "token" true)
+      (dict "name" "install" "hook" "post-install" "weight" "0" "token" false) }}
+{{- with $ }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-%s" $fn $job.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $up | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ $job.hook }}
+    helm.sh/hook-weight: {{ $job.weight | quote }}
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  # A refusal is not transient, and a retried apply would stop the release
+  # again. The install retries: the in-chart Postgres may still be starting.
+  backoffLimit: {{ ternary 2 0 (eq $job.name "install") }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.medic.labels" $up | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $fn }}
+      # Only the Job that scales holds a token.
+      automountServiceAccountToken: {{ $job.token }}
+      enableServiceLinks: false
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: upgrade
+          image: {{ include "vigil.image" (dict "context" . "component" "backend") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "backend") }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- if eq $job.name "check" }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ "${VIGIL_UPGRADE_ACK_VERSION}" != "${VIGIL_CHART_APP_VERSION}" ]; then
+                echo "vigil-upgrade: refused: upgrade.acknowledgeVersion is '${VIGIL_UPGRADE_ACK_VERSION}', not this release's ${VIGIL_CHART_APP_VERSION}. Nothing was stopped." >&2
+                exit 1
+              fi
+              if [ -z "$(printf '%s' "${VIGIL_UPGRADE_ACK_REASON}" | tr -d '[:space:]')" ]; then
+                echo "vigil-upgrade: refused: upgrade.acknowledgeReason is empty. Nothing was stopped." >&2
+                exit 1
+              fi
+              exec python -m core.upgrade --check
+          {{- else }}
+          command: ["python", "/opt/vigil-upgrade/helm_upgrade.py", {{ $job.name | quote }}]
+          {{- end }}
+          # The shared ConfigMap for POSTGRES_SSL_MODE and the like; never the
+          # app Secret, whose POSTGRES_PASSWORD is vigil_app's.
+          envFrom:
+            - configMapRef:
+                name: {{ include "vigil.configmap.fullname" . }}
+                optional: true
+          env:
+            - name: HOME
+              value: /home/vigil
+            - name: POSTGRES_HOST
+              value: {{ include "vigil.postgres.host" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ include "vigil.postgres.port" . | toString | quote }}
+            - name: POSTGRES_DB
+              value: {{ include "vigil.postgres.database" . | quote }}
+            # The owner: the upgrade is the one schema writer.
+            - name: POSTGRES_USER
+              value: {{ include "vigil.postgres.username" . | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.postgres.passwordSecret" . }}
+                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+            - name: POSTGRES_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
+            - name: VIGIL_UPGRADE_DIR
+              value: /var/lib/vigil-upgrade
+            - name: VIGIL_UPGRADE_ACK_VERSION
+              value: {{ .Values.upgrade.acknowledgeVersion | toString | quote }}
+            - name: VIGIL_UPGRADE_ACK_REASON
+              value: {{ .Values.upgrade.acknowledgeReason | quote }}
+            - name: VIGIL_CHART_APP_VERSION
+              value: {{ .Chart.AppVersion | toString | quote }}
+            {{- if eq $job.name "apply" }}
+            - name: VIGIL_RELEASE
+              value: {{ .Release.Name | quote }}
+            - name: VIGIL_UPGRADE_STOP_TIMEOUT
+              value: {{ .Values.upgrade.stopTimeoutSeconds | toString | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: upgrade-state
+              mountPath: /var/lib/vigil-upgrade
+            {{- if ne $job.name "check" }}
+            - name: script
+              mountPath: /opt/vigil-upgrade
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.upgrade.resources | nindent 12 }}
+      volumes:
+        - name: upgrade-state
+          persistentVolumeClaim:
+            claimName: {{ $fn }}
+        {{- if ne $job.name "check" }}
+        - name: script
+          configMap:
+            name: {{ $fn }}
+        {{- end }}
+---
+{{- end }}
+{{- end }}
+{{- end }}
