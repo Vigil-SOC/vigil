@@ -7,8 +7,8 @@
     "@burtthecoder/mcp-virustotal": "1.0.35",
     "@modelcontextprotocol/server-github": "2025.4.8",
     "@pebbletek/cribl-mcp": "0.1.12",
-    "firecrawl-mcp": "3.30.3",
-    "mcp-remote": "0.1.49",
+    "firecrawl-mcp": "3.34.1",
+    "mcp-remote": "0.15.2",
     "security-detections-mcp": "3.3.0"
   },
   "scripts": {
