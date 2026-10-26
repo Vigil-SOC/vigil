@@ -346,21 +346,28 @@ function RetentionCard({ notify }: SectionProps) {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
+  // A save that returns before the mount load must not be overwritten by it.
+  const loadGen = useRef(0)
 
   useEffect(() => {
-    let live = true
+    const mine = ++loadGen.current
     auditApi.retention()
       .then((res) => {
-        if (!live) return
+        if (loadGen.current !== mine) return
         setPolicy(res.data)
         const shown = res.data.pending_days ?? res.data.effective_days
         if (shown != null) setDays(String(shown))
       })
-      .catch(() => { if (live) setLoadFailed(true) })
-    return () => { live = false }
+      .catch(() => {
+        if (loadGen.current === mine) setLoadFailed(true)
+      })
+    return () => {
+      loadGen.current += 1
+    }
   }, [])
 
   const apply = (next: AuditRetention) => {
+    loadGen.current += 1
     setPolicy(next)
     setLoadFailed(false)
     setStatus('')

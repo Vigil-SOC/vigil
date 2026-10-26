@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from core.audit import trail
 from core.auth import mcp_credential_service, principals, sign_ins
@@ -26,7 +26,15 @@ MIN_DAYS = 365
 MAX_DAYS = 36500
 WAIT = timedelta(days=7)
 CONFIG_KEY = "audit.retention"
+CONFIG_DESCRIPTION = (
+    "Audit retention period, and erasures of an audit manager waiting out seven days."
+)
 LIST_NAME = "erased-principals.txt"
+# Queued on the session until the transaction commits. A rollback must not
+# leave an id in the file: restore would blank that principal anyway.
+_QUEUED = "erasure_file_ids"
+_REWRITE = "erasure_file_rewrite"
+_ARMED = "erasure_file_armed"
 
 # A row names a principal when its hashed payload carries that id. The columns
 # beside the hash are what erasure clears; the payload stays so the chain does.
@@ -79,7 +87,7 @@ def set_period(
         raise RetentionError(f"retention is at most {MAX_DAYS} days")
     if isinstance(days, bool) or not isinstance(days, int) or days < MIN_DAYS:
         raise RetentionError(f"retention is at least {MIN_DAYS} days")
-    stored = _load(session)
+    stored = _load(session, lock=True)
     entry = trail.append(
         session,
         {trail.ACTION: trail.ACTION_RETENTION, trail.ACTOR: actor, "days": days},
@@ -192,12 +200,11 @@ def reapply(session, snapshot_ids: list[str]) -> None:
     for pid in union:
         _blank(session, pid)
         _revoke(session, pid)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{pid}\n" for pid in union), encoding="utf-8")
+    _queue_rewrite(session, "".join(f"{pid}\n" for pid in union))
 
 
 def _apply_period(session, now: datetime) -> None:
-    period = _effective(_load(session)["periods"], now)
+    period = _effective(_load(session, lock=True)["periods"], now)
     if period is None or not _table(session, "audit_trail"):
         return
     cutoff = now - timedelta(days=int(period["days"]))
@@ -231,7 +238,7 @@ def _apply_period(session, now: datetime) -> None:
 def _apply_erasures(session, now: datetime) -> None:
     if outside_path() is None:
         return
-    stored = _load(session)
+    stored = _load(session, lock=True)
     due = [item for item in stored["erasures"] if _stamp(item) + WAIT <= now]
     if not due:
         return
@@ -255,7 +262,7 @@ def _apply_erasures(session, now: datetime) -> None:
 
 
 def _defer(session, actor, principal_id, reason, now, updated_by) -> dict:
-    stored = _load(session)
+    stored = _load(session, lock=True)
     if any(item["principal_id"] == principal_id for item in stored["erasures"]):
         return _view(session, now)
     entry = _announce(session, actor, principal_id, reason)
@@ -286,7 +293,7 @@ def _announce(session, actor: str, principal_id: str, reason: str):
 def _perform(session, principal_id: str) -> None:
     _blank(session, principal_id)
     _revoke(session, principal_id)
-    _append_file([principal_id])
+    _queue_append(session, [principal_id])
 
 
 def _blank(session, principal_id: str) -> None:
@@ -315,9 +322,11 @@ def _blank(session, principal_id: str) -> None:
 
 
 def _revoke(session, principal_id: str) -> None:
-    """Revoke credentials and end sign-ins the way account deletion does, and keep the rows.
+    """Revoke MCP credentials and end sign-ins, and keep those rows.
 
-    The user row stays, and the principal is not marked deleted.
+    The account is deactivated so it cannot sign in again or count as an
+    active audit manager. Its email, name, and password stay. The principal
+    is not marked deleted.
     """
     if not _table(session, "users"):
         return
@@ -335,6 +344,50 @@ def _revoke(session, principal_id: str) -> None:
         text("UPDATE public.users SET is_active = false WHERE user_id = :id"),
         {"id": user_id},
     )
+
+
+def _queue_append(session, ids: list[str]) -> None:
+    session.info.setdefault(_QUEUED, []).extend(ids)
+    _arm_file(session)
+
+
+def _queue_rewrite(session, body: str) -> None:
+    session.info[_REWRITE] = body
+    _arm_file(session)
+
+
+def _arm_file(session) -> None:
+    """Write the erasure file only after this transaction commits."""
+    if session.info.get(_ARMED):
+        return
+    session.info[_ARMED] = True
+
+    def _committed(sess) -> None:
+        event.remove(sess, "after_rollback", _rolled_back)
+        rewrite = sess.info.pop(_REWRITE, None)
+        append = list(sess.info.pop(_QUEUED, []))
+        sess.info.pop(_ARMED, None)
+        if rewrite is not None:
+            _write_exact(rewrite)
+        elif append:
+            _append_file(append)
+
+    def _rolled_back(sess) -> None:
+        event.remove(sess, "after_commit", _committed)
+        sess.info.pop(_REWRITE, None)
+        sess.info.pop(_QUEUED, None)
+        sess.info.pop(_ARMED, None)
+
+    event.listen(session, "after_commit", _committed, once=True)
+    event.listen(session, "after_rollback", _rolled_back, once=True)
+
+
+def _write_exact(body: str) -> None:
+    path = outside_path()
+    if path is None:
+        raise RetentionError("VIGIL_UPGRADE_DIR is unset")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
 
 
 def _append_file(ids: list[str]) -> None:
@@ -390,13 +443,32 @@ def _managers(session, *, active_only: bool) -> set[str]:
     return set(rows)
 
 
-def _load(session) -> dict[str, list]:
+def _load(session, *, lock: bool = False) -> dict[str, list]:
     if not _table(session, "system_config"):
         return {"periods": [], "erasures": []}
-    # Locked for the caller's transaction, so two writers cannot each save a
-    # list that lacks the other's change.
+    # FOR UPDATE locks only a row that is already there. Two first writers
+    # would each read nothing, then each replace the whole document. Insert
+    # the empty document first so the second writer waits and then reads the
+    # first writer's commit.
+    if lock:
+        session.execute(
+            text("""
+                INSERT INTO public.system_config
+                    (key, value, description, config_type, updated_by)
+                VALUES (:key, CAST(:value AS jsonb), :description, 'audit', NULL)
+                ON CONFLICT (key) DO NOTHING
+                """),
+            {
+                "key": CONFIG_KEY,
+                "value": json.dumps({"periods": [], "erasures": []}),
+                "description": CONFIG_DESCRIPTION,
+            },
+        )
     value = session.execute(
-        text("SELECT value FROM public.system_config WHERE key = :key FOR UPDATE"),
+        text(
+            "SELECT value FROM public.system_config WHERE key = :key"
+            + (" FOR UPDATE" if lock else "")
+        ),
         {"key": CONFIG_KEY},
     ).scalar()
     if not isinstance(value, dict):
@@ -425,7 +497,7 @@ def _save(session, stored: dict, updated_by: Optional[str]) -> None:
         {
             "key": CONFIG_KEY,
             "value": json.dumps(stored),
-            "description": "Audit retention period, and erasures of an audit manager waiting out seven days.",
+            "description": CONFIG_DESCRIPTION,
             "user": updated_by,
         },
     )

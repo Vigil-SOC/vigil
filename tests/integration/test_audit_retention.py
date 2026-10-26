@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from core.audit import feed, retention, trail
@@ -525,3 +526,48 @@ def test_a_service_account_with_the_role_is_not_a_manager(db, tmp_path, monkeypa
             retention.erase(session, "svc-audit", fay, "leaving", NOW)
     feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
     assert _label(db, fay)[0] == "fay"
+
+
+def test_a_rolled_back_tick_does_not_keep_the_erasure_id(db, tmp_path, monkeypatch):
+    """The id is written when the tick commits. A later failure in that tick leaves it out."""
+    monkeypatch.setenv("VIGIL_UPGRADE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    ada = _user("ada", "role-admin")
+    ned = _user("ned", "role-admin")
+    _activate(ada, ned)
+    with unit_of_work() as session:
+        retention.erase(session, ada, ned, "leaving", NOW)
+
+    def _fail(session, state):
+        raise RuntimeError("checkpoint failed")
+
+    original = feed._checkpoint
+    monkeypatch.setattr(feed, "_checkpoint", _fail)
+    with pytest.raises(RuntimeError, match="checkpoint failed"):
+        feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
+    assert _label(db, ned)[0] == "ned"
+    assert retention.read_ids(tmp_path / retention.LIST_NAME) == []
+    monkeypatch.setattr(feed, "_checkpoint", original)
+    feed.maintenance_and_send(feed.SendClock(), now=NOW + timedelta(days=7))
+    assert _label(db, ned)[0] is None
+    assert retention.read_ids(tmp_path / retention.LIST_NAME) == [ned]
+
+
+def test_the_first_retention_write_locks_the_row(db):
+    factory = sessionmaker(bind=db)
+    first = factory()
+    second = factory()
+    first.begin()
+    try:
+        retention._load(first, lock=True)
+        second.begin()
+        try:
+            second.execute(text("SET LOCAL statement_timeout = '400ms'"))
+            with pytest.raises(OperationalError):
+                retention._load(second, lock=True)
+        finally:
+            second.rollback()
+            second.close()
+    finally:
+        first.rollback()
+        first.close()

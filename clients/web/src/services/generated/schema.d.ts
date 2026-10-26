@@ -733,7 +733,7 @@ export interface paths {
         put?: never;
         /**
          * Erase Principal
-         * @description Blank one principal's personal details. An audit manager waits seven days.
+         * @description Blank one principal's label and trail details, and end their sign-in and credentials. An audit manager waits seven days.
          */
         post: operations["post_api_audit_erasure"];
         delete?: never;

@@ -242,7 +242,7 @@ def erase_principal(
     session: UnitOfWorkSession,
     user: User = Depends(_MANAGE),
 ):
-    """Blank one principal's personal details. An audit manager waits seven days."""
+    """Blank one principal's label and trail details, and end their sign-in and credentials. An audit manager waits seven days."""
     return _retention(
         lambda: retention.erase(
             session,
