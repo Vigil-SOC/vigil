@@ -142,7 +142,7 @@ class TestIsolationIdempotency:
         action = response.approval_service.get_action(first["action_id"])
         assert action is not None
         assert action.idempotency_key == "isolate_host:10.0.9.9"
-        assert action.status == ActionStatus.EXECUTED.value
+        assert action.status == ActionStatus.PENDING.value
 
     def test_rejected_isolate_is_not_executed_on_retry(self):
         response = AutonomousResponseService()
