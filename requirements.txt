@@ -66,7 +66,7 @@ uv>=0.13.1
 # Authentication
 bcrypt>=5.0.0
 pyjwt>=2.13.0
-pyotp>=2.9.0
+pyotp>=2.10.0
 cryptography>=50.0.2
 slowapi>=0.1.10
 # Signed URL-safe tokens for password reset (also a Starlette transitive
