@@ -152,7 +152,7 @@
       }
     },
     "runbook": {
-      "description": "runbooks/<id>.yaml. Minimal descriptor slot; G4 finalizes the action vocabulary before the first pack ships. Descriptors only: there is no executor in Phase 0, and rules never name runbooks (E2 §7).",
+      "description": "runbooks/<id>.yaml. Phase 0 actions are restart_service(service) and stop_stale_listener(service, port_label). Descriptors only: nothing executes in Phase 0, and rules never name runbooks (E2 §7).",
       "type": "object",
       "required": ["apiVersion", "kind", "id", "title", "applies_to", "action", "verify_after_s", "description"],
       "additionalProperties": false,
@@ -161,13 +161,26 @@
         "kind": {"const": "Runbook"},
         "id": {"$ref": "#/$defs/id"},
         "title": {"type": "string", "minLength": 5, "maxLength": 120},
-        "applies_to": {"description": "Lane-1 rule ids this runbook would fix.", "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^(ingest|llm|pipeline)\\.[a-z0-9][a-z0-9-]{1,62}$"}},
+        "applies_to": {"description": "Lane-1 rule ids this runbook would fix. One descriptor may name several; two descriptors may not name the same rule.", "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^(ingest|llm|pipeline)\\.[a-z0-9][a-z0-9-]{1,62}$"}},
         "action": {
-          "type": "object", "required": ["type", "target"], "additionalProperties": false,
-          "properties": {
-            "type": {"enum": ["restart_service", "kill_orphan_process"]},
-            "target": {"enum": ["soc-daemon", "llm-worker", "agent-worker", "agent-serve", "bifrost"]}
-          }
+          "description": "Closed Phase 0 list. service is a subset of fingerprint_ref.SERVICES. port_label names a group label (rule.schema.json $defs.name); the port comes from the incident, never from this file.",
+          "oneOf": [
+            {
+              "type": "object", "required": ["type", "service"], "additionalProperties": false,
+              "properties": {
+                "type": {"const": "restart_service"},
+                "service": {"enum": ["soc-daemon", "llm-worker", "agent-worker", "agent-serve", "bifrost"]}
+              }
+            },
+            {
+              "type": "object", "required": ["type", "service", "port_label"], "additionalProperties": false,
+              "properties": {
+                "type": {"const": "stop_stale_listener"},
+                "service": {"enum": ["soc-daemon", "llm-worker", "agent-worker", "agent-serve", "bifrost"]},
+                "port_label": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}
+              }
+            }
+          ]
         },
         "verify_after_s": {"type": "integer", "minimum": 30, "maximum": 86400},
         "description": {"$ref": "#/$defs/static_text", "maxLength": 1000}
