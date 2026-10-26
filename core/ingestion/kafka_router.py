@@ -45,8 +45,11 @@ ROUTER_META = RouterMeta(
 
 logger = logging.getLogger(__name__)
 
-# The daemon applies these values. Same class of change as the S3 settings route.
-_SETTINGS_WRITE = [permission_gate("integrations.write")]
+# Connector settings after the catalog revision. Until then this stays the
+# settings.write check the route had; 0008 does not copy that grant here.
+_SETTINGS_WRITE = [
+    permission_gate("integrations.write", before_revision="settings.write")
+]
 
 SYSTEMCONFIG_KEY = "kafka.settings"
 DAEMON_STATUS_TIMEOUT_SECONDS = 2.0

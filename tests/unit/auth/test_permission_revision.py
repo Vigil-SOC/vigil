@@ -37,6 +37,32 @@ def test_without_the_revision_a_split_write_keeps_its_parent(monkeypatch):
     assert enforced_permission("loglm.view", session) == "loglm.view"
 
 
+def test_a_route_that_had_no_gate_stays_open_until_the_revision(monkeypatch):
+    """automation.write keeps settings.write only where that check already ran."""
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: False
+    )
+    session = object()
+
+    assert (
+        enforced_permission("automation.write", session, introduced=True) is None
+    )
+    assert enforced_permission("automation.write", session) == "settings.write"
+
+
+def test_a_retargeted_write_keeps_the_live_check_until_the_revision(monkeypatch):
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: False
+    )
+
+    assert (
+        enforced_permission(
+            "integrations.write", object(), before_revision="settings.write"
+        )
+        == "settings.write"
+    )
+
+
 def test_with_the_revision_the_declared_name_is_the_check(monkeypatch):
     monkeypatch.setattr(
         "core.auth.permissions.catalog_revision_applied", lambda session: True
@@ -44,6 +70,16 @@ def test_with_the_revision_the_declared_name_is_the_check(monkeypatch):
 
     assert enforced_permission("detections.write", object()) == "detections.write"
     assert enforced_permission("detections.read", object()) == "detections.read"
+    assert (
+        enforced_permission("automation.write", object(), introduced=True)
+        == "automation.write"
+    )
+    assert (
+        enforced_permission(
+            "integrations.write", object(), before_revision="settings.write"
+        )
+        == "integrations.write"
+    )
 
 
 def test_overview_names_a_missing_read_and_keeps_the_arrays(monkeypatch):
@@ -146,6 +182,48 @@ def test_an_unopenable_database_keeps_todays_gates(monkeypatch):
 
     assert missing_permission("analyst", "detections.write") is None
     assert missing_permission("analyst", "cases.write") == "cases.write"
+
+
+def test_open_routes_do_not_grow_a_settings_write_check(monkeypatch):
+    """Generate and skill-test had no gate. Kafka's write was settings.write."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from core.auth.current_user import get_current_user
+    from core.ingestion.kafka_router import router as kafka_router
+    from core.workflows.workflows_router import router as workflows_router
+    from services.api.routers.skills import router as skills_router
+
+    monkeypatch.setattr(
+        "core.auth.permissions.catalog_revision_applied", lambda session: False
+    )
+
+    def _holds(user_id, permission, session=None):
+        return permission == "integrations.write"
+
+    monkeypatch.setattr(
+        "core.auth.permissions.AuthService.check_permission",
+        staticmethod(_holds),
+    )
+
+    app = FastAPI()
+    app.include_router(workflows_router, prefix="/api")
+    app.include_router(skills_router, prefix="/api/skills")
+    app.include_router(kafka_router, prefix="/api/kafka")
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        user_id="senior"
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    generate = client.post("/api/workflows/generate", json={"description": "look"})
+    assert generate.status_code != 403, generate.text
+
+    skill = client.post("/api/skills/demo/test")
+    assert skill.status_code != 403, skill.text
+
+    kafka = client.put("/api/kafka/config", json={"enabled": False})
+    assert kafka.status_code == 403
+    assert kafka.json()["detail"] == "Permission denied: settings.write required"
 
 
 def test_a_read_error_after_the_database_is_open_raises(monkeypatch):

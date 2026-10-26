@@ -306,16 +306,26 @@ def catalog_revision_applied(session) -> bool:
     return False
 
 
-def enforced_permission(permission: str, session) -> Optional[str]:
+def enforced_permission(
+    permission: str,
+    session,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Optional[str]:
     """The name to check, or None when the gate stays open.
 
     With the catalog revision applied, the declared name is the check. Without
     it, a successor of ``settings.write`` or ``integrations.write`` keeps that
     parent, and every other catalog permission is new and stays open. A name
     the catalog does not re-origin (the live gates, and ``{integration}.view``)
-    is checked either way. ``session`` may be None when no database is open;
-    that counts as the revision being absent unless the revision check is
-    stubbed to say otherwise.
+    is checked either way. ``introduced`` is a route that had no gate: it stays
+    open until the revision even when its name is a write successor.
+    ``before_revision`` is the live check a route keeps when its new name is
+    itself a live permission (``integrations.write``), which the catalog does
+    not record as a successor. ``session`` may be None when no database is
+    open; that counts as the revision being absent unless the revision check
+    is stubbed to say otherwise.
     """
     if session is not None and catalog_revision_applied(session):
         return permission
@@ -325,6 +335,10 @@ def enforced_permission(permission: str, session) -> Optional[str]:
                 return permission
         except Exception:
             pass
+    if introduced:
+        return None
+    if before_revision is not None:
+        return before_revision
     origin = CATALOG["permissions"].get(permission)
     if isinstance(origin, str) and origin.startswith(_SPLIT_PREFIX):
         parent = origin[len(_SPLIT_PREFIX) :]
@@ -335,8 +349,20 @@ def enforced_permission(permission: str, session) -> Optional[str]:
     return permission
 
 
-def _missing(user_id: str, permission: str, session) -> Optional[str]:
-    enforced = enforced_permission(permission, session)
+def _missing(
+    user_id: str,
+    permission: str,
+    session,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Optional[str]:
+    enforced = enforced_permission(
+        permission,
+        session,
+        introduced=introduced,
+        before_revision=before_revision,
+    )
     if enforced is None:
         return None
     if AuthService.check_permission(user_id, enforced, session=session):
@@ -344,7 +370,14 @@ def _missing(user_id: str, permission: str, session) -> Optional[str]:
     return enforced
 
 
-def missing_permission(user_id: str, permission: str, session=None) -> Optional[str]:
+def missing_permission(
+    user_id: str,
+    permission: str,
+    session=None,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Optional[str]:
     """The permission a refusal should name, or None when the call is allowed.
 
     No database yet (a unit test, or a process that has not connected) is the
@@ -352,7 +385,13 @@ def missing_permission(user_id: str, permission: str, session=None) -> Optional[
     ``check_permission`` still runs.
     """
     if session is not None:
-        return _missing(user_id, permission, session)
+        return _missing(
+            user_id,
+            permission,
+            session,
+            introduced=introduced,
+            before_revision=before_revision,
+        )
     # A database this process cannot open is the same as the revision being
     # absent. Unit tests point Postgres at an unreachable host. Only the open
     # falls back: an error once the database is open is raised, so a transient
@@ -368,13 +407,38 @@ def missing_permission(user_id: str, permission: str, session=None) -> Optional[
             # cannot be reached falls back and a later read error raises.
             owned.connection()
         except (RuntimeError, SQLAlchemyError):
-            return _missing(user_id, permission, None)
-        return _missing(user_id, permission, owned)
+            return _missing(
+                user_id,
+                permission,
+                None,
+                introduced=introduced,
+                before_revision=before_revision,
+            )
+        return _missing(
+            user_id,
+            permission,
+            owned,
+            introduced=introduced,
+            before_revision=before_revision,
+        )
 
 
-def deny_unless(user_id: str, permission: str, session=None) -> None:
+def deny_unless(
+    user_id: str,
+    permission: str,
+    session=None,
+    *,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> None:
     """403 naming the permission the check actually used."""
-    missing = missing_permission(user_id, permission, session)
+    missing = missing_permission(
+        user_id,
+        permission,
+        session,
+        introduced=introduced,
+        before_revision=before_revision,
+    )
     if missing is None:
         return
     raise HTTPException(
@@ -390,22 +454,36 @@ SIGN_IN_REQUIRED = "A person sign-in is required"
 
 
 def require_permission(
-    permission: str, *, unsafe_only: bool = False
+    permission: str,
+    *,
+    unsafe_only: bool = False,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
 ) -> Callable[..., User]:
     """Dependency that answers 403 unless the signed-in user holds ``permission``.
 
     ``unsafe_only`` skips GET/HEAD/OPTIONS, for a router-level gate that guards
-    the writes of a router whose reads stay open to every role.
+    the writes of a router whose reads stay open to every role. ``introduced``
+    and ``before_revision`` select the pre-revision check; see
+    ``enforced_permission``.
     """
 
     def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         if unsafe_only and request.method in _SAFE_METHODS:
             return user
-        deny_unless(user.user_id, permission)
+        # Omit the default keywords so a test stub of the two-argument
+        # call still matches a gate that is not one of the two exceptions.
+        extra = {}
+        if introduced:
+            extra["introduced"] = True
+        if before_revision is not None:
+            extra["before_revision"] = before_revision
+        deny_unless(user.user_id, permission, **extra)
         return user
 
     # Introspectable by the role x route matrix test.
     _check.permission, _check.unsafe_only = permission, unsafe_only
+    _check.introduced, _check.before_revision = introduced, before_revision
     return _check
 
 
@@ -474,9 +552,22 @@ def require_person_permission(permission: str) -> Callable[..., User]:
     return _check
 
 
-def permission_gate(permission: str, *, unsafe_only: bool = False) -> Depends:
+def permission_gate(
+    permission: str,
+    *,
+    unsafe_only: bool = False,
+    introduced: bool = False,
+    before_revision: Optional[str] = None,
+) -> Depends:
     """``Depends(require_permission(...))``, ready for ``dependencies=[...]``."""
-    return Depends(require_permission(permission, unsafe_only=unsafe_only))
+    return Depends(
+        require_permission(
+            permission,
+            unsafe_only=unsafe_only,
+            introduced=introduced,
+            before_revision=before_revision,
+        )
+    )
 
 
 def username_has_permission(username: str, permission: str) -> bool:

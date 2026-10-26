@@ -33,8 +33,11 @@ ROUTER_META = RouterMeta(
 )
 logger = logging.getLogger(__name__)
 
-# Federation is connector configuration: the switch and each source.
-_SETTINGS_WRITE = [permission_gate("integrations.write")]
+# The global switch was settings.write. It becomes integrations.write with the
+# catalog revision. Each source was already integrations.write.
+_SETTINGS_WRITE = [
+    permission_gate("integrations.write", before_revision="settings.write")
+]
 _INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 router.dependencies.append(permission_gate("integrations.read"))
 

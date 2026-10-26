@@ -244,7 +244,10 @@ async def delete_custom_workflow(
 # -----------------------------------------------------------------------------
 
 
-@router.post("/workflows/generate", dependencies=_SETTINGS_WRITE)
+@router.post(
+    "/workflows/generate",
+    dependencies=[permission_gate("automation.write", introduced=True)],
+)
 async def generate_workflow(
     payload: WorkflowGenerateRequest,
     generator: WorkflowAIGenerator = Depends(provide_workflow_ai),
@@ -785,7 +788,10 @@ async def _restate_summary(run_id: str, run_service: WorkflowRunService) -> None
         logger.warning("could not restate the stored summary of %s: %s", run_id, exc)
 
 
-@router.delete("/workflows/runs/{run_id}", dependencies=_SETTINGS_WRITE)
+@router.delete(
+    "/workflows/runs/{run_id}",
+    dependencies=[permission_gate("automation.write", introduced=True)],
+)
 async def delete_workflow_run(
     run_id: str,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
