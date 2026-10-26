@@ -146,15 +146,19 @@ text = open(p).read()
 open(p, "w").write(re.split(r"^dependencies:", text, flags=re.M)[0])
 PY
 if [[ $MODE == backend ]]; then
-  # The real backend, with the chart's own Postgres (+ db-init) and Redis.
+  # The real backend, with the chart's own Postgres (+ the post-install schema
+  # Job) and Redis.
+  app_version=$(sed -n 's/^appVersion: *//p' "$chart/Chart.yaml" | tr -d "\"'")
   vigil_set=(--set backend.replicaCount=1
+    --set upgrade.acknowledgeVersion="$app_version"
+    --set upgrade.acknowledgeReason="kind e2e: throwaway cluster, nothing to restore"
     --set backend.image.repository=vigil-backend --set backend.image.tag="$TAG"
     --set backend.image.pullPolicy=Never
     --set secrets.postgresPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.vigilAppPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.jwtSecretKey="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
 else
-  vigil_set=(--set backend.replicaCount=0 --set dbInit.enabled=false
+  vigil_set=(--set backend.replicaCount=0 --set upgrade.enabled=false
     --set postgresql.enabled=false --set postgresql.external.host=none
     --set redis.enabled=false --set redis.external.url=redis://none:6379/0
     --set secrets.postgresPassword=unused --set secrets.vigilAppPassword=unused-app)
@@ -298,8 +302,10 @@ expect 1.1.1.1 443 timeout "R2 internet"
 expect "$api_ep" "$api_port" connected "check 15 Kubernetes API"
 
 say "check 15: a wrong medic.kubeApi.cidrs cuts the API off"
+# upgrade.enabled=false: these upgrades change policy only, and the upgrade Jobs'
+# own egress would be cut off by the wrong CIDRs as Medic's is.
 helm --kube-context "kind-$CLUSTER" upgrade "$REL" "$chart" -n "$NS" --reuse-values \
-  --set 'medic.kubeApi.cidrs[0]=10.255.255.1/32' >/dev/null
+  --set upgrade.enabled=false --set 'medic.kubeApi.cidrs[0]=10.255.255.1/32' >/dev/null
 # Policy updates land asynchronously: poll rather than sleep.
 await() { # host port want label
   local got
@@ -313,7 +319,7 @@ await() { # host port want label
 }
 await "$api_ep" "$api_port" timeout "check 15 wrong cidrs"
 helm --kube-context "kind-$CLUSTER" upgrade "$REL" "$chart" -n "$NS" --reuse-values \
-  --set 'medic.kubeApi.cidrs={}' >/dev/null
+  --set upgrade.enabled=false --set 'medic.kubeApi.cidrs={}' >/dev/null
 restored=$($K -n "$NS" get networkpolicy "$FN-medic" -o jsonpath='{.spec.egress[*].to[*].ipBlock.cidr}')
 [[ $restored == "$api_ep/32" ]] || fail "check 15: an empty medic.kubeApi.cidrs left $restored, not the lookup's $api_ep/32"
 await "$api_ep" "$api_port" connected "check 15 restored by lookup"

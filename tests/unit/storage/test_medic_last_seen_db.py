@@ -1,7 +1,7 @@
 """``medic_last_seen`` in a real Postgres: create_all and the init SQL.
 
 A fresh install gets the table from create_all; a database built before it gets
-it from ``44_medic_last_seen.sql`` (Compose db-seed, Helm db-init). The two must
+it from ``44_medic_last_seen.sql`` (Compose db-seed). The two must
 build the same table, with the same limits: one row, a closed ``failure_kind``,
 a size-capped snapshot. Each change runs in a transaction that is rolled back,
 so the shared test database is left as found.
@@ -19,7 +19,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.databa
 
 REPO = Path(__file__).resolve().parents[3]
 INIT_SQL = REPO / "infra" / "database" / "init" / "44_medic_last_seen.sql"
-HELM_SQL = REPO / "infra" / "helm" / "vigil" / "files" / "database-init" / INIT_SQL.name
 
 COLUMNS = {
     "id": ("smallint", "NO"),
@@ -91,10 +90,6 @@ def test_init_sql_builds_the_same_table(conn):
 
 def test_no_row_on_a_fresh_install(conn):
     assert conn.execute(text("SELECT count(*) FROM medic_last_seen")).scalar() == 0
-
-
-def test_the_helm_copy_matches():
-    assert HELM_SQL.read_text() == INIT_SQL.read_text()
 
 
 @pytest.mark.parametrize(
