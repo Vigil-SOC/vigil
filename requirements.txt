@@ -17,7 +17,7 @@ httpx>=0.28.1
 requests>=2.34.2
 urllib3>=2.8.0
 boto3>=1.43.77
-aiohttp>=3.9.0
+aiohttp>=3.14.5
 
 # Core declared transitive deps
 pydantic>=2.0.0
