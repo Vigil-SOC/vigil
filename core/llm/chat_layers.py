@@ -201,13 +201,9 @@ def _declare(
     # Hunts curate separately (playbook_resolver).
     #
     # Chat has no approval-resume path, so ART execute is dropped by id.
-    # ``approve_action`` is not dropped, and that is the decision rather than an
-    # oversight: what it approves is an action a person already queued and can
-    # already release from the approvals screen, so chat releasing it is the same
-    # authority reached by a different door -- whereas ``isolate_host`` in chat
-    # would be a detonation nobody queued. If that reading is ever revisited, the
-    # thing to change is this list, not the verb set, which decides a different
-    # question.
+    # ``approve_action`` stays declared and does not approve: it leaves the row
+    # and points at Approvals (#2918). ``isolate_host`` in chat would be a
+    # detonation nobody queued, which is a different question from this list.
     static = {t["name"]: t for t in ALL_TOOLS if t.get("name")}
     names = list(static) if wanted is None else [n for n in wanted if n in static]
     entries = [static[n] for n in names if n not in EXECUTE_IDS]

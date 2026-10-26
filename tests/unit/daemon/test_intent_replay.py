@@ -74,17 +74,17 @@ def test_approval_requirement_matches_the_live_branch():
     config = ResponseConfig()
     assert approval_requirement(False, Reversibility.REVERSIBLE, 0.87, config) == (
         True,
-        "response.confidence_threshold=0.90 not met (0.87)",
+        "reversibility=reversible",
     )
-    assert approval_requirement(False, Reversibility.REVERSIBLE, 0.92, config) == (
-        False,
-        "response.confidence_threshold=0.90 met (0.92)",
+    assert approval_requirement(False, Reversibility.REVERSIBLE, 0.99, config) == (
+        True,
+        "reversibility=reversible",
     )
     held, rule = approval_requirement(
         False, Reversibility.REVERSIBLE, 0.92, ResponseConfig(confidence_threshold=0.95)
     )
     assert held is True
-    assert rule == "response.confidence_threshold=0.95 not met (0.92)"
+    assert rule == "reversibility=reversible"
     assert approval_requirement(False, Reversibility.IRREVERSIBLE, 0.99, config) == (
         True,
         "reversibility=irreversible",
@@ -120,8 +120,7 @@ def test_equal_configs_differ_on_nothing():
     assert "0 findings would have gained or lost a response action" in text
 
 
-def test_raised_threshold_holds_only_the_confidence_that_crosses():
-    # 0.87 already waits at 0.90, and 0.96 still clears 0.95. Only 0.92 flips.
+def test_a_raised_threshold_does_not_release_or_hold_an_approval():
     findings, approvals = _seeded()
     report = replay_decisions(
         findings,
@@ -129,15 +128,9 @@ def test_raised_threshold_holds_only_the_confidence_that_crosses():
         ResponseConfig(),
         ResponseConfig(confidence_threshold=0.95),
     )
-    assert [row.id for row in report.rows] == ["a-92"]
-    row = report.rows[0]
-    assert row.effective == "unattended"
-    assert row.declared == "approval"
-    assert row.effective_rule == "response.confidence_threshold=0.90 met (0.92)"
-    assert row.declared_rule == "response.confidence_threshold=0.95 not met (0.92)"
-    assert report.actions_now_requiring_approval == 1
+    assert report.rows == []
+    assert report.actions_now_requiring_approval == 0
     assert report.actions_now_unattended == 0
-    assert report.findings_gained_or_lost == 0
 
 
 def test_raised_critical_floor_drops_the_finding_action():
@@ -169,20 +162,19 @@ def test_auto_response_off_reports_the_finding_losing_its_action():
     assert report.findings_gained_or_lost == 1
 
 
-def test_loosened_threshold_would_have_run_unattended():
+def test_loosened_threshold_does_not_run_unattended():
     report = replay_decisions(
         [],
         [_approval("a-87", 0.87)],
         ResponseConfig(),
         ResponseConfig(confidence_threshold=0.80),
     )
-    assert report.actions_now_unattended == 1
+    assert report.actions_now_unattended == 0
     assert report.actions_now_requiring_approval == 0
-    assert report.rows[0].declared == "unattended"
+    assert report.rows == []
 
 
 def test_same_action_under_a_different_rule_is_not_a_row():
-    # 0.96 still auto-approves at 0.95; the rule text changes, the outcome does not.
     report = replay_decisions(
         [],
         [_approval("a-96", 0.96)],
@@ -203,20 +195,26 @@ class _FakeConfigService:
         return self.rows.get(key)
 
 
-def test_effective_force_uses_the_db_overlay_and_declared_can_override(monkeypatch):
-    svc = _FakeConfigService({"approval.force_manual_approval": {"enabled": True}})
-    monkeypatch.setattr(
-        "core.response.approval_service.get_config_service", lambda: svc
+def test_effective_act_flag_uses_the_ceiling_and_declared_can_override(monkeypatch):
+    svc = _FakeConfigService(
+        {
+            "autonomy.ceiling": {
+                "act_reversible": True,
+                "act_irreversible": False,
+                "four_eyes": True,
+                "stopped": False,
+            }
+        }
     )
+    monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: svc)
     base = DaemonConfig()
     effective = effective_daemon_config(base)
-    assert base.response.force_manual_approval is False
-    assert effective.response.force_manual_approval is True
-    declared = declared_daemon_config(
-        effective, {"respond.force_manual_approval": False}
-    )
-    assert declared.response.force_manual_approval is False
-    assert effective.response.force_manual_approval is True
+    assert base.ceiling.act_reversible is False
+    assert effective.ceiling.act_reversible is True
+    assert effective.ceiling.four_eyes is True
+    declared = declared_daemon_config(effective, {"act.reversible": False})
+    assert declared.ceiling.act_reversible is False
+    assert effective.ceiling.act_reversible is True
 
 
 class _BrokenConfigService:
@@ -224,13 +222,12 @@ class _BrokenConfigService:
         raise RuntimeError("db down")
 
 
-def test_failed_approval_read_reports_the_force_the_gate_applies(monkeypatch):
+def test_failed_ceiling_read_does_not_raise_an_act_flag(monkeypatch):
     svc = _BrokenConfigService()
-    monkeypatch.setattr(
-        "core.response.approval_service.get_config_service", lambda: svc
-    )
+    monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: svc)
     effective = effective_daemon_config(DaemonConfig())
-    assert effective.response.force_manual_approval is True
+    assert effective.ceiling.act_reversible is False
+    assert effective.ceiling.act_irreversible is False
 
 
 def test_wrong_type_is_skipped_and_a_sibling_key_still_applies(caplog):

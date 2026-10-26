@@ -21,7 +21,6 @@ from core.cases.case_status import (
     status_change,
 )
 from core.cases.linked_entities import finding_entity_summary
-from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -635,26 +634,20 @@ def get_approval_action(*, action_id: str) -> Args:
     return _decided(_approvals().get_action(action_id), "read")
 
 
-# The actor is the caller, not an argument. A model that names one is choosing
-# what the record will say. A hunt reaches this with nobody bound; approving
-# would stamp "agent" and release a row the requirement already held.
+# Chat and MCP do not approve. The row stays as it is; a person confirms it
+# on the Approvals screen. permission_refusal allows an unbound caller, and
+# this does not add a second denial for that case.
 def approve_action(*, action_id: str) -> Args:
-    from core.cases.agent_closure import actor
-    from core.response.approval_service import AlreadyDecided
-
-    if current_caller() is None:
-        return {"error": "Action cannot be approved: no principal is bound"}
     if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
-    claims = current_claims()
-    principal = None if claims is None else (claims.person_id or claims.agent_id)
-    try:
-        action = _approvals().approve_action(
-            action_id, actor(), approved_by_principal_id=principal
-        )
-    except AlreadyDecided as e:
-        return {"error": str(e)}
-    return _decided(action, "approved")
+    action = _approvals().get_action(action_id)
+    if action is None:
+        return {"error": f"Action {action_id} was not found"}
+    return {
+        "action_id": action.action_id,
+        "status": action.status,
+        "message": "Confirm this action in Approvals. Chat cannot approve it.",
+    }
 
 
 def reject_action(*, action_id: str, reason: str) -> Args:

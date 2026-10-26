@@ -32,10 +32,12 @@ def test_a_confidence_outside_zero_to_one_decides_no_response(confidence):
     )
 
 
-def test_an_ordinary_confidence_still_decides_by_the_threshold():
+def test_an_ordinary_confidence_does_not_approve():
     config = ResponseConfig()
-    assert approval_requirement(False, REVERSIBLE, 0.95, config)[0] is False
-    assert approval_requirement(False, REVERSIBLE, 0.50, config)[0] is True
+    for confidence in (0.99, 0.95, 0.50):
+        required, rule = approval_requirement(False, REVERSIBLE, confidence, config)
+        assert required is True
+        assert rule == "reversibility=reversible"
 
 
 class _Service:
@@ -73,7 +75,10 @@ def _row(action_id, *, requires_approval, approved_by):
     )
 
 
-def test_the_executor_skips_a_row_no_person_decided():
+def test_the_executor_skips_a_row_no_person_decided(monkeypatch):
+    monkeypatch.setattr(
+        "core.response.autonomous_response_service.execution_held", lambda: False
+    )
     service = AutonomousResponseService.__new__(AutonomousResponseService)
     service.approval_service = _Service(
         [
@@ -87,3 +92,17 @@ def test_the_executor_skips_a_row_no_person_decided():
 
     assert [r["action_id"] for r in results] == ["human"]
     assert service.approval_service.executed == ["human"]
+
+
+def test_stop_holds_a_person_approved_row(monkeypatch):
+    monkeypatch.setattr(
+        "core.response.autonomous_response_service.execution_held", lambda: True
+    )
+    service = AutonomousResponseService.__new__(AutonomousResponseService)
+    service.approval_service = _Service(
+        [_row("human", requires_approval=True, approved_by="alice")]
+    )
+    service._execute_cloudflare_action = lambda **_: {"success": True}
+
+    assert service.execute_approved_actions() == []
+    assert service.approval_service.executed == []

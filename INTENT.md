@@ -32,9 +32,16 @@ respond:
   critical_action_floor: 0.70
   # Investigate a high finding at or above this. (DAEMON_HIGH_ACTION_FLOOR)
   high_action_floor: 0.80
-  # Route every action through human approval regardless of confidence.
-  # (DAEMON_FORCE_APPROVAL, or Settings -> Approvals in the UI)
-  force_manual_approval: false
+
+act:
+  # Unattended reversible outside action. Off until a person raises it.
+  # DAEMON_FORCE_APPROVAL and DAEMON_AUTO_RESPONSE can force this off; neither
+  # can turn it on. (autonomy.ceiling act_reversible)
+  reversible: false
+  # Unattended irreversible outside action. Same floor. Not a grant.
+  irreversible: false
+  # Two-person rule. Stored on the ceiling and not enforced.
+  four_eyes: false
 
 escalate:
   # Severities that page a human; a shorter list is tighter.
@@ -59,8 +66,10 @@ operator and is not parsed.
 
 ## Why a file
 
-The knobs above already exist as typed environment variables, as overlays the
-Settings UI writes to the database, and as defaults in code. None of those has
+The knobs above already exist as typed environment variables, as the autonomy
+ceiling and other overlays the Settings UI writes to the database, and as
+defaults in code. The act flags are that ceiling. An environment variable can
+force them off and cannot turn one on. None of those has
 a history a reviewer can read: a change to `DAEMON_CONFIDENCE_THRESHOLD` leaves
 no trace of who made it or why. This file lives in the repository, so a change
 to declared intent is a commit with an author, a message and a review.
