@@ -230,9 +230,25 @@ def test_summarize_finding_defaults_none_valued_keys():
     assert summary.data_source == "unknown"
     assert summary.timestamp == ""
     assert summary.description == ""
-    assert summary.anomaly_score == 0.0
+    assert summary.anomaly_score is None
     assert summary.entity_str == ""
     assert summary.techniques_str == ""
+
+
+def test_build_prompt_says_a_missing_score_was_not_scored_by_the_source():
+    for finding in (
+        _finding(anomaly_score=None),
+        {k: v for k, v in _finding().items() if k != "anomaly_score"},
+    ):
+        prompt = build_prompt(summarize_finding(finding))
+        assert "Anomaly Score: not scored by the source" in prompt
+        assert "0.00" not in prompt
+        assert "Anomaly Score: None" not in prompt
+
+
+def test_build_prompt_keeps_a_real_zero_score():
+    prompt = build_prompt(summarize_finding(_finding(anomaly_score=0.0)))
+    assert "Anomaly Score: 0.00" in prompt
 
 
 def test_build_prompt_includes_optional_sections_when_present():
