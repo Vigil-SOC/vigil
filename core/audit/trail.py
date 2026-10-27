@@ -52,6 +52,9 @@ ACTION_CHECKPOINT = "audit.checkpoint"
 ACTION_EXPORT = "audit.export"
 # #2768 writes the restore entry under this action. Poll's reset returns the latest.
 ACTION_RESTORE = "audit.restore"
+# A retention period, or an erasure, announced in the same transaction that stores it.
+ACTION_RETENTION = "audit.retention"
+ACTION_ERASURE = "audit.erasure"
 OUTCOME_DONE = "done"
 OUTCOME_DENIED = "denied"
 OUTCOME_RECORDED_LATE = "recorded late"
