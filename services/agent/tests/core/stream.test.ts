@@ -961,13 +961,43 @@ describe("a role that answers in prose", () => {
     expect(outcome.value).toBe("bumped once");
   });
 
-  it("answers over a truncated set when the turn cap stops the loop, and says so", async () => {
+  // The last round is the answer's: every result a turn paid for is read by a call after it.
+  it("answers on a round of its own when the model asks for a tool every round, over everything it gathered", async () => {
     const calling = { calls: [{ tool: "bump", args: "{}" }], content: "still looking" };
+    const harness = harnessOf([calling, calling, calling, { content: "two lookups, host B unchecked" }]);
+    const outcome = await outcomeOf<string>(prose({ max_turns: 4 }), harness);
+    const sent = (harness.provider as ScriptedProvider).requests;
+
+    expect(outcome.capped).toBe(true);
+    expect(outcome.value).toBe("two lookups, host B unchecked");
+    expect(outcome.turns).toBe(4);
+    expect(outcome.calls).toHaveLength(3);
+    expect(sent.map((request) => request.answer)).toEqual([undefined, undefined, undefined, true]);
+    expect(sent.at(-1)!.tools).toEqual(sent[0]!.tools);
+    // Every result journaled is on the transcript the answer round was sent.
+    expect(sent.at(-1)!.messages.filter((message) => message.role === "tool")).toHaveLength(outcome.calls.length);
+    expect(sent.at(-1)!.messages.at(-1)!.content).toContain("used all your lookups");
+    expect(sent[0]!.messages.some((message) => message.content.includes("used all your lookups"))).toBe(false);
+  });
+
+  it("drops a tool call the answer round makes anyway", async () => {
+    const calling = { calls: [{ tool: "bump", args: "{}" }], content: "let me check" };
     const harness = harnessOf([calling, calling]);
     const outcome = await outcomeOf<string>(prose({ max_turns: 2 }), harness);
 
-    expect(outcome.capped).toBe(true);
-    expect(outcome.value).toBe("still looking");
+    expect(outcome.value).toBe("let me check");
+    expect(outcome.calls).toHaveLength(1);
+  });
+
+  it("makes the same calls as before when the model stops asking for tools before the cap", async () => {
+    const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { content: "bumped once" }]);
+    const outcome = await outcomeOf<string>(prose({ max_turns: 8 }), harness);
+    const sent = (harness.provider as ScriptedProvider).requests;
+
+    expect(outcome.value).toBe("bumped once");
+    expect(outcome.capped).toBe(false);
+    expect(sent).toHaveLength(2);
+    expect(sent.every((request) => request.answer === undefined)).toBe(true);
   });
 
   it("leaves a schema-carrying role emitting JSON exactly as before", async () => {

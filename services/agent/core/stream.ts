@@ -110,6 +110,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private folds = 0;
   private turns = 0;
   // The rounds the role may search in: all of max_turns, less the one the answer takes when it comes inside the cap.
+  // A prose role's answer always does, so a lookup's results are never the last thing a turn paid for.
   private searches = 0;
   private capped = false;
   private spent = 0;
@@ -158,7 +159,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
       await this.recalled(),
     );
 
-    this.searches = submit && this.cfg.answer_within_cap === true ? Math.max(0, this.cfg.max_turns - 1) : this.cfg.max_turns;
+    const reserved = submit ? this.cfg.answer_within_cap === true : schema === null && this.cfg.max_turns > 0;
+    this.searches = reserved ? Math.max(0, this.cfg.max_turns - 1) : this.cfg.max_turns;
     const ended = yield* this.toolLoop(submit);
     if (ended !== null) return yield* announce(ended);
     // Prose was already streamed as it arrived, so asking for it again would bill
@@ -227,7 +229,9 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private async *toolLoop(submit: boolean): AsyncGenerator<StreamEvent<T>, Outcome<T> | null> {
     // When the answer can be a tool call, the round after the search rounds is forced to the
     // submit tool where the wire allows. Inside the cap, a capped role pays for no round past it.
-    while (this.turns < this.searches + (submit ? 1 : 0)) {
+    // A prose role's answer round is asked for text over the same tools, with none to call.
+    const prose = this.cfg.schema === null;
+    while (this.turns < this.searches + (submit || (prose && this.cfg.max_turns > 0) ? 1 : 0)) {
       const closing = this.turns >= this.searches;
       if (closing) this.capped = true;
       const fold = await this.folder.advance();
@@ -238,19 +242,19 @@ class Run<T, Kinds extends Record<string, unknown>> {
       const refusal = await this.harness.budget.beginCall();
       if (refusal !== null) return this.exhausted(refusal);
 
-      const tail = this.nudge;
+      const tail = closing && prose ? LOOKUPS_SPENT : this.nudge;
       this.nudge = null;
       const messages = this.assembled(tail ?? "");
       if (this.lastFold > 0) yield { type: "folded", folded: this.lastFold, remaining: messages.length };
 
       let turn;
       try {
-        turn = yield* this.burn({ messages, tools: this.prefix.tools, ...(closing ? { force: SUBMIT_TOOL } : {}) }, tail);
+        turn = yield* this.burn({ messages, tools: this.prefix.tools, ...(closing ? (prose ? { answer: true } : { force: SUBMIT_TOOL }) : {}) }, tail);
       } catch (error) {
         // The answer round stands in for the emission, so it gets the emission's recourse:
         // a failed one is asked again by emit() over a folded transcript.
         const tighter = FOLD_LADDER[this.folds];
-        if (!closing || error instanceof ModelSilent || error instanceof OutputCapReached || tighter === undefined || this.cfg.signal?.aborted === true || hardStop(error)) throw error;
+        if (!closing || prose || error instanceof ModelSilent || error instanceof OutputCapReached || tighter === undefined || this.cfg.signal?.aborted === true || hardStop(error)) throw error;
         this.tightened = tighter;
         this.folds += 1;
         this.rejected.push(`the answer call failed (${error instanceof Error ? error.message : String(error)}); asked again over a folded transcript`);
@@ -261,6 +265,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       // A search asked for beside the answer is what the answer waits on; one asked for
       // past the cap is not run. Any further submit is an answer too, not a search.
       const asked = turn.tool_calls.filter((call) => !submit || call.tool !== SUBMIT_TOOL);
+      if (closing && prose) this.turns += 1;
       if (closing) return submitted === undefined ? null : this.accepted(submitted);
       this.turns += 1;
       if (asked.length === 0) {
@@ -772,6 +777,10 @@ const FOLD_LADDER: readonly FoldPolicy[] = [
   { head: 2, tail: 4, max_messages: 10, max_chars: 60_000 },
   { head: 1, tail: 1, max_messages: 4, max_chars: 40_000 },
 ];
+
+// The tail of a prose role's last round, where the tools stay declared but may not be called.
+const LOOKUPS_SPENT =
+  "You have used all your lookups and may not call another tool. Answer now, from what you gathered, without calling a tool, and say what you could not check.";
 
 // What a run that stopped early is asked, quoting its own words; its next answer stands.
 // When the answer comes by tool (`by`), the ask is that tool's refusal instead.
