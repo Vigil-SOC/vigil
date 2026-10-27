@@ -1471,6 +1471,84 @@ export const triageApi = {
   get: (params: TriageQuery = {}) => api.get<TriagePayload>('/triage', { params }),
 }
 
+// Logs: telemetry events Vigil keeps, every source in one schema (/api/logs).
+export interface LogRow {
+  id: string
+  time: string
+  ts: number
+  source: string
+  class: string
+  severity: string
+  srcIp: string | null
+  srcHost: string | null
+  dstIp: string | null
+  dstHost: string | null
+  dstPort: number | null
+  user: string | null
+  action: string | null
+  summary: string
+  loglm: number | null
+  mitre: string | null
+  incident: string | null
+  tags: string[]
+  raw: Record<string, unknown>
+}
+
+export interface LogSearchArgs { q: string; start: number; end: number; sources: string[] | null; offset: number; limit: number; buckets: number }
+
+export interface LogSearchResult {
+  total: number
+  events: LogRow[]
+  bySource: Record<string, number>
+  histogram: { counts: number[]; incident: number[] }
+  start: number
+  end: number
+  newest: number | null
+}
+
+export interface LogSourceInfo { source: string; events: number; first: string; last: string }
+
+interface LogSearchResponse {
+  total: number
+  events: LogRow[]
+  by_source?: Record<string, number>
+  histogram?: { counts?: number[]; incident?: number[] }
+  start: string
+  end: string
+  newest: string | null
+}
+
+export const logsApi = {
+  search: async (a: LogSearchArgs, signal?: AbortSignal): Promise<LogSearchResult> => {
+    const { data } = await api.get<LogSearchResponse>('/logs/search', {
+      signal,
+      params: {
+        q: a.q,
+        start: new Date(a.start).toISOString(),
+        end: new Date(a.end).toISOString(),
+        // every source hidden still sends a filter, one that matches nothing
+        sources: a.sources ? a.sources.join(',') || 'none' : undefined,
+        offset: a.offset,
+        limit: a.limit,
+        buckets: a.buckets,
+      },
+    })
+    return {
+      total: data.total,
+      events: data.events,
+      bySource: data.by_source ?? {},
+      histogram: { counts: data.histogram?.counts ?? [], incident: data.histogram?.incident ?? [] },
+      start: Date.parse(data.start),
+      end: Date.parse(data.end),
+      newest: data.newest ? Date.parse(data.newest) : null,
+    }
+  },
+  sources: async (): Promise<LogSourceInfo[]> => {
+    const { data } = await api.get<{ sources?: LogSourceInfo[] }>('/logs/sources')
+    return data.sources ?? []
+  },
+}
+
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),

@@ -60,6 +60,7 @@ from core.storage.models import (  # noqa: F401
     InvestigationLog,
     LLMInteractionLog,
     LLMProviderConfig,
+    LogEvent,
     Role,
     SharedIOC,
     SketchMapping,

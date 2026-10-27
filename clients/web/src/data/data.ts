@@ -9,6 +9,7 @@ export type ConsoleScreenKey =
   | 'cases'
   | 'metrics'
   | 'analytics'
+  | 'logs'
   | 'decisions'
   | 'workflows'
   | 'autoops'
@@ -31,6 +32,7 @@ export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
   ['pie', 'Analytics', 'analytics'],
+  ['doc', 'Logs', 'logs'],
   ['brain', 'AI Decisions', 'decisions'],
   ['flow', 'Agents & workflows', 'workflows'],
   ['bot', 'Auto Ops', 'autoops'],
@@ -112,6 +114,7 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],
   analytics: ['Analytics Dashboard', 'Security operations analytics'],
+  logs: ['Logs', 'Every event Vigil keeps, every source in one schema'],
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
   workflows: ['Agents & workflows', 'How Vigil works a case. Workflows are the plays, agents do the work, skills are what agents know how to do, and tool permissions decide what they may change on their own.'],
   autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],

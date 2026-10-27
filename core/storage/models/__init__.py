@@ -56,6 +56,7 @@ from core.storage.models.episodic import (
 )
 from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
+from core.storage.models.log_event import LogEvent
 from core.storage.models.medic import MedicLastSeen
 from core.storage.models.skill import SkillRead
 from core.storage.models.workflow import (
@@ -121,6 +122,7 @@ __all__ = [
     "LIVE_INVESTIGATION_STATUSES",
     "RUN_LIVE_STATE",
     "LLMInteractionLog",
+    "LogEvent",
     "LLMProviderConfig",
     "McpCredential",
     "Principal",

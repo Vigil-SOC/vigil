@@ -4106,6 +4106,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/logs/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Events
+         * @description Store a batch. Events whose id is already held are skipped, not updated.
+         */
+        post: operations["post_api_logs_events"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Event */
+        get: operations["get_api_logs_events_event_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Logs
+         * @description Newest first. ``by_source`` counts every source the search matched, before
+         *     the ``sources`` filter, so the source chips can show what turning one on adds.
+         *     ``histogram`` spreads the matched events over the window.
+         */
+        get: operations["get_api_logs_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Log Sources
+         * @description Each source: how many events Vigil holds, and when the last one arrived.
+         */
+        get: operations["get_api_logs_sources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/servers": {
         parameters: {
             query?: never;
@@ -9061,6 +9140,68 @@ export interface components {
             iocs: {
                 [key: string]: unknown;
             }[];
+        };
+        /** IngestBatch */
+        IngestBatch: {
+            /** Events */
+            events: components["schemas"]["IngestEvent"][];
+        };
+        /**
+         * IngestEvent
+         * @description One event as a sender posts it. id is the sender's own stable id, so
+         *     posting the same event twice stores it once.
+         */
+        IngestEvent: {
+            /** Action */
+            action?: string | null;
+            /** Dst Host */
+            dst_host?: string | null;
+            /** Dst Ip */
+            dst_ip?: string | null;
+            /** Dst Port */
+            dst_port?: number | null;
+            /**
+             * Event Class
+             * @default
+             */
+            event_class: string;
+            /** Id */
+            id: string;
+            /** Incident */
+            incident?: string | null;
+            /** Loglm */
+            loglm?: number | null;
+            /** Mitre */
+            mitre?: string | null;
+            /** Raw */
+            raw?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Severity
+             * @default info
+             */
+            severity: string;
+            /** Source */
+            source: string;
+            /** Src Host */
+            src_host?: string | null;
+            /** Src Ip */
+            src_ip?: string | null;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Time
+             * Format: date-time
+             */
+            time: string;
+            /** User */
+            user?: string | null;
         };
         /**
          * IngestionJobStatus
@@ -18641,6 +18782,156 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_logs_events: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IngestBatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_logs_events_event_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_logs_search: {
+        parameters: {
+            query?: {
+                /** @description Search: free words, "phrases", key:value, -exclude, loglm>0.7 */
+                q?: string;
+                /** @description ISO time; default 24 hours before end */
+                start?: string | null;
+                /** @description ISO time; default now */
+                end?: string | null;
+                /** @description Comma-separated source keys to keep */
+                sources?: string | null;
+                limit?: number;
+                offset?: number;
+                buckets?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_logs_sources: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
