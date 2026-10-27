@@ -27,8 +27,7 @@ import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
-import { fmtCost } from '../../shared/cost'
-import { costAcross, errorDetail, runLabel, timeLeft, when } from './caseFormat'
+import { errorDetail, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -567,22 +566,14 @@ function doorLines(folds: (RunFold | null)[], foldPhase: Phase, hasRun: boolean,
   const blind = read.reduce((n, one) => n + visibilityGaps(one).length, 0)
   const open = read.reduce((n, one) => n + leftOpen(one).length, 0)
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap'), open && plural(open, 'open question')].filter(Boolean).join(' · ')
-  const cost = spentAcross(folds.map((one) => one?.costUsd ?? null), folds.length > 1)
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: record ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : read.length ? 'Does not test explanations yet' : none,
     Evidence: evidence,
-    Checked: read.length ? `${cost} · ${plural(blind, 'gap')}` : none,
+    Checked: read.length ? plural(blind, 'gap') : none,
     'Memory and blind spots': recalls.length && recalls.every((r) => r.unavailable) ? 'Recall did not happen' : memory || (recalls.length ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
-}
-
-/** "$0.60 · 1 run unpriced": what the runs spent together, naming the runs nothing priced when there are several; never $0 for an unpriced run. */
-function spentAcross(costs: (number | null)[], several: boolean): string {
-  const { total, unpriced } = costAcross(costs)
-  const note = several && unpriced ? `${plural(unpriced, 'run')} unpriced` : ''
-  return [total ?? (note ? '' : '—'), note].filter(Boolean).join(' · ')
 }
 
 /** One run on the case, as the page has read it. */
@@ -627,14 +618,6 @@ function RunReader({ runId, evidenceLimit, onRead, onLoader, onSettled, onReread
   return null
 }
 
-/** "$0.12 of $1.00": what a run has spent against what it was granted, read off its fold once read; a cost nothing priced is a dash, never $0. */
-function spentLine(run: CaseRun): string {
-  const cost = run.fold ? run.fold.costUsd : null
-  const cap = run.fold?.maxCostUsd || (run.ref.max_cost_usd > 0 ? run.ref.max_cost_usd : null)
-  const spent = cost == null ? '—' : fmtCost(cost)
-  return cap == null ? spent : `${spent} of ${fmtCost(cap)}`
-}
-
 /** The other runs on the case, one head line each, under the primary run's cards. */
 function OtherRuns({ runs, names }: { runs: CaseRun[]; names: Record<string, string> }) {
   if (runs.length === 0) return null
@@ -652,7 +635,6 @@ function OtherRuns({ runs, names }: { runs: CaseRun[]; names: Record<string, str
                 {state}
                 {word && <> · <b>{wordDisplay(word)}</b></>}
               </span>
-              <span className="num">{spentLine(run)}</span>
             </li>
           )
         })}
@@ -1736,7 +1718,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} runs={runs} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} latestFold={runId === latest?.run_id ? fold : null} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />
@@ -1886,7 +1868,7 @@ function RunExplanations({ runs, labels, primaryId, rootCauseRunId, cites, onCit
   )
 }
 
-/** What one run asked, at what cost, and where it had no source. */
+/** What one run asked, and where it had no source. */
 function Checked({ fold, phase, runId }: { fold: RunFold | null; phase: Phase; runId: string | null }) {
   const gaps = visibilityGaps(fold)
   if (phase === 'loading') return <EmptyState loading compact icon="search" title="Loading the run…" />
@@ -1895,12 +1877,7 @@ function Checked({ fold, phase, runId }: { fold: RunFold | null; phase: Phase; r
   return (
     <section className="case-card case-checked">
       <h3>
-        What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
-        <InfoTip
-          label="About the cost"
-          source="The run's total spend."
-          calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
-        />
+        What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'}
         {gaps.length > 0 && ` · ${gaps.length} with no source`}
       </h3>
       <CheckedList runId={runId} calls={fold.calls} />
@@ -1913,18 +1890,12 @@ function MergedChecked({ runs, labels }: { runs: CaseRun[]; labels: Record<strin
   const read = runs.filter((one) => one.phase === 'ready' && one.fold)
   const calls = read.reduce((n, one) => n + one.fold!.calls.length, 0)
   const gaps = read.reduce((n, one) => n + visibilityGaps(one.fold).length, 0)
-  const cost = spentAcross(runs.map((one) => (one.phase === 'ready' && one.fold ? one.fold.costUsd : null)), runs.length > 1)
   return (
     <>
       {calls > 0 || gaps > 0 ? (
         <section className="case-card case-checked">
           <h3>
-            What Vigil checked · {calls} {calls === 1 ? 'query' : 'queries'} · {cost}
-            <InfoTip
-              label="About the cost"
-              source="The selected runs' total spend, added."
-              calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to a run's total."
-            />
+            What Vigil checked · {calls} {calls === 1 ? 'query' : 'queries'}
             {gaps > 0 && ` · ${gaps} with no source`}
           </h3>
           {read.map((one) => <CheckedList key={one.ref.run_id} runId={one.ref.run_id} calls={one.fold!.calls} tag={labels[one.ref.run_id]} />)}

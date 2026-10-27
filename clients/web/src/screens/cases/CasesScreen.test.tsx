@@ -277,9 +277,6 @@ describe('board grid', () => {
       last_activity: new Date(Date.now() - 3 * 3600_000).toISOString(),
       sla_seconds_left: 22 * 3600 + 50 * 60,
       health_status: 'healthy',
-      cost_usd: 2,
-      max_cost_usd: 5,
-      budget_health: 'healthy',
       comment_count: 3,
     }]
     renderCases()
@@ -293,30 +290,24 @@ describe('board grid', () => {
     expect(row.getByText('analyst (you)')).toBeInTheDocument()
     expect(row.getByText('22 h 50 min left')).toBeInTheDocument()
     expect(row.getByText('Good')).toHaveClass('level-pill', 'good')
-    expect(row.getByRole('meter')).toHaveAttribute('aria-valuenow', '40')
-    expect(row.getByText('40%')).toBeInTheDocument()
     expect(row.getByText('3')).toBeInTheDocument()
     // the old trash and arrow stay gone
     expect(row.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('lists a hunt that has only a run as its step, state and spend against the cap', async () => {
+  it('lists a hunt that has only a run as its step and state', async () => {
     testState.cases = [{
       ...CASE,
       combined_state: 'paused',
       workflow_id: 'hunt-a',
       findings_count: 7,
       iteration_count: 8,
-      cost_usd: 0.4452,
-      max_cost_usd: 15,
-      budget_health: 'healthy',
     }]
     renderCases()
 
     const row = within(await rowOf(CASE.title))
     expect(row.getByText(/^7 alerts · step 8/)).toBeInTheDocument()
     expect(row.getByText('Paused')).toBeInTheDocument()
-    expect(row.getByRole('meter')).toHaveAttribute('aria-valuenow', '3')
   })
 
   it('falls back to the workflow id when it is not in the catalog, and a dash with none', async () => {
@@ -352,22 +343,6 @@ describe('board grid', () => {
     const late = within(await rowOf('Late'))
     expect(late.getByText('10 min overdue')).toBeInTheDocument()
     expect(late.getByText('Poor')).toHaveClass('poor')
-  })
-
-  it('shows a dash instead of a meter when there is no cap, and clamps over-spend', async () => {
-    testState.cases = [
-      { ...CASE, case_id: 'a', title: 'Uncapped', cost_usd: 3 },
-      { ...CASE, case_id: 'b', title: 'Over', cost_usd: 9, max_cost_usd: 5, budget_health: 'critical' },
-    ]
-    renderCases()
-
-    const uncapped = within(await rowOf('Uncapped'))
-    expect(uncapped.queryByRole('meter')).not.toBeInTheDocument()
-    expect(uncapped.queryByText(/%/)).not.toBeInTheDocument()
-    const over = within(await rowOf('Over'))
-    expect(over.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
-    // the shared MeterBar puts the level on its fill
-    expect(over.getByRole('meter').firstElementChild).toHaveClass('meter-fill', 'poor')
   })
 
   it('puts the description on hover and not in the row', async () => {
