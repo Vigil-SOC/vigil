@@ -27,6 +27,7 @@ from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.crowdstrike.adapter import _confidence_to_score
+from core.integrations.splunk.adapter import _splunk_event_to_finding
 from core.storage.service import _mitre_prediction_items
 from core.time import utcnow
 from core.webhook_rejections import (
@@ -416,7 +417,7 @@ class DataPoller:
         # Process findings
         new_count = 0
         for event in findings:
-            finding = self._splunk_event_to_finding(event)
+            finding = _splunk_event_to_finding(event)
             if finding and not await self._splunk_dedup.is_processed(
                 finding["finding_id"]
             ):
@@ -429,67 +430,6 @@ class DataPoller:
         if new_count > 0:
             logger.info(f"Polled {new_count} new findings from Splunk")
             self.stats["splunk_findings"] += new_count
-
-    def _splunk_event_to_finding(
-        self, event: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Convert Splunk event to finding format."""
-        import uuid
-
-        # Extract key fields
-        event_id = event.get("_cd") or event.get("event_id") or str(uuid.uuid4())
-        finding_id = f"splunk-{event_id[:32]}"
-
-        # Determine severity
-        severity_raw = event.get("urgency") or event.get("severity") or "medium"
-        severity_map = {
-            "critical": "critical",
-            "high": "high",
-            "medium": "medium",
-            "low": "low",
-            "info": "low",
-            "informational": "low",
-        }
-        severity = severity_map.get(severity_raw.lower(), "medium")
-
-        # Extract entity context
-        entity_context = {
-            "src_ips": [],
-            "dest_ips": [],
-            "hostnames": [],
-            "usernames": [],
-        }
-
-        for ip_field in ["src_ip", "src", "source_ip"]:
-            if event.get(ip_field):
-                entity_context["src_ips"].append(event[ip_field])
-
-        for ip_field in ["dest_ip", "dest", "destination_ip"]:
-            if event.get(ip_field):
-                entity_context["dest_ips"].append(event[ip_field])
-
-        for host_field in ["host", "hostname", "src_host", "dest_host"]:
-            if event.get(host_field):
-                entity_context["hostnames"].append(event[host_field])
-
-        for user_field in ["user", "username", "src_user"]:
-            if event.get(user_field):
-                entity_context["usernames"].append(event[user_field])
-
-        return {
-            "finding_id": finding_id,
-            "data_source": "splunk",
-            "timestamp": event.get("_time") or utcnow().isoformat(),
-            "severity": severity,
-            "title": event.get("search_name")
-            or event.get("rule_name")
-            or "Splunk Alert",
-            "description": event.get("description") or event.get("_raw", "")[:500],
-            "entity_context": entity_context,
-            "raw_data": event,
-            "anomaly_score": None,
-            "mitre_predictions": {},
-        }
 
     async def _poll_crowdstrike_loop(self, shutdown_event: asyncio.Event):
         """Poll CrowdStrike for new detections on interval."""

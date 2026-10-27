@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import uuid
 from datetime import timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from core.config import is_integration_enabled
 from core.federation.adapters._base import (
@@ -194,8 +196,100 @@ def _splunk_event_to_finding(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "entity_context": entity_context,
         "raw_data": event,
         "anomaly_score": None,
-        "mitre_predictions": {},
+        # Splunk names the techniques but gives no confidence: store null.
+        "mitre_predictions": _mitre_from_annotations(event),
     }
+
+
+# ES detection annotations: Vigil has no captured notable, so every documented
+# form is read and the union kept. A present but unreadable annotation warns
+# once per search, since that is the only sign the forms were read wrongly.
+_TECHNIQUE_ID = re.compile(r"T\d{4}(?:\.\d{3})?")
+_MITRE_FIELDS = ("annotations.mitre_attack", "annotations.mitre_attack{}")
+_MITRE_SUBFIELD = "annotations.mitre_attack."
+_warned_annotation_keys: Set[str] = set()
+
+
+class _Unreadable(ValueError):
+    pass
+
+
+def _annotation_tokens(value: Any) -> List[str]:
+    """Non-empty comma-separated tokens of a string or list of strings."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise _Unreadable(type(value).__name__)
+    return [t.strip().upper() for v in value for t in v.split(",") if t.strip()]
+
+
+def _mitre_from_annotations(event: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """ATT&CK technique ids from a notable's ``mitre_attack`` annotation.
+
+    Never raises: an unreadable annotation gives no techniques and a warning.
+    """
+    found: List[str] = []  # annotation fields present, for the warning
+    tokens: List[str] = []
+    unreadable = False
+    try:
+        for field in _MITRE_FIELDS:
+            if field in event:
+                found.append(field)
+                try:
+                    tokens += _annotation_tokens(event[field])
+                except _Unreadable:
+                    unreadable = True
+        # Enrichment sub-fields are not parsed, only noticed.
+        found += [k for k in event if k.startswith(_MITRE_SUBFIELD) and event[k]]
+
+        raw = event.get("annotations")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                decoded = json.loads(raw)
+            except ValueError:
+                decoded = None
+            if not isinstance(decoded, dict):
+                found.append("annotations")
+                unreadable = True
+            elif "mitre_attack" in decoded:
+                found.append("annotations")
+                try:
+                    tokens += _annotation_tokens(decoded["mitre_attack"])
+                except _Unreadable:
+                    unreadable = True
+        elif raw is not None and not isinstance(raw, str):
+            found.append("annotations")
+            unreadable = True
+    except Exception:  # never let one notable fail its batch
+        unreadable = True
+
+    techniques: Dict[str, Optional[float]] = {
+        t: None for t in tokens if _TECHNIQUE_ID.fullmatch(t)
+    }
+    # Silent when nothing is present or the values are empty.
+    subfield = any(f.startswith(_MITRE_SUBFIELD) for f in found)
+    if not techniques and (unreadable or tokens or subfield):
+        _warn_unreadable(event, found)
+    return techniques
+
+
+def _warn_unreadable(event: Dict[str, Any], fields: List[str]) -> None:
+    # Keyed per search, not per title: fallback-query events share "Splunk Alert".
+    key = str(
+        event.get("search_name")
+        or event.get("rule_name")
+        or event.get("sourcetype")
+        or "unknown"
+    )
+    if key in _warned_annotation_keys:
+        return
+    _warned_annotation_keys.add(key)
+    logger.warning(
+        "Splunk %r: ATT&CK annotation in %s gave no readable technique ids; "
+        "ingesting without them (warned once per search)",
+        key,
+        ", ".join(fields) or "event",
+    )
 
 
 def _factory() -> FederationAdapter:
