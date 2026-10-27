@@ -30,6 +30,7 @@ import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { SectionProps } from './types'
+import VendorLogo from '../../shared/VendorLogo'
 
 const displayName = (name: string) => SERVER_DISPLAY_NAMES.get(name) ?? prettyServerName(name)
 const categoryOf = (name: string) => MCP_CATEGORIES.find((c) => c.servers.includes(name))?.label ?? 'Other'
@@ -285,6 +286,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
               <tr key={r.name}>
                 <td>
                   <span className="int-name">
+                    <VendorLogo name={`${displayName(r.name)} ${r.name}`} size={16} />
                     {displayName(r.name)}
                     {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
                     {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}

@@ -6,6 +6,7 @@ import { useSourceBadge } from '../../shared/useSourceBadge'
 import { VigilMark } from '../../shared/VigilLogo'
 import type { OverviewOutcome, OverviewPayload } from '../../services/api'
 import './overview.css'
+import VendorLogo, { vendorMark } from '../../shared/VendorLogo'
 
 const CONNECT_DATA = '/settings?section=data'
 const EMPTY_TEXT =
@@ -339,7 +340,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
             : sources.map((s, i) => {
                 const body = (
                   <>
-                    <span className="ov-tile"><Icon name={s.icon} size={15} /></span>
+                    <span className="ov-tile">{vendorMark(`${s.label} ${s.key}`) ? <VendorLogo name={`${s.label} ${s.key}`} size={18} /> : <Icon name={s.icon} size={15} />}</span>
                     <span className="ov-txt">
                       <b>{s.label}</b>
                       <span>{alerts(s.count)}</span>

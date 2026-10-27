@@ -12,6 +12,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
 import { triageApi, type TriagePayload, type TriageRow, type TriageSource } from '../../services/api'
+import VendorLogo from '../../shared/VendorLogo'
 
 const POLL_MS = 10_000
 const ROW_CAP = 200 // the server stops at this many rows
@@ -213,7 +214,7 @@ function Filters({
 
 function SourceName({ source }: { source: string }) {
   const { label } = useSourceBadge()(source)
-  return <span className="tq-source" title={label}>{label}</span>
+  return <span className="tq-source" title={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><VendorLogo name={`${label} ${source}`} size={13} />{label}</span>
 }
 
 function BreakdownRow({ label, children }: { label: string; children: ReactNode }) {

@@ -42,6 +42,7 @@ import {
 } from '../../services/bifrostApi'
 import type { SectionProps } from './types'
 import { urlIsLoopback } from '../../shared/loopback'
+import VendorLogo from '../../shared/VendorLogo'
 
 // Only the two outcomes a check actually decided are a level: routable is
 // Good, rejected is Poor. A probe that could not run is a chip, never Fair,
@@ -271,7 +272,7 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     <tr key={p.name}>
                       <td>
                         <div className="flex flex-col">
-                          <span className="font-medium">{p.name}</span>
+                          <span className="font-medium inline-flex items-center gap-1.5"><VendorLogo name={p.name} size={15} />{p.name}</span>
                           <span className="text-xs text-tx-3 truncate" style={{ maxWidth: 220 }}>
                             {p.custom_provider_config
                               ? 'Custom provider'

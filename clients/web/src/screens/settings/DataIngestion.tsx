@@ -21,6 +21,7 @@ import {
   type KafkaConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
+import VendorLogo from '../../shared/VendorLogo'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -733,7 +734,7 @@ export function StreamsCard({ notify }: SectionProps) {
           <tbody>
             {rows.flatMap((r) => [
               <tr key={r.key}>
-                <td><b>{r.name}</b></td>
+                <td><b style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><VendorLogo name={`${r.name} ${r.key}`} size={15} />{r.name}</b></td>
                 <td className="data-clip" title={r.settings}>{r.settings}</td>
                 <td><StatusCell status={r.status} /></td>
                 <td className="data-act">

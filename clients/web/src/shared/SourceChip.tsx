@@ -1,6 +1,7 @@
 // The chip for a data_source; its badge comes from useSourceBadge.
 import { useSourceBadge } from './useSourceBadge'
 import { Icon, type IconName } from './icons'
+import VendorLogo, { vendorMark } from './VendorLogo'
 
 interface SourceChipProps {
   source?: string | null
@@ -17,7 +18,7 @@ export default function SourceChip({ source }: SourceChipProps) {
         borderColor: `${color}40`,
       }}
     >
-      <Icon name={icon as IconName} size={12} />
+      {vendorMark(`${label} ${source ?? ''}`) ? <VendorLogo name={`${label} ${source ?? ''}`} size={12} /> : <Icon name={icon as IconName} size={12} />}
       <span>{label}</span>
     </span>
   )

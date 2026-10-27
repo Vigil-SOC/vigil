@@ -6,6 +6,7 @@ import { clock } from './clock'
 import { stateWord } from '../../shared/findingState'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import type { OverviewFeedItem, OverviewPayload } from '../../services/api'
+import VendorLogo, { vendorMark } from '../../shared/VendorLogo'
 
 const CONNECT_DATA = '/settings?section=data'
 
@@ -76,7 +77,7 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
   return (
     <div role="button" tabIndex={0} className="ov-row" onClick={() => onOpen(item.finding_id)} onKeyDown={onKey}>
       <div className="ov-row-1">
-        <span className="ov-st" title={badge.label}><Icon name={badge.icon as IconName} size={11} /></span>
+        <span className="ov-st" title={badge.label}>{vendorMark(`${badge.label} ${item.data_source}`) ? <VendorLogo name={`${badge.label} ${item.data_source}`} size={13} /> : <Icon name={badge.icon as IconName} size={11} />}</span>
         <SevMark severity={item.severity} />
         <span className="ov-row-r">
           <AgentMark item={item} />
