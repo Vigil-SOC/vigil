@@ -767,7 +767,7 @@ export function KeyDialog({
           <>
             <Field
               label="Authentication"
-              hint="An API key only works against Vertex express mode — an AI Studio key belongs under the gemini provider instead. A service account is what a standard Vertex project takes."
+              hint="An API key only works against Vertex express mode, which reaches Gemini models only — Claude and other partner models on Vertex need a service account. An AI Studio key belongs under the gemini provider instead. A service account is what a standard Vertex project takes."
             >
               <div className="inline-flex gap-1.5">
                 {(
