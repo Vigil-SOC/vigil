@@ -30,7 +30,7 @@ def read_global_settings() -> Dict[str, Any]:
     """
     from core.storage.config_service import get_config_service
 
-    cfg = get_config_service().get_system_config(GLOBAL_KEY)
+    cfg = get_config_service().read_system_config(GLOBAL_KEY)
     return cfg if isinstance(cfg, dict) else {"enabled": False}
 
 
@@ -74,9 +74,8 @@ def is_globally_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 
-@default_on_error(list, level="warning")
-def list_sources() -> List[Dict[str, Any]]:
-    """All federation_sources rows as dicts."""
+def read_sources() -> List[Dict[str, Any]]:
+    """All federation_sources rows as dicts; a store error raises."""
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
     from core.storage.schemas import FederationSourceSchema
