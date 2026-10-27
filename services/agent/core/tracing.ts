@@ -1,7 +1,9 @@
 import { context, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-grpc";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { BatchSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { errorFields, logger } from "./log.js";
 
 const log = logger("agent.tracing");
@@ -15,10 +17,20 @@ const tracer = trace.getTracer("vigil.agent");
 const ATTRIBUTE_LIMIT = 16_384;
 const BATCH_SIZE = 32;
 
-let provider: NodeTracerProvider | null = null;
+let provider: TracerProvider | null = null;
 
 function enabled(name: string): boolean {
   return ["true", "1", "yes"].includes((process.env[name] ?? "").toLowerCase());
+}
+
+// What NodeTracerProvider.register() did before SDK 3 dropped it: the global provider,
+// an await-surviving context, and W3C traceparent and baggage on the wire.
+export function registerProvider(registered: TracerProvider): void {
+  trace.setGlobalTracerProvider(registered);
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+  propagation.setGlobalPropagator(
+    new CompositePropagator({ propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()] }),
+  );
 }
 
 // Python's switch, so one setting traces both sides. The SDK reads the endpoint and
@@ -26,16 +38,16 @@ function enabled(name: string): boolean {
 export function initTracing(service: string): boolean {
   if (!enabled("VIGIL_OTEL_ENABLED") || provider !== null) return provider !== null;
   try {
-    provider = new NodeTracerProvider({
+    provider = new TracerProvider({
       resource: resourceFromAttributes({
         "service.name": service,
         "service.version": process.env["RELEASE_VERSION"] ?? "unknown",
         "deployment.environment": process.env["ENVIRONMENT"] ?? "development",
       }),
-      spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter(), { maxExportBatchSize: BATCH_SIZE })],
+      spanProcessors: [new BatchSpanProcessor({ exporter: new OTLPTraceExporter(), maxExportBatchSize: BATCH_SIZE })],
       spanLimits: { attributeValueLengthLimit: ATTRIBUTE_LIMIT },
     });
-    provider.register();
+    registerProvider(provider);
     return true;
   } catch (error) {
     // Tracing never stops a process from serving: a run untraced is still a run.
