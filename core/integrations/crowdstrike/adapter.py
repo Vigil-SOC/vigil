@@ -19,12 +19,22 @@ from core.federation.contract import (
     FetchResult,
     register_adapter,
 )
+from core.ingestion.ingestion_service import _optional_float
 from core.integrations._base.config import resolve
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+def _confidence_to_score(max_confidence: Any) -> Optional[float]:
+    """CrowdStrike ``max_confidence`` is 0–100. Scale only a parsed number."""
+    parsed = _optional_float(max_confidence)
+    if parsed is None:
+        return None
+    return parsed / 100.0
+
 
 _SEVERITY_MAP = {
     "Critical": "critical",
@@ -163,7 +173,7 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "description": detection.get("description", ""),
         "entity_context": entity_context,
         "raw_data": detection,
-        "anomaly_score": float(detection.get("max_confidence", 50)) / 100.0,
+        "anomaly_score": _confidence_to_score(detection.get("max_confidence")),
         "mitre_predictions": mitre_predictions,
     }
 

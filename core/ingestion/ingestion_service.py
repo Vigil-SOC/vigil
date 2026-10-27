@@ -27,6 +27,7 @@ from core.findings.source_evidence import (
     normalize_finding_source_evidence,
     source_evidence_from_loglm_row,
 )
+from core.storage.score import optional_float as _optional_float
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -86,16 +87,6 @@ def _first_present(row: Dict[str, Any], aliases: tuple) -> Any:
         if row.get(alias) is not None:
             return row[alias]
     return None
-
-
-def _optional_float(value: Any) -> Optional[float]:
-    """Parse a numeric field; missing, empty, and NaN stay None."""
-    if value is None or value == "":
-        return None
-    parsed = float(value)
-    if math.isnan(parsed):
-        return None
-    return parsed
 
 
 def _blank(value: Any) -> bool:

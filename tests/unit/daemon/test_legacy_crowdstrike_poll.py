@@ -84,3 +84,58 @@ async def test_empty_poll_is_clean_and_stamps_last_poll_time():
 
     assert poller.stats["errors"] == 0
     assert poller._crowdstrike_state.last_poll_time > prior
+
+
+@pytest.mark.parametrize(
+    "confidence,score",
+    [
+        ("missing", None),
+        (None, None),
+        ("", None),
+        ("  ", None),
+        ("high", None),
+        ("Infinity", None),
+        ({"n": 1}, None),
+        ("80", 0.8),
+        (80, 0.8),
+        (0, 0.0),
+        (150, 1.5),
+    ],
+)
+def test_confidence_is_scaled_only_when_the_source_sent_a_number(confidence, score):
+    detection = {
+        "detection_id": "ldt:1",
+        "max_severity_displayname": "High",
+    }
+    if confidence != "missing":
+        detection["max_confidence"] = confidence
+    finding = _poller(_FakeFalcon([]))._crowdstrike_detection_to_finding(detection)
+    assert finding["anomaly_score"] == score
+
+
+@pytest.mark.asyncio
+async def test_unusable_confidence_advances_last_poll_time():
+    prior = datetime(2026, 9, 30, 11, 0, 0)
+    shutdown = asyncio.Event()
+    detections = []
+    for i, confidence in enumerate(("high", None, "  ", {"n": 1}, "80"), start=1):
+        detections.append(
+            {
+                "detection_id": f"ldt:{i}",
+                "max_severity_displayname": "High",
+                "max_confidence": confidence,
+            }
+        )
+    poller = _poller(_FakeFalcon(detections, on_query=shutdown.set))
+    poller._crowdstrike_state.last_poll_time = prior
+
+    await poller._poll_crowdstrike_loop(shutdown)
+
+    assert poller.stats["errors"] == 0
+    assert poller._crowdstrike_state.last_poll_time > prior
+    queued = []
+    while not poller._output_queue.empty():
+        queued.append(poller._output_queue.get_nowait()["data"])
+    by_id = {item["finding_id"]: item["anomaly_score"] for item in queued}
+    assert by_id["cs-ldt:5"] == 0.8
+    assert all(by_id[f"cs-ldt:{i}"] is None for i in range(1, 5))

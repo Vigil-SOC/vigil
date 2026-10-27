@@ -289,7 +289,7 @@ class OpenSearchIngestion(SIEMIngestionService):
                 "description": description[:500],
                 "entity_context": entity_context,
                 "raw_data": alert,
-                "anomaly_score": 0.5,
+                "anomaly_score": None,
                 "mitre_predictions": mitre_from_tags(source),
                 "metadata": {
                     "opensearch_finding_id": finding_ref,
