@@ -109,3 +109,53 @@ describe('buildRows alert hits', () => {
     expect(exact.filter((row) => row.findingId === 'f-7')).toHaveLength(1)
   })
 })
+
+describe('buildRows with the unified search', () => {
+  const none = { caseExact: null, findingExact: null, textCases: [], iocCases: [], alertHits: [] }
+
+  it('adds what was found by meaning, says why, and routes each kind to its page', () => {
+    const rows = buildRows('data theft', {
+      ...none,
+      alertHits: [{ id: 'f-1', title: 'Exfil over C2' }],
+      found: {
+        groups: {
+          alert: [{ kind: 'alert', id: 'f-1', title: 'Exfil over C2', why: 'about exfiltration', route: { screen: 'overview', search: '?alert=f-1' } },
+            { kind: 'alert', id: 'f-2', title: 'Upload to cloud storage', subtitle: 'edr · high', why: 'about exfiltration', route: { screen: 'overview', search: '?alert=f-2' } }],
+          case: [{ kind: 'case', id: 'INC-1042', title: 'Acme intrusion', subtitle: 'critical · open', why: 'about exfiltration', route: { case: 'INC-1042' } }],
+          workflow: [{ kind: 'workflow', id: 'wf-1', title: 'Threat hunt', why: 'about exfiltration', route: { screen: 'workflows', search: '?workflow=wf-1' } }],
+          agent: [{ kind: 'agent', id: 'responder', title: 'Response agent', route: { screen: 'workflows', search: '?tab=agents&agent=responder' } }],
+          skill: [],
+        },
+      },
+    }, [], [])
+    expect(rows.map((row) => [row.section, row.label])).toEqual([
+      ['Cases', 'Acme intrusion'],
+      ['Alerts', 'Exfil over C2'],
+      ['Alerts', 'Upload to cloud storage'],
+      ['Workflows', 'Threat hunt'],
+      ['Agents', 'Response agent'],
+      ['Ask Vigil', 'Ask Vigil: “data theft”'],
+    ])
+    expect(rows[0]).toMatchObject({ dest: 'Case', caseId: 'INC-1042', desc: 'critical · open · about exfiltration' })
+    expect(rows[2].desc).toBe('edr · high · about exfiltration')
+    expect(rows[3].go).toEqual({ screen: 'workflows', search: '?workflow=wf-1' })
+    expect(rows[4]).toMatchObject({ dest: 'Go', go: { screen: 'workflows', search: '?tab=agents&agent=responder' } })
+  })
+
+  it('adds nothing when the unified search finds nothing or does not answer', () => {
+    const empty = buildRows('zzz', { ...none, found: { groups: {} } }, [], [])
+    expect(empty.map((row) => row.section)).toEqual(['Ask Vigil'])
+    expect(buildRows('zzz', { ...none, found: null }, [], []).map((row) => row.section)).toEqual(['Ask Vigil'])
+  })
+
+  it('puts something named exactly what was typed first', () => {
+    const rows = buildRows('Phishing triage', {
+      ...none,
+      found: { groups: {
+        alert: [{ kind: 'alert', id: 'f-9', title: 'Spearphishing attachment', route: { screen: 'overview', search: '?alert=f-9' } }],
+        skill: [{ kind: 'skill', id: 'phishing-triage', title: 'Phishing triage', subtitle: 'Skill', route: { screen: 'workflows', search: '?tab=skills&skill=phishing-triage' } }],
+      } },
+    }, [], [])
+    expect(rows.map((row) => [row.section, row.label]).slice(0, 2)).toEqual([['Best match', 'Phishing triage'], ['Alerts', 'Spearphishing attachment']])
+  })
+})

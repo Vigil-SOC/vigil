@@ -35,14 +35,18 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
 
-type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask'
+type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask' | 'Go'
 
 export type Section =
+  | 'Best match'
   | 'Recent searches'
   | 'Commands'
   | 'Custom commands'
   | 'Cases'
   | 'Alerts'
+  | 'Workflows'
+  | 'Agents'
+  | 'Skills'
   | 'Pages'
   | 'Ask Vigil'
 
@@ -66,6 +70,22 @@ export interface Hit {
   matchType?: MatchType
 }
 
+/** One result of /api/search: an item found by its words or by what it means. */
+export interface FoundItem {
+  kind: 'alert' | 'case' | 'workflow' | 'agent' | 'skill'
+  id: string
+  title: string
+  subtitle?: string
+  /** "mentions “exfil”", "about exfiltration", "similar meaning" */
+  why?: string
+  route: { screen?: string; search?: string; case?: string }
+}
+
+export interface Found {
+  groups: Partial<Record<FoundItem['kind'], FoundItem[]>>
+  counts?: Partial<Record<FoundItem['kind'], number>>
+}
+
 export interface SearchHits {
   caseExact: Hit | null
   findingExact: Hit | null
@@ -73,6 +93,8 @@ export interface SearchHits {
   iocCases: Hit[]
   /** Alerts whose id, description or entities (host, user, IP...) match. */
   alertHits: Hit[]
+  /** Everything the unified search found, words and meaning; null when it did not answer. */
+  found?: Found | null
 }
 
 export interface PaletteRow {
@@ -89,6 +111,8 @@ export interface PaletteRow {
   findingId?: string
   page?: string
   recent?: string
+  /** where a found workflow, agent or skill opens */
+  go?: { screen: string; search?: string }
 }
 
 interface JiraConfigRead {
@@ -238,6 +262,7 @@ export function tagText(row: PaletteRow): string {
       return 'Opens case'
     case 'Alert':
     case 'Page':
+    case 'Go':
       return 'Opens page'
     case 'Recent':
       return 'Search'
@@ -425,6 +450,12 @@ function askRow(query: string): PaletteRow {
   }
 }
 
+const FOUND_SECTIONS: [FoundItem['kind'], Section, IconName][] = [
+  ['workflow', 'Workflows', 'flow'],
+  ['agent', 'Agents', 'bot'],
+  ['skill', 'Skills', 'note'],
+]
+
 function pushCase(rows: PaletteRow[], seen: Set<string>, hit: Hit): void {
   if (!hit.id || seen.has(hit.id)) return
   seen.add(hit.id)
@@ -476,6 +507,44 @@ export function buildRows(
   }
   for (const hit of hits?.textCases ?? []) pushCase(cases, seen, hit)
   for (const hit of hits?.iocCases ?? []) pushCase(cases, seen, hit)
+  const found = hits?.found
+  for (const item of found?.groups?.case ?? []) {
+    pushCase(cases, seen, { id: item.id, title: item.title })
+    const row = cases.find((r) => r.caseId === item.id)
+    if (row && !row.desc) row.desc = joinParts([item.subtitle, item.why])
+  }
+  for (const item of found?.groups?.alert ?? []) {
+    if (seenAlerts.has(item.id)) continue
+    seenAlerts.add(item.id)
+    alerts.push({
+      key: `finding:${item.id}`,
+      label: item.title || item.id,
+      hint: item.id,
+      dest: 'Alert',
+      section: 'Alerts',
+      icon: 'alert',
+      desc: joinParts([item.subtitle, item.why]),
+      disabled: false,
+      findingId: item.id,
+    })
+  }
+  const others: PaletteRow[] = []
+  for (const [kind, section, icon] of FOUND_SECTIONS) {
+    for (const item of found?.groups?.[kind] ?? []) {
+      if (!item.route.screen) continue
+      others.push({
+        key: `${kind}:${item.id}`,
+        label: item.title,
+        hint: '',
+        dest: 'Go',
+        section,
+        icon,
+        desc: joinParts([item.subtitle, item.why]),
+        disabled: false,
+        go: { screen: item.route.screen, search: item.route.search },
+      })
+    }
+  }
   const pages: PaletteRow[] = boards
     .filter((board) => board.label.toLowerCase().includes(ql))
     .map((board) => ({
@@ -493,8 +562,13 @@ export function buildRows(
   const recent = recents.filter((text) => text.toLowerCase().includes(ql)).map(recentRow)
   // An exact finding id with no exact case id puts Alerts first.
   const alertsFirst = Boolean(hits?.findingExact?.id) && !hits?.caseExact
+  const matched = [...(alertsFirst ? [...alerts, ...cases] : [...cases, ...alerts]), ...others]
+  // something named exactly what was typed leads, whatever kind it is
+  const exact = matched.findIndex((row) => row.label.toLowerCase() === ql)
+  const lead = exact > 0 ? [{ ...matched.splice(exact, 1)[0], section: 'Best match' as const }] : []
   return [
-    ...(alertsFirst ? [...alerts, ...cases] : [...cases, ...alerts]),
+    ...lead,
+    ...matched,
     ...pages,
     ...commands,
     ...recent,
