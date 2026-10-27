@@ -238,8 +238,9 @@ def _run_row(run: WorkflowRun) -> Dict[str, Any]:
 
 def _record(window: list) -> Dict[str, Any]:
     tally = Counter(status for status, _d, _c in window)
-    durations = sorted(d for _s, d, _c in window if d)
-    costs = [float(c) for _s, _d, c in window if c]
+    # A free or instant run still counts: only a missing value is left out.
+    durations = sorted(d for _s, d, _c in window if d is not None)
+    costs = [float(c) for _s, _d, c in window if c is not None]
     ended = sum(tally.values())
     return {
         "days": RUN_WINDOW.days,
@@ -284,8 +285,11 @@ def agent_detail(
             .limit(RECENT_RUNS)
             .all()
         )
+        # The record counts hidden runs too, as the board's finish rate does.
         window = (
-            base.filter(
+            session.query(WorkflowRun)
+            .filter(
+                WorkflowRun.workflow_id == workflow_id,
                 WorkflowRun.started_at >= since,
                 WorkflowRun.status.in_(FINISHED),
             )

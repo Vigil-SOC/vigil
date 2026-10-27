@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import api from '../../services/api'
 import type { OverviewAgent } from '../../services/api'
 import { Icon, type IconName } from '../../shared/icons'
@@ -185,15 +185,21 @@ export function OutcomePanel({
   const [extra, setExtra] = useState<OutcomeAlert[]>([])
   const [more, setMore] = useState(false)
   const { data, error } = useGet<OutcomeList>(state ? `/overview/outcomes/${encodeURIComponent(state)}?limit=${PAGE}` : null)
-  useEffect(() => setExtra([]), [state])
+  // Bumped on every open, so a page still loading for an earlier one is dropped.
+  const opened = useRef(0)
+  useEffect(() => {
+    opened.current += 1
+    setExtra([])
+  }, [state])
   const shown = data && data.state === state ? data : null
   const items = shown ? [...shown.items, ...extra] : []
   const loadMore = () => {
     if (!state) return
+    const ticket = opened.current
     setMore(true)
     api
       .get<OutcomeList>(`/overview/outcomes/${encodeURIComponent(state)}?limit=${PAGE}&offset=${items.length}`)
-      .then((res) => setExtra((x) => [...x, ...res.data.items]))
+      .then((res) => { if (ticket === opened.current) setExtra((x) => [...x, ...res.data.items]) })
       .finally(() => setMore(false))
   }
 

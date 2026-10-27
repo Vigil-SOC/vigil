@@ -115,3 +115,12 @@ def test_record_counts_finished_runs():
     assert record["rate"] == pytest.approx(2 / 3)
     assert record["median_ms"] == 2000
     assert record["mean_cost_usd"] == pytest.approx(1.0)
+
+
+def test_record_keeps_free_and_instant_runs():
+    from core.findings.overview_drill_router import _record
+
+    record = _record([("completed", 0, 0.0), ("completed", 4000, 2.0)])
+    assert record["mean_cost_usd"] == pytest.approx(1.0)
+    assert record["median_ms"] == 4000
+    assert _record([("completed", 10, 0)])["mean_cost_usd"] == 0.0

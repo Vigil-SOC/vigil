@@ -71,3 +71,50 @@ def test_an_agent_card_opens_its_workflow_and_record(client):
     assert set(body["record"]) >= {"runs", "completed", "failed", "rate", "median_ms"}
     assert isinstance(body["live"], list) and isinstance(body["recent"], list)
     assert client.get("/api/overview/agents/no-such-workflow").status_code == 404
+
+
+def test_an_agent_record_matches_its_card_with_hidden_runs(client):
+    from datetime import timedelta
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import WorkflowRun
+    from core.time import utcnow
+
+    board = client.get("/api/overview").json()
+    wid = board["agents"][0]["workflow_id"]
+    now = utcnow().replace(tzinfo=None)
+    ids = ["drill-hidden-1", "drill-hidden-2"]
+    with get_db_manager().session_scope() as session:
+        session.add_all(
+            [
+                WorkflowRun(
+                    run_id=ids[0],
+                    workflow_id=wid,
+                    workflow_name=wid,
+                    status="completed",
+                    started_at=now - timedelta(hours=1),
+                ),
+                WorkflowRun(
+                    run_id=ids[1],
+                    workflow_id=wid,
+                    workflow_name=wid,
+                    status="failed",
+                    started_at=now - timedelta(hours=2),
+                    deleted_at=now,
+                ),
+            ]
+        )
+    try:
+        card = next(
+            a
+            for a in client.get("/api/overview").json()["agents"]
+            if a["workflow_id"] == wid
+        )
+        record = client.get(f"/api/overview/agents/{wid}").json()["record"]
+        assert record["runs"] == card["sample_size"]
+        assert record["rate"] == pytest.approx(card["rate"])
+    finally:
+        with get_db_manager().session_scope() as session:
+            session.query(WorkflowRun).filter(WorkflowRun.run_id.in_(ids)).delete(
+                synchronize_session=False
+            )
