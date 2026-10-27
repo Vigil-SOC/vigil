@@ -59,6 +59,11 @@ class FederationRunner:
         # Sources already warned about as unconfigured, so the warning is
         # logged on the transition rather than every tick.
         self._unconfigured_warned: set = set()
+        # Process counters for GET /status. Not the per-source DB totals.
+        self.polls = 0
+        self.findings = 0
+        self.errors = 0
+        self.dropped = 0
 
     def set_output_queue(self, queue: asyncio.Queue) -> None:
         self._output_queue = queue
@@ -196,6 +201,8 @@ class FederationRunner:
         cursor = row.get("cursor") or {}
         min_severity = row.get("min_severity")
 
+        # A fetch attempt counts even when it raises. The unconfigured return
+        # above is not an attempt, and a cancellation is not a finished attempt.
         try:
             result = await adapter.fetch(
                 cursor=cursor if isinstance(cursor, dict) else {},
@@ -213,8 +220,11 @@ class FederationRunner:
                     failures,
                     e,
                 )
+            self.polls += 1
+            self.errors += 1
             store.record_failure(source_id, str(e))
             return
+        self.polls += 1
 
         candidates = []
         dropped = result.dropped
@@ -258,12 +268,16 @@ class FederationRunner:
         if new_count:
             logger.info("Federation %s ingested %d finding(s)", source_id, new_count)
 
+        self.dropped += dropped
+        self.findings += new_count
+
         if not all_enqueued or new_count < len(pending):
             # Cursor stays put; stored ids are marked, so the re-read retries the rest.
             msg = (
                 f"{len(pending) - new_count} finding(s) not stored; cursor not advanced"
             )
             logger.warning("Federation %s: %s", source_id, msg)
+            self.errors += 1
             store.record_failure(source_id, msg)
             return
 
