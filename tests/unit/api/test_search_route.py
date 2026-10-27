@@ -95,3 +95,22 @@ def test_entities_are_short_scalar_values():
         }
     )
     assert got == {"ws-1", "f.ortiz", "443"}
+
+
+@pytest.mark.unit
+def test_an_exact_title_survives_the_per_kind_limit(monkeypatch):
+    docs = [
+        Doc("case", f"INC-{n}", f"Phishing triage report {n}", "", when=f"2026-10-2{n}")
+        for n in range(1, 7)
+    ] + [Doc("case", "INC-0", "Phishing triage", "", when="2026-01-01")]
+    monkeypatch.setattr(search_router, "_index", search_router._Index())
+    monkeypatch.setattr(
+        search_router,
+        "get_settings",
+        lambda: SimpleNamespace(search_embed_model="", ollama_url="http://127.0.0.1:9"),
+    )
+    monkeypatch.setattr(search_router, "corpus", lambda service=None, fresh=False: docs)
+    out = search_router.search_everything(
+        q="Phishing triage", limit=5, kinds="case", service=None
+    )
+    assert out["groups"]["case"][0]["id"] == "INC-0"

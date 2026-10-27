@@ -306,6 +306,9 @@ def search_everything(
     docs = [d for d in corpus(service) if d.kind in wanted]
     vectors = _index.vectors()
     hits, method = search(q, docs, vectors)
+    # An exact name leads its kind, so the limit below cannot cut it off.
+    exact = q.strip().lower()
+    hits.sort(key=lambda h: (h.doc.title or "").strip().lower() != exact)
     groups: Dict[str, List[Dict[str, Any]]] = {k: [] for k in KINDS if k in wanted}
     counts: Dict[str, int] = {k: 0 for k in groups}
     for h in hits:

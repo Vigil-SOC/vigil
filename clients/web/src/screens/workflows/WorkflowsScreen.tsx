@@ -77,6 +77,12 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const runId = searchParams.get('run')
   const saveDraft = () => workflowApi.createCustom(draftPayload(draft!)).then(() => { setDraft(null); workflows.reload() })
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
+  // A drawer a link opened gives its parameter back on close, so the same link opens it again.
+  const dropParam = useCallback((key: string) => setSearchParams((p) => {
+    const next = new URLSearchParams(p)
+    next.delete(key)
+    return next
+  }, { replace: true }), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
   const count = (feed: { rows: unknown[]; phase: Phase }) => (feed.phase === 'ready' ? feed.rows.length : null)
   const tabs: [WfTab, string, number | null][] = [
@@ -116,8 +122,8 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
       </div>
       {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
       {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} focusId={wantWorkflow} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} openId={searchParams.get('agent')} />}
-      {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} openName={searchParams.get('skill')} />}
+      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} openId={searchParams.get('agent')} onClosed={() => dropParam('agent')} />}
+      {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} openName={searchParams.get('skill')} onClosed={() => dropParam('skill')} />}
       {tab === 'commands' && <CommandsTab />}
       {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
     </AgentRowsProvider>
@@ -3755,11 +3761,12 @@ const SUCCESS_TIP = {
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
 /** `onToggled` runs after an agent is switched, so the workflow cards (which say when an agent they need is off) read the new state. */
-function AgentsTab({ feed, skillCount, onToggled, openId = null }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void; openId?: string | null }) {
+function AgentsTab({ feed, skillCount, onToggled, openId = null, onClosed }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void; openId?: string | null; onClosed?: () => void }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(openId)
   useEffect(() => { if (openId) setEditId(openId) }, [openId])
+  useEffect(() => { if (!editId && openId) onClosed?.() }, [editId]) // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
   // optimistic On switches, dropped when the list reloads
@@ -3957,12 +3964,13 @@ function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) 
   )
 }
 
-function SkillsTab({ feed, workflows, agents, openName = null }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents>; openName?: string | null }) {
+function SkillsTab({ feed, workflows, agents, openName = null, onClosed }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents>; openName?: string | null; onClosed?: () => void }) {
   const { rows, phase, error, reload } = feed
   // Saving, importing and deleting answer 403 without it.
   const canWrite = useAuth().hasPermission('settings.write')
   const [editName, setEditName] = useState<string | null>(openName)
   useEffect(() => { if (openName) setEditName(openName) }, [openName])
+  useEffect(() => { if (!editName && openName) onClosed?.() }, [editName]) // eslint-disable-line react-hooks/exhaustive-deps
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)

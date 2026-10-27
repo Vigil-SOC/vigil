@@ -142,6 +142,17 @@ describe('buildRows with the unified search', () => {
     expect(rows[4].go).toEqual({ screen: 'workflows', search: '?tab=agents&agent=responder' })
   })
 
+  it('keeps the unified order and its reasons ahead of the older alert lookup', () => {
+    const rows = buildRows('data theft', {
+      ...none,
+      alertHits: [{ id: 'f-old', title: 'Mentions data in the body' }, { id: 'f-1', title: 'Exfil over C2' }],
+      found: { groups: { alert: [{ kind: 'alert', id: 'f-1', title: 'Exfil over C2', why: 'about exfiltration', route: { screen: 'overview', search: '?alert=f-1' } }] } },
+    }, [], [])
+    const alerts = rows.filter((row) => row.section === 'Alerts')
+    expect(alerts.map((row) => row.findingId)).toEqual(['f-1', 'f-old'])
+    expect(alerts[0].desc).toBe('about exfiltration')
+  })
+
   it('works without the unified search', () => {
     expect(buildRows('zzz', { ...none, found: { groups: {} } }, [], []).map((row) => row.section)).toEqual(['Ask Vigil'])
     expect(buildRows('zzz', { ...none, found: null }, [], []).map((row) => row.section)).toEqual(['Ask Vigil'])

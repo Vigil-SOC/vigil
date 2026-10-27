@@ -273,3 +273,12 @@ def test_the_vector_cache_is_bounded_and_float32():
     assert cache.get(docs[0].key) is None  # the oldest went first
     kept = cache.get(docs[-1].key)
     assert kept is not None and kept.typecode == "f" and list(kept) == [0.5, 0.25]
+
+
+def test_a_host_is_looked_up_as_written_not_as_a_concept():
+    docs = [
+        Doc("alert", "f-9", "Beaconing to a rare domain", "periodic C2 callbacks"),
+        Doc("alert", "f-10", "New service on c2-host-14", "c2-host-14 installed svc"),
+    ]
+    hits, _ = search("c2-host-14", docs)
+    assert [h.doc.id for h in hits] == ["f-10"]

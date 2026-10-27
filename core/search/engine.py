@@ -387,6 +387,10 @@ def search(
     ql = q.lower()
     idlike = is_idlike(q)
     own, related = expand(q)
+    if idlike:
+        related = (
+            {}
+        )  # a host or id is looked up as written: "c2-host-14" is not about C2
     weight = common_word_weights(own, docs)
     if cache is not None and cache.available and not idlike:
         qvec = cache.query(q)

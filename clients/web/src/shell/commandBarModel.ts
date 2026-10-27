@@ -485,49 +485,40 @@ export function buildRows(
   // COMMANDS lists the custom row last, so it lands in its own section.
   if (q.startsWith('/')) return commandsFor(q).map(commandRow)
 
+  // Exact ids first, then the unified search in its own order with its reasons,
+  // then anything the older lookups found that it did not.
   const cases: PaletteRow[] = []
   const seen = new Set<string>()
   if (hits?.caseExact) pushCase(cases, seen, hits.caseExact)
   const alerts: PaletteRow[] = []
   const seenAlerts = new Set<string>()
-  for (const hit of [hits?.findingExact, ...(hits?.alertHits ?? [])]) {
-    if (!hit?.id || seenAlerts.has(hit.id)) continue
-    seenAlerts.add(hit.id)
+  const pushAlert = (id: string | undefined, label: string, desc: string) => {
+    if (!id || seenAlerts.has(id)) return
+    seenAlerts.add(id)
     alerts.push({
-      key: `finding:${hit.id}`,
-      label: hit.title || hit.id,
-      hint: hit.id,
+      key: `finding:${id}`,
+      label,
+      hint: id,
       dest: 'Alert',
       section: 'Alerts',
       icon: 'alert',
-      desc: joinParts([hit.dataSource, hit.severity]),
+      desc,
       disabled: false,
-      findingId: hit.id,
+      findingId: id,
     })
   }
-  for (const hit of hits?.textCases ?? []) pushCase(cases, seen, hit)
-  for (const hit of hits?.iocCases ?? []) pushCase(cases, seen, hit)
+  const exactAlert = hits?.findingExact
+  if (exactAlert?.id) pushAlert(exactAlert.id, exactAlert.title || exactAlert.id, joinParts([exactAlert.dataSource, exactAlert.severity]))
   const found = hits?.found
   for (const item of found?.groups?.case ?? []) {
     pushCase(cases, seen, { id: item.id, title: item.title })
     const row = cases.find((r) => r.caseId === item.id)
-    if (row && !row.desc) row.desc = joinParts([item.subtitle, item.why])
+    if (row) row.desc = joinParts([item.subtitle, item.why])
   }
-  for (const item of found?.groups?.alert ?? []) {
-    if (seenAlerts.has(item.id)) continue
-    seenAlerts.add(item.id)
-    alerts.push({
-      key: `finding:${item.id}`,
-      label: item.title || item.id,
-      hint: item.id,
-      dest: 'Alert',
-      section: 'Alerts',
-      icon: 'alert',
-      desc: joinParts([item.subtitle, item.why]),
-      disabled: false,
-      findingId: item.id,
-    })
-  }
+  for (const item of found?.groups?.alert ?? []) pushAlert(item.id, item.title || item.id, joinParts([item.subtitle, item.why]))
+  for (const hit of hits?.alertHits ?? []) pushAlert(hit.id, hit.title || hit.id, joinParts([hit.dataSource, hit.severity]))
+  for (const hit of hits?.textCases ?? []) pushCase(cases, seen, hit)
+  for (const hit of hits?.iocCases ?? []) pushCase(cases, seen, hit)
   const others: PaletteRow[] = []
   for (const [kind, section, icon] of FOUND_SECTIONS) {
     for (const item of found?.groups?.[kind] ?? []) {
