@@ -11,12 +11,17 @@ flag is on.
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+import time
+from datetime import timedelta
+from typing import Any, Dict, Optional, Tuple
 
 from aiohttp import web
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from core.agents.queue import RUN_QUEUE
 from core.config import get_settings
+from core.llm.gateway.gateway import QUEUE_NAME
+from core.redis_client import configured_redis_url, open_sync_redis, redact_logged_text
 from core.telemetry import get_meter
 from core.time import utcnow
 from services.daemon.config import MetricsConfig
@@ -26,6 +31,23 @@ logger = logging.getLogger(__name__)
 
 DAEMON_HEALTH_PORT = get_settings().daemon_health_port
 DAEMON_METRICS_PORT = get_settings().daemon_metrics_port
+
+# A few seconds, not ARQ's retry budget: /status must not stall the listener.
+_REDIS_SOCKET_TIMEOUT_S = 3
+
+# Legacy poll loops. Webhook has no PollState. All seven are emitted even
+# when that loop was never started, so a missing key means an older Vigil.
+_LEGACY_POLL_SOURCES = (
+    "splunk",
+    "crowdstrike",
+    "azure_sentinel",
+    "aws_security_hub",
+    "microsoft_defender",
+    "elastic",
+    "opensearch",
+)
+
+_FEDERATION_ZERO = {"polls": 0, "findings": 0, "errors": 0, "dropped": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +240,9 @@ class MetricsServer:
             "responder": metrics.get("responder", {}),
             "scheduler": metrics.get("scheduler", {}),
             "orchestrator": metrics.get("orchestrator", {}),
+            "federation": metrics["federation"],
+            "llm_queue_depth": metrics["llm_queue_depth"],
+            "agent_runs_depth": metrics["agent_runs_depth"],
             "vendors": metrics["vendors"],
         }
 
@@ -227,17 +252,20 @@ class MetricsServer:
         """Collect metrics from all component stats dicts."""
         metrics: Dict[str, Any] = {"vendors": vendor_error_snapshot()}
 
-        if self.poller:
-            metrics["poller"] = self.poller.stats.copy()
+        poller_stats = self.poller.stats.copy() if self.poller else {}
+        poller_stats["sources"] = _legacy_poll_sources(self.poller)
+        metrics["poller"] = poller_stats
 
         if self.kafka_ingestor:
             metrics["kafka"] = dict(self.kafka_ingestor.stats)
 
-        if self.processor:
-            metrics["processor"] = self.processor.stats.copy()
+        processor_stats = self.processor.stats.copy() if self.processor else {}
+        processor_stats.update(_processor_pipeline(self.processor))
+        metrics["processor"] = processor_stats
 
-        if self.responder:
-            metrics["responder"] = self.responder.stats.copy()
+        responder_stats = self.responder.stats.copy() if self.responder else {}
+        responder_stats["queue_depth"] = _queue_depth(self.responder)
+        metrics["responder"] = responder_stats
 
         if self.scheduler:
             metrics["scheduler"] = self.scheduler.stats.copy()
@@ -246,6 +274,122 @@ class MetricsServer:
             orch_stats = self.orchestrator.stats.copy()
             orch_stats["active_agents"] = self.orchestrator._in_flight()
             orch_stats["enabled"] = self.orchestrator.enabled
-            metrics["orchestrator"] = orch_stats
+        else:
+            orch_stats = {}
+        orch_stats.update(_orchestrator_capacity(self.orchestrator))
+        metrics["orchestrator"] = orch_stats
+
+        metrics["federation"] = _federation_totals(self.poller)
+        llm_depth, runs_depth = _redis_queue_depths()
+        metrics["llm_queue_depth"] = llm_depth
+        metrics["agent_runs_depth"] = runs_depth
 
         return metrics
+
+
+def _legacy_poll_sources(poller: Any) -> Dict[str, Any]:
+    sources: Dict[str, Any] = {}
+    for source_id in _LEGACY_POLL_SOURCES:
+        state = getattr(poller, f"_{source_id}_state", None) if poller else None
+        last = getattr(state, "last_poll_time", None)
+        sources[source_id] = {"last_poll_time": last.isoformat() if last else None}
+    return sources
+
+
+def _processor_pipeline(processor: Any) -> Dict[str, Any]:
+    if processor is None:
+        return {
+            "queue_depth": 0,
+            "queue_max": 0,
+            "enrich_inflight": 0,
+            "enrich_breaker_tripped": False,
+            "enrich_paused_until": None,
+            "auto_triage_enabled": False,
+        }
+    # Imported here: processor -> probes -> probe_metrics, which this module
+    # defines, so a top-level import is a cycle.
+    from services.daemon.processor import INPUT_QUEUE_MAXSIZE
+
+    return {
+        "queue_depth": processor.input_queue.qsize(),
+        "queue_max": INPUT_QUEUE_MAXSIZE,
+        "enrich_inflight": len(getattr(processor, "_enrich_tasks", ())),
+        "enrich_breaker_tripped": bool(
+            getattr(processor, "_enrich_breaker_tripped", False)
+        ),
+        "enrich_paused_until": _enrich_paused_until(processor),
+        "auto_triage_enabled": bool(
+            getattr(getattr(processor, "config", None), "auto_triage_enabled", False)
+        ),
+    }
+
+
+def _enrich_paused_until(processor: Any) -> Optional[str]:
+    """ISO-8601 wall clock, or null unless the breaker is open and the
+    monotonic deadline is still ahead. Recovery clears the flag and leaves
+    the deadline where it is."""
+    if not getattr(processor, "_enrich_breaker_tripped", False):
+        return None
+    remaining = getattr(processor, "_enrich_paused_until", 0.0) - time.monotonic()
+    if remaining <= 0:
+        return None
+    return (utcnow() + timedelta(seconds=remaining)).isoformat()
+
+
+def _queue_depth(component: Any) -> int:
+    if component is None:
+        return 0
+    queue = getattr(component, "input_queue", None)
+    if queue is None:
+        return 0
+    return queue.qsize()
+
+
+def _orchestrator_capacity(orchestrator: Any) -> Dict[str, int]:
+    """Free slots follow the admission gate (``_running``), not ``_in_flight``.
+
+    A failed ``_running`` already returns the cap, so free slots are 0.
+    """
+    if orchestrator is None:
+        return {"max_concurrent_agents": 0, "free_slots": 0}
+    cap = int(
+        getattr(getattr(orchestrator, "config", None), "max_concurrent_agents", 0)
+    )
+    running = getattr(orchestrator, "_running", None)
+    held = running() if callable(running) else cap
+    return {"max_concurrent_agents": cap, "free_slots": max(0, cap - int(held))}
+
+
+def _federation_totals(poller: Any) -> Dict[str, int]:
+    runner = getattr(poller, "_federation", None) if poller else None
+    if runner is None:
+        return dict(_FEDERATION_ZERO)
+    return {
+        "polls": int(getattr(runner, "polls", 0)),
+        "findings": int(getattr(runner, "findings", 0)),
+        "errors": int(getattr(runner, "errors", 0)),
+        "dropped": int(getattr(runner, "dropped", 0)),
+    }
+
+
+def _redis_queue_depths() -> Tuple[Optional[int], Optional[int]]:
+    """ZCARD of the ARQ llm queue and LLEN of the BullMQ wait list.
+
+    Null when no Redis URL is configured or the command fails. A cached
+    count would report a backlog that is already gone.
+    """
+    if configured_redis_url() is None:
+        return None, None
+    try:
+        with open_sync_redis(
+            socket_timeout=_REDIS_SOCKET_TIMEOUT_S,
+            socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_S,
+        ) as client:
+            llm = client.zcard(QUEUE_NAME)
+            runs = client.llen(f"bull:{RUN_QUEUE}:wait")
+        return int(llm), int(runs)
+    except Exception as exc:
+        logger.debug(
+            "status queue depths unavailable: %s", redact_logged_text(str(exc))
+        )
+        return None, None
