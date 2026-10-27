@@ -8,13 +8,19 @@ import AiProvidersPanel from './AiProvidersPanel'
 import { AGENT_MODELS_CHANGED } from './modelPrompt'
 
 const getConfig = vi.hoisted(() =>
-  vi.fn(() =>
-    Promise.resolve({
+  vi.fn(
+    (): Promise<{
       data: {
-        components: ['chat_default'],
-        assignments: { chat_default: { component: 'chat_default', provider_id: 'p', model_id: 'sonnet' } },
-      },
-    }),
+        components: string[]
+        assignments: Record<string, { component: string; provider_id: string; model_id: string }>
+      }
+    }> =>
+      Promise.resolve({
+        data: {
+          components: ['chat_default'],
+          assignments: { chat_default: { component: 'chat_default', provider_id: 'p', model_id: 'sonnet' } },
+        },
+      }),
   ),
 )
 
