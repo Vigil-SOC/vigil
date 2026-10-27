@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -19,6 +20,8 @@ from core.storage.models import FederationSource, Finding, WorkflowRun, Workflow
 from core.time import utcnow
 from core.workflows.workflow_run_service import IN_FLIGHT_STATUSES
 from core.workflows.workflows_service import WorkflowsService
+
+logger = logging.getLogger(__name__)
 
 FEED_LIMIT = 50
 RATE_WINDOW = timedelta(days=30)
@@ -248,8 +251,45 @@ def _feed() -> list[dict]:
     )
 
 
+def _demo_on() -> bool:
+    from core.config import is_demo_mode
+
+    return is_demo_mode()
+
+
+def _demo_agents() -> list[dict]:
+    """Workflow names with no run history. Demo mode does not read stored runs."""
+    try:
+        workflows = WorkflowsService().list_workflows()
+    except Exception:
+        logger.warning("Demo overview could not list workflows", exc_info=True)
+        return []
+    rows = []
+    for workflow in workflows:
+        workflow_id = workflow["id"]
+        rows.append(
+            {
+                "workflow_id": workflow_id,
+                "name": workflow.get("name") or workflow_id,
+                "running": 0,
+                "sample_size": 0,
+                "rate": None,
+                "level": None,
+                "current_step": None,
+            }
+        )
+    rows.sort(key=lambda row: (row["name"] or "", row["workflow_id"]))
+    return rows
+
+
 def overview_alert(finding_id: str) -> Optional[dict]:
     """One alert in the feed item's shape, noise-marked or older than the feed; None when unknown."""
+    if _demo_on():
+        from core.findings.demo_reads import load_demo
+        from core.findings.demo_reads import overview_alert as demo_alert
+
+        findings, cases = load_demo()
+        return demo_alert(findings, cases, finding_id)
     items = _feed_items(
         lambda session: session.query(Finding)
         .filter(Finding.finding_id == finding_id)
@@ -266,6 +306,27 @@ def overview_payload(
         day = utcnow().date()
     if now is None:
         now = utcnow()
+    if _demo_on():
+        from core.findings.demo_reads import load_demo, overview_parts
+
+        findings, cases = load_demo()
+        parts = overview_parts(findings, cases, day=day, feed_limit=FEED_LIMIT)
+        return {
+            "day": day.isoformat(),
+            "empty": parts["empty"],
+            "arrivals": [
+                {**row, "source_text": ARRIVAL_SOURCE} for row in parts["arrivals"]
+            ],
+            "outcomes": _outcome_nodes(parts["states"]),
+            "running_source": RUNNING_SOURCE,
+            "step_source": STEP_SOURCE,
+            "rate_info": RATE_INFO,
+            "good_at": GOOD_AT,
+            "fair_at": FAIR_AT,
+            "agents": _demo_agents(),
+            "feed": parts["feed"],
+            "feed_limit": FEED_LIMIT,
+        }
     arrivals = [
         {**row, "source_text": ARRIVAL_SOURCE} for row in arrivals_today_by_source(day)
     ]

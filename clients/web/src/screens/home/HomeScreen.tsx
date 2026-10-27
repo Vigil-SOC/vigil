@@ -24,7 +24,17 @@ const STEP_ACTION: Record<string, string> = {
   custom_skill: 'Add',
 }
 
-const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint', parked: 'Stopped at a limit' }
+const KIND_LABEL: Record<NeedsYouItem['kind'], string> = {
+  approval: 'Approval',
+  checkpoint: 'Checkpoint',
+  parked: 'Stopped at a limit',
+  open_case: 'Case',
+}
+
+// A parked hunt and a demo case are answered on the case, not approved from this card.
+function answersOnCase(item: NeedsYouItem): boolean {
+  return item.kind === 'parked' || item.kind === 'open_case'
+}
 
 type Pickup = { share: number; launched: number; today: number }
 
@@ -116,14 +126,14 @@ function DecisionCard({
       )}
       <div className="home-actions">
         {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
-        {item.kind === 'parked' ? null : item.reversibility === 'reversible' ? (
+        {answersOnCase(item) ? null : item.reversibility === 'reversible' ? (
           <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
             Approve
           </button>
         ) : (
           <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
         )}
-        {item.kind === 'parked' ? null : rejecting ? (
+        {answersOnCase(item) ? null : rejecting ? (
           <form
             className="home-reject"
             onSubmit={(event) => {
@@ -152,7 +162,7 @@ function DecisionCard({
         )}
         {caseId && (
           <Link
-            className={item.kind === 'parked' ? 'home-btn primary' : 'home-btn ghost'}
+            className={answersOnCase(item) ? 'home-btn primary' : 'home-btn ghost'}
             to={`/cases?case=${encodeURIComponent(caseId)}`}
             onClick={(event) => {
               if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
