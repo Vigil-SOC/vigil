@@ -18,6 +18,7 @@ sys.path.insert(0, str(REPO))
 
 from core.llm.bifrost.mirror import (  # noqa: E402
     _cred_from_env,
+    health_note,
     key_health,
     key_is_routable,
 )
@@ -75,6 +76,26 @@ def test_unresolved_seed_is_not_routable_without_status():
 def test_resolved_and_literal_keys_are_routable_without_status():
     assert key_is_routable({"value": RESOLVED_ENV}, "anthropic") is True
     assert key_is_routable({"value": LITERAL}, "openai") is True
+
+
+def test_a_vertex_key_that_cannot_list_models_is_not_a_refusal():
+    """Express mode cannot list models; the key still routes, and the note
+    says so instead of repeating the gateway's raw error."""
+    key = {
+        "value": LITERAL,
+        "status": "list_models_failed",
+        "description": "api key auth not supported for list models",
+    }
+    assert key_health(key, "vertex") == "unverifiable"
+    assert key_is_routable(key, "vertex") is True
+    note = health_note(key, "unverifiable")
+    assert note is not None
+    assert "Nothing to fix" in note
+    assert "not supported" not in note
+    # The same raw description on a provider that can be listed is a refusal.
+    refused = {**key, "description": "API key is invalid."}
+    assert key_health(refused, "openai") == "rejected"
+    assert health_note(refused, "rejected") == "API key is invalid."
 
 
 def test_unverifiable_vertex_with_unresolved_creds_is_not_routable():
@@ -174,6 +195,38 @@ def _applied(monkeypatch, routes):
 
 
 KEY_OK = {"id": "k1", "status": "success", "value": LITERAL}
+
+
+@pytest.mark.asyncio
+async def test_routability_explains_an_unverifiable_key(monkeypatch):
+    from core.llm.bifrost import mirror
+
+    monkeypatch.setattr(
+        mirror,
+        "_get",
+        _Gateway(
+            {
+                "providers": {"providers": [{"name": "vertex"}]},
+                "providers/vertex/keys": {
+                    "keys": [
+                        {
+                            "id": "vk",
+                            "status": "list_models_failed",
+                            "description": "api key auth not supported for list models",
+                            "value": LITERAL,
+                            "enabled": True,
+                        }
+                    ]
+                },
+            }
+        ).get,
+    )
+    out = await mirror.routability()
+    verdict = out["keys"]["vk"]
+    assert verdict["health"] == "unverifiable"
+    assert verdict["routable"] is True
+    assert verdict["description"].startswith("Nothing to fix.")
+    assert "not supported" not in verdict["description"]
 
 
 @pytest.mark.asyncio

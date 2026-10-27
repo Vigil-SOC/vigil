@@ -193,6 +193,41 @@ describe('the keys table', () => {
     expect(screen.getAllByText('Good')).toHaveLength(2)
   })
 
+  it('explains a key whose model list cannot be checked, and does not call it a fault', async () => {
+    const note =
+      'Nothing to fix. Calls still route. The model list was not verified: the gateway cannot list models for this key and uses its static catalogue.'
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'vertex' }] } })
+    listKeys.mockResolvedValue({
+      data: {
+        keys: [{
+          id: 'vk',
+          name: 'vertex-express',
+          value: { value: 'AQ.***key' },
+          models: ['*'],
+          weight: 1,
+          enabled: true,
+          status: 'list_models_failed',
+          description: 'api key auth not supported for list models',
+        }],
+        total: 1,
+      },
+    })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: {
+        providers: { vertex: true },
+        keys: { vk: { provider: 'vertex', routable: true, health: 'unverifiable', description: note } },
+      },
+    })
+    render(<AiProvidersPanel notify={() => {}} />)
+    const shown = await screen.findByText(/Nothing to fix/)
+    expect(shown).toHaveAttribute('title', note)
+    expect(screen.getByText('vertex-express')).toBeInTheDocument()
+    expect(screen.queryByText('Unverifiable')).not.toBeInTheDocument()
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+    expect(screen.queryByText(/not supported for list models/)).not.toBeInTheDocument()
+  })
+
   it('shows a rejected key as Poor, and never invents Fair', async () => {
     await mount([FENCED], [], 'rejected')
     expect(screen.getByText('Poor')).toBeInTheDocument()

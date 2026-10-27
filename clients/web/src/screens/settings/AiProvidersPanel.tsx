@@ -44,8 +44,9 @@ import type { SectionProps } from './types'
 import { urlIsLoopback } from '../../shared/loopback'
 
 // Only the two outcomes the gateway actually decided are a level: routable is
-// Good, rejected is Poor. Everything else stays a plain chip — never Fair — and
-// no verdicts at all (the check failed) draws nothing.
+// Good, rejected is Poor. A key it could not list-check is a note, not a level
+// and not a fault. Everything else stays a plain chip — never Fair — and no
+// verdicts at all (the check failed) draws nothing.
 function KeyHealth({ status, description, verdict }: {
   status?: string
   description?: string
@@ -60,7 +61,19 @@ function KeyHealth({ status, description, verdict }: {
     )
   }
   if (verdict?.health === 'disabled') return <span className="chip">Disabled</span>
-  if (verdict?.health === 'unverifiable') return <span className="chip" title={description}>Unverifiable</span>
+  // Not a fault. The gateway could not list models (a Vertex API key, for one);
+  // the verdict's note says the list was not verified and that nothing needs fixing.
+  // The key's own description is the raw gateway error, which reads as a refusal.
+  if (verdict?.health === 'unverifiable') {
+    const note =
+      verdict.description ||
+      'Nothing to fix. Calls still route. The model list was not verified.'
+    return (
+      <span className="line-clamp-2 max-w-64 whitespace-normal break-words text-xs leading-snug text-tx-2" title={note}>
+        {note}
+      </span>
+    )
+  }
   return <span className="chip" title={verdict ? description : status}>Unverified</span>
 }
 

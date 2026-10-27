@@ -319,6 +319,22 @@ HEALTH_DISABLED = "disabled"
 # tells apart from a key it should show as unverified or rejected.
 HEALTH_PLACEHOLDER = "placeholder"
 
+# What the console shows for ``unverifiable``. The gateway's own description
+# ("not supported for list models") names a check that cannot run and, used as
+# the badge, reads as a fault. The credential was not refused: calls still
+# route on the static catalogue, and nothing needs fixing.
+UNVERIFIABLE_NOTE = (
+    "Nothing to fix. Calls still route. The model list was not verified: "
+    "the gateway cannot list models for this key and uses its static catalogue."
+)
+
+
+def health_note(key: Dict[str, Any], health: str) -> Optional[str]:
+    """The line the console shows under a key's health, if it has one."""
+    if health == HEALTH_UNVERIFIABLE:
+        return UNVERIFIABLE_NOTE
+    return key.get("description") or None
+
 
 def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
     """One of the ``HEALTH_*`` labels for a key's Bifrost status."""
@@ -369,11 +385,12 @@ async def routability() -> Dict[str, Any]:
             verdict = key_is_routable(k, name)
             routable_here = routable_here or verdict
             if key_id:
+                health = key_health(k, name)
                 key_verdicts[key_id] = {
                     "provider": name,
                     "routable": verdict,
-                    "health": key_health(k, name),
-                    "description": k.get("description") or None,
+                    "health": health,
+                    "description": health_note(k, health),
                 }
         provider_verdicts[name] = routable_here
 
