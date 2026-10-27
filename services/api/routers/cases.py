@@ -725,14 +725,11 @@ async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
         from core.platform.demo_data_service import DemoDataService
 
         case = DemoDataService().get_case(case_id)
-    else:
-        case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    if session is None:
-        if not data_service.is_demo_mode():
-            raise HTTPException(status_code=503, detail="Database not initialized")
-        # No runs and no audit table. The case's own activities are the record.
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        # Demo cases have no runs and no audit rows. A missing session is how
+        # this handler is called when the database was never opened, and also
+        # how the record tests call it, so the shortcut is demo mode only.
         return {
             "run_id": None,
             "investigation_id": None,
@@ -740,6 +737,10 @@ async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
                 [], [], case.get("activities") or [], [], case_id=case_id
             ),
         }
+
+    case = data_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
 
     refs = [
         ref
