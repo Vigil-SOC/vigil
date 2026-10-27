@@ -388,6 +388,64 @@ def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
     assert "stopped" in (sb / "repo" / "logs" / "medic.log").read_text()
 
 
+def test_log_writer_caps_medics_log_and_keeps_the_newest_lines(sb: Path) -> None:
+    """C7: more than 30 MiB through the writer leaves at most 30 MiB on disk."""
+    logs = sb / "repo" / "logs"
+    (logs / "medic.log").write_text("from the last start\n")
+    (logs / "medic.log.4").write_text("old rotate_log scheme\n")
+    line = "x" * 1023
+    body = (
+        "_medic_log_shift logs/medic.log\n"
+        f"awk 'BEGIN {{ for (i = 0; i < 32 * 1024; i++) print i \" {line}\" }}'"
+        " | _medic_log_writer logs/medic.log"
+    )
+    out = _bash(sb, body)
+    assert out.returncode == 0, out.stderr
+    files = sorted(p.name for p in logs.glob("medic.log*"))
+    assert files == ["medic.log", "medic.log.1", "medic.log.2"]
+    assert sum((logs / f).stat().st_size for f in files) <= 30 * 1024 * 1024
+    last = (logs / "medic.log").read_text().splitlines()[-1]
+    assert last.startswith(f"{32 * 1024 - 1} ")
+
+
+def _descendants(pid: int) -> dict[int, str]:
+    ps = subprocess.run(
+        ["ps", "-A", "-o", "pid=,ppid=,comm="],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    rows = [ln.split(None, 2) for ln in ps.splitlines()]
+    found: dict[int, str] = {}
+    todo = [pid]
+    while todo:
+        parent = todo.pop()
+        for p, pp, comm in rows:
+            if int(pp) == parent and int(p) not in found:
+                found[int(p)] = comm
+                todo.append(int(p))
+    return found
+
+
+def test_log_writer_ends_with_the_loop(sb: Path) -> None:
+    """The writer rotates by size while Medic runs, and exits when the loop does."""
+    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", MEDIC_LOG_FILE_BYTES="300")
+    assert "rc=0" in out.stdout, out.stdout + out.stderr
+    loop = int((sb / "repo" / "logs" / "medic.pid").read_text())
+    _wait_for(lambda: _check(sb).returncode == 0, timeout=90)  # niced: slow when busy
+    writer = [p for p, comm in _descendants(loop).items() if comm.endswith("awk")]
+    assert len(writer) == 1
+    os.kill(loop, signal.SIGTERM)
+    _wait_for(
+        lambda: (
+            subprocess.run(["kill", "-0", str(writer[0])], check=False).returncode != 0
+        )
+    )
+    logs = sb / "repo" / "logs"
+    assert (logs / "medic.log.1").exists()
+    assert "stopped" in (logs / "medic.log").read_text()
+
+
 def test_worker_address_ignores_agent_health_port(sb: Path) -> None:
     """scripts/agent_up.sh always starts the worker on 6990, whatever .env says."""
     out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", AGENT_HEALTH_PORT="7001")

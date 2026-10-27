@@ -149,6 +149,41 @@ medic_host_backend_env() {
     export VIGIL_MEDIC_API_KEY_FILE="$key"
 }
 
+# C7: Medic's log on this shape is capped at 30 MiB, logs/medic.log plus .1 and
+# .2 of at most 10 MiB each (a single line longer than that is kept whole). The
+# loop runs as vigil-medic and can't rename files in logs/, so Vigil's user
+# rotates: once per start, and by size in the writer. MEDIC_LOG_FILE_BYTES is
+# for tests.
+_medic_log_shift() {
+    rm -f "$1.3" "$1.4" 2>/dev/null # left by lib.sh's rotate_log before C7
+    [ -s "$1" ] || return 0
+    if [ -e "$1.1" ]; then mv -f "$1.1" "$1.2" 2>/dev/null || true; fi
+    mv -f "$1" "$1.1" 2>/dev/null || true
+    return 0
+}
+
+# Copies stdin to $1 line by line, shifting by size. Blocks the writer rather than
+# drop a line; ends at EOF, when the loop and Medic have exited.
+_medic_log_writer() {
+    # exec, not a redirect on the call: this subshell must not hold start.sh's
+    # stdout open while the loop runs.
+    exec >/dev/null 2>&1
+    trap '' HUP INT
+    MEDIC_LOG="$1" LC_ALL=C awk -v max="${MEDIC_LOG_FILE_BYTES:-10485760}" '
+        BEGIN { f = ENVIRON["MEDIC_LOG"]; size = 0 }
+        {
+            n = length($0) + 1
+            if (size > 0 && size + n > max) {
+                close(f)
+                system("mv -f \"$MEDIC_LOG.1\" \"$MEDIC_LOG.2\" 2>/dev/null; mv -f \"$MEDIC_LOG\" \"$MEDIC_LOG.1\"")
+                size = 0
+            }
+            print >> f
+            fflush(f)
+            size += n
+        }'
+}
+
 # Returns 0 when Medic is off, running or started; 1 when it is on but couldn't
 # start (the reason and the fix are printed). Never stops Vigil from starting.
 medic_host_start() {
@@ -274,13 +309,15 @@ medic_host_start() {
     medic_host_backend_env || true
     if [ -r "${VIGIL_MEDIC_API_KEY_FILE:-}" ]; then keyin="$VIGIL_MEDIC_API_KEY_FILE"; fi
 
-    rotate_log "$log"
+    _medic_log_shift "$log"
     # L49: the worker's /readyz on loopback. scripts/agent_up.sh always starts
     # it on 6990 (AGENT_HEALTH_PORT in .env doesn't move it), so neither does this.
+    # The log writer is a process substitution, so $! stays the loop's PID
+    # (shutdown_all.sh and the already-running check above look for medic-loop).
     (cd / && exec nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
         --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data" \
         --agent-worker 127.0.0.1:6990 --api-key-stdin) \
-        < "$keyin" > "$log" 2>&1 &
+        < "$keyin" > >(_medic_log_writer "$log") 2>&1 &
     echo $! > "$pidfile"
     echo "Medic: started as $_MEDIC_USER (log: logs/medic.log). Health:"
     echo "  sudo -u $_MEDIC_USER $runtime/bin/medic-loop --python $runtime/venv/bin/python" \
