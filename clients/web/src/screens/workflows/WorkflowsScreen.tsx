@@ -271,10 +271,8 @@ function useFillHeight<T extends HTMLElement>() {
 function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: () => void; goSettings: ConsoleScreenProps['goSettings'] }) {
   const { rows, phase, error, reload } = feed
   const [modal, setModal] = useState<WfModal | null>(null)
-  // the pane replaces the table; read from the rows so an edit or a delete shows in it.
-  // ?workflow=<id> opens on that workflow, so Overview's agent panel can link to it.
-  const [searchParams] = useSearchParams()
-  const [openId, setOpenId] = useState<string | null>(() => searchParams.get('workflow'))
+  // the pane replaces the table; read from the rows so an edit or a delete shows in it
+  const [openId, setOpenId] = useState<string | null>(null)
   const open = rows.find((w) => w.id === openId)
   // bumped by a save, so the pane reads the edited definition again
   const [saves, setSaves] = useState(0)

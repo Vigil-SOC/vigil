@@ -200,7 +200,7 @@ export function OutcomePanel({
     api
       .get<OutcomeList>(`/overview/outcomes/${encodeURIComponent(state)}?limit=${PAGE}&offset=${items.length}`)
       .then((res) => { if (ticket === opened.current) setExtra((x) => [...x, ...res.data.items]) })
-      .finally(() => setMore(false))
+      .finally(() => { if (ticket === opened.current) setMore(false) })
   }
 
   const title = shown ? (
