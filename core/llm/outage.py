@@ -1,7 +1,9 @@
 """Log a repeating LLM-path outage once on entry, then a count, then recovery.
 
-State is module-level, like ``core/integrations/_base/config_gap.py``: the callers
-are per-finding or per-refresh-tick, so a repeat must not log per call.
+Reminder and recovery keep the caller's message as their template, plus a fixed
+suffix, so each outage matches on its own constant string. State is module-level,
+like ``core/integrations/_base/config_gap.py``: the callers are per-finding or
+per-refresh-tick, so a repeat must not log per call.
 """
 
 from __future__ import annotations
@@ -25,17 +27,16 @@ def report_outage(
     if count == 1:
         logger.error(message, *args)
     elif count % REMINDER_EVERY == 0:
-        logger.error(
-            "%s (still failing, %d failures)",
-            message % args if args else message,
-            count,
-        )
+        # Concatenate; do not pre-format. The caller's literal stays the template.
+        logger.error(message + " (still failing, %d failures)", *args, count)
 
 
-def report_recovered(logger: logging.Logger, key: str, message: str) -> bool:
+def report_recovered(
+    logger: logging.Logger, key: str, message: str, *args: object
+) -> bool:
     """INFO once when ``key`` works again. False if it was not failing."""
     count = _failures.pop(key, None)
     if count is None:
         return False
-    logger.info("%s; recovered after %d failures", message, count)
+    logger.info(message + "; recovered after %d failures", *args, count)
     return True
