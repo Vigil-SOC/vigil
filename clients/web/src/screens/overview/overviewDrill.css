@@ -1,0 +1,344 @@
+/* What a click on the Overview board opens: an outcome's alerts, or one agent's record. */
+
+.ovd {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ovd-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ovd-title b {
+  font-size: 20px;
+  font-weight: 750;
+}
+
+.ovd-title-s,
+.ovd-muted {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tx2);
+}
+
+.ovd-explain,
+.ovd-p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tx1);
+}
+
+.ovd-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--ln1);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--tx2);
+}
+
+.ovd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ovd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--ln0);
+  border-radius: 999px;
+  background: var(--bg1);
+  font-size: 12px;
+}
+
+.ovd-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--tx1);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ovd-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ovd-sec-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ovd-sec-h h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--tx2);
+}
+
+.ovd-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--ln0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ovd-list > li + li {
+  border-top: 1px solid var(--ln0);
+}
+
+.ovd-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 0;
+  background: var(--bg1);
+  color: var(--tx0);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ovd-row:hover,
+.ovd-row:focus-visible {
+  background: var(--bg2);
+}
+
+.ovd-id,
+.ovd-time {
+  flex: none;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ovd-row .ov-sev {
+  flex: none;
+  width: 72px;
+}
+
+.ovd-t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ovd-meta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 45%;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ovd-case {
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ac-bg);
+  color: var(--ac);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ovd-prio {
+  font-weight: 650;
+  text-transform: capitalize;
+}
+
+.ovd-prio.critical,
+.ovd-prio.high {
+  color: var(--poor);
+}
+
+.ovd-prio.medium {
+  color: var(--fair);
+}
+
+.ovd-pill {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--tx1);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.ovd-pill.good { background: var(--good-bg); color: var(--good); }
+.ovd-pill.poor { background: var(--poor-bg); color: var(--poor); }
+.ovd-pill.ac { background: var(--ac-bg); color: var(--ac); }
+.ovd-pill.fair { background: var(--fair-bg); color: var(--fair); }
+
+.ovd-steps .ovd-pill {
+  margin-left: 8px;
+}
+
+.ovd-more {
+  align-self: flex-start;
+}
+
+.ovd-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.ovd-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg2);
+}
+
+.ovd-facts dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+}
+
+.ovd-facts dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.ovd-rate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ovd-tag {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--tx2);
+}
+
+.ovd-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ovd-steps p {
+  margin: 2px 0 0;
+  color: var(--tx1);
+  line-height: 1.45;
+}
+
+.ovd-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.ovd-tools code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--tx1);
+  font-size: 11px;
+}
+
+/* The board's own click targets. */
+.ov-out.clickable,
+.ov-agent.clickable {
+  cursor: pointer;
+}
+
+.ov-out.clickable {
+  border-radius: 8px;
+  margin-left: -6px;
+  padding-left: 6px;
+}
+
+.ov-out.clickable:hover,
+.ov-out.clickable:focus-visible {
+  background: var(--bg2);
+}
+
+.ov-out.clickable:hover .ov-out-l span {
+  text-decoration: underline;
+}
+
+.ov-out.zero .ov-out-l b {
+  color: var(--tx3) !important;
+}
+
+.ov-agent.clickable {
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ov-agent.clickable:hover,
+.ov-agent.clickable:focus-visible {
+  border-color: var(--ac-ln, var(--ac));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+}
+
+.ov-band path[fill] {
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .ovd-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ovd-meta {
+    max-width: 55%;
+  }
+
+  .ovd-row .ov-sev {
+    width: auto;
+  }
+}

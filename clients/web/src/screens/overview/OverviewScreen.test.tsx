@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
 import { heldCase } from '../../shell/heldCase'
-import { casesApi, configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
+import api, { casesApi, configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
+  // the board's drill-down panels read through the default client; these tests never let it load
+  default: { get: vi.fn(() => new Promise(() => {})) },
   casesApi: { exportJira: vi.fn() },
   overviewApi: { get: vi.fn(), alert: vi.fn() },
   findingsApi: {
@@ -235,8 +237,7 @@ describe('OverviewScreen', () => {
     expect(await screen.findByRole('link', { name: 'Open in Splunk ↗' })).toHaveAttribute('href', 'https://example.test/alert/1')
     expect(screen.queryByRole('link', { name: 'https://example.test/alert/1' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Create ticket' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'ServiceNow' }).parentElement).toHaveAttribute('title', 'Coming in a later release')
+    expect(screen.queryByRole('button', { name: 'ServiceNow' })).not.toBeInTheDocument()
     expect(screen.getByText(/records omitted from this list/)).toBeInTheDocument()
   })
 
@@ -307,7 +308,7 @@ describe('OverviewScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create ticket' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('JIRA not configured')
     expect(casesApi.exportJira).toHaveBeenCalledWith('case-1', 'SOC')
-    expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'ServiceNow' })).not.toBeInTheDocument()
   })
 
   it('full screen hides the page heading and Agents running now, puts Exit in the diagram heading, and Escape leaves it', async () => {
@@ -367,7 +368,7 @@ describe('OverviewScreen', () => {
     expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
     expect(within(screen.getByRole('dialog')).getByText('Odd login')).toBeInTheDocument()
     expect(overviewApi.alert).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(where()).toBe('?keep=1'))
     fireEvent.click(await screen.findByText('f-1'))
     expect(where()).toBe('?keep=1&alert=f-1')
@@ -413,7 +414,7 @@ describe('OverviewScreen', () => {
 
     fireEvent.click(screen.getByText('f-2'))
     expect(screen.queryByRole('button', { name: 'Open case' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     fireEvent.click(screen.getByText('f-1'))
     fireEvent.click(await screen.findByRole('button', { name: 'Open case' }))
     expect(openCase).toHaveBeenCalledTimes(1)
@@ -466,17 +467,67 @@ describe('OverviewScreen', () => {
     expect(within(rail).getAllByRole('button', { name: /thing/ })).toHaveLength(3)
   })
 
+  it('an outcome and an agent card open their panels through ?outcome= and ?agent=', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen()
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    fireEvent.click(within(flow).getByLabelText('Not in a case'))
+    expect(where()).toBe('?outcome=waiting')
+    expect(api.get).toHaveBeenCalledWith('/overview/outcomes/waiting?limit=50')
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(where()).toBe(''))
+    fireEvent.keyDown(within(flow).getByLabelText('Needs you'), { key: 'Enter' })
+    expect(where()).toBe('?outcome=needs_you')
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(where()).toBe(''))
+    const card = screen.getAllByRole('listitem').find((el) => el.classList.contains('ov-agent'))!
+    fireEvent.click(card)
+    expect(where()).toBe(`?agent=${agent().workflow_id}`)
+    expect(api.get).toHaveBeenCalledWith(`/overview/agents/${agent().workflow_id}`)
+  })
+
+  it('opens an outcome panel from a ?outcome= link', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen('/overview?outcome=dismissed')
+    await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(api.get).toHaveBeenCalledWith('/overview/outcomes/dismissed?limit=50')
+  })
+
+  it('closing an alert opened over an outcome steps back, so one Back then closes the outcome', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    function Back() {
+      const navigate = useNavigate()
+      return <button type="button" onClick={() => navigate(-1)}>History back</button>
+    }
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} setWallMode={vi.fn()} chatOpen={false} />
+        <Where />
+        <Back />
+      </MemoryRouter>,
+    )
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    fireEvent.click(within(flow).getByLabelText('Not in a case'))
+    fireEvent.click(await screen.findByText('f-1'))
+    expect(where()).toBe('?outcome=waiting&alert=f-1')
+    fireEvent.click(within(screen.getAllByRole('dialog').slice(-1)[0]).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(where()).toBe('?outcome=waiting'))
+    fireEvent.click(screen.getByRole('button', { name: 'History back' }))
+    await waitFor(() => expect(where()).toBe(''))
+  })
+
   it('rail: a row click and Enter set ?alert=, and the Case pill opens the case without the alert', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item('f-1', { description: 'One' }), item('f-2', { description: 'Two', case_id: 'case-7', terminal_state: 'needs_you' })] }) } as never)
     const { openCase } = renderScreen()
     const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
     fireEvent.click(within(rail).getByRole('button', { name: /One/ }))
     expect(where()).toBe('?alert=f-1')
-    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(where()).toBe(''))
     fireEvent.keyDown(within(rail).getByRole('button', { name: /Two/ }), { key: 'Enter' })
     expect(where()).toBe('?alert=f-2')
-    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(where()).toBe(''))
     fireEvent.click(within(rail).getByRole('button', { name: 'Case case-7' }))
     expect(openCase).toHaveBeenCalledWith('case-7')

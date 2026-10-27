@@ -6,6 +6,7 @@ import { useSourceBadge } from '../../shared/useSourceBadge'
 import { VigilMark } from '../../shared/VigilLogo'
 import type { OverviewOutcome, OverviewPayload } from '../../services/api'
 import './overview.css'
+import { layoutOutcomes } from './outcomeLayout'
 
 const CONNECT_DATA = '/settings?section=data'
 const EMPTY_TEXT =
@@ -17,13 +18,16 @@ const SRC_NODE_W = 196
 const SLOT_W = 236
 const SLOT_DOT_X = 246
 const ENGINE_R = 52
-const BAND_TOTAL = 150
 
-// The three served states that carry a sub-line, and the colour token of each outcome.
+// A short sub-line for each served outcome, and the colour token of each outcome.
 const OUTCOME_SUB: Record<string, string> = {
   resolved_auto: 'closed without a person',
+  resolved_person: 'an analyst closed the case',
   working: 'cases in progress',
   needs_you: 'alerts waiting on a person',
+  dismissed: 'judged benign by triage',
+  scoring: 'queued, not scored yet',
+  waiting: 'scored, no case opened',
 }
 const OUTCOME_COLOR: Record<string, string> = {
   resolved_auto: 'var(--good)',
@@ -32,7 +36,7 @@ const OUTCOME_COLOR: Record<string, string> = {
   needs_you: 'var(--poor)',
   dismissed: 'var(--tx3)',
   scoring: 'var(--fair)',
-  waiting: 'var(--tx3)',
+  waiting: 'var(--tx2)',
 }
 const SLOTS: { label: string; sub: string; icon: IconName }[] = [
   { label: 'Connect a SIEM', sub: 'Splunk, Sentinel or Elastic', icon: 'search' },
@@ -116,9 +120,11 @@ interface Props {
   data: OverviewPayload
   wall: boolean
   onToggleWall: () => void
+  /** Opens the alerts behind an outcome. */
+  onOutcome?: (state: string) => void
 }
 
-export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
+export default function FlowDiagram({ data, wall, onToggleWall, onOutcome }: Props) {
   const badgeOf = useSourceBadge()
   const uid = useId().replace(/:/g, '')
   const [ref, W] = useWidth()
@@ -154,7 +160,6 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
   const total = data.arrivals.reduce((n, a) => n + a.count, 0)
   const measured = data.outcomes.filter((o): o is OverviewOutcome & { count: number } => o.count !== null)
   const unmeasured = data.outcomes.filter((o) => o.count === null)
-  const outTotal = measured.reduce((n, o) => n + o.count, 0)
 
   // Source strands: each source gets 1..12 strands, spread 1.4px apart where they meet the engine.
   const maxCount = Math.max(1, ...sources.map((s) => s.count))
@@ -170,11 +175,13 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
     return { ya, paths }
   })
 
-  // Outcome bands: stacked at the engine's right edge, landing on five evenly spaced rows.
-  let top = cy - BAND_TOTAL / 2
+  // Outcome bands: stacked at the engine's right edge in row order, so no two bands cross,
+  // and each lands on a row tall enough to hold it.
+  const lay = layoutOutcomes(measured.map((o) => o.count), H)
+  let top = cy - lay.th.reduce((n, t) => n + t, 0) / 2
   const bands = measured.map((o, j) => {
-    const th = o.count === 0 ? 0 : Math.max(2.5, (BAND_TOTAL * o.count) / (outTotal || 1))
-    const y = rowY(j, measured.length, H, 52, cy)
+    const th = lay.th[j]
+    const y = lay.ys[j]
     const t0 = top
     top += th
     const dx = x2 - xr
@@ -184,7 +191,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
       th > 0
         ? `M ${xr} ${t0} C ${c(t0, y - th / 2)}, ${x2} ${y - th / 2} L ${x2} ${y + th / 2} C ${x2 - dx * 0.5} ${y + th / 2}, ${xr + dx * 0.5} ${t0 + th}, ${xr} ${t0 + th} Z`
         : ''
-    return { o, y, th, line, shape, zero: strand(xr, cy, x2, y), color: OUTCOME_COLOR[o.state] ?? 'var(--tx3)' }
+    return { o, y, th, line, shape, zero: strand(xr, t0, x2, y), color: OUTCOME_COLOR[o.state] ?? 'var(--tx3)' }
   })
 
   const srcOn = (key: string) => hover?.kind === 'src' && hover.key === key
@@ -227,9 +234,8 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                 const hot = outOn(b.o.state)
                 return (
                   <linearGradient key={b.o.state} id={`${uid}-${b.o.state}`} x1="0" x2="1" y1="0" y2="0">
-                    <stop offset="0" style={{ stopColor: 'var(--tx1)', stopOpacity: 0.06 }} />
-                    <stop offset="0.55" style={{ stopColor: b.color, stopOpacity: hot ? 0.45 : 0.2 }} />
-                    <stop offset="1" style={{ stopColor: b.color, stopOpacity: hot ? 0.8 : 0.5 }} />
+                    <stop offset="0" style={{ stopColor: b.color, stopOpacity: hot ? 0.3 : 0.12 }} />
+                    <stop offset="1" style={{ stopColor: b.color, stopOpacity: hot ? 0.55 : 0.3 }} />
                   </linearGradient>
                 )
               })}
@@ -279,11 +285,16 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                         fill={`url(#${uid}-${b.o.state})`}
                         onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
                         onMouseLeave={leave}
+                        onClick={onOutcome ? () => onOutcome(b.o.state) : undefined}
                       />
                     ) : (
                       <path d={b.zero} className="ov-zero" />
                     )}
-                    <circle cx={x2} cy={b.y} r="5" className="ov-dot-out" style={{ stroke: b.color }} />
+                    {b.th > 0 ? (
+                      <rect x={x2 - 2} y={b.y - Math.max(b.th, 10) / 2} width="4" height={Math.max(b.th, 10)} rx="2" style={{ fill: b.color }} />
+                    ) : (
+                      <circle cx={x2} cy={b.y} r="4" className="ov-dot-out" style={{ stroke: 'var(--ln2)' }} />
+                    )}
                   </g>
                 )
               })}
@@ -311,7 +322,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
 
           <Engine cx={cx} cy={cy} idle={empty} />
           {!empty && (
-            <div className="ov-total" style={{ left: cx - 270, top: cy - 96 }}>
+            <div className="ov-total" style={{ left: cx - 92, top: cy - 92 - 52 }}>
               <b>{fmt(total)}</b>
               <span>alerts in</span>
             </div>
@@ -387,18 +398,29 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
             : bands.map((b) => (
                 <div
                   key={b.o.state}
-                  className="ov-out"
-                  role="group"
+                  className={`ov-out${onOutcome ? ' clickable' : ''}${b.o.count === 0 ? ' zero' : ''}`}
+                  role={onOutcome ? 'button' : 'group'}
                   tabIndex={0}
                   aria-label={b.o.label}
+                  title={onOutcome ? `Show the ${alerts(b.o.count)} that ${b.o.count === 1 ? 'is' : 'are'} ${b.o.label.toLowerCase()} today` : undefined}
                   style={{ left: x2 + 14, top: b.y - 19, opacity: outDim(b.o.state) }}
                   onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
                   onMouseLeave={leave}
                   onFocus={() => setHover({ kind: 'out', key: b.o.state })}
                   onBlur={leave}
+                  onClick={(e) => {
+                    // The info tip inside the row is its own button.
+                    if (!onOutcome || (e.target as HTMLElement).closest('button')) return
+                    onOutcome(b.o.state)
+                  }}
+                  onKeyDown={(e) => {
+                    if (!onOutcome || e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                    e.preventDefault()
+                    onOutcome(b.o.state)
+                  }}
                 >
                   <span className="ov-out-l">
-                    <b style={{ color: b.color }}>{fmt(b.o.count)}</b>
+                    <b style={{ color: b.o.count === 0 ? undefined : b.color }}>{fmt(b.o.count)}</b>
                     <span>{b.o.label}</span>
                   </span>
                   {(OUTCOME_SUB[b.o.state] || b.o.info) && (

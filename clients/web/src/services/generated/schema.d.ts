@@ -4600,6 +4600,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/overview/agents/{workflow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent Detail
+         * @description One workflow as the board shows it: what it does, live runs, recent runs, 30-day record.
+         */
+        get: operations["get_api_overview_agents_workflow_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/overview/alerts/{finding_id}": {
         parameters: {
             query?: never;
@@ -4612,6 +4632,26 @@ export interface paths {
          * @description One alert in the feed item's shape, including noise-marked and older ones.
          */
         get: operations["get_api_overview_alerts_finding_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/overview/outcomes/{state}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Outcome Alerts
+         * @description Today's alerts in one outcome, newest first, and the cases they sit in.
+         */
+        get: operations["get_api_overview_outcomes_state"];
         put?: never;
         post?: never;
         delete?: never;
@@ -19406,6 +19446,41 @@ export interface operations {
             };
         };
     };
+    get_api_overview_agents_workflow_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_overview_alerts_finding_id: {
         parameters: {
             query?: never;
@@ -19426,6 +19501,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_overview_outcomes_state: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                state: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

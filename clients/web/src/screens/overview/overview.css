@@ -223,10 +223,11 @@
   50% { transform: scale(1.08); opacity: 1; }
 }
 
+/* Centred over the engine, the way the engine label sits under it. */
 .ov-total {
   position: absolute;
-  width: 170px;
-  text-align: right;
+  width: 184px;
+  text-align: center;
   pointer-events: none;
 }
 

@@ -14,11 +14,26 @@ function fmtRate(rate: number | null): string {
   return `${(rate * 100).toFixed(1)}%`
 }
 
-function AgentCard({ agent }: { agent: OverviewAgent }) {
+function AgentCard({ agent, onOpen }: { agent: OverviewAgent; onOpen?: (agent: OverviewAgent) => void }) {
   const doing = agent.current_step ? `${agent.running} running · ${agent.current_step}` : `${agent.running} running`
   const measured = agent.sample_size > 0 && agent.level !== null
   return (
-    <div role="listitem" className={`ov-agent${agent.level === 'fair' || agent.level === 'poor' ? ` ${agent.level}` : ''}`}>
+    <div
+      role="listitem"
+      className={`ov-agent${agent.level === 'fair' || agent.level === 'poor' ? ` ${agent.level}` : ''}${onOpen ? ' clickable' : ''}`}
+      tabIndex={onOpen ? 0 : undefined}
+      aria-label={onOpen ? `${agent.name}: show what it does and its runs` : undefined}
+      onClick={onOpen ? () => onOpen(agent) : undefined}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return
+              e.preventDefault()
+              onOpen(agent)
+            }
+          : undefined
+      }
+    >
       <b title={agent.name}>{agent.name}</b>
       <span className="ov-agent-doing" title={doing}>{doing}</span>
       <div className="ov-agent-rate">
@@ -36,7 +51,16 @@ function AgentCard({ agent }: { agent: OverviewAgent }) {
 }
 
 /** "Agents running now": one card per workflow, with its level pill and 30-day rate. */
-export default function AgentCards({ data, go }: { data: OverviewPayload; go: ConsoleScreenProps['go'] }) {
+export default function AgentCards({
+  data,
+  go,
+  onOpen,
+}: {
+  data: OverviewPayload
+  go: ConsoleScreenProps['go']
+  /** Opens one agent's record. */
+  onOpen?: (agent: OverviewAgent) => void
+}) {
   const agents = [...data.agents].sort((a, b) => b.running - a.running || a.name.localeCompare(b.name))
   const idle = agents.every((a) => a.running === 0 && a.sample_size === 0)
   return (
@@ -72,7 +96,7 @@ export default function AgentCards({ data, go }: { data: OverviewPayload; go: Co
         </div>
       ) : (
         <div className="ov-agents-grid" role="list">
-          {agents.map((a) => <AgentCard key={a.workflow_id} agent={a} />)}
+          {agents.map((a) => <AgentCard key={a.workflow_id} agent={a} onOpen={onOpen} />)}
         </div>
       )}
     </section>

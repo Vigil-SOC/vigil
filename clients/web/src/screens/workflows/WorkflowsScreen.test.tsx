@@ -74,6 +74,14 @@ describe('Agents & workflows header', () => {
     expect(await screen.findByRole('tab', { name: /^Workflows/ })).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('opens on the workflow named by ?workflow=, and on the first one without it', async () => {
+    const { unmount } = mount('/workflows?workflow=b')
+    expect(await screen.findByRole('button', { pressed: true })).toHaveTextContent(/^B/)
+    unmount()
+    mount('/workflows')
+    expect(await screen.findByRole('button', { pressed: true })).toHaveTextContent(/^A/)
+  })
+
   it('opens the create flow from the header on a tab other than Workflows', async () => {
     mount()
     fireEvent.click(await screen.findByRole('tab', { name: 'Agents 3' }))

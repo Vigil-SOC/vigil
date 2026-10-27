@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import AgentCards from './AgentCards'
 import AlertRail, { SevMark } from './AlertRail'
 import { clock } from './clock'
 import FlowDiagram from './FlowDiagram'
+import { AgentPanel, OutcomePanel } from './OverviewDrill'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
@@ -104,16 +105,34 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const readStatus = read?.id === alertId ? read.status : 'loading'
   const feedSettled = phase !== 'loading'
 
-  const setAlert = (id: string | null, state?: unknown) =>
+  // ?outcome= and ?agent= open what a click on the board shows, so Back and links work.
+  const outcomeOpen = searchParams.get('outcome') || null
+  const agentOpenId = searchParams.get('agent') || null
+  // A panel or popup opened here pushed its own history entry: closing it steps back over
+  // that entry, so one Back (or close) undoes one click instead of leaving a duplicate.
+  const navigate = useNavigate()
+  const pushed = useRef(new Set<string>())
+  useEffect(() => {
+    for (const key of [...pushed.current]) if (!searchParams.get(key)) pushed.current.delete(key)
+  }, [searchParams])
+  const setParam = (key: 'outcome' | 'agent' | 'alert', value: string | null) => {
+    if (value === null && pushed.current.has(key)) {
+      pushed.current.delete(key)
+      navigate(-1)
+      return
+    }
+    if (value && !searchParams.get(key)) pushed.current.add(key)
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        if (id) next.set('alert', id)
-        else next.delete('alert')
+        if (value) next.set(key, value)
+        else next.delete(key)
         return next
       },
-      { replace: id === null, state },
+      { replace: value === null },
     )
+  }
+  const setAlert = (id: string | null) => setParam('alert', id)
 
   const load = useCallback(() => {
     overviewApi
@@ -196,8 +215,17 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
   const sourceLabel = open ? badgeOf(open.data_source).label : ''
 
   // One overlay at a time, in one navigation: a second navigate in the same click starts from the
-  // location this render saw, so it would undo the first.
-  const openCaseFromPopup = (id: string) => setAlert(null, holdCase(location.state, id))
+  // location this render saw, so it would undo the first. The case drawer replaces the alert and
+  // any board panel.
+  const openCaseFromPopup = (id: string) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const key of ['alert', 'outcome', 'agent']) next.delete(key)
+        return next
+      },
+      { replace: true, state: holdCase(location.state, id) },
+    )
 
   const stillOpen = (findingId: string) => openId.current === findingId
 
@@ -291,8 +319,8 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
       )}
       {phase === 'ready' && data && (
         <>
-          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
-          {!wall && <AgentCards data={data} go={go} />}
+          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} onOutcome={(state) => setParam('outcome', state)} />
+          {!wall && <AgentCards data={data} go={go} onOpen={(a) => setParam('agent', a.workflow_id)} />}
         </>
       )}
       </div>
@@ -300,6 +328,21 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
       {phase === 'ready' && data && !chatOpen && (
         <AlertRail data={data} paused={paused} onTogglePause={() => setPaused((p) => !p)} onOpen={setAlert} openCase={openCase} />
       )}
+
+      <OutcomePanel
+        state={outcomeOpen}
+        onClose={() => setParam('outcome', null)}
+        onOpenAlert={setAlert}
+        openCase={openCaseFromPopup}
+        goTriage={() => go('triage')}
+      />
+      <AgentPanel
+        agent={agentOpenId ? data?.agents.find((a) => a.workflow_id === agentOpenId) ?? null : null}
+        onClose={() => setParam('agent', null)}
+        openCase={openCaseFromPopup}
+        openWorkflow={(id) => go('workflows', { search: `?workflow=${encodeURIComponent(id)}` })}
+        openRun={(id) => go('workflows', { search: `?run=${encodeURIComponent(id)}` })}
+      />
 
       <Popup open={alertId !== null} onClose={() => setAlert(null)} title={open ? <PopupTitle item={open} /> : (alertId ?? 'Alert')} width={860}>
         {!open && readStatus === 'missing' && <p>Alert {alertId} not found.</p>}
@@ -348,9 +391,6 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
                   <button type="button" className="btn ghost" onClick={createTicket} disabled={jira.gap !== null}>Create ticket</button>
                 </span>
               )}
-              <span title="Coming in a later release">
-                <button type="button" className="btn ghost" disabled>ServiceNow</button>
-              </span>
             </div>
             {launchNote && (
               <p>
