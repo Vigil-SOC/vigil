@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.audit import trail
@@ -384,27 +383,7 @@ class ConfigService:
             )
 
 
-def _trail_ready(session: Session) -> bool:
-    """Whether ``session`` is Postgres and its revision includes the trail.
-
-    Anything else keeps today's ``config_audit_log`` insert. ``trail_ready``
-    itself is the Postgres check; callers do not add a setting.
-    """
-    get_bind = getattr(session, "get_bind", None)
-    if not callable(get_bind):
-        return False
-    bind = get_bind()
-    if getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
-        return False
-    if not trail.trail_ready(session):
-        return False
-    # stamp_schema_head records the head revision on a create_all database,
-    # which has no audit_trail. The revision check would append into a
-    # missing table and roll the caller's change back.
-    return (
-        session.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
-        is not None
-    )
+_trail_ready = trail.in_use
 
 
 def _redact_tree(value: Any, key: str = "") -> Any:

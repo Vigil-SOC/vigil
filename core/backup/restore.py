@@ -33,7 +33,7 @@ from urllib.parse import quote
 import psycopg2
 from cryptography.fernet import Fernet
 from psycopg2 import sql
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.pool import NullPool
 
 from core.audit import feed, trail
@@ -909,19 +909,9 @@ def _actor(actor: str | None) -> str:
         raise BackupError(f"could not identify the restoring user: {exc}") from exc
 
 
-def _trail_ready(conn) -> bool:
-    """Whether this database has the trail table, not only its revision.
-
-    ``stamp_schema_head`` records the head revision on a ``create_all``
-    database, and ``audit_trail`` is not an ORM model, so ``trail.trail_ready``
-    alone would query a missing table and refuse the swap.
-    """
-    if not trail.trail_ready(conn):
-        return False
-    return (
-        conn.execute(text("SELECT to_regclass('public.audit_trail')")).scalar()
-        is not None
-    )
+# The trail table, not only its revision: ``stamp_schema_head`` stamps a
+# ``create_all`` database that has no ``audit_trail``.
+_trail_ready = trail.in_use
 
 
 def _abandoned_tip(cfg: DatabaseConfig) -> dict | None:
