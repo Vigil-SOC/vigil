@@ -42,6 +42,14 @@ def test_an_unknown_confidence_keeps_every_technique_on_the_map():
     ]
 
 
+def test_a_single_technique_dict_is_not_read_as_a_map():
+    for tech in (
+        {"technique_id": "T1059", "confidence": 0.9, "technique_name": "x"},
+        {"id": "T1059", "confidence": None},
+    ):
+        assert list(iter_techniques({"mitre_predictions": tech})) == [tech]
+
+
 def test_predicted_techniques_is_not_read():
     finding = {"predicted_techniques": [{"technique_id": "T1048", "confidence": 1}]}
     assert list(iter_techniques(finding)) == []

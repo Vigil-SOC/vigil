@@ -174,8 +174,8 @@ def iter_techniques(finding: dict) -> Iterable[dict]:
     Handles:
       - `mitre_predictions: dict[tech_id, confidence]`. A value that is not a
         score yields the technique with `confidence: None`.
-      - `mitre_predictions: {"techniques": [...]}` or a single technique dict
-        (any map value is a list or dict)
+      - `mitre_predictions: {"techniques": [...]}` (a map value is a list or dict)
+      - `mitre_predictions: {technique_id | id, confidence, ...}`, one technique
       - `mitre_predictions: list[dict]`
     """
     predictions = finding.get("mitre_predictions")
@@ -183,7 +183,11 @@ def iter_techniques(finding: dict) -> Iterable[dict]:
         return
 
     if isinstance(predictions, dict):
-        if not any(isinstance(v, (list, dict)) for v in predictions.values()):
+        # A single technique dict (its own id key) is not a technique map.
+        single = "technique_id" in predictions or "id" in predictions
+        if not single and not any(
+            isinstance(v, (list, dict)) for v in predictions.values()
+        ):
             for tech_id, confidence in predictions.items():
                 yield {
                     "technique_id": tech_id,
