@@ -128,8 +128,22 @@ class TestTransforms:
             "mac": "aa:bb:cc:dd:ee:ff",
             "dst_ip": "203.0.113.9",
         }
-        assert f["mitre_predictions"] == {"T1071.001": 0.7, "T1048": 0.7}
+        assert f["mitre_predictions"] == {"T1071.001": None, "T1048": None}
         assert f["evidence_links"][0]["ref"].endswith("/#modelbreach/4242")
+
+    def test_model_score_stays_beside_an_unscored_technique(self):
+        svc = DarktraceIngestionService()
+        payload = {
+            **MODEL_BREACH_SAMPLE,
+            "model": {
+                "name": "Device / Anomalous Connection",
+                "tags": [{"name": "T1071.001", "score": 0.4}, "T1048"],
+            },
+        }
+        f = svc.transform_model_breach(payload)
+        assert f["anomaly_score"] == pytest.approx(0.87)
+        assert f["severity"] == "high"
+        assert f["mitre_predictions"] == {"T1071.001": None, "T1048": None}
 
     def test_model_breach_idempotent_finding_id(self):
         svc = DarktraceIngestionService()
@@ -148,7 +162,7 @@ class TestTransforms:
         # groupScore 92 is on 0-100 scale -> clamped to 0.92
         assert f["anomaly_score"] == pytest.approx(0.92)
         assert f["severity"] == "critical"
-        assert f["mitre_predictions"] == {"T1071": 0.7}
+        assert f["mitre_predictions"] == {"T1071": None}
         assert f["entity_context"]["src_ip"] == "10.0.0.5"
         assert "aianalyst/incident" in f["evidence_links"][0]["ref"]
 

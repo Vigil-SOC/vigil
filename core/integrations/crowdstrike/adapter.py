@@ -149,11 +149,11 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         detection.get("max_severity_displayname", "Medium"), "medium"
     )
 
-    mitre_predictions: Dict[str, float] = {}
+    mitre_predictions: Dict[str, Optional[float]] = {}
     for behavior in detection.get("behaviors", []) or []:
         technique = behavior.get("technique")
         if technique:
-            mitre_predictions[technique] = 0.9
+            mitre_predictions[technique] = None
 
     device = detection.get("device") or {}
     entity_context = {

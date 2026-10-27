@@ -598,7 +598,7 @@ class DataPoller:
         for behavior in behaviors:
             technique = behavior.get("technique")
             if technique:
-                mitre_predictions[technique] = 0.9  # High confidence from EDR
+                mitre_predictions[technique] = None
 
         # Entity context
         device = detection.get("device", {})

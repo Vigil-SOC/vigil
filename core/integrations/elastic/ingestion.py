@@ -291,7 +291,7 @@ class ElasticIngestion(SIEMIngestionService):
                 entity_context["usernames"].append(str(user["name"]))
 
             # MITRE ATT&CK from rule threat metadata
-            mitre_predictions: Dict[str, float] = {}
+            mitre_predictions: Dict[str, Optional[float]] = {}
             threats = source.get("kibana.alert.rule.threat", []) or rule.get(
                 "threat", []
             )
@@ -302,7 +302,7 @@ class ElasticIngestion(SIEMIngestionService):
                         for t in technique:
                             tid = t.get("id")
                             if tid:
-                                mitre_predictions[tid] = 0.9
+                                mitre_predictions[tid] = None
 
             return {
                 "finding_id": finding_id,
@@ -396,7 +396,7 @@ class ElasticIngestion(SIEMIngestionService):
                 else None
             ),
             "mitre_predictions": {
-                str(tid): 0.9 for tid in _as_list(mitre.get("id")) if tid
+                str(tid): None for tid in _as_list(mitre.get("id")) if tid
             },
             "metadata": {
                 "elastic_alert_id": alert_id,

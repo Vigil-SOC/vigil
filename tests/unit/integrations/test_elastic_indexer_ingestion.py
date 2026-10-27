@@ -176,7 +176,8 @@ def test_transform_maps_wazuh_fields():
     assert finding["title"] == ALERT["_source"]["rule"]["description"]
     assert finding["description"].startswith("Sep 28 11:17:17 web01")
     assert finding["timestamp"] == "2026-09-28T11:17:18.394Z"
-    assert finding["mitre_predictions"] == {"T1110": 0.9}
+    assert finding["anomaly_score"] == round(10 / 15, 2)
+    assert finding["mitre_predictions"] == {"T1110": None}
     assert finding["entity_context"] == {
         "src_ips": ["203.0.113.7"],
         "dest_ips": [],
@@ -215,7 +216,7 @@ def test_transform_manager_syslog_and_windows_fields():
     assert finding["entity_context"]["usernames"] == ["mallory", "admin"]
     assert finding["entity_context"]["src_ips"] == ["10.1.2.3"]
     assert finding["description"] == "An account failed to log on."
-    assert finding["mitre_predictions"] == {"T1078": 0.9}
+    assert finding["mitre_predictions"] == {"T1078": None}
 
 
 def test_elastic_security_alerts_keep_the_ecs_transform():

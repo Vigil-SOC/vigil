@@ -86,14 +86,14 @@ def _score_to_severity(score: float) -> str:
     return "info"
 
 
-def _extract_mitre(tags_or_tactics: Any) -> Dict[str, float]:
+def _extract_mitre(tags_or_tactics: Any) -> Dict[str, Optional[float]]:
     """AI Analyst payloads include MITRE tactic/technique tags.
 
     Darktrace emits either a list of dicts like ``{"name": "T1071.001"}`` or
-    plain technique strings. We preserve only things that look like MITRE IDs
-    and default confidence to 0.7 (Darktrace does not ship per-tag scores).
+    plain technique strings. We keep ids that look like MITRE techniques.
+    Darktrace does not ship per-tag scores, so the confidence is unknown.
     """
-    out: Dict[str, float] = {}
+    out: Dict[str, Optional[float]] = {}
     if not tags_or_tactics:
         return out
     items = tags_or_tactics if isinstance(tags_or_tactics, list) else [tags_or_tactics]
@@ -107,7 +107,7 @@ def _extract_mitre(tags_or_tactics: Any) -> Dict[str, float]:
         val = str(val).strip()
         # MITRE technique IDs start with T followed by digits
         if val.startswith("T") and val[1:].split(".")[0].isdigit():
-            out[val] = 0.7
+            out[val] = None
     return out
 
 

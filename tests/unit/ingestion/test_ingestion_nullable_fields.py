@@ -62,7 +62,7 @@ def test_parquet_null_score_severity_and_time_stay_null(service):
     assert finding["anomaly_score"] is None
     assert finding["severity"] is None
     assert finding["timestamp"] is None
-    assert finding["mitre_predictions"]["Discovery"] == 1.0
+    assert finding["mitre_predictions"]["Discovery"] is None
 
 
 def test_mitre_tactic_map_matches_loglm_class_order():
@@ -90,14 +90,22 @@ def test_mitre_tactic_map_matches_loglm_class_order():
 )
 def test_parquet_mitre_pred_maps_class_index(service, pred, key):
     finding = service._parquet_row_to_finding(_parquet_classified(mitre_pred=pred))
-    assert finding["mitre_predictions"] == {key: 1.0}
+    assert finding["mitre_predictions"] == {key: None}
 
 
 def test_parquet_mitre_logits_index_names_tactic(service):
     logits = [0.0] * 10
     logits[7] = 10.0
     finding = service._parquet_row_to_finding(_parquet_classified(mitre_logits=logits))
-    assert list(finding["mitre_predictions"]) == ["Discovery"]
+    assert finding["mitre_predictions"] == {"Discovery": 0.9996}
+
+
+def test_parquet_argmax_is_unknown_beside_a_confidence_score(service):
+    finding = service._parquet_row_to_finding(
+        _parquet_classified(confidence_score=0.42)
+    )
+    assert finding["mitre_predictions"] == {"Discovery": None}
+    assert finding["anomaly_score"] == 0.42
 
 
 def test_parquet_does_not_derive_score_or_severity_from_incident_pred(service):
@@ -124,7 +132,53 @@ def test_tempo_csv_null_confidence_and_time_stay_null(service):
     assert finding["anomaly_score"] is None
     assert finding["severity"] is None
     assert finding["timestamp"] is None
-    assert finding["mitre_predictions"] == {"Command and Control": 1.0}
+    assert finding["mitre_predictions"] == {"Command and Control": None}
+
+
+def test_tempo_tactic_is_unknown_beside_incident_confidence(service):
+    finding = service._tempo_csv_row_to_finding(
+        {
+            "sequence_id": "s-1",
+            "mitre_tactic": "Command and Control",
+            "incident_confidence": "85",
+        }
+    )
+    assert finding["mitre_predictions"] == {"Command and Control": None}
+    assert finding["anomaly_score"] == 0.85
+    assert finding["entity_context"]["confidence_score"] == 0.85
+
+
+def test_csv_mitre_cell_keeps_a_score_beside_an_unscored_technique(service):
+    finding = service._csv_row_to_finding(
+        {"finding_id": "f-mix", "mitre_predictions": "T1059,T1071:0.8"}
+    )
+    assert finding["mitre_predictions"] == {"T1059": None, "T1071": 0.8}
+
+    scored = service._csv_row_to_finding(
+        {
+            "finding_id": "f-scored",
+            "mitre_predictions": "T1071.001:0.85,T1048.003:0.72",
+        }
+    )
+    assert scored["mitre_predictions"] == {"T1071.001": 0.85, "T1048.003": 0.72}
+
+    continued = service._csv_row_to_finding(
+        {"finding_id": "f-bad", "mitre_predictions": "T1059:high,T1071:0.4"}
+    )
+    assert continued["mitre_predictions"] == {"T1059": None, "T1071": 0.4}
+
+    listed = service._csv_row_to_finding(
+        {"finding_id": "f-list", "mitre_predictions": '["T1059", "T1071"]'}
+    )
+    assert listed["mitre_predictions"] == {"T1059": None, "T1071": None}
+
+    supplied = service._csv_row_to_finding(
+        {
+            "finding_id": "f-obj",
+            "mitre_predictions": '{"T1059": null, "T1071": 0.8}',
+        }
+    )
+    assert supplied["mitre_predictions"] == {"T1059": None, "T1071": 0.8}
 
 
 def test_generic_row_does_not_invent_score_or_time(service):
