@@ -1,5 +1,5 @@
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
-import { InMemorySpanExporter, NodeTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node";
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { EventEmitter } from "node:events";
 import type { ServerResponse } from "node:http";
 import type OpenAI from "openai";
@@ -9,7 +9,7 @@ import { defineTool, type ToolResult } from "../../contracts/tool.js";
 import { Limiter } from "../../core/limiter.js";
 import { remoteDispatch } from "../../core/remote.js";
 import { InProcessState } from "../../core/state.js";
-import { traced } from "../../core/tracing.js";
+import { registerProvider, traced } from "../../core/tracing.js";
 import { openAiSurface } from "../../core/wire.js";
 import type { Message } from "../../core/provider.js";
 import { streamChat } from "../../serve.js";
@@ -18,9 +18,9 @@ import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import { InProcessLeases } from "../support/in-process-leases.js";
 
 const exporter = new InMemorySpanExporter();
-const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
 
-beforeAll(() => provider.register());
+beforeAll(() => registerProvider(provider));
 afterEach(() => {
   exporter.reset();
   vi.unstubAllEnvs();
