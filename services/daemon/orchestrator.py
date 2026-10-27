@@ -220,6 +220,29 @@ class _Overlap(str, Enum):
 _SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
 _BAND_RANK = {name: i for i, name in enumerate(_SEVERITY_BANDS)}
 
+# How long one Case keeps absorbing repeats of a NetFlow host pair.
+PAIR_CASE_WINDOW = timedelta(hours=24)
+
+
+def _netflow_pair(finding: Dict) -> Optional[Tuple[str, str]]:
+    """The host pair a finding with NetFlow source evidence is about, or None for any other finding."""
+    ctx = finding.get("entity_context") or {}
+    evidence = ctx.get("source_evidence")
+    if not isinstance(evidence, dict) or evidence.get("telemetry_kind") != "netflow":
+        return None
+    src, dst = ctx.get("src_ip"), ctx.get("dst_ip")
+    if not src or not dst:
+        return None
+    return str(src), str(dst)
+
+
+def _raises_severity(severity: Optional[str], case_severities) -> bool:
+    """True when ``severity`` is above every severity already on the Case."""
+    unknown = _BAND_RANK["unknown"]
+    rank = _BAND_RANK.get((severity or "").lower(), unknown)
+    best = min((_BAND_RANK.get(s, unknown) for s in case_severities), default=unknown)
+    return rank < best
+
 
 def _as_naive_utc(value: Any) -> Optional[datetime]:
     """Parse a dump-string or datetime into the naive UTC ``utcnow`` uses."""
@@ -915,6 +938,9 @@ class Orchestrator:
         A finding already on a not-closed Case merges into it even when that
         Case's investigation has finished and ``check_overlap`` no longer
         names it (#2245). A closed Case does not count: the finding reopens.
+        A NetFlow finding is matched on its host pair instead
+        (``_merge_into_pair_case``); a single shared IP such as a gateway
+        would otherwise pull unrelated traffic into one Case.
         """
         finding_id = finding.get("finding_id", "unknown")
         try:
@@ -935,6 +961,10 @@ class Orchestrator:
                 merged_into=holding,
             )
             return True
+
+        pair = _netflow_pair(finding)
+        if pair is not None:
+            return self._merge_into_pair_case(finding, trigger_id, pair)
 
         overlapping = self.shared_intel.check_overlap(finding)
         if not overlapping:
@@ -957,6 +987,70 @@ class Orchestrator:
         self.stats["dedup_prevented"] += 1
         if _dedup_prevented is not None:
             _dedup_prevented.add(1)
+
+    def _pair_case(self, data_source: str, pair: Tuple[str, str]) -> Tuple[bool, Any]:
+        """(read ok, the open Case for this ``data_source`` pair or None)."""
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.pair_case_repository import open_pair_case
+
+            with get_db_manager().session_scope() as session:
+                return True, open_pair_case(
+                    session,
+                    data_source,
+                    pair,
+                    utcnow() - PAIR_CASE_WINDOW,
+                )
+        except Exception as e:
+            logger.error("Pair case lookup failed for %s: %s", pair, e, exc_info=True)
+            return False, None
+
+    def _merge_into_pair_case(
+        self, finding: Dict, trigger_id: Optional[int], pair: Tuple[str, str]
+    ) -> bool:
+        """Attach a repeat of a host pair to its open Case; same contract as ``_merge_if_overlaps``.
+
+        No open Case for the pair inside ``PAIR_CASE_WINDOW`` launches a new
+        one. A finding more severe than anything on the Case, with no run live
+        on it, also launches: ``_create_investigation_for_finding`` re-runs on
+        that Case rather than minting another.
+        """
+        ok, match = self._pair_case(finding.get("data_source") or "", pair)
+        if not ok:
+            return True
+        if match is None:
+            return False
+        if not match.has_live_run and _raises_severity(
+            finding.get("severity"), match.severities
+        ):
+            return False
+        finding_id = finding.get("finding_id", "unknown")
+        added = bool(self._data_service) and self._data_service.add_finding_to_case(
+            match.case_id, finding_id
+        )
+        if not added:
+            logger.warning(
+                "Finding %s repeats pair %s but could not be attached to case %s; "
+                "leaving queued",
+                finding_id,
+                pair,
+                match.case_id,
+            )
+            return True
+        logger.info(
+            "Finding %s repeats pair %s; attached to case %s",
+            finding_id,
+            pair,
+            match.case_id,
+        )
+        self._count_dedup_prevented()
+        self._decide_trigger(
+            trigger_id,
+            state="merged",
+            reason="same_pair_open_case",
+            merged_into=match.case_id,
+        )
+        return True
 
     async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
         kind = row.get("kind")
@@ -1013,15 +1107,44 @@ class Orchestrator:
             )
             workflow_id = FALLBACK_WORKFLOW
         finding_id = finding.get("finding_id")
+        # The merge check let a pair repeat through only because it raised the
+        # severity: re-run on that pair's open Case instead of minting one.
+        pair = _netflow_pair(finding)
+        rerun_case_id = None
+        if pair is not None:
+            _, match = self._pair_case(finding.get("data_source") or "", pair)
+            rerun_case_id = match.case_id if match is not None else None
+        if rerun_case_id:
+            added = bool(self._data_service) and self._data_service.add_finding_to_case(
+                rerun_case_id, finding_id
+            )
+            if not added:
+                logger.warning(
+                    "Finding %s raises severity on case %s but could not be "
+                    "attached; leaving queued",
+                    finding_id,
+                    rerun_case_id,
+                )
+                return
+            logger.info(
+                "Finding %s raises severity on case %s; re-running",
+                finding_id,
+                rerun_case_id,
+            )
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
             priority=priority,
-            mint_case=CaseSpec(
-                title=_infer_title(finding, workflow_id)[:200],
-                finding_ids=[finding_id] if finding_id else [],
-                priority=priority,
+            case_id=rerun_case_id,
+            mint_case=(
+                None
+                if rerun_case_id
+                else CaseSpec(
+                    title=_infer_title(finding, workflow_id)[:200],
+                    finding_ids=[finding_id] if finding_id else [],
+                    priority=priority,
+                )
             ),
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
