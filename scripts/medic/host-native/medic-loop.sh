@@ -21,6 +21,8 @@
 #
 # Runs on macOS's bash 3.2: no associative arrays, no `wait -n`.
 set -u
+# A dead log reader must not end supervision (the watcher inherits this).
+trap '' PIPE
 
 usage() { sed -n '7,9p' "$0" | sed 's/^# *//' >&2; exit 2; }
 say() { printf 'medic-loop %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -149,6 +151,7 @@ watch_rss() {
         rss="${rss//[!0-9]/}"
         [ -n "$rss" ] || return 0
         [ "$rss" -gt $((RSS_MAX * 1024)) ] || continue
+        # Say first: once TERM lands, the loop reaps Medic and ends this watcher.
         say "Medic (pid $pid) uses $(((rss + 1023) / 1024)) MiB RSS, over the ${RSS_MAX} MiB limit; stopping it"
         kill -TERM "$pid" 2>/dev/null
         sleep 5 >/dev/null 2>&1

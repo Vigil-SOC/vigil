@@ -182,6 +182,8 @@ _medic_log_writer() {
             fflush(f)
             size += n
         }'
+    # awk gave up (disk full): keep draining, so the loop never blocks or sees EPIPE.
+    exec cat >/dev/null
 }
 
 # Returns 0 when Medic is off, running or started; 1 when it is on but couldn't
