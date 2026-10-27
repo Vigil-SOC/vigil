@@ -92,7 +92,7 @@ export default function ExclusionsSection({
         <span className="exclusions-count">{phase === 'ready' ? active.length : '·'}</span>
         {phase === 'ready' && active.length > 0 && (
           <span className="exclusions-sub">
-            hiding {hidden} finding{hidden === 1 ? '' : 's'} from the queue · still ingested and scored by LogLM
+            hiding {hidden} finding{hidden === 1 ? '' : 's'} from the queue · still ingested and stored
           </span>
         )}
       </button>
