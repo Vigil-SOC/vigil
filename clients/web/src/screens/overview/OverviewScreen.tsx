@@ -5,6 +5,7 @@ import AgentCards from './AgentCards'
 import AlertRail, { SevMark } from './AlertRail'
 import { clock } from './clock'
 import FlowDiagram from './FlowDiagram'
+import { AgentPanel, OutcomePanel } from './OverviewDrill'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
@@ -113,6 +114,30 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
         return next
       },
       { replace: id === null, state },
+    )
+
+  // ?outcome= and ?agent= open what a click on the board shows, so Back and links work.
+  const outcomeOpen = searchParams.get('outcome') || null
+  const agentOpenId = searchParams.get('agent') || null
+  const setPanel = (key: 'outcome' | 'agent', value: string | null) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value) next.set(key, value)
+        else next.delete(key)
+        return next
+      },
+      { replace: value === null },
+    )
+  // A case opened from a panel replaces it, in the same navigation that opens the drawer.
+  const openCaseFromPanel = (id: string) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const key of ['outcome', 'agent']) next.delete(key)
+        return next
+      },
+      { replace: true, state: holdCase(location.state, id) },
     )
 
   const load = useCallback(() => {
@@ -291,14 +316,33 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
       )}
       {phase === 'ready' && data && (
         <>
-          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
-          {!wall && <AgentCards data={data} go={go} />}
+          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} onOutcome={(state) => setPanel('outcome', state)} />
+          {!wall && <AgentCards data={data} go={go} onOpen={(a) => setPanel('agent', a.workflow_id)} />}
         </>
       )}
       </div>
 
       {phase === 'ready' && data && !chatOpen && (
         <AlertRail data={data} paused={paused} onTogglePause={() => setPaused((p) => !p)} onOpen={setAlert} openCase={openCase} />
+      )}
+
+      {outcomeOpen && (
+      <OutcomePanel
+        state={outcomeOpen}
+        onClose={() => setPanel('outcome', null)}
+        onOpenAlert={(id) => setAlert(id)}
+        openCase={openCaseFromPanel}
+        goTriage={() => go('triage')}
+      />
+      )}
+      {agentOpenId && (
+      <AgentPanel
+        agent={agentOpenId ? data?.agents.find((a) => a.workflow_id === agentOpenId) ?? null : null}
+        onClose={() => setPanel('agent', null)}
+        openCase={openCaseFromPanel}
+        openWorkflow={(id) => go('workflows', { search: `?workflow=${encodeURIComponent(id)}` })}
+        openRun={(id) => go('workflows', { search: `?run=${encodeURIComponent(id)}` })}
+      />
       )}
 
       <Popup open={alertId !== null} onClose={() => setAlert(null)} title={open ? <PopupTitle item={open} /> : (alertId ?? 'Alert')} width={860}>

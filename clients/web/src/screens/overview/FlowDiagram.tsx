@@ -116,9 +116,11 @@ interface Props {
   data: OverviewPayload
   wall: boolean
   onToggleWall: () => void
+  /** Opens the alerts behind an outcome. */
+  onOutcome?: (state: string) => void
 }
 
-export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
+export default function FlowDiagram({ data, wall, onToggleWall, onOutcome }: Props) {
   const badgeOf = useSourceBadge()
   const uid = useId().replace(/:/g, '')
   const [ref, W] = useWidth()
@@ -279,6 +281,7 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                         fill={`url(#${uid}-${b.o.state})`}
                         onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
                         onMouseLeave={leave}
+                        onClick={onOutcome ? () => onOutcome(b.o.state) : undefined}
                       />
                     ) : (
                       <path d={b.zero} className="ov-zero" />
@@ -387,15 +390,26 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
             : bands.map((b) => (
                 <div
                   key={b.o.state}
-                  className="ov-out"
-                  role="group"
+                  className={`ov-out${onOutcome ? ' clickable' : ''}`}
+                  role={onOutcome ? 'button' : 'group'}
                   tabIndex={0}
                   aria-label={b.o.label}
+                  title={onOutcome ? `Show the ${alerts(b.o.count)} that ${b.o.count === 1 ? 'is' : 'are'} ${b.o.label.toLowerCase()} today` : undefined}
                   style={{ left: x2 + 14, top: b.y - 19, opacity: outDim(b.o.state) }}
                   onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
                   onMouseLeave={leave}
                   onFocus={() => setHover({ kind: 'out', key: b.o.state })}
                   onBlur={leave}
+                  onClick={(e) => {
+                    // The info tip inside the row is its own button.
+                    if (!onOutcome || (e.target as HTMLElement).closest('button')) return
+                    onOutcome(b.o.state)
+                  }}
+                  onKeyDown={(e) => {
+                    if (!onOutcome || e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                    e.preventDefault()
+                    onOutcome(b.o.state)
+                  }}
                 >
                   <span className="ov-out-l">
                     <b style={{ color: b.color }}>{fmt(b.o.count)}</b>

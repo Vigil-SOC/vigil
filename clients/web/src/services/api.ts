@@ -1388,10 +1388,90 @@ export interface OverviewPayload {
   feed_limit: number
 }
 
+/* What a click on the Overview board opens (GET /overview/outcomes/{state}, /overview/agents/{id}). */
+export interface OutcomeAlert {
+  finding_id: string
+  title: string | null
+  description: string | null
+  severity: string | null
+  data_source: string
+  created_at: string | null
+  case_id: string | null
+}
+
+export interface OutcomeCase {
+  case_id: string
+  title: string | null
+  status: string | null
+  priority: string | null
+  updated_at: string | null
+  alerts: number
+}
+
+export interface OutcomeList {
+  state: string
+  label: string
+  explain: string
+  total: number
+  offset: number
+  items: OutcomeAlert[]
+  cases: OutcomeCase[]
+  by_source: { data_source: string; count: number }[]
+}
+
+export interface AgentRun {
+  run_id: string
+  status: string
+  started_at: string | null
+  finished_at: string | null
+  duration_ms: number | null
+  cost_usd: number
+  outcome: string | null
+  summary: string | null
+  triggered_by: string | null
+  case_id: string | null
+  finding_id: string | null
+}
+
+export interface AgentRecord {
+  workflow: {
+    id: string
+    name: string
+    source: string
+    description?: string | null
+    use_case?: string | null
+    run_kind?: string | null
+    agents?: string[]
+    tools_used?: string[]
+    objectives?: string[]
+    trigger_examples?: string[]
+    agent?: { name?: string; id?: string } | null
+    phases?: { name: string; agent_id?: string | null; purpose?: string | null; tools?: string[]; approval_required?: boolean }[] | null
+  }
+  live: AgentRun[]
+  recent: AgentRun[]
+  record: {
+    days: number
+    runs: number
+    completed: number
+    failed: number
+    cancelled: number
+    rate: number | null
+    median_ms: number | null
+    mean_cost_usd: number | null
+  }
+}
+
 export const overviewApi = {
   get: () => api.get<OverviewPayload>('/overview'),
   alert: (findingId: string) =>
     api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
+  /** Today's alerts behind one outcome node, newest first. */
+  outcome: (state: string, limit = 50, offset = 0) =>
+    api.get<OutcomeList>(`/overview/outcomes/${encodeURIComponent(state)}`, { params: { limit, offset } }),
+  /** One agent card opened: its workflow, live and recent runs, 30-day record. */
+  agent: (workflowId: string) =>
+    api.get<AgentRecord>(`/overview/agents/${encodeURIComponent(workflowId)}`),
 }
 
 export interface TriageRow {
