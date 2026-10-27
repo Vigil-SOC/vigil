@@ -482,7 +482,7 @@ class DataPoller:
             or "Splunk Alert",
             "description": event.get("description") or event.get("_raw", "")[:500],
             "entity_context": entity_context,
-            "raw_event": event,
+            "raw_data": event,
             "anomaly_score": 0.5,  # Default score
             "mitre_predictions": {},
         }
@@ -615,7 +615,7 @@ class DataPoller:
             "title": detection.get("scenario") or "CrowdStrike Detection",
             "description": detection.get("description", ""),
             "entity_context": entity_context,
-            "raw_event": detection,
+            "raw_data": detection,
             "anomaly_score": detection.get("max_confidence", 50) / 100.0,
             "mitre_predictions": mitre_predictions,
         }
