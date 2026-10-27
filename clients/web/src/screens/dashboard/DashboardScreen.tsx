@@ -505,7 +505,7 @@ function AttackTab() {
                   <tr><td colSpan={cols}><EmptyState table icon="alert" title="Couldn’t read that run" body={data.runError} /></td></tr>
                 )}
                 {phase === 'ready' && !data?.runError && techniques.length === 0 && (
-                  <tr><td colSpan={cols}><EmptyState table icon="filter" title={coverage ? 'No techniques on this run' : 'No techniques at this confidence threshold'} body={coverage ? 'The run has no action-trace steps with a technique id.' : conf > 0 ? 'Techniques with no confidence are not counted above 0. Lower the threshold to 0 to include them.' : 'Lower the confidence threshold or load findings with ATT&CK mappings.'} /></td></tr>
+                  <tr><td colSpan={cols}><EmptyState table icon="filter" title={coverage ? 'No techniques on this run' : 'No techniques at this confidence threshold'} body={coverage ? 'The run has no action-trace steps with a technique id.' : conf > 0 ? 'Techniques with no confidence are not counted above 0.' : 'Lower the confidence threshold or load findings with ATT&CK mappings.'} /></td></tr>
                 )}
                 {phase === 'ready' && !data?.runError && techniques.map((t) => (
                   <Fragment key={t.id}>
