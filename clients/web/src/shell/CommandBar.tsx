@@ -391,7 +391,6 @@ export default function CommandBar({
               .catch((error: unknown) => notify('err', `The hunt started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
           }
           onOpenCase(caseId)
-          setQuery('')
           removeAttachment()
           notify('ok', `Hunt started on case "${title}"`)
           break
@@ -417,6 +416,7 @@ export default function CommandBar({
           return exhaustive
         }
       }
+      setQuery('')
       setOpen(false)
       setPreview(null)
     } catch (error) {
