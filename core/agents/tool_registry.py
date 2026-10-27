@@ -47,6 +47,7 @@ Args = Dict[str, Any]
 def _compact(finding: Args, state: Optional[str] = None) -> Args:
     return {
         "finding_id": finding.get("finding_id"),
+        "title": finding.get("title"),
         "severity": finding.get("severity"),
         "anomaly_score": stored_anomaly_score(finding),
         "data_source": finding.get("data_source"),
@@ -357,19 +358,52 @@ def update_case(
     return {"success": True, "case_id": case_id}
 
 
+# The case's findings ride beside its tasks and escalations, paged: under
+# "findings", not an envelope key tools_router would unwrap and drop siblings of.
 def _case_records(args: Args) -> Args:
+    from sqlalchemy import func
+    from sqlalchemy.orm import noload
+
     from core.cases.case_records_service import list_escalations, tasks_on_case
+    from core.storage.models import Finding, case_findings
+    from core.storage.schemas import FindingSchema
     from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
     from core.storage.unit_of_work import unit_of_work
 
     case_id = str(args.get("case_id") or "")
+    offset = max(int(args.get("offset") or 0), 0)
+    limit = max(int(args.get("limit") or 100), 1)
     with unit_of_work() as session:
-        return {
+        on_case = (
+            session.query(Finding)
+            .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
+            .filter(case_findings.c.case_id == case_id)
+        )
+        total = on_case.with_entities(func.count()).scalar() or 0
+        page = (
+            on_case.options(
+                noload(Finding.cases), noload(Finding.mitre_prediction_rows)
+            )
+            .order_by(Finding.timestamp.desc().nulls_last(), Finding.finding_id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        records = {
             "tasks": CaseTaskSchema.dump_many(tasks_on_case(session, case_id)),
             "escalations": CaseEscalationSchema.dump_many(
                 list_escalations(session, case_id)
             ),
         }
+        findings = FindingSchema.dump_many(page)
+    return {
+        **records,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total,
+        "findings": _compact_page(_data(), findings),
+    }
 
 
 def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
