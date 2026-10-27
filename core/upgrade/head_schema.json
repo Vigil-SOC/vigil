@@ -2336,7 +2336,7 @@
  },
  "column finding_mitre_predictions.confidence": {
   "default": null,
-  "nullable": false,
+  "nullable": true,
   "type": "double precision"
  },
  "column finding_mitre_predictions.finding_id": {

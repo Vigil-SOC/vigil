@@ -151,7 +151,7 @@ class FindingMitrePrediction(Base):
         primary_key=True,
     )
     technique_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     finding: Mapped["Finding"] = relationship(
         "Finding", back_populates="mitre_prediction_rows"

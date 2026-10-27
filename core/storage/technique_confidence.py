@@ -10,6 +10,21 @@ from typing import Any, Callable, Iterable, Optional, TypeVar
 T = TypeVar("T")
 
 
+def restore_bool_confidences(raw: Any, validated: Any) -> Any:
+    """Put bools back after float validation so ``true`` is not stored as 1.0.
+
+    Pydantic accepts a bool as a float. The storage write then treats that
+    bool as unknown; it has to still be a bool when it gets there.
+    """
+    if not isinstance(raw, dict) or not isinstance(validated, dict):
+        return validated
+    restored = dict(validated)
+    for key, value in raw.items():
+        if isinstance(value, bool):
+            restored[str(key)] = value
+    return restored
+
+
 def is_score(value: Any) -> bool:
     """A real confidence: an int or float, not a bool (an int subclass)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)

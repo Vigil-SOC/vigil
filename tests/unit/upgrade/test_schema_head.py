@@ -10,7 +10,7 @@ from core.upgrade.command import PACKAGE_DIR
 
 def test_the_image_has_one_head_that_fits_the_version_column() -> None:
     head = schema_head()
-    assert head == "0013_merge_0012_heads"
+    assert head == "0014_mitre_confidence_nullable"
     assert len(head) <= 32
 
 
