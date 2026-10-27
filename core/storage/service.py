@@ -576,10 +576,19 @@ class DatabaseService:
                 "data_source": Finding.data_source,
             }
             sort_col = sort_column_map.get(sort_by, Finding.timestamp)
-            if sort_order == "asc":
-                query = query.order_by(sort_col.asc())
-            else:
-                query = query.order_by(sort_col.desc())
+            # An empty value is neither high nor low: nulls last in both
+            # directions. A page of equals needs a stable order, so newest
+            # event time (unless that is already the sort) then finding_id.
+            primary = (
+                sort_col.asc().nullslast()
+                if sort_order == "asc"
+                else sort_col.desc().nullslast()
+            )
+            order = [primary]
+            if sort_by != "timestamp":
+                order.append(Finding.timestamp.desc().nullslast())
+            order.append(Finding.finding_id.asc())
+            query = query.order_by(*order)
 
             query = query.limit(limit).offset(offset)
 
