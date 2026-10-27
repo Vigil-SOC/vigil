@@ -43,25 +43,34 @@ import {
 import type { SectionProps } from './types'
 import { urlIsLoopback } from '../../shared/loopback'
 
-// Only the two outcomes the gateway actually decided are a level: routable is
-// Good, rejected is Poor. Everything else stays a plain chip — never Fair — and
-// no verdicts at all (the check failed) draws nothing.
+// Only the two outcomes a check actually decided are a level: routable is
+// Good, rejected is Poor. A probe that could not run is a chip, never Fair,
+// and no verdicts at all (the check failed) draws nothing.
 function KeyHealth({ status, description, verdict }: {
   status?: string
   description?: string
   verdict?: KeyVerdict
 }) {
+  const why = verdict?.description || description || status
   if (verdict?.health === 'healthy') return <LevelBadge variant="pill" level="good" />
   if (verdict?.health === 'rejected') {
     return (
-      <span title={description || status}>
+      <span title={why}>
         <LevelBadge variant="pill" level="poor" />
       </span>
     )
   }
   if (verdict?.health === 'disabled') return <span className="chip">Disabled</span>
-  if (verdict?.health === 'unverifiable') return <span className="chip" title={description}>Unverifiable</span>
-  return <span className="chip" title={verdict ? description : status}>Unverified</span>
+  if (verdict?.health === 'not_checked') {
+    return <span className="chip" title={why || "Couldn't reach Vertex to check this key."}>Not checked</span>
+  }
+  if (verdict?.health === 'unverifiable') return <span className="chip" title={why}>Unverifiable</span>
+  return <span className="chip" title={verdict ? why : status}>Unverified</span>
+}
+
+/** An express key carries an API key in `value`. A service account does not. */
+function isExpressKey(key: BifrostKey): boolean {
+  return Boolean(secretText(key.value)) && !secretText(key.vertex_key_config?.auth_credentials)
 }
 
 interface AiProvidersPanelProps extends SectionProps {
@@ -107,6 +116,18 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
   const [busy, setBusy] = useState(false)
+  const [rechecking, setRechecking] = useState<string | null>(null)
+  const recheck = async (keyId: string) => {
+    setRechecking(keyId)
+    try {
+      await bifrostApi.recheckKey(keyId)
+      reload()
+    } catch (e) {
+      notify('err', bifrostError(e, 'Could not check this key.'))
+    } finally {
+      setRechecking(null)
+    }
+  }
 
   // a key-less custom provider has nothing to add a key to
   const keyable = providers.filter((p) => !p.custom_provider_config?.is_key_less)
@@ -311,6 +332,15 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="inline-flex gap-1.5">
+                        {p.name === 'vertex' && isExpressKey(k) && (
+                          <button
+                            className="btn ghost"
+                            disabled={rechecking === k.id}
+                            onClick={() => recheck(k.id)}
+                          >
+                            Test again
+                          </button>
+                        )}
                         <EditProviderButton provider={p} onEdit={setEditingProvider} />
                         <button
                           className="btn ghost"

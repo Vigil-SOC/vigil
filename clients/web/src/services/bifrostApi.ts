@@ -309,6 +309,9 @@ export const bifrostApi = {
 
   /** Vigil's own verdict on Bifrost's keys — not a proxied Bifrost path. */
   routability: () => api.get<BifrostRoutability>(`${bf}/routability`),
+  /** Drop the cached express probe and run it again. The next routability read reuses it. */
+  recheckKey: (keyId: string) =>
+    api.post<KeyVerdict>(`${bf}/routability/recheck/${encodeURIComponent(keyId)}`),
 
   listVirtualKeys: () =>
     api.get<{ virtual_keys: BifrostVirtualKey[] | null; count: number }>(

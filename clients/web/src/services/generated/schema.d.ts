@@ -1310,6 +1310,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/bifrost/routability/recheck/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recheck Key
+         * @description Run the express probe again for one key, ignoring the cached verdict.
+         *
+         *     The following routability read hits that fresh cache entry, so the page
+         *     does not call the model a second time.
+         */
+        post: operations["post_api_bifrost_routability_recheck_key_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bifrost/{path}": {
         parameters: {
             query?: never;
@@ -9338,7 +9361,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled" | "placeholder" | "not_checked";
             /** Provider */
             provider: string;
             /** Routable */
@@ -13447,6 +13470,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Routability"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_bifrost_routability_recheck_key_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyVerdict"];
                 };
             };
             /** @description Validation Error */
