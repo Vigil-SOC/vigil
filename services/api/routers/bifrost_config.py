@@ -46,7 +46,7 @@ from pydantic import BaseModel
 
 from core.auth.auth_service import AuthService
 from core.config import get_settings
-from core.llm.bifrost import mirror
+from core.llm.bifrost import mirror, path_health
 from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
 from core.llm.bifrost.auth import management_auth
 from core.llm.providers.base_url import (
@@ -539,11 +539,10 @@ async def routability(
     """
     _require_settings_admin(current_user)
     try:
-        return await mirror.routability()
-    except (httpx.HTTPError, ValueError) as exc:
+        return path_health.routability_body(await path_health.read())
+    except path_health.UNREACHABLE as exc:
         # ValueError: a gateway that answers 200 with something other than JSON
         # is still an upstream failure, not a bug in this handler.
-        logger.warning("Routability check failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
 
 

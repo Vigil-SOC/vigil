@@ -202,7 +202,6 @@ function SocConsoleInner() {
   const parked = usePendingApprovals().actions.length
   // needs-you is uncapped; the decisions badge stays on the pending list
   const [needsYou, setNeedsYou] = useState(0)
-  const canReadRoutability = hasPermission('settings.write')
 
   const openChat = useCallback((prompt?: string) => {
     setChatOpen(true)
@@ -379,9 +378,7 @@ function SocConsoleInner() {
         settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
         settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
         settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
-        canReadRoutability
-          ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
-          : Promise.resolve(null),
+        settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead)),
         settled(consoleApi.getProcesses().then((res) => res.data)),
       ]).then(([health, federation, mcp, routability, processes]) => {
         inFlight = false
@@ -396,7 +393,7 @@ function SocConsoleInner() {
       live = false
       clearInterval(id)
     }
-  }, [canReadRoutability])
+  }, [])
 
   useEffect(() => {
     if (!moreOpen) return

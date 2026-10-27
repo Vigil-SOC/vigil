@@ -456,7 +456,7 @@ export interface paths {
         };
         /**
          * Get Budget Quota
-         * @description Live spend/quota for the configured VK, proxied from Bifrost.
+         * @description Live spend/quota for the configured VK, from the shared Bifrost snapshot.
          */
         get: operations["get_api_analytics_budget_quota"];
         put?: never;
@@ -3954,6 +3954,26 @@ export interface paths {
          * @description Return live consumer stats plus the persisted enabled/config state.
          */
         get: operations["get_api_kafka_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/llm/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Llm Path Health
+         * @description Per-provider routability for every signed-in user.
+         */
+        get: operations["get_api_llm_health"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9348,6 +9368,16 @@ export interface components {
             is_default?: boolean | null;
             /** Name */
             name?: string | null;
+        };
+        /**
+         * LlmPathHealth
+         * @description Whether each provider can route. No key id, name, or budget.
+         */
+        LlmPathHealth: {
+            /** Providers */
+            providers: {
+                [key: string]: boolean;
+            };
         };
         /**
          * LoginRequest
@@ -18146,6 +18176,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_llm_health: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmPathHealth"];
                 };
             };
             /** @description Validation Error */
