@@ -1,6 +1,16 @@
 """Opening context must name the case the investigation already has (#867)."""
 
+import pytest
+
+from services.daemon import plan_generator
 from services.daemon.plan_generator import generate_initial_context
+
+
+@pytest.fixture(autouse=True)
+def case_holds(monkeypatch):
+    held = {}
+    monkeypatch.setattr(plan_generator, "case_finding_count", lambda c: held.get(c, 0))
+    return held
 
 
 def test_includes_case_id_when_the_investigation_has_one():
@@ -32,3 +42,15 @@ def test_a_document_cannot_close_its_fence_or_pose_as_the_brief():
     assert body == document
     assert "## Trigger Findings" not in head + opened
     assert tail.lstrip().startswith("## Trigger Findings")
+
+
+# The trigger list is not the case: a case holding more than the brief lists
+# says how many, and where to read them.
+def test_names_the_case_count_when_it_holds_more_than_the_brief(case_holds):
+    trigger = [{"finding_id": "f-1", "severity": "high", "description": "flows"}]
+    case_holds["c-42"] = 64
+    assert "This case holds 64 findings" in generate_initial_context(trigger, "c-42")
+    assert "case_records" in generate_initial_context(trigger, "c-42")
+
+    case_holds["c-42"] = 1
+    assert "This case holds" not in generate_initial_context(trigger, "c-42")
