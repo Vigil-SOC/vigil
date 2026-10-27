@@ -601,6 +601,11 @@ def test_poll_and_export_clear_the_flag(db, monkeypatch):
         trail.poll(session, trail.make_query(after=seq - 1))
     assert _pause(db) == (None, None)
 
+    seq = _restore(db)  # a reset hands the restore entry out
+    with unit_of_work() as session:
+        assert trail.poll(session, trail.make_query(after=seq + 50)).reset
+    assert _pause(db) == (None, None)
+
     seq = _restore(db)
     with unit_of_work() as session:  # the export's own entry is not refused
         rows, _ = trail.export(session, trail.make_query(), "admin")
@@ -620,5 +625,6 @@ def test_the_entries_payload_has_feed_health_and_no_destination(
     health = got.json()["feed"]
     assert set(health) == set(audit_router._FEED_FIELDS)
     assert health["enabled"] is True and health["unconfirmed"] == seq
+    assert health["paused"] is True
     for leaked in ("host", "port", "ca_set", "client_cert_set", "127.0.0.1"):
         assert leaked not in json.dumps(health)

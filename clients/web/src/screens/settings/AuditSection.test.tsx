@@ -51,10 +51,11 @@ describe('audit section', () => {
   })
 
   it('says when a restore entry is not yet off the box', async () => {
-    const feed = { enabled: true, behind: 2, last_delivered_at: null, last_delivered_seq: 40, last_error: null, unconfirmed: 42 }
+    const feed = { enabled: true, behind: 2, last_delivered_at: null, last_delivered_seq: 40, last_error: null, unconfirmed: 42, paused: true }
     vi.mocked(auditApi.entries).mockResolvedValueOnce({ data: { entries: [], tip: { seq: 42, hash: 'h' }, feed } } as never)
     render(<AuditSection notify={vi.fn()} />)
     expect(await screen.findByText(/restore entry \(seq 42\) has not been confirmed off the box/)).toBeTruthy()
+    expect(screen.getByText(/New entries wait/)).toBeTruthy()
     expect(screen.getByText('2 entries behind')).toBeTruthy()
     expect(screen.queryByText(/no outside proof/)).toBeNull()
   })

@@ -163,13 +163,19 @@ def _gate(session) -> None:
         raise Paused(row[0], row[1])
 
 
-def unconfirmed(session) -> Optional[int]:
-    """The restore entry not yet pushed, polled or exported, or None."""
+def pause_state(session) -> tuple[Optional[int], bool]:
+    """The restore entry not yet pushed, polled or exported, and whether writes wait."""
     if not pause_ready(session):
-        return None
-    return session.execute(
-        text("SELECT unconfirmed_seq FROM public.audit_feed_state WHERE id = 1")
-    ).scalar()
+        return None, False
+    row = session.execute(text("""
+        SELECT unconfirmed_seq, coalesce(pause_until > now(), false)
+        FROM public.audit_feed_state WHERE id = 1
+    """)).first()
+    return (row[0], bool(row[0] is not None and row[1])) if row else (None, False)
+
+
+def unconfirmed(session) -> Optional[int]:
+    return pause_state(session)[0]
 
 
 def confirm(session, seqs=(), *, through: Optional[int] = None) -> None:
@@ -806,7 +812,10 @@ def poll(session, query: TrailQuery, limit: int = POLL_LIMIT) -> PollPage:
         raise ValueError("poll needs after")
     tip = current_tip(session)
     if query.after > tip.seq:
-        return PollPage(tip, reset=True, restore=latest_restore(session))
+        restore = latest_restore(session)
+        if restore is not None:  # the reset hands the restore entry out
+            confirm(session, [restore["seq"]])
+        return PollPage(tip, reset=True, restore=restore)
     entries = tuple(read(session, query, min(limit, POLL_LIMIT)))
     confirm(session, (e["seq"] for e in entries))
     return PollPage(tip, entries=entries)

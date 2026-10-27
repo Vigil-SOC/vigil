@@ -6,7 +6,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { PageHead } from '../../shared/PageHead'
 import { EmptyState, FilterButton } from '../../shared/ui'
-import { utcClock, utcDayClock } from '../../shared/utc'
+import { utcDayClock } from '../../shared/utc'
 import { inputCls } from '../cases/CaseSections'
 import type { SectionProps } from './types'
 import './audit.css'
@@ -404,7 +404,7 @@ function FeedHealth({ feed }: { feed: AuditFeedHealth | null }) {
       {feed?.enabled && (
         <>
           <p className="audit-feed-health">
-            <span>Last delivered <b title={feed.last_delivered_at ?? 'Not delivered yet'}>{utcClock(feed.last_delivered_at) ?? '—'}</b></span>
+            <span>Last delivered <b title={feed.last_delivered_at ?? 'Not delivered yet'}>{utcDayClock(feed.last_delivered_at) ?? '—'}</b></span>
             {feed.last_delivered_seq != null && <span>through seq <b>{feed.last_delivered_seq}</b></span>}
             <span><b>{behind === 0 ? 'Caught up' : `${behind} ${behind === 1 ? 'entry' : 'entries'} behind`}</b></span>
           </p>
@@ -414,7 +414,7 @@ function FeedHealth({ feed }: { feed: AuditFeedHealth | null }) {
       {feed?.unconfirmed != null && (
         <p className="audit-note" role="status">
           <b>Restore not yet confirmed.</b> The restore entry (seq {feed.unconfirmed}) has not been confirmed off the box.{' '}
-          {feed.enabled ? 'New entries wait until the feed sends it, for up to 30 seconds.' : 'Export or poll the trail to carry it out.'}
+          {feed.paused ? 'New entries wait until the feed sends it, for up to 30 seconds.' : feed.enabled ? 'The feed sends it on its next push.' : 'Export or poll the trail to carry it out.'}
         </p>
       )}
     </section>

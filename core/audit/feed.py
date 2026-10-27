@@ -642,7 +642,7 @@ def health(session) -> dict:
                 SELECT last_delivered_seq, last_delivered_at, last_error
                 FROM public.audit_feed_state WHERE id = 1
             """)).mappings().first()
-    unconfirmed = trail.unconfirmed(session)
+    unconfirmed, paused = trail.pause_state(session)
     dest = _destination(session)
     tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
     delivered = row["last_delivered_seq"] if row else None
@@ -659,6 +659,7 @@ def health(session) -> dict:
         "behind": behind,
         "tip_seq": tip.seq,
         "unconfirmed": unconfirmed,
+        "paused": paused,
     }
 
 

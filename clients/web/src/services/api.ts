@@ -1094,6 +1094,8 @@ export interface AuditFeedHealth {
   last_error: string | null
   /** A restore entry not yet pushed, polled or exported. */
   unconfirmed: number | null
+  /** New entries are refused until the push carries it, for up to 30 seconds. */
+  paused: boolean
 }
 
 export interface AuditVerify {

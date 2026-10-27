@@ -123,6 +123,7 @@ _FEED_FIELDS = (
     "last_delivered_seq",
     "last_error",
     "unconfirmed",
+    "paused",
 )
 
 
@@ -130,7 +131,7 @@ def _feed(session) -> dict:
     try:
         health = feed.health(session)
     except feed.FeedUnavailable:
-        health = {"enabled": False, "behind": 0}
+        health = {"enabled": False, "behind": 0, "paused": False}
     return {key: health.get(key) for key in _FEED_FIELDS}
 
 
