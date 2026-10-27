@@ -368,11 +368,12 @@ async function reportOut(ctx: PluginContext, ports: HuntPorts, projection: Proje
 }
 
 // The hunt's own outcomes, as the ledger's. inconclusive is a completed run that
-// reported honestly, not a failure.
+// reported honestly, not a failure; data_starved is one that could not look.
 function outcomeOf(outcome: HuntOutcome | null): Ending["outcome"] {
   if (outcome === "aborted") return "aborted";
   if (outcome === "budget_terminated") return "budget_exhausted";
   if (outcome === "failed") return "failed";
+  if (outcome === "data_starved") return "data_starved";
   return "completed";
 }
 

@@ -50,10 +50,13 @@ RUN_STATUS = {WAITING: "paused", "running": "running", "completed": "running"}
 # A run nobody stopped and nothing broke. Aborted and abandoned both read as
 # crashes under "failed", and only one of the three is worth paging over.
 # budget_exhausted is the same mistake one step along: a hunt that stopped at the
-# ceiling its operator set did what it was told.
+# ceiling its operator set did what it was told. data_starved (#3248) answered but
+# could not look: completed, with outcome saying so, and the outcome == "completed"
+# gates below keep it from proposing, raising priority or closing the case.
 TERMINAL_STATUS = {
     "completed": "completed",
     "budget_exhausted": "completed",
+    "data_starved": "completed",
     "aborted": "cancelled",
     "abandoned": "cancelled",
 }

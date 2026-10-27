@@ -123,7 +123,7 @@ def test_any_other_verdict_leaves_the_case_open(disposition: Optional[str]) -> N
 
 
 @pytest.mark.parametrize(
-    "outcome", ["failed", "budget_exhausted", "aborted", "abandoned"]
+    "outcome", ["failed", "budget_exhausted", "aborted", "abandoned", "data_starved"]
 )
 def test_a_run_that_did_not_complete_closes_nothing(outcome: str) -> None:
     cases = _terminal(outcome=outcome, disposition="benign")

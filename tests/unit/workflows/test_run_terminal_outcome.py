@@ -24,6 +24,7 @@ pytestmark = pytest.mark.unit
 CASES = [
     ("completed", "completed", "the hunt wrote its report"),
     ("budget_exhausted", "completed", "hit the cost ceiling"),
+    ("data_starved", "completed", "Splunk could not be reached"),
     ("aborted", "cancelled", "the operator stopped it"),
     ("abandoned", "cancelled", "parked with no answer"),
     ("failed", "failed", "the worker crashed"),

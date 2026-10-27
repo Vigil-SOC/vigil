@@ -24,13 +24,14 @@ FEED_LIMIT = 50
 RATE_WINDOW = timedelta(days=30)
 GOOD_AT = 0.95
 FAIR_AT = 0.85
-# budget_exhausted is stored as completed (core/workflows/run_bridge_router.py).
+# budget_exhausted and data_starved are stored as completed (core/workflows/run_bridge_router.py).
 RATE_INFO = (
     "Completed divided by completed, failed, and cancelled runs started in "
     "the last 30 days. Good at or above 95%, fair from 85% up to 95%, poor "
     "below that. A sample of zero has no level. Rows hidden from history "
-    "still count. A run that stopped at its budget counts as completed, "
-    "because that is how the row is stored."
+    "still count. A run that stopped at its budget, or answered without "
+    "being able to look at its data, counts as completed, because that is "
+    "how the row is stored."
 )
 ARRIVAL_SOURCE = "Findings created today (UTC) with this data source."
 RUNNING_SOURCE = "Runs still in history whose status is running or paused."

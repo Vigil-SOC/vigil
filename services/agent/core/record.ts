@@ -17,6 +17,8 @@ export const PROPOSE_TOOL = "propose_hypothesis";
 export const LINK_TOOL = "link_evidence";
 export const QUESTION_TOOL = "open_question";
 export const RECORD_TOOLS = [PROPOSE_TOOL, LINK_TOOL, QUESTION_TOOL] as const;
+// The playbook loader: what it returns is the plugin's own text, never the estate's.
+export const SKILL_TOOL = "load_skill";
 
 export type Stance = LinkPayload["relation"];
 
@@ -59,6 +61,18 @@ export function classOf(call: CallPayload): CallClass {
   if (call.class !== undefined) return call.class;
   if (call.ok) return "served";
   return call.failure === "timeout" || call.failure === "unavailable" || call.failure === "backend_error" ? "visibility_gap" : "defect";
+}
+
+// The run could not look, and its answer rests on nothing it saw (#3248): the ledger holds a
+// blind spot -- a call the estate failed, or a need no tool here answers -- and no ref in
+// `rests` is a served estate call. One gap beside a result the answer stands on is not this.
+export function starved(events: readonly { kind: string; payload: unknown }[], rests: readonly string[]): boolean {
+  const calls = events.filter((event) => event.kind === "call").map((event) => event.payload as CallPayload);
+  const blind = events.some((event) => event.kind === "unbound") || calls.some((call) => classOf(call) === "visibility_gap");
+  if (!blind) return false;
+  const wanted = new Set(rests);
+  const bookkeeping = new Set<string>([SKILL_TOOL, ...RECORD_TOOLS]);
+  return !calls.some((call) => wanted.has(call.ref) && !bookkeeping.has(call.tool) && classOf(call) === "served");
 }
 
 // --- the fold ----------------------------------------------------------------

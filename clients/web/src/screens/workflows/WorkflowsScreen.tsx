@@ -1008,6 +1008,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
  *  completed and failed already say what they are. */
 const OUTCOME_BADGE: Record<string, string> = {
   budget_exhausted: 'stopped at budget',
+  data_starved: 'could not look',
   abandoned: 'abandoned',
   aborted: 'aborted',
 }
