@@ -58,6 +58,10 @@ const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'setti
 // a rule is drawn only between two groups that both have a visible item
 const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
 const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+// When the bar runs out of width, screens fold into More from its right end,
+// so what stays on the bar is always its first few screens in order, whichever
+// screen is open. Home never folds.
+const FOLD_ORDER = PRIMARY_KEYS.filter((key) => key !== 'home').reverse()
 
 const AUTONOMY_ACT = 'Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Assist · asks before changes'
@@ -157,6 +161,8 @@ function SocConsoleInner() {
   const [setupSteps, setSetupSteps] = useState<Schema<'SetupStep'>[] | null>(null)
   const [setupHidden, setSetupHidden] = useState<string[]>(() => readSetupHidden())
   const moreRef = useRef<HTMLDivElement>(null)
+  const navRef = useRef<HTMLElement>(null)
+  const [folded, setFolded] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
@@ -428,7 +434,10 @@ function SocConsoleInner() {
   const primary = PRIMARY_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item))
   const moreKeySet = new Set<string>(MORE_KEYS)
   const primaryKeySet = new Set<string>(PRIMARY_KEYS)
+  const foldable = FOLD_ORDER.filter((key) => byKey.has(key))
+  const foldedKeys = new Set(foldable.slice(0, folded))
   const more = [
+    ...primary.filter((item) => foldedKeys.has(item[2])),
     ...MORE_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
     ...visibleNav.filter((item) => {
       const key = item[2]
@@ -437,8 +446,37 @@ function SocConsoleInner() {
   ]
   const moreCurrent = more.some((item) => valid && item[2] === current)
   const navGroups = NAV_GROUPS.map((keys) =>
-    keys.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
+    keys.filter((key) => !foldedKeys.has(key)).map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
   ).filter((group) => group.length > 0)
+
+  // Fold one more screen into More each pass until the bar fits its width.
+  // Opening a screen never refolds: a folded screen stays in More, which
+  // shows as active, rather than swapping places with one on the bar. No deps:
+  // any render can change what the bar holds (a status or setup chip appears).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const nav = navRef.current
+    if (nav && nav.scrollWidth > nav.clientWidth && folded < foldable.length) setFolded(folded + 1)
+  })
+  // A width change can make room again: start over and refold.
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    let width = nav.clientWidth
+    const onResize = () => {
+      if (nav.clientWidth !== width) {
+        width = nav.clientWidth
+        setFolded(0)
+      }
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', onResize)
+      return () => window.removeEventListener('resize', onResize)
+    }
+    const observer = new ResizeObserver(onResize)
+    observer.observe(nav)
+    return () => observer.disconnect()
+  }, [wallMode])
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
@@ -544,7 +582,7 @@ function SocConsoleInner() {
             />
           </div>
         </header>}
-        {!wallMode && <nav className="vg-nav" aria-label="Primary">
+        {!wallMode && <nav ref={navRef} className="vg-nav" aria-label="Primary">
           {navGroups.map((group, i) => (
             <Fragment key={group[0][2]}>
               {i > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
