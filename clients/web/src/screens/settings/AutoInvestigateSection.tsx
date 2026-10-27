@@ -3,12 +3,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { DurationPicker } from '../../shared/DurationPicker'
 import { formatDuration } from '../../shared/duration'
 import { Icon } from '../../shared/icons'
-import { InfoTip } from '../../shared/InfoTip'
 import { ScrubField } from '../../shared/ScrubField'
 import { ConfirmDialog, Field, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import {
   matchesProfile,
-  useForceManualApproval,
+  useCeiling,
   useOrchestrator,
   type InvestigationProfileValues,
   type OrchestratorBound,
@@ -32,7 +31,11 @@ const LIMIT_FIELDS = [
 const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
   LIMIT_FIELDS.some((field) => next[field] > prev[field])
 
-type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
+type PendingSave =
+  | { kind: 'config'; next: OrchestratorConfig }
+  | { kind: 'act' }
+  | { kind: 'irreversible' }
+  | { kind: 'stop' }
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {
@@ -44,7 +47,17 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     case 'act':
       return {
         title: 'Let tools act on their own?',
-        body: 'Tools that change something will stop waiting for a person when the agent is confident enough.',
+        body: 'Tools that change something, such as revoking a session, will stop waiting for a person.',
+      }
+    case 'irreversible':
+      return {
+        title: 'Let tools that cannot be undone act on their own?',
+        body: 'Tools such as isolating a host will stop waiting for a person. Tools that change something will act on their own too.',
+      }
+    case 'stop':
+      return {
+        title: 'Stop autonomy?',
+        body: 'No tool acts on its own, and nothing is read, written or proposed, until you resume. Automatic investigation turns off and investigations in progress are marked failed.',
       }
     default: {
       const _exhaustive: never = pending
@@ -52,9 +65,6 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     }
   }
 }
-
-const ACT_TIP =
-  'A tool that can be undone runs on its own when the agent’s confidence is at or above the response confidence threshold, and waits for a person below it. Ask first makes every one of them wait.'
 
 const money = (v: number) => `$${v}`
 
@@ -85,7 +95,7 @@ const FLEET_ROWS: LimitRow[] = [
 
 export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
-  const approval = useForceManualApproval()
+  const ceiling = useCeiling()
   const lastSaved = useRef<OrchestratorConfig | null>(null)
   const configRef = useRef<OrchestratorConfig | null>(null)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -110,7 +120,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     [],
   )
 
-  if (phase === 'loading' || approval.phase === 'loading') {
+  if (phase === 'loading' || ceiling.phase === 'loading') {
     return <div className="text-sm text-tx-3 py-16 text-center">Loading limits and autonomy…</div>
   }
   if (phase === 'error' || !config) {
@@ -182,27 +192,32 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     if (JSON.stringify(config) !== JSON.stringify(lastSaved.current)) commitConfig(config)
   }
 
-  const saveApproval = async (enabled: boolean) => {
+  const saveCeiling = async (patch: Parameters<typeof ceiling.save>[0]) => {
     try {
-      await approval.save(enabled)
+      await ceiling.save(patch)
       notify('ok', 'Limits saved.')
     } catch (err) {
       notify('err', errorText(err, 'Failed to save limits.'))
     }
   }
 
-  const selectAsk = () => {
-    if (approval.enabled) return
-    saveApproval(true)
+  const stopAll = async () => {
+    try {
+      await ceiling.stop()
+      notify('ok', 'Stopped. Automatic investigation is off.')
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to stop.'))
+    }
+    reload() // kill turned automatic investigation off
   }
 
-  const selectAct = () => {
-    if (approval.environment_wins) {
-      saveApproval(false)
-      return
+  const resume = async () => {
+    try {
+      await ceiling.resume()
+      notify('ok', 'Resumed. Automatic investigation stays off until you turn it on.')
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to resume.'))
     }
-    if (!approval.enabled) return
-    setPending({ kind: 'act' })
   }
 
   const confirmPending = () => {
@@ -214,7 +229,13 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         persist(current.next)
         return
       case 'act':
-        saveApproval(false)
+        saveCeiling({ act_reversible: true })
+        return
+      case 'irreversible':
+        saveCeiling({ act_reversible: true, act_irreversible: true })
+        return
+      case 'stop':
+        stopAll()
         return
       default: {
         const _exhaustive: never = current
@@ -235,7 +256,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       break
     }
   }
-  const askFirst = approval.enabled || approval.environment_wins
+  const ceil = ceiling.ceiling
+  const locked = Boolean(ceil?.environment_locked)
+  // stored flags drive the controls; the lock shows them as Ask first
+  const reversibleOn = Boolean(ceil?.act_reversible) && !locked
+  const irreversibleOn = Boolean(ceil?.act_irreversible) && !locked
   const dialog = pending ? pendingCopy(pending) : null
 
   const tag = (field: keyof OrchestratorConfig) => {
@@ -277,6 +302,25 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       />
     )
   }
+
+  // the environment lock disables raising; lowering a stored flag still saves
+  const seg = (label: string, on: boolean, stored: boolean, raise: () => void, lower: () => void) => (
+    <>
+      <div className="lim-seg" role="group" aria-label={label}>
+        <button type="button" aria-pressed={on} disabled={locked} onClick={on ? undefined : raise}>
+          {locked && <Icon name="lock" size={12} />} On their own
+        </button>
+        <button type="button" aria-pressed={!on} onClick={stored ? lower : undefined}>
+          Ask first
+        </button>
+      </div>
+      {locked && (
+        <span className="lim-class-note">
+          <Icon name="lock" size={13} /> Locked by the environment
+        </span>
+      )}
+    </>
+  )
 
   const idle = bound('stale_threshold')
   const runtime = bound('max_runtime_per_investigation')
@@ -380,43 +424,86 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         wide
         title="What tools may do on their own"
         desc="Applies to new cases. Each workflow’s own tool permissions are shown in Agents & workflows."
+        actions={
+          ceil &&
+          (ceil.stopped ? (
+            <button className="btn" onClick={resume}>
+              <Icon name="play" /> Resume
+            </button>
+          ) : (
+            <button className="btn danger" onClick={() => setPending({ kind: 'stop' })}>
+              <Icon name="stop" /> Stop
+            </button>
+          ))
+        }
       >
-        {approval.phase === 'error' ? (
+        {!ceil ? (
           <div className="settings-banner err">
             <Icon name="alert" size={14} />
-            <span>Could not load the tool setting. Reload to try again.</span>
+            <span>Could not load the autonomy ceiling. Reload to try again.</span>
           </div>
         ) : (
           <>
-            {approval.environment_wins && (
+            {ceil.stopped && (
+              <div className="settings-banner err mb-3">
+                <Icon name="alert" size={14} />
+                <span>Stopped. Nothing is read, written, proposed or acted on until you resume. The choices below apply after that.</span>
+              </div>
+            )}
+            {locked && (
               <div className="settings-banner info mb-3">
-                <Icon name="info" size={14} />
-                <span>The environment wins. On their own cannot be saved.</span>
+                <Icon name="lock" size={14} />
+                <span>The environment wins. Tools ask first here, and On their own cannot be saved.</span>
               </div>
             )}
             <div className="lim-classes">
               <div className="lim-class good">
-                <h4>Read-only tools</h4>
-                <span>Look things up</span>
-                <span className="lim-class-note">Never need approval</span>
+                <h4>Read, write and propose</h4>
+                <span>Look things up, note findings, suggest a change</span>
+                <span className="lim-class-note">
+                  {ceil.read && ceil.write && ceil.propose
+                    ? 'On. Never need approval.'
+                    : `Off while stopped: ${[!ceil.read && 'read', !ceil.write && 'write', !ceil.propose && 'propose']
+                        .filter(Boolean)
+                        .join(', ')}.`}
+                </span>
               </div>
               <div className="lim-class fair">
-                <h4>
-                  Tools that change something <InfoTip label="About tools that change something" text={ACT_TIP} align="start" />
-                </h4>
+                <h4>Tools that change something</h4>
                 <span>Reversible, such as revoking a session</span>
-                <div className="lim-seg" role="group" aria-label="Tools that change something">
-                  <button type="button" aria-pressed={!askFirst} onClick={selectAct}>On their own</button>
-                  <button type="button" aria-pressed={askFirst} onClick={selectAsk}>Ask first</button>
-                </div>
+                {seg(
+                  'Tools that change something',
+                  reversibleOn,
+                  Boolean(ceil.act_reversible || ceil.act_irreversible),
+                  () => setPending({ kind: 'act' }),
+                  // Assist: both act flags off
+                  () => saveCeiling({ act_reversible: false, act_irreversible: false }),
+                )}
               </div>
               <div className="lim-class poor">
                 <h4>Tools that cannot be undone</h4>
                 <span>Such as isolating a host</span>
-                <span className="lim-class-note">
-                  <Icon name="lock" size={13} /> Always a person. This cannot be changed.
+                {seg(
+                  'Tools that cannot be undone',
+                  irreversibleOn,
+                  ceil.act_irreversible,
+                  () => setPending({ kind: 'irreversible' }),
+                  () => saveCeiling({ act_irreversible: false }),
+                )}
+              </div>
+            </div>
+            <div className="lim-switch mt-3">
+              <div className="toggle-row-text">
+                <span className="toggle-row-label">Four-eyes approval</span>
+                <span className="toggle-row-hint">
+                  A second person approves each change a person approves. Not enforced yet: switching it on only records the choice.
                 </span>
               </div>
+              <Toggle
+                label="Four-eyes approval"
+                checked={ceil.four_eyes}
+                onChange={(v) => saveCeiling({ four_eyes: v })}
+              />
             </div>
           </>
         )}
@@ -482,8 +569,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         open={dialog != null}
         title={dialog?.title ?? ''}
         body={dialog?.body ?? ''}
-        confirmLabel="Save"
-        danger={false}
+        confirmLabel={pending?.kind === 'stop' ? 'Stop' : 'Save'}
+        danger={pending?.kind === 'stop'}
         onConfirm={confirmPending}
         onClose={dismissPending}
       />
