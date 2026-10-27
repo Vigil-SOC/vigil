@@ -4,19 +4,26 @@ Each tag's clean install is committed as ``fixtures/adoption/<tag>.sql``
 (``build.py`` there rebuilds it). The drifted variants are that v0.7.0 dump
 with one catalogue entry undone: a Helm install, objects owned by
 ``vigil_app`` (or no ``vigil_app`` role), and a legacy role a user holds.
+
+``core/upgrade/baseline_schema.json`` is what ``0001_baseline`` alone builds.
+Rewrite it, only if that revision changes, with:
+
+    VIGIL_WRITE_BASELINE_SCHEMA=1 pytest tests/integration/test_upgrade_adoption.py
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
+from alembic.runtime.environment import EnvironmentContext
 from sqlalchemy import text
 
 from core.storage.connection import _stamp_schema_version
 from core.upgrade import command
-from core.upgrade.adopt import read_stamp
+from core.upgrade.adopt import BASELINE, read_stamp
 from core.upgrade.schema import compare, schema_state
 from tests.integration.test_upgrade_command import (
     HEAD,
@@ -114,6 +121,31 @@ def _adopted(engine, baseline, tag: str = "v0.7.0", unowned=()) -> dict:
         assert read_stamp(conn) == tag.lstrip("v"), "adoption wrote schema_version"
         assert not _app_can_move_revision(conn), "the app role can move the revision"
         return _operator_rows(_rows(conn))
+
+
+def test_baseline_schema_is_what_0001_builds(scratch):
+    script = command.script_directory()
+
+    def upgrade(rev, _context):
+        return script._upgrade_revs(BASELINE, rev)
+
+    with scratch.connect() as conn, EnvironmentContext(
+        command.alembic_config(), script, fn=upgrade, destination_rev=BASELINE
+    ) as env:
+        env.configure(connection=conn, version_table_schema="public")
+        with env.begin_transaction():
+            env.run_migrations()
+    assert _version(scratch) == BASELINE
+    with scratch.connect() as conn:
+        state = schema_state(conn)
+
+    if os.environ.get("VIGIL_WRITE_BASELINE_SCHEMA"):
+        command.BASELINE_SCHEMA.write_text(
+            json.dumps(state, indent=1, sort_keys=True) + "\n"
+        )
+    assert (
+        json.loads(command.BASELINE_SCHEMA.read_text()) == state
+    ), "core/upgrade/baseline_schema.json is not what 0001_baseline builds"
 
 
 @pytest.mark.parametrize("tag", TAGS)
