@@ -1,0 +1,10 @@
+apiVersion: medic.runbooks/v1
+kind: Runbook
+id: stop-stale-listener
+title: Stop the stale listener on the grouped port
+applies_to: [pipeline.stale-port-holder]
+action: {type: stop_stale_listener, service: soc-daemon, port_label: port}
+verify_after_s: 120
+description: >-
+  Stop the process still bound to the port in this incident's group. Phase 0
+  records this as "would have"; nothing is executed.

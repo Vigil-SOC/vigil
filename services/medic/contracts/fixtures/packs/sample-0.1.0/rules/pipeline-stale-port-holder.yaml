@@ -1,0 +1,21 @@
+# Lane-1 fixture that groups by port, so stop_stale_listener can bind port_label.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.stale-port-holder
+title: A stale process still holds a service port
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.a]}
+lane: 1
+shapes: [start_sh]
+signals:
+  holder: {sample: {signal: pid_files, key: present, by: [port]}}
+  health: {sample: {signal: daemon_health, key: uptime_seconds, by: [port]}}
+group_by: [port]
+when:
+  all:
+    - {fn: latest, signal: holder, op: "==", value: 1}
+    - {fn: latest, signal: health, op: ">", value: 0}
+advice:
+  summary: Something other than the current process still listens on a grouped port.
+  fix: >-
+    Phase 0 records that Medic would stop the stale listener. Nothing is executed.
