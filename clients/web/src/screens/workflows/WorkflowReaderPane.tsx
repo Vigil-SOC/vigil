@@ -337,18 +337,22 @@ function directActionTools(pre: Partial<Preflight>, selected: number | null): bo
 
 const CHANGES = {
   on_its_own: { text: 'On its own', color: 'var(--good)' },
-  asks_you: { text: 'Asks you', color: 'var(--fair)' },
+  asks_you: { text: 'Asks first', color: 'var(--fair)' },
 } as const
 
 function MayDo({ entries, pre, stage, missing }: { entries: Entry[]; pre: Partial<Preflight>; stage: StageDef | null; missing: string }) {
   const tools = new Set(covered(entries, stage?.tools ?? null).flatMap((e) => e.tools))
   const rows = (pre.permissions ?? []).filter((p) => !stage || tools.has(p.name) || (stage.handoff && p.name === HANDOFF_ROW))
+  // a tool that only steps needing approval hold asks first; one a free step also holds does not
+  const helpers = pre.roles?.helpers ?? []
+  const free = new Set(helpers.filter((h) => !h.approval_required).flatMap((h) => h.tools))
+  const gated = new Set(helpers.filter((h) => h.approval_required).flatMap((h) => h.tools).filter((t) => !free.has(t)))
   return (
     <Panel title="What it may do on its own">
       {!pre.permissions && <Muted>{missing}</Muted>}
       {pre.permissions && rows.length === 0 && <Muted>{stage ? 'Nothing it does at this stage needs a permission.' : pre.permissions_note ?? 'It holds no tools.'}</Muted>}
       {rows.map((p) => {
-        const state = p.bound === false ? { text: 'Not connected', color: 'var(--tx-3)' } : CHANGES[p.changes]
+        const state = p.bound === false ? { text: 'Not connected', color: 'var(--tx-3)' } : CHANGES[gated.has(p.name) ? 'asks_you' : p.changes]
         return (
           <span key={p.name} className="flex justify-between gap-2 text-[12px]">
             <span className={`min-w-0 break-words text-tx-2${p.label ? '' : ' font-mono'}`}>{p.label ?? p.name}</span>

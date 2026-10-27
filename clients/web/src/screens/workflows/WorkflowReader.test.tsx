@@ -191,11 +191,11 @@ describe('workflow reader pane', () => {
       definition: { run_kind: 'compose', hunt_like: false, objectives: [], phases: [] },
       preflight: {
         roles: { lead: null, reviewer: null, helpers: [
-          { agent: 'reporter', name: 'Write', tools: ['get_case'], approval_required: false },
-          { agent: 'triage', name: 'Check', tools: ['get_finding'], approval_required: true },
+          { agent: 'reporter', name: 'Write', tools: ['get_case', 'list_cases'], approval_required: false },
+          { agent: 'triage', name: 'Check', tools: ['get_finding', 'list_cases'], approval_required: true },
         ] },
         roles_note: null, model: null, model_source: null, skills: [], skills_note: 'No phase can read a skill.',
-        permissions: [{ name: 'get_case', changes: 'on_its_own' }, { name: 'get_finding', changes: 'on_its_own' }],
+        permissions: [{ name: 'get_case', changes: 'on_its_own' }, { name: 'get_finding', changes: 'on_its_own' }, { name: 'list_cases', changes: 'on_its_own' }],
         permissions_note: null, budgets: { max_calls: 20, max_cost_usd: 5, max_wall_ms: 1_800_000 },
         checkpoints: {}, checkpoints_note: 'It pauses only at phases marked approval_required.',
       },
@@ -210,6 +210,11 @@ describe('workflow reader pane', () => {
     expect(within(panel('Who does it')).queryByText('Claude Sonnet 5')).toBeNull()
     expect(within(panel('Stops when')).getByText('Approval required · Check')).toBeInTheDocument()
     expect(within(panel('Stops when')).queryByText(/Direct-action calls/)).toBeNull()
+    // only the approval step holds get_finding, so it asks first; list_cases also runs in a free step
+    const may = (tool: string) => within(panel('What it may do on its own')).getByText(tool).parentElement!.textContent
+    expect(may('get_finding')).toContain('Asks first')
+    expect(may('list_cases')).toContain('On its own')
+    expect(may('get_case')).toContain('On its own')
 
     fireEvent.click(within(strip).getByRole('button', { name: /Write/ }))
     expect(within(panel('What it may do on its own')).queryByText('get_finding')).toBeNull()
@@ -235,7 +240,7 @@ describe('workflow reader pane', () => {
     renderPane(<WorkflowReaderPane wf={row({ id: 'contain', name: 'Contain' })} {...actions} />)
     expect(await screen.findByText('Direct-action calls pause for approval before they run.')).toBeInTheDocument()
     expect(screen.queryByText('This definition declares no pause.')).toBeNull()
-    expect(within(panel('What it may do on its own')).getByText('Asks you')).toBeInTheDocument()
+    expect(within(panel('What it may do on its own')).getByText('Asks first')).toBeInTheDocument()
   })
 
   it('shows a single-agent kind as one agent with its instructions and no helper panels', async () => {

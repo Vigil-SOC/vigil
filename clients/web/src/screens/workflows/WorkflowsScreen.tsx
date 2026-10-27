@@ -11,6 +11,9 @@ import { TITLES } from '../../data/data'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedDraft, type ReplayReport } from '../../services/api'
 import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
+import WorkflowBuilder from './WorkflowBuilder'
+import CreateWorkflowDialog from './CreateWorkflowDialog'
+import { draftFrom, type BuilderDraft } from './workflowDraft'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import { skillsApi } from '../../services/skillsApi'
@@ -31,14 +34,8 @@ import {
   type WfRun, type WfRunDetail,
 } from './runRead'
 
-/** The body of POST /workflows/custom for a draft, so the server checks it as it would any other. */
-const draftPayload = (d: GeneratedDraft) => ({
-  name: (d.name ?? '').trim(),
-  description: (d.description ?? '').trim(),
-  use_case: d.use_case ?? '',
-  trigger_examples: d.trigger_examples ?? [],
-  phases: d.phases,
-})
+/** What the builder opens on: a saved workflow by id, or a draft from a template or the AI. */
+interface Building { workflowId?: string; initial?: BuilderDraft; origin?: string }
 
 type WfTab = 'workflows' | 'agents' | 'skills' | 'commands'
 
@@ -61,14 +58,18 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
     return wanted === 'agents' || wanted === 'skills' || wanted === 'commands' ? wanted : 'workflows'
   })
   // lifted so the header's "New workflow" opens the same dialog from any tab
+  const [choosing, setChoosing] = useState(false)
   const [describing, setDescribing] = useState(false)
-  const [draft, setDraft] = useState<GeneratedDraft | null>(null)
+  const [building, setBuilding] = useState<Building | null>(null)
+  // the workflow the catalog shows after a save
+  const [focusId, setFocusId] = useState<string | null>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
   const runId = searchParams.get('run')
-  const saveDraft = () => workflowApi.createCustom(draftPayload(draft!)).then(() => { setDraft(null); workflows.reload() })
+  const build = (b: Building) => { setChoosing(false); setDescribing(false); setTab('workflows'); setBuilding(b) }
+  const fromAi = (d: GeneratedDraft) => build({ initial: draftFrom(d), origin: 'Drafted by Vigil from your description. Check each step before you save.' })
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
   const count = (feed: { rows: unknown[]; phase: Phase }) => (feed.phase === 'ready' ? feed.rows.length : null)
@@ -79,7 +80,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
     ['commands', 'Commands', COMMANDS.length],
   ]
   // the Watch a run page carries its own header, as the board has it; the tab strip comes back with the catalog
-  const watching = tab === 'workflows' && runId !== null
+  const watching = (tab === 'workflows' && runId !== null) || building !== null
   return (
     <AgentRowsProvider value={agents.rows}>
       <div className={`flex flex-col gap-3.5 px-[26px] pt-5${watching ? ' hidden' : ''}`}>
@@ -89,7 +90,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
             <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
             <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
           </div>
-          <button className="btn primary wf-new" onClick={() => setDescribing(true)}><Icon name="plus" /> New workflow</button>
+          <button className="btn primary wf-new" onClick={() => setChoosing(true)}><Icon name="plus" /> New workflow</button>
         </div>
         <div className="wf-tabs" role="tablist" aria-label="Workflow views">
           {tabs.map(([k, label, n]) => (
@@ -107,12 +108,38 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
-      {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
+      {tab === 'workflows' && building && (
+        <WorkflowBuilder
+          key={building.workflowId ?? building.origin ?? 'new'}
+          workflowId={building.workflowId ?? null}
+          initial={building.initial}
+          origin={building.origin}
+          onCancel={() => setBuilding(null)}
+          onSaved={(id) => { setBuilding(null); setFocusId(id || null); workflows.reload() }}
+        />
+      )}
+      {tab === 'workflows' && !building && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : (
+        <WorkflowCatalog
+          feed={workflows}
+          focusId={focusId}
+          onCreate={() => setChoosing(true)}
+          onDescribe={() => setDescribing(true)}
+          onEdit={(wf) => build({ workflowId: wf.id })}
+          goSettings={goSettings}
+        />
+      ))}
       {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
-      {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
+      {choosing && (
+        <CreateWorkflowDialog
+          onClose={() => setChoosing(false)}
+          onBuild={() => build({ initial: { name: '', description: '', use_case: '', trigger_examples: [], phases: [] }, origin: '' })}
+          onTemplate={(t) => build({ initial: draftFrom(t), origin: `From the “${t.name}” template. Change anything before you save.` })}
+          onDescribe={() => { setChoosing(false); setDescribing(true) }}
+        />
+      )}
+      {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={fromAi} />}
     </AgentRowsProvider>
   )
 }
@@ -197,7 +224,7 @@ const KIND_LABEL: Record<string, string> = {
 }
 const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: 'Nightly', shadow: 'Runs alongside' }
 
-type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
+type WfModal = { kind: 'run' | 'history' | 'delete'; wf: Workflow }
 
 /** One workflow on the board's card column. Clicking the card shows it in the
  *  reader beside the column, whose header holds the actions. */
@@ -268,14 +295,22 @@ function useFillHeight<T extends HTMLElement>() {
   return ref
 }
 
-function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: () => void; goSettings: ConsoleScreenProps['goSettings'] }) {
+function WorkflowCatalog({ feed, focusId = null, onCreate, onDescribe, onEdit, goSettings }: {
+  feed: Feed<Workflow>
+  /** opened first, e.g. the workflow just saved */
+  focusId?: string | null
+  onCreate: () => void
+  onDescribe: () => void
+  /** opens a custom workflow in the builder */
+  onEdit: (wf: Workflow) => void
+  goSettings: ConsoleScreenProps['goSettings']
+}) {
   const { rows, phase, error, reload } = feed
   const [modal, setModal] = useState<WfModal | null>(null)
   // the pane replaces the table; read from the rows so an edit or a delete shows in it
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(focusId)
+  useEffect(() => { if (focusId) setOpenId(focusId) }, [focusId])
   const open = rows.find((w) => w.id === openId)
-  // bumped by a save, so the pane reads the edited definition again
-  const [saves, setSaves] = useState(0)
   const close = () => setModal(null)
   const list = rows
   // the board always shows one workflow in the reader; the first row until one is chosen
@@ -290,9 +325,9 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
           <EmptyState
             icon="flow"
             title="No workflows yet"
-            body="Create a workflow manually or generate one with AI from a plain-language investigation goal."
+            body="Build one step by step, start from a template, or describe it and let Vigil draft the steps."
             primary={{ label: 'New workflow', onClick: onCreate, icon: 'plus' }}
-            secondary={{ label: 'Generate with AI', onClick: onCreate, icon: 'sparkle' }}
+            secondary={{ label: 'Describe one', onClick: onDescribe, icon: 'sparkle' }}
           />
         </StateMsg>
       )}
@@ -303,19 +338,22 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
               <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} />
             ))}
             <div className="wfk-new">
-              <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
-              <span className="text-[12px] leading-[1.45] text-tx-2">Describe how your team works a case and Vigil drafts the workflow for you to edit.</span>
-              <button className="btn ghost wfk-btn self-start" onClick={onCreate}><Icon name="sparkle" /> Generate with AI</button>
+              <span className="text-[13px] font-semibold leading-[1.35] text-tx">Make your own</span>
+              <span className="text-[12px] leading-[1.45] text-tx-2">Build it step by step, start from a template, or describe it and Vigil drafts the steps for you to check.</span>
+              <span className="flex flex-wrap gap-2">
+                <button className="btn primary wfk-btn" onClick={onCreate}><Icon name="plus" /> New workflow</button>
+                <button className="btn ghost wfk-btn" onClick={onDescribe}><Icon name="sparkle" /> Describe one</button>
+              </span>
             </div>
           </div>
           {shown && (
             <div className="wfk-reader">
               <WorkflowReaderPane
-                key={`${shown.id}:${saves}`}
+                key={`${shown.id}:${shown.updatedAt ?? ''}`} // an edit reads the definition again
                 wf={shown}
                 onHistory={() => setModal({ kind: 'history', wf: shown })}
                 onRun={() => setModal({ kind: 'run', wf: shown })}
-                onEdit={() => setModal({ kind: 'edit', wf: shown })}
+                onEdit={() => onEdit(shown)}
                 onDelete={() => setModal({ kind: 'delete', wf: shown })}
                 onToggled={reload}
               />
@@ -325,7 +363,6 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
       )}
       {modal?.kind === 'run' && <RunModal wf={modal.wf} onClose={close} onStarted={() => setModal({ kind: 'history', wf: modal.wf })} />}
       {modal?.kind === 'history' && <HistoryModal wf={modal.wf} onClose={close} />}
-      {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); setSaves((n) => n + 1); reload() }} />}
       {modal?.kind === 'delete' && <DeleteModal wf={modal.wf} onClose={close} onDeleted={() => { close(); reload() }} />}
       {phase === 'ready' && rows.length === 0 && (
         <div className="px-[22px] pb-5">
@@ -3661,46 +3698,6 @@ function HuntCheckpoints({ checkpoints }: { checkpoints: HuntCheckpoint[] }) {
         </table>
       </div>
     </div>
-  )
-}
-
-function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void; onSaved: () => void }) {
-  const [name, setName] = useState(wf.name)
-  const [description, setDescription] = useState(wf.desc)
-  const [useCase, setUseCase] = useState(wf.useCase)
-  const [triggers, setTriggers] = useState(wf.cmds.join('\n'))
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const save = () => {
-    setBusy(true)
-    setError(null)
-    workflowApi
-      .updateCustom(wf.id, {
-        name: name.trim(),
-        description: description.trim(),
-        use_case: useCase.trim(),
-        trigger_examples: triggers.split('\n').map((t) => t.trim()).filter(Boolean),
-      })
-      .then(onSaved)
-      .catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-
-  return (
-    <Popup open onClose={onClose} title={`Edit · ${wf.name}`}>
-      <div className="flex flex-col gap-3.5">
-        <Field label="Name" value={name} onChange={setName} />
-        <Field label="Description" value={description} onChange={setDescription} textarea />
-        <Field label="Use case" value={useCase} onChange={setUseCase} textarea />
-        <Field label="Trigger examples (one per line)" value={triggers} onChange={setTriggers} textarea mono />
-        <p className="text-[11.5px] text-tx-3">Stages are not editable yet.</p>
-        {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-        <div className="flex justify-end gap-2.5 pt-1">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !name.trim()} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
-        </div>
-      </div>
-    </Popup>
   )
 }
 

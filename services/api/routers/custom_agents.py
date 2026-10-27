@@ -136,27 +136,62 @@ def list_custom_agents() -> Dict[str, Any]:
     return {"agents": agents}
 
 
-@router.get("/agents/custom/_meta/tools")
-def list_available_tools(
-    registry: MCPRegistry = Depends(provide_mcp_registry),
-) -> Dict[str, Any]:
-    """Return MCP tool names grouped by server prefix for the UI multiselect.
+# Tool groups for the picker: Vigil's own tools by what they work on, the rest by
+# the integration that serves them.
+_BUILTIN_GROUPS = (
+    ("Findings", ("finding", "dismiss_finding")),
+    ("Cases", ("case", "resolution")),
+    ("Detections", ("detection", "coverage", "technique", "gaps")),
+    ("Approvals", ("approv", "reject_action")),
+    ("Memory", ("recall", "episode", "hunt", "reconstruct", "replay")),
+    ("Threat intel", ("indicator", "intel")),
+    ("Skills", ("skill",)),
+)
 
-    Sources, in order of preference:
-      1. Live MCP registry (populated when MCP servers connect at startup).
-      2. Persistent tools cache file at ``data/mcp_tools_cache.json`` written
-         on prior successful boots — covers the common dev case where not
-         every MCP server happens to be reachable right now.
+
+def _builtin_group(name: str) -> str:
+    for label, words in _BUILTIN_GROUPS:
+        if any(w in name for w in words):
+            return label
+    return "Vigil"
+
+
+def _short(description: str) -> str:
+    """The first sentence of a tool description, without the [server] prefix."""
+    text = " ".join((description or "").split())
+    if text.startswith("[") and "] " in text:
+        text = text.split("] ", 1)[1]
+    end = text.find(". ")
+    text = text if end == -1 else text[: end + 1]
+    return text if len(text) <= 220 else text[:217].rstrip() + "..."
+
+
+def _tool_catalog(registry: MCPRegistry) -> List[Dict[str, Any]]:
+    """Every tool an agent may be given: name, where it comes from, what it does.
+
+    Integration tools come from the live registry, else the persisted cache;
+    Vigil's built-in tools are always there.
     """
-    tools: List[str] = []
+    rows: Dict[str, Dict[str, Any]] = {}
     try:
         names = registry.get_tool_names() or []
-        tools = sorted(set(names))
+        # Descriptions and servers are extras: a registry without them still lists names.
+        described = {
+            t.get("name"): t.get("description") or ""
+            for t in getattr(registry, "get_all_tools", list)()
+        }
+        servers = getattr(registry, "tool_servers", dict)()
+        for name in names:
+            if name and name not in rows:
+                rows[name] = {
+                    "name": name,
+                    "server": servers.get(name)
+                    or (name.split("_", 1)[0] if "_" in name else "other"),
+                    "description": _short(described.get(name, "")),
+                }
     except Exception as e:
-        logger.warning(f"Could not load MCP tool names from registry: {e}")
-
-    # Fallback: read the persisted tools cache (same file ClaudeService loads).
-    if not tools:
+        logger.warning(f"Could not read MCP tools from registry: {e}")
+    if not rows:
         try:
             import json
             from pathlib import Path
@@ -165,39 +200,73 @@ def list_available_tools(
                 Path(__file__).parent.parent.parent / "data" / "mcp_tools_cache.json"
             )
             if cache_file.exists():
-                with open(cache_file, "r") as f:
-                    tools_dict = json.load(f)
-                collected = set()
-                for server_name, server_tools in (tools_dict or {}).items():
+                for server_name, server_tools in (
+                    json.loads(cache_file.read_text()) or {}
+                ).items():
                     for t in server_tools or []:
-                        name = t.get("name") if isinstance(t, dict) else None
-                        if not name:
+                        if not isinstance(t, dict) or not t.get("name"):
                             continue
-                        collected.add(f"{server_name}_{name}" if server_name else name)
-                tools = sorted(collected)
-                if tools:
-                    logger.info(
-                        f"Loaded {len(tools)} tool names from cache file (registry empty)"
-                    )
+                        name = (
+                            f"{server_name}_{t['name']}" if server_name else t["name"]
+                        )
+                        rows.setdefault(
+                            name,
+                            {
+                                "name": name,
+                                "server": server_name or "other",
+                                "description": _short(t.get("description") or ""),
+                            },
+                        )
         except Exception as e:
-            logger.warning(f"Could not load MCP tool names from cache: {e}")
+            logger.warning(f"Could not read MCP tools from cache: {e}")
+    for row in rows.values():
+        row["connected"] = True
+    for t in ALL_TOOLS:
+        name = t.get("name")
+        if name and name not in rows:
+            rows[name] = {
+                "name": name,
+                "server": "vigil",
+                "description": _short(t.get("description") or ""),
+                "connected": False,
+            }
+    for row in rows.values():
+        row["group"] = (
+            _builtin_group(row["name"]) if row["server"] == "vigil" else row["server"]
+        )
+        row["changes"] = changes_for_tool(row["name"])
+    return sorted(
+        rows.values(), key=lambda r: (r["server"] != "vigil", r["group"], r["name"])
+    )
 
+
+@router.get("/agents/custom/_meta/tools")
+def list_available_tools(
+    registry: MCPRegistry = Depends(provide_mcp_registry),
+) -> Dict[str, Any]:
+    """Every tool an agent may be given, for the tool picker.
+
+    ``catalog`` has one row per tool: name, server ("vigil" for the built-in
+    ones), group, a one-sentence description and what it changes. ``tools``
+    (the connected MCP tools), ``grouped`` and ``changes`` are the older shapes,
+    kept for their callers.
+    Integration tools come from the live MCP registry, else from the cache file
+    at ``data/mcp_tools_cache.json`` written on prior boots.
+    """
+    catalog = _tool_catalog(registry)
+    # "connected" marks the ones an MCP server lists; it is not sent.
+    tools = sorted(r["name"] for r in catalog if r.pop("connected"))
     grouped: Dict[str, List[str]] = {}
     for name in tools:
         # Names follow "{server}_{tool}"; group by prefix before the first underscore
-        if "_" in name:
-            server, _rest = name.split("_", 1)
-        else:
-            server = "other"
+        server = name.split("_", 1)[0] if "_" in name else "other"
         grouped.setdefault(server, []).append(name)
-
-    # What each tool does to the outside world: the connected MCP tools and
-    # Vigil's built-in ones, which are always there. A name missing here is not connected.
-    names = set(tools) | {t["name"] for t in ALL_TOOLS if t.get("name")}
     return {
         "tools": tools,
         "grouped": grouped,
-        "changes": {n: changes_for_tool(n) for n in sorted(names)},
+        # A name missing here is not connected.
+        "changes": {r["name"]: r["changes"] for r in catalog},
+        "catalog": catalog,
     }
 
 
