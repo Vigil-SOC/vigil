@@ -366,6 +366,24 @@ describe('Home', () => {
     expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
   })
 
+  it('offers Open alert when the approval has no case yet, and Open case once it does', async () => {
+    mockQueue([
+      item({ source_id: 'a', title: 'Isolate host a', case_id: null, finding_id: 'f-1 x' }),
+      item({ source_id: 'b', title: 'Isolate host b', case_id: 'case-2', finding_id: 'f-2' }),
+      item({ source_id: 'c', title: 'Isolate host c', case_id: null, finding_id: null }),
+    ])
+    renderHome()
+    const card = async (name: string) => (await screen.findByRole('heading', { name })).closest('article') as HTMLElement
+    const a = await card('Isolate host a')
+    expect(within(a).getByRole('link', { name: 'Open alert' })).toHaveAttribute('href', '/overview?alert=f-1%20x')
+    expect(within(a).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+    const b = await card('Isolate host b')
+    expect(within(b).getByRole('link', { name: 'Open case' })).toBeInTheDocument()
+    expect(within(b).queryByRole('link', { name: 'Open alert' })).not.toBeInTheDocument()
+    const c = await card('Isolate host c')
+    expect(within(c).queryByRole('link')).not.toBeInTheDocument()
+  })
+
   it('names the explanation a hypothesis approval starts testing, shortened, with the full text on hover (#2456)', async () => {
     const pdf =
       'A finance workstation that opened an invoice-themed ISO attachment has executed rundll32.exe from a shortcut and is beaconing over HTTPS to DUSKY LANTERN infrastructure.'

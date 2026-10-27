@@ -9501,6 +9501,11 @@ export interface components {
              */
             created_at: string;
             /**
+             * Finding Id
+             * @description The first stored alert the approval's evidence names, so an item with no case can open it.
+             */
+            finding_id?: string | null;
+            /**
              * Hypotheses
              * @description A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.
              */
