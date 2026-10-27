@@ -36,7 +36,7 @@ from psycopg2 import sql
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-from core.audit import feed, trail
+from core.audit import feed, retention, trail
 from core.backup.connection import backup_database_config
 from core.backup.create import (
     PRE_RESTORE_PREFIX,
@@ -59,6 +59,7 @@ from core.skills.skill_library import operator_skills_root
 from core.storage.config_service import get_config_service
 from core.storage.connection import DatabaseConfig, get_db_manager
 from core.storage.models import ApprovalAction, User
+from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.version import __version__
 
@@ -182,6 +183,7 @@ def restore_snapshot(
             # Resolved before the swap: an unknown operator refuses the restore
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
+            _check_erasure_list(root, dump_in_snapshot)
             swap_lines, abandoned = _swap(cfg, staged_name, pre_name, placed, stamp)
             lines.extend(swap_lines)
             swapped = True
@@ -191,6 +193,10 @@ def restore_snapshot(
             # is recorded after settle so a missing history file does not skip
             # JWT rotation, and a write error still carries those lines.
             try:
+                # The restored database is the live name. Point this process at
+                # it before blanking, or the erasure list is applied nowhere.
+                _point_at_live(cfg)
+                _reapply_erased(root, dump_in_snapshot)
                 lines.extend(
                     _settle_restored(
                         cfg, manifest, snapshot_id, restoring_user, abandoned
@@ -616,6 +622,28 @@ def _check_secrets(placed: list[_Placed]) -> str:
     if key_path.read_bytes() != key_bytes:
         raise BackupError("secrets check failed: master.key was rewritten")
     return "ok"
+
+
+def _check_erasure_list(root: Path, dump_in_snapshot: str) -> None:
+    """Refuse before the swap when the snapshot's erasures could not be re-applied."""
+    path = _under_target(root, str(Path(dump_in_snapshot).parent / retention.LIST_NAME))
+    if path.is_file() and retention.read_ids(path) and retention.outside_path() is None:
+        raise BackupError(
+            "the snapshot erases principals and VIGIL_UPGRADE_DIR is unset; "
+            "set it, then restore again"
+        )
+
+
+def _reapply_erased(root: Path, dump_in_snapshot: str) -> None:
+    """Union the snapshot's erasure list with the outside file and blank each id."""
+    path = _under_target(root, str(Path(dump_in_snapshot).parent / retention.LIST_NAME))
+    try:
+        with unit_of_work() as session:
+            retention.reapply(
+                session, retention.read_ids(path) if path.is_file() else []
+            )
+    except Exception as exc:
+        raise BackupError(f"could not reapply erased principals: {exc}") from exc
 
 
 def _record_restored(

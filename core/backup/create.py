@@ -21,6 +21,7 @@ from typing import Mapping
 import psycopg2
 from psycopg2 import sql
 
+from core.audit.retention import list_text
 from core.backup.connection import backup_database_config
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
@@ -117,7 +118,9 @@ def create_snapshot(
             locations = _locations(staging, bifrost_data)
             manifest_path = staging / "manifest.json"
             _write_manifest(manifest_path, locations, counts, kind, version, taken_by)
-            paths = [str(manifest_path)]
+            erasure_path = staging / "erased-principals.txt"
+            erasure_path.write_text(list_text(), encoding="utf-8")
+            paths = [str(manifest_path), str(erasure_path)]
             paths.extend(loc.path for loc in locations if loc.path)
             snap = _restic_backup(repo, passphrase, paths, priority, tags, extra_env)
             try:
