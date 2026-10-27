@@ -252,7 +252,9 @@ class TestAMalformedProposalIsDropped:
 
 
 class TestNothingIsProposedWhere:
-    @pytest.mark.parametrize("outcome", ["budget_exhausted", "failed", "aborted"])
+    @pytest.mark.parametrize(
+        "outcome", ["budget_exhausted", "failed", "aborted", "data_starved"]
+    )
     def test_the_run_did_not_conclude(self, outcome):
         approvals = _Approvals()
         _terminate(

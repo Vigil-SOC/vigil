@@ -31,7 +31,7 @@ import type { ToolDispatch } from "./seams.js";
 import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
-import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
+import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
 import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
@@ -39,7 +39,7 @@ import { SEVERITIES, type RunEventKind } from "../contracts/events.js";
 
 export const AGENT_ROLE = "agent";
 export const REVIEW_ROLE = "reviewer";
-export const SKILL_TOOL = "load_skill";
+export { SKILL_TOOL };
 // How an agent gives a structured answer in the turn it decides, for a plugin that
 // finishes with a tool rather than being asked.
 export const CONCLUDE_TOOL = "conclude";
@@ -343,9 +343,14 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     review = await reviewOf(ctx, conclusion, callsIn(held));
     await harness.state.append(run_id, [event(options, "review", review)]);
   }
+  // A required record's answer that rests on nothing served, over a ledger that could not
+  // look, is data_starved: the report still goes out, but nothing acts on it (#3248).
+  const structured = isStructured(options.plugin.conclusion) ? options.plugin.conclusion : null;
+  const cited = structured?.citations_field === undefined ? [] : citedRefs(conclusion.value[structured.citations_field]);
+  const blind = recordModeOf(options.plugin) === "required" && starved(held, cited);
   return end(
     ctx,
-    "completed",
+    blind ? "data_starved" : "completed",
     summaryOf(options.plugin, conclusion, review),
     undefined,
     undefined,

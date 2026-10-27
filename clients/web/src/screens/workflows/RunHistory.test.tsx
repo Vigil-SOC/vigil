@@ -14,6 +14,7 @@ vi.mock('../../services/api', () => ({
           { run_id: 'run-zero', status: 'completed', triggered_by: 'zero', total_cost_usd: 0 },
           { run_id: 'run-absent', status: 'running', triggered_by: 'absent', total_cost_usd: null },
           { run_id: 'run-budget', status: 'completed', triggered_by: 'budget', outcome: 'budget_exhausted', reason: 'hit the cost ceiling' },
+          { run_id: 'run-starved', status: 'completed', triggered_by: 'blind', outcome: 'data_starved', reason: 'Splunk could not be reached' },
           { run_id: 'run-abandoned', status: 'cancelled', triggered_by: 'left', outcome: 'abandoned', reason: 'parked with no answer' },
           { run_id: 'run-aborted', status: 'cancelled', triggered_by: 'halted', outcome: 'aborted', reason: 'the operator stopped it' },
           { run_id: 'run-failed', status: 'failed', triggered_by: 'crashed', outcome: 'failed', reason: 'the worker crashed' },
@@ -53,6 +54,7 @@ describe('workflow run history rows', () => {
 
     await screen.findByText('budget')
     expect(within(rowFor('budget')).getByText('stopped at budget')).toHaveAttribute('title', 'hit the cost ceiling')
+    expect(within(rowFor('blind')).getByText('could not look')).toHaveAttribute('title', 'Splunk could not be reached')
     expect(within(rowFor('left')).getByText('abandoned')).toHaveAttribute('title', 'parked with no answer')
     expect(within(rowFor('halted')).getByText('aborted')).toHaveAttribute('title', 'the operator stopped it')
     // completed and failed already say what they are; an operator cancel stores

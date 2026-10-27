@@ -27,22 +27,32 @@ function specOf(): RunSpec {
   return buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") }, entry.actions);
 }
 
-function stub(id: string): RegisteredTool {
+// A tool in `down` answers as an estate that is not reachable: a visibility gap.
+function stub(id: string, down: ReadonlySet<string> = new Set()): RegisteredTool {
   return defineTool(
     {
       id,
       description: `stand-in for ${id}`,
       parameters: { type: "object", additionalProperties: true, properties: {} },
-      execute: async () => ({ ok: true, rows: [{ id, seen: `${id} answered` }], rowCount: 1, capped: false, sourceSystem: id }),
+      execute: async () =>
+        down.has(id)
+          ? { ok: false, failure: { kind: "unavailable", detail: `${id} is down` } }
+          : { ok: true, rows: [{ id, seen: `${id} answered` }], rowCount: 1, capped: false, sourceSystem: id },
     },
     { maxRows: 10, timeoutMs: 1_000 },
   );
 }
 
-function harnessOf(spec: RunSpec, plugin: PluginManifest, provider: ScriptedProvider, state: InProcessState<AgentKinds>): Harness<AgentKinds> {
+function harnessOf(
+  spec: RunSpec,
+  plugin: PluginManifest,
+  provider: ScriptedProvider,
+  state: InProcessState<AgentKinds>,
+  down: ReadonlySet<string> = new Set(),
+): Harness<AgentKinds> {
   return {
     provider,
-    registry: registryOf([...spec.tools.map((tool) => stub(tool.id)), skillTool(plugin)], pluginGrants(plugin, spec.tools)),
+    registry: registryOf([...spec.tools.map((tool) => stub(tool.id, down)), skillTool(plugin)], pluginGrants(plugin, spec.tools)),
     dispatch: localDispatch,
     budget: budgetOf(spec.budgets, unmeteredQuota),
     memory: nullMemory,
@@ -285,6 +295,38 @@ describe("the kernel runs a plugin to a conclusion", () => {
     // The resumed model read what the first pass learned.
     const resumed = second.requests[0]?.messages ?? [];
     expect(resumed.some((one) => one.role === "tool" && one.content.includes('ref="r1"'))).toBe(true);
+  });
+
+  // #3248: an answer that could not look is not a clean bill of health.
+  it("ends data_starved when the telemetry could not be reached and nothing served is cited", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [{ tool: "splunk_search", args: '{"sql":"select 1"}' }] },
+      STOP,
+      concluded("inconclusive", ["r1"], { gaps: ["Splunk could not be reached"] }),
+    ]);
+
+    const report = await runAgent(harnessOf(spec, plugin, provider, state, new Set(["splunk_search"])), optionsOf(spec, plugin));
+
+    expect(report.status).toBe("data_starved");
+    // The case still gets the report.
+    expect(await state.terminal(RUN)).toMatchObject({ outcome: "data_starved", summary: "the lockouts are inconclusive", disposition: "inconclusive" });
+  });
+
+  it("stays completed when the answer cites a served result beside the gap", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [{ tool: "splunk_search", args: '{"sql":"select 1"}' }, { tool: "get_finding", args: '{"finding_id":"f-1"}' }] },
+      STOP,
+      concluded("malicious", ["r2"]),
+    ]);
+
+    const report = await runAgent(harnessOf(spec, plugin, provider, state, new Set(["splunk_search"])), optionsOf(spec, plugin));
+
+    expect(report.status).toBe("completed");
+    expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed" });
   });
 
   it("ends as budget_exhausted when the budget refuses, without a conclusion", async () => {

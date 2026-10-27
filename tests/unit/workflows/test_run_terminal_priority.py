@@ -104,7 +104,7 @@ def test_a_missing_or_unrecognised_severity_is_ignored(severity: Optional[str]) 
 
 
 @pytest.mark.parametrize(
-    "outcome", ["failed", "budget_exhausted", "aborted", "abandoned"]
+    "outcome", ["failed", "budget_exhausted", "aborted", "abandoned", "data_starved"]
 )
 def test_a_run_that_did_not_complete_leaves_the_priority(outcome: str) -> None:
     cases = _terminal("low", outcome=outcome, severity="critical")

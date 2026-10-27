@@ -139,6 +139,23 @@ describe("a hunt run by one agent", () => {
     expect(gaps[0]?.payload).toMatchObject({ tool: "splunk_search", kind: "unavailable" });
   });
 
+  // #3248: one unreachable source is the whole estate here, so the hunt could not look.
+  it("ends data_starved when its one source could not be reached", async () => {
+    const state = new InProcessState<HuntKinds>();
+    const provider = modelOf([() => ({ tool: "splunk_search", args: { sql: "select 1" } }), () => ({ say: "the SIEM is down" })]);
+    const report = await runHunt(harnessOf(specOf(), provider, state, estate(new Set(["splunk_search"]))), {
+      run_id: RUN,
+      run_kind: "hunt",
+      spec: specOf(),
+      actions: [],
+      queue: new InProcessDirectiveQueue(),
+    });
+
+    expect(report.status).toBe("data_starved");
+    expect((await state.terminal(RUN))?.outcome).toBe("data_starved");
+    expect(fold((await state.read(RUN)) as readonly HuntEvent[]).hunt.outcome).toBe("data_starved");
+  });
+
   it("will not prove a hypothesis on one source system, however sure the agent is", async () => {
     const state = new InProcessState<HuntKinds>();
     const provider = modelOf([
