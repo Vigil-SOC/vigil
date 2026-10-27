@@ -4,7 +4,7 @@
    never widen one, and would silently drop models it was not shown. */
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import AiProvidersPanel from './AiProvidersPanel'
+import AiProvidersPanel, { KeyDialog } from './AiProvidersPanel'
 
 const listProviders = vi.fn()
 const listKeys = vi.fn()
@@ -86,6 +86,16 @@ const openEditor = async () => {
   fireEvent.click(await screen.findByTitle('Edit'))
   await screen.findByText('Key name')
 }
+
+describe('a Vertex key', () => {
+  it('says API-key mode reaches Gemini models only', () => {
+    render(
+      <KeyDialog provider="vertex" existing={null} onClose={() => {}} onSave={async () => {}} />,
+    )
+    expect(screen.getByText(/reaches Gemini models only/)).toBeInTheDocument()
+    expect(screen.getByText(/Claude and other partner models on Vertex need a service account/)).toBeInTheDocument()
+  })
+})
 
 describe('the models a key is fenced to', () => {
   it('offers the catalogue as checkboxes rather than a field to type ids into', async () => {
