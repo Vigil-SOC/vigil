@@ -126,9 +126,9 @@ export interface PluginHooks {
   finish?(ctx: PluginContext, outcome: Outcome<unknown>): Promise<Ending | Parked | null>;
   // What a run an operator stopped leaves behind.
   stopped?(ctx: PluginContext, directive: DirectivePayload): Promise<string | undefined>;
-  // The summary is about to be journaled, after the review. A hunt's header was
-  // written when it stopped reasoning, before the account and the review, both of
-  // which the run still pays for. finished_at is the instant the row should record.
+  // The summary is about to be journaled, after the review. A plugin may bring a
+  // header written earlier up to what the run has since spent. finished_at is the
+  // instant the row should record.
   seal?(ctx: PluginContext, summary: string): Promise<{ summary: string; finished_at?: string }>;
   // Once the terminal is on the ledger, for a plugin that reports it elsewhere too.
   ended?(ctx: PluginContext, terminal: TerminalPayload): Promise<void>;
