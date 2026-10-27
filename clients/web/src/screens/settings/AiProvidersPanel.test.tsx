@@ -2,9 +2,25 @@
    set, not the catalogue: unfenced that is everything, but once a key is fenced it
    is only the fence. So a picker that trusted it alone could narrow a fence and
    never widen one, and would silently drop models it was not shown. */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import AiProvidersPanel from './AiProvidersPanel'
+import { AGENT_MODELS_CHANGED } from './modelPrompt'
+
+const getConfig = vi.hoisted(() =>
+  vi.fn(() =>
+    Promise.resolve({
+      data: {
+        components: ['chat_default'],
+        assignments: { chat_default: { component: 'chat_default', provider_id: 'p', model_id: 'sonnet' } },
+      },
+    }),
+  ),
+)
+
+vi.mock('../../services/api', () => ({
+  aiConfigApi: { getConfig: () => getConfig() },
+}))
 
 const listProviders = vi.fn()
 const listKeys = vi.fn()
@@ -441,5 +457,122 @@ describe('a custom OpenAI-compatible provider', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(removeProvider).toHaveBeenCalledWith('lab-gw'))
     expect(removeProvider).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('a key saved while no agent has a model', () => {
+  const unset = () =>
+    getConfig.mockResolvedValue({
+      data: { components: ['chat_default'], assignments: {} },
+    })
+
+  beforeEach(() => {
+    keyRefusal.mockResolvedValue(null)
+    getConfig.mockResolvedValue({
+      data: {
+        components: ['chat_default'],
+        assignments: { chat_default: { component: 'chat_default', provider_id: 'p', model_id: 'sonnet' } },
+      },
+    })
+  })
+
+  it('stays quiet when the only key was refused', async () => {
+    unset()
+    await mount([FENCED], [], 'rejected')
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+    expect(screen.queryByText(/Every agent is still Not set/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'No model' })).not.toBeInTheDocument()
+  })
+
+  it('says so on the keys table and beside the health chip', async () => {
+    unset()
+    await mount([FENCED], ['claude-sonnet-5'])
+    expect(await screen.findByText(/Every agent is still Not set/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'No model' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pick a model' })).toBeInTheDocument()
+  })
+
+  it('prompts after the key is added, and the save confirmation says to pick one', async () => {
+    unset()
+    const notify = vi.fn()
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: { providers: { anthropic: true }, keys: { k1: { provider: 'anthropic', routable: true, health: 'healthy' } } },
+    })
+    render(<AiProvidersPanel notify={notify} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add key' }))
+    fireEvent.change(screen.getByLabelText(/^API key/), { target: { value: 'sk-test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Pick a model' })
+    expect(notify).toHaveBeenCalledWith('ok', expect.stringMatching(/still Not set/))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Pick a model' }))
+    expect(screen.queryByRole('dialog', { name: 'Pick a model' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the plain confirmation when Chat already has a model', async () => {
+    const notify = vi.fn()
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: { providers: { anthropic: true }, keys: { k1: { provider: 'anthropic', routable: true, health: 'healthy' } } },
+    })
+    render(<AiProvidersPanel notify={notify} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add key' }))
+    fireEvent.change(screen.getByLabelText(/^API key/), { target: { value: 'sk-test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', 'Key saved.'))
+    expect(screen.queryByRole('dialog', { name: 'Pick a model' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'No model' })).not.toBeInTheDocument()
+  })
+
+  it('does not open the prompt when an existing key is edited', async () => {
+    unset()
+    const notify = vi.fn()
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [FENCED], total: 1 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: { providers: { anthropic: true }, keys: { k1: { provider: 'anthropic', routable: true, health: 'healthy' } } },
+    })
+    render(<AiProvidersPanel notify={notify} />)
+    fireEvent.click(await screen.findByTitle('Edit'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', expect.stringMatching(/still Not set/)))
+    expect(screen.queryByRole('dialog', { name: 'Pick a model' })).not.toBeInTheDocument()
+  })
+
+  it('does not prompt for a key saved disabled', async () => {
+    unset()
+    const notify = vi.fn()
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({
+      data: { providers: { anthropic: false }, keys: { k1: { provider: 'anthropic', routable: false, health: 'disabled' } } },
+    })
+    render(<AiProvidersPanel notify={notify} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add key' }))
+    fireEvent.change(screen.getByLabelText(/^API key/), { target: { value: 'sk-test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', 'Key saved.'))
+    expect(screen.queryByRole('dialog', { name: 'Pick a model' })).not.toBeInTheDocument()
+  })
+
+  it('drops the prompt once a model is assigned', async () => {
+    unset()
+    await mount([FENCED], ['claude-sonnet-5'])
+    expect(await screen.findByText(/Every agent is still Not set/)).toBeInTheDocument()
+    getConfig.mockResolvedValue({
+      data: {
+        components: ['chat_default'],
+        assignments: { chat_default: { component: 'chat_default', provider_id: 'p', model_id: 'sonnet' } },
+      },
+    })
+    window.dispatchEvent(new Event(AGENT_MODELS_CHANGED))
+    await waitFor(() => expect(screen.queryByText(/Every agent is still Not set/)).not.toBeInTheDocument())
   })
 })

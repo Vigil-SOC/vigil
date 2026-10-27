@@ -14,6 +14,7 @@ import {
   type BifrostVirtualKeyWrite,
   type CustomProviderWrite,
 } from '../../services/bifrostApi'
+import { notifyRoutabilityChanged } from './routabilityChanged'
 
 type Phase = 'loading' | 'ready' | 'error'
 
@@ -94,6 +95,7 @@ export function useBifrostProviders() {
       const res = keyId
         ? await bifrostApi.updateKey(provider, keyId, data)
         : await bifrostApi.createKey(provider, data)
+      notifyRoutabilityChanged()
       reload()
       return res.data
     },
@@ -103,6 +105,7 @@ export function useBifrostProviders() {
   const removeKey = useCallback(
     async (provider: string, keyId: string) => {
       await bifrostApi.removeKey(provider, keyId)
+      notifyRoutabilityChanged()
       reload()
     },
     [reload],
@@ -111,6 +114,7 @@ export function useBifrostProviders() {
   const addProvider = useCallback(
     async (name: string, custom?: CustomProviderWrite) => {
       const res = await (custom ? bifrostApi.createProvider(name, custom) : bifrostApi.createProvider(name))
+      notifyRoutabilityChanged()
       reload()
       return res.data
     },
@@ -120,6 +124,7 @@ export function useBifrostProviders() {
   const setBaseUrl = useCallback(
     async (name: string, baseUrl: string) => {
       await bifrostApi.setProviderBaseUrl(name, baseUrl)
+      notifyRoutabilityChanged()
       reload()
     },
     [reload],
@@ -128,6 +133,7 @@ export function useBifrostProviders() {
   const removeProvider = useCallback(
     async (name: string) => {
       await bifrostApi.removeProvider(name)
+      notifyRoutabilityChanged()
       reload()
     },
     [reload],

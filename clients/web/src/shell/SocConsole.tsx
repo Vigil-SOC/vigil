@@ -40,6 +40,7 @@ import HomeScreen from '../screens/home/HomeScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import { AUTONOMY_CHANGED } from '../screens/settings/useSettings'
+import { ROUTABILITY_CHANGED } from '../screens/settings/routabilityChanged'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
 import TriageScreen from '../screens/triage/TriageScreen'
@@ -370,10 +371,14 @@ function SocConsoleInner() {
   useEffect(() => {
     let live = true
     let inFlight = false
+    let queued = false
     const settled = <T,>(p: Promise<T>): Promise<T | null> => p.then((v) => v).catch(() => null)
     // the last fold stays up while a round runs; a failed read folds as null
     const pollStatus = () => {
-      if (inFlight) return
+      if (inFlight) {
+        queued = true
+        return
+      }
       inFlight = true
       Promise.all([
         settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
@@ -388,13 +393,20 @@ function SocConsoleInner() {
         if (!live) return
         setStatus(foldStatus({ health, federation, mcp, routability, processes }))
         if (health) setHealth(health)
+        if (queued) {
+          queued = false
+          pollStatus()
+        }
       })
     }
     pollStatus()
     const id = setInterval(pollStatus, 30_000)
+    // a key write should clear "No routable provider." without waiting out the interval
+    window.addEventListener(ROUTABILITY_CHANGED, pollStatus)
     return () => {
       live = false
       clearInterval(id)
+      window.removeEventListener(ROUTABILITY_CHANGED, pollStatus)
     }
   }, [canReadRoutability])
 

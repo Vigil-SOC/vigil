@@ -40,8 +40,17 @@ import {
   type BifrostKey,
   type BifrostKeyWrite,
 } from '../../services/bifrostApi'
+import { aiConfigApi } from '../../services/api'
 import type { SectionProps } from './types'
 import { urlIsLoopback } from '../../shared/loopback'
+import {
+  AGENT_MODELS_CHANGED,
+  KEY_SAVED_UNSET,
+  MODEL_UNSET_NOTE,
+  chatModelUnset,
+  requestAgentModelPick,
+} from './modelPrompt'
+import './aiModels.css'
 
 // Only the two outcomes the gateway actually decided are a level: routable is
 // Good, rejected is Poor. Everything else stays a plain chip — never Fair — and
@@ -62,6 +71,12 @@ function KeyHealth({ status, description, verdict }: {
   if (verdict?.health === 'disabled') return <span className="chip">Disabled</span>
   if (verdict?.health === 'unverifiable') return <span className="chip" title={description}>Unverifiable</span>
   return <span className="chip" title={verdict ? description : status}>Unverified</span>
+}
+
+/** Healthy, not-yet-checked, or unlistable. A refused, disabled, or seed key is not. */
+function keyCanTakeModel(verdict?: KeyVerdict) {
+  const health = verdict?.health
+  return health === 'healthy' || health === 'unverified' || health === 'unverifiable'
 }
 
 interface AiProvidersPanelProps extends SectionProps {
@@ -107,6 +122,50 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
   const [busy, setBusy] = useState(false)
+  // null until the assignment read lands, so the prompt does not flash on load
+  const [unset, setUnset] = useState<boolean | null>(null)
+  const [askModel, setAskModel] = useState(false)
+
+  const readAssignments = () =>
+    aiConfigApi
+      .getConfig()
+      .then(({ data }) => {
+        const open = chatModelUnset(data.assignments)
+        setUnset(open)
+        return open
+      })
+      .catch(() => {
+        setUnset(null)
+        return null
+      })
+
+  useEffect(() => {
+    let live = true
+    const load = () => {
+      aiConfigApi
+        .getConfig()
+        .then(({ data }) => live && setUnset(chatModelUnset(data.assignments)))
+        .catch(() => live && setUnset(null))
+    }
+    load()
+    window.addEventListener(AGENT_MODELS_CHANGED, load)
+    return () => {
+      live = false
+      window.removeEventListener(AGENT_MODELS_CHANGED, load)
+    }
+  }, [phase])
+
+  // A refused key is not something to assign from. The seeded Ollama URL that
+  // nothing answers at is Poor, and prompting there would send the person to
+  // pick a model the gateway has already refused.
+  const canAssign =
+    !!verdicts &&
+    shown.some(
+      (p) =>
+        !!p.custom_provider_config?.is_key_less ||
+        (keys[p.name] || []).some((k) => keyCanTakeModel(verdicts.keys[k.id])),
+    )
+  const needsModel = unset === true && canAssign
 
   // a key-less custom provider has nothing to add a key to
   const keyable = providers.filter((p) => !p.custom_provider_config?.is_key_less)
@@ -231,6 +290,15 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           primary={{ label: 'Add provider', onClick: () => setAddingProvider(true), icon: 'plus' }}
         />
       )}
+      {phase === 'ready' && needsModel && (
+        <div className="aim-banner aim-prompt" role="status">
+          <Icon name="info" size={17} />
+          <span>{MODEL_UNSET_NOTE}</span>
+          <button type="button" className="btn primary" onClick={requestAgentModelPick}>
+            Pick a model
+          </button>
+        </div>
+      )}
       {phase === 'ready' && shown.length > 0 && (
         <div className="table-wrap">
           <table className="tbl">
@@ -260,9 +328,21 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                         </div>
                       </td>
                       <td colSpan={4} className="text-sm text-tx-3">
-                        {p.custom_provider_config?.is_key_less
-                          ? 'No API key needed — this provider routes without one'
-                          : 'No key — this provider cannot route'}
+                        <span className="inline-flex items-center gap-1.5">
+                          {p.custom_provider_config?.is_key_less
+                            ? 'No API key needed — this provider routes without one'
+                            : 'No key — this provider cannot route'}
+                          {needsModel && p.custom_provider_config?.is_key_less && (
+                            <button
+                              type="button"
+                              className="chip aim-model-chip"
+                              title="No agent has a model yet. Pick one for Chat (Ask Vigil)."
+                              onClick={requestAgentModelPick}
+                            >
+                              No model
+                            </button>
+                          )}
+                        </span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="inline-flex gap-1.5">
@@ -307,7 +387,19 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
                       {k.models?.includes('*') ? 'All models' : `${k.models?.length || 0} allowed`}
                     </td>
                     <td>
-                      {verdicts && <KeyHealth status={k.status} description={k.description} verdict={verdicts.keys[k.id]} />}
+                      <span className="inline-flex items-center gap-1.5">
+                        {verdicts && <KeyHealth status={k.status} description={k.description} verdict={verdicts.keys[k.id]} />}
+                        {needsModel && keyCanTakeModel(verdicts?.keys[k.id]) && (
+                          <button
+                            type="button"
+                            className="chip aim-model-chip"
+                            title="No agent has a model yet. Pick one for Chat (Ask Vigil)."
+                            onClick={requestAgentModelPick}
+                          >
+                            No model
+                          </button>
+                        )}
+                      </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="inline-flex gap-1.5">
@@ -446,15 +538,49 @@ export default function AiProvidersPanel({ notify, addProviderRequested, onAddPr
           existing={editing.key}
           onClose={() => setEditing(null)}
           onSave={async (data) => {
+            const adding = editing.key === null
             const saved = await saveKey(editing.provider, targetId(editing), data)
             setEditing(null)
             const refusal = await keyRefusal(saved?.id)
             // an edit that leaves the URL alone omits it from the write
             const url = data.ollama_key_config?.url || editing.key?.ollama_key_config?.url
-            notify(refusal ? 'err' : 'ok', refusal ? refusalText(editing.provider, refusal, url) : 'Key saved.')
+            if (refusal) {
+              notify('err', refusalText(editing.provider, refusal, url))
+              return
+            }
+            // A disabled key and an unresolved seed are stored, not usable. Only a
+            // key the gateway did not refuse is worth asking to assign.
+            let usable = false
+            try {
+              const { data: verdictsNow } = await bifrostApi.routability()
+              usable = keyCanTakeModel(saved?.id ? verdictsNow.keys?.[saved.id] : undefined)
+            } catch {
+              usable = false
+            }
+            const open = usable && (await readAssignments())
+            if (open) {
+              notify('ok', KEY_SAVED_UNSET)
+              // the banner and chip stay either way; the dialog is the prompt the add skipped
+              if (adding) setAskModel(true)
+            } else {
+              notify('ok', 'Key saved.')
+            }
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={askModel}
+        danger={false}
+        title="Pick a model"
+        body={`The key is saved. ${MODEL_UNSET_NOTE} Chat and agents cannot run until you do.`}
+        confirmLabel="Pick a model"
+        onConfirm={() => {
+          setAskModel(false)
+          requestAgentModelPick()
+        }}
+        onClose={() => setAskModel(false)}
+      />
 
       <ConfirmDialog
         open={!!confirmDel}

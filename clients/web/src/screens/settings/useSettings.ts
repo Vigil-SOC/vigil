@@ -25,6 +25,7 @@ import api, {
 import type { Schema } from '../../services/apiTypes'
 import { loadCustomIntegrations } from '../../config/integrations'
 import type { LastTest } from './integrationHealth'
+import { notifyAgentModelsChanged } from './modelPrompt'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 
 export type Phase = 'loading' | 'ready' | 'error'
@@ -770,21 +771,23 @@ export function useModelAssignment() {
     (component: string, providerId: string, modelId: string, settings: Record<string, unknown> = {}) =>
       aiConfigApi
         .setComponent(component, { provider_id: providerId, model_id: modelId, settings })
-        .then((res) =>
-          setAssignments((prev) => ({ ...prev, [component]: res.data })),
-        ),
+        .then((res) => {
+          setAssignments((prev) => ({ ...prev, [component]: res.data }))
+          notifyAgentModelsChanged()
+        }),
     [],
   )
 
   const clearAssign = useCallback(
     (component: string) =>
-      aiConfigApi.clearComponent(component).then(() =>
+      aiConfigApi.clearComponent(component).then(() => {
         setAssignments((prev) => {
           const copy = { ...prev }
           delete copy[component]
           return copy
-        }),
-      ),
+        })
+        notifyAgentModelsChanged()
+      }),
     [],
   )
 
