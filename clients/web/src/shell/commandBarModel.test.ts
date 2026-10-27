@@ -153,6 +153,15 @@ describe('buildRows with the unified search', () => {
     expect(alerts[0].desc).toBe('about exfiltration')
   })
 
+  it('keeps the unified reason on an alert found by its exact id', () => {
+    const rows = buildRows('f-1', {
+      ...none,
+      findingExact: { id: 'f-1', title: 'Exfil over C2', dataSource: 'zeek', severity: 'high' },
+      found: { groups: { alert: [{ kind: 'alert', id: 'f-1', title: 'Exfil over C2', why: 'its id', route: { screen: 'overview', search: '?alert=f-1' } }] } },
+    }, [], [])
+    expect(rows.filter((row) => row.section === 'Alerts').map((row) => row.desc)).toEqual(['zeek · high · its id'])
+  })
+
   it('works without the unified search', () => {
     expect(buildRows('zzz', { ...none, found: { groups: {} } }, [], []).map((row) => row.section)).toEqual(['Ask Vigil'])
     expect(buildRows('zzz', { ...none, found: null }, [], []).map((row) => row.section)).toEqual(['Ask Vigil'])

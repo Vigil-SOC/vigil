@@ -492,8 +492,14 @@ export function buildRows(
   if (hits?.caseExact) pushCase(cases, seen, hits.caseExact)
   const alerts: PaletteRow[] = []
   const seenAlerts = new Set<string>()
-  const pushAlert = (id: string | undefined, label: string, desc: string) => {
-    if (!id || seenAlerts.has(id)) return
+  const pushAlert = (id: string | undefined, label: string, desc: string, why?: string) => {
+    if (!id) return
+    if (seenAlerts.has(id)) {
+      // already listed (an exact id): keep the reason the unified search gave
+      const row = alerts.find((r) => r.findingId === id)
+      if (row && why && !row.desc.includes(why)) row.desc = joinParts([row.desc, why])
+      return
+    }
     seenAlerts.add(id)
     alerts.push({
       key: `finding:${id}`,
@@ -515,7 +521,7 @@ export function buildRows(
     const row = cases.find((r) => r.caseId === item.id)
     if (row) row.desc = joinParts([item.subtitle, item.why])
   }
-  for (const item of found?.groups?.alert ?? []) pushAlert(item.id, item.title || item.id, joinParts([item.subtitle, item.why]))
+  for (const item of found?.groups?.alert ?? []) pushAlert(item.id, item.title || item.id, joinParts([item.subtitle, item.why]), item.why)
   for (const hit of hits?.alertHits ?? []) pushAlert(hit.id, hit.title || hit.id, joinParts([hit.dataSource, hit.severity]))
   for (const hit of hits?.textCases ?? []) pushCase(cases, seen, hit)
   for (const hit of hits?.iocCases ?? []) pushCase(cases, seen, hit)
