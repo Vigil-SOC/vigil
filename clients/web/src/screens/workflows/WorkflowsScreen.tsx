@@ -63,6 +63,13 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   // lifted so the header's "New workflow" opens the same dialog from any tab
   const [describing, setDescribing] = useState(false)
   const [draft, setDraft] = useState<GeneratedDraft | null>(null)
+  // a search result can open a tab and one item on it while this page is already showing
+  const wantTab = searchParams.get('tab')
+  const wantWorkflow = searchParams.get('workflow')
+  useEffect(() => {
+    if (wantTab === 'agents' || wantTab === 'skills' || wantTab === 'commands' || wantTab === 'workflows') setTab(wantTab)
+    if (wantWorkflow) { setTab('workflows'); setDraft(null) }
+  }, [wantTab, wantWorkflow])
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
@@ -108,9 +115,9 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
         </div>
       </div>
       {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
-      {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} />}
-      {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
+      {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} focusId={wantWorkflow} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
+      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} openId={searchParams.get('agent')} />}
+      {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} openName={searchParams.get('skill')} />}
       {tab === 'commands' && <CommandsTab />}
       {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
     </AgentRowsProvider>
@@ -268,11 +275,18 @@ function useFillHeight<T extends HTMLElement>() {
   return ref
 }
 
-function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: () => void; goSettings: ConsoleScreenProps['goSettings'] }) {
+function WorkflowCatalog({ feed, focusId = null, onCreate, goSettings }: {
+  feed: Feed<Workflow>
+  /** opened first, e.g. the workflow a search result named (?workflow=) */
+  focusId?: string | null
+  onCreate: () => void
+  goSettings: ConsoleScreenProps['goSettings']
+}) {
   const { rows, phase, error, reload } = feed
   const [modal, setModal] = useState<WfModal | null>(null)
   // the pane replaces the table; read from the rows so an edit or a delete shows in it
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(focusId)
+  useEffect(() => { if (focusId) setOpenId(focusId) }, [focusId])
   const open = rows.find((w) => w.id === openId)
   // bumped by a save, so the pane reads the edited definition again
   const [saves, setSaves] = useState(0)
@@ -3741,10 +3755,11 @@ const SUCCESS_TIP = {
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
 /** `onToggled` runs after an agent is switched, so the workflow cards (which say when an agent they need is off) read the new state. */
-function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void }) {
+function AgentsTab({ feed, skillCount, onToggled, openId = null }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void; openId?: string | null }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
-  const [editId, setEditId] = useState<string | null>(null)
+  const [editId, setEditId] = useState<string | null>(openId)
+  useEffect(() => { if (openId) setEditId(openId) }, [openId])
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
   // optimistic On switches, dropped when the list reloads
@@ -3942,11 +3957,12 @@ function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) 
   )
 }
 
-function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
+function SkillsTab({ feed, workflows, agents, openName = null }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents>; openName?: string | null }) {
   const { rows, phase, error, reload } = feed
   // Saving, importing and deleting answer 403 without it.
   const canWrite = useAuth().hasPermission('settings.write')
-  const [editName, setEditName] = useState<string | null>(null)
+  const [editName, setEditName] = useState<string | null>(openName)
+  useEffect(() => { if (openName) setEditName(openName) }, [openName])
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)

@@ -428,6 +428,29 @@ describe('CommandBar', () => {
     expect(onGo).toHaveBeenCalledWith('overview', { search: '?alert=f-1' })
   })
 
+  it('lists what the unified search found by kind, and opens each on its page', async () => {
+    const { onGo } = renderBar()
+    apiGet.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/search'
+        ? {
+            groups: {
+              alert: [{ kind: 'alert', id: 'f-8', title: 'Exfil over C2', subtitle: 'zeek · high', why: 'about exfiltration', route: { screen: 'overview', search: '?alert=f-8' } }],
+              workflow: [{ kind: 'workflow', id: 'wf-1', title: 'Threat hunt', why: 'about exfiltration', route: { screen: 'workflows', search: '?workflow=wf-1' } }],
+              skill: [{ kind: 'skill', id: 'exfil-review', title: 'Exfil review', subtitle: 'Skill', route: { screen: 'workflows', search: '?tab=skills&skill=exfil-review' } }],
+            },
+          }
+        : { cases: [], comments: [], evidence: [] },
+    }))
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'data theft' } })
+    const row = await screen.findByRole('option', { name: /Threat hunt/ })
+    expect(apiGet).toHaveBeenCalledWith('/search', { params: { q: 'data theft', limit: 5 }, signal: expect.any(AbortSignal) })
+    expect(sections()).toEqual(['Alerts', 'Workflows', 'Skills', 'Ask Vigil'])
+    expect(screen.getByRole('option', { name: /Exfil over C2/ })).toHaveTextContent('zeek · high · about exfiltration')
+    expect(row.querySelector('.vg-command-dest')).toHaveTextContent('Opens page')
+    fireEvent.click(row)
+    expect(onGo).toHaveBeenCalledWith('workflows', { search: '?workflow=wf-1' })
+  })
+
   it('finds a case and its alert by a host the alert names', async () => {
     const { onOpenCase } = renderBar()
     apiGet.mockImplementation((path: string) => Promise.resolve({

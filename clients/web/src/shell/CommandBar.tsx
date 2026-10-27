@@ -26,6 +26,7 @@ import {
   tagText,
   writeRecent,
   type BoardLink,
+  type Found,
   type Hit,
   type HuntAttachment,
   type MatchType,
@@ -69,7 +70,7 @@ const MIN_SEARCH_CHARS = 3
 
 async function searchAll(query: string, signal: AbortSignal): Promise<SearchHits> {
   const broad = query.length >= MIN_SEARCH_CHARS
-  const [caseExact, findingExact, text, ioc, alerts] = await Promise.all([
+  const [caseExact, findingExact, text, ioc, alerts, found] = await Promise.all([
     casesApi.getById(query, signal).then((res) => {
       const data = res.data as { priority?: unknown; status?: unknown }
       return hitFrom(res.data.case_id, res.data.title, { priority: str(data.priority), status: str(data.status) })
@@ -79,6 +80,8 @@ async function searchAll(query: string, signal: AbortSignal): Promise<SearchHits
     broad ? api.get('/cases/search/by-ioc', { params: { ioc_value: query }, signal }).then((res) => res.data).catch(() => null) : null,
     // Matches entity_context too, so a host, user or IP finds its alerts.
     broad ? findingsApi.getAll({ search: query, limit: 5 }, signal).then((res) => (res.data as { findings?: unknown })?.findings).catch(() => null) : null,
+    // Words and meaning, across alerts, cases, workflows, agents and skills.
+    broad ? api.get('/search', { params: { q: query, limit: 5 }, signal }).then((res) => res.data as Found).catch(() => null) : null,
   ])
   const textData = text as { cases?: unknown; comments?: unknown; evidence?: unknown } | null
   return {
@@ -91,6 +94,7 @@ async function searchAll(query: string, signal: AbortSignal): Promise<SearchHits
     ],
     iocCases: casesOf(ioc),
     alertHits: Array.isArray(alerts) ? alerts.map(alertOf).filter((hit): hit is Hit => hit !== null) : [],
+    found: found && typeof found === 'object' && 'groups' in found ? found : null,
   }
 }
 
@@ -310,6 +314,10 @@ export default function CommandBar({
     remember(query)
     if (row.dest === 'Case' && row.caseId) onOpenCase(row.caseId)
     else if (row.dest === 'Page' && row.page) onGo(row.page)
+    else if (row.dest === 'Go' && row.go) {
+      inputRef.current?.blur()
+      onGo(row.go.screen, row.go.search ? { search: row.go.search } : undefined)
+    }
     else if (row.dest === 'Alert' && row.findingId) {
       // The popup hands focus back to its opener, which would reopen this menu.
       inputRef.current?.blur()

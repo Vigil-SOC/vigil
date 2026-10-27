@@ -251,6 +251,9 @@ class Settings(BaseSettings):
     agent_url: str = "http://localhost:6989"
     anthropic_base_url: str = ""
     ollama_url: str = "http://localhost:11434"
+    # Embedding model the top-bar search asks Ollama for, to find items by
+    # meaning as well as words. Empty, or no Ollama/model, searches by words.
+    search_embed_model: str = "nomic-embed-text"
     default_model: str = "claude-sonnet-4-6"
     ollama_extra_tool_models: str = ""
     model_catalog_refresh_interval_s: int = 300
