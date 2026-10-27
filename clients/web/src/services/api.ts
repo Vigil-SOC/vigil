@@ -164,9 +164,9 @@ export const findingsApi = {
     exclusions?: ExclusionView
     sort_by?: string
     sort_order?: 'asc' | 'desc'
-  }) => api.get('/findings', { params }),
+  }, signal?: AbortSignal) => api.get('/findings', { params, signal }),
   
-  getById: (id: string) => api.get(`/findings/${id}`),
+  getById: (id: string, signal?: AbortSignal) => api.get(`/findings/${id}`, { signal }),
   
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
@@ -256,7 +256,8 @@ export const casesApi = {
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
-  getById: (id: string) => api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`),
+  getById: (id: string, signal?: AbortSignal) =>
+    api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`, { signal }),
 
   create: (data: Schema<'CaseCreate'>) =>
     api.post<Schema<'CaseSchema'>>('/cases', data),

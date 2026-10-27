@@ -663,7 +663,7 @@ APPROVAL_TOOLS = [
     },
     {
         "name": "approve_action",
-        "description": "Approve a pending action for execution. The action will be executed automatically after approval.",
+        "description": "Does not approve. Leaves the action as it is and tells the caller to confirm it in Approvals.",
         "input_schema": {
             "type": "object",
             "properties": {

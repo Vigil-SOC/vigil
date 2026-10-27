@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import Text, cast, or_, select
 from sqlalchemy.orm import Session
 
 from core.storage.case_repository import CaseRepository
@@ -224,7 +224,7 @@ class CaseSearchService:
                 linked = session.execute(
                     select(case_findings.c.case_id)
                     .join(Finding, Finding.finding_id == case_findings.c.finding_id)
-                    .where(cast(Finding.entity_context, String).ilike(pattern))
+                    .where(cast(Finding.entity_context, Text).ilike(pattern))
                     .distinct()
                 )
                 case_ids.update(linked.scalars())

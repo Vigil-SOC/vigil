@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "fixtures"
@@ -33,6 +34,7 @@ class TestTransformAlert:
         finding = ingestion.transform_alert_to_finding(sample_alerts[0])
         assert finding is not None
         assert finding["finding_id"] == "defender-da637552173936382409"
+        assert finding["external_id"] == "da637552173936382409"
         assert finding["data_source"] == "microsoft_defender"
         assert finding["severity"] == "high"
         # MDE left description empty; the text lives in title.
@@ -60,11 +62,32 @@ class TestTransformAlert:
         finding = ingestion.transform_alert_to_finding({"id": "sparse-1"})
         assert finding is not None
         assert finding["finding_id"] == "defender-sparse-1"
+        assert finding["external_id"] == "sparse-1"
         assert finding["description"] == "Microsoft Defender Alert"
         assert finding["mitre_predictions"] == {}
 
     def test_handles_transform_error(self, ingestion):
         assert ingestion.transform_alert_to_finding(None) is None
+
+    def test_42_char_alert_id_fits_and_keeps_raw_external_id(self, ingestion):
+        # Repro: "defender-" + a 42-char MDE id is 51 and overflows String(50).
+        alert_id = "ed1234abcd-12ab-4cde-9f01-23456789abcd_aml"
+        finding = ingestion.transform_alert_to_finding({"id": alert_id})
+        assert finding is not None
+        assert len(alert_id) == 42
+        assert len(finding["finding_id"]) <= 50
+        assert finding["external_id"] == alert_id
+        assert finding["finding_id"] == fit_id("defender-", alert_id, FINDING_ID_MAX)
+
+    def test_long_ids_sharing_a_prefix_stay_distinct(self, ingestion):
+        shared = "ed1234abcd-12ab-4cde-9f01-23456789abcd"
+        first = ingestion.transform_alert_to_finding({"id": shared + "_aml"})
+        second = ingestion.transform_alert_to_finding({"id": shared + "_xyz"})
+        assert first["finding_id"] != second["finding_id"]
+        assert len(first["finding_id"]) <= 50
+        assert len(second["finding_id"]) <= 50
+        assert first["external_id"] == shared + "_aml"
+        assert second["external_id"] == shared + "_xyz"
 
 
 class TestLegacyAlertShape:

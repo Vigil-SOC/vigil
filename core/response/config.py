@@ -57,8 +57,9 @@ def split_decision_rule(reason: Optional[str]) -> tuple[str, Optional[str]]:
 @dataclass
 class ResponseConfig:
     auto_response_enabled: bool = True
-    # Reversible actions at or above this auto-approve; below it they wait for
-    # an analyst. The one knob DAEMON_CONFIDENCE_THRESHOLD has always named.
+    # Routing and prompt band. A confidence at or above this used to
+    # auto-approve a reversible row; the approval gate no longer does that
+    # (#2918). The daemon's finding-side response still reads it.
     confidence_threshold: float = 0.90
     # The "quick review" line: the correlator recommends isolation with
     # approval, and the processor queues a finding for response, at or above it.
@@ -70,6 +71,9 @@ class ResponseConfig:
     # investigated, at or above these.
     critical_action_floor: float = 0.70
     high_action_floor: float = 0.80
+    # Process copy of DAEMON_FORCE_APPROVAL. With auto-response off, it forces
+    # the ceiling's effective act flags off. It is not a grant, and it does
+    # not release a row.
     force_manual_approval: bool = False
     dry_run: bool = False  # Log actions without executing
 
@@ -128,6 +132,11 @@ def approval_requirement(
 ) -> tuple[bool, str]:
     """Whether an approval row waits for a human, and the rule that decided it.
 
+    A confidence never marks a row approved. Reversible and irreversible rows
+    both wait. ``config`` stays in the signature so callers and the intent
+    replay keep one function; the threshold it carries is a routing knob, not
+    a release. An act flag does not release a row either (#2931).
+
     ``reversibility`` is the enum the live path passes. Compared by ``.value``
     so this module does not import the service that calls it. An unknown
     value raises, unless force-manual already decided.
@@ -138,11 +147,9 @@ def approval_requirement(
     if value == "irreversible":
         return True, decision_rule("reversibility", value)
     if value == "reversible":
-        # A confidence is a probability. Anything else (5.0, NaN) is a caller
-        # inflating the number, and must not read as "above the threshold".
-        if not 0.0 <= confidence <= 1.0:
+        # A confidence is a probability. Anything else (5.0, NaN) is recorded
+        # as out of range, and still waits.
+        if not isinstance(confidence, (int, float)) or not 0.0 <= confidence <= 1.0:
             return True, decision_rule("response.confidence_range", confidence)
-        return confidence < config.confidence_threshold, decision_rule(
-            "response.confidence_threshold", config.confidence_threshold, confidence
-        )
+        return True, decision_rule("reversibility", value)
     raise ValueError(f"Unknown reversibility: {reversibility}")
