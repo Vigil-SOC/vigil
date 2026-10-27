@@ -202,13 +202,13 @@ def test_terminal_states_partition_the_day():
                     case_id="ov-c-you",
                     closure_category="resolved",
                     closed_by="ada",
-                    closed_by_kind="analyst",
+                    close_channel="cookie",
                 ),
                 CaseClosureInfo(
                     case_id="ov-c-person",
                     closure_category="resolved",
                     closed_by="ada",
-                    closed_by_kind="analyst",
+                    close_channel="cookie",
                 ),
                 WorkflowRun(
                     run_id="ov-run-ctx",

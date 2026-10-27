@@ -32,18 +32,34 @@ class ClosureCategory(str, Enum):
 
 
 class ClosedByKind(str, Enum):
-    """Which kind of actor closed it, asked at the write.
+    """The Trust word a reader shows, and the kind a noise mark stores.
 
-    Not derived from ``closed_by`` afterwards: an agent closing as
-    "soc-automation" and a person closing as "nestor" are the same shape of
-    string, and a lookup against users would grade a departed analyst's close as
-    an agent's. The HTTP close has a person behind it and the MCP tool has a
-    program holding someone's credential, so each writer already knows the
-    answer.
+    A closure does not store this word. It stores how the caller authenticated,
+    and Trust is derived from that: ``analyst`` only for a person on the
+    console cookie. Noise marking still writes the word itself; that path has
+    no session to derive from.
     """
 
     ANALYST = "analyst"
     AGENT = "agent"
 
 
-__all__: Sequence[str] = ("ClosedByKind", "ClosureCategory")
+# ``close_channel`` values. Trust is derived; the client cannot send either.
+CHANNEL_COOKIE = "cookie"
+CHANNEL_AGENT = "agent"
+
+
+def trust_word(channel: str | None) -> str:
+    """``analyst`` only when the close was a person's console cookie."""
+    if channel == CHANNEL_COOKIE:
+        return ClosedByKind.ANALYST.value
+    return ClosedByKind.AGENT.value
+
+
+__all__: Sequence[str] = (
+    "CHANNEL_AGENT",
+    "CHANNEL_COOKIE",
+    "ClosedByKind",
+    "ClosureCategory",
+    "trust_word",
+)

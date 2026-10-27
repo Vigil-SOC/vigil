@@ -664,6 +664,11 @@
   "nullable": false,
   "type": "character varying(50)"
  },
+ "column case_closure_info.close_channel": {
+  "default": "'agent'::character varying",
+  "nullable": false,
+  "type": "character varying(16)"
+ },
  "column case_closure_info.closed_at": {
   "default": "now()",
   "nullable": false,
@@ -674,10 +679,10 @@
   "nullable": false,
   "type": "character varying(100)"
  },
- "column case_closure_info.closed_by_kind": {
-  "default": "'agent'::character varying",
-  "nullable": false,
-  "type": "character varying(16)"
+ "column case_closure_info.closed_by_text": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(100)"
  },
  "column case_closure_info.closure_category": {
   "default": null,
@@ -3750,7 +3755,7 @@
  "constraint case_attachments.case_attachments_pkey": "PRIMARY KEY (attachment_id)",
  "constraint case_audit_logs.case_audit_logs_pkey": "PRIMARY KEY (audit_id)",
  "constraint case_closure_info.case_closure_info_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
- "constraint case_closure_info.case_closure_info_closed_by_kind_check": "CHECK (((closed_by_kind)::text = ANY ((ARRAY['analyst'::character varying, 'agent'::character varying])::text[])))",
+ "constraint case_closure_info.case_closure_info_close_channel_check": "CHECK (((close_channel)::text = ANY ((ARRAY['cookie'::character varying, 'agent'::character varying])::text[])))",
  "constraint case_closure_info.case_closure_info_pkey": "PRIMARY KEY (case_id)",
  "constraint case_comments.case_comments_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_comments.case_comments_parent_comment_id_fkey": "FOREIGN KEY (parent_comment_id) REFERENCES case_comments(comment_id) ON DELETE CASCADE",

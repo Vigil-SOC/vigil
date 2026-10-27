@@ -18,7 +18,6 @@ from core.agents.mcp_tools import MCPFailure
 from core.auth import tool_principal
 from core.auth.auth_service import AuthService
 from core.cases.case_workflow_service import CaseWorkflowService
-from core.cases.closure import ClosedByKind
 from core.integrations.mcp import in_process
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import current_caller
@@ -456,11 +455,10 @@ class TestMCPFallthrough:
 def closes(monkeypatch):
     """The closed_by each close_case call recorded, and every close's kind."""
     recorded = []
-    kinds = []
 
     def _close(self, session, case_id, **kwargs):
         recorded.append(kwargs["closed_by"])
-        kinds.append(kwargs["closed_by_kind"])
+        assert "closed_by_kind" not in kwargs
         closure = MagicMock()
         closure.to_dict.return_value = {"case_id": case_id}
         return closure
@@ -483,7 +481,6 @@ def closes(monkeypatch):
     app.state.mcp_registry = registry
     app.include_router(tools_router.router, prefix=tools_router.ROUTER_META.prefix)
     client = TestClient(app)
-    client.kinds = kinds
     return client, recorded
 
 
@@ -505,8 +502,8 @@ class TestPrincipal:
         assert response.status_code == 200, response.text
         assert response.json()["ok"] is True
         assert recorded == ["nestor"]
-        # The person's name, but still a program acting with their standing.
-        assert client.kinds == [ClosedByKind.AGENT]
+        # The tool does not choose Trust. close_case reads the session, and a
+        # verified tool principal is not the console cookie.
 
     def test_a_hunt_sends_no_principal_and_records_an_agent(self, closes):
         client, recorded = closes

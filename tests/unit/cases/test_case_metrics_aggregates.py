@@ -82,7 +82,7 @@ def _case(
                 case_id=case_id,
                 closure_category="unspecified",
                 closed_by="tester",
-                closed_by_kind="analyst",
+                close_channel="cookie",
                 closed_at=closed_at,
             )
         )
