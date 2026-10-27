@@ -12,7 +12,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_quota_without_a_virtual_key_points_at_settings_ai_models(monkeypatch):
-    monkeypatch.setattr(budgets, "read_vk", lambda: None)
+    async def no_providers():
+        return {"providers": {}, "keys": {}}
+
+    monkeypatch.setattr("core.llm.bifrost.mirror.routability", no_providers)
+    monkeypatch.setattr("core.llm.cost.budget.read_vk", lambda: None)
 
     body = asyncio.run(budgets.get_budget_quota())
 

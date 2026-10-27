@@ -516,12 +516,11 @@ export interface AgentSummary {
   decision_id?: string
 }
 
-/** Reads the shell folds itself. Health is public; processes needs a sign-in; routability is admin-only. */
+/** Reads the shell folds itself. Health is public; processes and the provider map need a sign-in. */
 export const consoleApi = {
   getHealth: () => api.get('/health'),
   getProcesses: () => api.get<Schema<'ProcessStates'>>('/processes'),
-  getRoutability: () =>
-    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
+  getRoutability: () => api.get<Schema<'LlmPathHealth'>>('/llm/health'),
 }
 
 export interface IntegrationTestResult {

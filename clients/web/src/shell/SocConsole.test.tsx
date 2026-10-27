@@ -1422,6 +1422,15 @@ describe('SocConsole', () => {
     expect(line).not.toHaveTextContent('No routable provider.')
   })
 
+  it('shows No routable provider when settings.write is denied and nothing can route', async () => {
+    authState.allow = (permission) => permission !== 'settings.write'
+    vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: {} } } as never)
+    renderConsole()
+    const line = await screen.findByRole('status', { name: 'System status' })
+    expect(line).toHaveTextContent('No routable provider.')
+    expect(consoleApi.getRoutability).toHaveBeenCalled()
+  })
+
   it('exports the filtered findings as a browser CSV download', async () => {
     let captured: Blob | undefined
     const createUrl = vi.fn((blob: Blob) => {
